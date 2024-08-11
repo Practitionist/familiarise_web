@@ -433,7 +433,7 @@ model SlotOfAvailabilty {
 
   slotType SlotType
 
-  slotsOfAppointmentRequest slotsOfAppointmentRequest[]
+  slotOfAppointmentRequest SlotOfAppointmentRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
@@ -441,7 +441,7 @@ model SlotOfAvailabilty {
   @@index([consultantProfileId])
 }
 
-model slotsOfAppointmentRequest {
+model SlotOfAppointmentRequest {
   id     String        @id @default(uuid())
   status RequestStatus @default(PENDING)
 
@@ -464,7 +464,7 @@ model SlotOfAppointment {
   consulteeProfile   ConsulteeProfile @relation(fields: [consulteeProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consulteeProfileId String
 
-  slotOfAppointmentRequest   slotsOfAppointmentRequest @relation(fields: [slotOfAppointmentRequestId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  slotOfAppointmentRequest   SlotOfAppointmentRequest @relation(fields: [slotOfAppointmentRequestId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   slotOfAppointmentRequestId String                    @unique
 
   appointmentsType AppointmentsType

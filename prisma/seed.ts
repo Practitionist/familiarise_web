@@ -314,7 +314,7 @@ async function createAppointments() {
         Object.values(AppointmentsType)
       );
 
-      const appointmentRequest = await prisma.slotsOfAppointmentRequest.create({
+      const appointmentRequest = await prisma.slotOfAppointmentRequest.create({
         data: {
           status: RequestStatus.PENDING,
           slotOfAvailabilityId: availabilitySlot.id,
