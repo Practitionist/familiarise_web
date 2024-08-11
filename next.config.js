@@ -14,6 +14,9 @@ module.exports = {
       {
         hostname: "spyhtvtmrektuyogsxze.supabase.co",
       },
+      {
+        hostname: "avatars.githubusercontent.com",
+      }
     ],
   },
 };

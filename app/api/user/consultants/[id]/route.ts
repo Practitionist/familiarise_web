@@ -23,29 +23,21 @@ export async function POST(req: NextRequest,
     params: { id: string }) {
 
     try {
-        const {
-            rating,
-            specialization,
-            experience,
-            location,
-            onlineStatus,
-            domain,
-            subDomains
-        } = await req.json();
+        const body = await req.json();
 
         const consultant = await prisma.consultantProfile.create({
             data: {
-                rating,
-                specialization,
-                experience,
-                location,
-                onlineStatus,
-                domain,
-                subDomains,
-                user: { connect: { id: params.id } }
+                scheduleType: body.scheduleType,
+                rating: body.rating,
+                specialization: body.specialization,
+                experience: body.experience,
+                location: body.location,
+                onlineStatus: body.onlineStatus,
+                domain: body.domain,
+                subDomains: body.subDomains,
+                userId: params.id
             }
         });
-
 
         return NextResponse.json(consultant, { status: 200 });
     }
@@ -60,28 +52,21 @@ export async function POST(req: NextRequest,
 export async function PUT(req: NextRequest,
     params: { id: string }) {
     try {
-        const {
-            rating,
-            specialization,
-            experience,
-            location,
-            onlineStatus,
-            domain,
-            subDomains
-        } = await req.json();
+        const body = await req.json();
 
         const consultant = await prisma.consultantProfile.update({
             where: {
                 id: params.id,
             },
             data: {
-                rating,
-                specialization,
-                experience,
-                location,
-                onlineStatus,
-                domain,
-                subDomains
+                scheduleType: body.scheduleType,
+                rating: body.rating,
+                specialization: body.specialization,
+                experience: body.experience,
+                location: body.location,
+                onlineStatus: body.onlineStatus,
+                domain: body.domain,
+                subDomains: body.subDomains,
             }
         });
 
