@@ -17,14 +17,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
-type TComment = {
+type TReview = {
   name: string;
   date: string;
   feedback: string;
   rating: number;
 };
 
-const comments: TComment[] = [
+const reviews: TReview[] = [
   {
     name: "Amit Kumar",
     date: "June 27, 2023",
@@ -274,8 +274,8 @@ export default function ExpertProfile({
         <div>
           <h3 className="font-semibold text-lg mb-4">All Reviews (3)</h3>
           <div className="space-y-4">
-            {comments.map((comment) => (
-              <Comment key={comment.name} {...comment} />
+            {reviews.map((review) => (
+              <Review key={review.name} {...review} />
             ))}
           </div>
         </div>
@@ -365,7 +365,7 @@ export default function ExpertProfile({
   );
 }
 
-const Comment = ({ name, date, feedback, rating }: TComment) => (
+const Review = ({ name, date, feedback, rating }: TReview) => (
   <div>
     <div className="flex items-center mb-1">
       <Avatar className="w-8 h-8 mr-2" />
@@ -374,7 +374,6 @@ const Comment = ({ name, date, feedback, rating }: TComment) => (
         <p className="text-sm text-gray-500">{date}</p>
       </div>
     </div>
-    <p>{feedback}</p>
     <div className="flex">
       {[...Array(rating)].map((_, i) => (
         <StarIcon
@@ -389,6 +388,7 @@ const Comment = ({ name, date, feedback, rating }: TComment) => (
         />
       ))}
     </div>
+    <p>{feedback}</p>
   </div>
 );
 

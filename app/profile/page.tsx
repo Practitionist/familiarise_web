@@ -51,10 +51,10 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { toast } from "@/components/ui/use-toast";
 import { useSession } from "next-auth/react";
 import Image from "next/image";
 import { useState } from "react";
-import { revalidatePath } from "next/cache";
 
 
 export default function Profile() {
@@ -84,9 +84,12 @@ export default function Profile() {
         setAddress(updatedUser.address);
 
         // Show a success message
-        console.log("Profile updated successfully");
-
-        revalidatePath("/profile");
+        toast({
+          title: "Profile Updated",
+          description: "Your profile has been updated successfully.",
+          variant: "default",
+        })
+        
       } else {
         // Handle error
         console.error("Failed to update profile");
