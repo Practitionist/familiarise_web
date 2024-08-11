@@ -301,13 +301,18 @@ async function createAppointments() {
   const webinarPlans = await prisma.webinarPlan.findMany();
   const classPlans = await prisma.classPlan.findMany();
 
-  for (const consultee of consultees) {
+  // Create a shuffled copy of availability slots
+  const shuffledSlots = [...availabilitySlots].sort(() => 0.5 - Math.random());
+
+  for (let i = 0; i < Math.min(consultees.length, shuffledSlots.length); i++) {
+    const consultee = consultees[i];
+    const availabilitySlot = shuffledSlots[i];
+
     try {
-      console.log(`Creating appointments for consultee: ${consultee.id}`);
+      console.log(`Creating appointment for consultee: ${consultee.id}`);
       const appointmentType = faker.helpers.arrayElement(
         Object.values(AppointmentsType)
       );
-      const availabilitySlot = faker.helpers.arrayElement(availabilitySlots);
 
       const appointmentRequest = await prisma.slotsOfAppointmentRequest.create({
         data: {
