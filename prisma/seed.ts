@@ -97,17 +97,17 @@ async function createConsultationPlans() {
       await prisma.consultationPlan.createMany({
         data: [
           {
-            consultantId: consultant.id,
+            consultantProfileId: consultant.id,
             duration: 0.5, // 30 minutes
             price: faker.number.int({ min: 2000, max: 5000 }), // $20 to $50
           },
           {
-            consultantId: consultant.id,
+            consultantProfileId: consultant.id,
             duration: 1, // 1 hour
             price: faker.number.int({ min: 4000, max: 10000 }), // $40 to $100
           },
           {
-            consultantId: consultant.id,
+            consultantProfileId: consultant.id,
             duration: 2, // 2 hours
             price: faker.number.int({ min: 7500, max: 20000 }), // $75 to $200
           },

@@ -51,7 +51,7 @@ export async function GET(
         ? dayOfWeekMap[formattedDate.getDay()]
         : undefined;
       // Fetch weekly slots for the consultant
-      slots = await prisma.slot.findMany({
+      slots = await prisma.slotOfAvailabilty.findMany({
         where: {
           consultantProfileId: params.consultantId,
           dayOfWeek: dayOfWeekEnum,
@@ -62,7 +62,7 @@ export async function GET(
       });
     } else if (consultantProfile.scheduleType === "CUSTOM") {
       // Fetch custom slots for the consultant
-      slots = await prisma.slot.findMany({
+      slots = await prisma.slotOfAvailabilty.findMany({
         where: {
           consultantProfileId: params.consultantId,
           date: formattedDate,

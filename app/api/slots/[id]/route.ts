@@ -7,10 +7,10 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const slot = await prisma.slot.findUnique({
+    const slot = await prisma.slotOfAvailabilty.findUnique({
       where: { id: params.id },
       include: {
-        slotRequests: true,
+        slotOfAppointmentRequest: true,
         consultantProfile: true,
       },
     });
@@ -28,7 +28,7 @@ export async function POST(req: NextRequest, res: NextResponse) {
   try {
     const body = await req.json();
 
-    const newSlot = await prisma.slot.create({
+    const newSlot = await prisma.slotOfAvailabilty.create({
       data: {
         date: body.date,
         dayOfWeek: body.dayOfWeek,
@@ -58,7 +58,7 @@ export async function PUT(
   try {
     const body = await req.json();
 
-    const updatedSlot = await prisma.slot.update({
+    const updatedSlot = await prisma.slotOfAvailabilty.update({
       where: { id: params.id },
       data: {
         date: body.date,
@@ -89,7 +89,7 @@ export async function PATCH(
   try {
     const body = await req.json();
 
-    const updatedSlot = await prisma.slot.update({
+    const updatedSlot = await prisma.slotOfAvailabilty.update({
       where: { id: params.id },
       data: {
         date: body.date, // Update only if provided
@@ -118,7 +118,7 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    await prisma.slot.delete({
+    await prisma.slotOfAvailabilty.delete({
       where: { id: params.id },
     });
 
