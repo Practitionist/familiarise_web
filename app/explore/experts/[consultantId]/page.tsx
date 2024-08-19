@@ -19,33 +19,13 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+// Types
 type TReview = {
   name: string;
   date: string;
   feedback: string;
   rating: number;
 };
-
-const reviews: TReview[] = [
-  {
-    name: "Amit Kumar",
-    date: "June 27, 2023",
-    feedback: "Good doctor, highly recommend 👍",
-    rating: 5,
-  },
-  {
-    name: "Rohit Singh",
-    date: "June 27, 2023",
-    feedback: "good",
-    rating: 4,
-  },
-  {
-    name: "Sneha Verma",
-    date: "June 27, 2023",
-    feedback: "so much good",
-    rating: 5,
-  },
-];
 
 type TUserDetails = {
   id: string;
@@ -75,46 +55,123 @@ type TConsultantDetails = {
   updatedAt: string;
 };
 
-const fetchConsultantDetails = async (id: string) => {
-  try {
-    const response = await fetch(`/api/user/consultants/${id}`);
-    if (!response.ok) {
-      throw new Error("Failed to fetch consultant details");
-    }
-    return response.json();
-  } catch (error: any) {
-    console.error("Error fetching consultant details:", error);
-    throw new Error("Failed to fetch consultant details");
-  }
+// Mock data (move to a separate file in a real application)
+const reviews: TReview[] = [
+  {
+    name: "Amit Kumar",
+    date: "June 27, 2023",
+    feedback: "Good doctor, highly recommend 👍",
+    rating: 5,
+  },
+  {
+    name: "Rohit Singh",
+    date: "June 27, 2023",
+    feedback: "good",
+    rating: 4,
+  },
+  {
+    name: "Sneha Verma",
+    date: "June 27, 2023",
+    feedback: "so much good",
+    rating: 5,
+  },
+];
+
+// API functions
+const fetchConsultantDetails = async (id: string): Promise<TConsultantDetails> => {
+  const response = await fetch(`/api/user/consultants/${id}`);
+  if (!response.ok) throw new Error("Failed to fetch consultant details");
+  return response.json();
 };
 
-const fetchUserDetails = async (id: string) => {
-  try {
-    const response = await fetch(`/api/user/${id}`);
-    if (!response.ok) {
-      throw new Error("Failed to fetch user details");
-    }
-    return response.json();
-  } catch (error: any) {
-    console.error("Error fetching user details:", error);
-    throw new Error("Failed to fetch user details");
-  }
+const fetchUserDetails = async (id: string): Promise<{ data: TUserDetails }> => {
+  const response = await fetch(`/api/user/${id}`);
+  if (!response.ok) throw new Error("Failed to fetch user details");
+  return response.json();
 };
 
-export default function ExpertProfile({
-  params,
-}: {
-  readonly params: { consultantId: string };
-}) {
+const fetchSelectedDateSlotTimings = async (consultantId: string, date: Date): Promise<TSlotTiming[]> => {
+  const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const response = await fetch(
+    `/api/slots/availability/${encodeURIComponent(consultantId)}?date=${encodeURIComponent(date.toISOString())}&timeZone=${encodeURIComponent(userTimeZone)}`
+  );
+  if (!response.ok) throw new Error("Failed to fetch available slots");
+  return response.json();
+};
+
+// Components
+const Review = ({ name, date, feedback, rating }: TReview) => (
+  <div>
+    <div className="flex items-center mb-1">
+      <Avatar className="w-8 h-8 mr-2" />
+      <div>
+        <p className="font-semibold">{name}</p>
+        <p className="text-sm text-gray-500">{date}</p>
+      </div>
+    </div>
+    <div className="flex">
+      {[...Array(5)].map((_, i) => (
+        <StarIcon
+          key={`${name}-${i}`}
+          className={`w-4 h-4 ${i < rating ? "text-blue-500" : "text-gray-300"}`}
+        />
+      ))}
+    </div>
+    <p>{feedback}</p>
+  </div>
+);
+
+const ConsultantSkeletonLoader = () => {
+  const [loadingText, setLoadingText] = useState("Please wait while we are fetching consultant details");
+
+  useEffect(() => {
+    const dots = [".", "..", "..."];
+    let dotIndex = 0;
+
+    const interval = setInterval(() => {
+      setLoadingText(prevText => {
+        const baseText = "Please wait while we are fetching consultant details";
+        return `${baseText}${dots[dotIndex]}`;
+      });
+      dotIndex = (dotIndex + 1) % dots.length;
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="flex flex-col justify-center items-center py-40 min-h-screen">
+      <div className="text-2xl font-semibold mb-8 text-center animate-pulse">{loadingText}</div>
+      <div className="flex justify-center w-full max-w-6xl">
+        <div className="flex flex-col w-1/2">
+          <Skeleton className="h-8 w-32 mb-2" />
+          <Skeleton className="h-10 w-64 mb-4" />
+          <Skeleton className="h-6 w-full mb-4" />
+          <Skeleton className="h-40 w-full mb-6" />
+          <Skeleton className="h-6 w-full mb-2" />
+          <Skeleton className="h-24 w-full mb-6" />
+          <Skeleton className="h-6 w-full mb-2" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+        <div className="flex flex-col items-center w-1/4 ml-10">
+          <Skeleton className="h-64 w-64 rounded-full mb-6" />
+          <Skeleton className="h-80 w-full rounded-lg" />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Main component
+export default function ExpertProfile({ params }: { readonly params: { consultantId: string } }) {
   const [userDetails, setUserDetails] = useState<TUserDetails | null>(null);
-  const [consultantDetails, setConsultantDetails] =
-    useState<TConsultantDetails | null>(null);
+  const [consultantDetails, setConsultantDetails] = useState<TConsultantDetails | null>(null);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
-  const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(true);
+  const { toast } = useToast();
 
   useEffect(() => {
     const fetchConsultantAndUserInfo = async () => {
@@ -143,31 +200,17 @@ export default function ExpertProfile({
   }, [params.consultantId, toast]);
 
   useEffect(() => {
-    const fetchSelectedDateSlotTimings = async (date: Date) => {
-      try {
-        const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        const response = await fetch(
-          `/api/slots/availability/${encodeURIComponent(params.consultantId)}?date=${encodeURIComponent(date.toISOString())}&timeZone=${encodeURIComponent(userTimeZone)}`
-        );
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch available slots");
-        }
-
-        const slots = await response.json();
-        setSlotTimings(slots);
-      } catch (error: any) {
-        console.error("Error fetching slots:", error);
-        toast({
-          title: "Error fetching slots",
-          description: error.message,
-          variant: "destructive",
-        });
-      }
-    };
-
     if (selectedDate) {
-      fetchSelectedDateSlotTimings(selectedDate);
+      fetchSelectedDateSlotTimings(params.consultantId, selectedDate)
+        .then(setSlotTimings)
+        .catch((error) => {
+          console.error("Error fetching slots:", error);
+          toast({
+            title: "Error fetching slots",
+            description: error.message,
+            variant: "destructive",
+          });
+        });
     }
   }, [selectedDate, params.consultantId, toast]);
 
@@ -202,29 +245,9 @@ export default function ExpertProfile({
     }
   };
 
-  const getDaysInMonth = (date: Date) => {
-    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-  };
-
-  const getFirstDayOfMonth = (date: Date) => {
-    return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
-  };
-
-  const handlePrevMonth = () => {
-    setCurrentDate(
-      new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1)
-    );
-  };
-
-  const handleNextMonth = () => {
-    setCurrentDate(
-      new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1)
-    );
-  };
-
   const renderCalendar = () => {
-    const daysInMonth = getDaysInMonth(currentDate);
-    const firstDayOfMonth = getFirstDayOfMonth(currentDate);
+    const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
+    const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay();
     const days = [];
 
     for (let i = 0; i < firstDayOfMonth; i++) {
@@ -232,11 +255,7 @@ export default function ExpertProfile({
     }
 
     for (let i = 1; i <= daysInMonth; i++) {
-      const date = new Date(
-        currentDate.getFullYear(),
-        currentDate.getMonth(),
-        i
-      );
+      const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), i);
       days.push(
         <button
           key={i}
@@ -260,13 +279,9 @@ export default function ExpertProfile({
     return (
       <div className="flex flex-col items-center justify-center h-screen">
         <h1 className="text-3xl font-bold mb-4">Oops! Consultant not found</h1>
-        <p className="text-lg mb-6">
-          Here are some other consultants you might want to try out
-        </p>
+        <p className="text-lg mb-6">Here are some other consultants you might want to try out</p>
         <Link href="/search">
-          <Button variant="night" className="rounded-full">
-            Search Consultants
-          </Button>
+          <Button variant="night" className="rounded-full">Search Consultants</Button>
         </Link>
       </div>
     );
@@ -277,19 +292,13 @@ export default function ExpertProfile({
       <div className="flex flex-col w-1/2">
         <div className="flex items-center mb-6 text-lg">
           <div className="flex flex-col">
-            <Badge className="mb-1" variant="outline">
-              {consultantDetails.specialization}
-            </Badge>
+            <Badge className="mb-1" variant="outline">{consultantDetails.specialization}</Badge>
             <h2 className="text-3xl font-semibold">{userDetails.name}</h2>
             <div className="flex items-center my-2">
-              <StarIcon className="text-blue-500 w-5 h-5" />
-              <StarIcon className="text-blue-500 w-5 h-5" />
-              <StarIcon className="text-blue-500 w-5 h-5" />
-              <StarIcon className="text-blue-500 w-5 h-5" />
-              <StarIcon className="text-gray-300 w-5 h-5" />
-              <span className="ml-2 text-base">
-                ({consultantDetails.rating})
-              </span>
+              {[...Array(5)].map((_, i) => (
+                <StarIcon key={`${i}-${consultantDetails.rating}`} className={`w-5 h-5 ${i < consultantDetails.rating ? "text-blue-500" : "text-gray-300"}`} />
+              ))}
+              <span className="ml-2 text-base">({consultantDetails.rating})</span>
             </div>
             <p className="text-lg">{consultantDetails.subDomains.join(", ")}</p>
           </div>
@@ -297,25 +306,19 @@ export default function ExpertProfile({
         <div className="mb-6">
           <h3>About</h3>
           <p className="mt-2 text-gray-500">
-            {userDetails.name} is a seasoned {consultantDetails.specialization}{" "}
-            with {consultantDetails.experience} of experience in the{" "}
-            {consultantDetails.domain} sector.
+            {userDetails.name} is a seasoned {consultantDetails.specialization} with {consultantDetails.experience} of experience in the {consultantDetails.domain} sector.
           </p>
           <h3>Expertise and Education</h3>
           <p className="mt-2 text-gray-500">
-            {userDetails.name}'s expertise spans multiple industries, with a
-            particular focus on {consultantDetails.subDomains.join(", ")}.
+            {userDetails.name}'s expertise spans multiple industries, with a particular focus on {consultantDetails.subDomains.join(", ")}.
           </p>
           <h3>Client Testimonials</h3>
           <p className="mt-2 text-gray-500">
-            Clients commend {userDetails.name} for their strategic insights and
-            result-oriented approach.
+            Clients commend {userDetails.name} for their strategic insights and result-oriented approach.
           </p>
         </div>
         <div>
-          <h3 className="font-semibold text-lg mb-4">
-            All Reviews ({consultantDetails.rating})
-          </h3>
+          <h3 className="font-semibold text-lg mb-4">All Reviews ({consultantDetails.rating})</h3>
           <div className="space-y-4">
             {reviews.map((review) => (
               <Review key={review.name} {...review} />
@@ -354,7 +357,7 @@ export default function ExpertProfile({
                   <h3 className="text-lg font-semibold mb-4">Select a Date</h3>
                   <div className="calendar-container bg-white bg-opacity-10 p-4 rounded-lg">
                     <div className="flex justify-between items-center mb-4">
-                      <button className="text-white" onClick={handlePrevMonth}>
+                      <button className="text-white" onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))}>
                         &lt;
                       </button>
                       <span>
@@ -363,7 +366,7 @@ export default function ExpertProfile({
                           year: "numeric",
                         })}
                       </span>
-                      <button className="text-white" onClick={handleNextMonth}>
+                      <button className="text-white" onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))}>
                         &gt;
                       </button>
                     </div>
@@ -378,20 +381,14 @@ export default function ExpertProfile({
                   </div>
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold mb-4">
-                    Available Time Slots
-                  </h3>
+                  <h3 className="text-lg font-semibold mb-4">Available Time Slots</h3>
                   <div className="bg-white bg-opacity-10 p-4 rounded-lg">
                     {slotTimings.length > 0 ? (
                       <div className="space-y-2">
                         {slotTimings.map((slot) => (
                           <Button
                             key={slot.slotId}
-                            variant={
-                              selectedSlot?.slotId === slot.slotId
-                                ? "outline"
-                                : "night"
-                            }
+                            variant={selectedSlot?.slotId === slot.slotId ? "outline" : "night"}
                             onClick={() => setSelectedSlot(slot)}
                             className="w-full justify-center text-sm bg-black bg-opacity-80 hover:bg-opacity-100"
                           >
@@ -400,9 +397,7 @@ export default function ExpertProfile({
                         ))}
                       </div>
                     ) : (
-                      <p className="text-center">
-                        No available slots. Please select a date to refresh.
-                      </p>
+                      <p className="text-center">No available slots. Please select a date to refresh.</p>
                     )}
                   </div>
                 </div>
@@ -432,76 +427,6 @@ export default function ExpertProfile({
     </div>
   );
 }
-
-const Review = ({ name, date, feedback, rating }: TReview) => (
-  <div>
-    <div className="flex items-center mb-1">
-      <Avatar className="w-8 h-8 mr-2" />
-      <div>
-        <p className="font-semibold">{name}</p>
-        <p className="text-sm text-gray-500">{date}</p>
-      </div>
-    </div>
-    <div className="flex">
-      {[...Array(rating)].map((_, i) => (
-        <StarIcon
-          key={`${name}-${rating}-${i}`}
-          className="text-blue-500 w-4 h-4"
-        />
-      ))}
-      {[...Array(5 - rating)].map((_, i) => (
-        <StarIcon
-          key={`${name}-${rating}-${i}`}
-          className="text-gray-300 w-4 h-4"
-        />
-      ))}
-    </div>
-    <p>{feedback}</p>
-  </div>
-);
-
-const ConsultantSkeletonLoader = () => {
-  const [loadingText, setLoadingText] = useState(
-    "Please wait while we are fetching consultant details"
-  );
-  const dots = [".", "..", "..."];
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setLoadingText((current) => {
-        const currentDots = current.slice(-3);
-        const nextDots = dots[(dots.indexOf(currentDots) + 1) % dots.length];
-        return `Please wait while we are fetching consultant details${nextDots}`;
-      });
-    }, 500);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  return (
-    <div className="flex flex-col justify-center items-center py-40 min-h-screen">
-      <div className="text-2xl font-semibold mb-8 text-center animate-pulse">
-        {loadingText}
-      </div>
-      <div className="flex justify-center w-full max-w-6xl">
-        <div className="flex flex-col w-1/2">
-          <Skeleton className="h-8 w-32 mb-2" />
-          <Skeleton className="h-10 w-64 mb-4" />
-          <Skeleton className="h-6 w-full mb-4" />
-          <Skeleton className="h-40 w-full mb-6" />
-          <Skeleton className="h-6 w-full mb-2" />
-          <Skeleton className="h-24 w-full mb-6" />
-          <Skeleton className="h-6 w-full mb-2" />
-          <Skeleton className="h-24 w-full" />
-        </div>
-        <div className="flex flex-col items-center w-1/4 ml-10">
-          <Skeleton className="h-64 w-64 rounded-full mb-6" />
-          <Skeleton className="h-80 w-full rounded-lg" />
-        </div>
-      </div>
-    </div>
-  );
-};
 
 function StarIcon(props: any) {
   return (
