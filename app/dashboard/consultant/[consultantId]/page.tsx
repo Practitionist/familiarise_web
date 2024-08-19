@@ -1,12 +1,62 @@
-import { Suspense } from 'react';
-import { AvatarImage, AvatarFallback, Avatar } from "@/components/ui/avatar"
-import Link from "next/link"
-import { Button } from "@/components/ui/button"
-import { CardTitle, CardDescription, CardHeader, CardContent, CardFooter, Card } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { TableHead, TableRow, TableHeader, TableCell, TableBody, Table } from "@/components/ui/table"
+"use client";
 
-// Separate components for better organization and reusability
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import Link from "next/link";
+import { Suspense, useEffect, useState } from 'react';
+
+// Fetch functions (to be implemented)
+async function fetchConsultantData(id: string) {
+  // Implement API call to fetch consultant data
+  // Return mock data for now
+  return { name: 'Mike Steele', role: 'Manager' };
+}
+
+async function fetchAppointments(id: string) {
+  // Implement API call to fetch appointments
+  // Return mock data for now
+  return [
+    { id: '1', name: 'Olga Nunez', description: 'Invoice Negotiation', time: '3:00 PM - 3:30 PM', badge: 'Meeting in 5 min' },
+    { id: '2', name: 'John Doe', description: 'Project Review', time: '4:00 PM - 4:30 PM', badge: 'Meeting in 2 hours' },
+  ];
+}
+
+async function fetchDocuments(id: string) {
+  // Implement API call to fetch documents
+  // Return mock data for now
+  return [
+    { invoiceNo: '2150', clientName: 'Andrea Jennings', title: '2020 - Tax Statement', tag: '2023' },
+    { invoiceNo: '2151', clientName: 'Stacey Larson', title: '2021 - Tax Statement', tag: '2023' },
+    { invoiceNo: '2152', clientName: 'Yvonne Breiner', title: '2022 - Tax Statement', tag: '2023' },
+    { invoiceNo: '2153', clientName: 'Steven Glover', title: '2023 - Tax Statement', tag: '2023' },
+  ];
+}
+
+async function fetchActivities(id: string) {
+  // Implement API call to fetch activities
+  // Return mock data for now
+  return [
+    { id: '1', name: 'Stephen', action: 'Stephen joined to 🎨 channel.', time: '20m ago' },
+    { id: '2', name: 'Alice', action: 'Alice uploaded a new document.', time: '1h ago' },
+    { id: '3', name: 'Bob', action: 'Bob scheduled a meeting.', time: '2h ago' },
+  ];
+}
+
+async function fetchBirthdays(id: string) {
+  // Implement API call to fetch birthdays
+  // Return mock data for now
+  return [
+    { id: '1', name: 'Jesus Cardoza', date: '24 March' },
+    { id: '2', name: 'Andrea Jennings', date: '25 March' },
+    { id: '3', name: 'Yvonne Breiner', date: '26 March' },
+    { id: '4', name: 'Gabriel Dennis', date: '27 March' },
+  ];
+}
+
+// Separate components (keep as they are)
 const Header = ({ name, role }: { name: string; role: string }) => (
   <header className="flex items-center justify-between pb-6">
     <div className="flex items-center">
@@ -156,32 +206,30 @@ const UpcomingBirthdays = ({ birthdays }: { birthdays: Birthday[] }) => (
     ))}
   </div>
 );
-
 // Main component
-export default function ConsultantDashboard() {
-  // In a real application, these would be fetched from an API
-  const consultant = { name: 'Mike Steele', role: 'Manager' };
-  const appointments = [
-    { id: '1', name: 'Olga Nunez', description: 'Invoice Negotiation', time: '3:00 PM - 3:30 PM', badge: 'Meeting in 5 min' },
-    { id: '2', name: 'John Doe', description: 'Project Review', time: '4:00 PM - 4:30 PM', badge: 'Meeting in 2 hours' },
-  ];
-  const documents = [
-    { invoiceNo: '2150', clientName: 'Andrea Jennings', title: '2020 - Tax Statement', tag: '2023' },
-    { invoiceNo: '2151', clientName: 'Stacey Larson', title: '2021 - Tax Statement', tag: '2023' },
-    { invoiceNo: '2152', clientName: 'Yvonne Breiner', title: '2022 - Tax Statement', tag: '2023' },
-    { invoiceNo: '2153', clientName: 'Steven Glover', title: '2023 - Tax Statement', tag: '2023' },
-  ];
-  const activities = [
-    { id: '1', name: 'Stephen', action: 'Stephen joined to 🎨 channel.', time: '20m ago' },
-    { id: '2', name: 'Alice', action: 'Alice uploaded a new document.', time: '1h ago' },
-    { id: '3', name: 'Bob', action: 'Bob scheduled a meeting.', time: '2h ago' },
-  ];
-  const birthdays = [
-    { id: '1', name: 'Jesus Cardoza', date: '24 March' },
-    { id: '2', name: 'Andrea Jennings', date: '25 March' },
-    { id: '3', name: 'Yvonne Breiner', date: '26 March' },
-    { id: '4', name: 'Gabriel Dennis', date: '27 March' },
-  ];
+export default function ConsultantDashboard({ params }: { readonly params: { consultantId: string } }) {
+
+  const consultantId = params.consultantId;
+
+  const [consultant, setConsultant] = useState<{ name: string; role: string } | null>(null);
+  const [appointments, setAppointments] = useState<{ id: string; name: string; description: string; time: string; badge: string; }[]>([]);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [activities, setActivities] = useState<{ id: string; name: string; action: string; time: string; }[]>([]);
+  const [birthdays, setBirthdays] = useState<{ id: string; name: string; date: string; }[]>([]);
+
+  useEffect(() => {
+    if (consultantId) {
+      fetchConsultantData(consultantId).then(setConsultant);
+      fetchAppointments(consultantId).then(setAppointments);
+      fetchDocuments(consultantId).then(setDocuments);
+      fetchActivities(consultantId).then(setActivities);
+      fetchBirthdays(consultantId).then(setBirthdays);
+    }
+  }, [consultantId]);
+
+  if (!consultant) {
+    return <div>Loading...</div>;
+  }
 
   return (
     <div className="bg-gray-100 p-40">
