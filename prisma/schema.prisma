@@ -355,9 +355,8 @@ model PostsImage {
 //////////////////////////////////////////////////// SLOTTING MECHANISM ////////////////////////////////////////////////////
 
 model ConsultantProfile {
-  id           String   @id @default(uuid())
-  rating       Float?
-  onlineStatus Boolean?
+  id     String @id @default(uuid())
+  rating Float  @default(0)
 
   specialization String?
   experience     String?
@@ -365,13 +364,17 @@ model ConsultantProfile {
   description    String?
   tags           String[]
 
-  domain     String?
+  domain     String
   subDomains String[]
+
+  onlineStatus    Boolean @default(false)
+  currentTimezone String
 
   consultantReviews ConsultantReview[]
   scheduleType      ScheduleType
 
-  slotsOfAvailability SlotOfAvailabilty[]
+  slotsOfAvailabiltyWeekly SlotOfAvailabiltyWeekly[]
+  slotsOfAvailabiltyCustom SlotOfAvailabiltyCustom[]
 
   consultationPlans ConsultationPlan[]
   subscriptionPlans SubscriptionPlan[]
@@ -388,9 +391,9 @@ model ConsultantProfile {
 }
 
 model ConsultantReview {
-  id                String  @id @default(uuid())
+  id                String @id @default(uuid())
   rating            Float
-  reviewDescription String? @db.Text()
+  reviewDescription String @db.Text()
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -403,9 +406,11 @@ model ConsultantReview {
 }
 
 model ConsulteeProfile {
-  id           String  @id @default(uuid())
-  location     String?
-  onlineStatus Boolean
+  id       String  @id @default(uuid())
+  location String?
+
+  onlineStatus    Boolean
+  currentTimezone String
 
   slotsOfAppointment SlotOfAppointment[]
   consultantReview   ConsultantReview[]
@@ -419,19 +424,32 @@ model ConsulteeProfile {
   @@index([userId])
 }
 
-model SlotOfAvailabilty {
-  id                  String             @id @default(uuid())
-  consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  consultantProfileId String?
+model SlotOfAvailabiltyWeekly {
+  id                  String            @id @default(uuid())
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
 
-  // Either date or dayOfWeek should be present 
-  date      DateTime?  @db.Date
-  dayOfWeek DayOfWeek?
+  dayOfWeekforStartTimeInUTC DayOfWeek
+  slotStartTimeInUTC         DateTime  @db.Timetz()
 
-  slotStartTimeInUTC DateTime? @db.Timetz()
-  slotEndTimeInUTC   DateTime? @db.Timetz()
+  dayOfWeekforEndTimeInUTC DayOfWeek
+  slotEndTimeInUTC         DateTime  @db.Timetz()
 
-  slotType SlotType
+  slotOfAppointmentRequest SlotOfAppointmentRequest[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
+
+  @@index([consultantProfileId])
+}
+
+model SlotOfAvailabiltyCustom {
+  id                  String            @id @default(uuid())
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
+
+  slotStartTimeInUTC DateTime @db.Timestamptz()
+  slotEndTimeInUTC   DateTime @db.Timestamptz()
 
   slotOfAppointmentRequest SlotOfAppointmentRequest[]
 
@@ -445,14 +463,17 @@ model SlotOfAppointmentRequest {
   id     String        @id @default(uuid())
   status RequestStatus @default(PENDING)
 
-  slotOfAvailabilty    SlotOfAvailabilty @relation(fields: [slotOfAvailabilityId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  slotOfAvailabilityId String            @unique
+  // Can be either a weekly slot or a custom slot
+  slotOfAvailabiltyWeekly    SlotOfAvailabiltyWeekly @relation(fields: [slotOfAvailabilityWeeklyId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  slotOfAvailabilityWeeklyId String
+
+  slotOfAvailabiltyCustom    SlotOfAvailabiltyCustom @relation(fields: [slotOfAvailabilityCustomId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  slotOfAvailabilityCustomId String
 
   slotsOfAppointment SlotOfAppointment?
 
-  appointmentDate           DateTime? @db.Date
-  appointmentStartTimeInUTC DateTime? @db.Timetz()
-  appointmentEndTimeInUTC   DateTime? @db.Timetz()
+  appointmentStartTimeInUTC DateTime? @db.Timestamptz()
+  appointmentEndTimeInUTC   DateTime? @db.Timestamptz()
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
@@ -465,7 +486,7 @@ model SlotOfAppointment {
   consulteeProfileId String
 
   slotOfAppointmentRequest   SlotOfAppointmentRequest @relation(fields: [slotOfAppointmentRequestId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  slotOfAppointmentRequestId String                    @unique
+  slotOfAppointmentRequestId String                   @unique
 
   appointmentsType AppointmentsType
 
@@ -664,11 +685,6 @@ enum DayOfWeek {
 }
 
 enum ScheduleType {
-  WEEKLY
-  CUSTOM
-}
-
-enum SlotType {
   WEEKLY
   CUSTOM
 }

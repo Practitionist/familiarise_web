@@ -1,30 +1,41 @@
+import prisma from "@/lib/prisma";
 import { faker } from "@faker-js/faker";
 import {
   AppointmentsType,
   ClassEmailSupport,
+  ConsultantProfile,
+  ConsulteeProfile,
   DayOfWeek,
   RequestStatus,
   ScheduleType,
-  SlotType,
   SubscriptionEmailSupport,
   SubscriptionPlanDuration,
-  UserRole,
+  User,
+  UserRole
 } from "@prisma/client";
 import * as dotenv from "dotenv";
-import prisma from "../lib/prisma";
+
 dotenv.config({ path: ".env" });
 
-async function createUsers() {
-  for (let i = 0; i < 40; i++) {
-    const userRole = faker.helpers.arrayElement([
-      "CONSULTANT",
-      "CONSULTEE",
-      "ADMIN",
-      "STAFF",
-    ]);
-    console.log(`Creating user with role: ${userRole}`);
+const NUM_USERS = 100;
+const NUM_CONSULTANTS = 40;
+const NUM_CONSULTEES = 60;
+const NUM_SLOTS_PER_CONSULTANT = 20;
+const NUM_APPOINTMENTS = 200;
+const NUM_NEWSLETTERS = 100;
+
+type UserWithProfiles = User & {
+  consultantProfile?: ConsultantProfile | null;
+  consulteeProfile?: ConsulteeProfile | null;
+};
+
+async function createUsers(): Promise<UserWithProfiles[]> {
+  const users: UserWithProfiles[] = [];
+  console.log(`Creating ${NUM_USERS} users...`);
+  for (let i = 0; i < NUM_USERS; i++) {
+    const userRole = i < NUM_CONSULTANTS ? "CONSULTANT" : "CONSULTEE";
     try {
-      await prisma.user.create({
+      const user = await prisma.user.create({
         data: {
           name: faker.person.fullName(),
           email: faker.internet.email(),
@@ -34,6 +45,21 @@ async function createUsers() {
           address: faker.location.streetAddress(),
           onboardingCompleted: faker.datatype.boolean(),
           role: userRole as UserRole,
+          cookiePreferences: {
+            create: {
+              essential: true,
+              analytics: faker.datatype.boolean(),
+              marketing: faker.datatype.boolean(),
+            },
+          },
+          notificationPreferences: {
+            create: {
+              allNotifications: faker.datatype.boolean(),
+              mentions: faker.datatype.boolean(),
+              directMessages: faker.datatype.boolean(),
+              updates: faker.datatype.boolean(),
+            },
+          },
           ...(userRole === "CONSULTANT" && {
             consultantProfile: {
               create: {
@@ -63,6 +89,7 @@ async function createUsers() {
                   ],
                   { min: 1, max: 3 }
                 ),
+                currentTimezone: faker.location.timeZone(),
                 scheduleType: faker.helpers.arrayElement([
                   "WEEKLY",
                   "CUSTOM",
@@ -75,39 +102,51 @@ async function createUsers() {
               create: {
                 location: faker.location.city(),
                 onlineStatus: faker.datatype.boolean(),
+                currentTimezone: faker.location.timeZone(),
               },
             },
           }),
         },
+        include: {
+          consultantProfile: true,
+          consulteeProfile: true,
+        },
       });
+      users.push(user);
     } catch (error) {
       console.error("Failed to create user:", error);
     }
+    if ((i + 1) % 10 === 0) {
+      console.log(`Created ${i + 1} users`);
+    }
   }
+  console.log(`Created ${users.length} users successfully.`);
+  return users;
 }
 
-async function createConsultationPlans() {
-  const consultants = await prisma.consultantProfile.findMany();
-
-  for (const consultant of consultants) {
+async function createConsultationPlans(consultants: UserWithProfiles[]) {
+  console.log(`Creating consultation plans for ${consultants.length} consultants...`);
+  for (let i = 0; i < consultants.length; i++) {
+    const consultant = consultants[i];
+    if (!consultant.consultantProfile) {
+      console.warn(`Skipping consultant ${consultant.id} - no profile found`);
+      continue;
+    }
     try {
-      console.log(
-        `Creating consultation plans for consultant: ${consultant.id}`
-      );
       await prisma.consultationPlan.createMany({
         data: [
           {
-            consultantProfileId: consultant.id,
+            consultantProfileId: consultant.consultantProfile.id,
             duration: 0.5, // 30 minutes
             price: faker.number.int({ min: 2000, max: 5000 }), // $20 to $50
           },
           {
-            consultantProfileId: consultant.id,
+            consultantProfileId: consultant.consultantProfile.id,
             duration: 1, // 1 hour
             price: faker.number.int({ min: 4000, max: 10000 }), // $40 to $100
           },
           {
-            consultantProfileId: consultant.id,
+            consultantProfileId: consultant.consultantProfile.id,
             duration: 2, // 2 hours
             price: faker.number.int({ min: 7500, max: 20000 }), // $75 to $200
           },
@@ -119,21 +158,25 @@ async function createConsultationPlans() {
         error
       );
     }
+    if ((i + 1) % 10 === 0 || i === consultants.length - 1) {
+      console.log(`Created consultation plans for ${i + 1} consultants`);
+    }
   }
 }
 
-async function createSubscriptionPlans() {
-  const consultants = await prisma.consultantProfile.findMany();
-
-  for (const consultant of consultants) {
+async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
+  console.log(`Creating subscription plans for ${consultants.length} consultants...`);
+  for (let i = 0; i < consultants.length; i++) {
+    const consultant = consultants[i];
+    if (!consultant.consultantProfile) {
+      console.warn(`Skipping consultant ${consultant.id} - no profile found`);
+      continue;
+    }
     try {
-      console.log(
-        `Creating subscription plans for consultant: ${consultant.id}`
-      );
       await prisma.subscriptionPlan.createMany({
         data: [
           {
-            consultantProfileId: consultant.id,
+            consultantProfileId: consultant.consultantProfile.id,
             duration: SubscriptionPlanDuration.ONE_MONTH,
             price: faker.number.int({ min: 9900, max: 19900 }), // $99 to $199
             callsPerWeek: 1,
@@ -141,7 +184,7 @@ async function createSubscriptionPlans() {
             emailSupport: SubscriptionEmailSupport.GENERAL,
           },
           {
-            consultantProfileId: consultant.id,
+            consultantProfileId: consultant.consultantProfile.id,
             duration: SubscriptionPlanDuration.THREE_MONTHS,
             price: faker.number.int({ min: 24900, max: 49900 }), // $249 to $499
             callsPerWeek: 2,
@@ -149,7 +192,7 @@ async function createSubscriptionPlans() {
             emailSupport: SubscriptionEmailSupport.PRIORITY,
           },
           {
-            consultantProfileId: consultant.id,
+            consultantProfileId: consultant.consultantProfile.id,
             duration: SubscriptionPlanDuration.SIX_MONTHS,
             price: faker.number.int({ min: 39900, max: 79900 }), // $399 to $799
             callsPerWeek: 3,
@@ -164,29 +207,35 @@ async function createSubscriptionPlans() {
         error
       );
     }
+    if ((i + 1) % 10 === 0 || i === consultants.length - 1) {
+      console.log(`Created subscription plans for ${i + 1} consultants`);
+    }
   }
 }
 
-async function createWebinarPlans() {
-  const consultants = await prisma.consultantProfile.findMany();
-
-  for (const consultant of consultants) {
+async function createWebinarPlans(consultants: UserWithProfiles[]) {
+  console.log(`Creating webinar plans for ${consultants.length} consultants...`);
+  for (let i = 0; i < consultants.length; i++) {
+    const consultant = consultants[i];
+    if (!consultant.consultantProfile) {
+      console.warn(`Skipping consultant ${consultant.id} - no profile found`);
+      continue;
+    }
     try {
-      console.log(`Creating webinar plans for consultant: ${consultant.id}`);
       await prisma.webinarPlan.createMany({
         data: [
           {
-            consultantProfileId: consultant.id,
+            consultantProfileId: consultant.consultantProfile.id,
             duration: 1, // 1 hour
             price: faker.number.int({ min: 1500, max: 3000 }), // $15 to $30
           },
           {
-            consultantProfileId: consultant.id,
+            consultantProfileId: consultant.consultantProfile.id,
             duration: 2, // 2 hours
             price: faker.number.int({ min: 2500, max: 5000 }), // $25 to $50
           },
           {
-            consultantProfileId: consultant.id,
+            consultantProfileId: consultant.consultantProfile.id,
             duration: 3, // 3 hours
             price: faker.number.int({ min: 3500, max: 7000 }), // $35 to $70
           },
@@ -198,19 +247,25 @@ async function createWebinarPlans() {
         error
       );
     }
+    if ((i + 1) % 10 === 0 || i === consultants.length - 1) {
+      console.log(`Created webinar plans for ${i + 1} consultants`);
+    }
   }
 }
 
-async function createClassPlans() {
-  const consultants = await prisma.consultantProfile.findMany();
-
-  for (const consultant of consultants) {
+async function createClassPlans(consultants: UserWithProfiles[]) {
+  console.log(`Creating class plans for ${consultants.length} consultants...`);
+  for (let i = 0; i < consultants.length; i++) {
+    const consultant = consultants[i];
+    if (!consultant.consultantProfile) {
+      console.warn(`Skipping consultant ${consultant.id} - no profile found`);
+      continue;
+    }
     try {
-      console.log(`Creating class plans for consultant: ${consultant.id}`);
       await prisma.classPlan.createMany({
         data: [
           {
-            consultantProfileId: consultant.id,
+            consultantProfileId: consultant.consultantProfile.id,
             duration: 4, // 4 weeks
             price: faker.number.int({ min: 19900, max: 39900 }), // $199 to $399
             callsPerWeek: 1,
@@ -218,7 +273,7 @@ async function createClassPlans() {
             emailSupport: ClassEmailSupport.GENERAL,
           },
           {
-            consultantProfileId: consultant.id,
+            consultantProfileId: consultant.consultantProfile.id,
             duration: 8, // 8 weeks
             price: faker.number.int({ min: 34900, max: 69900 }), // $349 to $699
             callsPerWeek: 2,
@@ -226,7 +281,7 @@ async function createClassPlans() {
             emailSupport: ClassEmailSupport.PRIORITY,
           },
           {
-            consultantProfileId: consultant.id,
+            consultantProfileId: consultant.consultantProfile.id,
             duration: 12, // 12 weeks
             price: faker.number.int({ min: 49900, max: 99900 }), // $499 to $999
             callsPerWeek: 3,
@@ -241,45 +296,72 @@ async function createClassPlans() {
         error
       );
     }
+    if ((i + 1) % 10 === 0 || i === consultants.length - 1) {
+      console.log(`Created class plans for ${i + 1} consultants`);
+    }
   }
 }
 
-async function createSlotsOfAvailability() {
-  const consultants = await prisma.consultantProfile.findMany();
-
-  for (const consultant of consultants) {
+async function createSlotsOfAvailability(consultants: UserWithProfiles[]) {
+  console.log(`Creating slots of availability for ${consultants.length} consultants...`);
+  for (let i = 0; i < consultants.length; i++) {
+    const consultant = consultants[i];
+    if (!consultant.consultantProfile) {
+      console.warn(`Skipping consultant ${consultant.id} - no profile found`);
+      continue;
+    }
     try {
-      console.log(
-        `Creating slots of availability for consultant: ${consultant.id}`
-      );
-      const slotType =
-        consultant.scheduleType === ScheduleType.WEEKLY
-          ? SlotType.WEEKLY
-          : SlotType.CUSTOM;
+      const slotType = consultant.consultantProfile.scheduleType;
 
-      if (slotType === SlotType.WEEKLY) {
+      if (slotType === ScheduleType.WEEKLY) {
         // Create weekly slots
-        for (let i = 0; i < 5; i++) {
-          await prisma.slotOfAvailabilty.create({
+        for (let j = 0; j < NUM_SLOTS_PER_CONSULTANT; j++) {
+          const dayOfWeek = faker.helpers.arrayElement(Object.values(DayOfWeek));
+          const startHour = faker.number.int({ min: 0, max: 23 });
+          const durationHours = faker.number.int({ min: 1, max: 8 }); // Max 8 hours to ensure < 24 hours
+
+          const startTime = new Date();
+          startTime.setUTCHours(startHour, 0, 0, 0);
+
+          const endTime = new Date(startTime);
+          endTime.setUTCHours(startTime.getUTCHours() + durationHours);
+
+          let endDayOfWeek = dayOfWeek;
+          if (endTime.getUTCDate() !== startTime.getUTCDate()) {
+            // If end time is on the next day, adjust the day of week
+            const daysOfWeek = Object.values(DayOfWeek);
+            const currentIndex = daysOfWeek.indexOf(dayOfWeek);
+            endDayOfWeek = daysOfWeek[(currentIndex + 1) % 7];
+          }
+
+          await prisma.slotOfAvailabiltyWeekly.create({
             data: {
-              consultantProfileId: consultant.id,
-              dayOfWeek: faker.helpers.arrayElement(Object.values(DayOfWeek)),
-              slotStartTimeInUTC: faker.date.future(),
-              slotEndTimeInUTC: faker.date.future(),
-              slotType: SlotType.WEEKLY,
+              consultantProfileId: consultant.consultantProfile.id,
+              dayOfWeekforStartTimeInUTC: dayOfWeek,
+              slotStartTimeInUTC: startTime,
+              dayOfWeekforEndTimeInUTC: endDayOfWeek,
+              slotEndTimeInUTC: endTime,
             },
           });
         }
       } else {
         // Create custom slots
-        for (let i = 0; i < 5; i++) {
-          await prisma.slotOfAvailabilty.create({
+        for (let j = 0; j < NUM_SLOTS_PER_CONSULTANT; j++) {
+          const startDate = faker.date.future();
+          const startHour = faker.number.int({ min: 0, max: 23 });
+          const durationHours = faker.number.int({ min: 1, max: 8 }); // Max 8 hours to ensure < 24 hours
+
+          const startTime = new Date(startDate);
+          startTime.setUTCHours(startHour, 0, 0, 0);
+
+          const endTime = new Date(startTime);
+          endTime.setUTCHours(startTime.getUTCHours() + durationHours);
+
+          await prisma.slotOfAvailabiltyCustom.create({
             data: {
-              consultantProfileId: consultant.id,
-              date: faker.date.future(),
-              slotStartTimeInUTC: faker.date.future(),
-              slotEndTimeInUTC: faker.date.future(),
-              slotType: SlotType.CUSTOM,
+              consultantProfileId: consultant.consultantProfile.id,
+              slotStartTimeInUTC: startTime,
+              slotEndTimeInUTC: endTime,
             },
           });
         }
@@ -290,43 +372,89 @@ async function createSlotsOfAvailability() {
         error
       );
     }
+    if ((i + 1) % 10 === 0 || i === consultants.length - 1) {
+      console.log(`Created slots of availability for ${i + 1} consultants`);
+    }
   }
 }
 
-async function createAppointments() {
-  const consultees = await prisma.consulteeProfile.findMany();
-  const availabilitySlots = await prisma.slotOfAvailabilty.findMany();
+async function createAppointments(consultees: UserWithProfiles[]) {
+  console.log(`Creating ${NUM_APPOINTMENTS} appointments...`);
+  const weeklySlots = await prisma.slotOfAvailabiltyWeekly.findMany({
+    take: NUM_APPOINTMENTS / 2,
+  });
+  const customSlots = await prisma.slotOfAvailabiltyCustom.findMany({
+    take: NUM_APPOINTMENTS / 2,
+  });
   const consultationPlans = await prisma.consultationPlan.findMany();
   const subscriptionPlans = await prisma.subscriptionPlan.findMany();
   const webinarPlans = await prisma.webinarPlan.findMany();
   const classPlans = await prisma.classPlan.findMany();
 
-  // Create a shuffled copy of availability slots
-  const shuffledSlots = [...availabilitySlots].sort(() => 0.5 - Math.random());
+  const allSlots = [
+    ...weeklySlots.map(slot => ({ type: 'weekly' as const, slot })),
+    ...customSlots.map(slot => ({ type: 'custom' as const, slot }))
+  ];
 
-  for (let i = 0; i < Math.min(consultees.length, shuffledSlots.length); i++) {
-    const consultee = consultees[i];
-    const availabilitySlot = shuffledSlots[i];
+  for (let i = 0; i < NUM_APPOINTMENTS; i++) {
+    const consultee = consultees[i % consultees.length];
+    const slotData = allSlots[i];
+
+    if (!consultee.consulteeProfile) {
+      console.warn(`Skipping consultee ${consultee.id} - no profile found`);
+      continue;
+    }
 
     try {
-      console.log(`Creating appointment for consultee: ${consultee.id}`);
       const appointmentType = faker.helpers.arrayElement(
         Object.values(AppointmentsType)
       );
 
-      const appointmentRequest = await prisma.slotOfAppointmentRequest.create({
-        data: {
+      let appointmentRequestData: any;
+
+      if (slotData.type === 'weekly') {
+        appointmentRequestData = {
           status: RequestStatus.PENDING,
-          slotOfAvailabilityId: availabilitySlot.id,
-          appointmentDate: faker.date.future(),
-          appointmentStartTimeInUTC: faker.date.future(),
-          appointmentEndTimeInUTC: faker.date.future(),
-        },
+          slotOfAvailabiltyWeekly: {
+            connect: { id: slotData.slot.id }
+          },
+          slotOfAvailabiltyCustom: {
+            create: {
+              consultantProfileId: slotData.slot.consultantProfileId,
+              slotStartTimeInUTC: slotData.slot.slotStartTimeInUTC,
+              slotEndTimeInUTC: slotData.slot.slotEndTimeInUTC,
+            }
+          },
+          appointmentStartTimeInUTC: slotData.slot.slotStartTimeInUTC,
+          appointmentEndTimeInUTC: slotData.slot.slotEndTimeInUTC,
+        };
+      } else {
+        appointmentRequestData = {
+          status: RequestStatus.PENDING,
+          slotOfAvailabiltyCustom: {
+            connect: { id: slotData.slot.id }
+          },
+          slotOfAvailabiltyWeekly: {
+            create: {
+              consultantProfileId: slotData.slot.consultantProfileId,
+              dayOfWeekforStartTimeInUTC: faker.helpers.arrayElement(Object.values(DayOfWeek)),
+              slotStartTimeInUTC: slotData.slot.slotStartTimeInUTC,
+              dayOfWeekforEndTimeInUTC: faker.helpers.arrayElement(Object.values(DayOfWeek)),
+              slotEndTimeInUTC: slotData.slot.slotEndTimeInUTC,
+            }
+          },
+          appointmentStartTimeInUTC: slotData.slot.slotStartTimeInUTC,
+          appointmentEndTimeInUTC: slotData.slot.slotEndTimeInUTC,
+        };
+      }
+
+      const appointmentRequest = await prisma.slotOfAppointmentRequest.create({
+        data: appointmentRequestData,
       });
 
       const appointment = await prisma.slotOfAppointment.create({
         data: {
-          consulteeProfileId: consultee.id,
+          consulteeProfileId: consultee.consulteeProfile.id,
           slotOfAppointmentRequestId: appointmentRequest.id,
           appointmentsType: appointmentType,
         },
@@ -387,13 +515,16 @@ async function createAppointments() {
         error
       );
     }
+    if ((i + 1) % 20 === 0 || i === NUM_APPOINTMENTS - 1) {
+      console.log(`Created ${i + 1} appointments`);
+    }
   }
 }
 
 async function createNewsletters() {
-  for (let i = 0; i < 40; i++) {
+  console.log(`Creating ${NUM_NEWSLETTERS} newsletter subscriptions...`);
+  for (let i = 0; i < NUM_NEWSLETTERS; i++) {
     try {
-      console.log("Creating newsletter subscription");
       await prisma.newsletter.create({
         data: {
           email: faker.internet.email(),
@@ -402,18 +533,56 @@ async function createNewsletters() {
     } catch (error) {
       console.error("Failed to create newsletter subscription:", error);
     }
+    if ((i + 1) % 20 === 0 || i === NUM_NEWSLETTERS - 1) {
+      console.log(`Created ${i + 1} newsletter subscriptions`);
+    }
   }
 }
 
+async function createConsultantReviews(consultants: UserWithProfiles[], consultees: UserWithProfiles[]) {
+  console.log(`Creating consultant reviews...`);
+  let totalReviews = 0;
+  for (const consultant of consultants) {
+    if (!consultant.consultantProfile) continue;
+
+    const numReviews = faker.number.int({ min: 1, max: 5 });
+    for (let i = 0; i < numReviews; i++) {
+      const consultee = faker.helpers.arrayElement(consultees);
+      if (!consultee.consulteeProfile) continue;
+
+      try {
+        await prisma.consultantReview.create({
+          data: {
+            rating: faker.number.float({ min: 1, max: 5, multipleOf: 0.1 }),
+            reviewDescription: faker.lorem.paragraph(),
+            consultantProfileId: consultant.consultantProfile.id,
+            consulteeProfileId: consultee.consulteeProfile.id,
+          },
+        });
+        totalReviews++;
+      } catch (error) {
+        console.error(`Failed to create review for consultant ${consultant.id}:`, error);
+      }
+    }
+  }
+  console.log(`Created ${totalReviews} consultant reviews`);
+}
+
 async function seed() {
-  await createUsers();
-  await createConsultationPlans();
-  await createSubscriptionPlans();
-  await createWebinarPlans();
-  await createClassPlans();
-  await createSlotsOfAvailability();
-  await createAppointments();
+  console.log("Starting seed process...");
+
+  const users = await createUsers();
+  const consultants = users.filter((user) => user.role === "CONSULTANT");
+  const consultees = users.filter((user) => user.role === "CONSULTEE");
+
+  await createConsultationPlans(consultants);
+  await createSubscriptionPlans(consultants);
+  await createWebinarPlans(consultants);
+  await createClassPlans(consultants);
+  await createSlotsOfAvailability(consultants);
+  await createAppointments(consultees);
   await createNewsletters();
+  await createConsultantReviews(consultants, consultees);
 
   console.log("Seed data inserted successfully.");
 }

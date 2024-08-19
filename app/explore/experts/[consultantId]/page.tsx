@@ -6,16 +6,18 @@
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Calendar } from "@/components/ui/calendar";
-import { useToast } from "@/components/ui/use-toast";
-import Image from "next/image";
-import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/components/ui/use-toast";
+import { TSlotTiming } from "@/lib/datetimetz";
+import Image from "next/image";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 
 type TReview = {
   name: string;
@@ -73,17 +75,6 @@ type TConsultantDetails = {
   updatedAt: string;
 };
 
-type TSlotTiming = {
-  slotId: string;
-  dateInISO: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
-  slotsOfAvailabilityId: string;
-  slotsOfAppointmentId: string;
-  startTime: string;
-  endTime: string;
-};
-
 const fetchConsultantDetails = async (id: string) => {
   try {
     const response = await fetch(`/api/user/consultants/${id}`);
@@ -115,26 +106,19 @@ export default function ExpertProfile({
 }: {
   readonly params: { consultantId: string };
 }) {
-  // Check if the consultantId is exists in the database and display the details of the consultant
-  // If the consultantId is not found in the database, display an error message
-  // If the consultantId is found in the database, display the details of the consultant
-
-  const [userDetails, setUserDetails] = useState<TUserDetails>();
-
+  const [userDetails, setUserDetails] = useState<TUserDetails | null>(null);
   const [consultantDetails, setConsultantDetails] =
-    useState<TConsultantDetails>();
-
-  const [selectedDateTime, setSelectedDateTime] = useState<Date | undefined>(
-    undefined
-  );
-  // const [availableSlots, setAvailableSlots] = useState<TSlotsOfAvailability>();
+    useState<TConsultantDetails | null>(null);
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);
-  const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | undefined>();
+  const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
   const { toast } = useToast();
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Fetch consultant details
     const fetchConsultantAndUserInfo = async () => {
+      setIsLoading(true);
       try {
         const data = await fetchConsultantDetails(params.consultantId);
         setConsultantDetails(data);
@@ -148,6 +132,10 @@ export default function ExpertProfile({
           description: error.message,
           variant: "destructive",
         });
+        setConsultantDetails(null);
+        setUserDetails(null);
+      } finally {
+        setIsLoading(false);
       }
     };
 
@@ -155,28 +143,19 @@ export default function ExpertProfile({
   }, [params.consultantId, toast]);
 
   useEffect(() => {
-    // Fetch available slots for the selected date
-    const fetchSlotTimings = async (date: Date) => {
+    const fetchSelectedDateSlotTimings = async (date: Date) => {
       try {
+        const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
         const response = await fetch(
-          `/api/slots/availability/${params.consultantId}?date=${date}`
+          `/api/slots/availability/${encodeURIComponent(params.consultantId)}?date=${encodeURIComponent(date.toISOString())}&timeZone=${encodeURIComponent(userTimeZone)}`
         );
 
         if (!response.ok) {
           throw new Error("Failed to fetch available slots");
         }
 
-        const data = await response.json();
-        const formattedSlots = data.map((slot: TSlotTiming) => {
-          return {
-            ...slot,
-            startTime: new Date(slot.slotStartTimeInUTC).toLocaleTimeString(),
-            endTime: new Date(slot.slotEndTimeInUTC).toLocaleTimeString(),
-          };
-        });
-
-        setSlotTimings(formattedSlots);
-        toast({ title: "Slots fetched successfully", variant: "default" });
+        const slots = await response.json();
+        setSlotTimings(slots);
       } catch (error: any) {
         console.error("Error fetching slots:", error);
         toast({
@@ -187,10 +166,10 @@ export default function ExpertProfile({
       }
     };
 
-    if (selectedDateTime) {
-      fetchSlotTimings(selectedDateTime);
+    if (selectedDate) {
+      fetchSelectedDateSlotTimings(selectedDate);
     }
-  }, [selectedDateTime, params.consultantId, toast]);
+  }, [selectedDate, params.consultantId, toast]);
 
   const handleBooking = async () => {
     if (!selectedSlot) {
@@ -205,7 +184,7 @@ export default function ExpertProfile({
         body: JSON.stringify({
           consultantId: params.consultantId,
           slotId: selectedSlot.slotId,
-          date: selectedDateTime,
+          date: selectedDate,
         }),
       });
 
@@ -223,56 +202,120 @@ export default function ExpertProfile({
     }
   };
 
+  const getDaysInMonth = (date: Date) => {
+    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  };
+
+  const getFirstDayOfMonth = (date: Date) => {
+    return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
+  };
+
+  const handlePrevMonth = () => {
+    setCurrentDate(
+      new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1)
+    );
+  };
+
+  const handleNextMonth = () => {
+    setCurrentDate(
+      new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1)
+    );
+  };
+
+  const renderCalendar = () => {
+    const daysInMonth = getDaysInMonth(currentDate);
+    const firstDayOfMonth = getFirstDayOfMonth(currentDate);
+    const days = [];
+
+    for (let i = 0; i < firstDayOfMonth; i++) {
+      days.push(<div key={`empty-${i}`} className="p-2"></div>);
+    }
+
+    for (let i = 1; i <= daysInMonth; i++) {
+      const date = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth(),
+        i
+      );
+      days.push(
+        <button
+          key={i}
+          className={`p-2 rounded-full hover:bg-white hover:bg-opacity-20 
+            ${selectedDate?.getDate() === i ? "bg-white text-black" : ""}`}
+          onClick={() => setSelectedDate(date)}
+        >
+          {i}
+        </button>
+      );
+    }
+
+    return days;
+  };
+
+  if (isLoading) {
+    return <ConsultantSkeletonLoader />;
+  }
+
+  if (!consultantDetails || !userDetails) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen">
+        <h1 className="text-3xl font-bold mb-4">Oops! Consultant not found</h1>
+        <p className="text-lg mb-6">
+          Here are some other consultants you might want to try out
+        </p>
+        <Link href="/search">
+          <Button variant="night" className="rounded-full">
+            Search Consultants
+          </Button>
+        </Link>
+      </div>
+    );
+  }
+
   return (
     <div key={params.consultantId} className="flex justify-center py-40">
       <div className="flex flex-col w-1/2">
         <div className="flex items-center mb-6 text-lg">
           <div className="flex flex-col">
             <Badge className="mb-1" variant="outline">
-              {consultantDetails?.specialization}
+              {consultantDetails.specialization}
             </Badge>
-            <h2 className="text-3xl font-semibold">{userDetails?.name}</h2>
+            <h2 className="text-3xl font-semibold">{userDetails.name}</h2>
             <div className="flex items-center my-2">
               <StarIcon className="text-blue-500 w-5 h-5" />
               <StarIcon className="text-blue-500 w-5 h-5" />
               <StarIcon className="text-blue-500 w-5 h-5" />
               <StarIcon className="text-blue-500 w-5 h-5" />
               <StarIcon className="text-gray-300 w-5 h-5" />
-              <span className="ml-2 text-base">(3)</span>
+              <span className="ml-2 text-base">
+                ({consultantDetails.rating})
+              </span>
             </div>
-            <p className="text-lg">
-              {consultantDetails?.subDomains.join(", ")}
-            </p>
+            <p className="text-lg">{consultantDetails.subDomains.join(", ")}</p>
           </div>
         </div>
         <div className="mb-6">
-          <h3>
-            About
-            <p className="mt-2 text-gray-500">
-              Mr. John Doe is a seasoned business strategist with over 25 years
-              of experience in the corporate sector. He has a proven track
-              record of driving business growth through innovative strategies
-              and leadership. His expertise spans multiple industries, with a
-              particular focus on market expansion and operational efficiency.
-            </p>
-            Expertise and Education
-            <p className="mt-2 text-gray-500">
-              Mr. Doe holds an MBA from Harvard Business School and a Bachelor’s
-              degree in Economics from Stanford University. His professional
-              journey includes leadership roles in Fortune 500 companies and he
-              is known for his ability to lead complex business transformations.
-            </p>
-            Client Testimonials
-            <p className="mt-2 text-gray-500">
-              Clients commend Mr. Doe for his strategic insights, comprehensive
-              planning, and result-oriented approach. His ability to identify
-              growth opportunities and drive successful implementations has made
-              him a trusted advisor to many leading businesses.
-            </p>
-          </h3>
+          <h3>About</h3>
+          <p className="mt-2 text-gray-500">
+            {userDetails.name} is a seasoned {consultantDetails.specialization}{" "}
+            with {consultantDetails.experience} of experience in the{" "}
+            {consultantDetails.domain} sector.
+          </p>
+          <h3>Expertise and Education</h3>
+          <p className="mt-2 text-gray-500">
+            {userDetails.name}'s expertise spans multiple industries, with a
+            particular focus on {consultantDetails.subDomains.join(", ")}.
+          </p>
+          <h3>Client Testimonials</h3>
+          <p className="mt-2 text-gray-500">
+            Clients commend {userDetails.name} for their strategic insights and
+            result-oriented approach.
+          </p>
         </div>
         <div>
-          <h3 className="font-semibold text-lg mb-4">All Reviews (3)</h3>
+          <h3 className="font-semibold text-lg mb-4">
+            All Reviews ({consultantDetails.rating})
+          </h3>
           <div className="space-y-4">
             {reviews.map((review) => (
               <Review key={review.name} {...review} />
@@ -285,7 +328,7 @@ export default function ExpertProfile({
           alt="Profile"
           className="rounded-full mb-6"
           height="1350"
-          src="/placeholder.svg"
+          src={userDetails.image || "/placeholder.svg"}
           style={{
             aspectRatio: "1080/1350",
             objectFit: "cover",
@@ -305,54 +348,79 @@ export default function ExpertProfile({
             <DialogTrigger asChild>
               <Button variant="night">Book Consultation</Button>
             </DialogTrigger>
-            <DialogContent className="w-full max-w-[800px] grid grid-cols-1 md:grid-cols-2 gap-6 bg-white rounded-lg p-6">
-              <div className="bg-white rounded-lg p-6">
-                <h3 className="text-lg font-semibold mb-4">Select a Date</h3>
-                <Calendar
-                  mode="single"
-                  selected={
-                    selectedDateTime ? new Date(selectedDateTime) : undefined
-                  }
-                  onSelect={(date) => {
-                    if (date) {
-                      // setSelectedDateTime(new Date(date.toISOString().split('T')[0]));
-                      setSelectedDateTime(new Date(date.toLocaleDateString()));
-                    } else {
-                      setSelectedDateTime(undefined);
-                    }
-                  }}
-                />
-              </div>
-              <div className="bg-white rounded-lg p-6">
-                <h3 className="text-lg font-semibold mb-4">
-                  Available Time Slots
-                </h3>
-                <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-1 lg:grid-cols-2">
-                  {slotTimings && slotTimings.length > 0 ? (
-                    slotTimings.map((slot) => (
-                      <Button
-                        key={slot.slotId}
-                        size="sm"
-                        variant={
-                          selectedSlot?.slotId === slot.slotId
-                            ? "night"
-                            : "outline"
-                        }
-                        onClick={() => setSelectedSlot(slot)}
-                      >
-                        {slot.startTime} - {slot.endTime}
-                      </Button>
-                    ))
-                  ) : (
-                    <p>No available slots. Please select a date to refresh.</p>
-                  )}
+            <DialogContent className="sm:max-w-[425px] lg:max-w-[700px] bg-black bg-opacity-80 text-white p-0 border-none">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
+                <div>
+                  <h3 className="text-lg font-semibold mb-4">Select a Date</h3>
+                  <div className="calendar-container bg-white bg-opacity-10 p-4 rounded-lg">
+                    <div className="flex justify-between items-center mb-4">
+                      <button className="text-white" onClick={handlePrevMonth}>
+                        &lt;
+                      </button>
+                      <span>
+                        {currentDate.toLocaleString("default", {
+                          month: "long",
+                          year: "numeric",
+                        })}
+                      </span>
+                      <button className="text-white" onClick={handleNextMonth}>
+                        &gt;
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-7 gap-1 text-center">
+                      {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day) => (
+                        <div key={day} className="text-sm font-medium">
+                          {day}
+                        </div>
+                      ))}
+                      {renderCalendar()}
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold mb-4">
+                    Available Time Slots
+                  </h3>
+                  <div className="bg-white bg-opacity-10 p-4 rounded-lg">
+                    {slotTimings.length > 0 ? (
+                      <div className="space-y-2">
+                        {slotTimings.map((slot) => (
+                          <Button
+                            key={slot.slotId}
+                            variant={
+                              selectedSlot?.slotId === slot.slotId
+                                ? "outline"
+                                : "night"
+                            }
+                            onClick={() => setSelectedSlot(slot)}
+                            className="w-full justify-center text-sm bg-black bg-opacity-80 hover:bg-opacity-100"
+                          >
+                            {slot.localStartTime} - {slot.localEndTime}
+                          </Button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-center">
+                        No available slots. Please select a date to refresh.
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
-              <DialogFooter className="col-start-1 col-end-3 flex justify-end gap-4">
-                <Button variant="default">Cancel</Button>
+              <DialogFooter className="p-4 bg-transparent">
                 <Button
+                  variant="outline"
+                  onClick={() => {
+                    /* handle cancel */
+                  }}
+                  className="text-white border-white"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="night"
                   onClick={handleBooking}
-                  variant={selectedSlot ? "night" : "outline"}
+                  disabled={!selectedDate || !selectedSlot}
                 >
                   Book Consultation
                 </Button>
@@ -391,6 +459,49 @@ const Review = ({ name, date, feedback, rating }: TReview) => (
     <p>{feedback}</p>
   </div>
 );
+
+const ConsultantSkeletonLoader = () => {
+  const [loadingText, setLoadingText] = useState(
+    "Please wait while we are fetching consultant details"
+  );
+  const dots = [".", "..", "..."];
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setLoadingText((current) => {
+        const currentDots = current.slice(-3);
+        const nextDots = dots[(dots.indexOf(currentDots) + 1) % dots.length];
+        return `Please wait while we are fetching consultant details${nextDots}`;
+      });
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="flex flex-col justify-center items-center py-40 min-h-screen">
+      <div className="text-2xl font-semibold mb-8 text-center animate-pulse">
+        {loadingText}
+      </div>
+      <div className="flex justify-center w-full max-w-6xl">
+        <div className="flex flex-col w-1/2">
+          <Skeleton className="h-8 w-32 mb-2" />
+          <Skeleton className="h-10 w-64 mb-4" />
+          <Skeleton className="h-6 w-full mb-4" />
+          <Skeleton className="h-40 w-full mb-6" />
+          <Skeleton className="h-6 w-full mb-2" />
+          <Skeleton className="h-24 w-full mb-6" />
+          <Skeleton className="h-6 w-full mb-2" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+        <div className="flex flex-col items-center w-1/4 ml-10">
+          <Skeleton className="h-64 w-64 rounded-full mb-6" />
+          <Skeleton className="h-80 w-full rounded-lg" />
+        </div>
+      </div>
+    </div>
+  );
+};
 
 function StarIcon(props: any) {
   return (

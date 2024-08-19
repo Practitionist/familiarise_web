@@ -7,14 +7,19 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const slot = await prisma.slotOfAvailabilty.findUnique({
+    const weeklySlots = await prisma.slotOfAvailabiltyWeekly.findUnique({
       where: { id: params.id },
-      include: {
-        slotOfAppointmentRequest: true,
-        consultantProfile: true,
-      },
     });
-    return NextResponse.json(slot, { status: 200 });
+
+    if (!weeklySlots) {
+      return NextResponse.json(
+        { error: "Slot not found" },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json(weeklySlots, { status: 200 });
+
   } catch (error) {
     console.error("Error fetching slot:", error);
     return NextResponse.json(
@@ -28,14 +33,13 @@ export async function POST(req: NextRequest, res: NextResponse) {
   try {
     const body = await req.json();
 
-    const newSlot = await prisma.slotOfAvailabilty.create({
+    const newSlot = await prisma.slotOfAvailabiltyWeekly.create({
       data: {
-        date: body.date,
-        dayOfWeek: body.dayOfWeek,
+        consultantProfile: { connect: { id: body.consultantProfileId } },
+        dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
+        dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
         slotStartTimeInUTC: body.slotStartTimeInUTC,
         slotEndTimeInUTC: body.slotEndTimeInUTC,
-        slotType: body.slotType,
-        consultantProfileId: body.consultantProfileId,
         // Additional fields can be added here if needed
       },
     });
@@ -58,16 +62,14 @@ export async function PUT(
   try {
     const body = await req.json();
 
-    const updatedSlot = await prisma.slotOfAvailabilty.update({
+    const updatedSlot = await prisma.slotOfAvailabiltyWeekly.update({
       where: { id: params.id },
       data: {
-        date: body.date,
-        dayOfWeek: body.dayOfWeek,
+        dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
+        dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
         slotStartTimeInUTC: body.slotStartTimeInUTC,
         slotEndTimeInUTC: body.slotEndTimeInUTC,
-        slotType: body.slotType,
-        consultantProfileId: body.consultantProfileId,
-        // Replace all fields, even if some remain unchanged
+        // Add other fields as necessary
       },
     });
 
@@ -89,17 +91,9 @@ export async function PATCH(
   try {
     const body = await req.json();
 
-    const updatedSlot = await prisma.slotOfAvailabilty.update({
+    const updatedSlot = await prisma.slotOfAvailabiltyWeekly.update({
       where: { id: params.id },
-      data: {
-        date: body.date, // Update only if provided
-        dayOfWeek: body.dayOfWeek, // Update only if provided
-        slotStartTimeInUTC: body.slotStartTimeInUTC, // Update only if provided
-        slotEndTimeInUTC: body.slotEndTimeInUTC, // Update only if provided
-        slotType: body.slotType, // Update only if provided
-        consultantProfileId: body.consultantProfileId, // Update only if provided
-        // Add other fields as necessary
-      },
+      data: body,
     });
 
     return NextResponse.json(updatedSlot, { status: 200 });
@@ -118,7 +112,7 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    await prisma.slotOfAvailabilty.delete({
+    await prisma.slotOfAvailabiltyWeekly.delete({
       where: { id: params.id },
     });
 
