@@ -1,4 +1,4 @@
-import prisma from "@/lib/prisma";
+import prisma from "../lib/prisma";
 import { faker } from "@faker-js/faker";
 import {
   AppointmentsType,
@@ -317,17 +317,17 @@ async function createSlotsOfAvailability(consultants: UserWithProfiles[]) {
         // Create weekly slots
         for (let j = 0; j < NUM_SLOTS_PER_CONSULTANT; j++) {
           const dayOfWeek = faker.helpers.arrayElement(Object.values(DayOfWeek));
-          const startHour = faker.number.int({ min: 0, max: 23 });
-          const durationHours = faker.number.int({ min: 1, max: 8 }); // Max 8 hours to ensure < 24 hours
+          const startHour = faker.helpers.arrayElement([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]);
+          const durationHours = faker.helpers.arrayElement([0.5, 1, 1.5, 2, 2.5, 3]);
 
           const startTime = new Date();
-          startTime.setUTCHours(startHour, 0, 0, 0);
+          startTime.setUTCHours(startHour, startHour % 1 === 0 ? 0 : 30, 0, 0);
 
           const endTime = new Date(startTime);
-          endTime.setUTCHours(startTime.getUTCHours() + durationHours);
+          endTime.setTime(startTime.getTime() + durationHours * 60 * 60 * 1000);
 
           let endDayOfWeek = dayOfWeek;
-          if (endTime.getUTCDate() !== startTime.getUTCDate()) {
+          if (endTime.getUTCHours() < startTime.getUTCHours()) {
             // If end time is on the next day, adjust the day of week
             const daysOfWeek = Object.values(DayOfWeek);
             const currentIndex = daysOfWeek.indexOf(dayOfWeek);
@@ -348,14 +348,19 @@ async function createSlotsOfAvailability(consultants: UserWithProfiles[]) {
         // Create custom slots
         for (let j = 0; j < NUM_SLOTS_PER_CONSULTANT; j++) {
           const startDate = faker.date.future();
-          const startHour = faker.number.int({ min: 0, max: 23 });
-          const durationHours = faker.number.int({ min: 1, max: 8 }); // Max 8 hours to ensure < 24 hours
+          const startHour = faker.helpers.arrayElement([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]);
+          const durationHours = faker.helpers.arrayElement([0.5, 1, 1.5, 2, 2.5, 3]);
 
           const startTime = new Date(startDate);
-          startTime.setUTCHours(startHour, 0, 0, 0);
+          startTime.setUTCHours(startHour, startHour % 1 === 0 ? 0 : 30, 0, 0);
 
           const endTime = new Date(startTime);
-          endTime.setUTCHours(startTime.getUTCHours() + durationHours);
+          endTime.setTime(startTime.getTime() + durationHours * 60 * 60 * 1000);
+
+          if (endTime < startTime) {
+            // If end time is on the next day, add one day to the end time
+            endTime.setDate(endTime.getDate() + 1);
+          }
 
           await prisma.slotOfAvailabiltyCustom.create({
             data: {
