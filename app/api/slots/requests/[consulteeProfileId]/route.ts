@@ -3,20 +3,26 @@ import prisma from "@/lib/prisma";
 
 export async function GET(
   req: NextRequest,
-  params: { consulteeProfileId: string }
+  { params }: { params: { consulteeProfileId: string } }
 ) {
   try {
-    const slots = await prisma.slotRequest.findMany({
+    const slotRequests = await prisma.slotOfAppointmentRequest.findMany({
       where: {
-        consulteeProfileId: params.consulteeProfileId,
+        slotsOfAppointment: {
+          consulteeProfileId: params.consulteeProfileId,
+        },
       },
       include: {
-        slot: true,
-        appointment: true,
-        consulteeProfile: true,
+        slotOfAvailabiltyWeekly: true,
+        slotOfAvailabiltyCustom: true,
+        slotsOfAppointment: {
+          include: {
+            consulteeProfile: true,
+          },
+        },
       },
     });
-    return NextResponse.json(slots, { status: 200 });
+    return NextResponse.json(slotRequests, { status: 200 });
   } catch (error) {
     console.error("Error fetching slot requests:", error);
     return NextResponse.json(
@@ -26,29 +32,36 @@ export async function GET(
   }
 }
 
-export async function POST(req: NextRequest, res: NextResponse) {
+export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    const newSlotRequest = await prisma.slotRequest.create({
+    const newSlotRequest = await prisma.slotOfAppointmentRequest.create({
       data: {
-        status: body.status ?? "PENDING", // Default to PENDING if not provided
-        consulteeProfileId: body.consulteeProfileId,
-        slot: {
-          connect: { id: body.slotId },
+        status: body.status ?? "PENDING",
+        slotOfAvailabiltyWeekly: {
+          connect: { id: body.slotOfAvailabilityWeeklyId },
         },
-        appointment: {
-          connect: { id: body.appointmentId },
+        slotOfAvailabiltyCustom: {
+          connect: { id: body.slotOfAvailabilityCustomId },
         },
-        consulteeProfile: {
-          connect: { id: body.consulteeProfileId },
+        slotsOfAppointment: {
+          create: {
+            consulteeProfileId: body.consulteeProfileId,
+            appointmentsType: body.appointmentsType,
+          },
         },
-        // Additional fields can be added here if needed
+        appointmentStartTimeInUTC: body.appointmentStartTimeInUTC,
+        appointmentEndTimeInUTC: body.appointmentEndTimeInUTC,
       },
       include: {
-        slot: true,
-        appointment: true,
-        consulteeProfile: true,
+        slotOfAvailabiltyWeekly: true,
+        slotOfAvailabiltyCustom: true,
+        slotsOfAppointment: {
+          include: {
+            consulteeProfile: true,
+          },
+        },
       },
     });
 
@@ -64,29 +77,32 @@ export async function POST(req: NextRequest, res: NextResponse) {
 
 export async function PUT(
   req: NextRequest,
-  res: NextResponse,
-  params: { id: string }
+  { params }: { params: { consulteeProfileId: string } }
 ) {
   try {
     const body = await req.json();
 
-    const updatedSlotRequest = await prisma.slotRequest.update({
-      where: { id: params.id },
+    const updatedSlotRequest = await prisma.slotOfAppointmentRequest.update({
+      where: { id: body.id },
       data: {
         status: body.status,
-        consulteeProfileId: body.consulteeProfileId,
-        slot: {
-          connect: { id: body.slotId },
+        slotOfAvailabiltyWeekly: {
+          connect: { id: body.slotOfAvailabilityWeeklyId },
         },
-        appointment: {
-          connect: { id: body.appointmentId },
+        slotOfAvailabiltyCustom: {
+          connect: { id: body.slotOfAvailabilityCustomId },
         },
-        // Replace all fields
+        appointmentStartTimeInUTC: body.appointmentStartTimeInUTC,
+        appointmentEndTimeInUTC: body.appointmentEndTimeInUTC,
       },
       include: {
-        slot: true,
-        appointment: true,
-        consulteeProfile: true,
+        slotOfAvailabiltyWeekly: true,
+        slotOfAvailabiltyCustom: true,
+        slotsOfAppointment: {
+          include: {
+            consulteeProfile: true,
+          },
+        },
       },
     });
 
@@ -102,27 +118,32 @@ export async function PUT(
 
 export async function PATCH(
   req: NextRequest,
-  res: NextResponse,
-  params: { id: string }
+  { params }: { params: { consulteeProfileId: string } }
 ) {
   try {
     const body = await req.json();
 
-    const updatedSlotRequest = await prisma.slotRequest.update({
-      where: { id: params.id },
+    const updatedSlotRequest = await prisma.slotOfAppointmentRequest.update({
+      where: { id: body.id },
       data: {
         status: body.status,
-        consulteeProfileId: body.consulteeProfileId,
-        slot: body.slotId ? { connect: { id: body.slotId } } : undefined,
-        appointment: body.appointmentId
-          ? { connect: { id: body.appointmentId } }
+        slotOfAvailabiltyWeekly: body.slotOfAvailabilityWeeklyId
+          ? { connect: { id: body.slotOfAvailabilityWeeklyId } }
           : undefined,
-        // Update only provided fields
+        slotOfAvailabiltyCustom: body.slotOfAvailabilityCustomId
+          ? { connect: { id: body.slotOfAvailabilityCustomId } }
+          : undefined,
+        appointmentStartTimeInUTC: body.appointmentStartTimeInUTC,
+        appointmentEndTimeInUTC: body.appointmentEndTimeInUTC,
       },
       include: {
-        slot: true,
-        appointment: true,
-        consulteeProfile: true,
+        slotOfAvailabiltyWeekly: true,
+        slotOfAvailabiltyCustom: true,
+        slotsOfAppointment: {
+          include: {
+            consulteeProfile: true,
+          },
+        },
       },
     });
 
@@ -138,12 +159,12 @@ export async function PATCH(
 
 export async function DELETE(
   req: NextRequest,
-  res: NextResponse,
-  params: { id: string }
+  { params }: { params: { consulteeProfileId: string } }
 ) {
   try {
-    await prisma.slotRequest.delete({
-      where: { id: params.id },
+    const body = await req.json();
+    await prisma.slotOfAppointmentRequest.delete({
+      where: { id: body.id },
     });
 
     return NextResponse.json(

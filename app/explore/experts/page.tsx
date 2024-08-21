@@ -201,7 +201,7 @@ function FindExperts() {
     async function fetchData() {
       setIsLoading(true);
       try {
-        const response = await fetch("/api/consultants/meta");
+        const response = await fetch("/api/user/consultants/meta");
         const data = await response.json();
         if (data.data.domains && Array.isArray(data.data.domains)) {
           setDomains(data.data.domains);

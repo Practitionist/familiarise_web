@@ -370,7 +370,7 @@ model ConsultantProfile {
   onlineStatus    Boolean @default(false)
   currentTimezone String
 
-  consultantReviews ConsultantReview[]
+  reviews ConsultantReview[]
   scheduleType      ScheduleType
 
   slotsOfAvailabiltyWeekly SlotOfAvailabiltyWeekly[]
@@ -413,7 +413,7 @@ model ConsulteeProfile {
   currentTimezone String
 
   slotsOfAppointment SlotOfAppointment[]
-  consultantReview   ConsultantReview[]
+  consultantReviews   ConsultantReview[]
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique

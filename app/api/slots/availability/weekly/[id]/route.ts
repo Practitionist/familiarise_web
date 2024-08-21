@@ -3,22 +3,25 @@ import prisma from "@/lib/prisma";
 
 export async function GET(
   req: NextRequest,
-  res: NextResponse,
   { params }: { params: { id: string } }
 ) {
   try {
-    const weeklySlots = await prisma.slotOfAvailabiltyWeekly.findUnique({
+    const weeklySlot = await prisma.slotOfAvailabiltyWeekly.findUnique({
       where: { id: params.id },
+      include: {
+        consultantProfile: true,
+        slotOfAppointmentRequest: true,
+      },
     });
 
-    if (!weeklySlots) {
+    if (!weeklySlot) {
       return NextResponse.json(
         { error: "Slot not found" },
         { status: 404 }
       );
     }
 
-    return NextResponse.json(weeklySlots, { status: 200 });
+    return NextResponse.json(weeklySlot, { status: 200 });
 
   } catch (error) {
     console.error("Error fetching slot:", error);
@@ -29,34 +32,34 @@ export async function GET(
   }
 }
 
-export async function POST(req: NextRequest, res: NextResponse) {
-  try {
-    const body = await req.json();
+// export async function POST(req: NextRequest, res: NextResponse) {
+//   try {
+//     const body = await req.json();
 
-    const newSlot = await prisma.slotOfAvailabiltyWeekly.create({
-      data: {
-        consultantProfile: { connect: { id: body.consultantProfileId } },
-        dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
-        dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
-        slotStartTimeInUTC: body.slotStartTimeInUTC,
-        slotEndTimeInUTC: body.slotEndTimeInUTC,
-        // Additional fields can be added here if needed
-      },
-    });
+//     const newSlot = await prisma.slotOfAvailabiltyWeekly.create({
+//       data: {
+//         consultantProfile: { connect: { id: body.consultantProfileId } },
+//         dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
+//         dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
+//         slotStartTimeInUTC: body.slotStartTimeInUTC,
+//         slotEndTimeInUTC: body.slotEndTimeInUTC,
+//         // Additional fields can be added here if needed
+//       },
+//     });
 
-    return NextResponse.json(newSlot, { status: 201 });
-  } catch (error) {
-    console.error("Error creating slot:", error);
-    return NextResponse.json(
-      { error: "Something went wrong" },
-      { status: 500 }
-    );
-  }
-}
+//     return NextResponse.json(newSlot, { status: 201 });
+//   } catch (error) {
+//     console.error("Error creating slot:", error);
+//     return NextResponse.json(
+//       { error: "Something went wrong" },
+//       { status: 500 }
+//     );
+//   }
+// }
+
 
 export async function PUT(
   req: NextRequest,
-  res: NextResponse,
   { params }: { params: { id: string } }
 ) {
   try {
@@ -69,7 +72,11 @@ export async function PUT(
         dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
         slotStartTimeInUTC: body.slotStartTimeInUTC,
         slotEndTimeInUTC: body.slotEndTimeInUTC,
-        // Add other fields as necessary
+        consultantProfile: body.consultantProfileId ? { connect: { id: body.consultantProfileId } } : undefined,
+      },
+      include: {
+        consultantProfile: true,
+        slotOfAppointmentRequest: true,
       },
     });
 
@@ -85,7 +92,6 @@ export async function PUT(
 
 export async function PATCH(
   req: NextRequest,
-  res: NextResponse,
   { params }: { params: { id: string } }
 ) {
   try {
@@ -93,7 +99,17 @@ export async function PATCH(
 
     const updatedSlot = await prisma.slotOfAvailabiltyWeekly.update({
       where: { id: params.id },
-      data: body,
+      data: {
+        dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
+        dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
+        slotStartTimeInUTC: body.slotStartTimeInUTC,
+        slotEndTimeInUTC: body.slotEndTimeInUTC,
+        consultantProfile: body.consultantProfileId ? { connect: { id: body.consultantProfileId } } : undefined,
+      },
+      include: {
+        consultantProfile: true,
+        slotOfAppointmentRequest: true,
+      },
     });
 
     return NextResponse.json(updatedSlot, { status: 200 });
@@ -108,16 +124,19 @@ export async function PATCH(
 
 export async function DELETE(
   req: NextRequest,
-  res: NextResponse,
   { params }: { params: { id: string } }
 ) {
   try {
-    await prisma.slotOfAvailabiltyWeekly.delete({
+    const deletedSlot = await prisma.slotOfAvailabiltyWeekly.delete({
       where: { id: params.id },
+      include: {
+        consultantProfile: true,
+        slotOfAppointmentRequest: true,
+      },
     });
 
     return NextResponse.json(
-      { message: "Slot deleted successfully" },
+      { message: "Slot deleted successfully", data: deletedSlot },
       { status: 200 }
     );
   } catch (error) {

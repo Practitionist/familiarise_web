@@ -1,21 +1,36 @@
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
+
 export async function GET(
   req: Request,
   { params }: { params: { id: string } }
 ) {
   try {
-    const { id } = params;
+    const user = await prisma.user.findUnique({
+      where: { id: params.id },
+      include: {
+        consultantProfile: true,
+        consulteeProfile: true,
+        accounts: true,
+        sessions: true,
+        attachments: true,
+        comments: true,
+        commentLikes: true,
+        images: true,
+        imageLikes: true,
+        posts: true,
+        postLikes: true,
+        postsAttachments: true,
+        usersImages: true,
+        cookiePreferences: true,
+        notificationPreferences: true,
+      },
+    });
 
-    // Get user
-    const user = await prisma.user.findUnique({ where: { id: id } });
-
-    // Check if user exists
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // Return the user
     return NextResponse.json({ data: user }, { status: 200 });
   } catch (error) {
     console.error("Error getting user:", error);
@@ -29,14 +44,20 @@ export async function GET(
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { name, phone, address } = body;
 
-    // Create user
     const user = await prisma.user.create({
-      data: { name, phone, address },
+      data: {
+        name: body.name,
+        email: body.email,
+        emailVerified: body.emailVerified,
+        image: body.image,
+        phone: body.phone,
+        address: body.address,
+        onboardingCompleted: body.onboardingCompleted,
+        role: body.role,
+      },
     });
 
-    // Return the new user
     return NextResponse.json({ data: user }, { status: 201 });
   } catch (error) {
     console.error("Error creating user:", error);
@@ -52,18 +73,22 @@ export async function PUT(
   { params }: { params: { id: string } },
 ) {
   try {
-    const { id } = params;
-    
     const body = await req.json();
-    const { name, phone, address } = body;
 
-    // Update user
     const updatedUser = await prisma.user.update({
-      where: { id: id },
-      data: { name, phone, address },
+      where: { id: params.id },
+      data: {
+        name: body.name,
+        email: body.email,
+        emailVerified: body.emailVerified,
+        image: body.image,
+        phone: body.phone,
+        address: body.address,
+        onboardingCompleted: body.onboardingCompleted,
+        role: body.role,
+      },
     });
 
-    // Return the updated user
     return NextResponse.json({ data: updatedUser }, { status: 200 });
   } catch (error) {
     console.error("Error updating user:", error);
@@ -79,12 +104,8 @@ export async function DELETE(
   { params }: { params: { id: string } },
 ) {
   try {
-    const { id } = params;
+    await prisma.user.delete({ where: { id: params.id } });
 
-    // Delete user
-    await prisma.user.delete({ where: { id: id } });
-
-    // Return success message
     return NextResponse.json({ message: "User deleted" }, { status: 200 });
   } catch (error) {
     console.error("Error deleting user:", error);

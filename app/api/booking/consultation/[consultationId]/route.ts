@@ -11,8 +11,18 @@ export async function GET(
     const consultation = await prisma.consultation.findUniqueOrThrow({
       where: { id: consultationId },
       include: {
-        consultantProfile: true,
-        consulteeProfile: true,
+        consultationPlan: true,
+        slotOfAppointment: {
+          include: {
+            consulteeProfile: true,
+            slotOfAppointmentRequest: {
+              include: {
+                slotOfAvailabiltyWeekly: true,
+                slotOfAvailabiltyCustom: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -27,7 +37,7 @@ export async function GET(
         { status: 404 }
       );
     }
-    console.log(error);
+    console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
       { status: 500 }
@@ -41,48 +51,37 @@ export async function PUT(
 ) {
   try {
     const { consultationId } = params;
-    const { startTime, endTime, price, consultantProfileId, consulteeProfileId } =
-      await request.json();
+    const body = await request.json();
 
     const consultation = await prisma.consultation.update({
       where: { id: consultationId },
       data: {
-        price,
-        consultantProfile: {
-          connect: {
-            id: consultantProfileId,
-          },
-        },
-        consulteeProfile: {
-          connect: {
-            id: consulteeProfileId,
-          },
+        consultationPlan: {
+          connect: { id: body.consultationPlanId },
         },
         slotOfAppointment: {
-          update: {
-            appointmentSlots: {
-              updateMany: {
-                where: {
-                  slotId: consultationId, // Assuming you have a way to identify the slot
-                },
-                data: {
-                  timeTzStart: startTime,
-                  timeTzEnd: endTime,
-                },
+          connect: { id: body.slotOfAppointmentId },
+        },
+      },
+      include: {
+        consultationPlan: true,
+        slotOfAppointment: {
+          include: {
+            consulteeProfile: true,
+            slotOfAppointmentRequest: {
+              include: {
+                slotOfAvailabiltyWeekly: true,
+                slotOfAvailabiltyCustom: true,
               },
             },
           },
         },
       },
-      include: {
-        consultantProfile: true,
-        consulteeProfile: true,
-      },
     });
 
     return NextResponse.json({ data: consultation }, { status: 200 });
   } catch (error) {
-    console.log(error);
+    console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
       { status: 500 }
@@ -99,11 +98,25 @@ export async function DELETE(
 
     const consultation = await prisma.consultation.delete({
       where: { id: consultationId },
+      include: {
+        consultationPlan: true,
+        slotOfAppointment: {
+          include: {
+            consulteeProfile: true,
+            slotOfAppointmentRequest: {
+              include: {
+                slotOfAvailabiltyWeekly: true,
+                slotOfAvailabiltyCustom: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     return NextResponse.json({ data: consultation }, { status: 200 });
   } catch (error) {
-    console.log(error);
+    console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
       { status: 500 }
