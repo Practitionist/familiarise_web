@@ -156,7 +156,7 @@ export default function ConsultantAvailabilityCalendar() {
 }
 
 
-function ChevronLeftIcon(props: any) {
+function ChevronLeftIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -176,7 +176,7 @@ function ChevronLeftIcon(props: any) {
 }
 
 
-function ChevronRightIcon(props: any) {
+function ChevronRightIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -196,7 +196,7 @@ function ChevronRightIcon(props: any) {
 }
 
 
-function SearchIcon(props: any) {
+function SearchIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -217,7 +217,7 @@ function SearchIcon(props: any) {
 }
 
 
-function SettingsIcon(props: any) {
+function SettingsIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -238,7 +238,7 @@ function SettingsIcon(props: any) {
 }
 
 
-function PlusIcon(props: any) {
+function PlusIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}

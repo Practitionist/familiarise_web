@@ -278,7 +278,7 @@ export default function ConsultantDashboard({ params }: { readonly params: { con
   )
 }
 
-function SettingsIcon(props: any) {
+function SettingsIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -298,7 +298,7 @@ function SettingsIcon(props: any) {
   )
 }
 
-function SignalIcon(props: any) {
+function SignalIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -321,7 +321,7 @@ function SignalIcon(props: any) {
   )
 }
 
-function SearchIcon(props: any) {
+function SearchIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -341,7 +341,7 @@ function SearchIcon(props: any) {
   )
 }
 
-function FileEditIcon(props: any) {
+function FileEditIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -362,7 +362,7 @@ function FileEditIcon(props: any) {
   )
 }
 
-function DeleteIcon(props: any) {
+function DeleteIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -383,7 +383,7 @@ function DeleteIcon(props: any) {
   )
 }
 
-function DownloadIcon(props: any) {
+function DownloadIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}

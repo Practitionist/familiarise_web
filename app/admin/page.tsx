@@ -167,7 +167,7 @@ export default function AdminPanel() {
   );
 }
 
-function BuildingIcon(props: any) {
+function BuildingIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -196,7 +196,7 @@ function BuildingIcon(props: any) {
   );
 }
 
-function BellIcon(props: any) {
+function BellIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -216,7 +216,7 @@ function BellIcon(props: any) {
   );
 }
 
-function HomeIcon(props: any) {
+function HomeIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -236,7 +236,7 @@ function HomeIcon(props: any) {
   );
 }
 
-function UsersIcon(props: any) {
+function UsersIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -258,7 +258,7 @@ function UsersIcon(props: any) {
   );
 }
 
-function CalendarIcon(props: any) {
+function CalendarIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -280,7 +280,7 @@ function CalendarIcon(props: any) {
   );
 }
 
-function BookOpenIcon(props: any) {
+function BookOpenIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -300,7 +300,7 @@ function BookOpenIcon(props: any) {
   );
 }
 
-function CameraIcon(props: any) {
+function CameraIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -320,7 +320,7 @@ function CameraIcon(props: any) {
   );
 }
 
-function BriefcaseIcon(props: any) {
+function BriefcaseIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -340,7 +340,7 @@ function BriefcaseIcon(props: any) {
   );
 }
 
-function MessageCircleIcon(props: any) {
+function MessageCircleIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -359,7 +359,7 @@ function MessageCircleIcon(props: any) {
   );
 }
 
-function CreditCardIcon(props: any) {
+function CreditCardIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -379,7 +379,7 @@ function CreditCardIcon(props: any) {
   );
 }
 
-function SearchIcon(props: any) {
+function SearchIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}

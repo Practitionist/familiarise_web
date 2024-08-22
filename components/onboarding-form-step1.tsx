@@ -42,7 +42,7 @@ export function OnboardingFormStep1() {
   )
 }
 
-function LogInIcon(props) {
+function LogInIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -64,7 +64,7 @@ function LogInIcon(props) {
 }
 
 
-function XIcon(props) {
+function XIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}

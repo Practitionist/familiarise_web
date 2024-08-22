@@ -418,7 +418,7 @@ export default function Hackathon() {
   );
 }
 
-function CalendarCheckIcon(props: any) {
+function CalendarCheckIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -441,7 +441,7 @@ function CalendarCheckIcon(props: any) {
   );
 }
 
-function UsersIcon(props: any) {
+function UsersIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -463,7 +463,7 @@ function UsersIcon(props: any) {
   );
 }
 
-function GlobeIcon(props: any) {
+function GlobeIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -484,7 +484,7 @@ function GlobeIcon(props: any) {
   );
 }
 
-function TrophyIcon(props: any) {
+function TrophyIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -508,7 +508,7 @@ function TrophyIcon(props: any) {
   );
 }
 
-function TwitterIcon(props: any) {
+function TwitterIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}

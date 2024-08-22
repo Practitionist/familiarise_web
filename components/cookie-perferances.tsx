@@ -58,7 +58,7 @@ export function CookiePerferances() {
 }
 
 
-function CookieIcon(props: any) {
+function CookieIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}

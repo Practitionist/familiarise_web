@@ -451,7 +451,7 @@ export function FindExperts() {
   )
 }
 
-function XIcon(props: any) {
+function XIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}

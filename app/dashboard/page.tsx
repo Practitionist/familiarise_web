@@ -161,7 +161,7 @@ export default function Dashboard() {
   );
 }
 
-function HomeIcon(props: any) {
+function HomeIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -181,7 +181,7 @@ function HomeIcon(props: any) {
   );
 }
 
-function CalendarIcon(props: any) {
+function CalendarIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -203,7 +203,7 @@ function CalendarIcon(props: any) {
   );
 }
 
-function BookIcon(props: any) {
+function BookIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -222,7 +222,7 @@ function BookIcon(props: any) {
   );
 }
 
-function TextIcon(props: any) {
+function TextIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}

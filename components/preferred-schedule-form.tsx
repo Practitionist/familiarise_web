@@ -155,7 +155,7 @@ export function PreferredScheduleForm() {
   )
 }
 
-function CalendarDaysIcon(props) {
+function CalendarDaysIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -184,7 +184,7 @@ function CalendarDaysIcon(props) {
 }
 
 
-function XIcon(props) {
+function XIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}

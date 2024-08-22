@@ -83,7 +83,7 @@ export default function SignIn() {
   );
 }
 
-function GlobeIcon(props: any) {
+function GlobeIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -104,7 +104,7 @@ function GlobeIcon(props: any) {
   );
 }
 
-function GithubIcon(props: any) {
+function GithubIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -124,7 +124,7 @@ function GithubIcon(props: any) {
   );
 }
 
-function ChromeIcon(props: any) {
+function ChromeIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -147,7 +147,7 @@ function ChromeIcon(props: any) {
   );
 }
 
-function FacebookIcon(props: any) {
+function FacebookIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}

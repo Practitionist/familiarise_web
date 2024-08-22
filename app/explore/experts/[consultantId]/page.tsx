@@ -428,7 +428,7 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
   );
 }
 
-function StarIcon(props: any) {
+function StarIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}

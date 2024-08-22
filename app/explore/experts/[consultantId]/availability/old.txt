@@ -103,7 +103,7 @@ function ChevronRightIcon({ onClick }) {
 }
 
 
-function SearchIcon(props: any) {
+function SearchIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -124,7 +124,7 @@ function SearchIcon(props: any) {
 }
 
 
-function SettingsIcon(props: any) {
+function SettingsIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -145,7 +145,7 @@ function SettingsIcon(props: any) {
 }
 
 
-function BellIcon(props: any) {
+function BellIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -166,7 +166,7 @@ function BellIcon(props: any) {
 }
 
 
-function LayoutGridIcon(props: any) {
+function LayoutGridIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -189,7 +189,7 @@ function LayoutGridIcon(props: any) {
 }
 
 
-function ListIcon(props: any) {
+function ListIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -215,7 +215,7 @@ function ListIcon(props: any) {
 
 
 
-function PlusIcon(props: any) {
+function PlusIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}

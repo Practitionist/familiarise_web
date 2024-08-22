@@ -122,7 +122,7 @@ export function SearchExperts() {
 }
 
 
-function MicroscopeIcon(props: any) {
+function MicroscopeIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -147,7 +147,7 @@ function MicroscopeIcon(props: any) {
 }
 
 
-function SettingsIcon(props: any) {
+function SettingsIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}

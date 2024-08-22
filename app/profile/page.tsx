@@ -440,7 +440,7 @@ export default function Profile() {
 
 // ... (icon components remain the same)
 
-function SettingsIcon(props: any) {
+function SettingsIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -460,7 +460,7 @@ function SettingsIcon(props: any) {
   );
 }
 
-function TrashIcon(props: any) {
+function TrashIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -481,7 +481,7 @@ function TrashIcon(props: any) {
   );
 }
 
-function MailIcon(props: any) {
+function MailIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -501,7 +501,7 @@ function MailIcon(props: any) {
   );
 }
 
-function PhoneIcon(props: any) {
+function PhoneIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
@@ -520,7 +520,7 @@ function PhoneIcon(props: any) {
   );
 }
 
-function CookieIcon(props: any) {
+function CookieIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
     <svg
       {...props}
