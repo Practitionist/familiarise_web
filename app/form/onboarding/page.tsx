@@ -1,21 +1,21 @@
 "use client";
-import React, { useState } from "react";
-import { FormProvider, useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import PersonalInfoAndRoleForm from "../components/PersonalInfoAndRoleForm";
-import ConsultantProfileForm from "../components/ConsultantProfileForm";
-import ConsulteeProfileForm from "../components/ConsulteeProfileForm";
-import StaffProfileForm from "../components/StaffProfileForm";
-import PreferredScheduleForm from "../components/PreferredScheduleForm";
 import {
   ConsultantProfile,
   ConsulteeProfile,
   PersonalInfoAndRole,
-  StaffProfile,
   PreferredSchedule,
+  StaffProfile,
   personalInfoAndRoleSchema,
-} from "../../../schemas/userSchema";
+} from "@/schemas/UserSchema";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useSession } from "next-auth/react";
+import React, { useState } from "react";
+import { FormProvider, useForm } from "react-hook-form";
+import ConsultantProfileForm from "./components/ConsultantProfileForm";
+import ConsulteeProfileForm from "./components/ConsulteeProfileForm";
+import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
+import PreferredScheduleForm from "./components/PreferredScheduleForm";
+import StaffProfileForm from "./components/StaffProfileForm";
 
 type SlotType = {
   startTime: string;
@@ -46,11 +46,9 @@ const MultiStepForm: React.FC = () => {
   });
 
   const handleNext = (stepData: Partial<FormData>) => {
-    console.log("handleNext called with:", stepData);
     const updatedData = { ...formData, ...stepData };
     setFormData(updatedData);
     setStep((prevStep) => {
-      console.log("Updating step from", prevStep, "to", prevStep + 1);
       return prevStep + 1;
     });
   };
@@ -102,15 +100,20 @@ const MultiStepForm: React.FC = () => {
           case "CONSULTANT":
             return (
               <ConsultantProfileForm
-                onNext={handleNext as any} // Type assertion to bypass strict checking
+                onNext={(data: Partial<ConsultantProfile>) => handleNext(data)}
                 onBack={handleBack}
-                initialData={formData}
+                initialData={{
+                  ...formData,
+                  scheduleType: formData.scheduleType || 'weekly',
+                  weeklySlots: formData.weeklySlots || {},
+                  customSlots: formData.customSlots || {},
+                }}
               />
             );
           case "CONSULTEE":
             return (
               <ConsulteeProfileForm
-                onNext={handleNext as any} // Type assertion to bypass strict checking
+                onNext={(data: Partial<ConsulteeProfile>) => handleNext(data)}
                 onBack={handleBack}
                 initialData={formData}
               />
@@ -130,9 +133,9 @@ const MultiStepForm: React.FC = () => {
         if (formData.role === "CONSULTANT") {
           return (
             <PreferredScheduleForm
-              onSubmit={(data: PreferredSchedule) => handleSubmit(data as any)} // Type assertion to bypass strict checking
+              onSubmit={(data: PreferredSchedule) => handleSubmit(data)}
               onBack={handleBack}
-              initialData={formData as any} // Type assertion to bypass strict checking
+              initialData={formData}
             />
           );
         }
@@ -185,11 +188,10 @@ type StepCircleProps = {
 
 const StepCircle: React.FC<StepCircleProps> = ({ step, currentStep }) => (
   <div
-    className={`flex items-center justify-center w-10 h-10 rounded-full ${
-      currentStep + 1 >= step
+    className={`flex items-center justify-center w-10 h-10 rounded-full ${currentStep + 1 >= step
         ? "bg-black text-white"
         : "bg-gray-200 text-gray-500"
-    }`}
+      }`}
   >
     {step}
   </div>

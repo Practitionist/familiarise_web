@@ -22,7 +22,7 @@ import { Controller, useForm } from "react-hook-form";
 import {
   PreferredSchedule,
   preferredScheduleSchema,
-} from "../../../schemas/userSchema";
+} from "@/schemas/UserSchema";
 
 interface SlotType {
   startTime: string;

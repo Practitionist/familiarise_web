@@ -11,51 +11,23 @@ export const personalInfoAndRoleSchema = z.object({
 
 export type PersonalInfoAndRole = z.infer<typeof personalInfoAndRoleSchema>;
 
-export const consultantProfileSchema = z
-  .object({
-    specialization: z.string().min(1, "Specialization is required"),
-    experience: z.string().min(1, "Experience is required"),
-    location: z.string().min(1, "Location is required"),
-    domain: z.string().min(1, "Domain is required"),
-    subDomains: z.string().min(1, "Sub-Domains are required"),
+const slotSchema = z.object({
+  startTime: z.string(),
+  endTime: z.string(),
+});
 
-    // Schedule
-    scheduleType: z.enum(["weekly", "custom"]),
-    weeklySlots: z
-      .record(
-        z.array(
-          z.object({
-            startTime: z.string(),
-            endTime: z.string(),
-          })
-        )
-      )
-      .optional(),
-    customSlots: z
-      .array(
-        z.object({
-          day: z.date(),
-          startTime: z.string(),
-          endTime: z.string(),
-        })
-      )
-      .optional(),
-  })
-  .refine(
-    (data) => {
-      const hasWeeklySlots = !!data.weeklySlots;
-      const hasCustomSlots = !!data.customSlots;
-      return (
-        !(hasWeeklySlots && hasCustomSlots) &&
-        (hasWeeklySlots || hasCustomSlots)
-      );
-    },
-    {
-      message:
-        "You can have only one of weeklySlots or customSlots but not both",
-      path: ["weeklySlots", "customSlots"],
-    }
-  );
+export const consultantProfileSchema = z.object({
+  description: z.string().optional(),
+  specialization: z.string().min(1, "Specialization is required"),
+  experience: z.string().min(1, "Experience is required"),
+  location: z.string().min(1, "Location is required"),
+  domain: z.string().min(1, "Domain is required"),
+  subDomains: z.string().min(1, "Sub-Domains are required"),
+  tags: z.string().optional(),
+  scheduleType: z.enum(['weekly', 'custom']),
+  weeklySlots: z.record(z.array(slotSchema)),
+  customSlots: z.record(z.array(slotSchema)),
+});
 
 export type ConsultantProfile = z.infer<typeof consultantProfileSchema>;
 
@@ -80,11 +52,6 @@ export const WeeklySlotSchema = z.object({
 
 export const CustomSlotSchema = z.object({
   date: z.string(), // ISO date string
-  startTime: z.string(),
-  endTime: z.string(),
-});
-
-export const slotSchema = z.object({
   startTime: z.string(),
   endTime: z.string(),
 });

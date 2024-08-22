@@ -8,7 +8,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   PersonalInfoAndRole,
   personalInfoAndRoleSchema,
-} from "../../../schemas/userSchema";
+} from "@/schemas/UserSchema";
 
 interface Props {
   onNext: (data: PersonalInfoAndRole) => void;

@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import {
   ConsulteeProfile,
   consulteeProfileSchema,
-} from "../../../schemas/userSchema";
+} from "../../../../schemas/UserSchema";
 
 interface Props {
   onNext: (data: Partial<ConsulteeProfile>) => void;
