@@ -11,10 +11,11 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useSession } from "next-auth/react";
 import React, { useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
+import ProgressIndicator from "../consultant/plans/components/ui/ProgressIndicator";
+import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
 import ConsultantProfileForm from "./components/ConsultantProfileForm";
 import ConsulteeProfileForm from "./components/ConsulteeProfileForm";
 import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
-import PreferredScheduleForm from "./components/PreferredScheduleForm";
 import StaffProfileForm from "./components/StaffProfileForm";
 
 type SlotType = {
@@ -104,9 +105,9 @@ const MultiStepForm: React.FC = () => {
                 onBack={handleBack}
                 initialData={{
                   ...formData,
-                  scheduleType: formData.scheduleType || 'weekly',
-                  weeklySlots: formData.weeklySlots || {},
-                  customSlots: formData.customSlots || {},
+                  scheduleType: formData.scheduleType ?? 'weekly',
+                  weeklySlots: formData.weeklySlots ?? {},
+                  customSlots: formData.customSlots ?? {},
                 }}
               />
             );
@@ -132,7 +133,7 @@ const MultiStepForm: React.FC = () => {
       case 2:
         if (formData.role === "CONSULTANT") {
           return (
-            <PreferredScheduleForm
+            <ConsultantPreferredScheduleForm
               onSubmit={(data: PreferredSchedule) => handleSubmit(data)}
               onBack={handleBack}
               initialData={formData}
@@ -149,7 +150,7 @@ const MultiStepForm: React.FC = () => {
     <FormProvider {...methods}>
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
         <Header />
-        <ProgressIndicator currentStep={step} />
+        <ProgressIndicator currentStep={step} totalSteps={4} />
         <WelcomeMessage />
         {renderFormStep()}
       </div>
@@ -162,39 +163,6 @@ const Header: React.FC = () => (
     <LogInIcon className="w-8 h-8 text-primary" />
     <h1 className="text-2xl font-bold">ConsultX</h1>
   </header>
-);
-
-type ProgressIndicatorProps = {
-  readonly currentStep: number;
-};
-
-const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({
-  currentStep,
-}) => (
-  <div className="flex items-center space-x-4 mb-8">
-    {[1, 2, 3, 4].map((step) => (
-      <React.Fragment key={step}>
-        <StepCircle step={step} currentStep={currentStep} />
-        {step < 4 && <div className="w-10 h-0.5 bg-gray-300" />}
-      </React.Fragment>
-    ))}
-  </div>
-);
-
-type StepCircleProps = {
-  readonly step: number;
-  readonly currentStep: number;
-};
-
-const StepCircle: React.FC<StepCircleProps> = ({ step, currentStep }) => (
-  <div
-    className={`flex items-center justify-center w-10 h-10 rounded-full ${currentStep + 1 >= step
-        ? "bg-black text-white"
-        : "bg-gray-200 text-gray-500"
-      }`}
-  >
-    {step}
-  </div>
 );
 
 const WelcomeMessage: React.FC = () => (

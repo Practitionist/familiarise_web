@@ -1,12 +1,11 @@
-import React from "react";
-import { useForm, Controller } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ConsultantProfile, consultantProfileSchema } from "../../../../schemas/UserSchema";
+import { zodResolver } from "@hookform/resolvers/zod";
+import React from "react";
+import { Controller, useForm } from "react-hook-form";
+import { ConsultantProfile, consultantProfileSchema } from "@/schemas/UserSchema";
 
 interface Props {
   onNext: (data: Partial<ConsultantProfile>) => void;
@@ -111,20 +110,19 @@ const ConsultantProfileForm: React.FC<Props> = ({
           name="scheduleType"
           control={control}
           render={({ field }) => (
-            <RadioGroup
-              onValueChange={field.onChange}
-              value={field.value}
-              className="flex flex-col space-y-1"
-            >
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="weekly" id="weekly" />
-                <Label htmlFor="weekly">Weekly</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="custom" id="custom" />
-                <Label htmlFor="custom">Custom</Label>
-              </div>
-            </RadioGroup>
+            <div className="flex space-x-2">
+              {["weekly", "custom"].map((type) => (
+                <Button
+                  key={type}
+                  type="button"
+                  variant={field.value === type ? "night" : "outline"}
+                  onClick={() => field.onChange(type)}
+                  className="flex-1"
+                >
+                  {type.charAt(0) + type.slice(1).toLowerCase()}
+                </Button>
+              ))}
+            </div>
           )}
         />
         {errors.scheduleType && <p className="text-red-500">{errors.scheduleType.message}</p>}

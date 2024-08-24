@@ -2,14 +2,13 @@ import prisma from "../lib/prisma";
 import { faker } from "@faker-js/faker";
 import {
   AppointmentsType,
-  ClassEmailSupport,
   ConsultantProfile,
   ConsulteeProfile,
   DayOfWeek,
   RequestStatus,
   ScheduleType,
-  SubscriptionEmailSupport,
-  SubscriptionPlanDuration,
+  PlanDuration,
+  PlanEmailSupport,
   User,
   UserRole
 } from "@prisma/client";
@@ -17,12 +16,22 @@ import * as dotenv from "dotenv";
 
 dotenv.config({ path: ".env" });
 
+// Big data
 const NUM_USERS = 100;
 const NUM_CONSULTANTS = 40;
 const NUM_CONSULTEES = 60;
 const NUM_SLOTS_PER_CONSULTANT = 20;
 const NUM_APPOINTMENTS = 200;
 const NUM_NEWSLETTERS = 100;
+
+
+// Small data
+// const NUM_USERS = 10;
+// const NUM_CONSULTANTS = 4;
+// const NUM_CONSULTEES = 6;
+// const NUM_SLOTS_PER_CONSULTANT = 5;
+// const NUM_APPOINTMENTS = 20;
+// const NUM_NEWSLETTERS = 10;
 
 type UserWithProfiles = User & {
   consultantProfile?: ConsultantProfile | null;
@@ -177,27 +186,27 @@ async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
         data: [
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: SubscriptionPlanDuration.ONE_MONTH,
+            duration: PlanDuration.ONE_MONTH,
             price: faker.number.int({ min: 9900, max: 19900 }), // $99 to $199
             callsPerWeek: 1,
             videoMeetings: 1,
-            emailSupport: SubscriptionEmailSupport.GENERAL,
+            emailSupport: PlanEmailSupport.GENERAL,
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: SubscriptionPlanDuration.THREE_MONTHS,
+            duration: PlanDuration.THREE_MONTHS,
             price: faker.number.int({ min: 24900, max: 49900 }), // $249 to $499
             callsPerWeek: 2,
             videoMeetings: 2,
-            emailSupport: SubscriptionEmailSupport.PRIORITY,
+            emailSupport: PlanEmailSupport.PRIORITY,
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: SubscriptionPlanDuration.SIX_MONTHS,
+            duration: PlanDuration.SIX_MONTHS,
             price: faker.number.int({ min: 39900, max: 79900 }), // $399 to $799
             callsPerWeek: 3,
             videoMeetings: 4,
-            emailSupport: SubscriptionEmailSupport.DEDICATED,
+            emailSupport: PlanEmailSupport.DEDICATED,
           },
         ],
       });
@@ -266,27 +275,27 @@ async function createClassPlans(consultants: UserWithProfiles[]) {
         data: [
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: 4, // 4 weeks
+            duration: PlanDuration.ONE_MONTH,
             price: faker.number.int({ min: 19900, max: 39900 }), // $199 to $399
             callsPerWeek: 1,
             videoMeetings: 4,
-            emailSupport: ClassEmailSupport.GENERAL,
+            emailSupport: PlanEmailSupport.GENERAL,
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: 8, // 8 weeks
+            duration: PlanDuration.THREE_MONTHS,
             price: faker.number.int({ min: 34900, max: 69900 }), // $349 to $699
             callsPerWeek: 2,
             videoMeetings: 8,
-            emailSupport: ClassEmailSupport.PRIORITY,
+            emailSupport: PlanEmailSupport.PRIORITY,
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: 12, // 12 weeks
+            duration: PlanDuration.SIX_MONTHS,
             price: faker.number.int({ min: 49900, max: 99900 }), // $499 to $999
             callsPerWeek: 3,
             videoMeetings: 12,
-            emailSupport: ClassEmailSupport.DEDICATED,
+            emailSupport: PlanEmailSupport.DEDICATED,
           },
         ],
       });
@@ -407,6 +416,11 @@ async function createAppointments(consultees: UserWithProfiles[]) {
 
     if (!consultee.consulteeProfile) {
       console.warn(`Skipping consultee ${consultee.id} - no profile found`);
+      continue;
+    }
+
+    if (!slotData) {
+      console.warn(`No slot data available for appointment ${i + 1}. This is likely due to insufficient slots created.Skipping appointment creation...`);
       continue;
     }
 

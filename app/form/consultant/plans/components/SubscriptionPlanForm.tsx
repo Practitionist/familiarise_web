@@ -1,18 +1,24 @@
-import React from "react";
-import { useForm, useFieldArray } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { subscriptionPlanSchema } from "@/schemas/PlanSchema";
-import { SubscriptionPlan } from "@prisma/client";
+import { PlanDuration, PlanEmailSupport, SubscriptionPlan, subscriptionPlanSchema } from "@/schemas/PlanSchema";
+import { zodResolver } from "@hookform/resolvers/zod";
+import React from "react";
+import { Controller, useFieldArray, useForm } from "react-hook-form";
+import { z } from "zod";
 
 interface Props {
     onNext: (data: SubscriptionPlan[]) => void;
     onBack: () => void;
     initialData: SubscriptionPlan[];
 }
+
+const SubscriptionPlanFormSchema = z.object({
+    plans: subscriptionPlanSchema.array().min(1, "At least one subscription plan is required"),
+});
+
+type FormData = z.infer<typeof SubscriptionPlanFormSchema>;
 
 const SubscriptionPlanForm: React.FC<Props> = ({
     onNext,
@@ -23,10 +29,26 @@ const SubscriptionPlanForm: React.FC<Props> = ({
         register,
         control,
         handleSubmit,
-        formState: { errors },
-    } = useForm<{ plans: SubscriptionPlan[] }>({
-        resolver: zodResolver(subscriptionPlanSchema.array()),
-        defaultValues: { plans: initialData.length ? initialData : [{ duration: "ONE_MONTH", price: 0, callsPerWeek: 1, videoMeetings: 1, emailSupport: "GENERAL" }] },
+        formState: { errors, isSubmitting },
+    } = useForm<FormData>({
+        resolver: zodResolver(SubscriptionPlanFormSchema),
+        defaultValues: {
+            plans: initialData.length
+                ? initialData
+                : [
+                    {
+                        id: crypto.randomUUID(),
+                        duration: PlanDuration.ONE_MONTH,
+                        price: 0,
+                        callsPerWeek: 1,
+                        videoMeetings: 1,
+                        emailSupport: PlanEmailSupport.GENERAL,
+                        consultantProfileId: null,
+                        createdAt: new Date(),
+                        updatedAt: new Date(),
+                    },
+                ],
+        },
     });
 
     const { fields, append, remove } = useFieldArray({
@@ -34,8 +56,14 @@ const SubscriptionPlanForm: React.FC<Props> = ({
         name: "plans",
     });
 
-    const onSubmit = (data: { plans: SubscriptionPlan[] }) => {
-        onNext(data.plans);
+    const onSubmit = (data: FormData) => {
+        console.log("Form submitted:", data);
+        try {
+            onNext(data.plans);
+            console.log("onNext function called successfully");
+        } catch (error) {
+            console.error("Error in onNext function:", error);
+        }
     };
 
     return (
@@ -48,19 +76,25 @@ const SubscriptionPlanForm: React.FC<Props> = ({
                 <div key={field.id} className="space-y-2 p-4 border rounded">
                     <div className="space-y-2">
                         <Label htmlFor={`plans.${index}.duration`}>Duration</Label>
-                        <Select onValueChange={(value) => register(`plans.${index}.duration`).onChange({ target: { value } })} defaultValue={field.duration}>
-                            <SelectTrigger>
-                                <SelectValue placeholder="Select duration" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="ONE_MONTH">One Month</SelectItem>
-                                <SelectItem value="THREE_MONTHS">Three Months</SelectItem>
-                                <SelectItem value="SIX_MONTHS">Six Months</SelectItem>
-                                <SelectItem value="TWELVE_MONTHS">Twelve Months</SelectItem>
-                            </SelectContent>
-                        </Select>
+                        <Controller
+                            name={`plans.${index}.duration` as const}
+                            control={control}
+                            render={({ field }) => (
+                                <Select onValueChange={field.onChange} value={field.value}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select duration" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value={PlanDuration.ONE_MONTH}>One Month</SelectItem>
+                                        <SelectItem value={PlanDuration.THREE_MONTHS}>Three Months</SelectItem>
+                                        <SelectItem value={PlanDuration.SIX_MONTHS}>Six Months</SelectItem>
+                                        <SelectItem value={PlanDuration.TWELVE_MONTHS}>Twelve Months</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            )}
+                        />
                         {errors.plans?.[index]?.duration && (
-                            <p className="text-red-500">{errors.plans?.[index]?.duration?.message}</p>
+                            <p className="text-red-500">{errors.plans[index]?.duration?.message}</p>
                         )}
                     </div>
 
@@ -72,7 +106,7 @@ const SubscriptionPlanForm: React.FC<Props> = ({
                             {...register(`plans.${index}.price` as const, { valueAsNumber: true })}
                         />
                         {errors.plans?.[index]?.price && (
-                            <p className="text-red-500">{errors.plans?.[index]?.price?.message}</p>
+                            <p className="text-red-500">{errors.plans[index]?.price?.message}</p>
                         )}
                     </div>
 
@@ -84,7 +118,7 @@ const SubscriptionPlanForm: React.FC<Props> = ({
                             {...register(`plans.${index}.callsPerWeek` as const, { valueAsNumber: true })}
                         />
                         {errors.plans?.[index]?.callsPerWeek && (
-                            <p className="text-red-500">{errors.plans?.[index]?.callsPerWeek?.message}</p>
+                            <p className="text-red-500">{errors.plans[index]?.callsPerWeek?.message}</p>
                         )}
                     </div>
 
@@ -96,49 +130,77 @@ const SubscriptionPlanForm: React.FC<Props> = ({
                             {...register(`plans.${index}.videoMeetings` as const, { valueAsNumber: true })}
                         />
                         {errors.plans?.[index]?.videoMeetings && (
-                            <p className="text-red-500">{errors.plans?.[index]?.videoMeetings?.message}</p>
+                            <p className="text-red-500">{errors.plans[index]?.videoMeetings?.message}</p>
                         )}
                     </div>
 
                     <div className="space-y-2">
                         <Label htmlFor={`plans.${index}.emailSupport`}>Email Support</Label>
-                        <Select onValueChange={(value) => register(`plans.${index}.emailSupport`).onChange({ target: { value } })} defaultValue={field.emailSupport}>
-                            <SelectTrigger>
-                                <SelectValue placeholder="Select email support level" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="GENERAL">General</SelectItem>
-                                <SelectItem value="PRIORITY">Priority</SelectItem>
-                                <SelectItem value="DEDICATED">Dedicated</SelectItem>
-                            </SelectContent>
-                        </Select>
+                        <Controller
+                            name={`plans.${index}.emailSupport` as const}
+                            control={control}
+                            render={({ field }) => (
+                                <Select onValueChange={field.onChange} value={field.value}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select email support level" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value={PlanEmailSupport.GENERAL}>General</SelectItem>
+                                        <SelectItem value={PlanEmailSupport.PRIORITY}>Priority</SelectItem>
+                                        <SelectItem value={PlanEmailSupport.DEDICATED}>Dedicated</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            )}
+                        />
                         {errors.plans?.[index]?.emailSupport && (
-                            <p className="text-red-500">{errors.plans?.[index]?.emailSupport?.message}</p>
+                            <p className="text-red-500">{errors.plans[index]?.emailSupport?.message}</p>
                         )}
                     </div>
 
-                    <Button type="button" onClick={() => remove(index)} variant="outline">
-                        Remove Plan
-                    </Button>
+                    {fields.length > 1 && (
+                        <Button type="button" onClick={() => remove(index)} variant="outline">
+                            Remove Plan
+                        </Button>
+                    )}
                 </div>
             ))}
 
             <Button
                 type="button"
-                onClick={() => append({ id: Date.now().toString(), duration: "ONE_MONTH", price: 0, callsPerWeek: 1, videoMeetings: 1, emailSupport: "GENERAL", consultantProfileId: null, createdAt: new Date(), updatedAt: new Date() })}
+                onClick={() => append({
+                    id: crypto.randomUUID(),
+                    duration: PlanDuration.ONE_MONTH,
+                    price: 0,
+                    callsPerWeek: 1,
+                    videoMeetings: 1,
+                    emailSupport: PlanEmailSupport.GENERAL,
+                    consultantProfileId: null,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                })}
                 variant="outline"
             >
                 Add Plan
             </Button>
 
+            {errors.plans?.root && (
+                <p className="text-red-500">{errors.plans.root.message}</p>
+            )}
+
             <div className="flex justify-between">
                 <Button type="button" onClick={onBack} variant="outline">
                     Back
                 </Button>
-                <Button type="submit" variant="night">
-                    Next
+                <Button type="submit" variant="night" disabled={isSubmitting}>
+                    {isSubmitting ? 'Submitting...' : 'Next'}
                 </Button>
             </div>
+
+            {Object.keys(errors).length > 0 && (
+                <p className="text-red-500">
+                    Please correct the errors in the form before submitting.
+                </p>
+            )}
         </form>
     );
 };

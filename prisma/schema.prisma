@@ -548,11 +548,11 @@ model Consultation {
 
 model SubscriptionPlan {
   id            String                   @id @default(cuid())
-  duration      SubscriptionPlanDuration @default(ONE_MONTH) // Duration of the plan (e.g., 1 month, 3 months, 6 months, 12 months)
+  duration      PlanDuration @default(ONE_MONTH) // Duration of the plan (e.g., 1 month, 3 months, 6 months, 12 months)
   price         Int // Price in cents (e.g., 9900 for $99.00)
   callsPerWeek  Int                      @default(1) // Number of calls allowed per week
   videoMeetings Int                      @default(1) // Number of video meetings allowed per month
-  emailSupport  SubscriptionEmailSupport @default(GENERAL) // Email support level
+  emailSupport  PlanEmailSupport @default(GENERAL) // Email support
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
@@ -563,18 +563,6 @@ model SubscriptionPlan {
   updatedAt DateTime @default(now())
 }
 
-enum SubscriptionPlanDuration {
-  ONE_MONTH
-  THREE_MONTHS
-  SIX_MONTHS
-  TWELVE_MONTHS
-}
-
-enum SubscriptionEmailSupport {
-  GENERAL
-  PRIORITY
-  DEDICATED
-}
 
 model Subscription {
   id     String           @id @default(cuid())
@@ -623,11 +611,11 @@ model Webinar {
 
 model ClassPlan {
   id            String            @id @default(cuid())
-  duration      Float             @default(1) // Duration in weeks, days, etc.
+  duration      PlanDuration      @default(ONE_MONTH) // Duration of the plan (e.g., 1 month, 3 months, 6 months, 12 months)
   price         Int // Price in cents for the class plan
   callsPerWeek  Int               @default(1) // Number of calls allowed per week
   videoMeetings Int               @default(1) // Number of video meetings allowed per month
-  emailSupport  ClassEmailSupport @default(GENERAL) // Email support level
+  emailSupport  PlanEmailSupport  @default(GENERAL) // Email support level
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
@@ -642,8 +630,8 @@ model Class {
   id          String    @id @default(cuid())
   title       String
   description String?   @db.Text
-  startDate   DateTime? // Start date for the class
-  endDate     DateTime? // End date for the class
+  startDate   DateTime? 
+  endDate     DateTime? 
 
   classPlans  ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
@@ -653,18 +641,27 @@ model Class {
   slotOfAppointment SlotOfAppointment[]
 }
 
-enum ClassEmailSupport {
-  GENERAL
-  PRIORITY
-  DEDICATED
-}
-
 model Newsletter {
   id    String @id @default(uuid())
   email String @unique
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
+}
+
+//////////////////////////////////////////////////// ENUMS ////////////////////////////////////////////////////
+
+enum PlanDuration {
+  ONE_MONTH
+  THREE_MONTHS
+  SIX_MONTHS
+  TWELVE_MONTHS
+}
+
+enum PlanEmailSupport {
+  GENERAL
+  PRIORITY
+  DEDICATED
 }
 
 enum UserRole {

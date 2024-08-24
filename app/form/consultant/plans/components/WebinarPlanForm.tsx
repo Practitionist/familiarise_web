@@ -1,17 +1,24 @@
-import React from "react";
-import { useForm, useFieldArray } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { webinarPlanSchema } from "@/schemas/PlanSchema";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { WebinarPlan } from "@prisma/client";
+import React from "react";
+import { useFieldArray, useForm } from "react-hook-form";
+import { z } from "zod";
 
 interface Props {
     onNext: (data: WebinarPlan[]) => void;
     onBack: () => void;
     initialData: WebinarPlan[];
 }
+
+const WebinarPlanFormSchema = z.object({
+    plans: webinarPlanSchema.array().min(1, "At least one webinar plan is required"),
+});
+
+type FormData = z.infer<typeof WebinarPlanFormSchema>;
 
 const WebinarPlanForm: React.FC<Props> = ({
     onNext,
@@ -22,10 +29,10 @@ const WebinarPlanForm: React.FC<Props> = ({
         register,
         control,
         handleSubmit,
-        formState: { errors },
-    } = useForm<{ plans: WebinarPlan[] }>({
-        resolver: zodResolver(webinarPlanSchema.array()),
-        defaultValues: { plans: initialData.length ? initialData : [{ duration: 1, price: 0 }] },
+        formState: { errors, isSubmitting },
+    } = useForm<FormData>({
+        resolver: zodResolver(WebinarPlanFormSchema),
+        defaultValues: { plans: initialData.length ? initialData : [{ id: Date.now().toString(), duration: 1, price: 0, consultantProfileId: null, createdAt: new Date(), updatedAt: new Date() }] },
     });
 
     const { fields, append, remove } = useFieldArray({
@@ -33,8 +40,14 @@ const WebinarPlanForm: React.FC<Props> = ({
         name: "plans",
     });
 
-    const onSubmit = (data: { plans: WebinarPlan[] }) => {
-        onNext(data.plans);
+    const onSubmit = (data: FormData) => {
+        console.log("Form submitted:", data);
+        try {
+            onNext(data.plans);
+            console.log("onNext function called successfully");
+        } catch (error) {
+            console.error("Error in onNext function:", error);
+        }
     };
 
     return (
@@ -54,7 +67,7 @@ const WebinarPlanForm: React.FC<Props> = ({
                             {...register(`plans.${index}.duration` as const, { valueAsNumber: true })}
                         />
                         {errors.plans?.[index]?.duration && (
-                            <p className="text-red-500">{errors.plans?.[index]?.duration?.message}</p>
+                            <p className="text-red-500">{errors.plans[index]?.duration?.message}</p>
                         )}
                     </div>
 
@@ -66,39 +79,51 @@ const WebinarPlanForm: React.FC<Props> = ({
                             {...register(`plans.${index}.price` as const, { valueAsNumber: true })}
                         />
                         {errors.plans?.[index]?.price && (
-                            <p className="text-red-500">{errors.plans?.[index]?.price?.message}</p>
+                            <p className="text-red-500">{errors.plans[index]?.price?.message}</p>
                         )}
                     </div>
 
-                    <Button type="button" onClick={() => remove(index)} variant="outline">
-                        Remove Plan
-                    </Button>
+                    {fields.length > 1 && (
+                        <Button type="button" onClick={() => remove(index)} variant="outline">
+                            Remove Plan
+                        </Button>
+                    )}
                 </div>
             ))}
 
             <Button
                 type="button"
-                onClick={() => append({ 
-                    id: "", 
-                    duration: 1, 
-                    price: 0, 
-                    consultantProfileId: null, 
-                    createdAt: new Date(), 
-                    updatedAt: new Date() 
+                onClick={() => append({
+                    id: Date.now().toString(),
+                    duration: 1,
+                    price: 0,
+                    consultantProfileId: null,
+                    createdAt: new Date(),
+                    updatedAt: new Date()
                 })}
                 variant="outline"
             >
                 Add Plan
             </Button>
 
+            {errors.plans?.root && (
+                <p className="text-red-500">{errors.plans.root.message}</p>
+            )}
+
             <div className="flex justify-between">
                 <Button type="button" onClick={onBack} variant="outline">
                     Back
                 </Button>
-                <Button type="submit" variant="night">
-                    Next
+                <Button type="submit" variant="night" disabled={isSubmitting}>
+                    {isSubmitting ? 'Submitting...' : 'Next'}
                 </Button>
             </div>
+
+            {Object.keys(errors).length > 0 && (
+                <p className="text-red-500">
+                    Please correct the errors in the form before submitting.
+                </p>
+            )}
         </form>
     );
 };

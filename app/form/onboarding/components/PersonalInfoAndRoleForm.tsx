@@ -4,7 +4,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   PersonalInfoAndRole,
   personalInfoAndRoleSchema,
@@ -67,24 +66,19 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
           name="role"
           control={control}
           render={({ field }) => (
-            <RadioGroup
-              onValueChange={field.onChange}
-              value={field.value}
-              className="flex flex-col space-y-1"
-            >
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="CONSULTEE" id="consultee" />
-                <Label htmlFor="consultee">Consultee</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="CONSULTANT" id="consultant" />
-                <Label htmlFor="consultant">Consultant</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="STAFF" id="staff" />
-                <Label htmlFor="staff">Staff</Label>
-              </div>
-            </RadioGroup>
+            <div className="flex space-x-2">
+              {["CONSULTEE", "CONSULTANT", "STAFF"].map((role) => (
+                <Button
+                  key={role}
+                  type="button"
+                  variant={field.value === role ? "night" : "outline"}
+                  onClick={() => field.onChange(role)}
+                  className="flex-1"
+                >
+                  {role.charAt(0) + role.slice(1).toLowerCase()}
+                </Button>
+              ))}
+            </div>
           )}
         />
         {errors.role && <p className="text-red-500">{errors.role.message}</p>}

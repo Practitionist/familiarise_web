@@ -41,7 +41,7 @@ interface Props {
 
 const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-const PreferredScheduleForm: React.FC<Props> = ({ onSubmit, onBack, initialData }) => {
+const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onSubmit, onBack, initialData }) => {
   const { handleSubmit, watch, setValue, control } = useForm<PreferredSchedule>({
     resolver: zodResolver(preferredScheduleSchema),
     defaultValues: initialData,
@@ -323,4 +323,4 @@ function TrashIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   );
 }
 
-export default PreferredScheduleForm;
+export default ConsultantPreferredScheduleForm;

@@ -1,20 +1,24 @@
-// File: app/form/consultant/plans/components/ClassPlanForm.tsx
-
-import React from "react";
-import { useForm, useFieldArray, Controller } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { classPlanSchema } from "@/schemas/PlanSchema";
-import { ClassPlan, SubscriptionEmailSupport } from "@prisma/client";
+import { ClassPlan, classPlanSchema, PlanDuration, PlanEmailSupport } from "@/schemas/PlanSchema";
+import { zodResolver } from "@hookform/resolvers/zod";
+import React from "react";
+import { Controller, useFieldArray, useForm } from "react-hook-form";
+import { z } from "zod";
 
 interface Props {
   onSubmit: (data: ClassPlan[]) => void;
   onBack: () => void;
   initialData: ClassPlan[];
 }
+
+const ClassPlanFormSchema = z.object({
+  plans: classPlanSchema.array().min(1, "At least one class plan is required"),
+});
+
+type FormData = z.infer<typeof ClassPlanFormSchema>;
 
 const ClassPlanForm: React.FC<Props> = ({
   onSubmit,
@@ -25,10 +29,26 @@ const ClassPlanForm: React.FC<Props> = ({
     register,
     control,
     handleSubmit,
-    formState: { errors },
-  } = useForm<{ plans: ClassPlan[] }>({
-    resolver: zodResolver(classPlanSchema.array()),
-    defaultValues: { plans: initialData.length ? initialData : [{ duration: 1, price: 0, callsPerWeek: 1, videoMeetings: 1, emailSupport: SubscriptionEmailSupport.GENERAL }] },
+    formState: { errors, isSubmitting },
+  } = useForm<FormData>({
+    resolver: zodResolver(ClassPlanFormSchema),
+    defaultValues: {
+      plans: initialData.length
+        ? initialData
+        : [
+            {
+              id: crypto.randomUUID(),
+              duration: PlanDuration.ONE_MONTH,
+              price: 0,
+              callsPerWeek: 1,
+              videoMeetings: 1,
+              emailSupport: PlanEmailSupport.GENERAL,
+              consultantProfileId: null,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          ],
+    },
   });
 
   const { fields, append, remove } = useFieldArray({
@@ -36,8 +56,14 @@ const ClassPlanForm: React.FC<Props> = ({
     name: "plans",
   });
 
-  const onSubmitForm = (data: { plans: ClassPlan[] }) => {
-    onSubmit(data.plans);
+  const onSubmitForm = (data: FormData) => {
+    console.log("Form submitted:", data);
+    try {
+       onSubmit(data.plans);
+      console.log("onSubmit function called successfully");
+    } catch (error) {
+      console.error("Error in onSubmit function:", error);
+    }
   };
 
   return (
@@ -49,15 +75,26 @@ const ClassPlanForm: React.FC<Props> = ({
       {fields.map((field, index) => (
         <div key={field.id} className="space-y-2 p-4 border rounded">
           <div className="space-y-2">
-            <Label htmlFor={`plans.${index}.duration`}>Duration (weeks)</Label>
-            <Input
-              id={`plans.${index}.duration`}
-              type="number"
-              step="0.5"
-              {...register(`plans.${index}.duration` as const, { valueAsNumber: true })}
+            <Label htmlFor={`plans.${index}.duration`}>Duration</Label>
+            <Controller
+              name={`plans.${index}.duration` as const}
+              control={control}
+              render={({ field }) => (
+                <Select onValueChange={field.onChange} value={field.value}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select duration" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={PlanDuration.ONE_MONTH}>One Month</SelectItem>
+                    <SelectItem value={PlanDuration.THREE_MONTHS}>Three Months</SelectItem>
+                    <SelectItem value={PlanDuration.SIX_MONTHS}>Six Months</SelectItem>
+                    <SelectItem value={PlanDuration.TWELVE_MONTHS}>Twelve Months</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             />
             {errors.plans?.[index]?.duration && (
-              <p className="text-red-500">{errors.plans?.[index]?.duration?.message}</p>
+              <p className="text-red-500">{errors.plans[index]?.duration?.message}</p>
             )}
           </div>
 
@@ -69,7 +106,7 @@ const ClassPlanForm: React.FC<Props> = ({
               {...register(`plans.${index}.price` as const, { valueAsNumber: true })}
             />
             {errors.plans?.[index]?.price && (
-              <p className="text-red-500">{errors.plans?.[index]?.price?.message}</p>
+              <p className="text-red-500">{errors.plans[index]?.price?.message}</p>
             )}
           </div>
 
@@ -81,7 +118,7 @@ const ClassPlanForm: React.FC<Props> = ({
               {...register(`plans.${index}.callsPerWeek` as const, { valueAsNumber: true })}
             />
             {errors.plans?.[index]?.callsPerWeek && (
-              <p className="text-red-500">{errors.plans?.[index]?.callsPerWeek?.message}</p>
+              <p className="text-red-500">{errors.plans[index]?.callsPerWeek?.message}</p>
             )}
           </div>
 
@@ -93,7 +130,7 @@ const ClassPlanForm: React.FC<Props> = ({
               {...register(`plans.${index}.videoMeetings` as const, { valueAsNumber: true })}
             />
             {errors.plans?.[index]?.videoMeetings && (
-              <p className="text-red-500">{errors.plans?.[index]?.videoMeetings?.message}</p>
+              <p className="text-red-500">{errors.plans[index]?.videoMeetings?.message}</p>
             )}
           </div>
 
@@ -108,50 +145,62 @@ const ClassPlanForm: React.FC<Props> = ({
                     <SelectValue placeholder="Select email support level" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={SubscriptionEmailSupport.GENERAL}>General</SelectItem>
-                    <SelectItem value={SubscriptionEmailSupport.PRIORITY}>Priority</SelectItem>
-                    <SelectItem value={SubscriptionEmailSupport.DEDICATED}>Dedicated</SelectItem>
+                    <SelectItem value={PlanEmailSupport.GENERAL}>General</SelectItem>
+                    <SelectItem value={PlanEmailSupport.PRIORITY}>Priority</SelectItem>
+                    <SelectItem value={PlanEmailSupport.DEDICATED}>Dedicated</SelectItem>
                   </SelectContent>
                 </Select>
               )}
             />
             {errors.plans?.[index]?.emailSupport && (
-              <p className="text-red-500">{errors.plans?.[index]?.emailSupport?.message}</p>
+              <p className="text-red-500">{errors.plans[index]?.emailSupport?.message}</p>
             )}
           </div>
 
-          <Button type="button" onClick={() => remove(index)} variant="outline">
-            Remove Plan
-          </Button>
+          {fields.length > 1 && (
+            <Button type="button" onClick={() => remove(index)} variant="outline">
+              Remove Plan
+            </Button>
+          )}
         </div>
       ))}
 
       <Button
         type="button"
-        onClick={() => append({ 
+        onClick={() => append({
           id: crypto.randomUUID(),
-          duration: 1, 
-          price: 0, 
-          callsPerWeek: 1, 
-          videoMeetings: 1, 
-          emailSupport: SubscriptionEmailSupport.GENERAL,
+          duration: PlanDuration.ONE_MONTH,
+          price: 0,
+          callsPerWeek: 1,
+          videoMeetings: 1,
+          emailSupport: PlanEmailSupport.GENERAL,
           consultantProfileId: null,
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: new Date(),
         })}
         variant="outline"
       >
         Add Plan
       </Button>
 
+      {errors.plans?.root && (
+        <p className="text-red-500">{errors.plans.root.message}</p>
+      )}
+
       <div className="flex justify-between">
         <Button type="button" onClick={onBack} variant="outline">
           Back
         </Button>
-        <Button type="submit" variant="night">
-          Submit
+        <Button type="submit" variant="night" disabled={isSubmitting}>
+          {isSubmitting ? 'Submitting...' : 'Submit'}
         </Button>
       </div>
+
+      {Object.keys(errors).length > 0 && (
+        <p className="text-red-500">
+          Please correct the errors in the form before submitting.
+        </p>
+      )}
     </form>
   );
 };

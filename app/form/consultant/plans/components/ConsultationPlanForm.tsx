@@ -1,5 +1,3 @@
-// File: app/form/consultant/plans/components/ConsultationPlanForm.tsx
-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,12 +5,19 @@ import { ConsultationPlan, consultationPlanSchema } from "@/schemas/PlanSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React from "react";
 import { useFieldArray, useForm } from "react-hook-form";
+import { z } from "zod";
 
 interface Props {
   onNext: (data: ConsultationPlan[]) => void;
   onBack: () => void;
   initialData: ConsultationPlan[];
 }
+
+const ConsultationPlanFormSchema = z.object({
+  plans: consultationPlanSchema.array().min(1, "At least one consultation plan is required"),
+});
+
+type FormData = z.infer<typeof ConsultationPlanFormSchema>;
 
 const ConsultationPlanForm: React.FC<Props> = ({
   onNext,
@@ -23,9 +28,9 @@ const ConsultationPlanForm: React.FC<Props> = ({
     register,
     control,
     handleSubmit,
-    formState: { errors },
-  } = useForm<{ plans: ConsultationPlan[] }>({
-    resolver: zodResolver(consultationPlanSchema.array()),
+    formState: { errors, isSubmitting },
+  } = useForm<FormData>({
+    resolver: zodResolver(ConsultationPlanFormSchema),
     defaultValues: { plans: initialData.length ? initialData : [{ id: '', duration: 1, price: 0, consultantProfileId: null, createdAt: new Date(), updatedAt: new Date() }] },
   });
 
@@ -34,8 +39,14 @@ const ConsultationPlanForm: React.FC<Props> = ({
     name: "plans",
   });
 
-  const onSubmit = (data: { plans: ConsultationPlan[] }) => {
-    onNext(data.plans);
+  const onSubmit = (data: FormData) => {
+    console.log("Form submitted:", data);
+    try {
+      onNext(data.plans);
+      console.log("onNext function called successfully");
+    } catch (error) {
+      console.error("Error in onNext function:", error);
+    }
   };
 
   return (
@@ -55,7 +66,7 @@ const ConsultationPlanForm: React.FC<Props> = ({
               {...register(`plans.${index}.duration` as const, { valueAsNumber: true })}
             />
             {errors.plans?.[index]?.duration && (
-              <p className="text-red-500">{errors.plans?.[index]?.duration?.message}</p>
+              <p className="text-red-500">{errors.plans[index]?.duration?.message}</p>
             )}
           </div>
 
@@ -67,13 +78,15 @@ const ConsultationPlanForm: React.FC<Props> = ({
               {...register(`plans.${index}.price` as const, { valueAsNumber: true })}
             />
             {errors.plans?.[index]?.price && (
-              <p className="text-red-500">{errors.plans?.[index]?.price?.message}</p>
+              <p className="text-red-500">{errors.plans[index]?.price?.message}</p>
             )}
           </div>
 
-          <Button type="button" onClick={() => remove(index)} variant="outline">
-            Remove Plan
-          </Button>
+          {fields.length > 1 && (
+            <Button type="button" onClick={() => remove(index)} variant="outline">
+              Remove Plan
+            </Button>
+          )}
         </div>
       ))}
 
@@ -94,14 +107,24 @@ const ConsultationPlanForm: React.FC<Props> = ({
         Add Plan
       </Button>
 
+      {errors.plans?.root && (
+        <p className="text-red-500">{errors.plans.root.message}</p>
+      )}
+
       <div className="flex justify-between">
         <Button type="button" onClick={onBack} variant="outline">
           Back
         </Button>
-        <Button type="submit" variant="night">
-          Next
+        <Button type="submit" variant="night" disabled={isSubmitting}>
+          {isSubmitting ? 'Submitting...' : 'Next'}
         </Button>
       </div>
+
+      {Object.keys(errors).length > 0 && (
+        <p className="text-red-500">
+          Please correct the errors in the form before submitting.
+        </p>
+      )}
     </form>
   );
 };

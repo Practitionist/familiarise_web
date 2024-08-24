@@ -2,14 +2,14 @@
 
 import { z } from "zod";
 
-export enum SubscriptionPlanDuration {
+export enum PlanDuration {
   ONE_MONTH = 'ONE_MONTH',
   THREE_MONTHS = 'THREE_MONTHS',
   SIX_MONTHS = 'SIX_MONTHS',
   TWELVE_MONTHS = 'TWELVE_MONTHS',
 }
 
-export enum EmailSupport {
+export enum PlanEmailSupport {
   GENERAL = 'GENERAL',
   PRIORITY = 'PRIORITY',
   DEDICATED = 'DEDICATED',
@@ -30,11 +30,11 @@ export const consultationPlanSchema = basePlanSchema.extend({
 export type ConsultationPlan = z.infer<typeof consultationPlanSchema>;
 
 export const subscriptionPlanSchema = basePlanSchema.extend({
-  duration: z.nativeEnum(SubscriptionPlanDuration),
+  duration: z.nativeEnum(PlanDuration),
   price: z.number().nonnegative(),
   callsPerWeek: z.number().int().positive(),
   videoMeetings: z.number().int().nonnegative(),
-  emailSupport: z.nativeEnum(EmailSupport),
+  emailSupport: z.nativeEnum(PlanEmailSupport),
 });
 
 export type SubscriptionPlan = z.infer<typeof subscriptionPlanSchema>;
@@ -47,11 +47,11 @@ export const webinarPlanSchema = basePlanSchema.extend({
 export type WebinarPlan = z.infer<typeof webinarPlanSchema>;
 
 export const classPlanSchema = basePlanSchema.extend({
-  duration: z.number().positive(),
+  duration: z.nativeEnum(PlanDuration),
   price: z.number().nonnegative(),
   callsPerWeek: z.number().int().positive(),
   videoMeetings: z.number().int().nonnegative(),
-  emailSupport: z.nativeEnum(EmailSupport),
+  emailSupport: z.nativeEnum(PlanEmailSupport),
 });
 
 export type ClassPlan = z.infer<typeof classPlanSchema>;
