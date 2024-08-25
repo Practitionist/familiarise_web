@@ -412,6 +412,11 @@ model ConsulteeProfile {
   onlineStatus    Boolean
   currentTimezone String
 
+  preferredConsultationMode ConsultationMode @default(VIDEO)
+  preferredLanguage         String
+  specialRequirements       String?
+  domains                   Json
+
   slotsOfAppointment SlotOfAppointment[]
   consultantReviews   ConsultantReview[]
 
@@ -422,6 +427,12 @@ model ConsulteeProfile {
   updatedAt DateTime @default(now())
 
   @@index([userId])
+}
+
+enum ConsultationMode {
+  VIDEO
+  AUDIO
+  IN_PERSON
 }
 
 model SlotOfAvailabiltyWeekly {

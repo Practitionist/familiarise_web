@@ -37,12 +37,32 @@ export const consulteeProfileSchema = z.object({
 
 export type ConsulteeProfile = z.infer<typeof consulteeProfileSchema>;
 
+const domainSchema = z.object({
+  name: z.string(),
+  subdomains: z.array(z.string()).optional(),
+});
+
+export const consulteePreferencesSchema = z.object({
+  preferredConsultationMode: z.enum(["VIDEO", "AUDIO", "IN_PERSON"]),
+  preferredLanguage: z.string(),
+  specialRequirements: z.string().optional(),
+  domains: z.array(domainSchema),
+});
+
+export type ConsulteePreferences = z.infer<typeof consulteePreferencesSchema>;
+
 export const staffProfileSchema = z.object({
   department: z.string().min(1, "Department is required"),
   position: z.string().min(1, "Position is required"),
 });
 
 export type StaffProfile = z.infer<typeof staffProfileSchema>;
+
+export const staffResponsibilitiesSchema = z.object({
+  responsibilities: z.string().min(1, "Responsibilities are required"),
+});
+
+export type StaffResponsibilities = z.infer<typeof staffResponsibilitiesSchema>;
 
 export const WeeklySlotSchema = z.object({
   day: z.enum(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']),

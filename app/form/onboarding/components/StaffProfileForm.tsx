@@ -7,13 +7,13 @@ import { Label } from "@/components/ui/label";
 import { StaffProfile, staffProfileSchema } from "../../../../schemas/UserSchema";
 
 interface Props {
-  onSubmit: (data: StaffProfile) => void;
+  onNext: (data: Partial<StaffProfile>) => void;
   onBack: () => void;
   initialData: Partial<StaffProfile>;
 }
 
 const StaffProfileForm: React.FC<Props> = ({
-  onSubmit,
+  onNext,
   onBack,
   initialData,
 }) => {
@@ -27,7 +27,7 @@ const StaffProfileForm: React.FC<Props> = ({
   });
 
   const onSubmitForm = (data: StaffProfile) => {
-    onSubmit(data);
+    onNext(data);
   };
 
   return (
@@ -56,7 +56,7 @@ const StaffProfileForm: React.FC<Props> = ({
           Back
         </Button>
         <Button type="submit" variant="night">
-          Submit
+          Next
         </Button>
       </div>
     </form>

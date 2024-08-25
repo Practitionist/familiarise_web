@@ -3,37 +3,41 @@ import {
   ConsultantProfile,
   ConsulteeProfile,
   PersonalInfoAndRole,
-  PreferredSchedule,
   StaffProfile,
   personalInfoAndRoleSchema,
+  ConsulteePreferences,
+  StaffResponsibilities,
+  PreferredSchedule
 } from "@/schemas/UserSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useSession } from "next-auth/react";
 import React, { useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import ProgressIndicator from "../consultant/plans/components/ui/ProgressIndicator";
+import ConsultantAgreementForm from "./components/ConsultantAgreementForm";
 import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
 import ConsultantProfileForm from "./components/ConsultantProfileForm";
+import ConsultantReviewForm from "./components/ConsultantReviewForm";
+import ConsulteeAgreementForm from "./components/ConsulteeAgreementForm";
+import ConsulteePreferencesForm from "./components/ConsulteePreferencesForm";
 import ConsulteeProfileForm from "./components/ConsulteeProfileForm";
+import ConsulteeReviewForm from "./components/ConsulteeReviewForm";
 import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
+import StaffAgreementForm from "./components/StaffAgreementForm";
 import StaffProfileForm from "./components/StaffProfileForm";
-
-type SlotType = {
-  startTime: string;
-  endTime: string;
-};
-
-type WeeklySlotsType = Record<string, SlotType[]>;
-type CustomSlotsType = Record<string, SlotType[]>;
+import StaffResponsibilitiesForm from "./components/StaffResponsibilitiesForm";
+import StaffReviewForm from "./components/StaffReviewForm";
 
 type FormData = PersonalInfoAndRole &
   Partial<ConsultantProfile> &
   Partial<ConsulteeProfile> &
   Partial<StaffProfile> &
+  Partial<ConsulteePreferences> &
+  Partial<StaffResponsibilities> &
+  Partial<PreferredSchedule> &
   Partial<{
-    scheduleType: "weekly" | "custom";
-    weeklySlots: WeeklySlotsType;
-    customSlots: CustomSlotsType;
+    termsAccepted: boolean;
+    privacyAccepted: boolean;
   }>;
 
 const MultiStepForm: React.FC = () => {
@@ -49,9 +53,7 @@ const MultiStepForm: React.FC = () => {
   const handleNext = (stepData: Partial<FormData>) => {
     const updatedData = { ...formData, ...stepData };
     setFormData(updatedData);
-    setStep((prevStep) => {
-      return prevStep + 1;
-    });
+    setStep((prevStep) => prevStep + 1);
   };
 
   const handleBack = () => setStep((prevStep) => prevStep - 1);
@@ -66,16 +68,13 @@ const MultiStepForm: React.FC = () => {
         throw new Error("User ID not found");
       }
 
-      const response = await fetch(
-        `/api/form/onboarding/${id}`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(finalData),
-        }
-      );
+      const response = await fetch(`/api/form/onboarding/${id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(finalData),
+      });
 
       if (!response.ok) {
         throw new Error("Failed to update onboarding information");
@@ -101,20 +100,15 @@ const MultiStepForm: React.FC = () => {
           case "CONSULTANT":
             return (
               <ConsultantProfileForm
-                onNext={(data: Partial<ConsultantProfile>) => handleNext(data)}
+                onNext={handleNext}
                 onBack={handleBack}
-                initialData={{
-                  ...formData,
-                  scheduleType: formData.scheduleType ?? 'weekly',
-                  weeklySlots: formData.weeklySlots ?? {},
-                  customSlots: formData.customSlots ?? {},
-                }}
+                initialData={formData}
               />
             );
           case "CONSULTEE":
             return (
               <ConsulteeProfileForm
-                onNext={(data: Partial<ConsulteeProfile>) => handleNext(data)}
+                onNext={handleNext}
                 onBack={handleBack}
                 initialData={formData}
               />
@@ -122,7 +116,7 @@ const MultiStepForm: React.FC = () => {
           case "STAFF":
             return (
               <StaffProfileForm
-                onSubmit={(data: StaffProfile) => handleSubmit(data)}
+                onNext={handleNext}
                 onBack={handleBack}
                 initialData={formData}
               />
@@ -131,21 +125,96 @@ const MultiStepForm: React.FC = () => {
             return null;
         }
       case 2:
-        if (formData.role === "CONSULTANT") {
-          return (
-            <ConsultantPreferredScheduleForm
-              onSubmit={(data: PreferredSchedule) => handleSubmit(data)}
-              onBack={handleBack}
-              initialData={formData}
-            />
-          );
+        switch (formData.role) {
+          case "CONSULTANT":
+            return (
+              <ConsultantPreferredScheduleForm
+                onNext={handleNext}
+                onBack={handleBack}
+                initialData={formData}
+              />
+            );
+          case "CONSULTEE":
+            return (
+              <ConsulteePreferencesForm
+                onNext={handleNext}
+                onBack={handleBack}
+                initialData={formData}
+              />
+            );
+          case "STAFF":
+            return (
+              <StaffResponsibilitiesForm
+                onNext={handleNext}
+                onBack={handleBack}
+                initialData={formData}
+              />
+            );
+          default:
+            return null;
         }
-        return null;
+      case 3:
+        switch (formData.role) {
+          case "CONSULTANT":
+            return (
+              <ConsultantAgreementForm
+                onNext={handleNext}
+                onBack={handleBack}
+                initialData={formData}
+              />
+            );
+          case "CONSULTEE":
+            return (
+              <ConsulteeAgreementForm
+                onNext={handleNext}
+                onBack={handleBack}
+                initialData={formData}
+              />
+            );
+          case "STAFF":
+            return (
+              <StaffAgreementForm
+                onNext={handleNext}
+                onBack={handleBack}
+                initialData={formData}
+              />
+            );
+          default:
+            return null;
+        }
+      case 4:
+        switch (formData.role) {
+          case "CONSULTANT":
+            return (
+              <ConsultantReviewForm
+                onSubmit={handleSubmit}
+                onBack={handleBack}
+                initialData={formData}
+              />
+            );
+          case "CONSULTEE":
+            return (
+              <ConsulteeReviewForm
+                onSubmit={handleSubmit}
+                onBack={handleBack}
+                initialData={formData}
+              />
+            );
+          case "STAFF":
+            return (
+              <StaffReviewForm
+                onSubmit={handleSubmit}
+                onBack={handleBack}
+                initialData={formData}
+              />
+            );
+          default:
+            return null;
+        }
       default:
         return null;
     }
   };
-
   return (
     <FormProvider {...methods}>
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">

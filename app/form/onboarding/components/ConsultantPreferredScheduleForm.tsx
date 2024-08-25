@@ -34,14 +34,14 @@ interface SlotType {
 type SlotsType = Record<string, SlotType[]>;
 
 interface Props {
-  onSubmit: (data: PreferredSchedule) => void;
+  onNext: (data: Partial<PreferredSchedule>) => void;
   onBack: () => void;
   initialData: Partial<PreferredSchedule>;
 }
 
 const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onSubmit, onBack, initialData }) => {
+const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
   const { handleSubmit, watch, setValue, control } = useForm<PreferredSchedule>({
     resolver: zodResolver(preferredScheduleSchema),
     defaultValues: initialData,
@@ -198,8 +198,8 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onSubmit, onBack, in
       alert("Please correct all slot times before submitting.");
       return;
     }
-    onSubmit(data);
-  }, [allSlotsValid, onSubmit]);
+    onNext(data);
+  }, [allSlotsValid, onNext]);
 
   return (
     <form onSubmit={handleSubmit(onSubmitForm)} className="w-full max-w-md">
