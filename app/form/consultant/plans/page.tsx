@@ -4,11 +4,11 @@ import { useSession } from 'next-auth/react';
 import React, { useState } from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
 
-import { ConsultantPlans, consultantPlansSchema, ConsultationPlan, SubscriptionPlan, WebinarPlan, ClassPlan } from '@/schemas/PlanSchema';
+import { ClassPlan, ConsultantPlans, consultantPlansSchema, ConsultationPlan, SubscriptionPlan, WebinarPlan } from '@/schemas/PlanSchema';
 import ClassPlanForm from './components/ClassPlanForm';
 import ConsultationPlanForm from './components/ConsultationPlanForm';
-import ProgressIndicator from './components/ui/ProgressIndicator';
 import SubscriptionPlanForm from './components/SubscriptionPlanForm';
+import ProgressIndicator from './components/ui/ProgressIndicator';
 import WebinarPlanForm from './components/WebinarPlanForm';
 
 const ConsultantPlansForm: React.FC = () => {
