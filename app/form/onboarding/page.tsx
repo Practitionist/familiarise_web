@@ -12,7 +12,7 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useSession } from "next-auth/react";
 import React, { useState } from "react";
-import { FormProvider, useForm } from "react-hook-form";
+import { FormProvider, useForm, UseFormReturn } from "react-hook-form";
 import ProgressIndicator from "../consultant/plans/components/ui/ProgressIndicator";
 import ConsultantAgreementForm from "./components/ConsultantAgreementForm";
 import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
@@ -51,8 +51,10 @@ const MultiStepForm: React.FC = () => {
   });
 
   const handleNext = (stepData: Partial<FormData>) => {
-    const updatedData = { ...formData, ...stepData };
-    setFormData(updatedData);
+    setFormData((prevData) => {
+      const updatedData = { ...prevData, ...stepData };
+      return updatedData;
+    });
     setStep((prevStep) => prevStep + 1);
   };
 
@@ -189,7 +191,7 @@ const MultiStepForm: React.FC = () => {
               <ConsultantReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                initialData={formData}
+                formData={formData}
               />
             );
           case "CONSULTEE":
@@ -197,7 +199,7 @@ const MultiStepForm: React.FC = () => {
               <ConsulteeReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                initialData={formData}
+                formData={formData}
               />
             );
           case "STAFF":
@@ -205,7 +207,7 @@ const MultiStepForm: React.FC = () => {
               <StaffReviewForm
                 onSubmit={handleSubmit}
                 onBack={handleBack}
-                initialData={formData}
+                formData={formData}
               />
             );
           default:

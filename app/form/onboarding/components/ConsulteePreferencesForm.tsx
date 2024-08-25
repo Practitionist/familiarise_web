@@ -85,7 +85,7 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
             <Input
               placeholder="Subdomains (comma-separated)"
               {...register(`domains.${index}.subdomains`)}
-              defaultValue={field.subdomains?.join(", ")}
+              defaultValue={Array.isArray(field.subdomains) ? field.subdomains.join(", ") : field.subdomains}
             />
             <Button type="button" variant="outline" onClick={() => remove(index)}>
               Remove
