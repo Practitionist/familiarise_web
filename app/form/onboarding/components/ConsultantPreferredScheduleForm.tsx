@@ -352,7 +352,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
         </CardContent>
         <CardFooter className="flex justify-between">
           <Button type="button" onClick={onBack} variant="outline">Back</Button>
-          <Button type="submit" variant="night" disabled={!allSlotsValid()}>Submit</Button>
+          <Button type="submit" variant="night" disabled={!allSlotsValid()}>Next</Button>
         </CardFooter>
       </Card>
     </form>
