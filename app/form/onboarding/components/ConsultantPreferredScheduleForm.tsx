@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import { Calendar } from "@/components/ui/calendar";
 import {
   Card,
   CardContent,
@@ -10,19 +9,14 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { zodResolver } from "@hookform/resolvers/zod";
-import React, { useCallback, useEffect, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
 import {
   PreferredSchedule,
   preferredScheduleSchema,
 } from "@/schemas/UserSchema";
+import { zodResolver } from "@hookform/resolvers/zod";
+import React, { useCallback, useEffect, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
 
 interface SlotType {
   startTime: string;
@@ -201,6 +195,108 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
     onNext(data);
   }, [allSlotsValid, onNext]);
 
+
+  // Generate Calendar
+  const [currentDate, setCurrentDate] = useState(new Date());
+
+  const getDaysInMonth = (date: Date) => {
+    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  };
+
+  const getFirstDayOfMonth = (date: Date) => {
+    return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
+  };
+
+  const handlePrevMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
+  };
+
+  const handleNextMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+  };
+
+  const renderCalendar = () => {
+    const daysInMonth = getDaysInMonth(currentDate);
+    const firstDayOfMonth = getFirstDayOfMonth(currentDate);
+    const days = [];
+
+    for (let i = 0; i < firstDayOfMonth; i++) {
+      days.push(<div key={`empty-${i}`} className="p-2"></div>);
+    }
+
+    for (let i = 1; i <= daysInMonth; i++) {
+      const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), i);
+      const dateString = date.toISOString().split("T")[0];
+      const isSelected = customSlots[dateString] !== undefined;
+      days.push(
+        <button
+          key={i}
+          type="button"
+          className={`p-2 rounded-full hover:bg-gray-200
+            ${isSelected ? 'bg-black text-white' : ''}`}
+          onClick={() => {
+            const newCustomSlots = { ...customSlots };
+            if (isSelected) {
+              delete newCustomSlots[dateString];
+            } else {
+              newCustomSlots[dateString] = [{ startTime: "", endTime: "", isValid: false }];
+            }
+            setCustomSlots(newCustomSlots);
+          }}
+        >
+          {i}
+        </button>
+      );
+    }
+
+    return days;
+  };
+
+  const renderSlotsForDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return (
+      <div key={dateString} className="mt-4">
+        <h4 className="font-semibold">{date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</h4>
+        {customSlots[dateString]?.map((slot: SlotType, index: number) => (
+          <div key={index} className="grid grid-cols-5 gap-2 items-center mt-2">
+            <Input
+              type="time"
+              value={slot.startTime}
+              onChange={(e) => handleUpdateSlot(dateString, index, "startTime", e.target.value, customSlots, setCustomSlots)}
+              className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
+              required
+              step="900"
+            />
+            <Input
+              type="time"
+              value={slot.endTime}
+              onChange={(e) => handleUpdateSlot(dateString, index, "endTime", e.target.value, customSlots, setCustomSlots)}
+              className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
+              required
+              step="900"
+            />
+            <TrashIcon
+              className="w-5 h-5 cursor-pointer"
+              onClick={() => handleDeleteSlot(dateString, index, customSlots, setCustomSlots)}
+            />
+          </div>
+        ))}
+        {customSlots[dateString]?.map((slot: SlotType, index: number) => (
+          !slot.isValid && slot.errorMessage && (
+            <p key={`error-${index}`} className="text-red-500 text-sm mt-1">{slot.errorMessage}</p>
+          )
+        ))}
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => handleAddSlot(dateString, customSlots, setCustomSlots)}
+          className="mt-2"
+        >
+          Add Slot
+        </Button>
+      </div>
+    );
+  };
   return (
     <form onSubmit={handleSubmit(onSubmitForm)} className="w-full max-w-md">
       <Card className="w-full">
@@ -227,39 +323,20 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
                   <RadioGroupItem id="custom" value="custom" />
                 </div>
                 <div className={`grid gap-4 mt-4 ${scheduleType !== "custom" ? "opacity-50 pointer-events-none" : ""}`}>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline">
-                        Pick dates
-                        <CalendarDaysIcon className="ml-auto h-4 w-4 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="multiple"
-                        selected={Object.keys(customSlots).map((dateString) => new Date(dateString))}
-                        onSelect={(days) => {
-                          if (days) {
-                            const newCustomSlots = { ...customSlots };
-                            days.forEach((day) => {
-                              const dateString = day.toISOString().split("T")[0];
-                              if (!newCustomSlots[dateString]) {
-                                newCustomSlots[dateString] = [{ startTime: "", endTime: "", isValid: false }];
-                              }
-                            });
-                            Object.keys(newCustomSlots).forEach((dateString) => {
-                              if (!days.some((day) => day.toISOString().split("T")[0] === dateString)) {
-                                delete newCustomSlots[dateString];
-                              }
-                            });
-                            setCustomSlots(newCustomSlots);
-                          }
-                        }}
-                        className="rounded-md border"
-                      />
-                    </PopoverContent>
-                  </Popover>
-                  {Object.entries(customSlots).map(([dateString, slots]) => renderSlots(new Date(dateString).toDateString(), { [dateString]: slots }, setCustomSlots))}
+                  <div className="calendar-container bg-white border p-4 rounded-lg">
+                    <div className="flex justify-between items-center mb-4">
+                      <button type="button" className="text-black" onClick={handlePrevMonth}>&lt;</button>
+                      <span>{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
+                      <button type="button" className="text-black" onClick={handleNextMonth}>&gt;</button>
+                    </div>
+                    <div className="grid grid-cols-7 gap-1 text-center">
+                      {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
+                        <div key={day} className="text-sm font-medium">{day}</div>
+                      ))}
+                      {renderCalendar()}
+                    </div>
+                  </div>
+                  {Object.keys(customSlots).sort().map(dateString => renderSlotsForDate(dateString))}
                 </div>
               </RadioGroup>
             )}
