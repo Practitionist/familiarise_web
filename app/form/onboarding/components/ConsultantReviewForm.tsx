@@ -13,6 +13,43 @@ const ConsultantReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) =
     onSubmit(formData);
   };
 
+  const renderSchedule = () => {
+    if (formData.scheduleType === "weekly") {
+      return (
+        <div>
+          <h4 className="font-semibold">Weekly Schedule:</h4>
+          {Object.entries(formData.weeklySlots).map(([day, slots]: [string, any]) => (
+            <div key={day}>
+              <p>{day}:</p>
+              <ul>
+                {slots.map((slot: any, index: number) => (
+                  <li key={index}>{slot.startTime} - {slot.endTime}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      );
+    } else if (formData.scheduleType === "custom") {
+      return (
+        <div>
+          <h4 className="font-semibold">Custom Schedule:</h4>
+          {Object.entries(formData.customSlots).map(([date, slots]: [string, any]) => (
+            <div key={date}>
+              <p>{date}:</p>
+              <ul>
+                {slots.map((slot: any, index: number) => (
+                  <li key={index}>{slot.startTime} - {slot.endTime}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
     <div className="w-full max-w-md space-y-4">
       <Card>
@@ -33,14 +70,14 @@ const ConsultantReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) =
             <p>Experience: {formData.experience}</p>
             <p>Location: {formData.location}</p>
             <p>Description: {formData.description}</p>
-            <p>Tags: {formData.tags?.join(", ")}</p>
+            <p>Tags: {formData.tags}</p>
             <p>Domain: {formData.domain}</p>
-            <p>Sub-Domains: {formData.subDomains?.join(", ")}</p>
+            <p>Sub-Domains: {formData.subDomains}</p>
           </div>
           <div>
             <h3 className="font-semibold">Preferred Schedule</h3>
             <p>Schedule Type: {formData.scheduleType}</p>
-            {/* Display weekly or custom slots based on scheduleType */}
+            {renderSchedule()}
           </div>
         </CardContent>
       </Card>

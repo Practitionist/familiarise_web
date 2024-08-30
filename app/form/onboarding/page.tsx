@@ -63,25 +63,47 @@ const MultiStepForm: React.FC = () => {
   const handleSubmit = async (data: Partial<FormData>) => {
     const finalData = { ...formData, ...data };
     console.log("Final Submitted Data:", finalData);
-
+  
     try {
       const id = session?.user?.id;
       if (!id) {
         throw new Error("User ID not found");
       }
-
+  
       const response = await fetch(`/api/form/onboarding/${id}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(finalData),
+        body: JSON.stringify({
+          personalInfo: {
+            name: finalData.name,
+            email: finalData.email,
+            phone: finalData.phone,
+            address: finalData.address,
+          },
+          role: finalData.role,
+          consultantProfile: finalData.role === "CONSULTANT" ? {
+            specialization: finalData.specialization,
+            experience: finalData.experience,
+            location: finalData.location,
+            description: finalData.description,
+            tags: finalData.tags,
+            domain: finalData.domain,
+            subDomains: finalData.subDomains,
+            scheduleType: finalData.scheduleType,
+            weeklySlots: finalData.weeklySlots,
+            customSlots: finalData.customSlots,
+          } : undefined,
+          // Include other role-specific data here
+        }),
       });
-
+  
       if (!response.ok) {
-        throw new Error("Failed to update onboarding information");
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Failed to update onboarding information");
       }
-
+  
       const result = await response.json();
       console.log("Onboarding update successful:", result);
       // Handle successful update (e.g., show success message, redirect)
