@@ -35,6 +35,14 @@ interface Props {
 
 const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
+// New function to get local date string
+const getLocalDateString = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const day = date.getDate().toString().padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
   const { handleSubmit, watch, setValue, control } = useForm<PreferredSchedule>({
     resolver: zodResolver(preferredScheduleSchema),
@@ -226,7 +234,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
 
     for (let i = 1; i <= daysInMonth; i++) {
       const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), i);
-      const dateString = date.toISOString().split("T")[0];
+      const dateString = getLocalDateString(date);
       const isSelected = customSlots[dateString] !== undefined;
       days.push(
         <button
