@@ -81,6 +81,7 @@ const MultiStepForm: React.FC = () => {
             email: finalData.email,
             phone: finalData.phone,
             address: finalData.address,
+            currentTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone
           },
           role: finalData.role,
           consultantProfile: finalData.role === "CONSULTANT" ? {

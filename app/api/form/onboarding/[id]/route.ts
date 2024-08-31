@@ -38,6 +38,7 @@ export async function PATCH(
         address: body.personalInfo.address,
         role: body.role,
         onboardingCompleted: true,
+        currentTimezone: body.personalInfo.currentTimezone,
       },
     });
 

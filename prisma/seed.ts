@@ -53,6 +53,7 @@ async function createUsers(): Promise<UserWithProfiles[]> {
           image: faker.image.avatar(),
           phone: faker.phone.number(),
           address: faker.location.streetAddress(),
+          currentTimezone: faker.location.timeZone(),
           onboardingCompleted: faker.datatype.boolean(),
           role: userRole as UserRole,
           cookiePreferences: {
@@ -99,7 +100,6 @@ async function createUsers(): Promise<UserWithProfiles[]> {
                   ],
                   { min: 1, max: 3 }
                 ),
-                currentTimezone: faker.location.timeZone(),
                 scheduleType: faker.helpers.arrayElement([
                   "WEEKLY",
                   "CUSTOM",

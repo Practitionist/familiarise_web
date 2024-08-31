@@ -11,15 +11,17 @@ datasource db {
 ////////////////////////////////////////// DO NOT EDIT //////////////////////////////////////////
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  image         String?
-  phone         String?   @unique
-  address       String?   @unique
-  accounts      Account[] // This refers to the accounts that the user has connected
-  sessions      Session[] // This refers to the sessions that the user has opened
+  id              String    @id @default(cuid())
+  name            String?
+  email           String?   @unique
+  emailVerified   DateTime?
+  image           String?
+  phone           String?   @unique
+  address         String?   @unique
+  currentTimezone String
+
+  accounts Account[] // NextAuth Accounts
+  sessions Session[] // NextAuth Sessions
 
   onboardingCompleted Boolean?  @default(false)
   role                UserRole? @default(CONSULTEE)
@@ -367,11 +369,10 @@ model ConsultantProfile {
   domain     String
   subDomains String[]
 
-  onlineStatus    Boolean @default(false)
-  currentTimezone String
+  onlineStatus Boolean @default(false)
 
-  reviews ConsultantReview[]
-  scheduleType      ScheduleType
+  reviews      ConsultantReview[]
+  scheduleType ScheduleType
 
   slotsOfAvailabiltyWeekly SlotOfAvailabiltyWeekly[]
   slotsOfAvailabiltyCustom SlotOfAvailabiltyCustom[]
@@ -418,7 +419,7 @@ model ConsulteeProfile {
   domains                   Json
 
   slotsOfAppointment SlotOfAppointment[]
-  consultantReviews   ConsultantReview[]
+  consultantReviews  ConsultantReview[]
 
   user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId String @unique
@@ -558,12 +559,12 @@ model Consultation {
 }
 
 model SubscriptionPlan {
-  id            String                   @id @default(cuid())
-  duration      PlanDuration @default(ONE_MONTH) // Duration of the plan (e.g., 1 month, 3 months, 6 months, 12 months)
-  price         Int // Price in cents (e.g., 9900 for $99.00)
-  callsPerWeek  Int                      @default(1) // Number of calls allowed per week
-  videoMeetings Int                      @default(1) // Number of video meetings allowed per month
-  emailSupport  PlanEmailSupport @default(GENERAL) // Email support
+  id            String           @id @default(cuid())
+  duration      PlanDuration     @default(ONE_MONTH) 
+  price         Int 
+  callsPerWeek  Int              @default(1) 
+  videoMeetings Int              @default(1) 
+  emailSupport  PlanEmailSupport @default(GENERAL) 
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
@@ -573,7 +574,6 @@ model SubscriptionPlan {
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
 }
-
 
 model Subscription {
   id     String           @id @default(cuid())
@@ -610,10 +610,10 @@ model Webinar {
 
   title       String
   description String? @db.Text
-  price       Int? // Price in cents for attending the webinar
+  price       Int?
 
-  scheduledAt     DateTime? // Scheduled date and time for the webinar
-  durationInHours Float     @default(1.0) // Duration in hours
+  scheduledAt     DateTime?
+  durationInHours Float     @default(1.0)
 
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @default(now())
@@ -621,12 +621,12 @@ model Webinar {
 }
 
 model ClassPlan {
-  id            String            @id @default(cuid())
-  duration      PlanDuration      @default(ONE_MONTH) // Duration of the plan (e.g., 1 month, 3 months, 6 months, 12 months)
-  price         Int // Price in cents for the class plan
-  callsPerWeek  Int               @default(1) // Number of calls allowed per week
-  videoMeetings Int               @default(1) // Number of video meetings allowed per month
-  emailSupport  PlanEmailSupport  @default(GENERAL) // Email support level
+  id            String           @id @default(cuid())
+  duration      PlanDuration     @default(ONE_MONTH)
+  price         Int
+  callsPerWeek  Int              @default(1)
+  videoMeetings Int              @default(1)
+  emailSupport  PlanEmailSupport @default(GENERAL)
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
@@ -641,8 +641,8 @@ model Class {
   id          String    @id @default(cuid())
   title       String
   description String?   @db.Text
-  startDate   DateTime? 
-  endDate     DateTime? 
+  startDate   DateTime?
+  endDate     DateTime?
 
   classPlans  ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
