@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ScheduleType, DayOfWeek } from "@prisma/client";
+import { m } from "framer-motion";
 
 export async function PATCH(
   req: NextRequest,
@@ -120,7 +121,7 @@ export async function PATCH(
       },
     });
 
-    return NextResponse.json({ user }, { status: 200 });
+    return NextResponse.json({message: "Onboarding information updated successfully"}, { status: 200 });
   } catch (error) {
     console.error("Error during onboarding update:", error);
     return NextResponse.json(
@@ -219,18 +220,20 @@ function addBreaksToSlots(slots: any[]) {
       ...slot,
       slotStartTimeInUTC: new Date(new Date(slot.slotStartTimeInUTC).getTime() - 15 * 60 * 1000).toISOString(),
       slotEndTimeInUTC: slot.slotStartTimeInUTC,
-      isBreak: true,
     };
 
     const breakAfter = {
       ...slot,
       slotStartTimeInUTC: slot.slotEndTimeInUTC,
       slotEndTimeInUTC: new Date(new Date(slot.slotEndTimeInUTC).getTime() + 15 * 60 * 1000).toISOString(),
-      isBreak: true,
     };
 
     slotsWithBreaks.push(breakBefore, slot, breakAfter);
   }
 
-  return slotsWithBreaks;
+  return slotsWithBreaks.filter(slot => !isBreakSlot(slot));
+}
+
+function isBreakSlot(slot: any) {
+  return new Date(slot.slotEndTimeInUTC).getTime() - new Date(slot.slotStartTimeInUTC).getTime() === 15 * 60 * 1000;
 }
