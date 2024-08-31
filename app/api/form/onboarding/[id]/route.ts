@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { ScheduleType } from "@prisma/client";
+import { ScheduleType, DayOfWeek } from "@prisma/client";
 
 export async function PATCH(
   req: NextRequest,
@@ -9,22 +9,36 @@ export async function PATCH(
   try {
     const { id } = params;
     const body = await req.json();
-
-    if (!id) {
-      return NextResponse.json(
-        { error: "User ID is required" },
-        { status: 400 }
-      );
-    }
-
+   
     // Check if the user exists
     const existingUser = await prisma.user.findUnique({
       where: { id },
+      include: {
+        consultantProfile: {
+          include: {
+            slotsOfAvailabiltyWeekly: true,
+            slotsOfAvailabiltyCustom: true,
+          },
+        },
+        consulteeProfile: true,
+      },
     });
 
     if (!existingUser) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
+
+    await prisma.user.update({
+      where: { id },
+      data: {
+        name: body.personalInfo.name,
+        email: body.personalInfo.email,
+        phone: body.personalInfo.phone,
+        address: body.personalInfo.address,
+        role: body.role,
+        onboardingCompleted: true,
+      },
+    });
 
     let userProfileData: any = {};
     if (body.role === "CONSULTANT") {
@@ -37,7 +51,9 @@ export async function PATCH(
         scheduleType,
         weeklySlots,
         customSlots,
-      } = body;
+        description,
+        tags,
+      } = body.consultantProfile;
 
       const subDomainsArray =
         typeof subDomains === "string"
@@ -58,6 +74,9 @@ export async function PATCH(
               scheduleType: scheduleTypeEnum,
               onlineStatus: true,
               rating: 0,
+              description,
+              tags: typeof tags === "string" ? tags.split(",").map(tag => tag.trim()) : tags,
+              currentTimezone: "UTC", // Default timezone, adjust as needed
             },
             update: {
               specialization,
@@ -66,29 +85,26 @@ export async function PATCH(
               domain,
               subDomains: subDomainsArray,
               scheduleType: scheduleTypeEnum,
+              description,
+              tags: typeof tags === "string" ? tags.split(",").map(tag => tag.trim()) : tags,
             },
           },
         },
       };
 
-      if (
-        scheduleTypeEnum === ScheduleType.WEEKLY ||
-        scheduleTypeEnum === ScheduleType.CUSTOM
-      ) {
-        userProfileData.consultantProfile.upsert.create.slots = {
-          create: createSlotsArray({
-            scheduleType: scheduleTypeEnum,
-            weeklySlots,
-            customSlots,
-          }),
-        };
-        userProfileData.consultantProfile.upsert.update.slots = {
+      if (scheduleTypeEnum === ScheduleType.WEEKLY && weeklySlots) {
+        const existingWeeklySlots = existingUser.consultantProfile?.slotsOfAvailabiltyWeekly || [];
+        const updatedWeeklySlots = createWeeklySlots(weeklySlots, existingWeeklySlots);
+        userProfileData.consultantProfile.upsert.update.slotsOfAvailabiltyWeekly = {
           deleteMany: {},
-          create: createSlotsArray({
-            scheduleType: scheduleTypeEnum,
-            weeklySlots,
-            customSlots,
-          }),
+          create: updatedWeeklySlots,
+        };
+      } else if (scheduleTypeEnum === ScheduleType.CUSTOM && customSlots) {
+        const existingCustomSlots = existingUser.consultantProfile?.slotsOfAvailabiltyCustom || [];
+        const updatedCustomSlots = createCustomSlots(customSlots, existingCustomSlots);
+        userProfileData.consultantProfile.upsert.update.slotsOfAvailabiltyCustom = {
+          deleteMany: {},
+          create: updatedCustomSlots,
         };
       }
     } else if (body.role === "CONSULTEE") {
@@ -100,12 +116,6 @@ export async function PATCH(
     const user = await prisma.user.update({
       where: { id },
       data: {
-        name: body.name,
-        email: body.email,
-        phone: body.phone,
-        address: body.address,
-        role: body.role,
-        onboardingCompleted: true,
         ...userProfileData,
       },
     });
@@ -120,65 +130,107 @@ export async function PATCH(
   }
 }
 
-function createSlotsArray({
-  scheduleType,
-  weeklySlots,
-  customSlots,
-}: {
-  scheduleType: ScheduleType;
-  weeklySlots: any;
-  customSlots: any;
-}) {
-  const slots = [];
+function createWeeklySlots(weeklySlots: any, existingSlots: any[]) {
+  const updatedSlots = [];
 
-  if (scheduleType === ScheduleType.WEEKLY && weeklySlots) {
-    for (const [day, daySlots] of Object.entries(weeklySlots)) {
-      for (const slot of daySlots as any) {
-        slots.push({
-          dayOfWeek: day.toUpperCase(),
-          slotStartTimeInUTC: new Date(
-            Date.UTC(1970, 0, 1, ...slot.startTime.split(":").map(Number))
-          ).toISOString(),
-          slotEndTimeInUTC: new Date(
-            Date.UTC(1970, 0, 1, ...slot.endTime.split(":").map(Number))
-          ).toISOString(),
-          slotType: "WEEKLY",
-        });
+  for (const [day, daySlots] of Object.entries(weeklySlots)) {
+    for (const slot of daySlots as any) {
+      const newSlot = {
+        dayOfWeekforStartTimeInUTC: day.toUpperCase() as DayOfWeek,
+        slotStartTimeInUTC: new Date(`1970-01-01T${slot.startTime}:00Z`).toISOString(),
+        dayOfWeekforEndTimeInUTC: day.toUpperCase() as DayOfWeek,
+        slotEndTimeInUTC: new Date(`1970-01-01T${slot.endTime}:00Z`).toISOString(),
+      };
+
+      const overlappingSlot = findOverlappingWeeklySlot(existingSlots, newSlot);
+      if (overlappingSlot) {
+        // Update the existing slot
+        Object.assign(overlappingSlot, newSlot);
+        updatedSlots.push(overlappingSlot);
+      } else {
+        // Create a new slot
+        updatedSlots.push(newSlot);
       }
     }
   }
 
-  if (scheduleType === ScheduleType.CUSTOM && customSlots) {
-    for (const [date, dateSlots] of Object.entries(customSlots)) {
-      for (const slot of dateSlots as any) {
-        const dateObj = new Date(date);
-        const slotStartTimeInUTC = new Date(
-          Date.UTC(
-            dateObj.getUTCFullYear(),
-            dateObj.getUTCMonth(),
-            dateObj.getUTCDate(),
-            ...slot.startTime.split(":").map(Number)
-          )
-        ).toISOString();
+  return addBreaksToSlots(updatedSlots);
+}
 
-        const slotEndTimeInUTC = new Date(
-          Date.UTC(
-            dateObj.getUTCFullYear(),
-            dateObj.getUTCMonth(),
-            dateObj.getUTCDate(),
-            ...slot.endTime.split(":").map(Number)
-          )
-        ).toISOString();
+function createCustomSlots(customSlots: any, existingSlots: any[]) {
+  const updatedSlots = [];
 
-        slots.push({
-          date: dateObj.toISOString(),
-          slotStartTimeInUTC,
-          slotEndTimeInUTC,
-          slotType: "CUSTOM",
-        });
+  for (const [date, dateSlots] of Object.entries(customSlots)) {
+    for (const slot of dateSlots as any) {
+      const newSlot = {
+        slotStartTimeInUTC: new Date(`${date}T${slot.startTime}:00Z`).toISOString(),
+        slotEndTimeInUTC: new Date(`${date}T${slot.endTime}:00Z`).toISOString(),
+      };
+
+      const overlappingSlot = findOverlappingCustomSlot(existingSlots, newSlot);
+      if (overlappingSlot) {
+        // Update the existing slot
+        Object.assign(overlappingSlot, newSlot);
+        updatedSlots.push(overlappingSlot);
+      } else {
+        // Create a new slot
+        updatedSlots.push(newSlot);
       }
     }
   }
 
-  return slots;
+  return addBreaksToSlots(updatedSlots);
+}
+
+function findOverlappingWeeklySlot(existingSlots: any[], newSlot: any) {
+  return existingSlots.find(slot =>
+    slot.dayOfWeekforStartTimeInUTC === newSlot.dayOfWeekforStartTimeInUTC &&
+    isOverlapping(slot, newSlot)
+  );
+}
+
+function findOverlappingCustomSlot(existingSlots: any[], newSlot: any) {
+  return existingSlots.find(slot =>
+    isSameDay(new Date(slot.slotStartTimeInUTC), new Date(newSlot.slotStartTimeInUTC)) &&
+    isOverlapping(slot, newSlot)
+  );
+}
+
+function isOverlapping(slot1: any, slot2: any) {
+  const start1 = new Date(slot1.slotStartTimeInUTC);
+  const end1 = new Date(slot1.slotEndTimeInUTC);
+  const start2 = new Date(slot2.slotStartTimeInUTC);
+  const end2 = new Date(slot2.slotEndTimeInUTC);
+
+  return (start1 < end2 && start2 < end1);
+}
+
+function isSameDay(date1: Date, date2: Date) {
+  return date1.getUTCFullYear() === date2.getUTCFullYear() &&
+         date1.getUTCMonth() === date2.getUTCMonth() &&
+         date1.getUTCDate() === date2.getUTCDate();
+}
+
+function addBreaksToSlots(slots: any[]) {
+  const slotsWithBreaks = [];
+
+  for (const slot of slots) {
+    const breakBefore = {
+      ...slot,
+      slotStartTimeInUTC: new Date(new Date(slot.slotStartTimeInUTC).getTime() - 15 * 60 * 1000).toISOString(),
+      slotEndTimeInUTC: slot.slotStartTimeInUTC,
+      isBreak: true,
+    };
+
+    const breakAfter = {
+      ...slot,
+      slotStartTimeInUTC: slot.slotEndTimeInUTC,
+      slotEndTimeInUTC: new Date(new Date(slot.slotEndTimeInUTC).getTime() + 15 * 60 * 1000).toISOString(),
+      isBreak: true,
+    };
+
+    slotsWithBreaks.push(breakBefore, slot, breakAfter);
+  }
+
+  return slotsWithBreaks;
 }
