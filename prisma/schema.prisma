@@ -18,7 +18,7 @@ model User {
   image           String?
   phone           String?   @unique
   address         String?   @unique
-  currentTimezone String
+  currentTimezone String?
 
   accounts Account[] // NextAuth Accounts
   sessions Session[] // NextAuth Sessions

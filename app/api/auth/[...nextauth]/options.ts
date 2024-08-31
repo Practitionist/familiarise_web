@@ -105,6 +105,7 @@ const authOptions: NextAuthOptions = {
           session.user.address = user?.address ?? "";
           session.user.onboardingCompleted = user?.onboardingCompleted ?? false;
           session.user.role = user?.role ?? "CONSULTEE";
+          session.user.currentTimezone = user?.currentTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
         }
         return session;
       } catch (error) {

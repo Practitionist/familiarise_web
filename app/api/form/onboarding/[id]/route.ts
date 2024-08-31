@@ -78,7 +78,6 @@ export async function PATCH(
               rating: 0,
               description,
               tags: typeof tags === "string" ? tags.split(",").map(tag => tag.trim()) : tags,
-              currentTimezone: "UTC", // Default timezone, adjust as needed
             },
             update: {
               specialization,

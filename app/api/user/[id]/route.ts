@@ -44,13 +44,13 @@ export async function GET(
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-
     const user = await prisma.user.create({
       data: {
         name: body.name,
         email: body.email,
         emailVerified: body.emailVerified,
         image: body.image,
+        currentTimezone: body.currentTimezone,
         phone: body.phone,
         address: body.address,
         onboardingCompleted: body.onboardingCompleted,
