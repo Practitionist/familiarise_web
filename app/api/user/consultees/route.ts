@@ -28,12 +28,13 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-
     const newConsultee = await prisma.consulteeProfile.create({
       data: {
         location: body.location,
         onlineStatus: body.onlineStatus,
         currentTimezone: body.currentTimezone,
+        preferredLanguage: body.preferredLanguage,
+        domains: body.domains,
         user: { connect: { id: body.userId } },
       },
       include: {

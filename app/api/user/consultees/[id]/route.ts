@@ -32,12 +32,13 @@ export async function POST(
 ) {
   try {
     const body = await req.json();
-
     const createdConsultee = await prisma.consulteeProfile.create({
       data: {
         location: body.location,
         onlineStatus: body.onlineStatus,
         currentTimezone: body.currentTimezone,
+        preferredLanguage: body.preferredLanguage,
+        domains: body.domains,
         user: { connect: { id: params.id } },
       },
       include: {

@@ -1,7 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { ScheduleType, DayOfWeek } from "@prisma/client";
-import { m } from "framer-motion";
+import { DayOfWeek, ScheduleType } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function PATCH(
   req: NextRequest,

@@ -45,7 +45,6 @@ export async function POST(req: NextRequest) {
         domain: body.domain,
         subDomains: body.subDomains,
         onlineStatus: body.onlineStatus || false,
-        currentTimezone: body.currentTimezone,
         scheduleType: body.scheduleType,
         user: { connect: { id: body.userId } },
       },
