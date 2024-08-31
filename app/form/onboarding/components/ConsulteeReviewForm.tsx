@@ -2,10 +2,12 @@ import React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+import { ConsulteeProfile, ConsulteePreferences, PersonalInfoAndRole } from "@/schemas/UserSchema";
+
 interface Props {
-  onSubmit: (data: any) => void;
+  onSubmit: (data: ConsulteeProfile & ConsulteePreferences & PersonalInfoAndRole) => void;
   onBack: () => void;
-  formData: any;
+  formData: ConsulteeProfile & ConsulteePreferences & PersonalInfoAndRole;
 }
 
 const ConsulteeReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
@@ -29,18 +31,21 @@ const ConsulteeReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) =>
           </div>
           <div>
             <h3 className="font-semibold">Consultee Profile</h3>
-            <p>Location: {formData.location}</p>
+            <p>Education: {formData.education}</p>
+            <p>Occupation: {formData.occupation}</p>
+            <p>About Me: {formData.aboutMe}</p>
           </div>
           <div>
             <h3 className="font-semibold">Preferences</h3>
             <p>Preferred Communication Method: {formData.preferredCommunicationMethod}</p>
             <p>Preferred Language: {formData.preferredLanguage}</p>
             <p>Special Requirements: {formData.specialRequirements}</p>
-            <h4>Domains of Interest:</h4>
+            <h3 className="font-semibold">Interests</h3>
             <ul>
-              {formData.domains?.map((domain: any, index: number) => (
+              {formData.interests?.map((interest, index) => (
                 <li key={index}>
-                  {domain.name} - Subdomains: {domain.subdomains?.join(", ")}
+                  <p>Name: {interest.name}</p>
+                  <p>Skills: {interest.skills}</p>
                 </li>
               ))}
             </ul>

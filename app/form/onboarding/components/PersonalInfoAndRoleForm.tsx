@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   PersonalInfoAndRole,
-  personalInfoAndRoleSchema,
+  PersonalInfoAndRoleSchema,
 } from "@/schemas/UserSchema";
 
 interface Props {
@@ -21,7 +21,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
     control,
     formState: { errors },
   } = useForm<PersonalInfoAndRole>({
-    resolver: zodResolver(personalInfoAndRoleSchema),
+    resolver: zodResolver(PersonalInfoAndRoleSchema),
     defaultValues: initialData,
   });
 

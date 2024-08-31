@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ConsulteePreferences, consulteePreferencesSchema } from "@/schemas/UserSchema";
+import { ConsulteePreferences, ConsulteePreferencesSchema } from "@/schemas/UserSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React from "react";
 import { useFieldArray, useForm } from "react-hook-form";
@@ -22,13 +22,13 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
     control,
     setValue,
   } = useForm<ConsulteePreferences>({
-    resolver: zodResolver(consulteePreferencesSchema),
+    resolver: zodResolver(ConsulteePreferencesSchema),
     defaultValues: initialData,
   });
 
   const { fields, append, remove } = useFieldArray({
     control,
-    name: "domains",
+    name: "interests",
   });
 
   const onSubmit = (data: ConsulteePreferences) => {
@@ -38,22 +38,24 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="w-full max-w-md space-y-4">
       <div className="space-y-2">
-        <Label htmlFor="preferredConsultationMode">Preferred Consultation Mode</Label>
+        <Label htmlFor="preferredCommunicationMethod">Preferred Communication Method</Label>
         <Select
-          onValueChange={(value) => setValue("preferredConsultationMode", value as "VIDEO" | "AUDIO" | "IN_PERSON")}
-          defaultValue={initialData.preferredConsultationMode}
+          onValueChange={(value) => setValue("preferredCommunicationMethod", value as "VIDEO" | "AUDIO" | "IN_PERSON")}
+          defaultValue={initialData.preferredCommunicationMethod}
         >
           <SelectTrigger>
-            <SelectValue placeholder="Select consultation mode" />
+            <SelectValue placeholder="Select communication method" />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="bg-gray-200">
             <SelectItem value="VIDEO">Video</SelectItem>
+            <div className="border-t border-gray-300 my-1"></div>
             <SelectItem value="AUDIO">Audio</SelectItem>
+            <div className="border-t border-gray-300 my-1"></div>
             <SelectItem value="IN_PERSON">In Person</SelectItem>
           </SelectContent>
         </Select>
-        {errors.preferredConsultationMode && (
-          <p className="text-red-500">{errors.preferredConsultationMode.message}</p>
+        {errors.preferredCommunicationMethod && (
+          <p className="text-red-500">{errors.preferredCommunicationMethod.message}</p>
         )}
       </div>
 
@@ -72,29 +74,35 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
           <p className="text-red-500">{errors.specialRequirements.message}</p>
         )}
       </div>
-
       <div className="space-y-2">
         <Label>Domains of Interest</Label>
         {fields.map((field, index) => (
           <div key={field.id} className="flex space-x-2">
             <Input
               placeholder="Domain"
-              {...register(`domains.${index}.name`)}
+              {...register(`interests.${index}.name`)}
               defaultValue={field.name}
             />
             <Input
               placeholder="Subdomains (comma-separated)"
-              {...register(`domains.${index}.subdomains`)}
-              defaultValue={Array.isArray(field.subdomains) ? field.subdomains.join(", ") : field.subdomains}
+              {...register(`interests.${index}.skills`)}
+              defaultValue={Array.isArray(field.skills) ? field.skills.join(", ") : field.skills}
             />
             <Button type="button" variant="outline" onClick={() => remove(index)}>
               Remove
             </Button>
           </div>
         ))}
-        <Button type="button" variant="night" onClick={() => append({ name: "", subdomains: [] })}>
+        <Button type="button" variant="night" onClick={() => append({ name: "", skills: "" })}>
           Add Domain
         </Button>
+        {errors.interests && <p className="text-red-500">{errors.interests.message}</p>}
+        {fields.length === 0 && <p className="text-gray-500">No interests added</p>}
+        {fields.length > 0 && (
+          <p className="text-gray-500">
+            {fields.length} domain{fields.length > 1 ? "s" : ""} added
+          </p>
+        )}
       </div>
 
       <div className="flex justify-between">

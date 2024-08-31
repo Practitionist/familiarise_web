@@ -1,10 +1,10 @@
-import React from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { StaffProfile, staffProfileSchema } from "../../../../schemas/UserSchema";
+import { StaffProfile, StaffProfileSchema } from "@/schemas/UserSchema";
+import { zodResolver } from "@hookform/resolvers/zod";
+import React from "react";
+import { useForm } from "react-hook-form";
 
 interface Props {
   onNext: (data: Partial<StaffProfile>) => void;
@@ -22,7 +22,7 @@ const StaffProfileForm: React.FC<Props> = ({
     handleSubmit,
     formState: { errors },
   } = useForm<StaffProfile>({
-    resolver: zodResolver(staffProfileSchema),
+    resolver: zodResolver(StaffProfileSchema),
     defaultValues: initialData,
   });
 

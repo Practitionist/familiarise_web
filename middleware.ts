@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 import micromatch from "micromatch";
+import prisma from "./lib/prisma";
 
 // Constants for common URLs
 const SIGNIN_URL = "/auth/signin";
@@ -47,9 +48,32 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   // Handle protected routes
   if (isMatchingRoute(pathname, PROTECTED_ROUTES)) {
-    return isAuthenticated
-      ? NextResponse.next()
-      : NextResponse.redirect(new URL(SIGNIN_URL, req.url));
+    if (!isAuthenticated) {
+      return NextResponse.redirect(new URL(SIGNIN_URL, req.url));
+    }
+
+    // Check onboarding status for /form/onboarding route
+    if (pathname === '/form/onboarding') {
+
+      const onboardingCompleted = token.onboardingCompleted;
+      const role = token.role;
+      
+      const consultantProfileId = token.consultantProfileId;
+      const consulteeProfileId = token.consulteeProfileId;
+      const staffProfileId = token.staffProfileId;
+
+      if (onboardingCompleted) {
+        if (role === 'CONSULTANT' && consultantProfileId) {
+          return NextResponse.redirect(new URL(`/dashboard/consultant/${consultantProfileId}`, req.url));
+        } else if (role === 'CONSULTEE' && consulteeProfileId) {
+          return NextResponse.redirect(new URL(`/dashboard/consultee/${consulteeProfileId}`, req.url));
+        } else if (role === 'STAFF' && staffProfileId) {
+          return NextResponse.redirect(new URL(`/dashboard/staff/${staffProfileId}`, req.url));
+        }
+      }
+    }
+
+    return NextResponse.next();
   }
 
   // Handle public auth routes

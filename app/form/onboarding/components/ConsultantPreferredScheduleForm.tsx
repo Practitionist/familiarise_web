@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   PreferredSchedule,
-  preferredScheduleSchema,
+  PreferredScheduleSchema,
 } from "@/schemas/UserSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
@@ -45,7 +45,7 @@ const getLocalDateString = (date: Date): string => {
 
 const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
   const { handleSubmit, watch, setValue, control } = useForm<PreferredSchedule>({
-    resolver: zodResolver(preferredScheduleSchema),
+    resolver: zodResolver(PreferredScheduleSchema),
     defaultValues: initialData,
   });
   const scheduleType = watch("scheduleType");

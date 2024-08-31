@@ -1,7 +1,7 @@
 // schemas/userSchema.ts
 import { z } from "zod";
 
-export const personalInfoAndRoleSchema = z.object({
+export const PersonalInfoAndRoleSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Invalid email address"),
   role: z.enum(["CONSULTANT", "CONSULTEE", "STAFF"]),
@@ -9,14 +9,14 @@ export const personalInfoAndRoleSchema = z.object({
   address: z.string().optional(),
 });
 
-export type PersonalInfoAndRole = z.infer<typeof personalInfoAndRoleSchema>;
+export type PersonalInfoAndRole = z.infer<typeof PersonalInfoAndRoleSchema>;
 
 const slotSchema = z.object({
   startTime: z.string(),
   endTime: z.string(),
 });
 
-export const consultantProfileSchema = z.object({
+export const ConsultantProfileSchema = z.object({
   description: z.string().optional(),
   specialization: z.string().min(1, "Specialization is required"),
   experience: z.string().min(1, "Experience is required"),
@@ -29,40 +29,40 @@ export const consultantProfileSchema = z.object({
   customSlots: z.record(z.array(slotSchema)),
 });
 
-export type ConsultantProfile = z.infer<typeof consultantProfileSchema>;
+export type ConsultantProfile = z.infer<typeof ConsultantProfileSchema>;
 
-export const consulteeProfileSchema = z.object({
-  location: z.string().optional(),
+export const ConsulteeProfileSchema = z.object({
+  education: z.string().optional(),
+  occupation: z.string().optional(),
+  aboutMe: z.string().optional(),
 });
 
-export type ConsulteeProfile = z.infer<typeof consulteeProfileSchema>;
+export type ConsulteeProfile = z.infer<typeof ConsulteeProfileSchema>;
 
-const domainSchema = z.object({
-  name: z.string(),
-  subdomains: z.array(z.string()).optional(),
-});
-
-export const consulteePreferencesSchema = z.object({
-  preferredConsultationMode: z.enum(["VIDEO", "AUDIO", "IN_PERSON"]),
+export const ConsulteePreferencesSchema = z.object({
+  preferredCommunicationMethod: z.enum(["VIDEO", "AUDIO", "IN_PERSON"]),
   preferredLanguage: z.string(),
   specialRequirements: z.string().optional(),
-  domains: z.array(domainSchema),
+  interests: z.array(z.object({
+    name: z.string(),
+    skills: z.string().optional(),
+  })).optional(),
 });
 
-export type ConsulteePreferences = z.infer<typeof consulteePreferencesSchema>;
+export type ConsulteePreferences = z.infer<typeof ConsulteePreferencesSchema>;
 
-export const staffProfileSchema = z.object({
+export const StaffProfileSchema = z.object({
   department: z.string().min(1, "Department is required"),
   position: z.string().min(1, "Position is required"),
 });
 
-export type StaffProfile = z.infer<typeof staffProfileSchema>;
+export type StaffProfile = z.infer<typeof StaffProfileSchema>;
 
-export const staffResponsibilitiesSchema = z.object({
+export const StaffResponsibilitiesSchema = z.object({
   responsibilities: z.string().min(1, "Responsibilities are required"),
 });
 
-export type StaffResponsibilities = z.infer<typeof staffResponsibilitiesSchema>;
+export type StaffResponsibilities = z.infer<typeof StaffResponsibilitiesSchema>;
 
 export const WeeklySlotSchema = z.object({
   day: z.enum(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']),
@@ -76,7 +76,7 @@ export const CustomSlotSchema = z.object({
   endTime: z.string(),
 });
 
-export const preferredScheduleSchema = z.object({
+export const PreferredScheduleSchema = z.object({
   scheduleType: z.enum(['weekly', 'custom']),
   weeklySlots: z.record(z.array(slotSchema)),
   customSlots: z.record(z.array(slotSchema)),
@@ -84,4 +84,4 @@ export const preferredScheduleSchema = z.object({
 
 export type WeeklySlot = z.infer<typeof WeeklySlotSchema>;
 export type CustomSlot = z.infer<typeof CustomSlotSchema>;
-export type PreferredSchedule = z.infer<typeof preferredScheduleSchema>;
+export type PreferredSchedule = z.infer<typeof PreferredScheduleSchema>;

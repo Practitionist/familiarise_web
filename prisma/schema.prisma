@@ -11,27 +11,30 @@ datasource db {
 ////////////////////////////////////////// DO NOT EDIT //////////////////////////////////////////
 
 model User {
-  id              String    @id @default(cuid())
-  name            String?
-  email           String?   @unique
-  emailVerified   DateTime?
-  image           String?
-  phone           String?   @unique
-  address         String?   @unique
-  currentTimezone String?
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  phone         String?   @unique
+  address       String?   @unique
 
   accounts Account[] // NextAuth Accounts
   sessions Session[] // NextAuth Sessions
 
+  currentTimezone     String?
   onboardingCompleted Boolean?  @default(false)
   role                UserRole? @default(CONSULTEE)
 
+  // Relations
   consultantProfile   ConsultantProfile?
   consultantProfileId String?            @unique
+  consulteeProfile    ConsulteeProfile?
+  consulteeProfileId  String?            @unique
+  staffProfile        StaffProfile?
+  staffProfileId      String?            @unique
 
-  consulteeProfile   ConsulteeProfile?
-  consulteeProfileId String?           @unique
-
+  // Social Engagement Template
   attachments             Attachment[]
   comments                Comment[]
   commentLikes            CommentLike[]
@@ -407,16 +410,17 @@ model ConsultantReview {
 }
 
 model ConsulteeProfile {
-  id       String  @id @default(uuid())
-  location String?
+  id         String  @id @default(uuid())
+  education  String?
+  occupation String?
+  aboutMe    String?
 
-  onlineStatus    Boolean
-  currentTimezone String
+  onlineStatus Boolean
 
-  preferredConsultationMode ConsultationMode @default(VIDEO)
-  preferredLanguage         String
-  specialRequirements       String?
-  domains                   Json
+  preferredCommunicationMethod ConsultationMode? @default(VIDEO)
+  preferredLanguage            String?
+  specialRequirements          String?
+  interests                    String?
 
   slotsOfAppointment SlotOfAppointment[]
   consultantReviews  ConsultantReview[]
@@ -434,6 +438,22 @@ enum ConsultationMode {
   VIDEO
   AUDIO
   IN_PERSON
+}
+
+model StaffProfile {
+  id               String  @id @default(uuid())
+  department       String?
+  position         String?
+  permissions      Json?
+  responsibilities Json?
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model SlotOfAvailabiltyWeekly {
@@ -560,11 +580,11 @@ model Consultation {
 
 model SubscriptionPlan {
   id            String           @id @default(cuid())
-  duration      PlanDuration     @default(ONE_MONTH) 
-  price         Int 
-  callsPerWeek  Int              @default(1) 
-  videoMeetings Int              @default(1) 
-  emailSupport  PlanEmailSupport @default(GENERAL) 
+  duration      PlanDuration     @default(ONE_MONTH)
+  price         Int
+  callsPerWeek  Int              @default(1)
+  videoMeetings Int              @default(1)
+  emailSupport  PlanEmailSupport @default(GENERAL)
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?

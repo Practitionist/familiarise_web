@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   ConsulteeProfile,
-  consulteeProfileSchema,
-} from "../../../../schemas/UserSchema";
+  ConsulteeProfileSchema,
+} from "@/schemas/UserSchema";
+import { Textarea } from "@/components/ui/textarea";
 
 interface Props {
   onNext: (data: Partial<ConsulteeProfile>) => void;
@@ -23,9 +24,9 @@ const ConsulteeProfileForm: React.FC<Props> = ({
   const {
     register,
     handleSubmit,
-    formState: { errors },
+    formState: { errors, isSubmitting },
   } = useForm<ConsulteeProfile>({
-    resolver: zodResolver(consulteeProfileSchema),
+    resolver: zodResolver(ConsulteeProfileSchema),
     defaultValues: initialData,
   });
 
@@ -33,16 +34,34 @@ const ConsulteeProfileForm: React.FC<Props> = ({
     onNext(data);
   };
 
+  console.log("Current form errors:", errors);
+
   return (
     <form
       onSubmit={handleSubmit(onSubmit)}
       className="w-full max-w-md space-y-4"
     >
       <div className="space-y-2">
-        <Label htmlFor="location">Location</Label>
-        <Input id="location" {...register("location")} />
-        {errors.location && (
-          <p className="text-red-500">{errors.location.message}</p>
+        <Label htmlFor="education">Education</Label>
+        <Input id="education" {...register("education")} />
+        {errors.education && (
+          <p className="text-red-500">{errors.education.message}</p>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="occupation">Occupation</Label>
+        <Input id="occupation" {...register("occupation")} />
+        {errors.occupation && (
+          <p className="text-red-500">{errors.occupation.message}</p>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="aboutMe">About Me</Label>
+        <Textarea id="aboutMe" {...register("aboutMe")} />
+        {errors.aboutMe && (
+          <p className="text-red-500">{errors.aboutMe.message}</p>
         )}
       </div>
 
@@ -50,8 +69,13 @@ const ConsulteeProfileForm: React.FC<Props> = ({
         <Button type="button" onClick={onBack} variant="outline">
           Back
         </Button>
-        <Button type="submit" variant="night">
-          Next
+        <Button 
+          type="submit" 
+          variant="night"
+          disabled={isSubmitting}
+          onClick={() => console.log("Next button clicked")}
+        >
+          {isSubmitting ? "Submitting..." : "Next"}
         </Button>
       </div>
     </form>

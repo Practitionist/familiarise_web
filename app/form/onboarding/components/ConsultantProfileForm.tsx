@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React from "react";
 import { Controller, useForm } from "react-hook-form";
-import { ConsultantProfile, consultantProfileSchema } from "@/schemas/UserSchema";
+import { ConsultantProfile, ConsultantProfileSchema } from "@/schemas/UserSchema";
 
 interface Props {
   onNext: (data: Partial<ConsultantProfile>) => void;
@@ -24,7 +24,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
     control,
     formState: { errors },
   } = useForm<ConsultantProfile>({
-    resolver: zodResolver(consultantProfileSchema),
+    resolver: zodResolver(ConsultantProfileSchema),
     defaultValues: {
       ...initialData,
       scheduleType: initialData.scheduleType || 'weekly',

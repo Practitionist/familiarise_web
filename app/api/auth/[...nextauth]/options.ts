@@ -1,12 +1,11 @@
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
-import { Account, NextAuthOptions, Profile, Session, User } from "next-auth";
-import { AdapterUser } from "next-auth/adapters";
+import { NextAuthOptions, User } from "next-auth";
 import { JWT } from "next-auth/jwt";
 import GitHubProvider from "next-auth/providers/github";
 import GoogleProvider from "next-auth/providers/google";
+import { Account, Session } from "next-auth";
 import prisma from "@/lib/prisma";
 
-// DONT EXPORT authOptions if using Docker
 const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
   providers: [
@@ -21,128 +20,82 @@ const authOptions: NextAuthOptions = {
   ],
   session: { strategy: "jwt" },
   jwt: {
-    maxAge: 30 * (24 * 60 * 60), // 30 days
+    maxAge: 30 * 24 * 60 * 60, // 30 days
     secret: process.env.JWT_SECRET!,
   },
 
   callbacks: {
-    async signIn({
-      user,
-      account,
-      profile,
-      email,
-      credentials,
-    }: {
-      user: User | AdapterUser;
-      account: Account | null;
-      profile?: Profile;
-      email?: string | { verificationRequest?: boolean };
-      credentials?: any;
-    }): Promise<boolean | string> {
-      try {
-        // Add any custom sign-in logic here
-        return true;
-      } catch (error) {
-        console.error("Error during sign-in:", error);
-        // Handle the error as needed
-        return false; // or redirect to an error page
-      }
+    async signIn({ user }: { user: User }) {
+      return !!user;
     },
 
-    async jwt({
-      token,
-      user,
-      account,
-      profile,
-      isNewUser,
-    }: {
-      token: JWT;
-      user: User | AdapterUser;
-      account: Account | null;
-      profile?: Profile;
-      isNewUser?: boolean;
-    }): Promise<any> {
-      try {
+    async jwt({ token, user, account }: { token: JWT; user: User | undefined; account: Account | null }) {
+      if (user) {
+        token.sub = user.id;
+        const dbUser = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: {
+            onboardingCompleted: true,
+            role: true,
+            consultantProfile: { select: { id: true } },
+            consulteeProfile: { select: { id: true } },
+            staffProfile: { select: { id: true } },
+          },
+        });
+
+        token.onboardingCompleted = dbUser?.onboardingCompleted;
+        token.role = dbUser?.role;
+        token.consultantProfileId = dbUser?.consultantProfile?.id;
+        token.consulteeProfileId = dbUser?.consulteeProfile?.id;
+        token.staffProfileId = dbUser?.staffProfile?.id;
+      } else if (account?.providerAccountId) {
+        token.accountId = account.providerAccountId;
+      }
+      return token;
+    },
+
+    async session({ session, token }: { session: Session; token: JWT }) {
+      if (session?.user && token.sub) {
+        session.user.id = token.sub;
+
+        const user = await prisma.user.findUnique({
+          where: { email: session.user.email ?? "" },
+          select: {
+            email: true,
+            name: true,
+            image: true,
+            phone: true,
+            address: true,
+            onboardingCompleted: true,
+            role: true,
+            currentTimezone: true,
+            consultantProfile: { select: { id: true } },
+            consulteeProfile: { select: { id: true } },
+            staffProfile: { select: { id: true } },
+          },
+        });
+
         if (user) {
-          token.sub = user.id;
-        } else if (account?.providerAccountId) {
-          token.accountId = account.providerAccountId;
-        } else if (profile) {
-          token.profile = profile;
-        }
-        // Optionally handle isNewUser or other properties
-        return token;
-      } catch (error) {
-        console.error("Error during JWT callback:", error);
-        // Handle the error as needed
-        return token; // Ensure token is returned even in error cases
-      }
-    },  
-
-    async session({
-      session,
-      token,
-      user,
-    }: {
-      session: Session;
-      token: JWT;
-      user: User | AdapterUser;
-    }): Promise<any> {
-      try {
-        if (session?.user && token.sub) {
-          session.user.id = token.sub;
-
-          const user = await prisma.user.findUnique({
-            where: {
-              email: session.user.email ?? "",
-            },
+          Object.assign(session.user, {
+            ...user,
+            phone: user.phone ?? "",
+            address: user.address ?? "",
+            onboardingCompleted: user.onboardingCompleted ?? false,
+            role: user.role ?? "CONSULTEE",
+            currentTimezone: user.currentTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+            consultantProfileId: user.consultantProfile?.id,
+            consulteeProfileId: user.consulteeProfile?.id,
+            staffProfileId: user.staffProfile?.id,
           });
-
-          session.user.email = user?.email;
-          session.user.name = user?.name;
-          session.user.image = user?.image;
-          session.user.phone = user?.phone ?? "";
-          session.user.address = user?.address ?? "";
-          session.user.onboardingCompleted = user?.onboardingCompleted ?? false;
-          session.user.role = user?.role ?? "CONSULTEE";
-          session.user.currentTimezone = user?.currentTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
         }
-        return session;
-      } catch (error) {
-        console.error("Error during session callback:", error);
-        // Handle the error as needed, such as setting default values
-        return session;
       }
+      return session;
     },
 
-    async redirect({
-      url,
-      baseUrl,
-    }: {
-      url: string;
-      baseUrl: string;
-    }): Promise<string> {
-      try {
-        return baseUrl + "/dashboard";
-      } catch (error) {
-        console.error("Error during redirect callback:", error);
-        // Handle the error as needed
-        return baseUrl;
-      }
+    async redirect({ baseUrl }: { baseUrl: string }) {
+      return `${baseUrl}/explore/experts`;
     },
   },
-  // theme: {
-  //   colorScheme: "auto", // "auto" | "dark" | "light"
-  //   brandColor: "", // Hex color value
-  //   logo: "", // Absolute URL to logo image
-  // },
-  // pages: {
-  //   signIn: "/auth/signin",
-  //   signOut: "/auth/signout",
-  //   error: "/auth/error",
-  //   verifyRequest: "/auth/verify-request",
-  //   // newUser: null, // If set, new users will be directed here on first sign in
-  // }
 };
 
 export default authOptions;

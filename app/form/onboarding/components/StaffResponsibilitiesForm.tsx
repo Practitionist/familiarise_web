@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { StaffResponsibilities, staffResponsibilitiesSchema } from "@/schemas/UserSchema";
+import { StaffResponsibilities, StaffResponsibilitiesSchema } from "@/schemas/UserSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React from "react";
 import { useForm } from "react-hook-form";
@@ -16,7 +16,7 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({ onNext, onBack, initialDat
     handleSubmit,
     formState: { errors },
   } = useForm<StaffResponsibilities>({
-    resolver: zodResolver(staffResponsibilitiesSchema),
+    resolver: zodResolver(StaffResponsibilitiesSchema),
     defaultValues: initialData,
   });
 

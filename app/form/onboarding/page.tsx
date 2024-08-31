@@ -1,18 +1,20 @@
 "use client";
+import { toast } from "@/components/ui/use-toast";
 import {
   ConsultantProfile,
+  ConsulteePreferences,
   ConsulteeProfile,
   PersonalInfoAndRole,
+  PersonalInfoAndRoleSchema,
+  PreferredSchedule,
   StaffProfile,
-  personalInfoAndRoleSchema,
-  ConsulteePreferences,
-  StaffResponsibilities,
-  PreferredSchedule
+  StaffResponsibilities
 } from "@/schemas/UserSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import React, { useState } from "react";
-import { FormProvider, useForm, UseFormReturn } from "react-hook-form";
+import { FormProvider, useForm } from "react-hook-form";
 import ProgressIndicator from "../consultant/plans/components/ui/ProgressIndicator";
 import ConsultantAgreementForm from "./components/ConsultantAgreementForm";
 import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
@@ -28,11 +30,12 @@ import StaffProfileForm from "./components/StaffProfileForm";
 import StaffResponsibilitiesForm from "./components/StaffResponsibilitiesForm";
 import StaffReviewForm from "./components/StaffReviewForm";
 
+
 type FormData = PersonalInfoAndRole &
   Partial<ConsultantProfile> &
-  Partial<ConsulteeProfile> &
+  ConsulteeProfile &
+  ConsulteePreferences &
   Partial<StaffProfile> &
-  Partial<ConsulteePreferences> &
   Partial<StaffResponsibilities> &
   Partial<PreferredSchedule> &
   Partial<{
@@ -41,12 +44,13 @@ type FormData = PersonalInfoAndRole &
   }>;
 
 const MultiStepForm: React.FC = () => {
-  const { data: session } = useSession();
+  const { data: session, update: updateSession } = useSession();
   const [step, setStep] = useState(0);
   const [formData, setFormData] = useState<FormData>({} as FormData);
+  const router = useRouter();
 
   const methods = useForm<FormData>({
-    resolver: zodResolver(personalInfoAndRoleSchema),
+    resolver: zodResolver(PersonalInfoAndRoleSchema),
     defaultValues: {} as FormData,
   });
 
@@ -96,7 +100,18 @@ const MultiStepForm: React.FC = () => {
             weeklySlots: finalData.weeklySlots,
             customSlots: finalData.customSlots,
           } : undefined,
-          // Include other role-specific data here
+          consulteeProfile: finalData.role === "CONSULTEE" ? {
+            location: finalData.location,
+            preferredCommunicationMethod: finalData.preferredCommunicationMethod,
+            preferredLanguage: finalData.preferredLanguage,
+            specialRequirements: finalData.specialRequirements,
+            interests: finalData.interests,
+          } : undefined,
+          staffProfile: finalData.role === "STAFF" ? {
+            department: finalData.department,
+            position: finalData.position,
+            responsibilities: finalData.responsibilities,
+          } : undefined,
         }),
       });
   
@@ -106,11 +121,43 @@ const MultiStepForm: React.FC = () => {
       }
   
       const result = await response.json();
-      console.log("Onboarding update successful:", result);
-      // Handle successful update (e.g., show success message, redirect)
-    } catch (error) {
+      toast({
+        title: "Onboarding Completed",
+        description: "Your onboarding information has been updated successfully.",
+        variant: "default",
+      })
+  
+      // Update the session
+      await updateSession({
+        ...session,
+        user: {
+          ...session?.user,
+          onboardingCompleted: true,
+          role: finalData.role,
+          consultantProfileId: result.consultantProfileId,
+          consulteeProfileId: result.consulteeProfileId,
+          staffProfileId: result.staffProfileId,
+        },
+      });
+  
+      // Redirect based on the user's role
+      if (finalData.role === "CONSULTANT" && result.consultantProfileId) {
+        router.push(`/dashboard/${result.consultantProfileId}`);
+      } else if (finalData.role === "CONSULTEE" && result.consulteeProfileId) {
+        router.push(`/dashboard/consultee/${result.consulteeProfileId}`);
+      } else if (finalData.role === "STAFF" && result.staffProfileId) {
+        router.push(`/dashboard/staff/${result.staffProfileId}`);
+      } else {
+        router.push('/dashboard');
+      }
+  
+    } catch (error : unknown) {
       console.error("Error updating onboarding information:", error);
-      // Handle error (e.g., show error message)
+      toast({
+        title: "Failed to Update Onboarding Information",
+        description: `${error}`,
+        variant: "destructive",
+      });
     }
   };
 

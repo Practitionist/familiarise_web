@@ -9,7 +9,7 @@ export async function PATCH(
   try {
     const { id } = params;
     const body = await req.json();
-   
+
     // Check if the user exists
     const existingUser = await prisma.user.findUnique({
       where: { id },
@@ -28,7 +28,7 @@ export async function PATCH(
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    await prisma.user.update({
+    const updatedUser = await prisma.user.update({
       where: { id },
       data: {
         name: body.personalInfo.name,
@@ -107,24 +107,68 @@ export async function PATCH(
           create: updatedCustomSlots,
         };
       }
+      // ... existing code ...
+
     } else if (body.role === "CONSULTEE") {
-      // Handle CONSULTEE profile (unchanged)
-    } else if (body.role === "STAFF") {
-      // Handle STAFF profile if needed (unchanged)
+      // Handle consultee profile update
+      const consulteeProfileData = {
+        preferredCommunicationMethod: body.consulteeProfile.preferredCommunicationMethod,
+        preferredLanguage: body.consulteeProfile.preferredLanguage,
+        specialRequirements: body.consulteeProfile.specialRequirements,
+        onlineStatus: true,
+        interests: JSON.stringify(body.consulteeProfile.interests) // Convert interests to a JSON string
+      };
+    
+      const consulteeProfile = await prisma.consulteeProfile.upsert({
+        where: { userId: id },
+        update: {
+          preferredCommunicationMethod: consulteeProfileData.preferredCommunicationMethod,
+          preferredLanguage: consulteeProfileData.preferredLanguage,
+          specialRequirements: consulteeProfileData.specialRequirements,
+          onlineStatus: consulteeProfileData.onlineStatus,
+          interests: { set: JSON.parse(consulteeProfileData.interests) }
+        },
+        create: {
+          userId: id,
+          preferredCommunicationMethod: consulteeProfileData.preferredCommunicationMethod,
+          preferredLanguage: consulteeProfileData.preferredLanguage,
+          specialRequirements: consulteeProfileData.specialRequirements,
+          onlineStatus: consulteeProfileData.onlineStatus,
+          interests: JSON.parse(consulteeProfileData.interests)
+        },
+      });
+
+      userProfileData.consulteeProfileId = consulteeProfile.id;
+
+    } if (body.role === "STAFF") {
+      // Handle staff profile update
+      const staffProfile = await prisma.staffProfile.upsert({
+        where: { userId: id },
+        update: {
+          department: body.staffProfile.department,
+          position: body.staffProfile.position,
+          responsibilities: body.staffProfile.responsibilities,
+        },
+        create: {
+          userId: id,
+          department: body.staffProfile.department,
+          position: body.staffProfile.position,
+          responsibilities: body.staffProfile.responsibilities,
+        },
+      });
+
+      userProfileData.staffProfileId = staffProfile.id;
     }
 
-    const user = await prisma.user.update({
-      where: { id },
-      data: {
-        ...userProfileData,
-      },
+    return NextResponse.json({
+      message: "Onboarding information updated successfully",
+      user: updatedUser,
+      ...userProfileData,
     });
-
-    return NextResponse.json({message: "Onboarding information updated successfully"}, { status: 200 });
-  } catch (error) {
-    console.error("Error during onboarding update:", error);
+  } catch (error: unknown) {
+    console.error("Error updating onboarding information:", error);
     return NextResponse.json(
-      { error: "Failed to update onboarding information" },
+      { error: error instanceof Error ? error.message : "Something went wrong" },
       { status: 500 }
     );
   }
@@ -207,8 +251,8 @@ function isOverlapping(slot1: any, slot2: any) {
 
 function isSameDay(date1: Date, date2: Date) {
   return date1.getUTCFullYear() === date2.getUTCFullYear() &&
-         date1.getUTCMonth() === date2.getUTCMonth() &&
-         date1.getUTCDate() === date2.getUTCDate();
+    date1.getUTCMonth() === date2.getUTCMonth() &&
+    date1.getUTCDate() === date2.getUTCDate();
 }
 
 function addBreaksToSlots(slots: any[]) {
