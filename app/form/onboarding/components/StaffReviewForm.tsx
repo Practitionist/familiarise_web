@@ -1,6 +1,6 @@
-import React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import React from "react";
 
 interface Props {
   onSubmit: (data: any) => void;
@@ -33,8 +33,19 @@ const StaffReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
             <p>Position: {formData.position}</p>
           </div>
           <div>
-            <h3 className="font-semibold">Responsibilities</h3>
-            {/* Add staff responsibilities here once they are defined in the StaffResponsibilitiesForm */}
+            <h3 className="font-semibold">Responsibilities and Permissions</h3>
+            <h4 className="font-medium mt-2">Responsibilities:</h4>
+            <ul className="list-disc list-inside">
+              {formData.responsibilities?.map((responsibility: string, index: number) => (
+                <li key={index}>{responsibility}</li>
+              ))}
+            </ul>
+            <h4 className="font-medium mt-2">Permissions:</h4>
+            <ul className="list-disc list-inside">
+              {formData.permissions?.map((permission: string, index: number) => (
+                <li key={index}>{permission}</li>
+              ))}
+            </ul>
           </div>
         </CardContent>
       </Card>

@@ -59,7 +59,8 @@ export const StaffProfileSchema = z.object({
 export type StaffProfile = z.infer<typeof StaffProfileSchema>;
 
 export const StaffResponsibilitiesSchema = z.object({
-  responsibilities: z.string().min(1, "Responsibilities are required"),
+  permissions: z.array(z.string()).min(1, "Permissions are required"),
+  responsibilities: z.array(z.string()).min(1, "Responsibilities are required"),
 });
 
 export type StaffResponsibilities = z.infer<typeof StaffResponsibilitiesSchema>;

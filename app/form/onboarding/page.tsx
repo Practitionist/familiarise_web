@@ -113,6 +113,7 @@ const MultiStepForm: React.FC = () => {
             department: finalData.department,
             position: finalData.position,
             responsibilities: finalData.responsibilities,
+            permissions: finalData.permissions,
           } : undefined,
         }),
       });

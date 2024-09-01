@@ -46,7 +46,7 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
           <SelectTrigger>
             <SelectValue placeholder="Select communication method" />
           </SelectTrigger>
-          <SelectContent className="bg-gray-200">
+          <SelectContent className="bg-slate-100">
             <SelectItem value="VIDEO">Video</SelectItem>
             <div className="border-t border-gray-300 my-1"></div>
             <SelectItem value="AUDIO">Audio</SelectItem>

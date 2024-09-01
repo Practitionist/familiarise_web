@@ -136,6 +136,7 @@ export async function PATCH(
       const staffProfileData = {
         department: body.staffProfile.department,
         position: body.staffProfile.position,
+        permissions: body.staffProfile.permissions,
         responsibilities: body.staffProfile.responsibilities,
       };
 
