@@ -156,16 +156,16 @@ const MultiStepForm: React.FC = () => {
       });
   
       // Redirect based on the user's role
-      if (finalData.role === "CONSULTANT" && result.consultantProfileId) {
-        router.push(`/dashboard/${result.consultantProfileId}`);
-      } else if (finalData.role === "CONSULTEE" && result.consulteeProfileId) {
-        router.push(`/dashboard/consultee/${result.consulteeProfileId}`);
-      } else if (finalData.role === "STAFF" && result.staffProfileId) {
-        router.push(`/dashboard/staff/${result.staffProfileId}`);
+      if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
+        router.push(`/dashboard/consultant/${result.user.consultantProfileId}`);
+      } else if (finalData.role === "CONSULTEE" && result.user.consulteeProfileId) {
+        router.push(`/dashboard/consultee/${result.user.consulteeProfileId}`);
+      } else if (finalData.role === "STAFF" && result.user.staffProfileId) {
+        router.push(`/dashboard/staff/${result.user.staffProfileId}`);
       } else {
         router.push('/dashboard');
       }
-  
+      
     } catch (error: unknown) {
       console.error("Error updating onboarding information:", error);
       if (error instanceof Error) {
