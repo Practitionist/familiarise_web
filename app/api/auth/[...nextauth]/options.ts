@@ -23,7 +23,7 @@ const authOptions: NextAuthOptions = {
     maxAge: 30 * 24 * 60 * 60, // 30 days
     secret: process.env.JWT_SECRET!,
   },
-
+  secret: process.env.NEXTAUTH_SECRET!,
   callbacks: {
     async signIn({ user }: { user: User }) {
       return !!user;

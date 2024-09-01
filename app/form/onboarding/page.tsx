@@ -11,7 +11,7 @@ import {
   StaffResponsibilities
 } from "@/schemas/UserSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useSession } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
@@ -71,7 +71,7 @@ const MultiStepForm: React.FC = () => {
     try {
       const id = session?.user?.id;
       if (!id) {
-        throw new Error("User ID not found");
+        throw new Error("User ID not found in session");
       }
   
       const response = await fetch(`/api/form/onboarding/${id}`, {
@@ -101,7 +101,9 @@ const MultiStepForm: React.FC = () => {
             customSlots: finalData.customSlots,
           } : undefined,
           consulteeProfile: finalData.role === "CONSULTEE" ? {
-            location: finalData.location,
+            education: finalData.education,
+            occupation: finalData.occupation,
+            aboutMe: finalData.aboutMe,
             preferredCommunicationMethod: finalData.preferredCommunicationMethod,
             preferredLanguage: finalData.preferredLanguage,
             specialRequirements: finalData.specialRequirements,
@@ -117,7 +119,20 @@ const MultiStepForm: React.FC = () => {
   
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || "Failed to update onboarding information");
+        if (response.status === 404) {
+          toast({
+            title: "User Not Found in Database",
+            description: "Please sign out and sign in again.",
+            variant: "destructive",
+          });
+          signOut();
+          return
+        }
+        toast({
+          title: "Error",
+          description: errorData.message || "Failed to update onboarding information",
+          variant: "destructive",
+        });
       }
   
       const result = await response.json();
@@ -151,11 +166,22 @@ const MultiStepForm: React.FC = () => {
         router.push('/dashboard');
       }
   
-    } catch (error : unknown) {
+    } catch (error: unknown) {
       console.error("Error updating onboarding information:", error);
+      if (error instanceof Error) {
+       if (error.message === "User ID not found in session") {
+        toast({
+            title: "User ID Not Found",
+            description: "Please sign out and sign in again.",
+            variant: "destructive",
+          });
+          signOut();
+          return;
+        }
+      }
       toast({
-        title: "Failed to Update Onboarding Information",
-        description: `${error}`,
+        title: "Error",
+        description: "Something went wrong. Please try again later.",
         variant: "destructive",
       });
     }

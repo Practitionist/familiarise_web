@@ -34,8 +34,6 @@ const ConsulteeProfileForm: React.FC<Props> = ({
     onNext(data);
   };
 
-  console.log("Current form errors:", errors);
-
   return (
     <form
       onSubmit={handleSubmit(onSubmit)}
@@ -73,7 +71,6 @@ const ConsulteeProfileForm: React.FC<Props> = ({
           type="submit" 
           variant="night"
           disabled={isSubmitting}
-          onClick={() => console.log("Next button clicked")}
         >
           {isSubmitting ? "Submitting..." : "Next"}
         </Button>

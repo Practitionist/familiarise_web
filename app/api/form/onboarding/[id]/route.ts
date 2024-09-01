@@ -21,6 +21,7 @@ export async function PATCH(
           },
         },
         consulteeProfile: true,
+        staffProfile: true,
       },
     });
 
@@ -63,107 +64,102 @@ export async function PATCH(
 
       const scheduleTypeEnum = scheduleType.toUpperCase() as ScheduleType;
 
-      userProfileData = {
-        consultantProfile: {
-          upsert: {
-            create: {
-              specialization,
-              experience,
-              location,
-              domain,
-              subDomains: subDomainsArray,
-              scheduleType: scheduleTypeEnum,
-              onlineStatus: true,
-              rating: 0,
-              description,
-              tags: typeof tags === "string" ? tags.split(",").map(tag => tag.trim()) : tags,
-            },
-            update: {
-              specialization,
-              experience,
-              location,
-              domain,
-              subDomains: subDomainsArray,
-              scheduleType: scheduleTypeEnum,
-              description,
-              tags: typeof tags === "string" ? tags.split(",").map(tag => tag.trim()) : tags,
-            },
-          },
+      const consultantProfile = await prisma.consultantProfile.upsert({
+        where: { userId: id },
+        update: {
+          specialization,
+          experience,
+          location,
+          domain,
+          subDomains: subDomainsArray,
+          scheduleType: scheduleTypeEnum,
+          description,
+          tags: typeof tags === "string" ? tags.split(",").map(tag => tag.trim()) : tags,
         },
-      };
+        create: {
+          userId: id,
+          specialization,
+          experience,
+          location,
+          domain,
+          subDomains: subDomainsArray,
+          scheduleType: scheduleTypeEnum,
+          onlineStatus: true,
+          rating: 0,
+          description,
+          tags: typeof tags === "string" ? tags.split(",").map(tag => tag.trim()) : tags,
+        },
+      });
+
+      userProfileData.consultantProfileId = consultantProfile.id;
 
       if (scheduleTypeEnum === ScheduleType.WEEKLY && weeklySlots) {
         const existingWeeklySlots = existingUser.consultantProfile?.slotsOfAvailabiltyWeekly || [];
         const updatedWeeklySlots = createWeeklySlots(weeklySlots, existingWeeklySlots);
-        userProfileData.consultantProfile.upsert.update.slotsOfAvailabiltyWeekly = {
-          deleteMany: {},
-          create: updatedWeeklySlots,
-        };
+        await prisma.slotOfAvailabiltyWeekly.deleteMany({ where: { consultantProfileId: consultantProfile.id } });
+        await prisma.slotOfAvailabiltyWeekly.createMany({
+          data: updatedWeeklySlots.map(slot => ({ ...slot, consultantProfileId: consultantProfile.id })),
+        });
       } else if (scheduleTypeEnum === ScheduleType.CUSTOM && customSlots) {
         const existingCustomSlots = existingUser.consultantProfile?.slotsOfAvailabiltyCustom || [];
         const updatedCustomSlots = createCustomSlots(customSlots, existingCustomSlots);
-        userProfileData.consultantProfile.upsert.update.slotsOfAvailabiltyCustom = {
-          deleteMany: {},
-          create: updatedCustomSlots,
-        };
+        await prisma.slotOfAvailabiltyCustom.deleteMany({ where: { consultantProfileId: consultantProfile.id } });
+        await prisma.slotOfAvailabiltyCustom.createMany({
+          data: updatedCustomSlots.map(slot => ({ ...slot, consultantProfileId: consultantProfile.id })),
+        });
       }
-      // ... existing code ...
 
     } else if (body.role === "CONSULTEE") {
-      // Handle consultee profile update
       const consulteeProfileData = {
+        education: body.consulteeProfile.education,
+        occupation: body.consulteeProfile.occupation,
+        aboutMe: body.consulteeProfile.aboutMe,
         preferredCommunicationMethod: body.consulteeProfile.preferredCommunicationMethod,
         preferredLanguage: body.consulteeProfile.preferredLanguage,
         specialRequirements: body.consulteeProfile.specialRequirements,
         onlineStatus: true,
-        interests: JSON.stringify(body.consulteeProfile.interests) // Convert interests to a JSON string
+        interests: JSON.stringify(body.consulteeProfile.interests),
       };
     
       const consulteeProfile = await prisma.consulteeProfile.upsert({
         where: { userId: id },
-        update: {
-          preferredCommunicationMethod: consulteeProfileData.preferredCommunicationMethod,
-          preferredLanguage: consulteeProfileData.preferredLanguage,
-          specialRequirements: consulteeProfileData.specialRequirements,
-          onlineStatus: consulteeProfileData.onlineStatus,
-          interests: { set: JSON.parse(consulteeProfileData.interests) }
-        },
+        update: consulteeProfileData,
         create: {
           userId: id,
-          preferredCommunicationMethod: consulteeProfileData.preferredCommunicationMethod,
-          preferredLanguage: consulteeProfileData.preferredLanguage,
-          specialRequirements: consulteeProfileData.specialRequirements,
-          onlineStatus: consulteeProfileData.onlineStatus,
-          interests: JSON.parse(consulteeProfileData.interests)
+          ...consulteeProfileData,
         },
       });
 
       userProfileData.consulteeProfileId = consulteeProfile.id;
 
-    } if (body.role === "STAFF") {
-      // Handle staff profile update
+    } else if (body.role === "STAFF") {
+      const staffProfileData = {
+        department: body.staffProfile.department,
+        position: body.staffProfile.position,
+        responsibilities: body.staffProfile.responsibilities,
+      };
+
       const staffProfile = await prisma.staffProfile.upsert({
         where: { userId: id },
-        update: {
-          department: body.staffProfile.department,
-          position: body.staffProfile.position,
-          responsibilities: body.staffProfile.responsibilities,
-        },
+        update: staffProfileData,
         create: {
           userId: id,
-          department: body.staffProfile.department,
-          position: body.staffProfile.position,
-          responsibilities: body.staffProfile.responsibilities,
+          ...staffProfileData,
         },
       });
 
       userProfileData.staffProfileId = staffProfile.id;
     }
 
+    // Update the user with the correct profile ID
+    const finalUpdatedUser = await prisma.user.update({
+      where: { id },
+      data: userProfileData,
+    });
+
     return NextResponse.json({
       message: "Onboarding information updated successfully",
-      user: updatedUser,
-      ...userProfileData,
+      user: finalUpdatedUser,
     });
   } catch (error: unknown) {
     console.error("Error updating onboarding information:", error);
