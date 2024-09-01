@@ -1,11 +1,11 @@
-import NextAuth, { DefaultSession } from "next-auth";
+import NextAuth, { DefaultSession, DefaultUser } from "next-auth";
+import { JWT } from "next-auth/jwt";
 
 declare module "next-auth" {
   /**
-   * Returned by `useSession`, `getSession` and received as a prop on the `Provider` React Context
+   * Extends the default session interface with custom fields
    */
   interface Session extends DefaultSession {
-    // supabaseToken?: string;
     user: {
       id: string;
       emailVerified: boolean | null;
@@ -14,8 +14,36 @@ declare module "next-auth" {
       onboardingCompleted: boolean;
       role: string;
       currentTimezone: string;
-
-      // name, email, image are provided by default
+      consultantProfileId?: string;
+      consulteeProfileId?: string;
+      staffProfileId?: string;
     } & DefaultSession["user"];
+  }
+
+  /**
+   * Extends the default user interface with custom fields
+   */
+  interface User extends DefaultUser {
+    onboardingCompleted: boolean;
+    role: string;
+    phone: string | null;
+    address: string | null;
+    currentTimezone: string | null;
+    consultantProfileId?: string;
+    consulteeProfileId?: string;
+    staffProfileId?: string;
+  }
+}
+
+declare module "next-auth/jwt" {
+  /**
+   * Extends the default JWT interface with custom fields
+   */
+  interface JWT {
+    onboardingCompleted: boolean;
+    role: string;
+    consultantProfileId?: string;
+    consulteeProfileId?: string;
+    staffProfileId?: string;
   }
 }
