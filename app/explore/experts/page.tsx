@@ -292,36 +292,47 @@ function FindExperts() {
             </Select>
           </div>
         </div>
-        <div className="border border-gray-200 rounded-lg p-4 flex flex-col justify-between dark:border-gray-800">
+        <div className="border border-gray-200 rounded-lg p-4 flex flex-col justify-between bg-white text-black dark:border-gray-800">
           <div>
             <label
-              className="block mb-2 text-sm font-medium text-gray-900 dark:text-gray-300"
+              className="block mb-2 text-sm font-medium"
               htmlFor="tags"
             >
               Tags
             </label>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
               <input
-                className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white mt-2"
+                className="bg-white border border-gray-300 text-black text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
                 id="tags"
-                placeholder="NLP, Leadership, Taxes"
+                placeholder="Search tags..."
                 type="text"
               />
-              <span className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg">
+                <ul className="py-1 overflow-auto max-h-60">
+                  <li className="px-3 py-2 hover:bg-gray-100 cursor-pointer">NLP</li>
+                  <li className="px-3 py-2 hover:bg-gray-100 cursor-pointer">Leadership</li>
+                  <li className="px-3 py-2 hover:bg-gray-100 cursor-pointer">Taxes</li>
+                  <li className="px-3 py-2 hover:bg-gray-100 cursor-pointer">AI</li>
+                  <li className="px-3 py-2 hover:bg-gray-100 cursor-pointer">Machine Learning</li>
+                </ul>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <span className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-black">
                 NLP
-                <button className="ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:text-gray-500 dark:text-gray-500 dark:hover:text-gray-400">
+                <button className="ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:text-gray-500">
                   <XIcon className="h-3 w-3" />
                 </button>
               </span>
-              <span className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+              <span className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-black">
                 Leadership
-                <button className="ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:text-gray-500 dark:text-gray-500 dark:hover:text-gray-400">
+                <button className="ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:text-gray-500">
                   <XIcon className="h-3 w-3" />
                 </button>
               </span>
-              <span className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+              <span className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-black">
                 Taxes
-                <button className="ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:text-gray-500 dark:text-gray-500 dark:hover:text-gray-400">
+                <button className="ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:text-gray-500">
                   <XIcon className="h-3 w-3" />
                 </button>
               </span>
