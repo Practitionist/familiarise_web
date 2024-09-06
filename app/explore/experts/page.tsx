@@ -365,16 +365,12 @@ function FindExperts() {
               min="0"
               type="range"
               list="experience-ticks"
-              className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-black focus:border-black block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white"
+              className="w-full"
             />
             <datalist id="experience-ticks">
-              <option value="0" label="0" />
-              <option value="5" label="5" />
-              <option value="10" label="10" />
-              <option value="15" label="15" />
-              <option value="20" label="20" />
-              <option value="25" label="25" />
-              <option value="30" label="30+" />
+              {[0, 5, 10, 15, 20, 25, 30].map((value) => (
+                <option key={value} value={value} label={value === 30 ? "30+" : value.toString()} />
+              ))}
             </datalist>
           </div>
         </div>
@@ -387,7 +383,7 @@ function FindExperts() {
               Pricing
             </label>
             <input
-              className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-black focus:border-black block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white"
+              className="w-full"
               id="pricing"
               max="1000"
               min="0"
@@ -395,11 +391,13 @@ function FindExperts() {
               list="pricing-ticks"
             />
             <datalist id="pricing-ticks">
-              <option value="0" label="$0" />
-              <option value="250" />
-              <option value="500" label="$500" />
-              <option value="750" />
-              <option value="1000" label="$1000+" />
+              {[0, 250, 500, 750, 1000].map((value) => (
+                <option 
+                  key={value} 
+                  value={value} 
+                  label={value === 0 ? "$0" : value === 1000 ? "$1000+" : value === 500 ? "$500" : ""} 
+                />
+              ))}
             </datalist>
           </div>
         </div>
@@ -460,110 +458,45 @@ function FindExperts() {
                     
                     <div className="flex">
                       <div className="bg-card rounded-lg shadow-lg w-[320px] mr-4">
-                        <Tabs defaultValue="1-month" className="w-full">
-                          <TabsList className="grid grid-cols-4 border-b">
-                            <TabsTrigger value="1-month">1 Month</TabsTrigger>
-                            <TabsTrigger value="3-month">3 Months</TabsTrigger>
-                            <TabsTrigger value="6-month">6 Months</TabsTrigger>
-                            <TabsTrigger value="12-month">12 Months</TabsTrigger>
-                          </TabsList>
-                          <TabsContent value="1-month">
-                            <Card className="rounded-b-lg">
-                              <CardContent className="grid gap-4 p-6">
-                                <div className="flex items-center justify-between">
-                                  <div className="text-4xl font-bold">$99</div>
-                                  <div className="text-muted-foreground">
-                                    per month
-                                  </div>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <div>Calls per week</div>
-                                  <div className="font-medium">1</div>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <div>Email support</div>
-                                  <div className="font-medium">Unlimited</div>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <div>Video meetings</div>
-                                  <div className="font-medium">1 per month</div>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          </TabsContent>
-                          <TabsContent value="3-month">
-                            <Card className="rounded-b-lg">
-                              <CardContent className="grid gap-4 p-6">
-                                <div className="flex items-center justify-between">
-                                  <div className="text-4xl font-bold">$79</div>
-                                  <div className="text-muted-foreground">
-                                    per month
-                                  </div>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <div>Calls per week</div>
-                                  <div className="font-medium">3</div>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <div>Email support</div>
-                                  <div className="font-medium">Unlimited</div>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <div>Video meetings</div>
-                                  <div className="font-medium">2 per month</div>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          </TabsContent>
-                          <TabsContent value="6-month">
-                            <Card className="rounded-b-lg">
-                              <CardContent className="grid gap-4 p-6">
-                                <div className="flex items-center justify-between">
-                                  <div className="text-4xl font-bold">$59</div>
-                                  <div className="text-muted-foreground">
-                                    per month
-                                  </div>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <div>Calls per week</div>
-                                  <div className="font-medium">6</div>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <div>Email support</div>
-                                  <div className="font-medium">Unlimited</div>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <div>Video meetings</div>
-                                  <div className="font-medium">4 per month</div>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          </TabsContent>
-                          <TabsContent value="12-month">
-                            <Card className="rounded-b-lg">
-                              <CardContent className="grid gap-4 p-6">
-                                <div className="flex items-center justify-between">
-                                  <div className="text-4xl font-bold">$39</div>
-                                  <div className="text-muted-foreground">
-                                    per month
-                                  </div>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <div>Calls per week</div>
-                                  <div className="font-medium">12</div>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <div>Email support</div>
-                                  <div className="font-medium">Unlimited</div>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <div>Video meetings</div>
-                                  <div className="font-medium">8 per month</div>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          </TabsContent>
-                        </Tabs>
+                      {consultant.subscriptionPlans && consultant.subscriptionPlans.length > 0 ? (
+                          <Tabs defaultValue="ONE_MONTH" className="w-full">
+                            <TabsList className={`grid grid-cols-${consultant.subscriptionPlans.length} border-b`}>
+                              {consultant.subscriptionPlans.map((plan: any) => (
+                                <TabsTrigger key={plan.id} value={plan.duration}>
+                                  {plan.duration.replace('ONE_', '1 ').replace('THREE_', '3 ').replace('SIX_', '6 ').replace('TWELVE_', '12 ')}
+                                </TabsTrigger>
+                              ))}
+                            </TabsList>
+                            {consultant.subscriptionPlans.map((plan: any) => (
+                              <TabsContent key={plan.id} value={plan.duration}>
+                                <Card className="rounded-b-lg">
+                                  <CardContent className="grid gap-4 p-6">
+                                    <div className="flex items-center justify-between">
+                                      <div className="text-4xl font-bold">${plan.price / 100}</div>
+                                      <div className="text-muted-foreground">
+                                        per {plan.duration.replace('ONE_', '1 ').replace('THREE_', '3 ').replace('SIX_', '6 ').replace('TWELVE_', '12 ').toLowerCase()}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                      <div>Calls per week</div>
+                                      <div className="font-medium">{plan.callsPerWeek}</div>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                      <div>Email support</div>
+                                      <div className="font-medium">{plan.emailSupport}</div>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                      <div>Video meetings</div>
+                                      <div className="font-medium">{plan.videoMeetings} per month</div>
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              </TabsContent>
+                            ))}
+                          </Tabs>
+                        ) : (
+                          <p>No subscription plans available</p>
+                        )}
                       </div>
                       <div className="flex flex-col items-center space-y-2 pt-5 justify-start">
                         <Button className="w-[140px]" variant="outline">
