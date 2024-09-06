@@ -16,6 +16,9 @@ module.exports = {
       },
       {
         hostname: "avatars.githubusercontent.com",
+      },
+      {
+        hostname: "cloudflare-ipfs.com",
       }
     ],
   },

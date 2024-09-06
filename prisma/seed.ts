@@ -110,17 +110,15 @@ async function createUsers(): Promise<UserWithProfiles[]> {
           ...(userRole === "CONSULTEE" && {
             consulteeProfile: {
               create: {
-                location: faker.location.city(),
                 onlineStatus: faker.datatype.boolean(),
-                currentTimezone: faker.location.timeZone(),
-                preferredConsultationMode: faker.helpers.arrayElement([
+                preferredCommunicationMethod: faker.helpers.arrayElement([
                   ConsultationMode.VIDEO,
                   ConsultationMode.AUDIO,
                   ConsultationMode.IN_PERSON,
                 ]),
                 preferredLanguage: faker.helpers.arrayElement(['English', 'Spanish', 'French', 'German', 'Chinese']),
                 specialRequirements: faker.lorem.sentence(),
-                domains: JSON.stringify(faker.helpers.arrayElements(
+                interests: JSON.stringify(faker.helpers.arrayElements(
                   ['Technology', 'Finance', 'Healthcare', 'Education', 'Marketing'],
                   { min: 1, max: 3 }
                 )),
