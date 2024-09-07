@@ -291,18 +291,18 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
   const renderAvailability = () => {
     if (!consultantDetails) return null;
 
-    const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const daysOfWeek = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
     if (consultantDetails.scheduleType === 'WEEKLY') {
       return (
-        <div className="grid gap-6">
-          <div className="grid grid-cols-7 gap-4 text-center text-xs font-medium">
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="grid grid-cols-7 gap-4 mb-4">
             {daysOfWeek.map((day) => (
-              <div key={day}>{day}</div>
+              <div key={day} className="text-center text-sm font-semibold text-gray-600">{day}</div>
             ))}
           </div>
           <div className="grid grid-cols-7 gap-4">
-            {daysOfWeek.map((day, index) => (
+            {daysOfWeek.map((day) => (
               <div key={day} className="space-y-2">
                 {consultantDetails.slotsOfAvailabiltyWeekly
                   .filter((slot) => slot.dayOfWeekforStartTimeInUTC === day.toUpperCase())
@@ -310,8 +310,11 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
                     const startTime = new Date(slot.slotStartTimeInUTC);
                     const endTime = new Date(slot.slotEndTimeInUTC);
                     return (
-                      <div key={slot.id} className="bg-muted rounded-md p-2 cursor-pointer hover:bg-muted-foreground/10 flex items-center justify-center">
-                        <div className="text-xs font-medium">
+                      <div 
+                        key={slot.id} 
+                        className="bg-blue-100 rounded-md p-2 cursor-pointer hover:bg-blue-200 transition-colors duration-200 flex items-center justify-center"
+                      >
+                        <div className="text-xs font-medium text-blue-800">
                           {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
                           {endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
@@ -332,10 +335,13 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
       });
 
       return (
-        <div className="grid gap-6">
-          <div className="grid grid-cols-7 gap-4 text-center text-xs font-medium">
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="grid grid-cols-7 gap-4 mb-4">
             {next7Days.map((date) => (
-              <div key={date.toISOString()}>{date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</div>
+              <div key={date.toISOString()} className="text-center">
+                <div className="text-sm font-semibold text-gray-600">{date.toLocaleDateString(undefined, { weekday: 'short' })}</div>
+                <div className="text-xs text-gray-500">{date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</div>
+              </div>
             ))}
           </div>
           <div className="grid grid-cols-7 gap-4">
@@ -350,8 +356,11 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
                     const startTime = new Date(slot.slotStartTimeInUTC);
                     const endTime = new Date(slot.slotEndTimeInUTC);
                     return (
-                      <div key={slot.id} className="bg-muted rounded-md p-2 cursor-pointer hover:bg-muted-foreground/10 flex items-center justify-center">
-                        <div className="text-xs font-medium">
+                      <div 
+                        key={slot.id} 
+                        className="bg-green-100 rounded-md p-2 cursor-pointer hover:bg-green-200 transition-colors duration-200 flex items-center justify-center"
+                      >
+                        <div className="text-xs font-medium text-green-800">
                           {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
                           {endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
