@@ -19,13 +19,17 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-
 // Types
 type TReview = {
-  name: string;
-  date: string;
-  feedback: string;
+  id: string;
   rating: number;
+  reviewDescription: string;
+  consultantProfile: TConsultantProfile;
+  consulteeProfile: {
+    name: string;
+  };
+  createdAt: string;
+  updatedAt: string;
 };
 
 type TUserDetails = {
@@ -42,7 +46,7 @@ type TUserDetails = {
   consulteeProfileId: string | null;
 };
 
-type TConsultantDetails = {
+type TConsultantProfile = {
   id: string;
   rating: number;
   specialization: string;
@@ -57,7 +61,17 @@ type TConsultantDetails = {
   scheduleType: "WEEKLY" | "CUSTOM";
   slotsOfAvailabiltyWeekly: TWeeklySlot[];
   slotsOfAvailabiltyCustom: TCustomSlot[];
+  consultationPlans: TConsultationPlan[];
 };
+
+type TConsultationPlan = {
+  id: string;
+  duration: number;
+  price: number;
+  consultantProfileId: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 type TWeeklySlot = {
   id: string;
@@ -73,30 +87,8 @@ type TCustomSlot = {
   slotEndTimeInUTC: string;
 };
 
-// Mock data (move to a separate file in a real application)
-const reviews: TReview[] = [
-  {
-    name: "Amit Kumar",
-    date: "June 27, 2023",
-    feedback: "Good doctor, highly recommend 👍",
-    rating: 5,
-  },
-  {
-    name: "Rohit Singh",
-    date: "June 27, 2023",
-    feedback: "good",
-    rating: 4,
-  },
-  {
-    name: "Sneha Verma",
-    date: "June 27, 2023",
-    feedback: "so much good",
-    rating: 5,
-  },
-];
-
 // API functions
-const fetchConsultantDetails = async (id: string): Promise<TConsultantDetails> => {
+const fetchConsultantDetails = async (id: string): Promise<TConsultantProfile> => {
   const response = await fetch(`/api/user/consultants/${id}`);
   if (!response.ok) throw new Error("Failed to fetch consultant details");
   return response.json();
@@ -117,25 +109,32 @@ const fetchSelectedDateSlotTimings = async (consultantId: string, date: Date): P
   return response.json();
 };
 
-// Components
-const Review = ({ name, date, feedback, rating }: TReview) => (
-  <div>
-    <div className="flex items-center mb-1">
-      <Avatar className="w-8 h-8 mr-2" />
-      <div>
-        <p className="font-semibold">{name}</p>
-        <p className="text-sm text-gray-500">{date}</p>
+const fetchReviews = async (consultantId: string): Promise<TReview[]> => {
+  const response = await fetch(`/api/user/consultees/reviews?consultantId=${consultantId}`);
+  if (!response.ok) throw new Error("Failed to fetch reviews");
+  return response.json();
+};
+
+const Review = (review: TReview) => (
+  <div className="flex items-center space-x-4">
+    <Avatar className="w-12 h-12" />
+    <div className="flex flex-col flex-1">
+      <div className="flex items-center justify-between">
+        <div>
+          <h4 className="text-lg font-semibold">{review.consulteeProfile.name}</h4>
+          <p className="text-sm text-gray-500">{new Date(review.createdAt).toLocaleDateString()}</p>
+        </div>
+        <div className="flex items-center space-x-1">
+          {[...Array(5)].map((_, i) => (
+            <StarIcon
+              key={`${review.id}-${i}`}
+              className={`w-5 h-5 ${i < review.rating ? "text-blue-500" : "text-gray-300"}`}
+            />
+          ))}
+        </div>
       </div>
+      <p className="text-gray-600">{review.reviewDescription}</p>
     </div>
-    <div className="flex">
-      {[...Array(5)].map((_, i) => (
-        <StarIcon
-          key={`${name}-${i}`}
-          className={`w-4 h-4 ${i < rating ? "text-blue-500" : "text-gray-300"}`}
-        />
-      ))}
-    </div>
-    <p>{feedback}</p>
   </div>
 );
 
@@ -183,12 +182,13 @@ const ConsultantSkeletonLoader = () => {
 // Main component
 export default function ExpertProfile({ params }: { readonly params: { consultantId: string } }) {
   const [userDetails, setUserDetails] = useState<TUserDetails | null>(null);
-  const [consultantDetails, setConsultantDetails] = useState<TConsultantDetails | null>(null);
+  const [consultantDetails, setConsultantDetails] = useState<TConsultantProfile | null>(null);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [reviews, setReviews] = useState<TReview[]>([]);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -199,6 +199,8 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
         setConsultantDetails(data);
         const userData = await fetchUserDetails(data.userId);
         setUserDetails(userData.data);
+        const reviewsData = await fetchReviews(params.consultantId);
+        setReviews(reviewsData);
       } catch (error: any) {
         console.error("Error fetching consultant details:", error);
         toast({
@@ -295,15 +297,16 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
 
     if (consultantDetails.scheduleType === 'WEEKLY') {
       return (
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="grid grid-cols-7 gap-4 mb-4">
+        <div className="bg-white rounded-lg shadow-lg p-8 border border-gray-200">
+          <h3 className="text-2xl font-semibold mb-6 text-center text-gray-800">Weekly Availability</h3>
+          <div className="grid grid-cols-7 gap-6 mb-6">
             {daysOfWeek.map((day) => (
-              <div key={day} className="text-center text-sm font-semibold text-gray-600">{day}</div>
+              <div key={day} className="text-center text-sm font-semibold text-gray-700">{day}</div>
             ))}
           </div>
-          <div className="grid grid-cols-7 gap-4">
+          <div className="grid grid-cols-7 gap-6">
             {daysOfWeek.map((day) => (
-              <div key={day} className="space-y-2">
+              <div key={day} className="space-y-3">
                 {consultantDetails.slotsOfAvailabiltyWeekly
                   .filter((slot) => slot.dayOfWeekforStartTimeInUTC === day.toUpperCase())
                   .map((slot) => {
@@ -312,9 +315,9 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
                     return (
                       <div 
                         key={slot.id} 
-                        className="bg-blue-100 rounded-md p-2 cursor-pointer hover:bg-blue-200 transition-colors duration-200 flex items-center justify-center"
+                        className="bg-blue-50 rounded-md p-2 cursor-pointer hover:bg-blue-100 transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center"
                       >
-                        <div className="text-xs font-medium text-blue-800">
+                        <div className="text-xs font-medium text-blue-700">
                           {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
                           {endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
@@ -335,18 +338,19 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
       });
 
       return (
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="grid grid-cols-7 gap-4 mb-4">
+        <div className="bg-white rounded-lg shadow-lg p-8 border border-gray-200">
+          <h3 className="text-2xl font-semibold mb-6 text-center text-gray-800">Custom Availability</h3>
+          <div className="grid grid-cols-7 gap-6 mb-6">
             {next7Days.map((date) => (
               <div key={date.toISOString()} className="text-center">
-                <div className="text-sm font-semibold text-gray-600">{date.toLocaleDateString(undefined, { weekday: 'short' })}</div>
+                <div className="text-sm font-semibold text-gray-700">{date.toLocaleDateString(undefined, { weekday: 'short' })}</div>
                 <div className="text-xs text-gray-500">{date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</div>
               </div>
             ))}
           </div>
-          <div className="grid grid-cols-7 gap-4">
+          <div className="grid grid-cols-7 gap-6">
             {next7Days.map((date) => (
-              <div key={date.toISOString()} className="space-y-2">
+              <div key={date.toISOString()} className="space-y-3">
                 {consultantDetails.slotsOfAvailabiltyCustom
                   .filter((slot) => {
                     const slotDate = new Date(slot.slotStartTimeInUTC);
@@ -358,9 +362,9 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
                     return (
                       <div 
                         key={slot.id} 
-                        className="bg-green-100 rounded-md p-2 cursor-pointer hover:bg-green-200 transition-colors duration-200 flex items-center justify-center"
+                        className="bg-green-50 rounded-md p-2 cursor-pointer hover:bg-green-100 transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center"
                       >
-                        <div className="text-xs font-medium text-green-800">
+                        <div className="text-xs font-medium text-green-700">
                           {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
                           {endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
@@ -434,10 +438,10 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
           {renderAvailability()}
         </div>
         <div>
-          <h3 className="font-semibold text-lg mb-4">All Reviews ({consultantDetails.rating})</h3>
+          <h3 className="font-semibold text-lg mb-4">All Reviews ({reviews.length})</h3>
           <div className="space-y-4">
             {reviews.map((review) => (
-              <Review key={review.name} {...review} />
+              <Review key={review.id} {...review} />
             ))}
           </div>
         </div>
@@ -454,15 +458,18 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
           }}
           width="1080"
         />
-        <div className="card p-6 bg-white shadow-lg rounded-lg w-full">
-          <h3 className="text-lg font-semibold mb-4">Ticket Price</h3>
-          <p className="text-3xl font-bold mb-6">INR 599</p>
-          <h4 className="font-semibold mb-2">Duration based pricing:</h4>
-          <ul className="mb-6">
-            <li>1 hour - INR 599</li>
-            <li>2 hours - INR 999</li>
-            <li>3 hours - INR 1499</li>
-          </ul>
+         <div className="card p-6 bg-white shadow-lg rounded-lg w-full">
+          <h3 className="text-lg font-semibold mb-4">Consultation Pricing</h3>
+          {consultantDetails.consultationPlans.map((plan) => (
+            <div key={plan.id} className="mb-4">
+              <p className="text-xl font-bold">
+                INR {plan.price.toLocaleString('en-IN')}
+              </p>
+              <p className="text-sm text-gray-600">
+                {plan.duration} {plan.duration === 1 ? 'hour' : 'hours'}
+              </p>
+            </div>
+          ))}
           <Dialog>
             <DialogTrigger asChild>
               <Button variant="night">Book Consultation</Button>

@@ -396,8 +396,8 @@ model ConsultantProfile {
 
 model ConsultantReview {
   id                String @id @default(uuid())
-  rating            Float
-  reviewDescription String @db.Text()
+  rating            Int    @default(0) @db.SmallInt
+  reviewDescription String? @db.Text()
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
