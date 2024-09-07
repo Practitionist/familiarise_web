@@ -23,7 +23,7 @@ export async function GET(
 
     const consultantProfile = await prisma.consultantProfile.findUnique({
       where: { id: params.consultantId },
-      select: { scheduleType: true, currentTimezone: true },
+      select: { scheduleType: true },
     });
 
     if (!consultantProfile) {

@@ -110,7 +110,7 @@ const fetchSelectedDateSlotTimings = async (consultantId: string, date: Date): P
 };
 
 const fetchReviews = async (consultantId: string): Promise<TReview[]> => {
-  const response = await fetch(`/api/user/consultees/reviews?consultantId=${consultantId}`);
+  const response = await fetch(`/api/user/reviews?consultantId=${consultantId}`);
   if (!response.ok) throw new Error("Failed to fetch reviews");
   return response.json();
 };

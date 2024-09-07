@@ -24,36 +24,3 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
-
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const newConsultee = await prisma.consulteeProfile.create({
-      data: {
-        location: body.location,
-        onlineStatus: body.onlineStatus,
-        currentTimezone: body.currentTimezone,
-        preferredLanguage: body.preferredLanguage,
-        domains: body.domains,
-        user: { connect: { id: body.userId } },
-      },
-      include: {
-        slotsOfAppointment: true,
-        consultantReviews: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-          },
-        },
-      },
-    });
-
-    return NextResponse.json(newConsultee, { status: 201 });
-  } catch (error) {
-    console.error("Error creating consultee:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
-  }
-}

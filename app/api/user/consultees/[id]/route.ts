@@ -32,13 +32,24 @@ export async function POST(
 ) {
   try {
     const body = await req.json();
+    const user = await prisma.user.findUnique({
+      where: { id: params.id },
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
     const createdConsultee = await prisma.consulteeProfile.create({
       data: {
-        location: body.location,
+        education: body.education,
+        occupation: body.occupation,
+        aboutMe: body.aboutMe,
         onlineStatus: body.onlineStatus,
-        currentTimezone: body.currentTimezone,
+        preferredCommunicationMethod: body.preferredCommunicationMethod,
         preferredLanguage: body.preferredLanguage,
-        domains: body.domains,
+        specialRequirements: body.specialRequirements,
+        interests: body.interests,
         user: { connect: { id: params.id } },
       },
       include: {
@@ -62,12 +73,25 @@ export async function PUT(
   try {
     const body = await req.json();
 
+    const existingConsultee = await prisma.consulteeProfile.findUnique({
+      where: { userId: params.id },
+    });
+
+    if (!existingConsultee) {
+      return NextResponse.json({ error: "Consultee profile not found" }, { status: 404 });
+    }
+
     const updatedConsultee = await prisma.consulteeProfile.update({
       where: { userId: params.id },
       data: {
-        location: body.location,
+        education: body.education,
+        occupation: body.occupation,
+        aboutMe: body.aboutMe,
         onlineStatus: body.onlineStatus,
-        currentTimezone: body.currentTimezone,
+        preferredCommunicationMethod: body.preferredCommunicationMethod,
+        preferredLanguage: body.preferredLanguage,
+        specialRequirements: body.specialRequirements,
+        interests: body.interests,
       },
       include: {
         slotsOfAppointment: true,
@@ -88,6 +112,14 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const existingConsultee = await prisma.consulteeProfile.findUnique({
+      where: { userId: params.id },
+    });
+
+    if (!existingConsultee) {
+      return NextResponse.json({ error: "Consultee profile not found" }, { status: 404 });
+    }
+
     const deletedConsultee = await prisma.consulteeProfile.delete({
       where: { userId: params.id },
       include: {
