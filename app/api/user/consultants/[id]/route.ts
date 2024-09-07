@@ -6,8 +6,8 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const consultant = await prisma.consultantProfile.findUnique({
-      where: { userId: params.id },
+    const consultant = await prisma.consultantProfile.findFirst({
+      where: { id: params.id },
       include: {
         reviews: true,
         slotsOfAvailabiltyWeekly: true,
@@ -48,7 +48,6 @@ export async function POST(
         description: body.description,
         tags: body.tags,
         onlineStatus: body.onlineStatus,
-        currentTimezone: body.currentTimezone,
         domain: body.domain,
         subDomains: body.subDomains,
         user: { connect: { id: params.id } },
@@ -90,7 +89,6 @@ export async function PUT(
         description: body.description,
         tags: body.tags,
         onlineStatus: body.onlineStatus,
-        currentTimezone: body.currentTimezone,
         domain: body.domain,
         subDomains: body.subDomains,
       },

@@ -10,7 +10,7 @@ import {
   Dialog,
   DialogContent,
   DialogFooter,
-  DialogTrigger,
+  DialogTrigger
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/use-toast";
@@ -18,6 +18,7 @@ import { TSlotTiming } from "@/lib/datetimetz";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+
 
 // Types
 type TReview = {
@@ -53,6 +54,23 @@ type TConsultantDetails = {
   userId: string;
   createdAt: string;
   updatedAt: string;
+  scheduleType: "WEEKLY" | "CUSTOM";
+  slotsOfAvailabiltyWeekly: TWeeklySlot[];
+  slotsOfAvailabiltyCustom: TCustomSlot[];
+};
+
+type TWeeklySlot = {
+  id: string;
+  dayOfWeekforStartTimeInUTC: string;
+  slotStartTimeInUTC: string;
+  dayOfWeekforEndTimeInUTC: string;
+  slotEndTimeInUTC: string;
+};
+
+type TCustomSlot = {
+  id: string;
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
 };
 
 // Mock data (move to a separate file in a real application)
@@ -179,7 +197,6 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
       try {
         const data = await fetchConsultantDetails(params.consultantId);
         setConsultantDetails(data);
-
         const userData = await fetchUserDetails(data.userId);
         setUserDetails(userData.data);
       } catch (error: any) {
@@ -271,6 +288,86 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
     return days;
   };
 
+  const renderAvailability = () => {
+    if (!consultantDetails) return null;
+
+    const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+    if (consultantDetails.scheduleType === 'WEEKLY') {
+      return (
+        <div className="grid gap-6">
+          <div className="grid grid-cols-7 gap-4 text-center text-xs font-medium">
+            {daysOfWeek.map((day) => (
+              <div key={day}>{day}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-4">
+            {daysOfWeek.map((day, index) => (
+              <div key={day} className="space-y-2">
+                {consultantDetails.slotsOfAvailabiltyWeekly
+                  .filter((slot) => slot.dayOfWeekforStartTimeInUTC === day.toUpperCase())
+                  .map((slot) => {
+                    const startTime = new Date(slot.slotStartTimeInUTC);
+                    const endTime = new Date(slot.slotEndTimeInUTC);
+                    return (
+                      <div key={slot.id} className="bg-muted rounded-md p-2 cursor-pointer hover:bg-muted-foreground/10 flex items-center justify-center">
+                        <div className="text-xs font-medium">
+                          {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
+                          {endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    } else if (consultantDetails.scheduleType === 'CUSTOM') {
+      const today = new Date();
+      const next7Days = Array.from({ length: 7 }, (_, i) => {
+        const date = new Date(today);
+        date.setDate(today.getDate() + i);
+        return date;
+      });
+
+      return (
+        <div className="grid gap-6">
+          <div className="grid grid-cols-7 gap-4 text-center text-xs font-medium">
+            {next7Days.map((date) => (
+              <div key={date.toISOString()}>{date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-4">
+            {next7Days.map((date) => (
+              <div key={date.toISOString()} className="space-y-2">
+                {consultantDetails.slotsOfAvailabiltyCustom
+                  .filter((slot) => {
+                    const slotDate = new Date(slot.slotStartTimeInUTC);
+                    return slotDate.toDateString() === date.toDateString();
+                  })
+                  .map((slot) => {
+                    const startTime = new Date(slot.slotStartTimeInUTC);
+                    const endTime = new Date(slot.slotEndTimeInUTC);
+                    return (
+                      <div key={slot.id} className="bg-muted rounded-md p-2 cursor-pointer hover:bg-muted-foreground/10 flex items-center justify-center">
+                        <div className="text-xs font-medium">
+                          {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
+                          {endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
   if (isLoading) {
     return <ConsultantSkeletonLoader />;
   }
@@ -316,6 +413,16 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
           <p className="mt-2 text-gray-500">
             Clients commend {userDetails.name} for their strategic insights and result-oriented approach.
           </p>
+        </div>
+        {/* UI to display Consultant Availability */}
+        <div className="mb-6">
+          <h3 className="text-lg font-semibold mb-4">Consultant Availability</h3>
+          <p className="text-sm text-gray-500 mb-4">
+            {consultantDetails.scheduleType === 'WEEKLY'
+              ? "Weekly schedule. Select a time slot to schedule a meeting."
+              : "Custom schedule for the next 7 days. Select a time slot to schedule a meeting."}
+          </p>
+          {renderAvailability()}
         </div>
         <div>
           <h3 className="font-semibold text-lg mb-4">All Reviews ({consultantDetails.rating})</h3>
