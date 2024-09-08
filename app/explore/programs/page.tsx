@@ -133,10 +133,10 @@ export default function Programs() {
                 <SelectValue placeholder="Select a category" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Categories</SelectItem>
-                <SelectItem value="Programming">Programming</SelectItem>
-                <SelectItem value="Design">Design</SelectItem>
-                <SelectItem value="Business">Business</SelectItem>
+                <SelectItem value="all" className="bg-white">All Categories</SelectItem>
+                <SelectItem value="Programming" className="bg-white">Programming</SelectItem>
+                <SelectItem value="Design" className="bg-white">Design</SelectItem>
+                <SelectItem value="Business" className="bg-white">Business</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -144,39 +144,32 @@ export default function Programs() {
             <Label htmlFor="date">Date</Label>
             <Input id="date" type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="price-range" className="text-base">
-              Price Range
-            </Label>
-            <div className="flex items-center gap-2">
-              <Label
-                htmlFor="price-range-0-50"
-                className="border cursor-pointer rounded-md p-2 flex items-center gap-2 [&:has(:checked)]:bg-muted"
-              >
-                <div />
-                $0 - $50
-              </Label>
-              <Label
-                htmlFor="price-range-50-100"
-                className="border cursor-pointer rounded-md p-2 flex items-center gap-2 [&:has(:checked)]:bg-muted"
-              >
-                <div />
-                $50 - $100
-              </Label>
-            </div>
+          <div>
+            <Label htmlFor="sort">Sort By</Label>
+            <Select>
+              <SelectTrigger id="sort">
+                <SelectValue placeholder="Select sorting option" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="relevance" className="bg-white">Relevance</SelectItem>
+                <SelectItem value="price-desc" className="bg-white">Popularity</SelectItem>
+                <SelectItem value="date-asc" className="bg-white">Date: Oldest First</SelectItem>
+                <SelectItem value="date-desc" className="bg-white">Date: Newest First</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </form>
       </div>
       <div className="flex items-center justify-between mb-4">
         <div>
           <Button
-            variant={viewMode === "grid" ? "default" : "outline"}
+            variant={viewMode === "grid" ? "night" : "default"}
             onClick={() => setViewMode("grid")}
             className="mr-2"
           >
             Grid View
           </Button>
-          <Button variant={viewMode === "list" ? "default" : "outline"} onClick={() => setViewMode("list")}>
+          <Button variant={viewMode === "list" ? "night" : "default"} onClick={() => setViewMode("list")}>
             List View
           </Button>
         </div>

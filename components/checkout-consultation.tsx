@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
+import { JSX, SVGProps } from "react"
 
 export function CheckoutConsultation() {
   return (
@@ -235,7 +236,7 @@ export function CheckoutConsultation() {
   )
 }
 
-function CreditCardIcon(props) {
+function CreditCardIcon(props: JSX.IntrinsicAttributes & SVGProps<SVGSVGElement>) {
   return (
     <svg
       {...props}

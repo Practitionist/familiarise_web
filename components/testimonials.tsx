@@ -39,7 +39,7 @@ const TestimonialCard: React.FC<TestimonialCardProps> = ({
   image,
   quote,
 }) => (
-  <div className="bg-white p-8 border border-gray-200 rounded-lg shadow-sm">
+  <div className="bg-white p-8 border border-gray-200 rounded-lg shadow-sm hover:shadow-lg transition-shadow duration-300 ease-in-out transform hover:-translate-y-1">
     <div className="flex items-center justify-center">
       <Image
         src={image}
