@@ -21,6 +21,8 @@ import { useEffect, useState } from "react";
 
 // Types
 import { Prisma } from '@prisma/client';
+import { Card, CardContent } from "@/components/ui/card";
+import { StarIcon, CalendarIcon, ClockIcon } from "lucide-react";
 
 // We use Prisma types to ensure type safety and consistency with our database schema.
 // This helps catch potential errors at compile-time and provides better autocomplete suggestions.
@@ -91,6 +93,7 @@ const fetchReviews = async (consultantId: string): Promise<TConsultantReview[]> 
   return response.json();
 };
 
+// Auxiliary components
 const Review = (review: TConsultantReview) => (
   <div className="flex items-center space-x-4">
     <Avatar className="w-12 h-12" />
@@ -154,6 +157,158 @@ const ConsultantSkeletonLoader = () => {
     </div>
   );
 };
+
+
+const ClassesAndWebinars = () => {
+  return (
+    <div className="max-w-6xl mx-auto px-4 py-10 sm:px-6 lg:px-8">
+      <div className="grid gap-8">
+        <div>
+          <h2 className="text-2xl font-bold mb-4">Upcoming Classes</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <Card>
+              <CardContent className="p-6 flex flex-col">
+                <div>
+                  <h3 className="text-lg font-semibold mb-2">Introduction to Consulting</h3>
+                  <div className="flex items-center gap-2 mb-2">
+                    <CalendarIcon className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-muted-foreground">Starts in 1 month</span>
+                  </div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <ClockIcon className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-muted-foreground">9:00 AM - 12:00 PM</span>
+                  </div>
+                  <p className="text-muted-foreground">
+                    Learn the fundamentals of consulting, including client engagement, problem-solving, and delivering
+                    value.
+                  </p>
+                </div>
+                <div className="mt-auto">
+                  <Button variant="outline">Register Now</Button>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-6 flex flex-col">
+                <div>
+                  <h3 className="text-lg font-semibold mb-2">Advanced Consulting Techniques</h3>
+                  <div className="flex items-center gap-2 mb-2">
+                    <CalendarIcon className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-muted-foreground">Starts in 2 months</span>
+                  </div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <ClockIcon className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-muted-foreground">1:00 PM - 5:00 PM</span>
+                  </div>
+                  <p className="text-muted-foreground">
+                    Explore advanced consulting methods, including data analysis, change management, and strategic
+                    planning.
+                  </p>
+                </div>
+                <div className="mt-auto">
+                  <Button variant="outline">Register Now</Button>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-6 flex flex-col">
+                <div>
+                  <h3 className="text-lg font-semibold mb-2">Consulting for Startups</h3>
+                  <div className="flex items-center gap-2 mb-2">
+                    <CalendarIcon className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-muted-foreground">Starts in 3 months</span>
+                  </div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <ClockIcon className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-muted-foreground">10:00 AM - 2:00 PM</span>
+                  </div>
+                  <p className="text-muted-foreground">
+                    Discover how to apply consulting principles to help startups achieve their goals.
+                  </p>
+                </div>
+                <div className="mt-auto">
+                  <Button variant="outline">Register Now</Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+        <div>
+          <h2 className="text-2xl font-bold mb-4">Upcoming Webinars</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <Card>
+              <CardContent className="p-6 flex flex-col">
+                <div>
+                  <h3 className="text-lg font-semibold mb-2">Effective Client Communication</h3>
+                  <div className="flex items-center gap-2 mb-2">
+                    <CalendarIcon className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-muted-foreground">Starts in 2 weeks</span>
+                  </div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <ClockIcon className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-muted-foreground">2:00 PM - 3:30 PM</span>
+                  </div>
+                  <p className="text-muted-foreground">
+                    Learn techniques for effective communication with clients, including active listening and managing
+                    expectations.
+                  </p>
+                </div>
+                <div className="mt-auto">
+                  <Button variant="outline">Register Now</Button>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-6 flex flex-col">
+                <div>
+                  <h3 className="text-lg font-semibold mb-2">Building a Consulting Mindset</h3>
+                  <div className="flex items-center gap-2 mb-2">
+                    <CalendarIcon className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-muted-foreground">Starts in 1 month</span>
+                  </div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <ClockIcon className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-muted-foreground">11:00 AM - 12:30 PM</span>
+                  </div>
+                  <p className="text-muted-foreground">
+                    Explore the mindset and skills needed to succeed as a consultant, including problem-solving,
+                    critical thinking, and adaptability.
+                  </p>
+                </div>
+                <div className="mt-auto">
+                  <Button variant="outline">Register Now</Button>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-6 flex flex-col">
+                <div>
+                  <h3 className="text-lg font-semibold mb-2">Consulting for Non-Profit Organizations</h3>
+                  <div className="flex items-center gap-2 mb-2">
+                    <CalendarIcon className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-muted-foreground">Ended on June 5, 2024</span>
+                  </div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <ClockIcon className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-muted-foreground">3:00 PM - 4:30 PM</span>
+                  </div>
+                  <p className="text-muted-foreground">
+                    Discover how to apply consulting principles to help non-profit organizations achieve their mission
+                    and goals.
+                  </p>
+                </div>
+                <div className="mt-auto">
+                  <Button variant="outline">View Recording</Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 // Main component
 export default function ExpertProfile({ params }: { readonly params: { consultantId: string } }) {
@@ -418,6 +573,8 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
           </p>
           {renderAvailability()}
         </div>
+        {/* Upcoming Classes and Webinars */}
+        <ClassesAndWebinars />
         <div>
           <h3 className="font-semibold text-lg mb-4">All Reviews ({reviews.length})</h3>
           <div className="space-y-4">
@@ -532,21 +689,3 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
   );
 }
 
-function StarIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-    </svg>
-  );
-}
