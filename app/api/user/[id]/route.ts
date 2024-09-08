@@ -8,23 +8,6 @@ export async function GET(
   try {
     const user = await prisma.user.findUnique({
       where: { id: params.id },
-      include: {
-        consultantProfile: true,
-        consulteeProfile: true,
-        accounts: true,
-        sessions: true,
-        attachments: true,
-        comments: true,
-        commentLikes: true,
-        images: true,
-        imageLikes: true,
-        posts: true,
-        postLikes: true,
-        postsAttachments: true,
-        usersImages: true,
-        cookiePreferences: true,
-        notificationPreferences: true,
-      },
     });
 
     if (!user) {

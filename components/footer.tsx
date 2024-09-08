@@ -21,6 +21,7 @@ const protectedRoutes = [
   "/dashboard/**",
   "/settings/**",
   "/profile/**",
+  "/checkout/**", // Added checkout route
 ];
 
 const Footer: React.FC = () => {

@@ -24,6 +24,8 @@ const NUM_CONSULTEES = 60;
 const NUM_SLOTS_PER_CONSULTANT = 20;
 const NUM_APPOINTMENTS = 200;
 const NUM_NEWSLETTERS = 100;
+const NUM_DISCOUNT_CODES = 10;
+const NUM_PAYMENTS = 100;
 
 
 // Small data
@@ -75,7 +77,6 @@ async function createUsers(): Promise<UserWithProfiles[]> {
             consultantProfile: {
               create: {
                 rating: faker.number.float({ min: 1, max: 5, multipleOf: 0.1 }),
-                onlineStatus: faker.datatype.boolean(),
                 specialization: faker.person.jobArea(),
                 experience: faker.helpers.arrayElement([
                   "1-3 years",
@@ -110,7 +111,8 @@ async function createUsers(): Promise<UserWithProfiles[]> {
           ...(userRole === "CONSULTEE" && {
             consulteeProfile: {
               create: {
-                onlineStatus: faker.datatype.boolean(),
+                education: faker.helpers.arrayElement(['High School', 'Bachelor\'s', 'Master\'s', 'PhD']),
+                occupation: faker.person.jobTitle(),
                 preferredCommunicationMethod: faker.helpers.arrayElement([
                   ConsultationMode.VIDEO,
                   ConsultationMode.AUDIO,
@@ -118,10 +120,10 @@ async function createUsers(): Promise<UserWithProfiles[]> {
                 ]),
                 preferredLanguage: faker.helpers.arrayElement(['English', 'Spanish', 'French', 'German', 'Chinese']),
                 specialRequirements: faker.lorem.sentence(),
-                interests: JSON.stringify(faker.helpers.arrayElements(
-                  ['Technology', 'Finance', 'Healthcare', 'Education', 'Marketing'],
+                interests: faker.helpers.arrayElements(
+                  ['Technology', 'Finance', 'Healthcare', 'Education', 'Marketing', 'Sports' , 'Entertainment', 'Travel', 'Fashion', 'Food', 'Music', 'Art', 'Science', 'Environment', 'Politics', 'History', 'Culture', 'Books', 'Movies', 'TV Shows', 'Gaming', 'Fitness', 'Pets', 'Cars', 'DIY', 'Home Decor', 'Gardening', 'Photography', 'Writing', 'Social Media', 'Mental Health', 'Parenting', 'Relationships', 'Self Improvement', 'Spirituality', 'Philosophy', 'Sustainability', 'Human Rights', 'Charity', 'Volunteering', 'Hobbies', 'Cooking', 'Baking', 'Dancing', 'Singing', 'Acting', 'Crafts', 'Yoga', 'Meditation', 'Astrology', 'Tarot', 'Horoscopes', 'Mythology', 'Folklore', 'Urban Legends', 'Conspiracy Theories', 'True Crime', 'Paranormal', 'Aliens', 'Cryptocurrency', 'Blockchain', 'Investing', 'Trading', 'Real Estate', 'Entrepreneurship', 'Startups', 'Business', 'Management', 'Leadership', 'Sales', 'Customer Service', 'Human Resources'],
                   { min: 1, max: 3 }
-                )),
+                ).join(', '),
               },
             },
           }),
@@ -582,7 +584,7 @@ async function createConsultantReviews(consultants: UserWithProfiles[], consulte
       try {
         await prisma.consultantReview.create({
           data: {
-            rating: faker.number.float({ min: 1, max: 5, multipleOf: 0.1 }),
+            rating: faker.number.int({ min: 1, max: 5 }),
             reviewDescription: faker.lorem.paragraph(),
             consultantProfileId: consultant.consultantProfile.id,
             consulteeProfileId: consultee.consulteeProfile.id,
@@ -595,6 +597,153 @@ async function createConsultantReviews(consultants: UserWithProfiles[], consulte
     }
   }
   console.log(`Created ${totalReviews} consultant reviews`);
+}
+
+
+async function createDiscountCodes() {
+  console.log(`Creating ${NUM_DISCOUNT_CODES} discount codes...`);
+  for (let i = 0; i < NUM_DISCOUNT_CODES; i++) {
+    try {
+      await prisma.discountCode.create({
+        data: {
+          code: faker.string.alphanumeric(8).toUpperCase(),
+          description: faker.lorem.sentence(),
+          discountType: faker.helpers.arrayElement(['PERCENTAGE', 'FIXED_AMOUNT', 'FREE_SHIPPING']),
+          discountValue: faker.helpers.arrayElement([
+            faker.number.int({ min: 5, max: 50 }), // Percentage
+            faker.number.int({ min: 500, max: 5000 }), // Fixed amount (in cents)
+            0, // Free shipping
+          ]),
+        },
+      });
+    } catch (error) {
+      console.error("Failed to create discount code:", error);
+    }
+  }
+  console.log(`Created ${NUM_DISCOUNT_CODES} discount codes`);
+}
+
+async function createPayments(users: UserWithProfiles[]) {
+  console.log(`Creating ${NUM_PAYMENTS} payments...`);
+  const discountCodes = await prisma.discountCode.findMany();
+  const consultations = await prisma.consultation.findMany();
+  const subscriptions = await prisma.subscription.findMany();
+  const webinars = await prisma.webinar.findMany();
+  const classes = await prisma.class.findMany();
+
+  const usedConsultations = new Set<string>();
+  const usedSubscriptions = new Set<string>();
+  const usedWebinars = new Set<string>();
+  const usedClasses = new Set<string>();
+
+  for (let i = 0; i < NUM_PAYMENTS; i++) {
+    const user = faker.helpers.arrayElement(users);
+    let paymentType = faker.helpers.arrayElement(['CONSULTATION', 'SUBSCRIPTION', 'WEBINAR', 'CLASS']);
+    let relatedItemId: string | undefined;
+
+    try {
+      let paymentData: any = {
+        userId: user.id,
+        amount: faker.number.int({ min: 1000, max: 100000 }), // Amount in cents
+        currency: faker.helpers.arrayElement(['USD', 'EUR', 'GBP']),
+        paymentMethod: faker.helpers.arrayElement(['credit_card', 'paypal', 'bank_transfer']),
+        paymentIntent: faker.string.uuid(),
+        paymentGateway: faker.helpers.arrayElement(['STRIPE', 'PAYPAL', 'RAZORPAY']),
+        paymentStatus: faker.helpers.arrayElement(['PENDING', 'SUCCEEDED', 'FAILED']),
+        paymentType: paymentType,
+        description: faker.lorem.sentence(),
+        receiptUrl: faker.internet.url(),
+      };
+
+      // Randomly assign a discount code to some payments
+      if (faker.datatype.boolean()) {
+        paymentData.discountCodeId = faker.helpers.arrayElement(discountCodes).id;
+      }
+
+      // Function to get an unused item
+      const getUnusedItem = <T extends { id: string }>(items: T[], usedSet: Set<string>): T | undefined => {
+        const unusedItems = items.filter(item => !usedSet.has(item.id));
+        if (unusedItems.length === 0) return undefined;
+        return faker.helpers.arrayElement(unusedItems);
+      };
+
+      // Try to find an unused item for the selected payment type
+      let item: any;
+      switch (paymentType) {
+        case 'CONSULTATION':
+          item = getUnusedItem(consultations, usedConsultations);
+          break;
+        case 'SUBSCRIPTION':
+          item = getUnusedItem(subscriptions, usedSubscriptions);
+          break;
+        case 'WEBINAR':
+          item = getUnusedItem(webinars, usedWebinars);
+          break;
+        case 'CLASS':
+          item = getUnusedItem(classes, usedClasses);
+          break;
+      }
+
+      // If no unused item is found, try other payment types
+      if (!item) {
+        const remainingTypes = ['CONSULTATION', 'SUBSCRIPTION', 'WEBINAR', 'CLASS'].filter(type => type !== paymentType);
+        for (const type of remainingTypes) {
+          switch (type) {
+            case 'CONSULTATION':
+              item = getUnusedItem(consultations, usedConsultations);
+              break;
+            case 'SUBSCRIPTION':
+              item = getUnusedItem(subscriptions, usedSubscriptions);
+              break;
+            case 'WEBINAR':
+              item = getUnusedItem(webinars, usedWebinars);
+              break;
+            case 'CLASS':
+              item = getUnusedItem(classes, usedClasses);
+              break;
+          }
+          if (item) {
+            paymentType = type;
+            break;
+          }
+        }
+      }
+
+      // If still no unused item is found, skip this payment
+      if (!item) {
+        console.log(`Skipping payment ${i + 1}: No unused items available.`);
+        continue;
+      }
+
+      // Mark the item as used and add it to the payment data
+      switch (paymentType) {
+        case 'CONSULTATION':
+          usedConsultations.add(item.id);
+          paymentData.consultationId = item.id;
+          break;
+        case 'SUBSCRIPTION':
+          usedSubscriptions.add(item.id);
+          paymentData.subscriptionId = item.id;
+          break;
+        case 'WEBINAR':
+          usedWebinars.add(item.id);
+          paymentData.webinarId = item.id;
+          break;
+        case 'CLASS':
+          usedClasses.add(item.id);
+          paymentData.classId = item.id;
+          break;
+      }
+
+      await prisma.payment.create({ data: paymentData });
+    } catch (error) {
+      console.error(`Failed to create payment for user ${user.id}:`, error);
+    }
+
+    if ((i + 1) % 20 === 0 || i === NUM_PAYMENTS - 1) {
+      console.log(`Created ${i + 1} payments`);
+    }
+  }
 }
 
 async function seed() {
@@ -612,6 +761,9 @@ async function seed() {
   await createAppointments(consultees);
   await createNewsletters();
   await createConsultantReviews(consultants, consultees);
+
+  await createDiscountCodes();
+  await createPayments(users);
 
   console.log("Seed data inserted successfully.");
 }

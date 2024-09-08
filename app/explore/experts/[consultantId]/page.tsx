@@ -20,72 +20,48 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 // Types
-type TReview = {
-  id: string;
-  rating: number;
-  reviewDescription: string;
-  consultantProfile: TConsultantProfile;
-  consulteeProfile: {
-    name: string;
-  };
-  createdAt: string;
-  updatedAt: string;
-};
+import { Prisma } from '@prisma/client';
 
-type TUserDetails = {
-  id: string;
-  name: string;
-  email: string;
-  emailVerified: string;
-  image: string;
-  phone: string;
-  address: string;
-  onboardingCompleted: boolean;
-  role: string;
-  consultantProfileId: string | null;
-  consulteeProfileId: string | null;
-};
+// We use Prisma types to ensure type safety and consistency with our database schema.
+// This helps catch potential errors at compile-time and provides better autocomplete suggestions.
 
-type TConsultantProfile = {
-  id: string;
-  rating: number;
-  specialization: string;
-  experience: string;
-  location: string;
-  onlineStatus: boolean;
-  domain: string;
-  subDomains: string[];
-  userId: string;
-  createdAt: string;
-  updatedAt: string;
-  scheduleType: "WEEKLY" | "CUSTOM";
-  slotsOfAvailabiltyWeekly: TWeeklySlot[];
-  slotsOfAvailabiltyCustom: TCustomSlot[];
-  consultationPlans: TConsultationPlan[];
-};
+// By using Prisma's generated types, we ensure that our TypeScript types
+// are always in sync with our database schema, reducing the chance of runtime errors
+// and improving the overall reliability of our application.
 
-type TConsultationPlan = {
-  id: string;
-  duration: number;
-  price: number;
-  consultantProfileId: string;
-  createdAt: string;
-  updatedAt: string;
-}
+type TConsultantReview = Prisma.ConsultantReviewGetPayload<{
+  select: {
+    id: true,
+    reviewDescription: true,
+    rating: true,
+    createdAt: true,
+    consulteeProfileId: true
+  }
+}>;
 
-type TWeeklySlot = {
-  id: string;
-  dayOfWeekforStartTimeInUTC: string;
-  slotStartTimeInUTC: string;
-  dayOfWeekforEndTimeInUTC: string;
-  slotEndTimeInUTC: string;
-};
+type TUserDetails = Prisma.UserGetPayload<{
+  select: {
+    id: true,
+    name: true,
+    email: true,
+    emailVerified: true,
+    image: true,
+    phone: true,
+    address: true,
+    onboardingCompleted: true,
+    role: true,
+    consultantProfileId: true,
+    consulteeProfileId: true
+  }
+}>;
 
-type TCustomSlot = {
-  id: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
-};
+type TConsultantProfile = Prisma.ConsultantProfileGetPayload<{
+  include: {
+    slotsOfAvailabiltyWeekly: true,
+    slotsOfAvailabiltyCustom: true,
+    consultationPlans: true
+  }
+}>;
 
 // API functions
 const fetchConsultantDetails = async (id: string): Promise<TConsultantProfile> => {
@@ -109,19 +85,19 @@ const fetchSelectedDateSlotTimings = async (consultantId: string, date: Date): P
   return response.json();
 };
 
-const fetchReviews = async (consultantId: string): Promise<TReview[]> => {
+const fetchReviews = async (consultantId: string): Promise<TConsultantReview[]> => {
   const response = await fetch(`/api/user/reviews?consultantId=${consultantId}`);
   if (!response.ok) throw new Error("Failed to fetch reviews");
   return response.json();
 };
 
-const Review = (review: TReview) => (
+const Review = (review: TConsultantReview) => (
   <div className="flex items-center space-x-4">
     <Avatar className="w-12 h-12" />
     <div className="flex flex-col flex-1">
       <div className="flex items-center justify-between">
         <div>
-          <h4 className="text-lg font-semibold">{review.consulteeProfile.name}</h4>
+          <h4 className="text-lg font-semibold">{review.consulteeProfileId}</h4>
           <p className="text-sm text-gray-500">{new Date(review.createdAt).toLocaleDateString()}</p>
         </div>
         <div className="flex items-center space-x-1">
@@ -188,19 +164,22 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
   const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [reviews, setReviews] = useState<TReview[]>([]);
+  const [reviews, setReviews] = useState<TConsultantReview[]>([]);
   const { toast } = useToast();
 
   useEffect(() => {
     const fetchConsultantAndUserInfo = async () => {
       setIsLoading(true);
       try {
-        const data = await fetchConsultantDetails(params.consultantId);
-        setConsultantDetails(data);
-        const userData = await fetchUserDetails(data.userId);
-        setUserDetails(userData.data);
+        const consultantDetails = await fetchConsultantDetails(params.consultantId);
+        setConsultantDetails(consultantDetails);
+
+        const userDetails = await fetchUserDetails(consultantDetails.userId);
+        setUserDetails(userDetails.data);
+        
         const reviewsData = await fetchReviews(params.consultantId);
         setReviews(reviewsData);
+      
       } catch (error: any) {
         console.error("Error fetching consultant details:", error);
         toast({
@@ -217,6 +196,8 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
 
     fetchConsultantAndUserInfo();
   }, [params.consultantId, toast]);
+
+
 
   useEffect(() => {
     if (selectedDate) {

@@ -44,10 +44,12 @@ const Navbar = () => {
   const apiRoutes = ["/api/**"];
   const publicAuthRoutes = ["/auth/**"];
   const formRoutes = ["/form/**"];
+  const checkoutRoutes = ["/checkout/**"];
   const excludeNavbar =
     micromatch.isMatch(pathname, apiRoutes) ||
     micromatch.isMatch(pathname, publicAuthRoutes) ||
-    micromatch.isMatch(pathname, formRoutes);
+    micromatch.isMatch(pathname, formRoutes) ||
+    micromatch.isMatch(pathname, checkoutRoutes);
   if (excludeNavbar) return null;
 
   return (

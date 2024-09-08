@@ -84,7 +84,6 @@ export async function PATCH(
           domain,
           subDomains: subDomainsArray,
           scheduleType: scheduleTypeEnum,
-          onlineStatus: true,
           rating: 0,
           description,
           tags: typeof tags === "string" ? tags.split(",").map(tag => tag.trim()) : tags,
@@ -117,7 +116,6 @@ export async function PATCH(
         preferredCommunicationMethod: body.consulteeProfile.preferredCommunicationMethod,
         preferredLanguage: body.consulteeProfile.preferredLanguage,
         specialRequirements: body.consulteeProfile.specialRequirements,
-        onlineStatus: true,
         interests: JSON.stringify(body.consulteeProfile.interests),
       };
     

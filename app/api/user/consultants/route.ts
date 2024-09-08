@@ -44,7 +44,6 @@ export async function POST(req: NextRequest) {
         tags: body.tags,
         domain: body.domain,
         subDomains: body.subDomains,
-        onlineStatus: body.onlineStatus || false,
         scheduleType: body.scheduleType,
         user: { connect: { id: body.userId } },
       },

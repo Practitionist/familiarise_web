@@ -1,3 +1,9 @@
+/**
+ * This file defines the API route for fetching availability slots for a consultant.
+ * It handles GET requests to retrieve available time slots for a specific consultant on a given date,
+ * taking into account the user's timezone and the consultant's schedule type (weekly or custom).
+ */
+
 import { TSlotTiming } from "@/lib/datetimetz";
 import prisma from "@/lib/prisma";
 import { DayOfWeek, ScheduleType } from "@prisma/client";
@@ -5,12 +11,19 @@ import { endOfDay, parseISO, startOfDay } from "date-fns";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from 'date-fns-tz';
 import { NextRequest, NextResponse } from "next/server";
 
+/**
+ * GET handler for fetching availability slots
+ * 
+ * @param req - The incoming request object
+ * @param params - Object containing route parameters
+ * @param params.consultantId - The ID of the consultant
+ * @returns A JSON response with the available slots or an error message
+ */
 export async function GET(
   req: NextRequest,
   { params }: { params: { consultantId: string } }
 ) {
   try {
-
     const date = req.nextUrl.searchParams.get('date');
     const userTimeZone = req.nextUrl.searchParams.get('timeZone');
 
@@ -146,6 +159,12 @@ export async function GET(
   }
 }
 
+/**
+ * Converts a Date object to the corresponding DayOfWeek enum value
+ * 
+ * @param date - The date to convert
+ * @returns The corresponding DayOfWeek enum value
+ */
 function getDayOfWeek(date: Date): DayOfWeek {
   const days = [
     DayOfWeek.SUNDAY,
@@ -159,6 +178,12 @@ function getDayOfWeek(date: Date): DayOfWeek {
   return days[date.getDay()];
 }
 
+/**
+ * Gets the previous day of the week
+ * 
+ * @param day - The current day of the week
+ * @returns The previous day of the week
+ */
 function getPreviousDayOfWeek(day: DayOfWeek): DayOfWeek {
   const days = [
     DayOfWeek.SUNDAY,
@@ -173,6 +198,13 @@ function getPreviousDayOfWeek(day: DayOfWeek): DayOfWeek {
   return days[(index - 1 + 7) % 7];
 }
 
+/**
+ * Sets the year, month, and date of a given date to match another date
+ * 
+ * @param date - The date to modify
+ * @param userDate - The reference date
+ * @returns A new Date object with the updated year, month, and date
+ */
 function setToUserDate(date: Date, userDate: Date): Date {
   const result = new Date(date);
   result.setFullYear(userDate.getFullYear(), userDate.getMonth(), userDate.getDate());
