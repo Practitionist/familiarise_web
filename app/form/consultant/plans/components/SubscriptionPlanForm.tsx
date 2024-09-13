@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { PlanDuration, PlanEmailSupport, SubscriptionPlan, subscriptionPlanSchema } from "@/schemas/PlanSchema";
+import { PlanEmailSupport, SubscriptionPlan, subscriptionPlanSchema } from "@/schemas/PlanSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React from "react";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
@@ -38,7 +38,7 @@ const SubscriptionPlanForm: React.FC<Props> = ({
                 : [
                     {
                         id: crypto.randomUUID(),
-                        duration: PlanDuration.ONE_MONTH,
+                        durationInMonths: 1,
                         price: 0,
                         callsPerWeek: 1,
                         videoMeetings: 1,
@@ -75,26 +75,26 @@ const SubscriptionPlanForm: React.FC<Props> = ({
             {fields.map((field, index) => (
                 <div key={field.id} className="space-y-2 p-4 border rounded">
                     <div className="space-y-2">
-                        <Label htmlFor={`plans.${index}.duration`}>Duration</Label>
+                        <Label htmlFor={`plans.${index}.durationInMonths`}>Duration</Label>
                         <Controller
-                            name={`plans.${index}.duration` as const}
+                            name={`plans.${index}.durationInMonths` as const}
                             control={control}
                             render={({ field }) => (
-                                <Select onValueChange={field.onChange} value={field.value}>
+                                <Select onValueChange={field.onChange} value={field.value?.toString()}>
                                     <SelectTrigger>
                                         <SelectValue placeholder="Select duration" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value={PlanDuration.ONE_MONTH}>One Month</SelectItem>
-                                        <SelectItem value={PlanDuration.THREE_MONTHS}>Three Months</SelectItem>
-                                        <SelectItem value={PlanDuration.SIX_MONTHS}>Six Months</SelectItem>
-                                        <SelectItem value={PlanDuration.TWELVE_MONTHS}>Twelve Months</SelectItem>
+                                        <SelectItem value="1">One Month</SelectItem>
+                                        <SelectItem value="3">Three Months</SelectItem>
+                                        <SelectItem value="6">Six Months</SelectItem>
+                                        <SelectItem value="12">Twelve Months</SelectItem>
                                     </SelectContent>
                                 </Select>
                             )}
                         />
-                        {errors.plans?.[index]?.duration && (
-                            <p className="text-red-500">{errors.plans[index]?.duration?.message}</p>
+                        {errors.plans?.[index]?.durationInMonths && (
+                            <p className="text-red-500">{errors.plans[index]?.durationInMonths?.message}</p>
                         )}
                     </div>
 
@@ -169,7 +169,7 @@ const SubscriptionPlanForm: React.FC<Props> = ({
                 type="button"
                 onClick={() => append({
                     id: crypto.randomUUID(),
-                    duration: PlanDuration.ONE_MONTH,
+                    durationInMonths: 1,
                     price: 0,
                     callsPerWeek: 1,
                     videoMeetings: 1,

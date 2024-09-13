@@ -31,7 +31,16 @@ const ConsultationPlanForm: React.FC<Props> = ({
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
     resolver: zodResolver(ConsultationPlanFormSchema),
-    defaultValues: { plans: initialData.length ? initialData : [{ id: '', duration: 1, price: 0, consultantProfileId: null, createdAt: new Date(), updatedAt: new Date() }] },
+    defaultValues: { 
+      plans: initialData.length ? initialData : [{
+        id: '',
+        durationInHours: 1,
+        price: 0,
+        consultantProfileId: null,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }]
+    },
   });
 
   const { fields, append, remove } = useFieldArray({
@@ -63,10 +72,10 @@ const ConsultationPlanForm: React.FC<Props> = ({
               id={`plans.${index}.duration`}
               type="number"
               step="0.5"
-              {...register(`plans.${index}.duration` as const, { valueAsNumber: true })}
+              {...register(`plans.${index}.durationInHours` as const, { valueAsNumber: true })}
             />
-            {errors.plans?.[index]?.duration && (
-              <p className="text-red-500">{errors.plans[index]?.duration?.message}</p>
+            {errors.plans?.[index]?.durationInHours && (
+              <p className="text-red-500">{errors.plans[index]?.durationInHours?.message}</p>
             )}
           </div>
 
@@ -95,7 +104,7 @@ const ConsultationPlanForm: React.FC<Props> = ({
         onClick={() =>
           append({
             id: '',
-            duration: 1,
+            durationInHours: 1,
             price: 0,
             consultantProfileId: null,
             createdAt: new Date(),

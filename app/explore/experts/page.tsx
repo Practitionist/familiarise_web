@@ -1,8 +1,7 @@
 "use client";
 import { Avatar } from "@/components/ui/avatar";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -11,10 +10,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SubscriptionPlan } from "@prisma/client";
 import Image from "next/image";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
 // ... (ExploreExperts component remains unchanged)
 
@@ -334,24 +335,31 @@ function FindExperts() {
                         {consultant.subscriptionPlans && consultant.subscriptionPlans.length > 0 ? (
                           <Tabs defaultValue="ONE_MONTH" className="w-full">
                             <TabsList className={`grid grid-cols-${consultant.subscriptionPlans.length} border-b`}>
-                              {consultant.subscriptionPlans.map((plan: any) => (
+                              {consultant.subscriptionPlans.map((plan: SubscriptionPlan) => (
                                 <TabsTrigger
                                   key={plan.id}
-                                  value={plan.duration}
+                                  value={plan.durationInMonths.toString()}
                                   className="data-[state=active]:bg-black data-[state=active]:text-white rounded-md transition-all duration-200 ease-in-out"
                                 >
-                                  {plan.duration.replace('ONE_', '1 ').replace('THREE_', '3 ').replace('SIX_', '6 ').replace('TWELVE_', '12 ')}
+                                  {plan.durationInMonths === 1 ? '1 Month' :
+                                   plan.durationInMonths === 3 ? '3 Months' :
+                                   plan.durationInMonths === 6 ? '6 Months' :
+                                   plan.durationInMonths === 12 ? '12 Months' : `${plan.durationInMonths} Months`}
                                 </TabsTrigger>
                               ))}
                             </TabsList>
-                            {consultant.subscriptionPlans.map((plan: any) => (
-                              <TabsContent key={plan.id} value={plan.duration}>
+                            {consultant.subscriptionPlans.map((plan: SubscriptionPlan) => (
+                              <TabsContent key={plan.id} value={plan.durationInMonths.toString()}>
                                 <Card className="rounded-b-lg">
                                   <CardContent className="grid gap-4 p-6">
                                     <div className="flex items-center justify-between">
                                       <div className="text-4xl font-bold">${plan.price / 100}</div>
                                       <div className="text-muted-foreground">
-                                        for {plan.duration.replace('ONE_', '1 ').replace('THREE_', '3 ').replace('SIX_', '6 ').replace('TWELVE_', '12 ').toLowerCase()}
+                                        for {plan.durationInMonths === 1 ? '1 month' :
+                                             plan.durationInMonths === 3 ? '3 months' :
+                                             plan.durationInMonths === 6 ? '6 months' :
+                                             plan.durationInMonths === 12 ? '12 months' :
+                                             `${plan.durationInMonths} months`}
                                       </div>
                                     </div>
                                     <div className="flex items-center justify-between">
@@ -413,28 +421,6 @@ function XIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
     >
       <path d="M18 6 6 18" />
       <path d="m6 6 12 12" />
-    </svg>
-  );
-}
-
-function CalendarIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
-      <line x1="16" x2="16" y1="2" y2="6" />
-      <line x1="8" x2="8" y1="2" y2="6" />
-      <line x1="3" x2="21" y1="10" y2="10" />
     </svg>
   );
 }

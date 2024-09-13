@@ -7,11 +7,11 @@ import {
   DayOfWeek,
   RequestStatus,
   ScheduleType,
-  PlanDuration,
   PlanEmailSupport,
   User,
   UserRole,
-  ConsultationMode
+  ConsultationMode,
+  Topic
 } from "@prisma/client";
 import * as dotenv from "dotenv";
 
@@ -26,6 +26,8 @@ const NUM_APPOINTMENTS = 200;
 const NUM_NEWSLETTERS = 100;
 const NUM_DISCOUNT_CODES = 10;
 const NUM_PAYMENTS = 100;
+const NUM_TOPICS = 100;
+
 
 
 // Small data
@@ -121,7 +123,7 @@ async function createUsers(): Promise<UserWithProfiles[]> {
                 preferredLanguage: faker.helpers.arrayElement(['English', 'Spanish', 'French', 'German', 'Chinese']),
                 specialRequirements: faker.lorem.sentence(),
                 interests: faker.helpers.arrayElements(
-                  ['Technology', 'Finance', 'Healthcare', 'Education', 'Marketing', 'Sports' , 'Entertainment', 'Travel', 'Fashion', 'Food', 'Music', 'Art', 'Science', 'Environment', 'Politics', 'History', 'Culture', 'Books', 'Movies', 'TV Shows', 'Gaming', 'Fitness', 'Pets', 'Cars', 'DIY', 'Home Decor', 'Gardening', 'Photography', 'Writing', 'Social Media', 'Mental Health', 'Parenting', 'Relationships', 'Self Improvement', 'Spirituality', 'Philosophy', 'Sustainability', 'Human Rights', 'Charity', 'Volunteering', 'Hobbies', 'Cooking', 'Baking', 'Dancing', 'Singing', 'Acting', 'Crafts', 'Yoga', 'Meditation', 'Astrology', 'Tarot', 'Horoscopes', 'Mythology', 'Folklore', 'Urban Legends', 'Conspiracy Theories', 'True Crime', 'Paranormal', 'Aliens', 'Cryptocurrency', 'Blockchain', 'Investing', 'Trading', 'Real Estate', 'Entrepreneurship', 'Startups', 'Business', 'Management', 'Leadership', 'Sales', 'Customer Service', 'Human Resources'],
+                  ['Technology', 'Finance', 'Healthcare', 'Education', 'Marketing', 'Sports', 'Entertainment', 'Travel', 'Fashion', 'Food', 'Music', 'Art', 'Science', 'Environment', 'Politics', 'History', 'Culture', 'Books', 'Movies', 'TV Shows', 'Gaming', 'Fitness', 'Pets', 'Cars', 'DIY', 'Home Decor', 'Gardening', 'Photography', 'Writing', 'Social Media', 'Mental Health', 'Parenting', 'Relationships', 'Self Improvement', 'Spirituality', 'Philosophy', 'Sustainability', 'Human Rights', 'Charity', 'Volunteering', 'Hobbies', 'Cooking', 'Baking', 'Dancing', 'Singing', 'Acting', 'Crafts', 'Yoga', 'Meditation', 'Astrology', 'Tarot', 'Horoscopes', 'Mythology', 'Folklore', 'Urban Legends', 'Conspiracy Theories', 'True Crime', 'Paranormal', 'Aliens', 'Cryptocurrency', 'Blockchain', 'Investing', 'Trading', 'Real Estate', 'Entrepreneurship', 'Startups', 'Business', 'Management', 'Leadership', 'Sales', 'Customer Service', 'Human Resources'],
                   { min: 1, max: 3 }
                 ).join(', '),
               },
@@ -158,17 +160,17 @@ async function createConsultationPlans(consultants: UserWithProfiles[]) {
         data: [
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: 0.5, // 30 minutes
+            durationInHours: 0.5, // 30 minutes
             price: faker.number.int({ min: 2000, max: 5000 }), // $20 to $50
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: 1, // 1 hour
+            durationInHours: 1, // 1 hour
             price: faker.number.int({ min: 4000, max: 10000 }), // $40 to $100
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: 2, // 2 hours
+            durationInHours: 2, // 2 hours
             price: faker.number.int({ min: 7500, max: 20000 }), // $75 to $200
           },
         ],
@@ -198,7 +200,7 @@ async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
         data: [
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: PlanDuration.ONE_MONTH,
+            durationInMonths: 1,
             price: faker.number.int({ min: 9900, max: 19900 }), // $99 to $199
             callsPerWeek: 1,
             videoMeetings: 1,
@@ -206,7 +208,7 @@ async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: PlanDuration.THREE_MONTHS,
+            durationInMonths: 3,
             price: faker.number.int({ min: 24900, max: 49900 }), // $249 to $499
             callsPerWeek: 2,
             videoMeetings: 2,
@@ -214,7 +216,7 @@ async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: PlanDuration.SIX_MONTHS,
+            durationInMonths: 6,
             price: faker.number.int({ min: 39900, max: 79900 }), // $399 to $799
             callsPerWeek: 3,
             videoMeetings: 4,
@@ -247,17 +249,17 @@ async function createWebinarPlans(consultants: UserWithProfiles[]) {
         data: [
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: 1, // 1 hour
+            durationInHours: 1, // 1 hour
             price: faker.number.int({ min: 1500, max: 3000 }), // $15 to $30
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: 2, // 2 hours
+            durationInHours: 2, // 2 hours
             price: faker.number.int({ min: 2500, max: 5000 }), // $25 to $50
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: 3, // 3 hours
+            durationInHours: 3, // 3 hours
             price: faker.number.int({ min: 3500, max: 7000 }), // $35 to $70
           },
         ],
@@ -287,7 +289,7 @@ async function createClassPlans(consultants: UserWithProfiles[]) {
         data: [
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: PlanDuration.ONE_MONTH,
+            durationInMonths: 1,
             price: faker.number.int({ min: 19900, max: 39900 }), // $199 to $399
             callsPerWeek: 1,
             videoMeetings: 4,
@@ -295,7 +297,7 @@ async function createClassPlans(consultants: UserWithProfiles[]) {
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: PlanDuration.THREE_MONTHS,
+            durationInMonths: 3,
             price: faker.number.int({ min: 34900, max: 69900 }), // $349 to $699
             callsPerWeek: 2,
             videoMeetings: 8,
@@ -303,7 +305,7 @@ async function createClassPlans(consultants: UserWithProfiles[]) {
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
-            duration: PlanDuration.SIX_MONTHS,
+            durationInMonths: 6,
             price: faker.number.int({ min: 49900, max: 99900 }), // $499 to $999
             callsPerWeek: 3,
             videoMeetings: 12,
@@ -404,6 +406,25 @@ async function createSlotsOfAvailability(consultants: UserWithProfiles[]) {
   }
 }
 
+async function createTopics() {
+  console.log(`Creating ${NUM_TOPICS} topics...`);
+  const topics: Topic[] = [];
+  for (let i = 0; i < NUM_TOPICS; i++) {
+    try {
+      const topic = await prisma.topic.create({
+        data: {
+          name: faker.lorem.words(3),
+        },
+      });
+      topics.push(topic);
+    } catch (error) {
+      console.error("Failed to create topic:", error);
+    }
+  }
+  console.log(`Created ${topics.length} topics`);
+  return topics;
+}
+
 async function createAppointments(consultees: UserWithProfiles[]) {
   console.log(`Creating ${NUM_APPOINTMENTS} appointments...`);
   const weeklySlots = await prisma.slotOfAvailabiltyWeekly.findMany({
@@ -416,6 +437,8 @@ async function createAppointments(consultees: UserWithProfiles[]) {
   const subscriptionPlans = await prisma.subscriptionPlan.findMany();
   const webinarPlans = await prisma.webinarPlan.findMany();
   const classPlans = await prisma.classPlan.findMany();
+
+  const topics = await prisma.topic.findMany();
 
   const allSlots = [
     ...weeklySlots.map(slot => ({ type: 'weekly' as const, slot })),
@@ -524,6 +547,9 @@ async function createAppointments(consultees: UserWithProfiles[]) {
                 multipleOf: 0.5,
               }),
               slotOfAppointment: { connect: { id: appointment.id } },
+              topics: {
+                connect: faker.helpers.arrayElements(topics, { min: 1, max: 3 }).map(topic => ({ id: topic.id })),
+              },
             },
           });
           break;
@@ -536,6 +562,9 @@ async function createAppointments(consultees: UserWithProfiles[]) {
               startDate: faker.date.recent(),
               endDate: faker.date.future(),
               slotOfAppointment: { connect: { id: appointment.id } },
+              topics: {
+                connect: faker.helpers.arrayElements(topics, { min: 1, max: 5 }).map(topic => ({ id: topic.id })),
+              },
             },
           });
           break;
@@ -758,6 +787,7 @@ async function seed() {
   await createWebinarPlans(consultants);
   await createClassPlans(consultants);
   await createSlotsOfAvailability(consultants);
+  await createTopics(); 
   await createAppointments(consultees);
   await createNewsletters();
   await createConsultantReviews(consultants, consultees);
