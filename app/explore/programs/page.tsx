@@ -109,10 +109,10 @@ export default function Programs() {
   }, [selectedCategory, selectedDate, priceRange, searchTerm])
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Search Classes and Webinars</h1>
-        <p className="text-muted-foreground">Find the perfect class or webinar to suit your needs.</p>
+    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-32">
+      <div className="mb-8 text-center">
+        <h1 className="text-3xl font-bold mb-2 bg-gradient-to-r from-black via-gray-700 to-gray-400 text-transparent bg-clip-text">Search Classes and Webinars</h1>
+        <p className="text-muted-foreground bg-gradient-to-r from-gray-800 via-gray-600 to-gray-400 text-transparent bg-clip-text">Find the perfect class or webinar to suit your needs.</p>
       </div>
       <div className="bg-muted rounded-lg p-4 sm:p-6 mb-8">
         <form className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

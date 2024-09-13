@@ -60,7 +60,7 @@ export default function Home() {
             <div className="container mx-auto px-4 md:px-6">
               <div className="flex flex-col items-center space-y-6 text-center">
                 <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold tracking-tighter text-gray-900">
-                  Welcome to ConsultX
+                Elevate Your Career with ConsultX
                 </h1>
                 <p className="max-w-[700px] text-xl md:text-2xl text-gray-800 italic">
                   <q>
@@ -73,13 +73,13 @@ export default function Home() {
                     className="inline-flex h-12 items-center justify-center rounded-md bg-gray-900 px-6 py-3 text-sm font-medium text-white shadow transition-colors hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-950"
                     href="#"
                   >
-                    Join Now
+                    Book an Expert Session
                   </Link>
                   <Link
                     className="inline-flex h-12 items-center justify-center rounded-md border border-gray-900 bg-transparent px-6 py-3 text-sm font-medium text-gray-900 shadow transition-colors hover:bg-gray-900 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-950"
                     href="#"
                   >
-                    Learn more
+                    Learn More
                   </Link>
                 </div>
               </div>
@@ -91,18 +91,24 @@ export default function Home() {
               <div className="grid items-center gap-12 lg:grid-cols-2">
                 <div className="flex flex-col justify-center space-y-6">
                   <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tighter">
-                    Our Services
+                    Transform Your Career with Expert Guidance
                   </h2>
-                  <p className="text-lg text-gray-600 md:text-xl">
-                    We provide a range of services including 1-1 sessions,
-                    classes, webinars, and conferences. Our experts are ready to
-                    share their advice and experience with you.
-                  </p>
+                  <ul className="space-y-4 text-lg text-gray-600 md:text-xl">
+                    <li>
+                      <span className="font-semibold">✓ Accelerate Your Growth:</span> Gain years of industry insights in just hours through our 1-1 sessions.
+                    </li>
+                    <li>
+                      <span className="font-semibold">✓ Expand Your Network:</span> Connect with industry leaders and peers in our exclusive classes and webinars.
+                    </li>
+                    <li>
+                      <span className="font-semibold">✓ Stay Ahead of the Curve:</span> Access cutting-edge knowledge and trends through our conferences.
+                    </li>
+                  </ul>
                   <Link
                     className="inline-flex w-full sm:w-auto items-center justify-center rounded-md bg-gray-900 px-6 py-3 text-sm font-medium text-white shadow transition-colors hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-950"
                     href="#"
                   >
-                    View Services
+                    Start Your Journey
                   </Link>
                 </div>
                 <div className="flex justify-center">
@@ -112,40 +118,35 @@ export default function Home() {
             </div>
           </section>
 
-          <section id="features" className="w-full py-16 md:py-24 lg:py-32 bg-gray-100">
+          <section id="benefits" className="w-full py-16 md:py-24 lg:py-32 bg-gray-100">
             <div className="container mx-auto px-4 md:px-6">
               <div className="flex flex-col items-center justify-center space-y-6 text-center">
                 <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tighter">
-                  Unlock Your Professional Potential
+                  Unlock Your Full Potential
                 </h2>
                 <p className="max-w-[900px] text-lg text-gray-600 md:text-xl">
-                  Our comprehensive mentorship consultancy provides you with
-                  the guidance and support you need to achieve your career and
-                  personal development goals.
+                  Experience transformative growth with our comprehensive mentorship program.
                 </p>
               </div>
               <div className="grid lg:grid-cols-2 gap-12 mt-12">
                 <div className="flex flex-col justify-center space-y-6">
                   <ul className="space-y-6">
                     <li>
-                      <h3 className="text-xl font-bold">Personalized Mentorship Plans</h3>
+                      <h3 className="text-xl font-bold">Tailored Career Acceleration</h3>
                       <p className="text-gray-600">
-                        Receive customized mentorship plans tailored to your
-                        career aspirations, goals, and industry.
+                        Receive a personalized roadmap to fast-track your career goals, designed by industry experts who've walked the path.
                       </p>
                     </li>
                     <li>
-                      <h3 className="text-xl font-bold">Expert Career Advice</h3>
+                      <h3 className="text-xl font-bold">Insider Knowledge & Strategies</h3>
                       <p className="text-gray-600">
-                        Get professional advice on navigating your career
-                        path, overcoming challenges, and seizing opportunities.
+                        Gain exclusive insights and proven strategies to navigate complex career challenges and seize hidden opportunities.
                       </p>
                     </li>
                     <li>
-                      <h3 className="text-xl font-bold">One-on-One Coaching</h3>
+                      <h3 className="text-xl font-bold">Confidence & Skill Mastery</h3>
                       <p className="text-gray-600">
-                        Work closely with our experienced mentors to stay
-                        motivated, accountable, and on track to achieve your goals.
+                        Develop unshakeable confidence and master critical skills through hands-on guidance and real-world application.
                       </p>
                     </li>
                   </ul>
