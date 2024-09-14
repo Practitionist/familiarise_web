@@ -12,13 +12,13 @@ export async function GET(
       where: { id: subscriptionId },
       include: {
         plan: true,
-        slotOfAppointment: {
+        appointment: {
           include: {
-            consulteeProfile: true,
-            slotOfAppointmentRequest: {
+            slotOfAppointment: {
               include: {
-                slotOfAvailabiltyWeekly: true,
-                slotOfAvailabiltyCustom: true,
+                consulteeProfile: true,
+                slotOfAvailabilityWeekly: true,
+                slotOfAvailabilityCustom: true,
               },
             },
           },
@@ -61,16 +61,19 @@ export async function PUT(
         plan: {
           connect: { id: body.planId },
         },
+        appointment: body.appointmentId ? {
+          connect: { id: body.appointmentId },
+        } : undefined,
       },
       include: {
         plan: true,
-        slotOfAppointment: {
+        appointment: {
           include: {
-            consulteeProfile: true,
-            slotOfAppointmentRequest: {
+            slotOfAppointment: {
               include: {
-                slotOfAvailabiltyWeekly: true,
-                slotOfAvailabiltyCustom: true,
+                consulteeProfile: true,
+                slotOfAvailabilityWeekly: true,
+                slotOfAvailabilityCustom: true,
               },
             },
           },
@@ -99,13 +102,13 @@ export async function DELETE(
       where: { id: subscriptionId },
       include: {
         plan: true,
-        slotOfAppointment: {
+        appointment: {
           include: {
-            consulteeProfile: true,
-            slotOfAppointmentRequest: {
+            slotOfAppointment: {
               include: {
-                slotOfAvailabiltyWeekly: true,
-                slotOfAvailabiltyCustom: true,
+                consulteeProfile: true,
+                slotOfAvailabilityWeekly: true,
+                slotOfAvailabilityCustom: true,
               },
             },
           },

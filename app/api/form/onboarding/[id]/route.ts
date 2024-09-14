@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { DayOfWeek, ScheduleType } from "@prisma/client";
+import { DayOfWeek, ScheduleType, UserRole } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PATCH(
@@ -10,14 +10,22 @@ export async function PATCH(
     const { id } = params;
     const body = await req.json();
 
+    // Validate required fields
+    const requiredFields = ['personalInfo', 'role'];
+    for (const field of requiredFields) {
+      if (!body[field]) {
+        return NextResponse.json({ error: `Missing required field: ${field}` }, { status: 400 });
+      }
+    }
+
     // Check if the user exists
     const existingUser = await prisma.user.findUnique({
       where: { id },
       include: {
         consultantProfile: {
           include: {
-            slotsOfAvailabiltyWeekly: true,
-            slotsOfAvailabiltyCustom: true,
+            slotsOfAvailabilityWeekly: true,
+            slotsOfAvailabilityCustom: true,
           },
         },
         consulteeProfile: true,
@@ -27,6 +35,11 @@ export async function PATCH(
 
     if (!existingUser) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    // Validate role
+    if (!Object.values(UserRole).includes(body.role)) {
+      return NextResponse.json({ error: "Invalid role" }, { status: 400 });
     }
 
     const updatedUser = await prisma.user.update({
@@ -43,7 +56,7 @@ export async function PATCH(
     });
 
     let userProfileData: any = {};
-    if (body.role === "CONSULTANT") {
+    if (body.role === UserRole.CONSULTANT) {
       const {
         specialization,
         experience,
@@ -93,22 +106,22 @@ export async function PATCH(
       userProfileData.consultantProfileId = consultantProfile.id;
 
       if (scheduleTypeEnum === ScheduleType.WEEKLY && weeklySlots) {
-        const existingWeeklySlots = existingUser.consultantProfile?.slotsOfAvailabiltyWeekly || [];
+        const existingWeeklySlots = existingUser.consultantProfile?.slotsOfAvailabilityWeekly || [];
         const updatedWeeklySlots = createWeeklySlots(weeklySlots, existingWeeklySlots);
-        await prisma.slotOfAvailabiltyWeekly.deleteMany({ where: { consultantProfileId: consultantProfile.id } });
-        await prisma.slotOfAvailabiltyWeekly.createMany({
+        await prisma.slotOfAvailabilityWeekly.deleteMany({ where: { consultantProfileId: consultantProfile.id } });
+        await prisma.slotOfAvailabilityWeekly.createMany({
           data: updatedWeeklySlots.map(slot => ({ ...slot, consultantProfileId: consultantProfile.id })),
         });
       } else if (scheduleTypeEnum === ScheduleType.CUSTOM && customSlots) {
-        const existingCustomSlots = existingUser.consultantProfile?.slotsOfAvailabiltyCustom || [];
+        const existingCustomSlots = existingUser.consultantProfile?.slotsOfAvailabilityCustom || [];
         const updatedCustomSlots = createCustomSlots(customSlots, existingCustomSlots);
-        await prisma.slotOfAvailabiltyCustom.deleteMany({ where: { consultantProfileId: consultantProfile.id } });
-        await prisma.slotOfAvailabiltyCustom.createMany({
+        await prisma.slotOfAvailabilityCustom.deleteMany({ where: { consultantProfileId: consultantProfile.id } });
+        await prisma.slotOfAvailabilityCustom.createMany({
           data: updatedCustomSlots.map(slot => ({ ...slot, consultantProfileId: consultantProfile.id })),
         });
       }
 
-    } else if (body.role === "CONSULTEE") {
+    } else if (body.role === UserRole.CONSULTEE) {
       const consulteeProfileData = {
         education: body.consulteeProfile.education,
         occupation: body.consulteeProfile.occupation,
@@ -130,7 +143,7 @@ export async function PATCH(
 
       userProfileData.consulteeProfileId = consulteeProfile.id;
 
-    } else if (body.role === "STAFF") {
+    } else if (body.role === UserRole.STAFF) {
       const staffProfileData = {
         department: body.staffProfile.department,
         position: body.staffProfile.position,
@@ -163,7 +176,7 @@ export async function PATCH(
   } catch (error: unknown) {
     console.error("Error updating onboarding information:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Something went wrong" },
+      { error: error instanceof Error ? error.message : "An error occurred while updating onboarding information" },
       { status: 500 }
     );
   }

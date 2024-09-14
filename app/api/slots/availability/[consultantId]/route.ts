@@ -62,7 +62,7 @@ export async function GET(
       const previousDayOfWeek = getPreviousDayOfWeek(userDayOfWeek);
 
       // Fetch slots for the current day and previous day (for overnight slots)
-      const weeklySlots = await prisma.slotOfAvailabiltyWeekly.findMany({
+      const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
         where: {
           consultantProfileId: params.consultantId,
           OR: [
@@ -95,15 +95,15 @@ export async function GET(
           dateInISO: formatInTimeZone(adjustedStart, userTimeZone, "yyyy-MM-dd'T'HH:mm:ssXXX"),
           slotStartTimeInUTC: formatInTimeZone(fromZonedTime(adjustedStart, userTimeZone), 'UTC', "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"),
           slotEndTimeInUTC: formatInTimeZone(fromZonedTime(adjustedEnd, userTimeZone), 'UTC', "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"),
-          slotsOfAvailabilityId: slot.id,
-          slotsOfAppointmentId: '', // This would be filled if it's a booked appointment
+          slotOfAvailabilityId: slot.id,
+          slotOfAppointmentId: '', // This would be filled if it's a booked appointment
           localStartTime: formatInTimeZone(adjustedStart, userTimeZone, 'HH:mm'),
           localEndTime: formatInTimeZone(adjustedEnd, userTimeZone, 'HH:mm'),
         } as TSlotTiming;
       });
 
     } else if (consultantProfile.scheduleType === ScheduleType.CUSTOM) {
-      const customSlots = await prisma.slotOfAvailabiltyCustom.findMany({
+      const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
         where: {
           consultantProfileId: params.consultantId,
           OR: [
@@ -134,8 +134,8 @@ export async function GET(
           dateInISO: formatInTimeZone(slotStart, userTimeZone, "yyyy-MM-dd'T'HH:mm:ssXXX"),
           slotStartTimeInUTC: formatInTimeZone(slot.slotStartTimeInUTC, 'UTC', "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"),
           slotEndTimeInUTC: formatInTimeZone(slot.slotEndTimeInUTC, 'UTC', "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"),
-          slotsOfAvailabilityId: slot.id,
-          slotsOfAppointmentId: '', // This would be filled if it's a booked appointment
+          slotOfAvailabilityId: slot.id,
+          slotOfAppointmentId: '', // This would be filled if it's a booked appointment
           localStartTime: formatInTimeZone(slotStart, userTimeZone, 'HH:mm'),
           localEndTime: formatInTimeZone(slotEnd, userTimeZone, 'HH:mm'),
         } as TSlotTiming;
@@ -149,11 +149,43 @@ export async function GET(
       return (slotStart < userDayEnd && slotEnd > userDayStart);
     });
 
+    // Check for existing appointments and remove booked slots
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        slotOfAppointment: {
+          OR: [
+            { slotOfAvailabilityWeeklyId: { in: slots.map(s => s.slotOfAvailabilityId) } },
+            { slotOfAvailabilityCustomId: { in: slots.map(s => s.slotOfAvailabilityId) } },
+          ],
+        },
+      },
+      select: {
+        slotOfAppointment: {
+          select: {
+            slotOfAvailabilityWeeklyId: true,
+            slotOfAvailabilityCustomId: true,
+          },
+        },
+      },
+    });
+
+    const bookedSlotIds = appointments.flatMap(a => {
+      if (a.slotOfAppointment) {
+        return [
+          a.slotOfAppointment.slotOfAvailabilityWeeklyId,
+          a.slotOfAppointment.slotOfAvailabilityCustomId
+        ].filter((id): id is string => id !== null);
+      }
+      return [];
+    });
+
+    slots = slots.filter(slot => !bookedSlotIds.includes(slot.slotOfAvailabilityId));
+
     return NextResponse.json(slots, { status: 200 });
   } catch (error) {
     console.error("Error fetching slots:", error);
     return NextResponse.json(
-      { error: "Something went wrong" },
+      { error: "An error occurred while fetching availability slots" },
       { status: 500 }
     );
   }

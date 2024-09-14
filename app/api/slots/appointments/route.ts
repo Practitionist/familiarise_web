@@ -1,110 +1,108 @@
-
 import { NextResponse } from 'next/server';
-import prisma
- from '@/lib/prisma';
+import prisma from '@/lib/prisma';
+import { AppointmentsType } from '@prisma/client';
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const type = searchParams.get('type');
+  
+  const type = searchParams.get('type')?.toUpperCase();
   const consultantProfileId = searchParams.get('consultantProfileId');
   const consulteeProfileId = searchParams.get('consulteeProfileId');
 
+  if (!type) {
+    return NextResponse.json({ error: 'Appointment type is required' }, { status: 400 });
+  }
+
+  if (!Object.values(AppointmentsType).includes(type as AppointmentsType)) {
+    return NextResponse.json({ error: 'Invalid appointment type' }, { status: 400 });
+  }
+
   try {
-    switch (type) {
-      case 'consultations':
-        return NextResponse.json(await getConsultations(consultantProfileId, consulteeProfileId));
-      case 'subscriptions':
-        return NextResponse.json(await getSubscriptions(consultantProfileId, consulteeProfileId));
-      case 'classes':
-        return NextResponse.json(await getClasses(consultantProfileId, consulteeProfileId));
-      case 'webinars':
-        return NextResponse.json(await getWebinars(consultantProfileId, consulteeProfileId));
-      default:
-        return NextResponse.json({ error: 'Invalid appointment type' }, { status: 400 });
-    }
+    const appointments = await getAppointments(type as AppointmentsType, consultantProfileId, consulteeProfileId);
+    return NextResponse.json(appointments);
   } catch (error) {
     console.error('Error fetching appointments:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: 'An error occurred while fetching appointments' }, { status: 500 });
   }
 }
 
-async function getConsultations(consultantProfileId?: string | null, consulteeProfileId?: string | null) {
-  return await prisma.consultation.findMany({
-    where: {
-      consultationPlan: consultantProfileId ? { consultantProfileId } : undefined,
-      slotOfAppointment: consulteeProfileId ? { consulteeProfileId } : undefined,
-    },
-    include: {
-      consultationPlan: true,
-      slotOfAppointment: {
-        include: {
-          slotOfAppointmentRequest: true,
-          consulteeProfile: true,
-        },
-      },
-      Payment: true,
-    },
-  });
-}
+async function getAppointments(type: AppointmentsType, consultantProfileId?: string | null, consulteeProfileId?: string | null) {
+  const whereClause: any = {
+    appointmentType: type,
+  };
 
-async function getSubscriptions(consultantProfileId?: string | null, consulteeProfileId?: string | null) {
-  return await prisma.subscription.findMany({
-    where: {
-      plan: consultantProfileId ? { consultantProfileId } : undefined,
-      slotOfAppointment: consulteeProfileId ? { consulteeProfileId } : undefined,
-    },
-    include: {
-      plan: true,
-      slotOfAppointment: {
-        include: {
-          slotOfAppointmentRequest: true,
-          consulteeProfile: true,
-        },
-      },
-      Payment: true,
-    },
-  });
-}
+  if (consultantProfileId) {
+    switch (type) {
+      case AppointmentsType.CONSULTATION:
+        whereClause.consultation = {
+          consultationPlan: {
+            consultantProfileId
+          }
+        };
+        break;
+      case AppointmentsType.SUBSCRIPTION:
+        whereClause.subscription = {
+          plan: {
+            consultantProfileId
+          }
+        };
+        break;
+      case AppointmentsType.WEBINAR:
+        whereClause.webinar = {
+          webinarPlan: {
+            consultantProfileId
+          }
+        };
+        break;
+      case AppointmentsType.CLASS:
+        whereClause.class = {
+          classPlans: {
+            consultantProfileId
+          }
+        };
+        break;
+    }
+  }
 
-async function getClasses(consultantProfileId?: string | null, consulteeProfileId?: string | null) {
-  return await prisma.class.findMany({
-    where: {
-      classPlans: consultantProfileId ? { consultantProfileId } : undefined,
-      slotOfAppointment: consulteeProfileId ? { 
-        some: { consulteeProfileId } 
-      } : undefined,
-    },
-    include: {
-      classPlans: true,
-      topic: true,
-      slotOfAppointment: {
-        include: {
-          slotOfAppointmentRequest: true,
-          consulteeProfile: true,
-        },
-      },
-      Payment: true,
-    },
-  });
-}
+  if (consulteeProfileId) {
+    whereClause.slotOfAppointment = {
+      consulteeProfileId
+    };
+  }
 
-async function getWebinars(consultantProfileId?: string | null, consulteeProfileId?: string | null) {
-  return await prisma.webinar.findMany({
-    where: {
-      webinarPlan: consultantProfileId ? { consultantProfileId } : undefined,
-      slotOfAppointment: consulteeProfileId ? { 
-        some: { consulteeProfileId } 
-      } : undefined,
-    },
+  return await prisma.appointment.findMany({
+    where: whereClause,
     include: {
-      webinarPlan: true,
-      topic: true,
       slotOfAppointment: {
         include: {
-          slotOfAppointmentRequest: true,
           consulteeProfile: true,
+          slotOfAvailabilityWeekly: true,
+          slotOfAvailabilityCustom: true,
         },
       },
-      Payment: true,
+      consultation: {
+        include: {
+          consultationPlan: true,
+        },
+      },
+      subscription: {
+        include: {
+          plan: true,
+        },
+      },
+      webinar: {
+        include: {
+          webinarPlan: true,
+          topics: true,
+        },
+      },
+      class: {
+        include: {
+          classPlans: true,
+          topics: true,
+        },
+      },
+      payment: true,
     },
   });
 }

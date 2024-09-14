@@ -12,13 +12,13 @@ export async function GET(
       where: { id: consultationId },
       include: {
         consultationPlan: true,
-        slotOfAppointment: {
+        appointment: {
           include: {
-            consulteeProfile: true,
-            slotOfAppointmentRequest: {
+            slotOfAppointment: {
               include: {
-                slotOfAvailabiltyWeekly: true,
-                slotOfAvailabiltyCustom: true,
+                consulteeProfile: true,
+                slotOfAvailabilityWeekly: true,
+                slotOfAvailabilityCustom: true,
               },
             },
           },
@@ -59,19 +59,23 @@ export async function PUT(
         consultationPlan: {
           connect: { id: body.consultationPlanId },
         },
-        slotOfAppointment: {
-          connect: { id: body.slotOfAppointmentId },
+        appointment: {
+          update: {
+            slotOfAppointment: {
+              connect: { id: body.slotOfAppointmentId },
+            },
+          },
         },
       },
       include: {
         consultationPlan: true,
-        slotOfAppointment: {
+        appointment: {
           include: {
-            consulteeProfile: true,
-            slotOfAppointmentRequest: {
+            slotOfAppointment: {
               include: {
-                slotOfAvailabiltyWeekly: true,
-                slotOfAvailabiltyCustom: true,
+                consulteeProfile: true,
+                slotOfAvailabilityWeekly: true,
+                slotOfAvailabilityCustom: true,
               },
             },
           },
@@ -100,13 +104,13 @@ export async function DELETE(
       where: { id: consultationId },
       include: {
         consultationPlan: true,
-        slotOfAppointment: {
+        appointment: {
           include: {
-            consulteeProfile: true,
-            slotOfAppointmentRequest: {
+            slotOfAppointment: {
               include: {
-                slotOfAvailabiltyWeekly: true,
-                slotOfAvailabiltyCustom: true,
+                consulteeProfile: true,
+                slotOfAvailabilityWeekly: true,
+                slotOfAvailabilityCustom: true,
               },
             },
           },

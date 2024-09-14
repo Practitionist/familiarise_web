@@ -333,7 +333,7 @@ function FindExperts() {
                     <div className="flex">
                       <div className="bg-card rounded-lg shadow-lg w-[320px] mr-4">
                         {consultant.subscriptionPlans && consultant.subscriptionPlans.length > 0 ? (
-                          <Tabs defaultValue="ONE_MONTH" className="w-full">
+                          <Tabs defaultValue="1" className="w-full">
                             <TabsList className={`grid grid-cols-${consultant.subscriptionPlans.length} border-b`}>
                               {consultant.subscriptionPlans.map((plan: SubscriptionPlan) => (
                                 <TabsTrigger

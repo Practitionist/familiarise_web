@@ -20,7 +20,7 @@ export const ConsultantSkeletonLoader: React.FC = () => {
   }, []);
 
   return (
-    <div className="flex flex-col justify-center items-center py-40 min-h-screen">
+    <div className="flex flex-col justify-center items-center min-h-screen">
       <div className="text-2xl font-semibold mb-8 text-center animate-pulse">{loadingText}</div>
       <div className="flex justify-center w-full max-w-6xl">
         <div className="flex flex-col w-1/2">

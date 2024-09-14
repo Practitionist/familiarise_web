@@ -6,8 +6,8 @@ export type TSlotTiming = {
   dateInISO: string;
   slotStartTimeInUTC: string;
   slotEndTimeInUTC: string;
-  slotsOfAvailabilityId: string;
-  slotsOfAppointmentId: string;
+  slotOfAvailabilityId: string;
+  slotOfAppointmentId: string;
   localStartTime: string;
   localEndTime: string;
 };

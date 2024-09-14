@@ -123,8 +123,8 @@ model ConsultantProfile {
   reviews      ConsultantReview[]
   scheduleType ScheduleType
 
-  slotsOfAvailabiltyWeekly SlotOfAvailabiltyWeekly[]
-  slotsOfAvailabiltyCustom SlotOfAvailabiltyCustom[]
+  slotsOfAvailabilityWeekly SlotOfAvailabilityWeekly[]
+  slotsOfAvailabilityCustom SlotOfAvailabilityCustom[]
 
   consultationPlans ConsultationPlan[]
   subscriptionPlans SubscriptionPlan[]
@@ -199,14 +199,14 @@ model StaffProfile {
   @@index([userId])
 }
 
-model SlotOfAvailabiltyWeekly {
+model SlotOfAvailabilityWeekly {
   id                         String    @id @default(uuid())
   dayOfWeekforStartTimeInUTC DayOfWeek
   slotStartTimeInUTC         DateTime  @db.Timetz()
   dayOfWeekforEndTimeInUTC   DayOfWeek
   slotEndTimeInUTC           DateTime  @db.Timetz()
 
-  slotOfAppointmentRequest SlotOfAppointmentRequest[]
+  slotsOfAppointment SlotOfAppointment[]
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -217,12 +217,12 @@ model SlotOfAvailabiltyWeekly {
   @@index([consultantProfileId])
 }
 
-model SlotOfAvailabiltyCustom {
+model SlotOfAvailabilityCustom {
   id                 String   @id @default(uuid())
   slotStartTimeInUTC DateTime @db.Timestamptz()
   slotEndTimeInUTC   DateTime @db.Timestamptz()
 
-  slotOfAppointmentRequest SlotOfAppointmentRequest[]
+  slotsOfAppointment SlotOfAppointment[]
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -231,26 +231,6 @@ model SlotOfAvailabiltyCustom {
   updatedAt DateTime @default(now())
 
   @@index([consultantProfileId])
-}
-
-model SlotOfAppointmentRequest {
-  id     String        @id @default(uuid())
-  status RequestStatus @default(PENDING)
-
-  // Can be either a weekly slot or a custom slot
-  slotOfAvailabiltyWeekly    SlotOfAvailabiltyWeekly @relation(fields: [slotOfAvailabilityWeeklyId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  slotOfAvailabilityWeeklyId String
-
-  slotOfAvailabiltyCustom    SlotOfAvailabiltyCustom @relation(fields: [slotOfAvailabilityCustomId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  slotOfAvailabilityCustomId String
-
-  slotsOfAppointment SlotOfAppointment?
-
-  appointmentStartTimeInUTC DateTime? @db.Timestamptz()
-  appointmentEndTimeInUTC   DateTime? @db.Timestamptz()
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
 }
 
 model SlotOfAppointment {
@@ -259,38 +239,25 @@ model SlotOfAppointment {
   consulteeProfile   ConsulteeProfile @relation(fields: [consulteeProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consulteeProfileId String
 
-  slotOfAppointmentRequest   SlotOfAppointmentRequest @relation(fields: [slotOfAppointmentRequestId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  slotOfAppointmentRequestId String                   @unique
+  slotOfAvailabilityWeekly   SlotOfAvailabilityWeekly? @relation(fields: [slotOfAvailabilityWeeklyId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  slotOfAvailabilityWeeklyId String?
+
+  slotOfAvailabilityCustom   SlotOfAvailabilityCustom? @relation(fields: [slotOfAvailabilityCustomId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  slotOfAvailabilityCustomId String?
+
+  appointmentStartTimeInUTC DateTime @db.Timestamptz()
+  appointmentEndTimeInUTC   DateTime @db.Timestamptz()
 
   appointmentsType AppointmentsType
 
-  consultation   Consultation? @relation(fields: [consultationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  consultationId String?       @unique
-
-  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  subscriptionId String?       @unique
-
-  webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  webinarId String?
-
-  class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classId String?
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentId String      @unique
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
-}
 
-enum RequestStatus {
-  PENDING
-  APPROVED
-  REJECTED
-}
-
-enum AppointmentsType {
-  CONSULTATION
-  SUBSCRIPTION
-  WEBINAR
-  CLASS
+  @@index([slotOfAvailabilityWeeklyId])
+  @@index([slotOfAvailabilityCustomId])
 }
 
 //////////////////////////////////////////////////// PRICING PLANS ////////////////////////////////////////////////////
@@ -315,9 +282,7 @@ model Consultation {
   consultationPlan   ConsultationPlan @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationPlanId String
 
-  slotOfAppointment SlotOfAppointment?
-  payment           Payment?
-  AppointmentLock   AppointmentLock?
+  appointment Appointment?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
@@ -349,9 +314,7 @@ model Subscription {
   plan   SubscriptionPlan @relation(fields: [planId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   planId String
 
-  slotOfAppointment SlotOfAppointment?
-  payment           Payment?
-  AppointmentLock   AppointmentLock?
+  appointment Appointment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
@@ -378,12 +341,12 @@ model Webinar {
   price           Int?
   scheduledAt     DateTime?
   durationInHours Float     @default(1.0)
+  topics          Topic[]
 
-  topics            Topic[]
-  webinarPlan       WebinarPlan         @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  webinarPlanId     String
-  slotOfAppointment SlotOfAppointment[]
-  payment           Payment[]
+  webinarPlan   WebinarPlan @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarPlanId String
+
+  appointment Appointment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
@@ -412,15 +375,56 @@ model Class {
   description String?   @db.Text
   startDate   DateTime?
   endDate     DateTime?
+  topics      Topic[]
 
-  classPlans        ClassPlan           @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classPlanId       String
-  topics            Topic[]
-  slotOfAppointment SlotOfAppointment[]
-  payment           Payment[]
+  classPlans  ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classPlanId String
+
+  appointment Appointment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
+}
+
+// Generic Appointment Model
+model Appointment {
+  id                String             @id @default(uuid())
+  appointmentType   AppointmentsType
+  slotOfAppointment SlotOfAppointment?
+
+  consultation   Consultation? @relation(fields: [consultationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultationId String?       @unique
+
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  subscriptionId String?
+
+  webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarId String?
+
+  class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classId String?
+
+  payment         Payment?
+  appointmentLock AppointmentLock?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
+}
+
+enum AppointmentsType {
+  CONSULTATION
+  SUBSCRIPTION
+  WEBINAR
+  CLASS
+}
+
+model AppointmentLock {
+  id        String   @id @default(cuid())
+  lockedAt  DateTime @default(now())
+  expiresAt DateTime
+
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentId String      @unique
 }
 
 model Topic {
@@ -442,17 +446,6 @@ model Newsletter {
   updatedAt DateTime @default(now())
 }
 
-model AppointmentLock {
-  id        String   @id @default(cuid())
-  lockedAt  DateTime @default(now())
-  expiresAt DateTime
-
-  consultation   Consultation? @relation(fields: [consultationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  consultationId String?       @unique
-  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  subscriptionId String?       @unique
-}
-
 ////////////////////////////////////////////// PAYMENT STUFF ////////////////////////////////////////////////////
 
 model Payment {
@@ -465,18 +458,11 @@ model Payment {
   paymentIntent  String
   paymentGateway PaymentGateway
   paymentStatus  PaymentStatus
-  paymentType    PaymentType
 
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
-  consultation   Consultation? @relation(fields: [consultationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  consultationId String?       @unique
-  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  subscriptionId String?       @unique
-  webinar        Webinar?      @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  webinarId      String?
-  class          Class?        @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classId        String?
+  appointment    Appointment   @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentId  String        @unique
   discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   discountCodeId String?
 
@@ -494,13 +480,6 @@ enum PaymentStatus {
   PENDING
   SUCCEEDED
   FAILED
-}
-
-enum PaymentType {
-  CONSULTATION
-  SUBSCRIPTION
-  WEBINAR
-  CLASS
 }
 
 model DiscountCode {

@@ -19,9 +19,8 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({ consulta
     const fetchClassesAndWebinars = async () => {
       setIsLoading(true);
       try {
-        const classesResponse = await fetch(`/api/slots/appointments?type=classes&consultantProfileId=${consultantId}`);
-        const webinarsResponse = await fetch(`/api/slots/appointments?type=webinars&consultantProfileId=${consultantId}`);
-        
+        const classesResponse = await fetch(`/api/slots/appointments?type=class&consultantProfileId=${consultantId}`);
+        const webinarsResponse = await fetch(`/api/slots/appointments?type=webinar&consultantProfileId=${consultantId}`);
         if (!classesResponse.ok || !webinarsResponse.ok) {
           throw new Error('Failed to fetch data');
         }
@@ -29,8 +28,8 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({ consulta
         const classesData = await classesResponse.json();
         const webinarsData = await webinarsResponse.json();
 
-        setClasses(Array.isArray(classesData) ? classesData : []);
-        setWebinars(Array.isArray(webinarsData) ? webinarsData : []);
+        setClasses(classesData.map((classItem: any) => classItem.class));
+        setWebinars(webinarsData.map((webinar: any) => webinar.webinar));
       } catch (error) {
         console.error('Error fetching classes and webinars:', error);
         toast({

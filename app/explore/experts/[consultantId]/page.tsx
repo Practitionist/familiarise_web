@@ -1,20 +1,21 @@
 "use client";
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import Image from "next/image";
-import Link from "next/link";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
+import { useConsultantData } from '@/hooks/useConsultantData';
+import { TSlotTiming } from "@/lib/datetimetz";
+import { ConsultantReview } from "@prisma/client";
 import { StarIcon } from "lucide-react";
-import { ConsultantSkeletonLoader } from './ConsultantSkeletonLoader';
+import Image from "next/image";
+import Link from "next/link";
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ClassesAndWebinars } from './ClassesAndWebinars';
-import { useConsultantData } from './useConsultantData';
-import { TSlotTiming, TConsultantReview } from './types';
+import { ConsultantSkeletonLoader } from './ConsultantSkeletonLoader';
 import PricingToggle from './PricingToggle';
 
-const Review: React.FC<TConsultantReview> = ({ consulteeProfileId, createdAt, rating, reviewDescription }) => (
+const Review: React.FC<ConsultantReview> = ({ consulteeProfileId, createdAt, rating, reviewDescription }) => (
   <div className="flex items-start space-x-4 p-4 bg-white rounded-lg shadow-sm">
     <Avatar className="w-10 h-10" />
     <div className="flex-1">
@@ -146,7 +147,7 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
           <div className="grid grid-cols-7 gap-6">
             {daysOfWeek.map((day) => (
               <div key={day} className="space-y-3">
-                {consultantDetails.slotsOfAvailabiltyWeekly
+                {consultantDetails.slotsOfAvailabilityWeekly
                   .filter((slot) => slot.dayOfWeekforStartTimeInUTC === day.toUpperCase())
                   .map((slot) => {
                     const startTime = new Date(slot.slotStartTimeInUTC);
@@ -190,7 +191,7 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
           <div className="grid grid-cols-7 gap-6">
             {next7Days.map((date) => (
               <div key={date.toISOString()} className="space-y-3">
-                {consultantDetails.slotsOfAvailabiltyCustom
+                {consultantDetails.slotsOfAvailabilityCustom
                   .filter((slot) => {
                     const slotDate = new Date(slot.slotStartTimeInUTC);
                     return slotDate.toDateString() === date.toDateString();

@@ -1,22 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { Prisma, DayOfWeek } from "@prisma/client";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const weeklySlot = await prisma.slotOfAvailabiltyWeekly.findUnique({
+    const weeklySlot = await prisma.slotOfAvailabilityWeekly.findUnique({
       where: { id: params.id },
       include: {
         consultantProfile: true,
-        slotOfAppointmentRequest: true,
+        slotsOfAppointment: true,
       },
     });
 
     if (!weeklySlot) {
       return NextResponse.json(
-        { error: "Slot not found" },
+        { error: "Weekly slot not found" },
         { status: 404 }
       );
     }
@@ -24,39 +25,65 @@ export async function GET(
     return NextResponse.json(weeklySlot, { status: 200 });
 
   } catch (error) {
-    console.error("Error fetching slot:", error);
+    console.error("Error fetching weekly slot:", error);
     return NextResponse.json(
-      { error: "Something went wrong" },
+      { error: "An error occurred while fetching the weekly slot" },
       { status: 500 }
     );
   }
 }
 
-// export async function POST(req: NextRequest, res: NextResponse) {
-//   try {
-//     const body = await req.json();
+export async function POST(
+  req: NextRequest
+) {
+  try {
+    const body = await req.json();
 
-//     const newSlot = await prisma.slotOfAvailabiltyWeekly.create({
-//       data: {
-//         consultantProfile: { connect: { id: body.consultantProfileId } },
-//         dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
-//         dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
-//         slotStartTimeInUTC: body.slotStartTimeInUTC,
-//         slotEndTimeInUTC: body.slotEndTimeInUTC,
-//         // Additional fields can be added here if needed
-//       },
-//     });
+    if (!body.consultantProfileId || !body.dayOfWeekforStartTimeInUTC || !body.dayOfWeekforEndTimeInUTC || !body.slotStartTimeInUTC || !body.slotEndTimeInUTC) {
+      return NextResponse.json(
+        { error: "Missing required fields" },
+        { status: 400 }
+      );
+    }
 
-//     return NextResponse.json(newSlot, { status: 201 });
-//   } catch (error) {
-//     console.error("Error creating slot:", error);
-//     return NextResponse.json(
-//       { error: "Something went wrong" },
-//       { status: 500 }
-//     );
-//   }
-// }
+    if (!Object.values(DayOfWeek).includes(body.dayOfWeekforStartTimeInUTC) || !Object.values(DayOfWeek).includes(body.dayOfWeekforEndTimeInUTC)) {
+      return NextResponse.json(
+        { error: "Invalid day of week" },
+        { status: 400 }
+      );
+    }
 
+    const newSlot = await prisma.slotOfAvailabilityWeekly.create({
+      data: {
+        consultantProfile: { connect: { id: body.consultantProfileId } },
+        dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
+        dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
+        slotStartTimeInUTC: body.slotStartTimeInUTC,
+        slotEndTimeInUTC: body.slotEndTimeInUTC,
+      },
+      include: {
+        consultantProfile: true,
+        slotsOfAppointment: true,
+      },
+    });
+
+    return NextResponse.json(newSlot, { status: 201 });
+  } catch (error) {
+    console.error("Error creating weekly slot:", error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2002') {
+        return NextResponse.json(
+          { error: "A slot with this time range already exists" },
+          { status: 400 }
+        );
+      }
+    }
+    return NextResponse.json(
+      { error: "An error occurred while creating the weekly slot" },
+      { status: 500 }
+    );
+  }
+}
 
 export async function PUT(
   req: NextRequest,
@@ -65,7 +92,21 @@ export async function PUT(
   try {
     const body = await req.json();
 
-    const updatedSlot = await prisma.slotOfAvailabiltyWeekly.update({
+    if (!body.dayOfWeekforStartTimeInUTC || !body.dayOfWeekforEndTimeInUTC || !body.slotStartTimeInUTC || !body.slotEndTimeInUTC) {
+      return NextResponse.json(
+        { error: "Missing required fields" },
+        { status: 400 }
+      );
+    }
+
+    if (!Object.values(DayOfWeek).includes(body.dayOfWeekforStartTimeInUTC) || !Object.values(DayOfWeek).includes(body.dayOfWeekforEndTimeInUTC)) {
+      return NextResponse.json(
+        { error: "Invalid day of week" },
+        { status: 400 }
+      );
+    }
+
+    const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
       where: { id: params.id },
       data: {
         dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
@@ -76,15 +117,23 @@ export async function PUT(
       },
       include: {
         consultantProfile: true,
-        slotOfAppointmentRequest: true,
+        slotsOfAppointment: true,
       },
     });
 
     return NextResponse.json(updatedSlot, { status: 200 });
   } catch (error) {
-    console.error("Error updating slot:", error);
+    console.error("Error updating weekly slot:", error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2025') {
+        return NextResponse.json(
+          { error: "Weekly slot not found" },
+          { status: 404 }
+        );
+      }
+    }
     return NextResponse.json(
-      { error: "Something went wrong" },
+      { error: "An error occurred while updating the weekly slot" },
       { status: 500 }
     );
   }
@@ -97,7 +146,21 @@ export async function PATCH(
   try {
     const body = await req.json();
 
-    const updatedSlot = await prisma.slotOfAvailabiltyWeekly.update({
+    if (body.dayOfWeekforStartTimeInUTC && !Object.values(DayOfWeek).includes(body.dayOfWeekforStartTimeInUTC)) {
+      return NextResponse.json(
+        { error: "Invalid day of week for start time" },
+        { status: 400 }
+      );
+    }
+
+    if (body.dayOfWeekforEndTimeInUTC && !Object.values(DayOfWeek).includes(body.dayOfWeekforEndTimeInUTC)) {
+      return NextResponse.json(
+        { error: "Invalid day of week for end time" },
+        { status: 400 }
+      );
+    }
+
+    const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
       where: { id: params.id },
       data: {
         dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
@@ -108,15 +171,23 @@ export async function PATCH(
       },
       include: {
         consultantProfile: true,
-        slotOfAppointmentRequest: true,
+        slotsOfAppointment: true,
       },
     });
 
     return NextResponse.json(updatedSlot, { status: 200 });
   } catch (error) {
-    console.error("Error partially updating slot:", error);
+    console.error("Error partially updating weekly slot:", error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2025') {
+        return NextResponse.json(
+          { error: "Weekly slot not found" },
+          { status: 404 }
+        );
+      }
+    }
     return NextResponse.json(
-      { error: "Something went wrong" },
+      { error: "An error occurred while updating the weekly slot" },
       { status: 500 }
     );
   }
@@ -127,22 +198,30 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const deletedSlot = await prisma.slotOfAvailabiltyWeekly.delete({
+    const deletedSlot = await prisma.slotOfAvailabilityWeekly.delete({
       where: { id: params.id },
       include: {
         consultantProfile: true,
-        slotOfAppointmentRequest: true,
+        slotsOfAppointment: true,
       },
     });
 
     return NextResponse.json(
-      { message: "Slot deleted successfully", data: deletedSlot },
+      { message: "Weekly slot deleted successfully", data: deletedSlot },
       { status: 200 }
     );
   } catch (error) {
-    console.error("Error deleting slot:", error);
+    console.error("Error deleting weekly slot:", error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2025') {
+        return NextResponse.json(
+          { error: "Weekly slot not found" },
+          { status: 404 }
+        );
+      }
+    }
     return NextResponse.json(
-      { error: "Something went wrong" },
+      { error: "An error occurred while deleting the weekly slot" },
       { status: 500 }
     );
   }

@@ -5,13 +5,14 @@ import {
   ConsultantProfile,
   ConsulteeProfile,
   DayOfWeek,
-  RequestStatus,
   ScheduleType,
   PlanEmailSupport,
   User,
   UserRole,
   ConsultationMode,
-  Topic
+  Topic,
+  PaymentGateway,
+  PaymentStatus
 } from "@prisma/client";
 import * as dotenv from "dotenv";
 
@@ -28,8 +29,6 @@ const NUM_DISCOUNT_CODES = 10;
 const NUM_PAYMENTS = 100;
 const NUM_TOPICS = 100;
 
-
-
 // Small data
 // const NUM_USERS = 10;
 // const NUM_CONSULTANTS = 4;
@@ -37,6 +36,7 @@ const NUM_TOPICS = 100;
 // const NUM_SLOTS_PER_CONSULTANT = 5;
 // const NUM_APPOINTMENTS = 20;
 // const NUM_NEWSLETTERS = 10;
+
 
 type UserWithProfiles = User & {
   consultantProfile?: ConsultantProfile | null;
@@ -357,7 +357,7 @@ async function createSlotsOfAvailability(consultants: UserWithProfiles[]) {
             endDayOfWeek = daysOfWeek[(currentIndex + 1) % 7];
           }
 
-          await prisma.slotOfAvailabiltyWeekly.create({
+          await prisma.slotOfAvailabilityWeekly.create({
             data: {
               consultantProfileId: consultant.consultantProfile.id,
               dayOfWeekforStartTimeInUTC: dayOfWeek,
@@ -385,7 +385,7 @@ async function createSlotsOfAvailability(consultants: UserWithProfiles[]) {
             endTime.setDate(endTime.getDate() + 1);
           }
 
-          await prisma.slotOfAvailabiltyCustom.create({
+          await prisma.slotOfAvailabilityCustom.create({
             data: {
               consultantProfileId: consultant.consultantProfile.id,
               slotStartTimeInUTC: startTime,
@@ -427,10 +427,10 @@ async function createTopics() {
 
 async function createAppointments(consultees: UserWithProfiles[]) {
   console.log(`Creating ${NUM_APPOINTMENTS} appointments...`);
-  const weeklySlots = await prisma.slotOfAvailabiltyWeekly.findMany({
+  const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
     take: NUM_APPOINTMENTS / 2,
   });
-  const customSlots = await prisma.slotOfAvailabiltyCustom.findMany({
+  const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
     take: NUM_APPOINTMENTS / 2,
   });
   const consultationPlans = await prisma.consultationPlan.findMany();
@@ -455,7 +455,7 @@ async function createAppointments(consultees: UserWithProfiles[]) {
     }
 
     if (!slotData) {
-      console.warn(`No slot data available for appointment ${i + 1}. This is likely due to insufficient slots created.Skipping appointment creation...`);
+      console.warn(`No slot data available for appointment ${i + 1}. This is likely due to insufficient slots created. Skipping appointment creation...`);
       continue;
     }
 
@@ -464,111 +464,83 @@ async function createAppointments(consultees: UserWithProfiles[]) {
         Object.values(AppointmentsType)
       );
 
-      let appointmentRequestData: any;
-
-      if (slotData.type === 'weekly') {
-        appointmentRequestData = {
-          status: RequestStatus.PENDING,
-          slotOfAvailabiltyWeekly: {
-            connect: { id: slotData.slot.id }
-          },
-          slotOfAvailabiltyCustom: {
+      await prisma.$transaction(async (prisma) => {
+        const appointmentData: any = {
+          appointmentType: appointmentType,
+          slotOfAppointment: {
             create: {
-              consultantProfileId: slotData.slot.consultantProfileId,
-              slotStartTimeInUTC: slotData.slot.slotStartTimeInUTC,
-              slotEndTimeInUTC: slotData.slot.slotEndTimeInUTC,
-            }
-          },
-          appointmentStartTimeInUTC: slotData.slot.slotStartTimeInUTC,
-          appointmentEndTimeInUTC: slotData.slot.slotEndTimeInUTC,
-        };
-      } else {
-        appointmentRequestData = {
-          status: RequestStatus.PENDING,
-          slotOfAvailabiltyCustom: {
-            connect: { id: slotData.slot.id }
-          },
-          slotOfAvailabiltyWeekly: {
-            create: {
-              consultantProfileId: slotData.slot.consultantProfileId,
-              dayOfWeekforStartTimeInUTC: faker.helpers.arrayElement(Object.values(DayOfWeek)),
-              slotStartTimeInUTC: slotData.slot.slotStartTimeInUTC,
-              dayOfWeekforEndTimeInUTC: faker.helpers.arrayElement(Object.values(DayOfWeek)),
-              slotEndTimeInUTC: slotData.slot.slotEndTimeInUTC,
-            }
-          },
-          appointmentStartTimeInUTC: slotData.slot.slotStartTimeInUTC,
-          appointmentEndTimeInUTC: slotData.slot.slotEndTimeInUTC,
-        };
-      }
-
-      const appointmentRequest = await prisma.slotOfAppointmentRequest.create({
-        data: appointmentRequestData,
-      });
-
-      const appointment = await prisma.slotOfAppointment.create({
-        data: {
-          consulteeProfileId: consultee.consulteeProfile.id,
-          slotOfAppointmentRequestId: appointmentRequest.id,
-          appointmentsType: appointmentType,
-        },
-      });
-
-      switch (appointmentType) {
-        case AppointmentsType.CONSULTATION:
-          await prisma.consultation.create({
-            data: {
-              consultationPlanId:
-                faker.helpers.arrayElement(consultationPlans).id,
-              slotOfAppointment: { connect: { id: appointment.id } },
-            },
-          });
-          break;
-        case AppointmentsType.SUBSCRIPTION:
-          await prisma.subscription.create({
-            data: {
-              planId: faker.helpers.arrayElement(subscriptionPlans).id,
-              startDate: faker.date.recent(),
-              endDate: faker.date.future(),
-              slotOfAppointment: { connect: { id: appointment.id } },
-            },
-          });
-          break;
-        case AppointmentsType.WEBINAR:
-          await prisma.webinar.create({
-            data: {
-              webinarPlanId: faker.helpers.arrayElement(webinarPlans).id,
-              title: faker.lorem.sentence(),
-              description: faker.lorem.paragraph(),
-              scheduledAt: faker.date.future(),
-              durationInHours: faker.number.float({
-                min: 1,
-                max: 3,
-                multipleOf: 0.5,
-              }),
-              slotOfAppointment: { connect: { id: appointment.id } },
-              topics: {
-                connect: faker.helpers.arrayElements(topics, { min: 1, max: 3 }).map(topic => ({ id: topic.id })),
+              consulteeProfile: {
+                connect: { id: consultee.consulteeProfile!.id }
               },
+              appointmentStartTimeInUTC: slotData.type === 'weekly' ? slotData.slot.slotStartTimeInUTC : slotData.slot.slotStartTimeInUTC,
+              appointmentEndTimeInUTC: slotData.type === 'weekly' ? slotData.slot.slotEndTimeInUTC : slotData.slot.slotEndTimeInUTC,
+              appointmentsType: appointmentType,
+              ...(slotData.type === 'weekly' 
+                ? { slotOfAvailabilityWeekly: { connect: { id: slotData.slot.id } } }
+                : { slotOfAvailabilityCustom: { connect: { id: slotData.slot.id } } }
+              ),
             },
-          });
-          break;
-        case AppointmentsType.CLASS:
-          await prisma.class.create({
-            data: {
-              classPlanId: faker.helpers.arrayElement(classPlans).id,
-              title: faker.lorem.sentence(),
-              description: faker.lorem.paragraph(),
-              startDate: faker.date.recent(),
-              endDate: faker.date.future(),
-              slotOfAppointment: { connect: { id: appointment.id } },
-              topics: {
-                connect: faker.helpers.arrayElements(topics, { min: 1, max: 5 }).map(topic => ({ id: topic.id })),
+          },
+        };
+
+        switch (appointmentType) {
+          case AppointmentsType.CONSULTATION:
+            appointmentData.consultation = {
+              create: {
+                consultationPlan: { connect: { id: faker.helpers.arrayElement(consultationPlans).id } },
               },
-            },
-          });
-          break;
-      }
+            };
+            break;
+          case AppointmentsType.SUBSCRIPTION:
+            appointmentData.subscription = {
+              create: {
+                plan: { connect: { id: faker.helpers.arrayElement(subscriptionPlans).id } },
+                startDate: faker.date.recent(),
+                endDate: faker.date.future(),
+              },
+            };
+            break;
+          case AppointmentsType.WEBINAR:
+            appointmentData.webinar = {
+              create: {
+                webinarPlan: { connect: { id: faker.helpers.arrayElement(webinarPlans).id } },
+                title: faker.lorem.sentence(),
+                description: faker.lorem.paragraph(),
+                scheduledAt: faker.date.future(),
+                durationInHours: faker.number.float({
+                  min: 1,
+                  max: 3,
+                  multipleOf: 0.5,
+                }),
+                topics: {
+                  connect: faker.helpers.arrayElements(topics, { min: 1, max: 3 }).map(topic => ({ id: topic.id })),
+                },
+              },
+            };
+            break;
+          case AppointmentsType.CLASS:
+            const classPlan = faker.helpers.arrayElement(classPlans);
+            appointmentData.class = {
+              create: {
+                classPlans: {
+                  connect: { id: classPlan.id }
+                },
+                title: faker.lorem.sentence(),
+                description: faker.lorem.paragraph(),
+                startDate: faker.date.recent(),
+                endDate: faker.date.future(),
+                topics: {
+                  connect: faker.helpers.arrayElements(topics, { min: 1, max: 5 }).map(topic => ({ id: topic.id })),
+                },
+              },
+            };
+            break;
+        }
+
+        await prisma.appointment.create({
+          data: appointmentData,
+        });
+      });
     } catch (error) {
       console.error(
         `Failed to create appointment for consultee ${consultee.id}:`,
@@ -628,7 +600,6 @@ async function createConsultantReviews(consultants: UserWithProfiles[], consulte
   console.log(`Created ${totalReviews} consultant reviews`);
 }
 
-
 async function createDiscountCodes() {
   console.log(`Creating ${NUM_DISCOUNT_CODES} discount codes...`);
   for (let i = 0; i < NUM_DISCOUNT_CODES; i++) {
@@ -653,22 +624,24 @@ async function createDiscountCodes() {
 }
 
 async function createPayments(users: UserWithProfiles[]) {
-  console.log(`Creating ${NUM_PAYMENTS} payments...`);
+  console.log(`Creating payments...`);
   const discountCodes = await prisma.discountCode.findMany();
-  const consultations = await prisma.consultation.findMany();
-  const subscriptions = await prisma.subscription.findMany();
-  const webinars = await prisma.webinar.findMany();
-  const classes = await prisma.class.findMany();
+  const appointments = await prisma.appointment.findMany({
+    where: {
+      payment: null // Only get appointments without payments
+    },
+    include: {
+      consultation: true,
+      subscription: true,
+      webinar: true,
+      class: true,
+    },
+    take: NUM_PAYMENTS, // Limit to the number of payments we want to create
+  });
 
-  const usedConsultations = new Set<string>();
-  const usedSubscriptions = new Set<string>();
-  const usedWebinars = new Set<string>();
-  const usedClasses = new Set<string>();
-
-  for (let i = 0; i < NUM_PAYMENTS; i++) {
+  for (let i = 0; i < appointments.length; i++) {
     const user = faker.helpers.arrayElement(users);
-    let paymentType = faker.helpers.arrayElement(['CONSULTATION', 'SUBSCRIPTION', 'WEBINAR', 'CLASS']);
-    let relatedItemId: string | undefined;
+    const appointment = appointments[i];
 
     try {
       let paymentData: any = {
@@ -677,11 +650,11 @@ async function createPayments(users: UserWithProfiles[]) {
         currency: faker.helpers.arrayElement(['USD', 'EUR', 'GBP']),
         paymentMethod: faker.helpers.arrayElement(['credit_card', 'paypal', 'bank_transfer']),
         paymentIntent: faker.string.uuid(),
-        paymentGateway: faker.helpers.arrayElement(['STRIPE', 'PAYPAL', 'RAZORPAY']),
-        paymentStatus: faker.helpers.arrayElement(['PENDING', 'SUCCEEDED', 'FAILED']),
-        paymentType: paymentType,
+        paymentGateway: faker.helpers.arrayElement(Object.values(PaymentGateway)),
+        paymentStatus: faker.helpers.arrayElement(Object.values(PaymentStatus)),
         description: faker.lorem.sentence(),
         receiptUrl: faker.internet.url(),
+        appointmentId: appointment.id,
       };
 
       // Randomly assign a discount code to some payments
@@ -689,87 +662,12 @@ async function createPayments(users: UserWithProfiles[]) {
         paymentData.discountCodeId = faker.helpers.arrayElement(discountCodes).id;
       }
 
-      // Function to get an unused item
-      const getUnusedItem = <T extends { id: string }>(items: T[], usedSet: Set<string>): T | undefined => {
-        const unusedItems = items.filter(item => !usedSet.has(item.id));
-        if (unusedItems.length === 0) return undefined;
-        return faker.helpers.arrayElement(unusedItems);
-      };
-
-      // Try to find an unused item for the selected payment type
-      let item: any;
-      switch (paymentType) {
-        case 'CONSULTATION':
-          item = getUnusedItem(consultations, usedConsultations);
-          break;
-        case 'SUBSCRIPTION':
-          item = getUnusedItem(subscriptions, usedSubscriptions);
-          break;
-        case 'WEBINAR':
-          item = getUnusedItem(webinars, usedWebinars);
-          break;
-        case 'CLASS':
-          item = getUnusedItem(classes, usedClasses);
-          break;
-      }
-
-      // If no unused item is found, try other payment types
-      if (!item) {
-        const remainingTypes = ['CONSULTATION', 'SUBSCRIPTION', 'WEBINAR', 'CLASS'].filter(type => type !== paymentType);
-        for (const type of remainingTypes) {
-          switch (type) {
-            case 'CONSULTATION':
-              item = getUnusedItem(consultations, usedConsultations);
-              break;
-            case 'SUBSCRIPTION':
-              item = getUnusedItem(subscriptions, usedSubscriptions);
-              break;
-            case 'WEBINAR':
-              item = getUnusedItem(webinars, usedWebinars);
-              break;
-            case 'CLASS':
-              item = getUnusedItem(classes, usedClasses);
-              break;
-          }
-          if (item) {
-            paymentType = type;
-            break;
-          }
-        }
-      }
-
-      // If still no unused item is found, skip this payment
-      if (!item) {
-        console.log(`Skipping payment ${i + 1}: No unused items available.`);
-        continue;
-      }
-
-      // Mark the item as used and add it to the payment data
-      switch (paymentType) {
-        case 'CONSULTATION':
-          usedConsultations.add(item.id);
-          paymentData.consultationId = item.id;
-          break;
-        case 'SUBSCRIPTION':
-          usedSubscriptions.add(item.id);
-          paymentData.subscriptionId = item.id;
-          break;
-        case 'WEBINAR':
-          usedWebinars.add(item.id);
-          paymentData.webinarId = item.id;
-          break;
-        case 'CLASS':
-          usedClasses.add(item.id);
-          paymentData.classId = item.id;
-          break;
-      }
-
       await prisma.payment.create({ data: paymentData });
     } catch (error) {
       console.error(`Failed to create payment for user ${user.id}:`, error);
     }
 
-    if ((i + 1) % 20 === 0 || i === NUM_PAYMENTS - 1) {
+    if ((i + 1) % 20 === 0 || i === appointments.length - 1) {
       console.log(`Created ${i + 1} payments`);
     }
   }

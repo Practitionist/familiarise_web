@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { ScheduleType } from "@prisma/client";
 
 export async function GET(
   req: NextRequest,
@@ -10,8 +11,8 @@ export async function GET(
       where: { id: params.id },
       include: {
         reviews: true,
-        slotsOfAvailabiltyWeekly: true,
-        slotsOfAvailabiltyCustom: true,
+        slotsOfAvailabilityWeekly: true,
+        slotsOfAvailabilityCustom: true,
         consultationPlans: true,
         subscriptionPlans: true,
         webinarPlans: true,
@@ -38,10 +39,14 @@ export async function POST(
   try {
     const body = await req.json();
 
+    if (!body.domain || !Array.isArray(body.subDomains) || body.subDomains.length === 0) {
+      return NextResponse.json({ error: "Domain and subDomains are required" }, { status: 400 });
+    }
+
     const consultant = await prisma.consultantProfile.create({
       data: {
-        scheduleType: body.scheduleType,
-        rating: body.rating,
+        scheduleType: body.scheduleType as ScheduleType,
+        rating: body.rating ? parseFloat(body.rating) : 0,
         specialization: body.specialization,
         experience: body.experience,
         location: body.location,
@@ -53,8 +58,8 @@ export async function POST(
       },
       include: {
         reviews: true,
-        slotsOfAvailabiltyWeekly: true,
-        slotsOfAvailabiltyCustom: true,
+        slotsOfAvailabilityWeekly: true,
+        slotsOfAvailabilityCustom: true,
         consultationPlans: true,
         subscriptionPlans: true,
         webinarPlans: true,
@@ -77,11 +82,15 @@ export async function PUT(
   try {
     const body = await req.json();
 
+    if (body.domain !== undefined && (!body.subDomains || !Array.isArray(body.subDomains) || body.subDomains.length === 0)) {
+      return NextResponse.json({ error: "When updating domain, subDomains must also be provided" }, { status: 400 });
+    }
+
     const consultant = await prisma.consultantProfile.update({
       where: { userId: params.id },
       data: {
-        scheduleType: body.scheduleType,
-        rating: body.rating,
+        scheduleType: body.scheduleType as ScheduleType,
+        rating: body.rating ? parseFloat(body.rating) : undefined,
         specialization: body.specialization,
         experience: body.experience,
         location: body.location,
@@ -92,8 +101,8 @@ export async function PUT(
       },
       include: {
         reviews: true,
-        slotsOfAvailabiltyWeekly: true,
-        slotsOfAvailabiltyCustom: true,
+        slotsOfAvailabilityWeekly: true,
+        slotsOfAvailabilityCustom: true,
         consultationPlans: true,
         subscriptionPlans: true,
         webinarPlans: true,
@@ -118,8 +127,8 @@ export async function DELETE(
       where: { userId: params.id },
       include: {
         reviews: true,
-        slotsOfAvailabiltyWeekly: true,
-        slotsOfAvailabiltyCustom: true,
+        slotsOfAvailabilityWeekly: true,
+        slotsOfAvailabilityCustom: true,
         consultationPlans: true,
         subscriptionPlans: true,
         webinarPlans: true,
