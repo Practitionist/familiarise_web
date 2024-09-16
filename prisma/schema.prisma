@@ -165,6 +165,9 @@ model ConsulteeProfile {
   specialRequirements          String?
   interests                    String?
 
+  consultationRequests      Consultation[]
+  subscriptionRequests      Subscription[]
+
   slotsOfAppointment SlotOfAppointment[]
   consultantReviews  ConsultantReview[]
 
@@ -282,6 +285,14 @@ model Consultation {
   consultationPlan   ConsultationPlan @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationPlanId String
 
+  appointmentRequestStatus RequestStatus @default(PENDING)
+  requestedBy              ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  requestedById            String
+  requestedAt              DateTime?
+  preferredDateTime        DateTime?
+  requestNotes             String?
+  directlyBooked           Boolean       @default(false)
+
   appointment Appointment?
 
   createdAt DateTime @default(now())
@@ -311,6 +322,14 @@ model Subscription {
   startDate DateTime @default(now())
   endDate   DateTime
 
+  appointmentRequestStatus RequestStatus @default(PENDING)
+  requestedBy              ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  requestedById            String
+  requestedAt              DateTime      @default(now())
+  preferredStartDate       DateTime?
+  preferredSchedule        String?
+  requestNotes             String?
+
   plan   SubscriptionPlan @relation(fields: [planId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   planId String
 
@@ -318,6 +337,13 @@ model Subscription {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
 }
 
 // Many-Many Webinar
@@ -342,6 +368,9 @@ model Webinar {
   scheduledAt     DateTime?
   durationInHours Float     @default(1.0)
   topics          Topic[]
+
+  maxParticipants Int        @default(1)
+  waitlist        Waitlist[]
 
   webinarPlan   WebinarPlan @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   webinarPlanId String
@@ -376,6 +405,9 @@ model Class {
   startDate   DateTime?
   endDate     DateTime?
   topics      Topic[]
+
+  maxParticipants Int        @default(1)
+  waitlist        Waitlist[]
 
   classPlans  ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
@@ -444,6 +476,21 @@ model Newsletter {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now())
+}
+
+model Waitlist {
+  id       String   @id @default(uuid())
+  userId   String
+  joinedAt DateTime @default(now())
+
+  webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarId String?
+
+  class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classId String?
+
+  @@unique([userId, webinarId])
+  @@unique([userId, classId])
 }
 
 ////////////////////////////////////////////// PAYMENT STUFF ////////////////////////////////////////////////////

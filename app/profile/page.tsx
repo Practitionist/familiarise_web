@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/use-toast";
+import { User } from "@prisma/client";
 import { useSession } from "next-auth/react";
 import Image from "next/image";
 import { useState } from "react";
@@ -77,11 +78,12 @@ export default function Profile() {
 
       if (res.ok) {
         // Profile updated successfully
-        const updatedUser = await res.json();
+        const updatedUser: User = await res.json();
+        
         // Update the UI with new user data (optional)
-        setName(updatedUser.name);
-        setPhone(updatedUser.phone);
-        setAddress(updatedUser.address);
+        setName(updatedUser.name ?? "");
+        setPhone(updatedUser.phone ?? "");
+        setAddress(updatedUser.address ?? "");
 
         // Show a success message
         toast({
@@ -437,8 +439,6 @@ export default function Profile() {
     </div>
   );
 }
-
-// ... (icon components remain the same)
 
 function SettingsIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (
