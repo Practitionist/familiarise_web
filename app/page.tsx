@@ -3,9 +3,9 @@
 import { Provider as ReduxProvider } from "react-redux";
 import { AnimatePresence } from "framer-motion";
 
-import { Faq } from "@/components/home/faq";
-import { Newsletter } from "@/components/home/newsletter";
-import TestimonialsSection from "@/components/home/testimonials";
+import { Faq } from "@/components/home/Faq";
+import { Newsletter } from "@/components/home/Newsletter";
+import TestimonialsSection from "@/components/home/Testimonials";
 import MeetTheTeam from "@/components/home/MeetTheTeam";
 import HeroSection from "@/components/home/HeroSection";
 import TransformCareerSection from "@/components/home/TransformCareerSection";
