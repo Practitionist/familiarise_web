@@ -13,7 +13,6 @@ import { AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Provider as ReduxProvider } from "react-redux";
-import bannerImage from "../public/static/assets/images/main-banner.jpeg";
 
 type TImage = {
   url: string;
@@ -49,7 +48,7 @@ export default function Home() {
           <section
             className="h-screen py-12 md:py-24 lg:py-32 xl:py-40 bg-gray-100 flex items-center"
             style={{
-              backgroundImage: `url(${renderImage(images, 0, bannerImage.src, 1920, 1080).props.src})`,
+              backgroundImage: `url(${renderImage(images, 0, "/placeholder.svg", 1920, 1080).props.src})`,
               backgroundSize: "cover",
               backgroundPosition: "center",
               backgroundPositionY: "15%",
