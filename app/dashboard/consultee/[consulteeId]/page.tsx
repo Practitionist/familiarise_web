@@ -5,12 +5,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { BellIcon, FigmaIcon } from "@/assets/icons"
-import HomeTab from './HomeTab';
-import AppointmentsTab from './AppointmentsTab';
-import MessagesTab from './MessagesTab';
-import FeedbackSupportTab from './FeedbackSupportTab';
-import BookingHistoryTab from './BookingHistoryTab';
-import PolicyTab from './PolicyTab';
+import HomeTab from './components/HomeTab';
+import AppointmentsTab from './components/AppointmentsTab';
+import MessagesTab from './components/MessagesTab';
+import FeedbackSupportTab from './components/FeedbackSupportTab';
+import BookingHistoryTab from './components/BookingHistoryTab';
+import PolicyTab from './components/PolicyTab';
 
 const tabs = ['Home', 'Appointments', 'Messages', 'Feedback & Support', 'Booking History', 'Policy'];
 

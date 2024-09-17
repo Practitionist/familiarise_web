@@ -1,19 +1,18 @@
 "use client";
 
-import TestimonialsSection from "@/components/testimonials";
-import store from "@/redux/store";
-import { Provider as ReduxProvider } from "react-redux";
-
 import { Faq } from "@/components/faq";
 import { Newsletter } from "@/components/newsletter";
+import TestimonialsSection from "@/components/testimonials";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import renderImage from "@/lib/image";
 import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
+import store from "@/redux/store";
 import { AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Provider as ReduxProvider } from "react-redux";
 import bannerImage from "../public/static/assets/images/main-banner.jpeg";
 
 type TImage = {
@@ -27,7 +26,6 @@ type TImage = {
   last_accessed_at: string;
   metadata: Record<string, any>;
 };
-
 export default function Home() {
   const [images, setImages] = useState<TImage[]>([]);
 
@@ -51,7 +49,7 @@ export default function Home() {
           <section
             className="h-screen py-12 md:py-24 lg:py-32 xl:py-40 bg-gray-100 flex items-center"
             style={{
-              backgroundImage: `url(${bannerImage.src})`,
+              backgroundImage: `url(${renderImage(images, 0, bannerImage.src, 1920, 1080).props.src})`,
               backgroundSize: "cover",
               backgroundPosition: "center",
               backgroundPositionY: "15%",
@@ -112,7 +110,7 @@ export default function Home() {
                   </Link>
                 </div>
                 <div className="flex justify-center">
-                  {renderImage(images, 0, "/placeholder.svg", 550, 310)}
+                  {renderImage(images, 1, "/placeholder.svg", 550, 310)}
                 </div>
               </div>
             </div>
@@ -152,7 +150,7 @@ export default function Home() {
                   </ul>
                 </div>
                 <div className="flex justify-center items-center">
-                  {renderImage(images, 1, "/placeholder.svg", 550, 310)}
+                  {renderImage(images, 2, "/placeholder.svg", 550, 310)}
                 </div>
               </div>
             </div>
@@ -182,7 +180,7 @@ export default function Home() {
                 </div>
               </div>
               <div className="w-full max-w-[1600px] mx-auto overflow-hidden">
-                {renderImage(images, 2, "/placeholder.svg", 1300, 867)}
+                {renderImage(images, 3, "/placeholder.svg", 1300, 867)}
               </div>
             </div>
           </section>

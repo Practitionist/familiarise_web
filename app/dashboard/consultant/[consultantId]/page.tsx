@@ -4,13 +4,13 @@ import React, { Suspense, useEffect, useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Header } from './Header';
-import { Sidebar } from './Sidebar';
-import { AppointmentCard } from './AppointmentCard';
-import { DocumentReviewTable } from './DocumentReviewTable';
-import { ClientActivity } from './ClientActivity';
-import { ApprovalsTable } from './ApprovalsTable';
-import ChatUI from './ChatUI';
+import { Header } from './components/Header';
+import { Sidebar } from './components/Sidebar';
+import { AppointmentCard } from './components/AppointmentCard';
+import { DocumentReviewTable } from './components/DocumentReviewTable';
+import { ClientActivity } from './components/ClientActivity';
+import { ApprovalsTable } from './components/ApprovalsTable';
+import ChatUI from './components/ChatUI';
 import {
   fetchConsultantData,
   fetchAppointments,

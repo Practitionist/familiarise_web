@@ -1,7 +1,7 @@
 import React from 'react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { FileEditIcon, DeleteIcon, DownloadIcon } from '../../../../assets/icons';
+import { FileEditIcon, DeleteIcon, DownloadIcon } from '../../../../../assets/icons';
 
 interface Document {
   invoiceNo: string;
