@@ -61,6 +61,12 @@ export async function POST(request: Request) {
               id: body.subscriptionPlanId,
             },
           },
+          requestedBy: {
+            connect: {
+              id: body.consulteeProfileId,
+            },
+          },
+          appointmentRequestStatus: "PENDING",
         },
       });
 

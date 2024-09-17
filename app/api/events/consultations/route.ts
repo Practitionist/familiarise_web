@@ -38,14 +38,29 @@ export async function POST(request: Request) {
     const result = await prisma.$transaction(async (prisma) => {
       const consultation = await prisma.consultation.create({
         data: {
-          consultationPlanId: body.consultationPlanId,
+          consultationPlan: {
+            connect: {
+              id: body.consultationPlanId,
+            },
+          },
+          requestedBy: {
+            connect: {
+              id: body.consulteeProfileId,
+            },
+          },
+          appointmentRequestStatus: "PENDING",
+          directlyBooked: true,
         },
       });
 
       const appointment = await prisma.appointment.create({
         data: {
           appointmentType: "CONSULTATION",
-          consultationId: consultation.id,
+          consultation: {
+            connect: {
+              id: consultation.id,
+            },
+          },
           slotOfAppointment: {
             create: {
               appointmentStartTimeInUTC: new Date(body.startTime),
