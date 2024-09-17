@@ -31,9 +31,9 @@ export default function Home() {
           <BestExpertsSection images={images} />
           <FeaturedExpertsSection />
           <OfferingsSection />
-          <JoinCommunitySection />
-          <Faq />
           <TestimonialsSection />
+          <Faq />
+          <JoinCommunitySection />
           <MeetTheTeam />
           <Newsletter />
         </main>
