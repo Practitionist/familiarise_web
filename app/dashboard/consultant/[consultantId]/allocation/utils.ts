@@ -8,7 +8,6 @@ import {
   endOfWeek,
   format,
   isSameDay,
-  isSameMonth,
   startOfMonth,
   startOfWeek,
   subMonths,

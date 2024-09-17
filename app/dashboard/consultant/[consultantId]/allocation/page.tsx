@@ -8,14 +8,12 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/components/ui/use-toast";
 import { useEffect, useState } from 'react';
-import { format, startOfWeek, addDays } from 'date-fns';
+import { format, startOfWeek, addDays, eachDayOfInterval, startOfMonth, endOfMonth } from 'date-fns';
 import {
   SlotOfAvailability,
   NewSlot,
   DayOfWeek,
   navigateCalendar,
-  getWeekDays,
-  getMonthDays,
   filterSlotsByDay,
   formatSlotTime,
   calculateSlotPosition
@@ -113,6 +111,17 @@ export default function EnhancedSlotAllocationCalendar() {
     setIsAddScheduleOpen(true);
   };
 
+  const getWeekDays = (date: Date) => {
+    const start = startOfWeek(date);
+    return Array.from({ length: 7 }, (_, i) => addDays(start, i));
+  };
+
+  const getMonthDays = (date: Date) => {
+    const start = startOfMonth(date);
+    const end = endOfMonth(date);
+    return eachDayOfInterval({ start, end });
+  };
+
   const renderWeekView = () => {
     const days = getWeekDays(currentDate);
 
@@ -120,11 +129,20 @@ export default function EnhancedSlotAllocationCalendar() {
       <div className="grid grid-cols-8 gap-px bg-gray-200">
         <div className="col-span-1 bg-white">
           <div className="h-12 border-b border-gray-200"></div>
-          {Array.from({ length: 24 }, (_, i) => (
-            <div key={i} className="h-12 text-xs text-right pr-2 flex items-center justify-end">
-              {format(new Date().setHours(i, 0, 0, 0), 'h a')}
-            </div>
-          ))}
+          <div className="relative" style={{ height: 'calc(24 * 3rem)' }}>
+            {Array.from({ length: 25 }, (_, i) => (
+              <div 
+                key={i} 
+                className="absolute w-full text-xs text-right pr-2 flex items-center justify-end" 
+                style={{ 
+                  top: i === 0 ? '0' : i === 24 ? 'calc(24 * 3rem)' : `${i * 3}rem`,
+                  transform: i === 0 ? 'translateY(0)' : i === 24 ? 'translateY(-100%)' : 'translateY(-50%)'
+                }}
+              >
+                {format(new Date().setHours(i % 24, 0, 0, 0), 'h a')}
+              </div>
+            ))}
+          </div>
         </div>
         {days.map((day, dayIndex) => (
           <div key={dayIndex} className="col-span-1 bg-white">
