@@ -1,37 +1,15 @@
-import { StaticImport } from "next/dist/shared/lib/get-img-props";
-import Image from "next/image"; // Ensure you have the correct import for the Image component
+import Image from 'next/image';
+import { ImageType } from '@/hooks/useImages';
 
-function renderImage(
-  images: string | any[],
-  index: number,
-  placeholderUrl: string | StaticImport,
-  width = 550,
-  height = 310,
-  className = "mx-auto aspect-video overflow-hidden rounded-xl object-cover object-center sm:w-full lg:order-last"
-) {
-  if (images.length > index && images[index].url) {
-    return (
-      <Image
-        key={images[index].id}
-        src={images[index].url}
-        width={width}
-        height={height}
-        alt={images[index].name}
-        className={className}
-      />
-    );
-  } else {
-    return (
-      <Image
-        key={`placeholder-${index}`}
-        src={placeholderUrl}
-        width={width}
-        height={height}
-        alt="Placeholder image"
-        className={className}
-      />
-    );
-  }
+export function renderImage(images: ImageType[], index: number, fallback: string, width: number, height: number) {
+  const image = images[index];
+  return (
+    <Image
+      src={image ? image.url : fallback}
+      alt={image ? image.name : 'Placeholder image'}
+      width={width}
+      height={height}
+      layout="responsive"
+    />
+  );
 }
-
-export default renderImage;
