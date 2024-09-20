@@ -7,12 +7,7 @@ export async function GET(
 ) {
   try {
     const consultee = await prisma.consulteeProfile.findUnique({
-      where: { userId: params.id },
-      include: {
-        slotsOfAppointment: true,
-        consultantReviews: true,
-        user: true,
-      },
+      where: { id: params.id },
     });
 
     if (!consultee) {

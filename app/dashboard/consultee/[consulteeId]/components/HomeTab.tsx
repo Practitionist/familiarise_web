@@ -152,7 +152,7 @@ function DashboardCard({ title, items }: { title: string; items: { title: string
                 <div className="text-sm text-muted-foreground bg-white">{item.date}</div>
               </div>
               {item.status && (
-                <Badge variant={item.status.includes("Not") ? "secondary" : "default"} className="bg-white">
+                <Badge variant={item.status.includes("Not") ? "night" : "outline"}>
                   {item.status}
                 </Badge>
               )}

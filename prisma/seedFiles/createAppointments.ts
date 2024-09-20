@@ -55,7 +55,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
               appointmentStartTimeInUTC: slotData.type === 'weekly' ? slotData.slot.slotStartTimeInUTC : slotData.slot.slotStartTimeInUTC,
               appointmentEndTimeInUTC: slotData.type === 'weekly' ? slotData.slot.slotEndTimeInUTC : slotData.slot.slotEndTimeInUTC,
               appointmentsType: appointmentType,
-              ...(slotData.type === 'weekly' 
+              ...(slotData.type === 'weekly'
                 ? { slotOfAvailabilityWeekly: { connect: { id: slotData.slot.id } } }
                 : { slotOfAvailabilityCustom: { connect: { id: slotData.slot.id } } }
               ),
@@ -68,6 +68,9 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
             appointmentData.consultation = {
               create: {
                 consultationPlan: { connect: { id: faker.helpers.arrayElement(consultationPlans).id } },
+                requestedBy: {
+                  connect: { id: consultee.consulteeProfile!.id }
+                },
               },
             };
             break;
@@ -77,6 +80,9 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
                 plan: { connect: { id: faker.helpers.arrayElement(subscriptionPlans).id } },
                 startDate: faker.date.recent(),
                 endDate: faker.date.future(),
+                requestedBy: {
+                  connect: { id: consultee.consulteeProfile!.id }
+                },
               },
             };
             break;
@@ -123,7 +129,8 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
       });
     } catch (error) {
       console.error(
-        `Failed to create appointment for consultee ${consultee.id}:`,
+        `Failed to create appointment for consultee ${consultee.id}:
+`,
         error
       );
     }

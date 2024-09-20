@@ -4,7 +4,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import { useConsultantData } from '@/hooks/useConsultantData';
+import { useUserData } from '@/hooks/useUserData';
 import { TSlotTiming } from "@/lib/datetimetz";
 import { ConsultantReview } from "@prisma/client";
 import { StarIcon } from "lucide-react";
@@ -39,7 +39,7 @@ const Review: React.FC<ConsultantReview> = ({ consulteeProfileId, createdAt, rat
 );
 
 export default function ExpertProfile({ params }: { readonly params: { consultantId: string } }) {
-  const { userDetails, consultantDetails, reviews, isLoading } = useConsultantData(params.consultantId);
+  const { userDetails, consultantDetails, reviews, isLoading } = useUserData(params.consultantId);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);

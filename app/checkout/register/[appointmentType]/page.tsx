@@ -11,7 +11,7 @@ import { useSearchParams } from "next/navigation"
 import { JSX, SVGProps, useEffect, useState } from "react"
 import { z } from "zod"
 import { ConsultantProfile, ConsultantReview, User } from "@prisma/client"
-import { fetchConsultantDetails, fetchReviews, fetchUserDetails } from "@/hooks/useConsultantData"
+import { fetchConsultantDetails, fetchReviews, fetchUserDetails } from "@/hooks/useUserData"
 import { motion } from "framer-motion"
 
 const eventSchemas = {
