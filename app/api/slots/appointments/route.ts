@@ -9,16 +9,12 @@ export async function GET(request: Request) {
   const consultantProfileId = searchParams.get('consultantProfileId');
   const consulteeProfileId = searchParams.get('consulteeProfileId');
 
-  if (!type) {
-    return NextResponse.json({ error: 'Appointment type is required' }, { status: 400 });
-  }
-
-  if (!Object.values(AppointmentsType).includes(type as AppointmentsType)) {
+  if (type && !Object.values(AppointmentsType).includes(type as AppointmentsType)) {
     return NextResponse.json({ error: 'Invalid appointment type' }, { status: 400 });
   }
 
   try {
-    const appointments = await getAppointments(type as AppointmentsType, consultantProfileId, consulteeProfileId);
+    const appointments = await getAppointments(type as AppointmentsType | undefined, consultantProfileId, consulteeProfileId);
     return NextResponse.json(appointments);
   } catch (error) {
     console.error('Error fetching appointments:', error);
@@ -26,10 +22,12 @@ export async function GET(request: Request) {
   }
 }
 
-async function getAppointments(type: AppointmentsType, consultantProfileId?: string | null, consulteeProfileId?: string | null) {
-  const whereClause: any = {
-    appointmentType: type,
-  };
+async function getAppointments(type?: AppointmentsType, consultantProfileId?: string | null, consulteeProfileId?: string | null) {
+  const whereClause: any = {};
+
+  if (type) {
+    whereClause.appointmentType = type;
+  }
 
   if (consultantProfileId) {
     switch (type) {

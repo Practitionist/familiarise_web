@@ -1,14 +1,32 @@
 "use client"
 
-import React from "react"
-import { motion } from "framer-motion"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useEvents } from "@/hooks/useEvents"
+import { Class, Consultation, Subscription, Webinar } from '@prisma/client'
+import { motion } from "framer-motion"
+import React from "react"
 
-export default function AppointmentsTab() {
+type EventWithType =
+  | (Consultation & { type: 'Consultation' })
+  | (Subscription & { type: 'Subscription' })
+  | (Webinar & { type: 'Webinar' })
+  | (Class & { type: 'Class' })
+
+export default function AppointmentsTab({ consulteeId }: { consulteeId: string }) {
+  const { consultations, subscriptions, webinars, classes, isLoading, error } = useEvents(consulteeId);
+
+  if (isLoading) {
+    return <div>Loading appointments...</div>;
+  }
+
+  if (error) {
+    return <div>Error loading appointments: {error.message}</div>;
+  }
+
   return (
     <div className="space-y-8 min-h-[calc(100vh-200px)]">
       <h2 className="text-3xl font-bold">Consultee Appointments</h2>
@@ -19,10 +37,10 @@ export default function AppointmentsTab() {
           <TabsTrigger value="calendar" className="data-[state=active]:bg-black data-[state=active]:text-white border-t border-r border-b rounded-tr-lg rounded-br-lg">Calendar</TabsTrigger>
         </TabsList>
         <TabsContent value="overview" className="space-y-8 rounded-lg">
-          <Overview />
+          <Overview consultations={consultations} subscriptions={subscriptions} webinars={webinars} classes={classes} />
         </TabsContent>
         <TabsContent value="upcoming" className="space-y-8 rounded-lg">
-          <Upcoming />
+          <Upcoming consultations={consultations} subscriptions={subscriptions} webinars={webinars} classes={classes} />
         </TabsContent>
         <TabsContent value="calendar" className="space-y-8 rounded-lg">
           <Calendar />
@@ -32,103 +50,119 @@ export default function AppointmentsTab() {
   )
 }
 
-function Overview() {
+function Overview({ consultations, subscriptions, webinars, classes }: {
+  consultations: Consultation[],
+  subscriptions: Subscription[],
+  webinars: Webinar[],
+  classes: Class[]
+}) {
+  const allAppointments: EventWithType[] = [
+    ...consultations.map(c => ({ ...c, type: 'Consultation' as const })),
+    ...subscriptions.map(s => ({ ...s, type: 'Subscription' as const })),
+    ...webinars.map(w => ({ ...w, type: 'Webinar' as const })),
+    ...classes.map(c => ({ ...c, type: 'Class' as const }))
+  ].sort((a, b) => {
+    const dateA = getAppointmentDate(a);
+    const dateB = getAppointmentDate(b);
+    return new Date(dateA).getTime() - new Date(dateB).getTime();
+  });
+
+  const upcomingAppointments = allAppointments.slice(0, 5);
+
   return (
     <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-4">
       <DashboardCard
-        title="Upcoming Consultations"
-        items={[
-          { title: "Design Consultation", date: "June 15, 2023 - 2:00 PM" },
-          { title: "Marketing Consultation", date: "June 22, 2023 - 4:00 PM" },
-        ]}
+        title="Consultations"
+        items={consultations.map(consultation => ({
+          title: "Consultation",
+          consultant: "Unknown Consultant",
+          date: consultation.preferredDateTime ? new Date(consultation.preferredDateTime).toLocaleString() : "Unknown Date"
+        }))}
       />
       <DashboardCard
-        title="Active Subscriptions"
-        items={[
-          { title: "Monthly Coaching", date: "Expires: July 31, 2023" },
-          { title: "Quarterly Strategy", date: "Expires: Sep 30, 2023" },
-        ]}
+        title="Subscriptions"
+        items={subscriptions.map(subscription => ({
+          title: "Subscription",
+          consultant: "Unknown Consultant",
+          date: subscription.startDate ? new Date(subscription.startDate).toLocaleString() : "Unknown Date"
+        }))}
       />
       <DashboardCard
-        title="Upcoming Classes"
-        items={[
-          { title: "Design Fundamentals", date: "June 20-24, 2023", status: "Enrolled" },
-          { title: "Marketing Strategies", date: "July 10-14, 2023", status: "Not Enrolled" },
-        ]}
+        title="Classes"
+        items={classes.map(classItem => ({
+          title: "Class",
+          consultant: "Unknown Consultant",
+          date: classItem.startDate ? new Date(classItem.startDate).toLocaleString() : "Unknown Date"
+        }))}
       />
       <DashboardCard
-        title="Upcoming Webinars"
-        items={[
-          { title: "Branding Masterclass", date: "June 30, 2023 - 2:00 PM", status: "Registered" },
-          { title: "Social Media Strategies", date: "July 15, 2023 - 4:00 PM", status: "Not Registered" },
-        ]}
+        title="Webinars"
+        items={webinars.map(webinar => ({
+          title: "Webinar",
+          consultant: "Unknown Consultant",
+          date: webinar.scheduledAt ? new Date(webinar.scheduledAt).toLocaleString() : "Unknown Date"
+        }))}
       />
     </div>
   )
 }
 
-function Upcoming() {
+function Upcoming({ consultations, subscriptions, webinars, classes }: {
+  consultations: Consultation[],
+  subscriptions: Subscription[],
+  webinars: Webinar[],
+  classes: Class[]
+}) {
   return (
     <div className="space-y-8">
-      <Section title="Consultations">
-        <ConsultationCard
-          title="Design Consultation"
-          consultant="John Doe"
-          date="June 15, 2023 - 2:00 PM"
-          buttonText="Join"
-        />
-        <ConsultationCard
-          title="Marketing Consultation"
-          consultant="Jane Smith"
-          date="June 22, 2023 - 4:00 PM"
-          buttonText="Join"
-        />
+      <Section title="Upcoming Consultations">
+        {consultations.map(consultation => (
+          <ConsultationCard
+            key={consultation.id}
+            title="Consultation"
+            consultant="Unknown Consultant"
+            date={consultation.preferredDateTime ? new Date(consultation.preferredDateTime).toLocaleString() : "Unknown Date"}
+            buttonText="Join"
+          />
+        ))}
       </Section>
       <Section title="Subscriptions">
-        <ConsultationCard
-          title="Monthly Coaching"
-          consultant="Alice Johnson"
-          date="Expires: July 31, 2023"
-          buttonText="Renew"
-        />
-        <ConsultationCard
-          title="Quarterly Strategy"
-          consultant="Bob Williams"
-          date="Expires: Sep 30, 2023"
-          buttonText="Renew"
-        />
+        {subscriptions.map(subscription => (
+          <ConsultationCard
+            key={subscription.id}
+            title="Subscription"
+            consultant="Unknown Consultant"
+            date={subscription.startDate ? new Date(subscription.startDate).toLocaleString() : "Unknown Date"}
+            buttonText="View"
+          />
+        ))}
       </Section>
       <Section title="Classes">
-        <ConsultationCard
-          title="Design Fundamentals"
-          consultant="Alice Johnson"
-          date="June 20, 2023 - June 24, 2023"
-          buttonText="View Details"
-        />
-        <ConsultationCard
-          title="Marketing Strategies"
-          consultant="Bob Williams"
-          date="July 10, 2023 - July 14, 2023"
-          buttonText="Enroll"
-        />
+        {classes.map(classItem => (
+          <ConsultationCard
+            key={classItem.id}
+            title="Class"
+            consultant="Unknown Consultant"
+            date={classItem.startDate ? new Date(classItem.startDate).toLocaleString() : "Unknown Date"}
+            buttonText="Join"
+          />
+        ))}
       </Section>
       <Section title="Webinars">
-        <ConsultationCard
-          title="Branding Masterclass"
-          consultant="Emma Brown"
-          date="June 30, 2023 - 2:00 PM"
-          buttonText="Join"
-        />
-        <ConsultationCard
-          title="Social Media Strategies"
-          consultant="David Lee"
-          date="July 15, 2023 - 4:00 PM"
-          buttonText="Register"
-        />
+        {webinars.map(webinar => (
+          <ConsultationCard
+            key={webinar.id}
+            title="Webinar"
+            consultant="Unknown Consultant"
+            date={webinar.scheduledAt ? new Date(webinar.scheduledAt).toLocaleString() : "Unknown Date"}
+            buttonText="Join"
+          />
+        ))}
       </Section>
     </div>
   )
 }
+
 
 function Calendar() {
   return (
@@ -150,7 +184,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
-function DashboardCard({ title, items }: { title: string; items: { title: string; date: string; status?: string }[] }) {
+function DashboardCard({ title, items }: { title: string; items: { title: string; date: string; consultant: string; status?: string }[] }) {
   return (
     <Card className="bg-white">
       <CardHeader className="bg-white">
@@ -169,6 +203,7 @@ function DashboardCard({ title, items }: { title: string; items: { title: string
               <div>
                 <div className="font-medium bg-white">{item.title}</div>
                 <div className="text-sm text-muted-foreground bg-white">{item.date}</div>
+                <div className="text-sm text-muted-foreground bg-white">{item.consultant}</div>
               </div>
               {item.status && (
                 <Badge variant={item.status.includes("Not") ? "secondary" : "default"} className="bg-white">
@@ -198,9 +233,22 @@ function ConsultationCard({ title, consultant, date, buttonText }: { title: stri
         </div>
         <div className="flex items-center justify-between bg-white">
           <div className="text-sm text-muted-foreground bg-white">{date}</div>
-          <Button size="sm" className="bg-black text-white bg-white">{buttonText}</Button>
+          <Button size="sm" className="bg-black text-white">{buttonText}</Button>
         </div>
       </CardContent>
     </Card>
   )
+}
+
+function getAppointmentDate(appointment: EventWithType): string {
+  switch (appointment.type) {
+    case 'Consultation':
+      return appointment.preferredDateTime ? new Date(appointment.preferredDateTime).toLocaleString() : "Unknown Date";
+    case 'Subscription':
+      return appointment.startDate ? new Date(appointment.startDate).toLocaleString() : "Unknown Date";
+    case 'Webinar':
+      return appointment.scheduledAt ? new Date(appointment.scheduledAt).toLocaleString() : "Unknown Date";
+    case 'Class':
+      return appointment.startDate ? new Date(appointment.startDate).toLocaleString() : "Unknown Date";
+  }
 }

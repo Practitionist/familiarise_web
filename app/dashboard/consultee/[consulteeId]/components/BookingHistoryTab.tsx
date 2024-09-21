@@ -3,13 +3,38 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useEvents } from '@/hooks/useEvents';
+import { Consultation, Subscription, Webinar, Class } from '@prisma/client';
 
-export default function BookingHistoryTab() {
-  const bookings = [
-    { id: 1, date: '2023-06-15', consultant: 'John Doe', service: 'Business Strategy', status: 'Completed' },
-    { id: 2, date: '2023-06-22', consultant: 'Jane Smith', service: 'Marketing Consultation', status: 'Upcoming' },
-    { id: 3, date: '2023-07-01', consultant: 'Mike Johnson', service: 'Financial Planning', status: 'Cancelled' },
-  ];
+type EventWithType = 
+  | (Consultation & { type: 'Consultation' })
+  | (Subscription & { type: 'Subscription' })
+  | (Webinar & { type: 'Webinar' })
+  | (Class & { type: 'Class' })
+
+export default function BookingHistoryTab({ consulteeId }: { consulteeId: string }) {
+  const { consultations, subscriptions, webinars, classes, isLoading, error } = useEvents(consulteeId);
+
+  if (isLoading) {
+    return <div>Loading booking history...</div>;
+  }
+
+  if (error) {
+    return <div>Error loading booking history: {error.message}</div>;
+  }
+
+  const allEvents: EventWithType[] = [
+    ...consultations.map(c => ({ ...c, type: 'Consultation' as const })),
+    ...subscriptions.map(s => ({ ...s, type: 'Subscription' as const })),
+    ...webinars.map(w => ({ ...w, type: 'Webinar' as const })),
+    ...classes.map(c => ({ ...c, type: 'Class' as const }))
+  ].sort((a, b) => {
+    const dateA = getEventDate(a);
+    const dateB = getEventDate(b);
+    return new Date(dateB).getTime() - new Date(dateA).getTime(); // Sort in descending order
+  });
+
+  console.log(allEvents);
 
   return (
     <div className="min-h-[calc(100vh-200px)] space-y-6 overflow-y-auto">
@@ -24,18 +49,18 @@ export default function BookingHistoryTab() {
             <TableHeader>
               <TableRow>
                 <TableHead>Date</TableHead>
-                <TableHead>Consultant</TableHead>
-                <TableHead>Service</TableHead>
+                <TableHead>Type</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Details</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {bookings.map((booking) => (
-                <TableRow key={booking.id} className="bg-white">
-                  <TableCell>{booking.date}</TableCell>
-                  <TableCell>{booking.consultant}</TableCell>
-                  <TableCell>{booking.service}</TableCell>
-                  <TableCell>{booking.status}</TableCell>
+              {allEvents.map((event) => (
+                <TableRow key={event.id} className="bg-white">
+                  <TableCell>{new Date(getEventDate(event)).toLocaleDateString()}</TableCell>
+                  <TableCell>{event.type}</TableCell>
+                  <TableCell>{getEventStatus(event)}</TableCell>
+                  <TableCell>{getEventDetails(event)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -44,4 +69,45 @@ export default function BookingHistoryTab() {
       </Card>
     </div>
   );
+}
+
+function getEventDate(event: EventWithType): string {
+  switch (event.type) {
+    case 'Consultation':
+      return event.preferredDateTime ? new Date(event.preferredDateTime).toISOString() : "Unknown";
+    case 'Subscription':
+      return event.startDate ? new Date(event.startDate).toISOString() : "Unknown";
+    case 'Webinar':
+      return event.scheduledAt ? new Date(event.scheduledAt).toISOString() : "Unknown";
+    case 'Class':
+      return event.startDate ? new Date(event.startDate).toISOString() : "Unknown";
+  }
+}
+
+function getEventStatus(event: EventWithType): string {
+  switch (event.type) {
+    case 'Consultation':
+      return event.appointmentRequestStatus;
+    case 'Subscription':
+      return event.appointmentRequestStatus;
+    case 'Webinar':
+      return event.scheduledAt && new Date(event.scheduledAt) > new Date() ? "Upcoming" : "Completed";
+    case 'Class':
+      return event.startDate && new Date(event.startDate) > new Date() ? "Upcoming" : "Completed";
+  }
+}
+
+function getEventDetails(event: EventWithType): string {
+  switch (event.type) {
+    case 'Consultation':
+      return `Consultation Plan: ${event.consultationPlanId ?? "Unknown"}`;
+    case 'Subscription':
+      return `Subscription Plan: ${event.planId ?? "Unknown"}`;
+    case 'Webinar':
+      return `${event.title ?? "Unknown"} (${event.durationInHours ?? "Unknown"} hours)`;
+    case 'Class':
+      return `${event.title ?? "Unknown"}`;
+    default:
+      return "Unknown";
+  }
 }

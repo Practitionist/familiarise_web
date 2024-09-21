@@ -1,9 +1,10 @@
 "use client";
-
 import { BellIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useState } from 'react';
+import { useSession } from 'next-auth/react';
+import { useUserData } from '@/hooks/useUserData';
 import AppointmentsTab from './components/AppointmentsTab';
 import BookingHistoryTab from './components/BookingHistoryTab';
 import FeedbackSupportTab from './components/FeedbackSupportTab';
@@ -11,10 +12,21 @@ import HomeTab from './components/HomeTab';
 import MessagesTab from './components/MessagesTab';
 import PolicyTab from './components/PolicyTab';
 
-const tabs = ['Home', 'Appointments', 'Messages', 'Feedback & Support', 'Booking History', 'Policy'];
+const tabs = ['Home', 'Appointments', 'Booking History', 'Messages', 'Feedback & Support', 'Policy'];
 
 export default function ConsulteeDashboard() {
   const [activeTab, setActiveTab] = useState('Home');
+  const { data: session } = useSession();
+  const userId = session?.user?.id;
+  const { userDetails, profileDetails, isLoading, error } = useUserData(userId || '');
+
+  // TODO: Replace with actual consulteeId
+  const mockConsulteeId = '31db0449-ed31-4966-9733-1daca947cb27';
+
+  if (!userId) return <div>User not authenticated</div>;
+  if (isLoading) return <div>Loading...</div>;
+  if (error) return <div>Error: {error.message}</div>;
+  if (!userDetails || !profileDetails) return <div>User data not found</div>;
 
   return (
     <div className="bg-gray-100 min-h-screen flex flex-col">
@@ -24,11 +36,10 @@ export default function ConsulteeDashboard() {
             {tabs.map((tab) => (
               <Button
                 key={tab}
-                className={`${
-                  activeTab === tab
+                className={`${activeTab === tab
                     ? 'bg-[#f87171] text-white'
                     : 'text-gray-500 hover:bg-gray-200'
-                } rounded-md px-4 py-2 transition-colors whitespace-nowrap`}
+                  } rounded-md px-4 py-2 transition-colors whitespace-nowrap`}
                 variant={activeTab === tab ? 'default' : 'ghost'}
                 onClick={() => setActiveTab(tab)}
               >
@@ -46,11 +57,11 @@ export default function ConsulteeDashboard() {
         </div>
       </div>
       <div className="flex-grow overflow-y-auto p-8">
-        {activeTab === 'Home' && <HomeTab />}
-        {activeTab === 'Appointments' && <AppointmentsTab />}
+        {activeTab === 'Home' && <HomeTab userDetails={userDetails} consulteeId={mockConsulteeId}/>}
+        {activeTab === 'Appointments' && <AppointmentsTab consulteeId={mockConsulteeId} />}
+        {activeTab === 'Booking History' && <BookingHistoryTab consulteeId={mockConsulteeId} />}
         {activeTab === 'Messages' && <MessagesTab />}
         {activeTab === 'Feedback & Support' && <FeedbackSupportTab />}
-        {activeTab === 'Booking History' && <BookingHistoryTab />}
         {activeTab === 'Policy' && <PolicyTab />}
       </div>
     </div>

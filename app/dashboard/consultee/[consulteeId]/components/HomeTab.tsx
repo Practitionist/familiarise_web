@@ -1,127 +1,98 @@
 "use client"
 
-import React from 'react';
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
-import { ArrowLeftIcon, ArrowRightIcon } from "@/assets/icons"
-import { motion } from "framer-motion"
-import { Badge } from "@/components/ui/badge"
+import { ArrowLeftIcon, ArrowRightIcon } from "@/assets/icons";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEvents } from '@/hooks/useEvents';
+import { Class, Consultation, Subscription, User, Webinar } from '@prisma/client';
+import { motion } from "framer-motion";
 
-export default function HomeTab() {
+interface HomeTabProps {
+  userDetails: User | null;
+  consulteeId: string;
+}
+
+type EventType = 
+  | (Consultation & { type: 'Consultation' })
+  | (Subscription & { type: 'Subscription' })
+  | (Webinar & { type: 'Webinar' })
+  | (Class & { type: 'Class' });
+
+export default function HomeTab({ userDetails, consulteeId }: HomeTabProps) {
+  const { consultations, subscriptions, webinars, classes, isLoading, error } = useEvents(consulteeId);
+
+  if (!userDetails || isLoading) {
+    return <div>Loading user data...</div>;
+  }
+
+  if (error) {
+    return <div>Error loading events: {error.message}</div>;
+  }
+
+  const leftColumnEvents: EventType[] = [
+    ...consultations.map(c => ({ ...c, type: 'Consultation' as const })),
+    ...subscriptions.map(s => ({ ...s, type: 'Subscription' as const }))
+  ].sort((a, b) => new Date(getEventDate(a)).getTime() - new Date(getEventDate(b)).getTime());
+
+  const rightColumnEvents: EventType[] = [
+    ...webinars.map(w => ({ ...w, type: 'Webinar' as const })),
+    ...classes.map(c => ({ ...c, type: 'Class' as const }))
+  ].sort((a, b) => new Date(getEventDate(a)).getTime() - new Date(getEventDate(b)).getTime());
+
   return (
     <div className="space-y-6 min-h-[calc(100vh-200px)]">
-      <h2 className="text-3xl font-bold">Home</h2>
+      <h2 className="text-3xl font-bold">Welcome, {userDetails.name}</h2>
       <div className="grid grid-cols-2 gap-8">
         <div>
           <Card className="w-full mb-6 rounded-lg shadow-lg bg-white">
             <CardHeader>
               <div className="flex items-center space-x-4">
                 <Avatar className="rounded-full">
-                  <AvatarImage src="/placeholder.svg" alt="Consultant avatar" />
-                  <AvatarFallback>C</AvatarFallback>
+                  <AvatarImage src={userDetails.image || "/placeholder.svg"} alt="User avatar" />
+                  <AvatarFallback>{userDetails.name?.charAt(0) || 'U'}</AvatarFallback>
                 </Avatar>
                 <div>
-                  <CardTitle className="text-xl font-semibold">Consulting Session</CardTitle>
-                  <div className="flex items-center space-x-2 text-gray-500 text-sm">
-                    <p>11 Nov - 16 Nov</p>
-                    <span>•</span>
-                    <p>11:00 AM</p>
-                  </div>
-                  <div className="mt-2 text-sm text-gray-500">
-                    <p>Consultant: John Doe</p>
-                    <p>Consultation Details: 1-on-1 session to discuss your business goals and strategy</p>
+                  <CardTitle className="text-xl font-semibold">{userDetails.name}</CardTitle>
+                  <div className="text-sm text-gray-500">
+                    <p>{userDetails.name}</p>
+                    <p>Timezone: {userDetails.currentTimezone || 'Not provided'}</p>
                   </div>
                 </div>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="flex justify-end mt-4">
-                <Button
-                  variant="outline"
-                  className="rounded-md px-4 py-2 transition-colors hover:bg-gray-200 bg-black text-white"
-                >
-                  Join
-                </Button>
+              <div className="mt-4">
+                <h3 className="font-semibold">About Me</h3>
               </div>
             </CardContent>
           </Card>
           <div>
             <div className="flex justify-between items-center mb-2">
-              <h2 className="text-xl font-semibold">Upcoming Schedule</h2>
+              <h2 className="text-xl font-semibold">Consultations & Subscriptions</h2>
               <div className="flex items-center space-x-2">
                 <ArrowLeftIcon className="h-4 w-4 text-gray-500 hover:text-gray-700 cursor-pointer" />
-                <p className="text-sm text-gray-500">December 2023</p>
+                <p className="text-sm text-gray-500">{new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}</p>
                 <ArrowRightIcon className="h-4 w-4 text-gray-500 hover:text-gray-700 cursor-pointer" />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <DashboardCard
-                title="Design Consultation"
-                items={[
-                  { title: "With Sarah Johnson", date: "Dec 10, 2023 - 2:00 PM" },
-                ]}
-              />
-              <DashboardCard
-                title="Marketing Strategy"
-                items={[
-                  { title: "With Mike Brown", date: "Dec 15, 2023 - 3:00 PM" },
-                ]}
-              />
-              <DashboardCard
-                title="Financial Planning"
-                items={[
-                  { title: "With Emily Davis", date: "Dec 20, 2023 - 10:00 AM" },
-                ]}
-              />
-              <DashboardCard
-                title="Product Development"
-                items={[
-                  { title: "With Alex Turner", date: "Dec 22, 2023 - 1:00 PM" },
-                ]}
-              />
+            <div className="space-y-4">
+              {leftColumnEvents.map((event, index) => (
+                <EventCard key={index} event={event} />
+              ))}
             </div>
           </div>
         </div>
         <div>
           <Card className="w-full mb-6 rounded-lg shadow-lg bg-white">
             <CardHeader>
-              <CardTitle className="text-xl font-semibold">Upcoming Events</CardTitle>
+              <CardTitle className="text-xl font-semibold">Classes & Webinars</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4">
-                <DashboardCard
-                  title="Webinar: Startup Funding"
-                  items={[
-                    { title: "Speaker: John Smith", date: "Dec 5, 2023 - 2:00 PM", status: "Registered" },
-                  ]}
-                />
-                <DashboardCard
-                  title="Workshop: Digital Marketing"
-                  items={[
-                    { title: "Instructor: Lisa Wong", date: "Dec 12, 2023 - 10:00 AM", status: "Not Registered" },
-                  ]}
-                />
-                <DashboardCard
-                  title="Conference: Tech Innovations"
-                  items={[
-                    { title: "Various Speakers", date: "Dec 18-20, 2023", status: "Registered" },
-                  ]}
-                />
-                <DashboardCard
-                  title="Networking: Entrepreneurs Meetup"
-                  items={[
-                    { title: "Host: Startup Hub", date: "Dec 25, 2023 - 6:00 PM", status: "Not Registered" },
-                  ]}
-                />
-              </div>
-              <div className="mt-4 text-right">
-                <Button
-                  variant="outline"
-                  className="rounded-md px-4 py-2 transition-colors hover:bg-gray-200 text-gray-500"
-                >
-                  View All
-                </Button>
+              <div className="space-y-4">
+                {rightColumnEvents.map((event, index) => (
+                  <EventCard key={index} event={event} />
+                ))}
               </div>
             </CardContent>
           </Card>
@@ -131,35 +102,65 @@ export default function HomeTab() {
   );
 }
 
-function DashboardCard({ title, items }: { title: string; items: { title: string; date: string; status?: string }[] }) {
+function EventCard({ event }: { event: EventType }) {
   return (
-    <Card className="bg-white">
-      <CardHeader>
-        <CardTitle className="text-lg font-semibold bg-white">{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="bg-white">
-        <div className="space-y-4">
-          {items.map((item, index) => (
-            <motion.div
-              key={index}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.1 }}
-              className="flex items-center justify-between bg-white"
-            >
-              <div>
-                <div className="font-medium bg-white" >{item.title}</div>
-                <div className="text-sm text-muted-foreground bg-white">{item.date}</div>
-              </div>
-              {item.status && (
-                <Badge variant={item.status.includes("Not") ? "night" : "outline"}>
-                  {item.status}
-                </Badge>
-              )}
-            </motion.div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.1 }}
+    >
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg font-semibold">{getEventTitle(event)}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm text-muted-foreground">{new Date(getEventDate(event)).toLocaleString()}</div>
+            </div>
+            <Badge variant={getEventStatus(event).toLowerCase().includes("not") ? "secondary" : "outline"}>
+              {getEventStatus(event)}
+            </Badge>
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
   )
+}
+
+function getEventDate(event: EventType): string {
+  switch (event.type) {
+    case 'Consultation':
+      return event.preferredDateTime?.toString() || "Unknown";
+    case 'Subscription':
+      return event.startDate?.toString() || "Unknown";
+    case 'Webinar':
+      return event.scheduledAt?.toString() || "Unknown";
+    case 'Class':
+      return event.startDate?.toString() || "Unknown";
+  }
+}
+
+function getEventStatus(event: EventType): string {
+  switch (event.type) {
+    case 'Consultation':
+    case 'Subscription':
+      return event.appointmentRequestStatus || "Pending";
+    case 'Webinar':
+    case 'Class':
+      const eventDate = getEventDate(event);
+      return new Date(eventDate) > new Date() ? "Upcoming" : "Completed";
+  }
+}
+
+function getEventTitle(event: EventType): string {
+  switch (event.type) {
+    case 'Consultation':
+      return `Consultation`;
+    case 'Subscription':
+      return `Subscription`;
+    case 'Webinar':
+    case 'Class':
+      return event.title || event.type;
+  }
 }

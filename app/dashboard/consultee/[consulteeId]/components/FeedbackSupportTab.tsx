@@ -4,6 +4,7 @@ import React from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { Input } from "@/components/ui/input"
 
 export default function FeedbackSupportTab() {
   return (
@@ -29,13 +30,25 @@ export default function FeedbackSupportTab() {
           <CardDescription>Need help? Our support team is here for you</CardDescription>
         </CardHeader>
         <CardContent>
+          <form className="space-y-4">
+            <Input placeholder="Subject" />
+            <Textarea placeholder="Describe your issue..." className="min-h-[150px] bg-gray-200" />
+          </form>
+        </CardContent>
+        <CardFooter>
+          <Button className="bg-black text-white">Submit Support Ticket</Button>
+        </CardFooter>
+      </Card>
+
+      <Card className="bg-white">
+        <CardHeader>
+          <CardTitle>Support Information</CardTitle>
+        </CardHeader>
+        <CardContent>
           <p>Email: support@example.com</p>
           <p>Phone: +1 (123) 456-7890</p>
           <p>Hours: Monday - Friday, 9 AM - 5 PM EST</p>
         </CardContent>
-        <CardFooter>
-          <Button className="bg-black text-white">Open Support Ticket</Button>
-        </CardFooter>
       </Card>
     </div>
   );

@@ -32,7 +32,7 @@ export default function HeroSection({ images }: { images: ImageType[] }) {
               Book an Expert Session
             </Link>
             <Link
-              className="inline-flex h-12 items-center justify-center rounded-md border border-gray-900 bg-transparent px-6 py-3 text-sm font-medium text-gray-900 shadow transition-colors hover:bg-gray-900 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-950"
+              className="inline-flex h-12 items-center justify-center rounded-md border border-black bg-gray-200 px-6 py-3 text-sm font-medium text-black shadow transition-colors hover:bg-gray-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black"
               href="#"
             >
               Learn More

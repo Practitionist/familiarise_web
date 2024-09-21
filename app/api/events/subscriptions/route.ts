@@ -4,7 +4,29 @@ import { checkOverlappingAppointments } from "@/lib/appointmentUtils";
 
 export async function GET(request: Request) {
   try {
-    const subscriptions = await prisma.subscription.findMany({});
+    const { searchParams } = new URL(request.url);
+    const consulteeId = searchParams.get('consulteeId');
+    const consultantId = searchParams.get('consultantId');
+
+    let subscriptions;
+
+    if (consulteeId) {
+      subscriptions = await prisma.subscription.findMany({
+        where: {
+          requestedById: consulteeId
+        }
+      });
+    } else if (consultantId) {
+      subscriptions = await prisma.subscription.findMany({
+        where: {
+          plan: {
+            consultantProfileId: consultantId
+          }
+        }
+      });
+    } else {
+      subscriptions = await prisma.subscription.findMany({});
+    }
 
     return NextResponse.json({ data: subscriptions }, { status: 200 });
   } catch (error) {

@@ -68,7 +68,7 @@ export async function PUT(
     const body = await req.json();
 
     const existingConsultee = await prisma.consulteeProfile.findUnique({
-      where: { userId: params.id },
+      where: { id: params.id },
     });
 
     if (!existingConsultee) {
@@ -76,7 +76,7 @@ export async function PUT(
     }
 
     const updatedConsultee = await prisma.consulteeProfile.update({
-      where: { userId: params.id },
+      where: { id: params.id },
       data: {
         education: body.education,
         occupation: body.occupation,
@@ -106,7 +106,7 @@ export async function DELETE(
 ) {
   try {
     const existingConsultee = await prisma.consulteeProfile.findUnique({
-      where: { userId: params.id },
+      where: { id: params.id },
     });
 
     if (!existingConsultee) {
@@ -114,7 +114,7 @@ export async function DELETE(
     }
 
     const deletedConsultee = await prisma.consulteeProfile.delete({
-      where: { userId: params.id },
+      where: { id: params.id },
       include: {
         slotsOfAppointment: true,
         consultantReviews: true,

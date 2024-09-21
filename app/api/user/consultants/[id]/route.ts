@@ -87,7 +87,7 @@ export async function PUT(
     }
 
     const consultant = await prisma.consultantProfile.update({
-      where: { userId: params.id },
+      where: { id: params.id },
       data: {
         scheduleType: body.scheduleType as ScheduleType,
         rating: body.rating ? parseFloat(body.rating) : undefined,
@@ -124,7 +124,7 @@ export async function DELETE(
 ) {
   try {
     const consultant = await prisma.consultantProfile.delete({
-      where: { userId: params.id },
+      where: { id: params.id },
       include: {
         reviews: true,
         slotsOfAvailabilityWeekly: true,
