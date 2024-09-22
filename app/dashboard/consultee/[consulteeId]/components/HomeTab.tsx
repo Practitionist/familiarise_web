@@ -1,8 +1,10 @@
 "use client"
 
+import React, { useState } from 'react';
 import { ArrowLeftIcon, ArrowRightIcon } from "@/assets/icons";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useEvents } from '@/hooks/useEvents';
 import { Class, Consultation, Subscription, User, Webinar } from '@prisma/client';
@@ -19,8 +21,21 @@ type EventType =
   | (Webinar & { type: 'Webinar' })
   | (Class & { type: 'Class' });
 
+// Simulated function to fetch trending events
+// TODO: Replace with actual API call
+const fetchTrendingEvents = (): EventType[] => {
+  // This is a placeholder. In a real application, you would fetch this data from an API
+  return [
+    { type: 'Webinar', title: 'Introduction to AI', scheduledAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
+    { type: 'Class', title: 'Advanced JavaScript', startDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) },
+    { type: 'Consultation', title: 'Career Guidance', preferredDateTime: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) },
+  ] as EventType[];
+};
+
 export default function HomeTab({ userDetails, consulteeId }: HomeTabProps) {
   const { consultations, subscriptions, webinars, classes, isLoading, error } = useEvents(consulteeId);
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const trendingEvents = fetchTrendingEvents();
 
   if (!userDetails || isLoading) {
     return <div>Loading user data...</div>;
@@ -30,15 +45,29 @@ export default function HomeTab({ userDetails, consulteeId }: HomeTabProps) {
     return <div>Error loading events: {error.message}</div>;
   }
 
-  const leftColumnEvents: EventType[] = [
+  const allEvents: EventType[] = [
     ...consultations.map(c => ({ ...c, type: 'Consultation' as const })),
-    ...subscriptions.map(s => ({ ...s, type: 'Subscription' as const }))
-  ].sort((a, b) => new Date(getEventDate(a)).getTime() - new Date(getEventDate(b)).getTime());
-
-  const rightColumnEvents: EventType[] = [
+    ...subscriptions.map(s => ({ ...s, type: 'Subscription' as const })),
     ...webinars.map(w => ({ ...w, type: 'Webinar' as const })),
     ...classes.map(c => ({ ...c, type: 'Class' as const }))
   ].sort((a, b) => new Date(getEventDate(a)).getTime() - new Date(getEventDate(b)).getTime());
+
+  const eventsForCurrentMonth = allEvents.filter(event => {
+    const eventDate = new Date(getEventDate(event));
+    return eventDate.getMonth() === currentMonth.getMonth() && eventDate.getFullYear() === currentMonth.getFullYear();
+  });
+
+  const oneWeekAgo = new Date();
+  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+  const recentEvents = allEvents.filter(event => new Date(getEventDate(event)) >= oneWeekAgo);
+
+  const goToPreviousMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
+  };
+
+  const goToNextMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+  };
 
   return (
     <div className="space-y-6 min-h-[calc(100vh-200px)]">
@@ -69,30 +98,55 @@ export default function HomeTab({ userDetails, consulteeId }: HomeTabProps) {
           </Card>
           <div>
             <div className="flex justify-between items-center mb-2">
-              <h2 className="text-xl font-semibold">Consultations & Subscriptions</h2>
+              <h2 className="text-xl font-semibold">Monthly Events</h2>
               <div className="flex items-center space-x-2">
-                <ArrowLeftIcon className="h-4 w-4 text-gray-500 hover:text-gray-700 cursor-pointer" />
-                <p className="text-sm text-gray-500">{new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}</p>
-                <ArrowRightIcon className="h-4 w-4 text-gray-500 hover:text-gray-700 cursor-pointer" />
+                <Button onClick={goToPreviousMonth} variant="outline" size="icon">
+                  <ArrowLeftIcon className="h-4 w-4" />
+                </Button>
+                <p className="text-sm text-gray-500">{currentMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}</p>
+                <Button onClick={goToNextMonth} variant="outline" size="icon">
+                  <ArrowRightIcon className="h-4 w-4" />
+                </Button>
               </div>
             </div>
             <div className="space-y-4">
-              {leftColumnEvents.map((event, index) => (
+              {eventsForCurrentMonth.map((event, index) => (
                 <EventCard key={index} event={event} />
               ))}
+              {eventsForCurrentMonth.length === 0 && (
+                <p className="text-center text-gray-500">No events for this month</p>
+              )}
             </div>
           </div>
         </div>
         <div>
           <Card className="w-full mb-6 rounded-lg shadow-lg bg-white">
             <CardHeader>
-              <CardTitle className="text-xl font-semibold">Classes & Webinars</CardTitle>
+              <CardTitle className="text-xl font-semibold">Recent Events</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {rightColumnEvents.map((event, index) => (
+                {recentEvents.map((event, index) => (
                   <EventCard key={index} event={event} />
                 ))}
+                {recentEvents.length === 0 && (
+                  <p className="text-center text-gray-500">No recent events</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="w-full mt-6 rounded-lg shadow-lg bg-white">
+            <CardHeader>
+              <CardTitle className="text-xl font-semibold">Trending Events</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {trendingEvents.map((event, index) => (
+                  <TrendingEventCard key={index} event={event} />
+                ))}
+                {trendingEvents.length === 0 && (
+                  <p className="text-center text-gray-500">No trending events available</p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -121,6 +175,30 @@ function EventCard({ event }: { event: EventType }) {
             <Badge variant={getEventStatus(event).toLowerCase().includes("not") ? "secondary" : "outline"}>
               {getEventStatus(event)}
             </Badge>
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  )
+}
+
+function TrendingEventCard({ event }: { event: EventType }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.1 }}
+    >
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg font-semibold">{getEventTitle(event)}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm text-muted-foreground">{new Date(getEventDate(event)).toLocaleString()}</div>
+            </div>
+            <Button variant="outline" size="sm">Register</Button>
           </div>
         </CardContent>
       </Card>

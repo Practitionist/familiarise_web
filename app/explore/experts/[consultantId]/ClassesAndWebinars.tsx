@@ -64,8 +64,8 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({ consulta
           </div>
         </div>
         <p className="text-gray-700 mb-4 line-clamp-3 flex-grow">{classItem.description}</p>
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           className="w-full mt-auto cursor-pointer transition-colors duration-300 hover:bg-black hover:text-white"
         >
           Register Now
@@ -89,8 +89,8 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({ consulta
           </div>
         </div>
         <p className="text-gray-700 mb-4 line-clamp-3 flex-grow">{webinar.description}</p>
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           className="w-full mt-auto cursor-pointer transition-colors duration-300 hover:bg-black hover:text-white"
         >
           {webinar.scheduledAt instanceof Date && webinar.scheduledAt <= new Date() ? 'View Recording' : 'Register Now'}
