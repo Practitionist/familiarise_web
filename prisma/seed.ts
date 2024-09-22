@@ -17,6 +17,7 @@ dotenv.config({ path: ".env" });
 
 async function seed() {
   console.log("Starting seed process...");
+  const startTime = Date.now();
 
   const users = await createUsers();
   const consultants = users.filter((user) => user.role === "CONSULTANT");
@@ -34,7 +35,9 @@ async function seed() {
   await createDiscountCodes();
   await createPayments(users);
 
-  console.log("Seed data inserted successfully.");
+  const endTime = Date.now();
+  const timeElapsed = (endTime - startTime) / 1000; // time in seconds
+  console.log(`Seed data inserted successfully in ${timeElapsed} seconds.`);
 }
 
 seed()

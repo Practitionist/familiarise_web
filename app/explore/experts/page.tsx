@@ -17,8 +17,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-// ... (ExploreExperts component remains unchanged)
-
 function FindExperts() {
   const [domains, setDomains] = useState<string[]>([]);
   const [subdomains, setSubdomains] = useState<string[]>([]);
@@ -43,24 +41,17 @@ function FindExperts() {
         const metaData = await metaResponse.json();
         const consultantsData = await consultantsResponse.json();
 
-        console.log("Meta Data:", metaData);
-        console.log("Consultants Data:", consultantsData);
-
         if (metaData.data.domains && Array.isArray(metaData.data.domains)) {
           setDomains(metaData.data.domains);
-          console.log("Domains:", metaData.data.domains);
         }
         if (metaData.data.subdomains && Array.isArray(metaData.data.subdomains)) {
           setSubdomains(metaData.data.subdomains);
-          console.log("Subdomains:", metaData.data.subdomains);
         }
         setConsultants(consultantsData);
-        console.log("Consultants set:", consultantsData);
       } catch (error) {
         console.error("Error fetching data:", error);
       } finally {
         setIsLoading(false);
-        console.log("Loading state set to false");
       }
     }
     fetchData();
@@ -342,9 +333,9 @@ function FindExperts() {
                                   className="data-[state=active]:bg-black data-[state=active]:text-white rounded-md transition-all duration-200 ease-in-out"
                                 >
                                   {plan.durationInMonths === 1 ? '1 Month' :
-                                   plan.durationInMonths === 3 ? '3 Months' :
-                                   plan.durationInMonths === 6 ? '6 Months' :
-                                   plan.durationInMonths === 12 ? '12 Months' : `${plan.durationInMonths} Months`}
+                                    plan.durationInMonths === 3 ? '3 Months' :
+                                      plan.durationInMonths === 6 ? '6 Months' :
+                                        plan.durationInMonths === 12 ? '12 Months' : `${plan.durationInMonths} Months`}
                                 </TabsTrigger>
                               ))}
                             </TabsList>
@@ -356,10 +347,10 @@ function FindExperts() {
                                       <div className="text-4xl font-bold">${plan.price / 100}</div>
                                       <div className="text-muted-foreground">
                                         for {plan.durationInMonths === 1 ? '1 month' :
-                                             plan.durationInMonths === 3 ? '3 months' :
-                                             plan.durationInMonths === 6 ? '6 months' :
-                                             plan.durationInMonths === 12 ? '12 months' :
-                                             `${plan.durationInMonths} months`}
+                                          plan.durationInMonths === 3 ? '3 months' :
+                                            plan.durationInMonths === 6 ? '6 months' :
+                                              plan.durationInMonths === 12 ? '12 months' :
+                                                `${plan.durationInMonths} months`}
                                       </div>
                                     </div>
                                     <div className="flex items-center justify-between">

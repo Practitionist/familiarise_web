@@ -165,8 +165,8 @@ model ConsulteeProfile {
   specialRequirements          String?
   interests                    String?
 
-  consultationRequests      Consultation[]
-  subscriptionRequests      Subscription[]
+  consultationRequests Consultation[]
+  subscriptionRequests Subscription[]
 
   slotsOfAppointment SlotOfAppointment[]
   consultantReviews  ConsultantReview[]
@@ -285,13 +285,13 @@ model Consultation {
   consultationPlan   ConsultationPlan @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationPlanId String
 
-  appointmentRequestStatus RequestStatus @default(PENDING)
+  appointmentRequestStatus RequestStatus    @default(PENDING)
   requestedBy              ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById            String
   requestedAt              DateTime?
   preferredDateTime        DateTime?
   requestNotes             String?
-  directlyBooked           Boolean       @default(false)
+  directlyBooked           Boolean          @default(false)
 
   appointment Appointment?
 
@@ -322,12 +322,12 @@ model Subscription {
   startDate DateTime @default(now())
   endDate   DateTime
 
-  appointmentRequestStatus RequestStatus @default(PENDING)
+  appointmentRequestStatus RequestStatus    @default(PENDING)
   requestedBy              ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById            String
-  requestedAt              DateTime      @default(now())
-  preferredStartDate       DateTime?
-  preferredSchedule        String?
+  requestedAt              DateTime         @default(now())
+  tentativeStartDate       DateTime?
+  tentativeSchedule        String?
   requestNotes             String?
 
   plan   SubscriptionPlan @relation(fields: [planId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -406,8 +406,10 @@ model Class {
   endDate     DateTime?
   topics      Topic[]
 
-  maxParticipants Int        @default(1)
-  waitlist        Waitlist[]
+  tentativeStartDate DateTime?
+  tentativeSchedule  String?
+  maxParticipants    Int        @default(1)
+  waitlist           Waitlist[]
 
   classPlans  ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
