@@ -1,3 +1,4 @@
+import { TrashIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -306,7 +307,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
     );
   };
   return (
-    <form onSubmit={handleSubmit(onSubmitForm)} className="w-full max-w-md">
+    <form onSubmit={handleSubmit(onSubmitForm)} className="w-full max-w-6xl mx-auto">
       <Card className="w-full">
         <CardHeader>
           <CardTitle>Preferred Schedule</CardTitle>
@@ -318,33 +319,39 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
             control={control}
             defaultValue="weekly"
             render={({ field }) => (
-              <RadioGroup onValueChange={field.onChange} value={field.value}>
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="weekly" className="font-medium">Weekly Recurring</Label>
-                  <RadioGroupItem id="weekly" value="weekly" />
-                </div>
-                <div className={`grid gap-4 mt-4 ${scheduleType !== "weekly" ? "opacity-50 pointer-events-none" : ""}`}>
-                  {DAYS_OF_WEEK.map((day) => renderSlots(day, weeklySlots, setWeeklySlots))}
-                </div>
-                <div className="flex items-center justify-between mt-6">
-                  <Label htmlFor="custom" className="font-medium">Custom Schedule</Label>
-                  <RadioGroupItem id="custom" value="custom" />
-                </div>
-                <div className={`grid gap-4 mt-4 ${scheduleType !== "custom" ? "opacity-50 pointer-events-none" : ""}`}>
-                  <div className="calendar-container bg-white border p-4 rounded-lg">
-                    <div className="flex justify-between items-center mb-4">
-                      <button type="button" className="text-black" onClick={handlePrevMonth}>&lt;</button>
-                      <span>{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
-                      <button type="button" className="text-black" onClick={handleNextMonth}>&gt;</button>
+              <RadioGroup onValueChange={field.onChange} value={field.value} className="space-y-4">
+                <div className="flex flex-col md:flex-row md:space-x-8 space-y-4 md:space-y-0">
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-4">
+                      <Label htmlFor="weekly" className="font-medium">Weekly Recurring</Label>
+                      <RadioGroupItem id="weekly" value="weekly" />
                     </div>
-                    <div className="grid grid-cols-7 gap-1 text-center">
-                      {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
-                        <div key={day} className="text-sm font-medium">{day}</div>
-                      ))}
-                      {renderCalendar()}
+                    <div className={`grid gap-4 ${scheduleType !== "weekly" ? "opacity-50 pointer-events-none" : ""}`}>
+                      {DAYS_OF_WEEK.map((day) => renderSlots(day, weeklySlots, setWeeklySlots))}
                     </div>
                   </div>
-                  {Object.keys(customSlots).sort().map(dateString => renderSlotsForDate(dateString))}
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-4">
+                      <Label htmlFor="custom" className="font-medium">Custom Schedule</Label>
+                      <RadioGroupItem id="custom" value="custom" />
+                    </div>
+                    <div className={`grid gap-4 ${scheduleType !== "custom" ? "opacity-50 pointer-events-none" : ""}`}>
+                      <div className="calendar-container bg-white border p-4 rounded-lg">
+                        <div className="flex justify-between items-center mb-4">
+                          <button type="button" className="text-black" onClick={handlePrevMonth}>&lt;</button>
+                          <span>{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
+                          <button type="button" className="text-black" onClick={handleNextMonth}>&gt;</button>
+                        </div>
+                        <div className="grid grid-cols-7 gap-1 text-center">
+                          {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
+                            <div key={day} className="text-sm font-medium">{day}</div>
+                          ))}
+                          {renderCalendar()}
+                        </div>
+                      </div>
+                      {Object.keys(customSlots).sort().map(dateString => renderSlotsForDate(dateString))}
+                    </div>
+                  </div>
                 </div>
               </RadioGroup>
             )}
@@ -359,53 +366,6 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
   );
 };
 
-function CalendarDaysIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M8 2v4" />
-      <path d="M16 2v4" />
-      <rect width="18" height="18" x="3" y="4" rx="2" />
-      <path d="M3 10h18" />
-      <path d="M8 14h.01" />
-      <path d="M12 14h.01" />
-      <path d="M16 14h.01" />
-      <path d="M8 18h.01" />
-      <path d="M12 18h.01" />
-      <path d="M16 18h.01" />
-    </svg>
-  );
-}
 
-function TrashIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M3 6h18" />
-      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-    </svg>
-  );
-}
 
 export default ConsultantPreferredScheduleForm;
