@@ -17,7 +17,7 @@ model User {
   emailVerified       DateTime?
   image               String?
   phone               String?   @unique
-  address             String?   @unique
+  address             String?
   onlineStatus        Boolean   @default(false)
   currentTimezone     String?
   onboardingCompleted Boolean?  @default(false)

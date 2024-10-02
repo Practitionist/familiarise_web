@@ -47,7 +47,7 @@ const apiEndpoints = {
   // POST booked
   consultation: (planId: string) => `/api/plans/consultations/${planId}`,
   subscription: (planId: string) => `/api/plans/subscriptions/${planId}`,
-  
+
   // PRE booked
   webinar: (webinarId: string) => `/api/events/webinars/${webinarId}`,
   class: (classId: string) => `/api/events/classes/${classId}`,
@@ -60,7 +60,7 @@ export default function CheckoutPage({ params }: { params: { appointmentType: st
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [consultantId, setConsultantId] = useState<string | null>(null);
-  
+
   const [userDetails, setUserDetails] = useState<User | null>(null);
   const [consultantDetails, setConsultantDetails] = useState<ConsultantProfile | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
@@ -88,8 +88,8 @@ export default function CheckoutPage({ params }: { params: { appointmentType: st
         // Construct the API endpoint based on the appointment type and params
         const endpoint = apiEndpoints[appointmentType as keyof typeof apiEndpoints](
           // Use the appropriate ID based on the appointment type, fallback to planId or empty string
-          parsedParams.data[`${appointmentType}Id` as keyof typeof parsedParams.data] || 
-          (parsedParams.data as { planId?: string }).planId || 
+          parsedParams.data[`${appointmentType}Id` as keyof typeof parsedParams.data] ||
+          (parsedParams.data as { planId?: string }).planId ||
           ''
         );
 
@@ -118,17 +118,19 @@ export default function CheckoutPage({ params }: { params: { appointmentType: st
         setEventData(data);
         setConsultantId(extractedConsultantId);
 
-        const consultantData = await fetchConsultantDetails(extractedConsultantId);
-        const userData = await fetchUserDetails(consultantData.userId);
-        const reviewsData = await fetchReviews(extractedConsultantId);
-        
+        const [consultantData, userData, reviewsData] = await Promise.all([
+          fetchConsultantDetails(extractedConsultantId),
+          fetchUserDetails(extractedConsultantId),
+          fetchReviews(extractedConsultantId)
+        ]);
+
         setConsultantDetails(consultantData);
         setUserDetails(userData);
         setReviews(reviewsData);
       } catch (error) {
         console.error("Error fetching event data:", error);
         let errorMessage = 'An unexpected error occurred. Please try again.';
-        
+
         if (error instanceof Error) {
           if (error.message.includes('Missing required fields')) {
             errorMessage = error.message + '. Please ensure you have provided all necessary information.';
@@ -136,7 +138,7 @@ export default function CheckoutPage({ params }: { params: { appointmentType: st
             errorMessage = error.message;
           }
         }
-        
+
         setError(errorMessage);
       } finally {
         setIsLoading(false);

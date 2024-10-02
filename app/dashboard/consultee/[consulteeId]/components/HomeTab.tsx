@@ -45,6 +45,7 @@ export default function HomeTab({ userDetails, consulteeId }: HomeTabProps) {
     return <div>Error loading events: {error.message}</div>;
   }
 
+  // Combine all event types into a single array and sort by date
   const allEvents: EventType[] = [
     ...consultations.map(c => ({ ...c, type: 'Consultation' as const })),
     ...subscriptions.map(s => ({ ...s, type: 'Subscription' as const })),
@@ -52,19 +53,25 @@ export default function HomeTab({ userDetails, consulteeId }: HomeTabProps) {
     ...classes.map(c => ({ ...c, type: 'Class' as const }))
   ].sort((a, b) => new Date(getEventDate(a)).getTime() - new Date(getEventDate(b)).getTime());
 
+  // Filter events for the current month
   const eventsForCurrentMonth = allEvents.filter(event => {
     const eventDate = new Date(getEventDate(event));
     return eventDate.getMonth() === currentMonth.getMonth() && eventDate.getFullYear() === currentMonth.getFullYear();
   });
 
+  // Calculate the date one week ago
   const oneWeekAgo = new Date();
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+  
+  // Filter events that occurred within the last week
   const recentEvents = allEvents.filter(event => new Date(getEventDate(event)) >= oneWeekAgo);
 
+  // Function to navigate to the previous month
   const goToPreviousMonth = () => {
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
   };
 
+  // Function to navigate to the next month
   const goToNextMonth = () => {
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
   };

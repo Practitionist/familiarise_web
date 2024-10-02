@@ -1,9 +1,8 @@
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useState } from 'react';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components/ui/dialog"
-import { StarIcon } from "lucide-react"
 
 interface PricingOption {
   title: string
@@ -76,11 +75,8 @@ const defaultSubscriptionOptions: PricingOption[] = [
 export default function PricingToggle({
   consultationOptions = defaultConsultationOptions,
   subscriptionOptions = defaultSubscriptionOptions,
-  consultantDetails,
-  userDetails,
   handleBooking,
   selectedDate,
-  setSelectedDate,
   currentDate,
   setCurrentDate,
   renderCalendar,
@@ -133,7 +129,7 @@ export default function PricingToggle({
                     <div className="text-4xl font-bold">${option.price}</div>
                     <Dialog>
                       <DialogTrigger asChild>
-                        <Button variant="outline" className="w-full cursor-pointer transition-colors duration-300 hover:bg-black hover:text-white border border-black">
+                        <Button variant="outline" className="w-full border border-black bg-black text-white hover:bg-gray-800 transition-colors duration-200">
                           Book Now
                         </Button>
                       </DialogTrigger>
@@ -245,9 +241,25 @@ export default function PricingToggle({
                         ))}
                       </ul>
                     </div>
-                    <Button variant="outline" className="w-full border border-black hover:bg-black hover:text-white transition-colors duration-200">
-                      Subscribe
-                    </Button>
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button variant="outline" className="w-full border border-black bg-black text-white hover:bg-gray-800 transition-colors duration-200">
+                          Subscribe
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-[425px] bg-white">
+                        <DialogHeader>
+                          <DialogTitle>Confirm Subscription</DialogTitle>
+                          <DialogDescription>
+                            Are you sure you want to subscribe to this plan?
+                          </DialogDescription>
+                        </DialogHeader>
+                        <DialogFooter>
+                          <Button variant="outline" onClick={() => { }}>Cancel</Button>
+                          <Button variant="night" onClick={() => { }}>Confirm Subscription</Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
                   </CardContent>
                 </Card>
               </TabsContent>

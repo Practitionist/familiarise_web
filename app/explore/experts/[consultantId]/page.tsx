@@ -4,9 +4,9 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import { useUserData } from '@/hooks/useUserData';
+import { fetchConsultantDetails, fetchUserDetails, fetchReviews } from '@/hooks/useUserData';
 import { TSlotTiming } from "@/lib/datetimetz";
-import { ConsultantReview } from "@prisma/client";
+import { ConsultantReview, User, ConsultationPlan, SubscriptionPlan } from "@prisma/client";
 import { StarIcon } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -14,6 +14,15 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ClassesAndWebinars } from './ClassesAndWebinars';
 import { ConsultantSkeletonLoader } from './ConsultantSkeletonLoader';
 import PricingToggle from './PricingToggle';
+import { TConsultantProfile } from '@/types/consultant';
+
+interface PricingOption {
+  title: string;
+  description: string;
+  price: number;
+  duration: string;
+  features?: string[];
+}
 
 const Review: React.FC<ConsultantReview> = ({ consulteeProfileId, createdAt, rating, reviewDescription }) => (
   <div className="flex items-start space-x-4 p-4 bg-white rounded-lg shadow-sm">
@@ -39,12 +48,49 @@ const Review: React.FC<ConsultantReview> = ({ consulteeProfileId, createdAt, rat
 );
 
 export default function ExpertProfile({ params }: { readonly params: { consultantId: string } }) {
-  const { userDetails, consultantDetails, reviews, isLoading } = useUserData(params.consultantId);
+  const [userDetails, setUserDetails] = useState<User | null>(null);
+  const [consultantDetails, setConsultantDetails] = useState<TConsultantProfile | null>(null);
+  const [reviews, setReviews] = useState<ConsultantReview[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
   const { toast } = useToast();
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const consultantData = await fetchConsultantDetails(params.consultantId);
+        setConsultantDetails(consultantData);
+
+        if (consultantData.userId) {
+          const userData = await fetchUserDetails(consultantData.userId);
+          setUserDetails(userData);
+
+          const reviewsData = await fetchReviews(params.consultantId);
+          setReviews(reviewsData);
+        } else {
+          throw new Error("Consultant user ID not found");
+        }
+      } catch (err) {
+        console.error("Error fetching data:", err);
+        setError(err instanceof Error ? err : new Error('An unknown error occurred'));
+        toast({
+          title: "Error fetching data",
+          description: err instanceof Error ? err.message : 'An unknown error occurred',
+          variant: "destructive",
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [params.consultantId, toast]);
 
   const fetchSelectedDateSlotTimings = useCallback(async (consultantId: string, date: Date) => {
     const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -63,7 +109,7 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
           console.error("Error fetching slots:", error);
           toast({
             title: "Error fetching slots",
-            description: error.message,
+            description: error instanceof Error ? error.message : 'An unknown error occurred',
             variant: "destructive",
           });
         });
@@ -221,11 +267,51 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
     return null;
   }, [consultantDetails]);
 
+  const isConsultationPlan = (plan: ConsultationPlan | SubscriptionPlan): plan is ConsultationPlan => {
+    return 'durationInHours' in plan;
+  };
+
+  const isSubscriptionPlan = (plan: ConsultationPlan | SubscriptionPlan): plan is SubscriptionPlan => {
+    return 'durationInMonths' in plan;
+  };
+
+  const formatPricingOptions = useCallback((plans: (ConsultationPlan | SubscriptionPlan)[], type: 'consultation' | 'subscription'): PricingOption[] => {
+    return plans.map(plan => {
+      if (type === 'consultation' && isConsultationPlan(plan)) {
+        return {
+          title: `${plan.durationInHours} Hour${plan.durationInHours > 1 ? 's' : ''}`,
+          description: `${plan.durationInHours} hour consultation`,
+          price: plan.price,
+          duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? 's' : ''}`,
+        };
+      } else if (type === 'subscription' && isSubscriptionPlan(plan)) {
+        return {
+          title: `${plan.durationInMonths} Month${plan.durationInMonths > 1 ? 's' : ''}`,
+          description: `${plan.durationInMonths} month subscription`,
+          price: plan.price,
+          duration: `${plan.durationInMonths} month${plan.durationInMonths > 1 ? 's' : ''}`,
+          features: [
+            `${plan.callsPerWeek} call${plan.callsPerWeek > 1 ? 's' : ''} per week`,
+            `${plan.videoMeetings} video meeting${plan.videoMeetings > 1 ? 's' : ''}`,
+            `${plan.emailSupport} email support`
+          ]
+        };
+      }
+      // This should never happen, but TypeScript requires a return statement
+      return {
+        title: '',
+        description: '',
+        price: 0,
+        duration: '',
+      };
+    });
+  }, []);
+
   if (isLoading) {
     return <ConsultantSkeletonLoader />;
   }
 
-  if (!consultantDetails || !userDetails) {
+  if (error || !consultantDetails || !userDetails) {
     return (
       <div className="flex flex-col items-center justify-center h-screen">
         <h1 className="text-3xl font-bold mb-4">Oops! Consultant not found</h1>
@@ -236,6 +322,9 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
       </div>
     );
   }
+
+  const consultationOptions = formatPricingOptions(consultantDetails.consultationPlans, 'consultation');
+  const subscriptionOptions = formatPricingOptions(consultantDetails.subscriptionPlans, 'subscription');
 
   return (
     <div key={params.consultantId} className="flex justify-center py-40">
@@ -314,6 +403,8 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
         <div className="card p-6 bg-white shadow-lg rounded-lg w-full">
           <h3 className="text-lg font-semibold mb-4">Consultation Pricing</h3>
           <PricingToggle
+            consultationOptions={consultationOptions}
+            subscriptionOptions={subscriptionOptions}
             consultantDetails={consultantDetails}
             userDetails={userDetails}
             handleBooking={handleBooking}
