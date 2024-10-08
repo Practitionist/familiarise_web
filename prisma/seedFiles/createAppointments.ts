@@ -23,8 +23,8 @@ function generateTentativeSchedule(startDate: Date, numSessions: number): string
     endTime.setHours(startTime.getHours() + faker.number.int({ min: 1, max: 3 }));
     const timezone = 'UTC';
     return {
-      startTime: startTime.toLocaleString('en-US', { timeZone: timezone }),
-      endTime: endTime.toLocaleString('en-US', { timeZone: timezone }),
+      startTime: startTime.toISOString(),
+      endTime: endTime.toISOString(),
       timezone: timezone,
     };
   }));
@@ -96,7 +96,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
             const consultationData: ConsultationCreate = {
               consultationPlan: { connect: { id: faker.helpers.arrayElement(consultationPlans).id } },
               requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
-              appointmentRequestStatus: RequestStatus.PENDING,
+              requestStatus: RequestStatus.PENDING,
               preferredDateTime: slotData.slot.slotStartTimeInUTC,
               requestedAt: new Date(),
               requestNotes: faker.lorem.sentence(),
@@ -110,7 +110,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
               startDate: startDate,
               endDate: endDate,
               requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
-              appointmentRequestStatus: RequestStatus.PENDING,
+              requestStatus: RequestStatus.PENDING,
               requestedAt: new Date(),
               tentativeStartDate: tentativeStartDate,
               tentativeSchedule: generateTentativeSchedule(tentativeStartDate, 4),
@@ -121,36 +121,21 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
           case AppointmentsType.WEBINAR:
             const webinarData: WebinarCreate = {
               webinarPlan: { connect: { id: faker.helpers.arrayElement(webinarPlans).id } },
-              title: faker.lorem.sentence(),
-              description: faker.lorem.paragraph(),
-              price: faker.number.int({ min: 1000, max: 10000 }),
               scheduledAt: faker.date.future(),
-              durationInHours: faker.number.float({
-                min: 1,
-                max: 3,
-                precision: 0.5,
-              }),
-              maxParticipants: faker.number.int({ min: 10, max: 100 }),
-              topics: {
-                connect: faker.helpers.arrayElements(topics, { min: 1, max: 3 }).map(topic => ({ id: topic.id })),
-              },
+              endAt: faker.date.future(),
+              status: 'SCHEDULED',
             };
             appointmentData.webinar = { create: webinarData };
             break;
           case AppointmentsType.CLASS:
             const classPlan = faker.helpers.arrayElement(classPlans);
             const classData: ClassCreate = {
-              classPlans: { connect: { id: classPlan.id } },
-              title: faker.lorem.sentence(),
-              description: faker.lorem.paragraph(),
+              classPlan: { connect: { id: classPlan.id } },
               startDate: startDate,
               endDate: endDate,
               tentativeStartDate: tentativeStartDate,
               tentativeSchedule: generateTentativeSchedule(tentativeStartDate, 4),
-              maxParticipants: faker.number.int({ min: 5, max: 30 }),
-              topics: {
-                connect: faker.helpers.arrayElements(topics, { min: 1, max: 5 }).map(topic => ({ id: topic.id })),
-              },
+              status: 'SCHEDULED',
             };
             appointmentData.class = { create: classData };
             break;

@@ -18,8 +18,8 @@ export async function createConsultantReviews(consultants: UserWithProfiles[], c
           data: {
             rating: faker.number.int({ min: 1, max: 5 }),
             reviewDescription: faker.lorem.paragraph(),
-            consultantProfileId: consultant.consultantProfile.id,
-            consulteeProfileId: consultee.consulteeProfile.id,
+            consultantProfile: { connect: { id: consultant.consultantProfile.id } },
+            consulteeProfile: { connect: { id: consultee.consulteeProfile.id } },
           },
         });
         totalReviews++;

@@ -7,6 +7,10 @@ import {
   StaffProfile,
   ScheduleType,
   ConsultationMode,
+  PlanEmailSupport,
+  Domain,
+  SubDomain,
+  Tag,
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
 
@@ -20,7 +24,76 @@ const NUM_USERS = 100;
 const NUM_CONSULTANTS = 40;
 const NUM_CONSULTEES = 60;
 
+// Predefined domains, subdomains, and tags
+const domains = [
+  { name: "Technology", subdomains: ["Web Development", "Mobile Development", "Data Science"], tags: ["JavaScript", "Python", "React", "Machine Learning"] },
+  { name: "Business", subdomains: ["Marketing", "Finance", "Management"], tags: ["Digital Marketing", "Financial Planning", "Leadership"] },
+  { name: "Health", subdomains: ["Nutrition", "Fitness", "Mental Health"], tags: ["Diet", "Yoga", "Meditation"] },
+];
+
+async function createDomainsSubdomainsTags() {
+  for (const domain of domains) {
+    const createdDomain = await prisma.domain.create({
+      data: {
+        name: domain.name,
+        subDomains: {
+          create: domain.subdomains.map(sd => ({ name: sd })),
+        },
+        tags: {
+          create: domain.tags.map(t => ({ name: t })),
+        },
+      },
+    });
+    console.log(`Created domain: ${createdDomain.name}`);
+  }
+}
+
+async function createConsultantProfileData() {
+  const domain = await prisma.domain.findFirst({
+    include: {
+      subDomains: true,
+      tags: true,
+    },
+    orderBy: {
+      id: 'asc',
+    },
+  });
+
+  if (!domain) {
+    throw new Error("No domain found");
+  }
+
+  const subDomains = faker.helpers.arrayElements(domain.subDomains, { min: 1, max: 2 });
+  const tags = faker.helpers.arrayElements(domain.tags, { min: 2, max: 4 });
+
+  return {
+    rating: faker.number.float({ min: 1, max: 5, multipleOf: 0.1 }),
+    specialization: faker.person.jobArea(),
+    experience: faker.helpers.arrayElement([
+      "1-3 years",
+      "3-5 years",
+      "5-10 years",
+      "10+ years",
+    ]),
+    description: faker.lorem.paragraph(),
+    domain: { connect: { id: domain.id } },
+    subDomains: {
+      connect: subDomains.map(sd => ({ id: sd.id })),
+    },
+    tags: {
+      connect: tags.map(t => ({ id: t.id })),
+    },
+    scheduleType: faker.helpers.arrayElement([
+      "WEEKLY",
+      "CUSTOM",
+    ]) as ScheduleType,
+    qualifications: faker.lorem.sentence(),
+  };
+}
+
 export async function createUsers(): Promise<UserWithProfiles[]> {
+  await createDomainsSubdomainsTags();
+
   const users: UserWithProfiles[] = [];
   console.log(`Creating ${NUM_USERS} users...`);
   for (let i = 0; i < NUM_USERS; i++) {
@@ -55,37 +128,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
           },
           ...(userRole === "CONSULTANT" && {
             consultantProfile: {
-              create: {
-                rating: faker.number.float({ min: 1, max: 5, multipleOf: 0.1 }),
-                specialization: faker.person.jobArea(),
-                experience: faker.helpers.arrayElement([
-                  "1-3 years",
-                  "3-5 years",
-                  "5-10 years",
-                  "10+ years",
-                ]),
-                location: faker.location.city(),
-                description: faker.lorem.paragraph(),
-                tags: faker.helpers.arrayElements(
-                  ["Expert", "Certified", "Top Rated", "Experienced"],
-                  { min: 1, max: 3 }
-                ),
-                domain: faker.person.jobType(),
-                subDomains: faker.helpers.arrayElements(
-                  [
-                    "Risk Management",
-                    "Training",
-                    "Digital Marketing",
-                    "Data Analysis",
-                    "Supply Chain",
-                  ],
-                  { min: 1, max: 3 }
-                ),
-                scheduleType: faker.helpers.arrayElement([
-                  "WEEKLY",
-                  "CUSTOM",
-                ]) as ScheduleType,
-              },
+              create: await createConsultantProfileData(),
             },
           }),
           ...(userRole === "CONSULTEE" && {
@@ -100,10 +143,9 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
                 ]),
                 preferredLanguage: faker.helpers.arrayElement(['English', 'Spanish', 'French', 'German', 'Chinese']),
                 specialRequirements: faker.lorem.sentence(),
-                interests: faker.helpers.arrayElements(
-                  ['Technology', 'Finance', 'Healthcare', 'Education', 'Marketing', 'Sports', 'Entertainment', 'Travel', 'Fashion', 'Food', 'Music', 'Art', 'Science', 'Environment', 'Politics', 'History', 'Culture', 'Books', 'Movies', 'TV Shows', 'Gaming', 'Fitness', 'Pets', 'Cars', 'DIY', 'Home Decor', 'Gardening', 'Photography', 'Writing', 'Social Media', 'Mental Health', 'Parenting', 'Relationships', 'Self Improvement', 'Spirituality', 'Philosophy', 'Sustainability', 'Human Rights', 'Charity', 'Volunteering', 'Hobbies', 'Cooking', 'Baking', 'Dancing', 'Singing', 'Acting', 'Crafts', 'Yoga', 'Meditation', 'Astrology', 'Tarot', 'Horoscopes', 'Mythology', 'Folklore', 'Urban Legends', 'Conspiracy Theories', 'True Crime', 'Paranormal', 'Aliens', 'Cryptocurrency', 'Blockchain', 'Investing', 'Trading', 'Real Estate', 'Entrepreneurship', 'Startups', 'Business', 'Management', 'Leadership', 'Sales', 'Customer Service', 'Human Resources'],
-                  { min: 1, max: 3 }
-                ).join(', '),
+                interests: faker.lorem.words(5),
+                aboutMe: faker.lorem.paragraph(),
+                goals: faker.lorem.sentence(),
               },
             },
           }),

@@ -110,15 +110,17 @@ model VerificationToken {
 //////////////////////////////////////////////////// SLOTTING MECHANISM ////////////////////////////////////////////////////
 
 model ConsultantProfile {
-  id             String   @id @default(uuid())
-  rating         Float    @default(0)
+  id             String  @id @default(uuid())
+  description    String? @db.Text
+  qualifications String?
   specialization String?
   experience     String?
-  location       String?
-  description    String?
-  tags           String[]
-  domain         String
-  subDomains     String[]
+  rating         Float   @default(0)
+
+  domain     Domain      @relation(fields: [domainId], references: [id])
+  domainId   String
+  subDomains SubDomain[]
+  tags       Tag[]
 
   reviews      ConsultantReview[]
   scheduleType ScheduleType
@@ -135,15 +137,57 @@ model ConsultantProfile {
   userId String @unique
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
+  @@index([domainId])
+}
+
+model Domain {
+  id                 String              @id @default(uuid())
+  name               String              @unique
+  subDomains         SubDomain[]
+  tags               Tag[]
+  consultantProfiles ConsultantProfile[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+}
+
+model SubDomain {
+  id                 String              @id @default(uuid())
+  name               String
+  domain             Domain              @relation(fields: [domainId], references: [id])
+  domainId           String
+  consultantProfiles ConsultantProfile[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, domainId])
+  @@index([domainId])
+}
+
+model Tag {
+  id                 String              @id @default(uuid())
+  name               String
+  domain             Domain              @relation(fields: [domainId], references: [id])
+  domainId           String
+  consultantProfiles ConsultantProfile[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, domainId])
+  @@index([domainId])
 }
 
 model ConsultantReview {
   id                String  @id @default(uuid())
   rating            Int     @default(0) @db.SmallInt
-  reviewDescription String? @db.Text()
+  reviewDescription String? @db.Text
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -152,7 +196,7 @@ model ConsultantReview {
   consulteeProfileId String
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model ConsulteeProfile {
@@ -164,6 +208,7 @@ model ConsulteeProfile {
   preferredLanguage            String?
   specialRequirements          String?
   interests                    String?
+  goals                        String?
 
   consultationRequests Consultation[]
   subscriptionRequests Subscription[]
@@ -175,7 +220,7 @@ model ConsulteeProfile {
   userId String @unique
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
 }
@@ -197,7 +242,7 @@ model StaffProfile {
   userId String @unique
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
 }
@@ -215,7 +260,7 @@ model SlotOfAvailabilityWeekly {
   consultantProfileId String
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([consultantProfileId])
 }
@@ -231,7 +276,7 @@ model SlotOfAvailabilityCustom {
   consultantProfileId String
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([consultantProfileId])
 }
@@ -257,7 +302,7 @@ model SlotOfAppointment {
   appointmentId String      @unique
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([slotOfAvailabilityWeeklyId])
   @@index([slotOfAvailabilityCustomId])
@@ -267,9 +312,16 @@ model SlotOfAppointment {
 
 // 1-1 Consultation
 model ConsultationPlan {
-  id              String @id @default(cuid())
-  durationInHours Float  @default(1)
-  price           Int
+  id               String   @id @default(cuid())
+  title            String
+  description      String?  @db.Text
+  durationInHours  Float    @default(1)
+  price            Int
+  language         String   @default("English")
+  level            String   @default("Beginner")
+  prerequisites    String?  @default("None")
+  materialProvided String?  @default("None")
+  learningOutcomes String[] @default([])
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -277,7 +329,7 @@ model ConsultationPlan {
   consultations Consultation[]
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Consultation {
@@ -285,36 +337,45 @@ model Consultation {
   consultationPlan   ConsultationPlan @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationPlanId String
 
-  appointmentRequestStatus RequestStatus    @default(PENDING)
-  requestedBy              ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  requestedById            String
-  requestedAt              DateTime?
-  preferredDateTime        DateTime?
-  requestNotes             String?
-  directlyBooked           Boolean          @default(false)
+  requestStatus          RequestStatus    @default(PENDING)
+  requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  requestedById          String
+  requestedAt            DateTime         @default(now())
+  preferredDateTime      DateTime?
+  requestNotes           String?
+  directlyBooked         Boolean          @default(false)
+  feedbackFromConsultee  String?
+  feedbackFromConsultant String?
+  rating                 Float?
 
   appointment Appointment?
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
-// 1-1 Subscription
 model SubscriptionPlan {
   id               String           @id @default(cuid())
-  durationInMonths Int              @default(1) // Duration in months
+  title            String
+  description      String?          @db.Text
+  durationInMonths Int              @default(1)
   price            Int
   callsPerWeek     Int              @default(1)
   videoMeetings    Int              @default(1)
   emailSupport     PlanEmailSupport @default(GENERAL)
+  language         String           @default("English")
+  level            String           @default("Beginner")
+  prerequisites    String?          @default("None")
+  materialProvided String?          @default("None")
+  learningOutcomes String[]         @default([])
 
-  consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
-  consultantProfileId String?
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
 
-  subscription Subscription[]
+  subscriptions Subscription[]
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Subscription {
@@ -322,21 +383,24 @@ model Subscription {
   startDate DateTime @default(now())
   endDate   DateTime
 
-  appointmentRequestStatus RequestStatus    @default(PENDING)
-  requestedBy              ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  requestedById            String
-  requestedAt              DateTime         @default(now())
-  tentativeStartDate       DateTime?
-  tentativeSchedule        String?
-  requestNotes             String?
+  requestStatus          RequestStatus    @default(PENDING)
+  requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  requestedById          String
+  requestedAt            DateTime         @default(now())
+  tentativeStartDate     DateTime?
+  tentativeSchedule      String?
+  requestNotes           String?
+  feedbackFromConsultee  String?
+  feedbackFromConsultant String?
+  rating                 Float?
 
   plan   SubscriptionPlan @relation(fields: [planId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   planId String
 
-  appointment Appointment[]
+  appointments Appointment[]
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum RequestStatus {
@@ -344,32 +408,39 @@ enum RequestStatus {
   APPROVED
   REJECTED
   CANCELLED
+  EXPIRED
 }
 
 // Many-Many Webinar
 model WebinarPlan {
-  id              String @id @default(cuid())
-  durationInHours Float  @default(1) // Duration in hours
-  price           Int // Price in cents for attending the webinar
+  id               String   @id @default(cuid())
+  title            String
+  topics           Topic[]
+  description      String?  @db.Text
+  price            Int
+  durationInHours  Float    @default(1) // Duration in hours
+  maxParticipants  Int      @default(100)
+  language         String?  @default("English")
+  level            String?  @default("Beginner")
+  prerequisites    String?  @default("None")
+  materialProvided String?  @default("None")
+  learningOutcomes String[] @default([])
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
   webinars            Webinar[]
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Webinar {
-  id              String    @id @default(cuid())
-  title           String
-  description     String?   @db.Text
-  price           Int?
-  scheduledAt     DateTime?
-  durationInHours Float     @default(1.0)
-  topics          Topic[]
-
-  maxParticipants Int        @default(1)
+  id              String        @id @default(cuid())
+  scheduledAt     DateTime
+  endAt           DateTime
+  status          WebinarStatus @default(SCHEDULED)
+  recordingUrl    String?
+  feedbackSummary String?
   waitlist        Waitlist[]
 
   webinarPlan   WebinarPlan @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -378,46 +449,86 @@ model Webinar {
   appointment Appointment[]
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum WebinarStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
 }
 
 // Many-Many Class
 model ClassPlan {
-  id               String           @id @default(cuid())
-  durationInMonths Int              @default(1) // Duration in months
-  price            Int
-  callsPerWeek     Int              @default(1)
-  videoMeetings    Int              @default(1)
-  emailSupport     PlanEmailSupport @default(GENERAL)
+  id                  String           @id @default(cuid())
+  title               String
+  description         String           @db.Text
+  topics              Topic[]
+  classContents       ClassContent[]
+  price               Int
+  certificateProvided Boolean          @default(false)
+  durationInMonths    Int              @default(1) // Duration in months
+  callsPerWeek        Int              @default(1)
+  videoMeetings       Int              @default(1)
+  emailSupport        PlanEmailSupport @default(GENERAL)
+  maxParticipants     Int              @default(1)
+  language            String?          @default("English")
+  level               String?          @default("Beginner")
+  prerequisites       String?          @default("None")
+  materialProvided    String?          @default("None")
+  learningOutcomes    String[]         @default([])
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
   classes             Class[]
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Class {
-  id          String    @id @default(cuid())
-  title       String
-  description String?   @db.Text
-  startDate   DateTime?
-  endDate     DateTime?
-  topics      Topic[]
+  id                  String      @id @default(cuid())
+  startDate           DateTime?
+  endDate             DateTime?
+  status              ClassStatus @default(SCHEDULED)
+  tentativeStartDate  DateTime?
+  tentativeSchedule   String?
+  waitlist            Waitlist[]
+  currentParticipants Int         @default(0)
+  recordingUrls       String[]
+  feedbackSummary     String?     @db.Text
 
-  tentativeStartDate DateTime?
-  tentativeSchedule  String?
-  maxParticipants    Int        @default(1)
-  waitlist           Waitlist[]
-
-  classPlans  ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
 
   appointment Appointment[]
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ClassContent {
+  id            String  @id @default(cuid())
+  title         String
+  description   String  @db.Text
+  contentType   String?
+  contentUrl    String?
+  order         Int
+  hoursAllotted Float
+
+  classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classPlanId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum ClassStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
 }
 
 // Generic Appointment Model
@@ -442,7 +553,7 @@ model Appointment {
   appointmentLock AppointmentLock?
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 enum AppointmentsType {
@@ -465,11 +576,11 @@ model Topic {
   id   String @id @default(cuid())
   name String @unique
 
-  webinars Webinar[]
-  classes  Class[]
+  webinarPlans WebinarPlan[]
+  classPlans   ClassPlan[]
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Newsletter {
@@ -477,7 +588,7 @@ model Newsletter {
   email String @unique
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Waitlist {

@@ -40,8 +40,8 @@ export async function createPayments(users: UserWithProfiles[]) {
       };
 
       // Randomly assign a discount code to some payments
-      if (faker.datatype.boolean()) {
-        paymentData.discountCodeId = faker.helpers.arrayElement(discountCodes).id;
+      if (faker.datatype.boolean() && discountCodes.length > 0) {
+        paymentData.discountCode = { connect: { id: faker.helpers.arrayElement(discountCodes).id } };
       }
 
       await prisma.payment.create({ data: paymentData });

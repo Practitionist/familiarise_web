@@ -1,7 +1,10 @@
+import { CalendarIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { motion } from "framer-motion";
+import { ClockIcon } from "lucide-react";
 import { useState } from 'react';
 
 interface PricingOption {
@@ -89,181 +92,200 @@ export default function PricingToggle({
   const [activeSubscriptionOption, setActiveSubscriptionOption] = useState(subscriptionOptions[0].title.toLowerCase().replace(" ", "-"))
 
   return (
-    <div className="w-full max-w-3xl mx-auto py-12">
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="flex justify-center gap-4 border border-gray-200 rounded-lg p-1">
+    <div className="w-full max-w-4xl mx-auto py-16 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8">
+        <TabsList className="flex justify-center gap-4 bg-gray-800/50 rounded-full p-1 backdrop-blur-sm">
           <TabsTrigger
             value="consultation"
-            className={`${activeTab === 'consultation' ? 'bg-black text-white' : ''} px-4 py-2 rounded-md transition-colors duration-200`}
+            className={`${activeTab === 'consultation' ? 'bg-gray-200 text-black' : 'text-gray-300'} px-6 py-3 rounded-full transition-all duration-300 ease-in-out`}
           >
             Consultation
           </TabsTrigger>
           <TabsTrigger
             value="subscription"
-            className={`${activeTab === 'subscription' ? 'bg-black text-white' : ''} px-4 py-2 rounded-md transition-colors duration-200`}
+            className={`${activeTab === 'subscription' ? 'bg-gray-200 text-black' : 'text-gray-300'} px-6 py-3 rounded-full transition-all duration-300 ease-in-out`}
           >
             Subscription
           </TabsTrigger>
         </TabsList>
         <TabsContent value="consultation">
-          <Tabs value={activeConsultationOption} onValueChange={setActiveConsultationOption} className="space-y-6">
-            <TabsList className="flex justify-center gap-4 border border-gray-200 rounded-lg p-1">
+          <Tabs value={activeConsultationOption} onValueChange={setActiveConsultationOption} className="space-y-8">
+            <TabsList className="flex justify-center gap-4 bg-gray-800/50 rounded-full p-1 backdrop-blur-sm">
               {consultationOptions.map((option) => (
                 <TabsTrigger
                   key={option.title}
                   value={option.title.toLowerCase().replace(" ", "-")}
-                  className={`${activeConsultationOption === option.title.toLowerCase().replace(" ", "-") ? 'bg-black text-white' : ''} px-4 py-2 rounded-md transition-colors duration-200`}
+                  className={`${activeConsultationOption === option.title.toLowerCase().replace(" ", "-") ? 'bg-gray-200 text-black' : 'text-gray-300'} px-6 py-3 rounded-full transition-all duration-300 ease-in-out`}
                 >
                   {option.title}
                 </TabsTrigger>
               ))}
             </TabsList>
-            {consultationOptions.map((option) => (
-              <TabsContent key={option.title} value={option.title.toLowerCase().replace(" ", "-")}>
-                <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200">
-                  <CardHeader>
-                    <CardTitle>{option.title}</CardTitle>
-                    <CardDescription>{option.description}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="text-4xl font-bold">${option.price}</div>
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button variant="outline" className="w-full border border-black bg-black text-white hover:bg-gray-800 transition-colors duration-200">
-                          Book Now
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="sm:max-w-[425px] lg:max-w-[700px] bg-black bg-opacity-80 text-white p-0 border border-white rounded-lg">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-                          <div>
-                            <h3 className="text-lg font-semibold mb-4">Select a Date</h3>
-                            <div className="calendar-container bg-white bg-opacity-10 p-4 rounded-lg border border-white">
-                              <div className="flex justify-between items-center mb-4">
-                                <button className="text-white" onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))}>
-                                  &lt;
-                                </button>
-                                <span>
-                                  {currentDate.toLocaleString("default", {
-                                    month: "long",
-                                    year: "numeric",
-                                  })}
-                                </span>
-                                <button className="text-white" onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))}>
-                                  &gt;
-                                </button>
-                              </div>
-                              <div className="grid grid-cols-7 gap-1 text-center">
-                                {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day) => (
-                                  <div key={day} className="text-sm font-medium">
-                                    {day}
-                                  </div>
-                                ))}
-                                {renderCalendar()}
-                              </div>
-                            </div>
-                          </div>
-                          <div>
-                            <h3 className="text-lg font-semibold mb-4">Available Time Slots</h3>
-                            <div className="bg-white bg-opacity-10 p-4 rounded-lg border border-white">
-                              {slotTimings.length > 0 ? (
-                                <div className="space-y-2">
-                                  {slotTimings.map((slot) => (
-                                    <Button
-                                      key={slot.slotId}
-                                      variant={selectedSlot?.slotId === slot.slotId ? "outline" : "night"}
-                                      onClick={() => setSelectedSlot(slot)}
-                                      className="w-full justify-center text-sm bg-black bg-opacity-80 hover:bg-opacity-100 border border-white"
-                                    >
-                                      {slot.localStartTime} - {slot.localEndTime}
-                                    </Button>
-                                  ))}
+            <div className="grid grid-cols-1 gap-6">
+              {consultationOptions.map((option) => (
+                <motion.div
+                  key={option.title}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: activeConsultationOption === option.title.toLowerCase().replace(" ", "-") ? 1 : 0, y: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className={activeConsultationOption === option.title.toLowerCase().replace(" ", "-") ? 'block' : 'hidden'}
+                >
+                  <Card className="bg-gray-800/50 border-gray-700 shadow-lg hover:shadow-xl transition-all duration-300 backdrop-blur-sm">
+                    <CardHeader>
+                      <CardTitle className="text-2xl font-bold text-gray-100">{option.title}</CardTitle>
+                      <CardDescription className="text-gray-400">{option.description}</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      <div className="text-5xl font-bold text-gray-100">${option.price}</div>
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <Button variant="outline" className="w-full bg-gray-200 text-black hover:bg-gray-300 transition-colors duration-300">
+                            Book Now
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-[425px] lg:max-w-[700px] bg-gray-900 text-gray-100 p-0 border border-gray-700 rounded-lg">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
+                            <div>
+                              <h3 className="text-xl font-semibold mb-4 flex items-center"><CalendarIcon className="mr-2" /> Select a Date</h3>
+                              <div className="calendar-container bg-gray-800 p-4 rounded-lg border border-gray-700">
+                                <div className="flex justify-between items-center mb-4">
+                                  <Button variant="ghost" onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))}>
+                                    &lt;
+                                  </Button>
+                                  <span className="text-lg font-medium">
+                                    {currentDate.toLocaleString("default", {
+                                      month: "long",
+                                      year: "numeric",
+                                    })}
+                                  </span>
+                                  <Button variant="ghost" onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))}>
+                                    &gt;
+                                  </Button>
                                 </div>
-                              ) : (
-                                <p className="text-center">No available slots. Please select a date to refresh.</p>
-                              )}
+                                <div className="grid grid-cols-7 gap-2 text-center">
+                                  {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day) => (
+                                    <div key={day} className="text-sm font-medium text-gray-400">
+                                      {day}
+                                    </div>
+                                  ))}
+                                  {renderCalendar()}
+                                </div>
+                              </div>
+                            </div>
+                            <div>
+                              <h3 className="text-xl font-semibold mb-4 flex items-center"><ClockIcon className="mr-2" /> Available Time Slots</h3>
+                              <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                                {slotTimings.length > 0 ? (
+                                  <div className="grid grid-cols-2 gap-2">
+                                    {slotTimings.map((slot) => (
+                                      <Button
+                                        key={slot.slotId}
+                                        variant={selectedSlot?.slotId === slot.slotId ? "secondary" : "outline"}
+                                        onClick={() => setSelectedSlot(slot)}
+                                        className="w-full justify-center text-sm"
+                                      >
+                                        {slot.localStartTime} - {slot.localEndTime}
+                                      </Button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-center text-gray-400">No available slots. Please select a date to refresh.</p>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                        <DialogFooter className="p-4 bg-transparent">
-                          <Button
-                            variant="outline"
-                            onClick={() => {
-                              /* handle cancel */
-                            }}
-                            className="text-white border-white"
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            variant="night"
-                            onClick={handleBooking}
-                            disabled={!selectedDate || !selectedSlot}
-                            className="border border-white"
-                          >
-                            Book Consultation
-                          </Button>
-                        </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            ))}
+                          <DialogFooter className="p-6 bg-gray-800 rounded-b-lg">
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                /* handle cancel */
+                              }}
+                              className="text-gray-300 border-gray-600 hover:bg-gray-700"
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              variant="default"
+                              onClick={handleBooking}
+                              disabled={!selectedDate || !selectedSlot}
+                              className="bg-gray-200 text-black hover:bg-gray-300"
+                            >
+                              Book Consultation
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              ))}
+            </div>
           </Tabs>
         </TabsContent>
         <TabsContent value="subscription">
-          <Tabs value={activeSubscriptionOption} onValueChange={setActiveSubscriptionOption} className="space-y-6">
-            <TabsList className="flex justify-center gap-4 border border-gray-200 rounded-lg p-1">
+          <Tabs value={activeSubscriptionOption} onValueChange={setActiveSubscriptionOption} className="space-y-8">
+            <TabsList className="flex justify-center gap-4 bg-gray-800/50 rounded-full p-1 backdrop-blur-sm">
               {subscriptionOptions.map((option) => (
                 <TabsTrigger
                   key={option.title}
                   value={option.title.toLowerCase().replace(" ", "-")}
-                  className={`${activeSubscriptionOption === option.title.toLowerCase().replace(" ", "-") ? 'bg-black text-white' : ''} px-4 py-2 rounded-md transition-colors duration-200`}
+                  className={`${activeSubscriptionOption === option.title.toLowerCase().replace(" ", "-") ? 'bg-gray-200 text-black' : 'text-gray-300'} px-6 py-3 rounded-full transition-all duration-300 ease-in-out`}
                 >
                   {option.title.split(' ')[0]} {option.title.split(' ')[1]}
                 </TabsTrigger>
               ))}
             </TabsList>
-            {subscriptionOptions.map((option) => (
-              <TabsContent key={option.title} value={option.title.toLowerCase().replace(" ", "-")}>
-                <Card className="border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200">
-                  <CardHeader>
-                    <CardTitle>{option.title}</CardTitle>
-                    <CardDescription>{option.description}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="text-4xl font-bold">${option.price}/{option.duration}</div>
-                    <div className="space-y-2">
-                      <p>Includes:</p>
-                      <ul className="list-disc space-y-1 pl-4">
-                        {option.features?.map((feature, index) => (
-                          <li key={index}>{feature}</li>
-                        ))}
-                      </ul>
-                    </div>
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button variant="outline" className="w-full border border-black bg-black text-white hover:bg-gray-800 transition-colors duration-200">
-                          Subscribe
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="sm:max-w-[425px] bg-white">
-                        <DialogHeader>
-                          <DialogTitle>Confirm Subscription</DialogTitle>
-                          <DialogDescription>
-                            Are you sure you want to subscribe to this plan?
-                          </DialogDescription>
-                        </DialogHeader>
-                        <DialogFooter>
-                          <Button variant="outline" onClick={() => { }}>Cancel</Button>
-                          <Button variant="night" onClick={() => { }}>Confirm Subscription</Button>
-                        </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            ))}
+            <div className="grid grid-cols-1 gap-6">
+              {subscriptionOptions.map((option) => (
+                <motion.div
+                  key={option.title}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: activeSubscriptionOption === option.title.toLowerCase().replace(" ", "-") ? 1 : 0, y: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className={activeSubscriptionOption === option.title.toLowerCase().replace(" ", "-") ? 'block' : 'hidden'}
+                >
+                  <Card className="bg-gray-800/50 border-gray-700 shadow-lg hover:shadow-xl transition-all duration-300 backdrop-blur-sm">
+                    <CardHeader>
+                      <CardTitle className="text-2xl font-bold text-gray-100">{option.title}</CardTitle>
+                      <CardDescription className="text-gray-400">{option.description}</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      <div className="text-5xl font-bold text-gray-100">${option.price}<span className="text-xl text-gray-400">/{option.duration}</span></div>
+                      <div className="space-y-2">
+                        <p className="text-gray-300">Includes:</p>
+                        <ul className="space-y-1 pl-4">
+                          {option.features?.map((feature, index) => (
+                            <li key={index} className="text-gray-400 flex items-center">
+                              <svg className="w-4 h-4 mr-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                              {feature}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <Button variant="outline" className="w-full bg-gray-200 text-black hover:bg-gray-300 transition-colors duration-300">
+                            Subscribe
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-[425px] bg-gray-900 text-gray-100 border border-gray-700">
+                          <DialogHeader>
+                            <DialogTitle>Confirm Subscription</DialogTitle>
+                            <DialogDescription className="text-gray-400">
+                              Are you sure you want to subscribe to this plan?
+                            </DialogDescription>
+                          </DialogHeader>
+                          <DialogFooter>
+                            <Button variant="outline" onClick={() => { }} className="text-gray-300 border-gray-600 hover:bg-gray-700">Cancel</Button>
+                            <Button variant="default" onClick={() => { }} className="bg-gray-200 text-black hover:bg-gray-300">Confirm Subscription</Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              ))}
+            </div>
           </Tabs>
         </TabsContent>
       </Tabs>
