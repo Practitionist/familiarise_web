@@ -16,6 +16,8 @@ import { ConsultantSkeletonLoader } from './ConsultantSkeletonLoader';
 import PricingToggle from './PricingToggle';
 import { TConsultantProfile } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
+import { CustomAvailability } from "./CustomAvailability";
+import { WeeklyAvailability } from "./WeeklyAvailability";
 
 interface PricingOption {
   title: string;
@@ -92,29 +94,43 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
     fetchData();
   }, [params.consultantId, toast]);
 
-  const fetchSelectedDateSlotTimings = useCallback(async (consultantId: string, date: Date) => {
-    const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const response = await fetch(
-      `/api/slots/availability/${encodeURIComponent(consultantId)}?date=${encodeURIComponent(date.toISOString())}&timeZone=${encodeURIComponent(userTimeZone)}`
-    );
-    if (!response.ok) throw new Error("Failed to fetch available slots");
-    return response.json();
-  }, []);
 
   useEffect(() => {
     if (selectedDate && consultantDetails) {
-      fetchSelectedDateSlotTimings(consultantDetails.id, selectedDate)
-        .then(setSlotTimings)
-        .catch((error) => {
-          console.error("Error fetching slots:", error);
-          toast({
-            title: "Error fetching slots",
-            description: error instanceof Error ? error.message : 'An unknown error occurred',
-            variant: "destructive",
-          });
-        });
+      if (consultantDetails.scheduleType === 'WEEKLY') {
+        // For weekly schedule, use the slots directly from consultantDetails
+        const weeklySlots = consultantDetails.slotsOfAvailabilityWeekly.map(slot => ({
+          slotId: slot.id,
+          dateInISO: selectedDate.toISOString(),
+          slotStartTimeInUTC: slot.slotStartTimeInUTC.toString(),
+          slotEndTimeInUTC: slot.slotEndTimeInUTC.toString(),
+          slotOfAvailabilityId: slot.id,
+          slotOfAppointmentId: '',
+          localStartTime: new Date(`1970-01-01T${slot.slotStartTimeInUTC}`).toISOString(),
+          localEndTime: new Date(`1970-01-01T${slot.slotEndTimeInUTC}`).toISOString()
+        }));
+        setSlotTimings(weeklySlots);
+      } else if (consultantDetails.scheduleType === 'CUSTOM') {
+        // For custom schedule, use the custom slots from consultantDetails
+        const customSlots = consultantDetails.slotsOfAvailabilityCustom
+          .filter(slot => {
+            const slotDate = new Date(slot.slotStartTimeInUTC);
+            return slotDate.toDateString() === selectedDate.toDateString();
+          })
+          .map(slot => ({
+            slotId: slot.id,
+            dateInISO: selectedDate.toISOString(),
+            slotStartTimeInUTC: slot.slotStartTimeInUTC.toString(),
+            slotEndTimeInUTC: slot.slotEndTimeInUTC.toString(),
+            slotOfAvailabilityId: slot.id,
+            slotOfAppointmentId: '',
+            localStartTime: new Date(slot.slotStartTimeInUTC).toISOString(),
+            localEndTime: new Date(slot.slotEndTimeInUTC).toISOString()
+          }));
+        setSlotTimings(customSlots);
+      }
     }
-  }, [selectedDate, consultantDetails, fetchSelectedDateSlotTimings, toast]);
+  }, [selectedDate, consultantDetails]);
 
   const handleBooking = useCallback(async () => {
     if (!selectedSlot) {
@@ -178,103 +194,55 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
 
   const renderAvailability = useMemo(() => {
     if (!consultantDetails) return null;
-
-    const daysOfWeek = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
     if (consultantDetails.scheduleType === 'WEEKLY') {
+      const weeklySlots = consultantDetails.slotsOfAvailabilityWeekly.map(slot => ({
+        id: slot.id,
+        dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
+        slotStartTimeInUTC: slot.slotStartTimeInUTC.toString(),
+        dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
+        slotEndTimeInUTC: slot.slotEndTimeInUTC.toString()
+      }));
       return (
-        <div className="bg-white rounded-lg shadow-lg p-8 border border-gray-200">
-          <h3 className="text-2xl font-semibold mb-6 text-center text-gray-800">Weekly Availability</h3>
-          <div className="grid grid-cols-7 gap-6 mb-6">
-            {daysOfWeek.map((day) => (
-              <div key={day} className="text-center text-sm font-semibold text-gray-700">{day}</div>
-            ))}
-          </div>
-          <div className="grid grid-cols-7 gap-6">
-            {daysOfWeek.map((day) => (
-              <div key={day} className="space-y-3">
-                {slotTimings
-                  .filter((slot) => {
-                    const slotDate = new Date(slot.slotStartTimeInUTC);
-                    return daysOfWeek[slotDate.getDay()] === day;
-                  })
-                  .map((slot) => {
-                    const startTime = new Date(slot.localStartTime);
-                    const endTime = new Date(slot.localEndTime);
-                    return (
-                      <div
-                        key={slot.slotId}
-                        className={`bg-blue-50 rounded-md p-2 cursor-pointer ${
-                          selectedSlot?.slotId === slot.slotId ? 'bg-blue-200' : 'hover:bg-blue-100'
-                        } transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center`}
-                        onClick={() => setSelectedSlot(slot)}
-                      >
-                        <div className="text-xs font-medium text-blue-700">
-                          {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
-                          {endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </div>
-                    );
-                  })}
-              </div>
-            ))}
-          </div>
-        </div>
+        <WeeklyAvailability
+          slots={weeklySlots}
+          onSlotSelect={(slot) => setSelectedSlot({
+            slotId: slot.id,
+            dateInISO: new Date().toISOString(),
+            slotStartTimeInUTC: slot.slotStartTimeInUTC,
+            slotEndTimeInUTC: slot.slotEndTimeInUTC,
+            slotOfAvailabilityId: slot.id,
+            slotOfAppointmentId: '',
+            localStartTime: new Date(`1970-01-01T${slot.slotStartTimeInUTC}`).toISOString(),
+            localEndTime: new Date(`1970-01-01T${slot.slotEndTimeInUTC}`).toISOString()
+          })}
+          selectedSlotId={selectedSlot?.slotId}
+        />
       );
     } else if (consultantDetails.scheduleType === 'CUSTOM') {
-      const today = new Date();
-      const next7Days = Array.from({ length: 7 }, (_, i) => {
-        const date = new Date(today);
-        date.setDate(today.getDate() + i);
-        return date;
-      });
-
+      const customSlots = consultantDetails.slotsOfAvailabilityCustom.map(slot => ({
+        id: slot.id,
+        slotStartTimeInUTC: slot.slotStartTimeInUTC.toString(),
+        slotEndTimeInUTC: slot.slotEndTimeInUTC.toString()
+      }));
       return (
-        <div className="bg-white rounded-lg shadow-lg p-8 border border-gray-200">
-          <h3 className="text-2xl font-semibold mb-6 text-center text-gray-800">Custom Availability</h3>
-          <div className="grid grid-cols-7 gap-6 mb-6">
-            {next7Days.map((date) => (
-              <div key={date.toISOString()} className="text-center">
-                <div className="text-sm font-semibold text-gray-700">{date.toLocaleDateString(undefined, { weekday: 'short' })}</div>
-                <div className="text-xs text-gray-500">{date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</div>
-              </div>
-            ))}
-          </div>
-          <div className="grid grid-cols-7 gap-6">
-            {next7Days.map((date) => (
-              <div key={date.toISOString()} className="space-y-3">
-                {slotTimings
-                  .filter((slot) => {
-                    const slotDate = new Date(slot.slotStartTimeInUTC);
-                    return slotDate.toDateString() === date.toDateString();
-                  })
-                  .map((slot) => {
-                    const startTime = new Date(slot.localStartTime);
-                    const endTime = new Date(slot.localEndTime);
-                    return (
-                      <div
-                        key={slot.slotId}
-                        className={`bg-green-50 rounded-md p-2 cursor-pointer ${
-                          selectedSlot?.slotId === slot.slotId ? 'bg-green-200' : 'hover:bg-green-100'
-                        } transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center`}
-                        onClick={() => setSelectedSlot(slot)}
-                      >
-                        <div className="text-xs font-medium text-green-700">
-                          {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
-                          {endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </div>
-                    );
-                  })}
-              </div>
-            ))}
-          </div>
-        </div>
+        <CustomAvailability
+          slots={customSlots}
+          onSlotSelect={(slot) => setSelectedSlot({
+            slotId: slot.id,
+            dateInISO: new Date(slot.slotStartTimeInUTC).toISOString(),
+            slotStartTimeInUTC: slot.slotStartTimeInUTC,
+            slotEndTimeInUTC: slot.slotEndTimeInUTC,
+            slotOfAvailabilityId: slot.id,
+            slotOfAppointmentId: '',
+            localStartTime: new Date(slot.slotStartTimeInUTC).toISOString(),
+            localEndTime: new Date(slot.slotEndTimeInUTC).toISOString()
+          })}
+          selectedSlotId={selectedSlot?.slotId}
+        />
       );
     }
-
     return null;
-  }, [consultantDetails, slotTimings, selectedSlot]);
+  }, [consultantDetails, selectedSlot]);
 
   const isConsultationPlan = (plan: ConsultationPlan | SubscriptionPlan): plan is ConsultationPlan => {
     return 'durationInHours' in plan;
@@ -384,7 +352,10 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
             {renderAvailability}
           </div>
         </div>
-        <ClassesAndWebinars consultantId={params.consultantId} />
+        <ClassesAndWebinars
+          classPlans={consultantDetails.classPlans}
+          webinarPlans={consultantDetails.webinarPlans}
+        />
         <div>
           <h3 className="font-semibold text-lg mb-4">All Reviews ({reviews?.length || 0})</h3>
           <div className="space-y-4">

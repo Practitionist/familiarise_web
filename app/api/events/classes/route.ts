@@ -55,6 +55,7 @@ export async function GET(request: Request) {
           appointment: true
         }
       });
+      console.log('classes', classes);
     } else {
       classes = await prisma.class.findMany({
         include: {
