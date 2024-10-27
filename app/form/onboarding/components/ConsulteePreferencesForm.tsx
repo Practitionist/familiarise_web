@@ -3,15 +3,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ConsulteePreferences, ConsulteePreferencesSchema } from "@/schemas/UserSchema";
+import { ConsulteeProfile, ConsulteeProfileSchema } from "@/schemas/UserSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React from "react";
-import { useFieldArray, useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 
 interface Props {
-  onNext: (data: Partial<ConsulteePreferences>) => void;
+  onNext: (data: Partial<ConsulteeProfile>) => void;
   onBack: () => void;
-  initialData: Partial<ConsulteePreferences>;
+  initialData: Partial<ConsulteeProfile>;
 }
 
 const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
@@ -20,18 +20,12 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
     handleSubmit,
     formState: { errors },
     control,
-    setValue,
-  } = useForm<ConsulteePreferences>({
-    resolver: zodResolver(ConsulteePreferencesSchema),
+  } = useForm<ConsulteeProfile>({
+    resolver: zodResolver(ConsulteeProfileSchema),
     defaultValues: initialData,
   });
 
-  const { fields, append, remove } = useFieldArray({
-    control,
-    name: "interests",
-  });
-
-  const onSubmit = (data: ConsulteePreferences) => {
+  const onSubmit = (data: ConsulteeProfile) => {
     onNext(data);
   };
 
@@ -39,21 +33,24 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
     <form onSubmit={handleSubmit(onSubmit)} className="w-full max-w-md space-y-4">
       <div className="space-y-2">
         <Label htmlFor="preferredCommunicationMethod">Preferred Communication Method</Label>
-        <Select
-          onValueChange={(value) => setValue("preferredCommunicationMethod", value as "VIDEO" | "AUDIO" | "IN_PERSON")}
-          defaultValue={initialData.preferredCommunicationMethod}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Select communication method" />
-          </SelectTrigger>
-          <SelectContent className="bg-slate-100">
-            <SelectItem value="VIDEO">Video</SelectItem>
-            <div className="border-t border-gray-300 my-1"></div>
-            <SelectItem value="AUDIO">Audio</SelectItem>
-            <div className="border-t border-gray-300 my-1"></div>
-            <SelectItem value="IN_PERSON">In Person</SelectItem>
-          </SelectContent>
-        </Select>
+        <Controller
+          name="preferredCommunicationMethod"
+          control={control}
+          render={({ field }) => (
+            <Select onValueChange={field.onChange} value={field.value}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select communication method" />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-100">
+                <SelectItem value="VIDEO">Video</SelectItem>
+                <div className="border-t border-gray-300 my-1"></div>
+                <SelectItem value="AUDIO">Audio</SelectItem>
+                <div className="border-t border-gray-300 my-1"></div>
+                <SelectItem value="IN_PERSON">In Person</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+        />
         {errors.preferredCommunicationMethod && (
           <p className="text-red-500">{errors.preferredCommunicationMethod.message}</p>
         )}
@@ -74,34 +71,20 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
           <p className="text-red-500">{errors.specialRequirements.message}</p>
         )}
       </div>
+
       <div className="space-y-2">
-        <Label>Domains of Interest</Label>
-        {fields.map((field, index) => (
-          <div key={field.id} className="flex space-x-2">
-            <Input
-              placeholder="Domain"
-              {...register(`interests.${index}.name`)}
-              defaultValue={field.name}
-            />
-            <Input
-              placeholder="Subdomains (comma-separated)"
-              {...register(`interests.${index}.skills`)}
-              defaultValue={Array.isArray(field.skills) ? field.skills.join(", ") : field.skills}
-            />
-            <Button type="button" variant="outline" onClick={() => remove(index)}>
-              Remove
-            </Button>
-          </div>
-        ))}
-        <Button type="button" variant="night" onClick={() => append({ name: "", skills: "" })}>
-          Add Domain
-        </Button>
-        {errors.interests && <p className="text-red-500">{errors.interests.message}</p>}
-        {fields.length === 0 && <p className="text-gray-500">No interests added</p>}
-        {fields.length > 0 && (
-          <p className="text-gray-500">
-            {fields.length} domain{fields.length > 1 ? "s" : ""} added
-          </p>
+        <Label htmlFor="interests">Interests (comma-separated)</Label>
+        <Input id="interests" {...register("interests")} />
+        {errors.interests && (
+          <p className="text-red-500">{errors.interests.message}</p>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="goals">Goals</Label>
+        <Textarea id="goals" {...register("goals")} />
+        {errors.goals && (
+          <p className="text-red-500">{errors.goals.message}</p>
         )}
       </div>
 

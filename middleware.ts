@@ -10,10 +10,11 @@ const URLS = {
 };
 
 const ROUTES = {
-  PROTECTED: ["/form/**", "/admin/**", "/dashboard/**", "/settings/**", "/profile/**"],
-  PUBLIC_AUTH: ["/auth/**"],
-  PRIVATE_API: ["/api/auth/**", "/api/inngest/**"],
-  PUBLIC_API: ["/api/**"],
+  PROTECTED_ROUTES: ["/form/**", "/dashboard/**", "/settings/**", "/profile/**"],
+  PUBLIC_AUTH_ROUTES: ["/auth/**"],
+  PRIVATE_API: ["/api/inngest/**"],
+  PROTECTED_API: ["/api/form/onboarding/**"], // Added onboarding API route
+  PUBLIC_API: ["/api/user/**", "/api/auth/*"],
 };
 
 // Define the structure of the token
@@ -90,20 +91,48 @@ const handleDashboardRedirect = (token: Token, pathname: string, req: NextReques
  * Middleware function to handle authentication and authorization for routes.
  */
 export async function middleware(req: NextRequest): Promise<NextResponse> {
+
   const { pathname } = req.nextUrl;
   const token = await getToken({ req }) as Token | null;
   const isAuthenticated = !!token;
+
   const isOnboarded = token?.onboardingCompleted ?? false;
 
   // Handle private API routes (including Inngest and Auth)
   if (isMatchingRoute(pathname, ROUTES.PRIVATE_API)) {
+        return isAuthenticated
+      ? NextResponse.next()
+      : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Handle protected API routes
+  if (isMatchingRoute(pathname, ROUTES.PROTECTED_API)) {
     return isAuthenticated
       ? NextResponse.next()
       : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Handle public API routes
+  if (isMatchingRoute(pathname, ROUTES.PUBLIC_API)) {
+    return NextResponse.next();
+  }
+
+  // Handle public auth routes
+  if (isMatchingRoute(pathname, ROUTES.PUBLIC_AUTH_ROUTES)) {
+    if (isAuthenticated) {
+      const onboardingCheck = handleOnboardingCheck(isOnboarded, pathname, req);
+      if (onboardingCheck) return onboardingCheck;
+
+      if (token) {
+        const correctDashboardUrl = getCorrectDashboardUrl(token);
+        return NextResponse.redirect(new URL(correctDashboardUrl || URLS.DASHBOARD, req.url));
+      }
+    }
+    return NextResponse.next();
+  }
+
   // Handle protected routes
-  if (isMatchingRoute(pathname, ROUTES.PROTECTED)) {
+  if (isMatchingRoute(pathname, ROUTES.PROTECTED_ROUTES)) {
     const authCheck = handleAuthCheck(isAuthenticated, req);
     if (authCheck) return authCheck;
 
@@ -123,29 +152,10 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
-  // Handle public auth routes
-  if (isMatchingRoute(pathname, ROUTES.PUBLIC_AUTH)) {
-    if (isAuthenticated) {
-      const onboardingCheck = handleOnboardingCheck(isOnboarded, pathname, req);
-      if (onboardingCheck) return onboardingCheck;
-
-      if (token) {
-        const correctDashboardUrl = getCorrectDashboardUrl(token);
-        return NextResponse.redirect(new URL(correctDashboardUrl || URLS.DASHBOARD, req.url));
-      }
-    }
-    return NextResponse.next();
-  }
-
   // Handle other authenticated routes
   if (isAuthenticated) {
     const onboardingCheck = handleOnboardingCheck(isOnboarded, pathname, req);
     if (onboardingCheck) return onboardingCheck;
-  }
-
-  // Handle public API routes
-  if (isMatchingRoute(pathname, ROUTES.PUBLIC_API)) {
-    return NextResponse.next();
   }
 
   // Allow access to all other routes

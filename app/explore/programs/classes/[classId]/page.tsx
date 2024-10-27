@@ -54,7 +54,7 @@ async function getClassPlan(classId: string): Promise<ClassPlanWithRelations> {
   return classPlan as unknown as ClassPlanWithRelations;
 }
 
-export default async function ClassDetailsPage({ params }: { params: { classId: string } }) {
+export default async function ClassDetailsPage({ params }: Readonly<{ params: { classId: string } }>) {
   const classPlan = await getClassPlan(params.classId);
 
   return (

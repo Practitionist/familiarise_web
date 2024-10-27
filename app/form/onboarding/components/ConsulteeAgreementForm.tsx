@@ -1,21 +1,33 @@
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import TermsAndPrivacyAgreement from "./TermsAndPrivacyAgreement";
+import { ConsulteeProfile, PersonalInfoAndRole } from "@/schemas/UserSchema";
 
 interface Props {
-  onNext: (data: any) => void;
+  onSubmit: (data: FormData) => void;
   onBack: () => void;
-  initialData: any;
+  formData: FormData;
 }
 
-const ConsulteeAgreementForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
-  const [termsChecked, setTermsChecked] = useState(false);
-  const [privacyChecked, setPrivacyChecked] = useState(false);
+type FormData = PersonalInfoAndRole & 
+  Partial<ConsulteeProfile> & {
+    termsAccepted?: boolean;
+    privacyAccepted?: boolean;
+  };
+
+const ConsulteeAgreementForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
+  const [termsChecked, setTermsChecked] = useState(formData.termsAccepted || false);
+  const [privacyChecked, setPrivacyChecked] = useState(formData.privacyAccepted || false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (termsChecked && privacyChecked) {
-      onNext({ termsAccepted: true, privacyAccepted: true });
+      onSubmit({
+        ...formData,
+        termsAccepted: true,
+        privacyAccepted: true,
+        preferredCommunicationMethod: formData.preferredCommunicationMethod || "VIDEO",
+      });
     } else {
       alert("Please accept both the Terms of Service and Privacy Policy to continue.");
     }
@@ -34,7 +46,7 @@ const ConsulteeAgreementForm: React.FC<Props> = ({ onNext, onBack, initialData }
           Back
         </Button>
         <Button type="submit" variant="night" disabled={!termsChecked || !privacyChecked}>
-          Next
+          Submit
         </Button>
       </div>
     </form>

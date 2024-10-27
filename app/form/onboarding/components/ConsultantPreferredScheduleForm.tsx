@@ -19,6 +19,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 
+type DayOfWeek = "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
+
 interface SlotType {
   startTime: string;
   endTime: string;
@@ -34,9 +36,8 @@ interface Props {
   initialData: Partial<PreferredSchedule>;
 }
 
-const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAYS_OF_WEEK: DayOfWeek[] = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
 
-// New function to get local date string
 const getLocalDateString = (date: Date): string => {
   const year = date.getFullYear();
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -44,21 +45,109 @@ const getLocalDateString = (date: Date): string => {
   return `${year}-${month}-${day}`;
 };
 
+const formatDayDisplay = (day: DayOfWeek): string => {
+  return day.charAt(0) + day.slice(1).toLowerCase();
+};
+
+// Extract time from datetime string (e.g., "2024-01-01T09:30:00" -> "09:30")
+const extractTimeFromDateTime = (dateTimeString: string): string => {
+  try {
+    if (dateTimeString.includes('T')) {
+      const [_, time] = dateTimeString.split('T');
+      return time.substring(0, 5); // Get HH:mm part only
+    }
+    // If it's already in HH:mm format, return as is
+    if (/^\d{2}:\d{2}$/.test(dateTimeString)) {
+      return dateTimeString;
+    }
+    // If it's in HH:mm:ss format, truncate seconds
+    if (/^\d{2}:\d{2}:\d{2}$/.test(dateTimeString)) {
+      return dateTimeString.substring(0, 5);
+    }
+    return '';
+  } catch (error) {
+    console.error('Error extracting time:', error);
+    return '';
+  }
+};
+
 const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
   const { handleSubmit, watch, setValue, control } = useForm<PreferredSchedule>({
     resolver: zodResolver(PreferredScheduleSchema),
-    defaultValues: initialData,
+    defaultValues: {
+      ...initialData,
+      scheduleType: initialData.scheduleType || "WEEKLY"
+    },
   });
   const scheduleType = watch("scheduleType");
-  const [weeklySlots, setWeeklySlots] = useState<SlotsType>((initialData.weeklySlots as SlotsType) || {});
-  const [customSlots, setCustomSlots] = useState<SlotsType>((initialData.customSlots as SlotsType) || {});
+  
+  const [weeklySlots, setWeeklySlots] = useState<SlotsType>({});
+  const [customSlots, setCustomSlots] = useState<SlotsType>({});
+
+  // Initialize slots from initialData
+  useEffect(() => {
+    if (initialData.weeklySlots?.length) {
+      const formattedWeeklySlots: SlotsType = {};
+      initialData.weeklySlots.forEach(slot => {
+        const day = slot.dayOfWeekforStartTimeInUTC.toLowerCase();
+        if (!formattedWeeklySlots[day]) {
+          formattedWeeklySlots[day] = [];
+        }
+        formattedWeeklySlots[day].push({
+          startTime: extractTimeFromDateTime(slot.slotStartTimeInUTC),
+          endTime: extractTimeFromDateTime(slot.slotEndTimeInUTC),
+          isValid: true
+        });
+      });
+      setWeeklySlots(formattedWeeklySlots);
+    }
+
+    if (initialData.customSlots?.length) {
+      const formattedCustomSlots: SlotsType = {};
+      initialData.customSlots.forEach(slot => {
+        try {
+          const startDate = new Date(slot.slotStartTimeInUTC);
+          const dateString = getLocalDateString(startDate);
+          if (!formattedCustomSlots[dateString]) {
+            formattedCustomSlots[dateString] = [];
+          }
+          formattedCustomSlots[dateString].push({
+            startTime: extractTimeFromDateTime(slot.slotStartTimeInUTC),
+            endTime: extractTimeFromDateTime(slot.slotEndTimeInUTC),
+            isValid: true
+          });
+        } catch (error) {
+          console.error('Error processing custom slot:', error);
+        }
+      });
+      setCustomSlots(formattedCustomSlots);
+    }
+  }, [initialData]);
 
   useEffect(() => {
-    setValue("weeklySlots", weeklySlots);
+    const formattedWeeklySlots = Object.entries(weeklySlots).flatMap(([day, slots]) =>
+      slots.map(slot => ({
+        dayOfWeekforStartTimeInUTC: day.toUpperCase() as DayOfWeek,
+        dayOfWeekforEndTimeInUTC: day.toUpperCase() as DayOfWeek,
+        slotStartTimeInUTC: slot.startTime,
+        slotEndTimeInUTC: slot.endTime
+      }))
+    );
+    setValue("weeklySlots", formattedWeeklySlots);
   }, [weeklySlots, setValue]);
 
   useEffect(() => {
-    setValue("customSlots", customSlots);
+    const formattedCustomSlots = Object.entries(customSlots).flatMap(([dateString, slots]) =>
+      slots.map(slot => {
+        const startDateTime = `${dateString}T${slot.startTime}`;
+        const endDateTime = `${dateString}T${slot.endTime}`;
+        return {
+          slotStartTimeInUTC: startDateTime,
+          slotEndTimeInUTC: endDateTime
+        };
+      })
+    );
+    setValue("customSlots", formattedCustomSlots);
   }, [customSlots, setValue]);
 
   const validateSlot = useCallback((slot: SlotType, otherSlots: SlotType[]): SlotType => {
@@ -148,64 +237,70 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
     });
   }, []);
 
-  const renderSlots = useCallback((day: string, slots: SlotsType, setSlots: React.Dispatch<React.SetStateAction<SlotsType>>) => (
-    <div key={day} className="grid gap-2">
-      <Label>{day}</Label>
-      {slots[day]?.map((slot: SlotType, index: number) => (
-        <div key={index} className="grid gap-2">
-          <div className="grid grid-cols-5 gap-2 items-center">
-            <Input
-              type="time"
-              value={slot.startTime}
-              onChange={(e) => handleUpdateSlot(day, index, "startTime", e.target.value, slots, setSlots)}
-              className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
-              required
-              step="900"
-            />
-            <Input
-              type="time"
-              value={slot.endTime}
-              onChange={(e) => handleUpdateSlot(day, index, "endTime", e.target.value, slots, setSlots)}
-              className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
-              required
-              step="900"
-            />
-            <TrashIcon
-              className="w-5 h-5 cursor-pointer"
-              onClick={() => handleDeleteSlot(day, index, slots, setSlots)}
-            />
+  const renderSlots = useCallback((day: DayOfWeek, slots: SlotsType, setSlots: React.Dispatch<React.SetStateAction<SlotsType>>) => {
+    const dayKey = day.toLowerCase();
+    return (
+      <div key={`slot-${day}`} className="grid gap-2">
+        <Label>{formatDayDisplay(day)}</Label>
+        {slots[dayKey]?.map((slot: SlotType, index: number) => (
+          <div key={`slot-${day}-${index}`} className="grid gap-2">
+            <div className="grid grid-cols-5 gap-2 items-center">
+              <Input
+                type="time"
+                value={slot.startTime}
+                onChange={(e) => handleUpdateSlot(dayKey, index, "startTime", e.target.value, slots, setSlots)}
+                className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
+                required
+                step="900"
+              />
+              <Input
+                type="time"
+                value={slot.endTime}
+                onChange={(e) => handleUpdateSlot(dayKey, index, "endTime", e.target.value, slots, setSlots)}
+                className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
+                required
+                step="900"
+              />
+              <TrashIcon
+                className="w-5 h-5 cursor-pointer"
+                onClick={() => handleDeleteSlot(dayKey, index, slots, setSlots)}
+              />
+            </div>
+            {!slot.isValid && slot.errorMessage && (
+              <p className="text-red-500 text-sm">{slot.errorMessage}</p>
+            )}
           </div>
-          {!slot.isValid && slot.errorMessage && (
-            <p className="text-red-500 text-sm">{slot.errorMessage}</p>
-          )}
-        </div>
-      ))}
-      <Button
-        type="button"
-        variant="outline"
-        onClick={() => handleAddSlot(day, slots, setSlots)}
-      >
-        Add Slot
-      </Button>
-    </div>
-  ), [handleAddSlot, handleUpdateSlot, handleDeleteSlot]);
+        ))}
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => handleAddSlot(dayKey, slots, setSlots)}
+        >
+          Add Slot
+        </Button>
+      </div>
+    );
+  }, [handleAddSlot, handleUpdateSlot, handleDeleteSlot]);
 
   const allSlotsValid = useCallback(() => {
     const areAllSlotsValid = (slots: SlotsType) =>
       Object.values(slots).every((daySlots) => daySlots.every((slot) => slot.isValid));
-    return areAllSlotsValid(weeklySlots) && areAllSlotsValid(customSlots);
-  }, [weeklySlots, customSlots]);
+    
+    if (scheduleType === "WEEKLY") {
+      return areAllSlotsValid(weeklySlots) && Object.keys(weeklySlots).length > 0;
+    } else {
+      return areAllSlotsValid(customSlots) && Object.keys(customSlots).length > 0;
+    }
+  }, [weeklySlots, customSlots, scheduleType]);
 
   const onSubmitForm = useCallback((data: PreferredSchedule) => {
     if (!allSlotsValid()) {
-      alert("Please correct all slot times before submitting.");
+      alert("Please add and validate at least one time slot before proceeding.");
       return;
     }
     onNext(data);
   }, [allSlotsValid, onNext]);
 
-
-  // Generate Calendar
   const [currentDate, setCurrentDate] = useState(new Date());
 
   const getDaysInMonth = (date: Date) => {
@@ -239,7 +334,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
       const isSelected = customSlots[dateString] !== undefined;
       days.push(
         <button
-          key={i}
+          key={`day-${i}`}
           type="button"
           className={`p-2 rounded-full hover:bg-gray-200
             ${isSelected ? 'bg-black text-white' : ''}`}
@@ -264,10 +359,10 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
   const renderSlotsForDate = (dateString: string) => {
     const date = new Date(dateString);
     return (
-      <div key={dateString} className="mt-4">
+      <div key={`date-${dateString}`} className="mt-4">
         <h4 className="font-semibold">{date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</h4>
         {customSlots[dateString]?.map((slot: SlotType, index: number) => (
-          <div key={index} className="grid grid-cols-5 gap-2 items-center mt-2">
+          <div key={`custom-slot-${dateString}-${index}`} className="grid grid-cols-5 gap-2 items-center mt-2">
             <Input
               type="time"
               value={slot.startTime}
@@ -292,7 +387,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
         ))}
         {customSlots[dateString]?.map((slot: SlotType, index: number) => (
           !slot.isValid && slot.errorMessage && (
-            <p key={`error-${index}`} className="text-red-500 text-sm mt-1">{slot.errorMessage}</p>
+            <p key={`custom-error-${dateString}-${index}`} className="text-red-500 text-sm mt-1">{slot.errorMessage}</p>
           )
         ))}
         <Button
@@ -306,6 +401,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
       </div>
     );
   };
+
   return (
     <form onSubmit={handleSubmit(onSubmitForm)} className="w-full max-w-6xl mx-auto">
       <Card className="w-full">
@@ -317,34 +413,34 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
           <Controller
             name="scheduleType"
             control={control}
-            defaultValue="weekly"
+            defaultValue="WEEKLY"
             render={({ field }) => (
               <RadioGroup onValueChange={field.onChange} value={field.value} className="space-y-4">
                 <div className="flex flex-col md:flex-row md:space-x-8 space-y-4 md:space-y-0">
                   <div className="flex-1">
                     <div className="flex items-center justify-between mb-4">
-                      <Label htmlFor="weekly" className="font-medium">Weekly Recurring</Label>
-                      <RadioGroupItem id="weekly" value="weekly" />
+                      <Label htmlFor="WEEKLY" className="font-medium">Weekly Recurring</Label>
+                      <RadioGroupItem id="WEEKLY" value="WEEKLY" />
                     </div>
-                    <div className={`grid gap-4 ${scheduleType !== "weekly" ? "opacity-50 pointer-events-none" : ""}`}>
+                    <div className={`grid gap-4 ${scheduleType !== "WEEKLY" ? "opacity-50 pointer-events-none" : ""}`}>
                       {DAYS_OF_WEEK.map((day) => renderSlots(day, weeklySlots, setWeeklySlots))}
                     </div>
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center justify-between mb-4">
-                      <Label htmlFor="custom" className="font-medium">Custom Schedule</Label>
-                      <RadioGroupItem id="custom" value="custom" />
+                      <Label htmlFor="CUSTOM" className="font-medium">Custom Schedule</Label>
+                      <RadioGroupItem id="CUSTOM" value="CUSTOM" />
                     </div>
-                    <div className={`grid gap-4 ${scheduleType !== "custom" ? "opacity-50 pointer-events-none" : ""}`}>
+                    <div className={`grid gap-4 ${scheduleType !== "CUSTOM" ? "opacity-50 pointer-events-none" : ""}`}>
                       <div className="calendar-container bg-white border p-4 rounded-lg">
                         <div className="flex justify-between items-center mb-4">
-                          <button type="button" className="text-black" onClick={handlePrevMonth}>&lt;</button>
+                          <button type="button" className="text-black" onClick={handlePrevMonth}>&larr;</button>
                           <span>{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
-                          <button type="button" className="text-black" onClick={handleNextMonth}>&gt;</button>
+                          <button type="button" className="text-black" onClick={handleNextMonth}>&rarr;</button>
                         </div>
                         <div className="grid grid-cols-7 gap-1 text-center">
                           {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
-                            <div key={day} className="text-sm font-medium">{day}</div>
+                            <div key={`header-${day}`} className="text-sm font-medium">{day}</div>
                           ))}
                           {renderCalendar()}
                         </div>
@@ -365,7 +461,5 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({ onNext, onBack, init
     </form>
   );
 };
-
-
 
 export default ConsultantPreferredScheduleForm;

@@ -2,15 +2,14 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { responsibilitiesAndPermissions } from "@/schemas/ResponsibilitiesAndPermissionsSchema";
-import { StaffProfile, StaffProfileSchema } from "@/schemas/UserSchema";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { StaffProfile, PersonalInfoAndRole } from "@/schemas/UserSchema";
 import React, { useEffect, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { Controller, useFormContext } from "react-hook-form";
 
 interface Props {
-  onNext: (data: Partial<StaffProfile>) => void;
+  onNext: (data: any) => void;
   onBack: () => void;
-  initialData: Partial<StaffProfile>;
+  initialData: Partial<StaffProfile & PersonalInfoAndRole>;
 }
 
 const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
@@ -18,30 +17,49 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
   const [positions, setPositions] = useState<string[]>([]);
 
   const {
-    register,
     control,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors },
-  } = useForm<StaffProfile>({
-    resolver: zodResolver(StaffProfileSchema),
-    defaultValues: initialData,
-  });
+  } = useFormContext();
 
   const watchDepartment = watch("department");
 
   useEffect(() => {
+    // Initialize departments from the schema
     setDepartments(Object.keys(responsibilitiesAndPermissions.departments));
-  }, []);
+
+    // Initialize with initial data if available
+    if (initialData.department) {
+      setValue("department", initialData.department);
+      if (initialData.position) {
+        setValue("position", initialData.position);
+      }
+    }
+  }, [initialData, setValue]);
 
   useEffect(() => {
     if (watchDepartment) {
-      setPositions(Object.keys(responsibilitiesAndPermissions.departments[watchDepartment].positions));
+      // Update available positions when department changes
+      const departmentData = responsibilitiesAndPermissions.departments[watchDepartment];
+      if (departmentData) {
+        setPositions(Object.keys(departmentData.positions));
+      } else {
+        setPositions([]);
+      }
+    } else {
+      setPositions([]);
     }
   }, [watchDepartment]);
 
-  const onSubmit = (data: StaffProfile) => {
-    onNext(data);
+  const onSubmit = (data: Partial<StaffProfile>) => {
+    // Initialize empty responsibilities and permissions objects
+    onNext({
+      ...data,
+      responsibilities: {},
+      permissions: {},
+    });
   };
 
   return (
@@ -51,8 +69,12 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
         <Controller
           name="department"
           control={control}
+          rules={{ required: "Department is required" }}
           render={({ field }) => (
-            <Select onValueChange={field.onChange} value={field.value}>
+            <Select
+              onValueChange={field.onChange}
+              value={field.value}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select a department" />
               </SelectTrigger>
@@ -67,7 +89,7 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
           )}
         />
         {errors.department && (
-          <p className="text-red-500">{errors.department.message}</p>
+          <p className="text-red-500 text-sm">{errors.department.message as string}</p>
         )}
       </div>
 
@@ -76,8 +98,13 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
         <Controller
           name="position"
           control={control}
+          rules={{ required: "Position is required" }}
           render={({ field }) => (
-            <Select onValueChange={field.onChange} value={field.value} disabled={!watchDepartment}>
+            <Select
+              onValueChange={field.onChange}
+              value={field.value}
+              disabled={!watchDepartment}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select a position" />
               </SelectTrigger>
@@ -92,7 +119,7 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
           )}
         />
         {errors.position && (
-          <p className="text-red-500">{errors.position.message}</p>
+          <p className="text-red-500 text-sm">{errors.position.message as string}</p>
         )}
       </div>
 

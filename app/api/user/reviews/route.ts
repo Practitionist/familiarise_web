@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
         },
       });
   
-      return NextResponse.json(reviews, { status: 200 });
+      return NextResponse.json({data: reviews}, { status: 200 });
     } catch (error) {
       console.error("Error getting reviews:", error);
       return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });

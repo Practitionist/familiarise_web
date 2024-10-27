@@ -14,7 +14,7 @@ export async function GET(
       return NextResponse.json({ error: "Consultee not found" }, { status: 404 });
     }
 
-    return NextResponse.json(consultee, { status: 200 });
+    return NextResponse.json({data: consultee}, { status: 200 });
   } catch (error) {
     console.error("Error getting consultee:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });

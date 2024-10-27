@@ -4,8 +4,8 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import { fetchConsultantDetails, fetchUserDetails, fetchReviews } from '@/hooks/useUserData';
-import { TSlotTiming } from "@/lib/datetimetz";
+import { fetchConsultantDetails, fetchUserDetails, fetchReviews } from "@/hooks/useUserData";
+
 import { ConsultantReview, User, ConsultationPlan, SubscriptionPlan } from "@prisma/client";
 import { StarIcon } from "lucide-react";
 import Image from "next/image";
@@ -14,7 +14,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ClassesAndWebinars } from './ClassesAndWebinars';
 import { ConsultantSkeletonLoader } from './ConsultantSkeletonLoader';
 import PricingToggle from './PricingToggle';
-import { TConsultantProfile } from '@/types/consultant';
+import { TConsultantProfile } from "@/types/consultant";
+import { TSlotTiming } from "@/types/slots";
 
 interface PricingOption {
   title: string;
@@ -36,7 +37,7 @@ const Review: React.FC<ConsultantReview> = ({ consulteeProfileId, createdAt, rat
         <div className="flex items-center">
           {[...Array(5)].map((_, i) => (
             <StarIcon
-              key={i}
+              key={`star-${rating}-${i}`}
               className={`w-4 h-4 ${i < rating ? "text-yellow-400" : "text-gray-200"}`}
             />
           ))}
@@ -66,11 +67,10 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
       try {
         const consultantData = await fetchConsultantDetails(params.consultantId);
         setConsultantDetails(consultantData);
-
+        console.log(consultantData);
         if (consultantData.userId) {
           const userData = await fetchUserDetails(consultantData.userId);
           setUserDetails(userData);
-
           const reviewsData = await fetchReviews(params.consultantId);
           setReviews(reviewsData);
         } else {
@@ -165,7 +165,7 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
             ${selectedDate?.getDate() === i ? "bg-white text-black" : ""}`}
           onClick={() => {
             setSelectedDate(date);
-            setSelectedSlot(null); // Reset selected slot when a new date is chosen
+            setSelectedSlot(null);
           }}
         >
           {i}
@@ -193,15 +193,21 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
           <div className="grid grid-cols-7 gap-6">
             {daysOfWeek.map((day) => (
               <div key={day} className="space-y-3">
-                {consultantDetails.slotsOfAvailabilityWeekly
-                  .filter((slot) => slot.dayOfWeekforStartTimeInUTC === day.toUpperCase())
+                {slotTimings
+                  .filter((slot) => {
+                    const slotDate = new Date(slot.slotStartTimeInUTC);
+                    return daysOfWeek[slotDate.getDay()] === day;
+                  })
                   .map((slot) => {
-                    const startTime = new Date(slot.slotStartTimeInUTC);
-                    const endTime = new Date(slot.slotEndTimeInUTC);
+                    const startTime = new Date(slot.localStartTime);
+                    const endTime = new Date(slot.localEndTime);
                     return (
                       <div
-                        key={slot.id}
-                        className="bg-blue-50 rounded-md p-2 cursor-pointer hover:bg-blue-100 transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center"
+                        key={slot.slotId}
+                        className={`bg-blue-50 rounded-md p-2 cursor-pointer ${
+                          selectedSlot?.slotId === slot.slotId ? 'bg-blue-200' : 'hover:bg-blue-100'
+                        } transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center`}
+                        onClick={() => setSelectedSlot(slot)}
                       >
                         <div className="text-xs font-medium text-blue-700">
                           {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
@@ -237,18 +243,21 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
           <div className="grid grid-cols-7 gap-6">
             {next7Days.map((date) => (
               <div key={date.toISOString()} className="space-y-3">
-                {consultantDetails.slotsOfAvailabilityCustom
+                {slotTimings
                   .filter((slot) => {
                     const slotDate = new Date(slot.slotStartTimeInUTC);
                     return slotDate.toDateString() === date.toDateString();
                   })
                   .map((slot) => {
-                    const startTime = new Date(slot.slotStartTimeInUTC);
-                    const endTime = new Date(slot.slotEndTimeInUTC);
+                    const startTime = new Date(slot.localStartTime);
+                    const endTime = new Date(slot.localEndTime);
                     return (
                       <div
-                        key={slot.id}
-                        className="bg-green-50 rounded-md p-2 cursor-pointer hover:bg-green-100 transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center"
+                        key={slot.slotId}
+                        className={`bg-green-50 rounded-md p-2 cursor-pointer ${
+                          selectedSlot?.slotId === slot.slotId ? 'bg-green-200' : 'hover:bg-green-100'
+                        } transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center`}
+                        onClick={() => setSelectedSlot(slot)}
                       >
                         <div className="text-xs font-medium text-green-700">
                           {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
@@ -265,7 +274,7 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
     }
 
     return null;
-  }, [consultantDetails]);
+  }, [consultantDetails, slotTimings, selectedSlot]);
 
   const isConsultationPlan = (plan: ConsultationPlan | SubscriptionPlan): plan is ConsultationPlan => {
     return 'durationInHours' in plan;
@@ -297,7 +306,6 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
           ]
         };
       }
-      // This should never happen, but TypeScript requires a return statement
       return {
         title: '',
         description: '',
@@ -339,24 +347,22 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
                 ))}
                 <span className="ml-2 text-sm text-gray-600">({consultantDetails.rating})</span>
               </div>
-              <p className="text-lg text-gray-700 mt-1">{consultantDetails.subDomains.join(", ")}</p>
             </div>
           </div>
 
           <div className="space-y-6">
-            
             <Badge variant="outline">{consultantDetails.specialization}</Badge>
             <div>
               <h3 className="text-xl font-semibold mb-2">About</h3>
               <p className="text-gray-600">
-                {userDetails.name} is a seasoned {consultantDetails.specialization} with {consultantDetails.experience} of experience in the {consultantDetails.domain} sector.
+                {userDetails.name} is a seasoned {consultantDetails.specialization} with {consultantDetails.experience} of experience in the {consultantDetails.domain.name} sector.
               </p>
             </div>
 
             <div>
               <h3 className="text-xl font-semibold mb-2">Expertise and Education</h3>
               <p className="text-gray-600">
-                {userDetails.name}'s expertise spans multiple industries, with a particular focus on {consultantDetails.subDomains.join(", ")}.
+                {userDetails.name}'s expertise spans multiple industries, with a particular focus on {consultantDetails?.subDomains.join(", ")}.
               </p>
             </div>
 
@@ -380,11 +386,15 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
         </div>
         <ClassesAndWebinars consultantId={params.consultantId} />
         <div>
-          <h3 className="font-semibold text-lg mb-4">All Reviews ({reviews.length})</h3>
+          <h3 className="font-semibold text-lg mb-4">All Reviews ({reviews?.length || 0})</h3>
           <div className="space-y-4">
-            {reviews.map((review) => (
-              <Review key={review.id} {...review} />
-            ))}
+            {reviews && reviews.length > 0 ? (
+              reviews.map((review) => (
+                <Review key={review.id} {...review} />
+              ))
+            ) : (
+              <p>No reviews available.</p>
+            )}
           </div>
         </div>
       </div>

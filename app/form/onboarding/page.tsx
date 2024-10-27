@@ -2,14 +2,13 @@
 import { toast } from "@/components/ui/use-toast";
 import {
   ConsultantProfile,
-  ConsulteePreferences,
   ConsulteeProfile,
   PersonalInfoAndRole,
   PersonalInfoAndRoleSchema,
   PreferredSchedule,
   StaffProfile,
-  StaffResponsibilities
 } from "@/schemas/UserSchema";
+import { Domain, SubDomain, Tag } from "@/schemas/PlanSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
@@ -21,7 +20,6 @@ import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredSch
 import ConsultantProfileForm from "./components/ConsultantProfileForm";
 import ConsultantReviewForm from "./components/ConsultantReviewForm";
 import ConsulteeAgreementForm from "./components/ConsulteeAgreementForm";
-import ConsulteePreferencesForm from "./components/ConsulteePreferencesForm";
 import ConsulteeProfileForm from "./components/ConsulteeProfileForm";
 import ConsulteeReviewForm from "./components/ConsulteeReviewForm";
 import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
@@ -29,19 +27,29 @@ import StaffAgreementForm from "./components/StaffAgreementForm";
 import StaffProfileForm from "./components/StaffProfileForm";
 import StaffResponsibilitiesForm from "./components/StaffResponsibilitiesForm";
 import StaffReviewForm from "./components/StaffReviewForm";
-
+import ConsulteePreferencesForm from "./components/ConsulteePreferencesForm";
 
 type FormData = PersonalInfoAndRole &
   Partial<ConsultantProfile> &
-  ConsulteeProfile &
-  ConsulteePreferences &
+  Partial<ConsulteeProfile> &
   Partial<StaffProfile> &
-  Partial<StaffResponsibilities> &
-  Partial<PreferredSchedule> &
-  Partial<{
-    termsAccepted: boolean;
-    privacyAccepted: boolean;
-  }>;
+  Partial<PreferredSchedule> & {
+    termsAccepted?: boolean;
+    privacyAccepted?: boolean;
+    domain?: Domain;
+    subDomains?: SubDomain[];
+    tags?: Tag[];
+    weeklySlots?: {
+      dayOfWeekforStartTimeInUTC: "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
+      slotStartTimeInUTC: string;
+      dayOfWeekforEndTimeInUTC: "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
+      slotEndTimeInUTC: string;
+    }[];
+    customSlots?: {
+      slotStartTimeInUTC: string;
+      slotEndTimeInUTC: string;
+    }[];
+  };
 
 const MultiStepForm: React.FC = () => {
   const { data: session, update: updateSession } = useSession();
@@ -56,93 +64,149 @@ const MultiStepForm: React.FC = () => {
 
   const handleNext = (stepData: Partial<FormData>) => {
     setFormData((prevData) => {
+      // Merge the new data with existing data, preserving all fields
       const updatedData = { ...prevData, ...stepData };
+      
+      // For schedule data, ensure we preserve the complete slot information
+      if (stepData.scheduleType) {
+        updatedData.scheduleType = stepData.scheduleType;
+        if (stepData.weeklySlots) {
+          updatedData.weeklySlots = [...stepData.weeklySlots];
+        }
+        if (stepData.customSlots) {
+          updatedData.customSlots = [...stepData.customSlots];
+        }
+      }
+      
       return updatedData;
     });
     setStep((prevStep) => prevStep + 1);
   };
 
-  const handleBack = () => setStep((prevStep) => prevStep - 1);
+  const handleBack = () => {
+    setStep((prevStep) => prevStep - 1);
+  };
 
-  const handleSubmit = async (data: Partial<FormData>) => {
+const handleSubmit = async (data: FormData) => {
     const finalData = { ...formData, ...data };
-    console.log("Final Submitted Data:", finalData);
-  
+    console.log("Finally Submitted Data:", finalData);
+
     try {
       const id = session?.user?.id;
       if (!id) {
         throw new Error("User ID not found in session");
       }
-  
+
+      // Format custom slots to include milliseconds and UTC timezone
+      const formattedCustomSlots = finalData.customSlots?.map(slot => ({
+        slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC).toISOString(),
+        slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC).toISOString()
+      }));
+
+      const requestBody = {
+        name: finalData.name,
+        email: finalData.email,
+        phone: finalData.phone,
+        address: finalData.address,
+        currentTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        role: finalData.role,
+        onboardingCompleted: true,
+        consultantProfile: finalData.role === "CONSULTANT" ? {
+          create: {
+            description: finalData.description ?? "",
+            qualifications: finalData.qualifications ?? "",
+            specialization: finalData.specialization ?? "",
+            experience: finalData.experience ?? "",
+            domain: { connect: { id: finalData.domain!.id } },
+            subDomains: finalData.subDomains?.length ? { 
+              connect: finalData.subDomains.map(sd => ({ id: sd.id })) 
+            } : undefined,
+            tags: finalData.tags?.length ? { 
+              connect: finalData.tags.map(t => ({ id: t.id })) 
+            } : undefined,
+            scheduleType: finalData.scheduleType ?? "WEEKLY",
+            slotsOfAvailabilityWeekly: finalData.weeklySlots?.length ? {
+              create: finalData.weeklySlots.map(slot => ({
+                dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
+                slotStartTimeInUTC: slot.slotStartTimeInUTC,
+                dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
+                slotEndTimeInUTC: slot.slotEndTimeInUTC,
+              }))
+            } : undefined,
+            slotsOfAvailabilityCustom: formattedCustomSlots?.length ? {
+              create: formattedCustomSlots
+            } : undefined,
+          }
+        } : undefined,
+        consulteeProfile: finalData.role === "CONSULTEE" ? {
+          create: {
+            education: finalData.education ?? "",
+            occupation: finalData.occupation ?? "",
+            aboutMe: finalData.aboutMe ?? "",
+            preferredCommunicationMethod: finalData.preferredCommunicationMethod ?? "VIDEO",
+            preferredLanguage: finalData.preferredLanguage ?? "",
+            specialRequirements: finalData.specialRequirements ?? "",
+            interests: finalData.interests ?? "",
+            goals: finalData.goals ?? "",
+          }
+        } : undefined,
+        staffProfile: finalData.role === "STAFF" ? {
+          create: {
+            department: finalData.department ?? "",
+            position: finalData.position ?? "",
+            permissions: finalData.permissions ?? {},
+            responsibilities: finalData.responsibilities ?? {},
+          }
+        } : undefined,
+      };
+
+      console.log("Request Body:", JSON.stringify(requestBody, null, 2));
+
       const response = await fetch(`/api/form/onboarding/${id}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          personalInfo: {
-            name: finalData.name,
-            email: finalData.email,
-            phone: finalData.phone,
-            address: finalData.address,
-            currentTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-          },
-          role: finalData.role,
-          consultantProfile: finalData.role === "CONSULTANT" ? {
-            specialization: finalData.specialization,
-            experience: finalData.experience,
-            location: finalData.location,
-            description: finalData.description,
-            tags: finalData.tags,
-            domain: finalData.domain,
-            subDomains: finalData.subDomains,
-            scheduleType: finalData.scheduleType,
-            weeklySlots: finalData.weeklySlots,
-            customSlots: finalData.customSlots,
-          } : undefined,
-          consulteeProfile: finalData.role === "CONSULTEE" ? {
-            education: finalData.education,
-            occupation: finalData.occupation,
-            aboutMe: finalData.aboutMe,
-            preferredCommunicationMethod: finalData.preferredCommunicationMethod,
-            preferredLanguage: finalData.preferredLanguage,
-            specialRequirements: finalData.specialRequirements,
-            interests: finalData.interests,
-          } : undefined,
-          staffProfile: finalData.role === "STAFF" ? {
-            department: finalData.department,
-            position: finalData.position,
-            responsibilities: finalData.responsibilities,
-            permissions: finalData.permissions,
-          } : undefined,
-        }),
+        body: JSON.stringify(requestBody),
       });
-  
+
       if (!response.ok) {
-        const errorData = await response.json();
-        if (response.status === 404) {
-          toast({
-            title: "User Not Found in Database",
-            description: "Please sign out and sign in again.",
-            variant: "destructive",
-          });
-          signOut();
-          return
+        let errorMessage = "Failed to update onboarding information";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        } catch (parseError) {
+          console.error("Error parsing response:", parseError);
+          const errorText = await response.text();
+          console.error("Server response:", errorText);
+          
+          if (response.status === 404) {
+            errorMessage = "User not found. Please sign out and sign in again.";
+            toast({
+              title: "User Not Found",
+              description: errorMessage,
+              variant: "destructive",
+            });
+            signOut();
+            return;
+          }
         }
+
         toast({
           title: "Error",
-          description: errorData.message || "Failed to update onboarding information",
+          description: errorMessage,
           variant: "destructive",
         });
+        return;
       }
-  
+
       const result = await response.json();
       toast({
         title: "Onboarding Completed",
         description: "Your onboarding information has been updated successfully.",
         variant: "default",
-      })
-  
+      });
+
       // Update the session
       await updateSession({
         ...session,
@@ -150,12 +214,12 @@ const MultiStepForm: React.FC = () => {
           ...session?.user,
           onboardingCompleted: true,
           role: finalData.role,
-          consultantProfileId: result.consultantProfileId,
-          consulteeProfileId: result.consulteeProfileId,
-          staffProfileId: result.staffProfileId,
+          consultantProfileId: result.user.consultantProfileId,
+          consulteeProfileId: result.user.consulteeProfileId,
+          staffProfileId: result.user.staffProfileId,
         },
       });
-  
+
       // Redirect based on the user's role
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
         router.push(`/dashboard/consultant/${result.user.consultantProfileId}`);
@@ -166,12 +230,12 @@ const MultiStepForm: React.FC = () => {
       } else {
         router.push('/dashboard');
       }
-      
+
     } catch (error: unknown) {
       console.error("Error updating onboarding information:", error);
       if (error instanceof Error) {
-       if (error.message === "User ID not found in session") {
-        toast({
+        if (error.message === "User ID not found in session") {
+          toast({
             title: "User ID Not Found",
             description: "Please sign out and sign in again.",
             variant: "destructive",
@@ -181,12 +245,13 @@ const MultiStepForm: React.FC = () => {
         }
       }
       toast({
-        title: "Error",
-        description: "Something went wrong. Please try again later.",
+        title: "Something went wrong. Please try again later.",
+        description: error instanceof Error ? error.message : "An error occurred while updating onboarding information",
         variant: "destructive",
       });
     }
   };
+
 
   const renderFormStep = () => {
     switch (step) {
@@ -265,9 +330,9 @@ const MultiStepForm: React.FC = () => {
           case "CONSULTEE":
             return (
               <ConsulteeAgreementForm
-                onNext={handleNext}
+                onSubmit={handleSubmit}
                 onBack={handleBack}
-                initialData={formData}
+                formData={formData}
               />
             );
           case "STAFF":
@@ -314,6 +379,7 @@ const MultiStepForm: React.FC = () => {
         return null;
     }
   };
+
   return (
     <FormProvider {...methods}>
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
@@ -362,3 +428,4 @@ function LogInIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
 }
 
 export default MultiStepForm;
+

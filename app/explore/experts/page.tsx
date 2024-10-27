@@ -11,22 +11,54 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { SubscriptionPlan } from "@prisma/client";
+import { Domain, SubDomain, Tag, ConsultationPlan, SubscriptionPlan, WebinarPlan, ClassPlan } from "@prisma/client";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+interface MetaData {
+  domains: Domain[];
+  subdomains: SubDomain[];
+  tags: Tag[];
+}
+
+interface Consultant {
+  id: string;
+  description: string;
+  qualifications: string;
+  specialization: string;
+  experience: string;
+  rating: number;
+  domainId: string;
+  scheduleType: string;
+  userId: string;
+  reviews: any[];
+  slotsOfAvailabilityWeekly: any[];
+  slotsOfAvailabilityCustom: any[];
+  consultationPlans: ConsultationPlan[];
+  subscriptionPlans: SubscriptionPlan[];
+  webinarPlans: WebinarPlan[];
+  classPlans: ClassPlan[];
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    image: string;
+  };
+}
+
 function FindExperts() {
-  const [domains, setDomains] = useState<string[]>([]);
-  const [subdomains, setSubdomains] = useState<string[]>([]);
-  const [consultants, setConsultants] = useState<any[]>([]);
+  const [metadata, setMetadata] = useState<MetaData | null>(null);
+  const [consultants, setConsultants] = useState<Consultant[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [experienceYears, setExperienceYears] = useState(0);
   const [pricing, setPricing] = useState(0);
+  const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
+  const [selectedSubdomain, setSelectedSubdomain] = useState<string | null>(null);
 
   const router = useRouter();
 
@@ -41,13 +73,8 @@ function FindExperts() {
         const metaData = await metaResponse.json();
         const consultantsData = await consultantsResponse.json();
 
-        if (metaData.data.domains && Array.isArray(metaData.data.domains)) {
-          setDomains(metaData.data.domains);
-        }
-        if (metaData.data.subdomains && Array.isArray(metaData.data.subdomains)) {
-          setSubdomains(metaData.data.subdomains);
-        }
-        setConsultants(consultantsData);
+        setMetadata(metaData.data);
+        setConsultants(consultantsData.data);
       } catch (error) {
         console.error("Error fetching data:", error);
       } finally {
@@ -74,12 +101,15 @@ function FindExperts() {
     setIsDropdownOpen(true);
   };
 
-  const availableTags = ["NLP", "Leadership", "Taxes", "AI", "Machine Learning"];
-  const filteredTags = availableTags.filter(
+  const filteredTags = metadata?.tags.filter(
     (tag) =>
-      tag.toLowerCase().includes(searchTerm.toLowerCase()) &&
-      !selectedTags.includes(tag)
-  );
+      tag.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
+      !selectedTags.includes(tag.name)
+  ) || [];
+
+  if (isLoading) {
+    return <div>Loading experts...</div>;
+  }
 
   return (
     <div key="1" className="w-full px-4 py-6 space-y-6 md:px-6 md:py-12">
@@ -101,26 +131,20 @@ function FindExperts() {
             >
               Domain
             </label>
-            <Select disabled={isLoading}>
+            <Select
+              onValueChange={(value) => setSelectedDomain(value)}
+            >
               <SelectTrigger id="domain" aria-label="Select domain">
                 <SelectValue
-                  placeholder={
-                    isLoading ? "Loading domains..." : "Select domain"
-                  }
+                  placeholder="Select domain"
                 />
               </SelectTrigger>
               <SelectContent>
-                {isLoading ? (
-                  <SelectItem value="loading" disabled className="bg-slate-200 text-black">
-                    Loading domains...
+                {metadata?.domains.map((domain) => (
+                  <SelectItem key={domain.id} value={domain.id} className="bg-slate-200 text-black">
+                    {domain.name}
                   </SelectItem>
-                ) : (
-                  domains.map((domain) => (
-                    <SelectItem key={domain} value={domain.toLowerCase()} className="bg-slate-200 text-black">
-                      {domain}
-                    </SelectItem>
-                  ))
-                )}
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -131,26 +155,23 @@ function FindExperts() {
             >
               Subdomain
             </label>
-            <Select disabled={isLoading}>
+            <Select
+              disabled={!selectedDomain}
+              onValueChange={(value) => setSelectedSubdomain(value)}
+            >
               <SelectTrigger id="subdomain" aria-label="Select subdomain">
                 <SelectValue
-                  placeholder={
-                    isLoading ? "Loading subdomains..." : "Select subdomain"
-                  }
+                  placeholder="Select subdomain"
                 />
               </SelectTrigger>
               <SelectContent>
-                {isLoading ? (
-                  <SelectItem value="loading" disabled className="bg-slate-200 text-black">
-                    Loading subdomains...
-                  </SelectItem>
-                ) : (
-                  subdomains.map((subdomain) => (
-                    <SelectItem key={subdomain} value={subdomain.toLowerCase()} className="bg-slate-200 text-black">
-                      {subdomain}
+                {metadata?.subdomains
+                  .filter((subdomain) => subdomain.domainId === selectedDomain)
+                  .map((subdomain) => (
+                    <SelectItem key={subdomain.id} value={subdomain.id} className="bg-slate-200 text-black">
+                      {subdomain.name}
                     </SelectItem>
-                  ))
-                )}
+                  ))}
               </SelectContent>
             </Select>
           </div>
@@ -178,11 +199,11 @@ function FindExperts() {
                   <ul className="py-1 overflow-auto max-h-60">
                     {filteredTags.map((tag) => (
                       <li
-                        key={tag}
+                        key={tag.id}
                         className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-black"
-                        onClick={() => handleTagSelect(tag)}
+                        onClick={() => handleTagSelect(tag.name)}
                       >
-                        {tag}
+                        {tag.name}
                       </li>
                     ))}
                   </ul>
@@ -269,21 +290,21 @@ function FindExperts() {
         />
       </div>
       <div className="space-y-4">
-        {isLoading ? (
-          <p>Loading consultants...</p>
-        ) : (
-          domains.map((domain) => (
-            <div key={domain} className="space-y-4">
-              <h2 className="text-2xl font-bold">{domain}</h2>
-              {consultants
-                .filter((consultant) => consultant.domain === domain)
-                .map((consultant) => (
+        {metadata?.domains.map((domain) => {
+          const domainConsultants = consultants?.filter((consultant) => consultant.domainId === domain.id) ?? [];
+
+          return (
+            <div key={domain.id} className="space-y-4">
+              <h2 className="text-2xl font-bold">{domain.name}</h2>
+              {domainConsultants.length > 0 ? (
+                domainConsultants.map((consultant) => (
+                  console.log(consultant),
                   <div
                     key={consultant.id}
-                    className="border border-gray-200 rounded-lg p-4 flex items-center justify-between space-x-4 dark:border-gray-800"
+                    className="border border-gray-200 rounded-lg p-4 flex items-start justify-between space-x-4 dark:border-gray-800"
                   >
                     <div
-                      className="flex items-center space-x-4 cursor-pointer"
+                      className="flex items-start space-x-4 cursor-pointer"
                       onClick={() => router.push(`/explore/experts/${consultant.id}`)}
                     >
                       <Image
@@ -301,22 +322,36 @@ function FindExperts() {
                             @{consultant.user.email.split('@')[0]}
                           </span>
                         </div>
-                        <div className="text-sm grid gap-1">
+                        <div className="text-sm space-y-2">
                           <p className="text-black dark:text-black">{consultant.description}</p>
-                          <p className="text-black dark:text-black">Experience: {consultant.experience}</p>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="text-black dark:text-black">Experience: {consultant.experience}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="text-black dark:text-black">Specialization: {consultant.specialization}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="text-black dark:text-black">Qualifications: {consultant.qualifications}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="text-black dark:text-black">Domain:</span>
+                            <span className="bg-gray-200 text-black dark:bg-gray-700 dark:text-white px-2 py-1 rounded-full">
+                              {metadata?.domains.find(d => d.id === consultant.domainId)?.name}
+                            </span>
+                            <span className="text-black dark:text-black">Subdomains:</span>
+                            {metadata?.subdomains.filter(sd => sd.domainId === consultant.domainId).map(sd => (
+                              <span key={sd.id} className="bg-gray-200 text-black dark:bg-gray-700 dark:text-white px-2 py-1 rounded-full">{sd.name}</span>
+                            ))}
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="text-black dark:text-black">Tags:</span>
+                            {metadata?.tags.filter(t => t.domainId === consultant.domainId).map(t => (
+                              <span key={t.id} className="bg-gray-200 text-black dark:bg-gray-700 dark:text-white px-2 py-1 rounded-full">{t.name}</span>
+                            ))}
+                          </div>
                           <div className="flex items-center space-x-2 text-black dark:text-black">
                             <StarIcon className="w-4 h-4" />
-                            <span>{consultant.rating} ({consultant.reviewCount} reviews)</span>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2 mt-2">
-                            {consultant.tags.map((tag: string) => (
-                              <span
-                                key={tag}
-                                className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-800 dark:bg-gray-700 dark:text-gray-200"
-                              >
-                                {tag}
-                              </span>
-                            ))}
+                            <span>{consultant.rating.toFixed(1)} ({consultant.reviews?.length || 0} reviews)</span>
                           </div>
                         </div>
                       </div>
@@ -325,50 +360,63 @@ function FindExperts() {
                       <div className="bg-card rounded-lg shadow-lg w-[320px] mr-4">
                         {consultant.subscriptionPlans && consultant.subscriptionPlans.length > 0 ? (
                           <Tabs defaultValue="1" className="w-full">
-                            <TabsList className={`grid grid-cols-${consultant.subscriptionPlans.length} border-b`}>
-                              {consultant.subscriptionPlans.map((plan: SubscriptionPlan) => (
-                                <TabsTrigger
-                                  key={plan.id}
-                                  value={plan.durationInMonths.toString()}
-                                  className="data-[state=active]:bg-black data-[state=active]:text-white rounded-md transition-all duration-200 ease-in-out"
-                                >
-                                  {plan.durationInMonths === 1 ? '1 Month' :
-                                    plan.durationInMonths === 3 ? '3 Months' :
-                                      plan.durationInMonths === 6 ? '6 Months' :
-                                        plan.durationInMonths === 12 ? '12 Months' : `${plan.durationInMonths} Months`}
-                                </TabsTrigger>
-                              ))}
+                            <TabsList className="flex border-b">
+                              {Array.from(consultant.subscriptionPlans || [])
+                                .sort((a, b) => a.durationInMonths - b.durationInMonths)
+                                .map((plan: SubscriptionPlan) => (
+                                  <TabsTrigger
+                                    key={plan.id}
+                                    value={plan.durationInMonths.toString()}
+                                    className="flex-1 data-[state=active]:bg-black data-[state=active]:text-white rounded-md transition-all duration-200 ease-in-out"
+                                  >
+                                    {(() => {
+                                      switch (plan.durationInMonths) {
+                                        case 1: return '1 Month';
+                                        case 3: return '3 Months';
+                                        case 6: return '6 Months';
+                                        case 12: return '12 Months';
+                                        default: return `${plan.durationInMonths} Months`;
+                                      }
+                                    })()}
+                                  </TabsTrigger>
+                                ))}
                             </TabsList>
-                            {consultant.subscriptionPlans.map((plan: SubscriptionPlan) => (
-                              <TabsContent key={plan.id} value={plan.durationInMonths.toString()}>
-                                <Card className="rounded-b-lg">
-                                  <CardContent className="grid gap-4 p-6">
-                                    <div className="flex items-center justify-between">
-                                      <div className="text-4xl font-bold">${plan.price / 100}</div>
-                                      <div className="text-muted-foreground">
-                                        for {plan.durationInMonths === 1 ? '1 month' :
-                                          plan.durationInMonths === 3 ? '3 months' :
-                                            plan.durationInMonths === 6 ? '6 months' :
-                                              plan.durationInMonths === 12 ? '12 months' :
-                                                `${plan.durationInMonths} months`}
+                            {Array.from(consultant.subscriptionPlans || [])
+                              .sort((a, b) => a.durationInMonths - b.durationInMonths)
+                              .map((plan: SubscriptionPlan) => (
+                                <TabsContent key={plan.id} value={plan.durationInMonths.toString()}>
+                                  <Card className="rounded-b-lg">
+                                    <CardContent className="grid gap-4 p-6">
+                                      <div className="flex items-center justify-between">
+                                        <div className="text-4xl font-bold">${plan.price / 100}</div>
+                                        <div className="text-muted-foreground">
+                                          {(() => {
+                                            switch (plan.durationInMonths) {
+                                              case 1: return '1 month';
+                                              case 3: return '3 months';
+                                              case 6: return '6 months';
+                                              case 12: return '12 months';
+                                              default: return `${plan.durationInMonths} months`;
+                                            }
+                                          })()}
+                                        </div>
                                       </div>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                      <div>Calls per week</div>
-                                      <div className="font-medium">{plan.callsPerWeek}</div>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                      <div>Email support</div>
-                                      <div className="font-medium">{plan.emailSupport}</div>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                      <div>Video meetings</div>
-                                      <div className="font-medium">{plan.videoMeetings} per month</div>
-                                    </div>
-                                  </CardContent>
-                                </Card>
-                              </TabsContent>
-                            ))}
+                                      <div className="flex items-center justify-between">
+                                        <div>Calls per week</div>
+                                        <div className="font-medium">{plan.callsPerWeek}</div>
+                                      </div>
+                                      <div className="flex items-center justify-between">
+                                        <div>Email support</div>
+                                        <div className="font-medium">{plan.emailSupport}</div>
+                                      </div>
+                                      <div className="flex items-center justify-between">
+                                        <div>Video meetings</div>
+                                        <div className="font-medium">{plan.videoMeetings} per month</div>
+                                      </div>
+                                    </CardContent>
+                                  </Card>
+                                </TabsContent>
+                              ))}
                           </Tabs>
                         ) : (
                           <div className="flex items-center justify-center h-full p-6 text-muted-foreground">
@@ -389,16 +437,17 @@ function FindExperts() {
                       </div>
                     </div>
                   </div>
-                ))}
+                ))
+              ) : (
+                <p className="text-gray-500">No consultants available in this domain at the moment.</p>
+              )}
             </div>
-          ))
-        )}
+          );
+        })}
       </div>
     </div>
   );
 }
-
-
 
 export default function ExploreExperts() {
   return (
@@ -473,17 +522,16 @@ export default function ExploreExperts() {
             </h2>
             <p className="mx-auto max-w-[600px] text-gray-500 md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed dark:text-gray-400">
               Hear from our valued customers about their experience with our
-              keyboards.
+              experts.
             </p>
           </div>
           <div className="mx-auto w-full max-w-sm space-y-2">
             <Avatar className="w-12 h-12" />
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              &ldquo;The mechanical keyboard I bought from here is the best
-              I&apos;ve ever used. The keys are so satisfying to press!&ldquo;
+              &ldquo;The expert I consulted with was incredibly knowledgeable and helped me solve my business challenges quickly.&ldquo;
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              - Happy Customer
+              - Satisfied Client
             </p>
           </div>
         </div>
