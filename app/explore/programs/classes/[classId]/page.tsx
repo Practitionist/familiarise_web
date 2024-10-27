@@ -4,42 +4,23 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import prisma from "@/lib/prisma";
+import { ClassNotFound } from "./ClassNotFound";
+import type { Prisma } from "@prisma/client";
 
-type ClassPlanWithRelations = {
-  id: string;
-  title: string;
-  description: string;
-  price: number;
-  durationInMonths: number;
-  callsPerWeek: number;
-  videoMeetings: number;
-  emailSupport: string;
-  maxParticipants: number;
-  language: string | null;
-  level: string | null;
-  prerequisites: string | null;
-  materialProvided: string | null;
-  learningOutcomes: string[];
-  certificateProvided: boolean;
-  consultantProfile: {
-    user: {
-      name: string | null;
-    } | null;
-  } | null;
-  classContents: {
-    id: string;
-    title: string;
-    description: string;
-    hoursAllotted: number;
-  }[];
-  topics: {
-    id: string;
-    name: string;
-  }[];
-};
+type ClassPlanWithRelations = Prisma.ClassPlanGetPayload<{
+  include: {
+    consultantProfile: {
+      include: {
+        user: true;
+      };
+    };
+    topics: true;
+    classContents: true;
+  };
+}>;
 
-async function getClassPlan(classId: string): Promise<ClassPlanWithRelations> {
-  const classPlan = await prisma.classPlan.findUniqueOrThrow({
+async function getClassPlan(classId: string): Promise<ClassPlanWithRelations | null> {
+  const classPlan = await prisma.classPlan.findUnique({
     where: { id: classId },
     include: {
       consultantProfile: {
@@ -51,11 +32,15 @@ async function getClassPlan(classId: string): Promise<ClassPlanWithRelations> {
       topics: true,
     },
   });
-  return classPlan as unknown as ClassPlanWithRelations;
+  return classPlan;
 }
 
 export default async function ClassDetailsPage({ params }: Readonly<{ params: { classId: string } }>) {
   const classPlan = await getClassPlan(params.classId);
+
+  if (!classPlan) {
+    return <ClassNotFound />;
+  }
 
   return (
     <div className="container mx-auto pt-24 py-8 px-4">
@@ -130,8 +115,12 @@ export default async function ClassDetailsPage({ params }: Readonly<{ params: { 
               ))}
             </CardContent>
             <CardFooter className="flex flex-col gap-4">
-              <Button className="w-full">Enroll in course</Button>
-              <Button variant="outline" className="w-full">Buy as a gift</Button>
+              <form action="/api/checkout/class" method="POST" className="w-full">
+                <input type="hidden" name="classId" value={classPlan.id} />
+                <Button type="submit" className="w-full">
+                  Enroll in course
+                </Button>
+              </form>
             </CardFooter>
           </Card>
         </div>

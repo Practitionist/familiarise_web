@@ -1,8 +1,5 @@
 /** @type {import('next').NextConfig} */
 module.exports = {
-  // images: {
-  //   domains: ["lh3.googleusercontent.com", "firebasestorage.googleapis.com"],
-  // },
   images: {
     remotePatterns: [
       {
@@ -19,6 +16,9 @@ module.exports = {
       },
       {
         hostname: "cloudflare-ipfs.com",
+      },
+      {
+        hostname: "picsum.photos",
       }
     ],
   },
