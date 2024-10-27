@@ -99,33 +99,53 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
     if (selectedDate && consultantDetails) {
       if (consultantDetails.scheduleType === 'WEEKLY') {
         // For weekly schedule, use the slots directly from consultantDetails
-        const weeklySlots = consultantDetails.slotsOfAvailabilityWeekly.map(slot => ({
-          slotId: slot.id,
-          dateInISO: selectedDate.toISOString(),
-          slotStartTimeInUTC: slot.slotStartTimeInUTC.toString(),
-          slotEndTimeInUTC: slot.slotEndTimeInUTC.toString(),
-          slotOfAvailabilityId: slot.id,
-          slotOfAppointmentId: '',
-          localStartTime: new Date(`1970-01-01T${slot.slotStartTimeInUTC}`).toISOString(),
-          localEndTime: new Date(`1970-01-01T${slot.slotEndTimeInUTC}`).toISOString()
-        }));
+        const weeklySlots = consultantDetails.slotsOfAvailabilityWeekly.map(slot => {
+          // Extract time from the ISO string and ensure it's a string
+          const startTimeStr = typeof slot.slotStartTimeInUTC === 'string'
+            ? slot.slotStartTimeInUTC
+            : new Date(slot.slotStartTimeInUTC).toISOString();
+          const endTimeStr = typeof slot.slotEndTimeInUTC === 'string'
+            ? slot.slotEndTimeInUTC
+            : new Date(slot.slotEndTimeInUTC).toISOString();
+
+          return {
+            slotId: slot.id,
+            dateInISO: selectedDate.toISOString(),
+            slotStartTimeInUTC: startTimeStr,
+            slotEndTimeInUTC: endTimeStr,
+            slotOfAvailabilityId: slot.id,
+            slotOfAppointmentId: '',
+            localStartTime: startTimeStr,
+            localEndTime: endTimeStr
+          };
+        });
         setSlotTimings(weeklySlots);
       } else if (consultantDetails.scheduleType === 'CUSTOM') {
         // For custom schedule, use the custom slots from consultantDetails
         const customSlots = consultantDetails.slotsOfAvailabilityCustom
           .filter(slot => {
-            const slotDate = new Date(slot.slotStartTimeInUTC);
+            const slotDate = new Date(typeof slot.slotStartTimeInUTC === 'string'
+              ? slot.slotStartTimeInUTC
+              : slot.slotStartTimeInUTC);
             return slotDate.toDateString() === selectedDate.toDateString();
           })
           .map(slot => ({
             slotId: slot.id,
             dateInISO: selectedDate.toISOString(),
-            slotStartTimeInUTC: slot.slotStartTimeInUTC.toString(),
-            slotEndTimeInUTC: slot.slotEndTimeInUTC.toString(),
+            slotStartTimeInUTC: typeof slot.slotStartTimeInUTC === 'string'
+              ? slot.slotStartTimeInUTC
+              : new Date(slot.slotStartTimeInUTC).toISOString(),
+            slotEndTimeInUTC: typeof slot.slotEndTimeInUTC === 'string'
+              ? slot.slotEndTimeInUTC
+              : new Date(slot.slotEndTimeInUTC).toISOString(),
             slotOfAvailabilityId: slot.id,
             slotOfAppointmentId: '',
-            localStartTime: new Date(slot.slotStartTimeInUTC).toISOString(),
-            localEndTime: new Date(slot.slotEndTimeInUTC).toISOString()
+            localStartTime: typeof slot.slotStartTimeInUTC === 'string'
+              ? slot.slotStartTimeInUTC
+              : new Date(slot.slotStartTimeInUTC).toISOString(),
+            localEndTime: typeof slot.slotEndTimeInUTC === 'string'
+              ? slot.slotEndTimeInUTC
+              : new Date(slot.slotEndTimeInUTC).toISOString()
           }));
         setSlotTimings(customSlots);
       }
@@ -194,14 +214,21 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
 
   const renderAvailability = useMemo(() => {
     if (!consultantDetails) return null;
+
     if (consultantDetails.scheduleType === 'WEEKLY') {
+      // Convert Date objects to strings for weekly slots
       const weeklySlots = consultantDetails.slotsOfAvailabilityWeekly.map(slot => ({
         id: slot.id,
         dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
-        slotStartTimeInUTC: slot.slotStartTimeInUTC.toString(),
+        slotStartTimeInUTC: typeof slot.slotStartTimeInUTC === 'string'
+          ? slot.slotStartTimeInUTC
+          : slot.slotStartTimeInUTC.toISOString(),
         dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
-        slotEndTimeInUTC: slot.slotEndTimeInUTC.toString()
+        slotEndTimeInUTC: typeof slot.slotEndTimeInUTC === 'string'
+          ? slot.slotEndTimeInUTC
+          : slot.slotEndTimeInUTC.toISOString()
       }));
+
       return (
         <WeeklyAvailability
           slots={weeklySlots}
@@ -219,11 +246,17 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
         />
       );
     } else if (consultantDetails.scheduleType === 'CUSTOM') {
+      // Convert Date objects to strings for custom slots
       const customSlots = consultantDetails.slotsOfAvailabilityCustom.map(slot => ({
         id: slot.id,
-        slotStartTimeInUTC: slot.slotStartTimeInUTC.toString(),
-        slotEndTimeInUTC: slot.slotEndTimeInUTC.toString()
+        slotStartTimeInUTC: typeof slot.slotStartTimeInUTC === 'string'
+          ? slot.slotStartTimeInUTC
+          : slot.slotStartTimeInUTC.toISOString(),
+        slotEndTimeInUTC: typeof slot.slotEndTimeInUTC === 'string'
+          ? slot.slotEndTimeInUTC
+          : slot.slotEndTimeInUTC.toISOString()
       }));
+
       return (
         <CustomAvailability
           slots={customSlots}
@@ -243,7 +276,6 @@ export default function ExpertProfile({ params }: { readonly params: { consultan
     }
     return null;
   }, [consultantDetails, selectedSlot]);
-
   const isConsultationPlan = (plan: ConsultationPlan | SubscriptionPlan): plan is ConsultationPlan => {
     return 'durationInHours' in plan;
   };

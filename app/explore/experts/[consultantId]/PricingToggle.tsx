@@ -31,11 +31,28 @@ interface PricingToggleProps {
   setSelectedSlot: (slot: any) => void
 }
 
+const formatTime = (isoString: string): string => {
+  try {
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) {
+      throw new Error('Invalid date');
+    }
+    return date.toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: true 
+    });
+  } catch (error) {
+    console.error('Error formatting time:', error);
+    return 'Invalid Time';
+  }
+};
+
 const defaultConsultationOptions: PricingOption[] = [
   { title: "One Hour", description: "Get a quick consultation", price: 99, duration: "1 hour" },
   { title: "Two Hour", description: "Dive deeper into your needs", price: 199, duration: "2 hours" },
   { title: "Three Hour", description: "Comprehensive consultation", price: 299, duration: "3 hours" }
-]
+];
 
 const defaultSubscriptionOptions: PricingOption[] = [
   {
@@ -73,7 +90,7 @@ const defaultSubscriptionOptions: PricingOption[] = [
       "15% discount on all services"
     ]
   }
-]
+];
 
 export default function PricingToggle({
   consultationOptions = defaultConsultationOptions,
@@ -87,19 +104,18 @@ export default function PricingToggle({
   selectedSlot,
   setSelectedSlot
 }: PricingToggleProps) {
-  const [activeTab, setActiveTab] = useState("consultation")
+  const [activeTab, setActiveTab] = useState("consultation");
   const [activeConsultationOption, setActiveConsultationOption] = useState(
     consultationOptions.length > 0 
       ? consultationOptions[0].title.toLowerCase().replace(" ", "-")
       : defaultConsultationOptions[0].title.toLowerCase().replace(" ", "-")
-  )
+  );
   const [activeSubscriptionOption, setActiveSubscriptionOption] = useState(
     subscriptionOptions.length > 0
       ? subscriptionOptions[0].title.toLowerCase().replace(" ", "-")
       : defaultSubscriptionOptions[0].title.toLowerCase().replace(" ", "-")
-  )
+  );
 
-  // If both options are empty, show a message
   if (consultationOptions.length === 0 && subscriptionOptions.length === 0) {
     return (
       <div className="w-full max-w-4xl mx-auto py-16 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
@@ -131,6 +147,7 @@ export default function PricingToggle({
             </TabsTrigger>
           )}
         </TabsList>
+
         {consultationOptions.length > 0 && (
           <TabsContent value="consultation">
             <Tabs value={activeConsultationOption} onValueChange={setActiveConsultationOption} className="space-y-8">
@@ -169,12 +186,19 @@ export default function PricingToggle({
                           </DialogTrigger>
                           <DialogContent className="sm:max-w-[425px] lg:max-w-[700px] bg-gray-900 text-gray-100 p-0 border border-gray-700 rounded-lg">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
+                              {/* Calendar Section */}
                               <div>
-                                <h3 className="text-xl font-semibold mb-4 flex items-center"><CalendarIcon className="mr-2" /> Select a Date</h3>
+                                <h3 className="text-xl font-semibold mb-4 flex items-center">
+                                  <CalendarIcon className="mr-2" /> Select a Date
+                                </h3>
                                 <div className="calendar-container bg-gray-800 p-4 rounded-lg border border-gray-700">
                                   <div className="flex justify-between items-center mb-4">
-                                    <Button variant="ghost" onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))}>
-                                    &lt;
+                                    <Button
+                                      variant="ghost"
+                                      onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))}
+                                      className="text-gray-300 hover:text-gray-100"
+                                    >
+                                      &lt;
                                     </Button>
                                     <span className="text-lg font-medium">
                                       {currentDate.toLocaleString("default", {
@@ -182,8 +206,12 @@ export default function PricingToggle({
                                         year: "numeric",
                                       })}
                                     </span>
-                                    <Button variant="ghost" onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))}>
-                                    &gt;
+                                    <Button
+                                      variant="ghost"
+                                      onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))}
+                                      className="text-gray-300 hover:text-gray-100"
+                                    >
+                                      &gt;
                                     </Button>
                                   </div>
                                   <div className="grid grid-cols-7 gap-2 text-center">
@@ -196,28 +224,49 @@ export default function PricingToggle({
                                   </div>
                                 </div>
                               </div>
+
+                              {/* Time Slots Section */}
                               <div>
-                                <h3 className="text-xl font-semibold mb-4 flex items-center"><ClockIcon className="mr-2" /> Available Time Slots</h3>
-                                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                                <h3 className="text-xl font-semibold mb-4 flex items-center">
+                                  <ClockIcon className="mr-2" /> Available Time Slots
+                                </h3>
+                                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 h-[400px] overflow-y-auto">
                                   {slotTimings.length > 0 ? (
-                                    <div className="grid grid-cols-2 gap-2">
-                                      {slotTimings.map((slot) => (
-                                        <Button
-                                          key={slot.slotId}
-                                          variant={selectedSlot?.slotId === slot.slotId ? "secondary" : "outline"}
-                                          onClick={() => setSelectedSlot(slot)}
-                                          className="w-full justify-center text-sm"
-                                        >
-                                          {slot.localStartTime} - {slot.localEndTime}
-                                        </Button>
-                                      ))}
+                                    <div className="grid grid-cols-1 gap-2">
+                                      {slotTimings.map((slot) => {
+                                        const startTime = formatTime(slot.slotStartTimeInUTC);
+                                        const endTime = formatTime(slot.slotEndTimeInUTC);
+                                        
+                                        return (
+                                          <Button
+                                            key={slot.slotId}
+                                            variant={selectedSlot?.slotId === slot.slotId ? "secondary" : "outline"}
+                                            onClick={() => setSelectedSlot(slot)}
+                                            className={`w-full justify-center text-sm py-3 ${
+                                              selectedSlot?.slotId === slot.slotId 
+                                                ? 'bg-gray-200 text-gray-900' 
+                                                : 'text-gray-200 hover:bg-gray-700'
+                                            }`}
+                                          >
+                                            {startTime} - {endTime}
+                                          </Button>
+                                        );
+                                      })}
                                     </div>
                                   ) : (
-                                    <p className="text-center text-gray-400">No available slots. Please select a date to refresh.</p>
+                                    <div className="flex flex-col items-center justify-center h-full text-center">
+                                      <ClockIcon className="w-12 h-12 text-gray-500 mb-2" />
+                                      <p className="text-gray-400">
+                                        No available slots for this date.
+                                        <br />
+                                        Please select a different date.
+                                      </p>
+                                    </div>
                                   )}
                                 </div>
                               </div>
                             </div>
+
                             <DialogFooter className="p-6 bg-gray-800 rounded-b-lg">
                               <Button
                                 variant="outline"
@@ -247,6 +296,7 @@ export default function PricingToggle({
             </Tabs>
           </TabsContent>
         )}
+
         {subscriptionOptions.length > 0 && (
           <TabsContent value="subscription">
             <Tabs value={activeSubscriptionOption} onValueChange={setActiveSubscriptionOption} className="space-y-8">
@@ -276,13 +326,18 @@ export default function PricingToggle({
                         <CardDescription className="text-gray-400">{option.description}</CardDescription>
                       </CardHeader>
                       <CardContent className="space-y-6">
-                        <div className="text-5xl font-bold text-gray-100">${option.price}<span className="text-xl text-gray-400">/{option.duration}</span></div>
+                        <div className="text-5xl font-bold text-gray-100">
+                          ${option.price}
+                          <span className="text-xl text-gray-400">/{option.duration}</span>
+                        </div>
                         <div className="space-y-2">
                           <p className="text-gray-300">Includes:</p>
                           <ul className="space-y-1 pl-4">
                             {option.features?.map((feature, index) => (
                               <li key={index} className="text-gray-400 flex items-center">
-                                <svg className="w-4 h-4 mr-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                <svg className="w-4 h-4 mr-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
                                 {feature}
                               </li>
                             ))}
@@ -302,8 +357,12 @@ export default function PricingToggle({
                               </DialogDescription>
                             </DialogHeader>
                             <DialogFooter>
-                              <Button variant="outline" onClick={() => { }} className="text-gray-300 border-gray-600 hover:bg-gray-700">Cancel</Button>
-                              <Button variant="default" onClick={() => { }} className="bg-gray-200 text-black hover:bg-gray-300">Confirm Subscription</Button>
+                              <Button variant="outline" className="text-gray-300 border-gray-600 hover:bg-gray-700">
+                                Cancel
+                              </Button>
+                              <Button variant="default" className="bg-gray-200 text-black hover:bg-gray-300">
+                                Confirm Subscription
+                              </Button>
                             </DialogFooter>
                           </DialogContent>
                         </Dialog>
@@ -317,5 +376,5 @@ export default function PricingToggle({
         )}
       </Tabs>
     </div>
-  )
+  );
 }
