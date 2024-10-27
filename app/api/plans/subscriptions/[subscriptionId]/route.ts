@@ -1,9 +1,9 @@
 import prisma from "@/lib/prisma";
 import { Prisma, PlanEmailSupport } from "@prisma/client";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
-  request: Request,
+  request: NextRequest,
   { params }: { params: { subscriptionId: string } }
 ) {
   try {
@@ -12,7 +12,7 @@ export async function GET(
       where: { id: subscriptionId },
       include: {
         consultantProfile: true,
-        subscription: true,
+        subscriptions: true,
       },
     });
 
@@ -27,22 +27,23 @@ export async function GET(
         { status: 404 }
       );
     }
-    console.error(error);
+    console.error("Error fetching subscription plan:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while fetching the subscription plan" },
       { status: 500 }
     );
   }
 }
 
 export async function PUT(
-  request: Request,
+  request: NextRequest,
   { params }: { params: { subscriptionId: string } }
 ) {
   try {
     const { subscriptionId } = params;
     const body = await request.json();
 
+    // Input validation
     if (body.durationInMonths && body.durationInMonths <= 0) {
       return NextResponse.json(
         { error: "Duration must be a positive number" },
@@ -50,16 +51,23 @@ export async function PUT(
       );
     }
 
-    if (body.callsPerWeek && body.callsPerWeek <= 0) {
+    if (body.price && body.price <= 0) {
       return NextResponse.json(
-        { error: "Calls per week must be a positive number" },
+        { error: "Price must be a positive number" },
         { status: 400 }
       );
     }
 
-    if (body.videoMeetings && body.videoMeetings <= 0) {
+    if (body.callsPerWeek && body.callsPerWeek < 0) {
       return NextResponse.json(
-        { error: "Video meetings must be a positive number" },
+        { error: "Calls per week must be a non-negative number" },
+        { status: 400 }
+      );
+    }
+
+    if (body.videoMeetings && body.videoMeetings < 0) {
+      return NextResponse.json(
+        { error: "Video meetings must be a non-negative number" },
         { status: 400 }
       );
     }
@@ -74,18 +82,25 @@ export async function PUT(
     const subscriptionPlan = await prisma.subscriptionPlan.update({
       where: { id: subscriptionId },
       data: {
+        title: body.title,
+        description: body.description,
         durationInMonths: body.durationInMonths,
         price: body.price ? Math.round(body.price) : undefined, // Ensure price is an integer
         callsPerWeek: body.callsPerWeek,
         videoMeetings: body.videoMeetings,
         emailSupport: body.emailSupport as PlanEmailSupport,
+        language: body.language,
+        level: body.level,
+        prerequisites: body.prerequisites,
+        materialProvided: body.materialProvided,
+        learningOutcomes: body.learningOutcomes,
         consultantProfile: body.consultantProfileId ? {
           connect: { id: body.consultantProfileId },
         } : undefined,
       },
       include: {
         consultantProfile: true,
-        subscription: true,
+        subscriptions: true,
       },
     });
 
@@ -100,26 +115,37 @@ export async function PUT(
         { status: 404 }
       );
     }
-    console.error(error);
+    console.error("Error updating subscription plan:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while updating the subscription plan" },
       { status: 500 }
     );
   }
 }
 
 export async function DELETE(
-  request: Request,
+  request: NextRequest,
   { params }: { params: { subscriptionId: string } }
 ) {
   try {
     const { subscriptionId } = params;
 
+    // Check if there are any associated subscriptions
+    const associatedSubscriptions = await prisma.subscription.findMany({
+      where: { planId: subscriptionId },
+    });
+
+    if (associatedSubscriptions.length > 0) {
+      return NextResponse.json(
+        { error: "Cannot delete subscription plan with associated subscriptions" },
+        { status: 400 }
+      );
+    }
+
     const subscriptionPlan = await prisma.subscriptionPlan.delete({
       where: { id: subscriptionId },
       include: {
         consultantProfile: true,
-        subscription: true,
       },
     });
 
@@ -134,9 +160,9 @@ export async function DELETE(
         { status: 404 }
       );
     }
-    console.error(error);
+    console.error("Error deleting subscription plan:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while deleting the subscription plan" },
       { status: 500 }
     );
   }

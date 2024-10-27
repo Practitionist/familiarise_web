@@ -254,8 +254,6 @@ model SlotOfAvailabilityWeekly {
   dayOfWeekforEndTimeInUTC   DayOfWeek
   slotEndTimeInUTC           DateTime  @db.Timetz()
 
-  slotsOfAppointment SlotOfAppointment[]
-
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
@@ -269,8 +267,6 @@ model SlotOfAvailabilityCustom {
   id                 String   @id @default(uuid())
   slotStartTimeInUTC DateTime @db.Timestamptz()
   slotEndTimeInUTC   DateTime @db.Timestamptz()
-
-  slotsOfAppointment SlotOfAppointment[]
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -287,25 +283,14 @@ model SlotOfAppointment {
   consulteeProfile   ConsulteeProfile @relation(fields: [consulteeProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consulteeProfileId String
 
-  slotOfAvailabilityWeekly   SlotOfAvailabilityWeekly? @relation(fields: [slotOfAvailabilityWeeklyId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  slotOfAvailabilityWeeklyId String?
+  slotStartTimeInUTC DateTime @db.Timestamptz()
+  slotEndTimeInUTC   DateTime @db.Timestamptz()
 
-  slotOfAvailabilityCustom   SlotOfAvailabilityCustom? @relation(fields: [slotOfAvailabilityCustomId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  slotOfAvailabilityCustomId String?
-
-  appointmentStartTimeInUTC DateTime @db.Timestamptz()
-  appointmentEndTimeInUTC   DateTime @db.Timestamptz()
-
-  appointmentsType AppointmentsType
-
-  appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  appointmentId String      @unique
+  appointment      Appointment      @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentId    String
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  @@index([slotOfAvailabilityWeeklyId])
-  @@index([slotOfAvailabilityCustomId])
 }
 
 //////////////////////////////////////////////////// PRICING PLANS ////////////////////////////////////////////////////
@@ -533,9 +518,9 @@ enum ClassStatus {
 
 // Generic Appointment Model
 model Appointment {
-  id                String             @id @default(uuid())
+  id                String              @id @default(uuid())
   appointmentType   AppointmentsType
-  slotOfAppointment SlotOfAppointment?
+  slotOfAppointment SlotOfAppointment[]
 
   consultation   Consultation? @relation(fields: [consultationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationId String?       @unique

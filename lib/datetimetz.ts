@@ -1,16 +1,6 @@
+import { TSlotTiming } from '@/types/slots';
 import { parseISO } from 'date-fns';
 import { formatInTimeZone, fromZonedTime, toZonedTime } from 'date-fns-tz';
-
-export type TSlotTiming = {
-  slotId: string;
-  dateInISO: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
-  slotOfAvailabilityId: string;
-  slotOfAppointmentId: string;
-  localStartTime: string;
-  localEndTime: string;
-};
 
 export function convertZoneTimeToUTC(dateString: string, timeZone: string): string | null {
   try {

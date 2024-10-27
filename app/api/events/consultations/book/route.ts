@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth/next";
-import authOptions from '@/app/api/auth/[...nextauth]/options';
+import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { DayOfWeek } from '@prisma/client';
 
 export async function POST(request: Request) {
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
       where: {
         consultationPlanId: consultationPlanId,
         preferredDateTime: new Date(preferredDateTime),
-        appointmentRequestStatus: 'PENDING',
+        requestStatus: 'PENDING',
       },
     });
 
@@ -49,10 +49,12 @@ export async function POST(request: Request) {
         requestedBy: { connect: { id: consultee.id } },
         preferredDateTime: new Date(preferredDateTime),
         requestNotes,
-        appointmentRequestStatus: 'PENDING',
+        requestStatus: 'PENDING',
         directlyBooked: false,
       },
     });
+
+    const appointmentEndTime = new Date(new Date(preferredDateTime).getTime() + consultationPlan.durationInHours * 60 * 60 * 1000);
 
     if (consultationPlan.consultantProfile.scheduleType === 'WEEKLY') {
       // Find the corresponding weekly slot of availability
@@ -74,37 +76,25 @@ export async function POST(request: Request) {
             consultation: { connect: { id: consultation.id } },
             slotOfAppointment: {
               create: {
+                slotStartTimeInUTC: new Date(preferredDateTime),
+                slotEndTimeInUTC: appointmentEndTime,
                 consulteeProfile: { connect: { id: consultee.id } },
-                slotOfAvailabilityWeekly: { connect: { id: slotOfAvailability.id } },
-                appointmentStartTimeInUTC: new Date(preferredDateTime),
-                appointmentEndTimeInUTC: new Date(new Date(preferredDateTime).getTime() + consultationPlan.durationInHours * 60 * 60 * 1000),
-                appointmentsType: 'CONSULTATION',
               },
             },
           },
         });
       }
     } else {
-      // For custom schedule, create a custom slot of availability
-      const slotOfAvailability = await prisma.slotOfAvailabilityCustom.create({
-        data: {
-          consultantProfile: { connect: { id: consultationPlan.consultantProfile.id } },
-          slotStartTimeInUTC: new Date(preferredDateTime),
-          slotEndTimeInUTC: new Date(new Date(preferredDateTime).getTime() + consultationPlan.durationInHours * 60 * 60 * 1000),
-        },
-      });
-
+      // For custom schedule, create an appointment without creating a new SlotOfAvailabilityCustom
       await prisma.appointment.create({
         data: {
           appointmentType: 'CONSULTATION',
           consultation: { connect: { id: consultation.id } },
           slotOfAppointment: {
             create: {
+              slotStartTimeInUTC: new Date(preferredDateTime),
+              slotEndTimeInUTC: appointmentEndTime,
               consulteeProfile: { connect: { id: consultee.id } },
-              slotOfAvailabilityCustom: { connect: { id: slotOfAvailability.id } },
-              appointmentStartTimeInUTC: new Date(preferredDateTime),
-              appointmentEndTimeInUTC: new Date(new Date(preferredDateTime).getTime() + consultationPlan.durationInHours * 60 * 60 * 1000),
-              appointmentsType: 'CONSULTATION',
             },
           },
         },
@@ -114,7 +104,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ consultation }, { status: 201 });
   } catch (error) {
     console.error('Error booking consultation:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: 'An error occurred while booking the consultation' }, { status: 500 });
   }
 }
 

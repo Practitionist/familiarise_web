@@ -11,7 +11,6 @@ export async function GET(
       where: { id: params.id },
       include: {
         consultantProfile: true,
-        slotsOfAppointment: true,
       },
     });
 
@@ -22,64 +21,12 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(weeklySlot, { status: 200 });
+    return NextResponse.json({ data: weeklySlot }, { status: 200 });
 
   } catch (error) {
     console.error("Error fetching weekly slot:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the weekly slot" },
-      { status: 500 }
-    );
-  }
-}
-
-export async function POST(
-  req: NextRequest
-) {
-  try {
-    const body = await req.json();
-
-    if (!body.consultantProfileId || !body.dayOfWeekforStartTimeInUTC || !body.dayOfWeekforEndTimeInUTC || !body.slotStartTimeInUTC || !body.slotEndTimeInUTC) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 }
-      );
-    }
-
-    if (!Object.values(DayOfWeek).includes(body.dayOfWeekforStartTimeInUTC) || !Object.values(DayOfWeek).includes(body.dayOfWeekforEndTimeInUTC)) {
-      return NextResponse.json(
-        { error: "Invalid day of week" },
-        { status: 400 }
-      );
-    }
-
-    const newSlot = await prisma.slotOfAvailabilityWeekly.create({
-      data: {
-        consultantProfile: { connect: { id: body.consultantProfileId } },
-        dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
-        dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
-        slotStartTimeInUTC: body.slotStartTimeInUTC,
-        slotEndTimeInUTC: body.slotEndTimeInUTC,
-      },
-      include: {
-        consultantProfile: true,
-        slotsOfAppointment: true,
-      },
-    });
-
-    return NextResponse.json(newSlot, { status: 201 });
-  } catch (error) {
-    console.error("Error creating weekly slot:", error);
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === 'P2002') {
-        return NextResponse.json(
-          { error: "A slot with this time range already exists" },
-          { status: 400 }
-        );
-      }
-    }
-    return NextResponse.json(
-      { error: "An error occurred while creating the weekly slot" },
       { status: 500 }
     );
   }
@@ -106,22 +53,55 @@ export async function PUT(
       );
     }
 
+    const startTime = new Date(body.slotStartTimeInUTC);
+    const endTime = new Date(body.slotEndTimeInUTC);
+
+    if (startTime >= endTime) {
+      return NextResponse.json({ error: "Start time must be before end time" }, { status: 400 });
+    }
+
+    // Check for overlapping slots
+    const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
+      where: {
+        id: { not: params.id },
+        consultantProfileId: body.consultantProfileId,
+        dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
+        OR: [
+          {
+            slotStartTimeInUTC: { lte: startTime },
+            slotEndTimeInUTC: { gt: startTime }
+          },
+          {
+            slotStartTimeInUTC: { lt: endTime },
+            slotEndTimeInUTC: { gte: endTime }
+          },
+          {
+            slotStartTimeInUTC: { gte: startTime },
+            slotEndTimeInUTC: { lte: endTime }
+          }
+        ]
+      }
+    });
+
+    if (overlappingSlot) {
+      return NextResponse.json({ error: "This slot overlaps with an existing slot" }, { status: 409 });
+    }
+
     const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
       where: { id: params.id },
       data: {
         dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
         dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
-        slotStartTimeInUTC: body.slotStartTimeInUTC,
-        slotEndTimeInUTC: body.slotEndTimeInUTC,
+        slotStartTimeInUTC: startTime,
+        slotEndTimeInUTC: endTime,
         consultantProfile: body.consultantProfileId ? { connect: { id: body.consultantProfileId } } : undefined,
       },
       include: {
         consultantProfile: true,
-        slotsOfAppointment: true,
       },
     });
 
-    return NextResponse.json(updatedSlot, { status: 200 });
+    return NextResponse.json({ data: updatedSlot }, { status: 200 });
   } catch (error) {
     console.error("Error updating weekly slot:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -160,22 +140,66 @@ export async function PATCH(
       );
     }
 
+    const currentSlot = await prisma.slotOfAvailabilityWeekly.findUnique({
+      where: { id: params.id },
+    });
+
+    if (!currentSlot) {
+      return NextResponse.json(
+        { error: "Weekly slot not found" },
+        { status: 404 }
+      );
+    }
+
+    const startTime = body.slotStartTimeInUTC ? new Date(body.slotStartTimeInUTC) : currentSlot.slotStartTimeInUTC;
+    const endTime = body.slotEndTimeInUTC ? new Date(body.slotEndTimeInUTC) : currentSlot.slotEndTimeInUTC;
+
+    if (startTime >= endTime) {
+      return NextResponse.json({ error: "Start time must be before end time" }, { status: 400 });
+    }
+
+    // Check for overlapping slots
+    const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
+      where: {
+        id: { not: params.id },
+        consultantProfileId: body.consultantProfileId || currentSlot.consultantProfileId,
+        dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC || currentSlot.dayOfWeekforStartTimeInUTC,
+        OR: [
+          {
+            slotStartTimeInUTC: { lte: startTime },
+            slotEndTimeInUTC: { gt: startTime }
+          },
+          {
+            slotStartTimeInUTC: { lt: endTime },
+            slotEndTimeInUTC: { gte: endTime }
+          },
+          {
+            slotStartTimeInUTC: { gte: startTime },
+            slotEndTimeInUTC: { lte: endTime }
+          }
+        ]
+      }
+    });
+
+    if (overlappingSlot) {
+      return NextResponse.json({ error: "This slot overlaps with an existing slot" }, { status: 409 });
+    }
+
     const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
       where: { id: params.id },
       data: {
         dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
         dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
-        slotStartTimeInUTC: body.slotStartTimeInUTC,
-        slotEndTimeInUTC: body.slotEndTimeInUTC,
+        slotStartTimeInUTC: startTime,
+        slotEndTimeInUTC: endTime,
         consultantProfile: body.consultantProfileId ? { connect: { id: body.consultantProfileId } } : undefined,
       },
       include: {
         consultantProfile: true,
-        slotsOfAppointment: true,
       },
     });
 
-    return NextResponse.json(updatedSlot, { status: 200 });
+    return NextResponse.json({ data: updatedSlot }, { status: 200 });
   } catch (error) {
     console.error("Error partially updating weekly slot:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -198,11 +222,22 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    // Check if there are any associated appointments
+    const associatedAppointments = await prisma.slotOfAppointment.findMany({
+      where: { id: params.id },
+    });
+
+    if (associatedAppointments.length > 0) {
+      return NextResponse.json(
+        { error: "Cannot delete weekly slot with associated appointments" },
+        { status: 400 }
+      );
+    }
+
     const deletedSlot = await prisma.slotOfAvailabilityWeekly.delete({
       where: { id: params.id },
       include: {
         consultantProfile: true,
-        slotsOfAppointment: true,
       },
     });
 

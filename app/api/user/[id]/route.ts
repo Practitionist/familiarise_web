@@ -1,13 +1,32 @@
 import prisma from "@/lib/prisma";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import authOptions from "../../auth/[...nextauth]/options";
+import { UserRole } from "@prisma/client";
 
 export async function GET(
-  req: Request,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    // const session = await getServerSession(authOptions);
+    // if (!session || (session.user.id !== params.id && session.user.role !== 'ADMIN')) {
+    //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // }
+
     const user = await prisma.user.findUnique({
       where: { id: params.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        phone: true,
+        address: true,
+        onboardingCompleted: true,
+        role: true,
+        currentTimezone: true,
+      },
     });
 
     if (!user) {
@@ -18,57 +37,56 @@ export async function GET(
   } catch (error) {
     console.error("Error getting user:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
-    );
-  }
-}
-
-export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-    const user = await prisma.user.create({
-      data: {
-        name: body.name,
-        email: body.email,
-        emailVerified: body.emailVerified,
-        image: body.image,
-        currentTimezone: body.currentTimezone,
-        phone: body.phone,
-        address: body.address,
-        onboardingCompleted: body.onboardingCompleted,
-        role: body.role,
-      },
-    });
-
-    return NextResponse.json({ data: user }, { status: 201 });
-  } catch (error) {
-    console.error("Error creating user:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while fetching the user" },
       { status: 500 }
     );
   }
 }
 
 export async function PUT(
-  req: Request,
+  req: NextRequest,
   { params }: { params: { id: string } },
 ) {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session || (session.user.id !== params.id && session.user.role !== 'ADMIN')) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
+    const { name, email, image, phone, address, onboardingCompleted, role, currentTimezone } = body;
+
+    // Input validation
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json({ error: "Invalid email format" }, { status: 400 });
+    }
+
+    if (role && !Object.values(UserRole).includes(role)) {
+      return NextResponse.json({ error: "Invalid role" }, { status: 400 });
+    }
 
     const updatedUser = await prisma.user.update({
       where: { id: params.id },
       data: {
-        name: body.name,
-        email: body.email,
-        emailVerified: body.emailVerified,
-        image: body.image,
-        phone: body.phone,
-        address: body.address,
-        onboardingCompleted: body.onboardingCompleted,
-        role: body.role,
+        name,
+        email,
+        image,
+        phone,
+        address,
+        onboardingCompleted,
+        role: role as UserRole,
+        currentTimezone,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        phone: true,
+        address: true,
+        onboardingCompleted: true,
+        role: true,
+        currentTimezone: true,
       },
     });
 
@@ -76,24 +94,34 @@ export async function PUT(
   } catch (error) {
     console.error("Error updating user:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while updating the user" },
       { status: 500 }
     );
   }
 }
 
 export async function DELETE(
-  req: Request,
+  req: NextRequest,
   { params }: { params: { id: string } },
 ) {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session || session.user.role !== 'ADMIN') {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: params.id } });
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
     await prisma.user.delete({ where: { id: params.id } });
 
-    return NextResponse.json({ message: "User deleted" }, { status: 200 });
+    return NextResponse.json({ message: "User deleted successfully" }, { status: 200 });
   } catch (error) {
     console.error("Error deleting user:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while deleting the user" },
       { status: 500 }
     );
   }

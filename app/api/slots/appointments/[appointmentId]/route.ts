@@ -13,14 +13,29 @@ export async function GET(
                 slotOfAppointment: {
                     include: {
                         consulteeProfile: true,
-                        slotOfAvailabilityWeekly: true,
-                        slotOfAvailabilityCustom: true,
                     },
                 },
-                consultation: true,
-                subscription: true,
-                webinar: true,
-                class: true,
+                consultation: {
+                    include: {
+                        consultationPlan: true,
+                    },
+                },
+                subscription: {
+                    include: {
+                        plan: true,
+                    },
+                },
+                webinar: {
+                    include: {
+                        webinarPlan: true,
+                    },
+                },
+                class: {
+                    include: {
+                        classPlan: true,
+                    },
+                },
+                payment: true,
             },
         });
 
@@ -28,62 +43,10 @@ export async function GET(
             return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
         }
 
-        return NextResponse.json(appointment, { status: 200 });
+        return NextResponse.json({ data: appointment }, { status: 200 });
     } catch (error) {
         console.error("Error fetching appointment:", error);
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
-    }
-}
-
-export async function POST(
-    req: NextRequest,
-    { params }: { params: { appointmentId: string } }
-) {
-    try {
-        const body = await req.json();
-
-        if (!Object.values(AppointmentsType).includes(body.appointmentType)) {
-            return NextResponse.json({ error: "Invalid appointment type" }, { status: 400 });
-        }
-
-        const eventTypeCount = [body.consultationId, body.subscriptionId, body.webinarId, body.classId].filter(Boolean).length;
-        if (eventTypeCount !== 1) {
-            return NextResponse.json({ error: "Exactly one event type must be specified" }, { status: 400 });
-        }
-
-        const newAppointment = await prisma.appointment.create({
-            data: {
-                appointmentType: body.appointmentType,
-                slotOfAppointment: { connect: { id: body.slotOfAppointmentId } },
-                consultation: body.consultationId ? { connect: { id: body.consultationId } } : undefined,
-                subscription: body.subscriptionId ? { connect: { id: body.subscriptionId } } : undefined,
-                webinar: body.webinarId ? { connect: { id: body.webinarId } } : undefined,
-                class: body.classId ? { connect: { id: body.classId } } : undefined,
-            },
-            include: {
-                slotOfAppointment: {
-                    include: {
-                        consulteeProfile: true,
-                        slotOfAvailabilityWeekly: true,
-                        slotOfAvailabilityCustom: true,
-                    },
-                },
-                consultation: true,
-                subscription: true,
-                webinar: true,
-                class: true,
-            },
-        });
-
-        return NextResponse.json(newAppointment, { status: 201 });
-    } catch (error) {
-        console.error("Error creating appointment:", error);
-        if (error instanceof Prisma.PrismaClientKnownRequestError) {
-            if (error.code === 'P2002') {
-                return NextResponse.json({ error: "A unique constraint would be violated on Appointment" }, { status: 400 });
-            }
-        }
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+        return NextResponse.json({ error: "An error occurred while fetching the appointment" }, { status: 500 });
     }
 }
 
@@ -112,18 +75,33 @@ export async function PUT(
                 slotOfAppointment: {
                     include: {
                         consulteeProfile: true,
-                        slotOfAvailabilityWeekly: true,
-                        slotOfAvailabilityCustom: true,
                     },
                 },
-                consultation: true,
-                subscription: true,
-                webinar: true,
-                class: true,
+                consultation: {
+                    include: {
+                        consultationPlan: true,
+                    },
+                },
+                subscription: {
+                    include: {
+                        plan: true,
+                    },
+                },
+                webinar: {
+                    include: {
+                        webinarPlan: true,
+                    },
+                },
+                class: {
+                    include: {
+                        classPlan: true,
+                    },
+                },
+                payment: true,
             },
         });
 
-        return NextResponse.json(updatedAppointment, { status: 200 });
+        return NextResponse.json({ data: updatedAppointment }, { status: 200 });
     } catch (error) {
         console.error("Error updating appointment:", error);
         if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -131,7 +109,7 @@ export async function PUT(
                 return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
             }
         }
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+        return NextResponse.json({ error: "An error occurred while updating the appointment" }, { status: 500 });
     }
 }
 
@@ -140,24 +118,48 @@ export async function DELETE(
     { params }: { params: { appointmentId: string } }
 ) {
     try {
+        // Check if there's an associated payment
+        const appointment = await prisma.appointment.findUnique({
+            where: { id: params.appointmentId },
+            include: { payment: true },
+        });
+
+        if (appointment?.payment) {
+            return NextResponse.json({ error: "Cannot delete appointment with associated payment" }, { status: 400 });
+        }
+
         const deletedAppointment = await prisma.appointment.delete({
             where: { id: params.appointmentId },
             include: {
                 slotOfAppointment: {
                     include: {
                         consulteeProfile: true,
-                        slotOfAvailabilityWeekly: true,
-                        slotOfAvailabilityCustom: true,
                     },
                 },
-                consultation: true,
-                subscription: true,
-                webinar: true,
-                class: true,
+                consultation: {
+                    include: {
+                        consultationPlan: true,
+                    },
+                },
+                subscription: {
+                    include: {
+                        plan: true,
+                    },
+                },
+                webinar: {
+                    include: {
+                        webinarPlan: true,
+                    },
+                },
+                class: {
+                    include: {
+                        classPlan: true,
+                    },
+                },
             },
         });
 
-        return NextResponse.json(deletedAppointment, { status: 200 });
+        return NextResponse.json({ data: deletedAppointment }, { status: 200 });
     } catch (error) {
         console.error("Error deleting appointment:", error);
         if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -165,6 +167,6 @@ export async function DELETE(
                 return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
             }
         }
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+        return NextResponse.json({ error: "An error occurred while deleting the appointment" }, { status: 500 });
     }
 }

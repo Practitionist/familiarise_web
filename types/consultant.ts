@@ -17,6 +17,8 @@ import { Prisma } from '@prisma/client';
 export type TConsultantProfile = Prisma.ConsultantProfileGetPayload<{
   include: {
     user: true,
+    domain:true,
+    subDomains: true,
     slotsOfAvailabilityWeekly: true,
     slotsOfAvailabilityCustom: true,
     consultationPlans: true,

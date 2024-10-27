@@ -43,8 +43,6 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   const webinarPlans = await prisma.webinarPlan.findMany();
   const classPlans = await prisma.classPlan.findMany();
 
-  const topics = await prisma.topic.findMany();
-
   const allSlots = [
     ...weeklySlots.map(slot => ({ type: 'weekly' as const, slot })),
     ...customSlots.map(slot => ({ type: 'custom' as const, slot }))
@@ -70,18 +68,16 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
       );
 
       await prisma.$transaction(async (prisma) => {
+        const slotStartTime = slotData.type === 'weekly' ? slotData.slot.slotStartTimeInUTC : slotData.slot.slotStartTimeInUTC;
+        const slotEndTime = slotData.type === 'weekly' ? slotData.slot.slotEndTimeInUTC : slotData.slot.slotEndTimeInUTC;
+
         const appointmentData: TAppointmentCreateInput = {
           appointmentType: appointmentType,
           slotOfAppointment: {
             create: {
               consulteeProfile: { connect: { id: consultee.consulteeProfile!.id } },
-              appointmentStartTimeInUTC: slotData.type === 'weekly' ? slotData.slot.slotStartTimeInUTC : slotData.slot.slotStartTimeInUTC,
-              appointmentEndTimeInUTC: slotData.type === 'weekly' ? slotData.slot.slotEndTimeInUTC : slotData.slot.slotEndTimeInUTC,
-              appointmentsType: appointmentType,
-              ...(slotData.type === 'weekly'
-                ? { slotOfAvailabilityWeekly: { connect: { id: slotData.slot.id } } }
-                : { slotOfAvailabilityCustom: { connect: { id: slotData.slot.id } } }
-              ),
+              slotStartTimeInUTC: slotStartTime,
+              slotEndTimeInUTC: slotEndTime,
             },
           },
         };
@@ -97,7 +93,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
               consultationPlan: { connect: { id: faker.helpers.arrayElement(consultationPlans).id } },
               requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
               requestStatus: RequestStatus.PENDING,
-              preferredDateTime: slotData.slot.slotStartTimeInUTC,
+              preferredDateTime: slotStartTime,
               requestedAt: new Date(),
               requestNotes: faker.lorem.sentence(),
               directlyBooked: faker.datatype.boolean(),

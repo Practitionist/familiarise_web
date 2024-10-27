@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
-import { NextResponse } from "next/server";
 import { checkOverlappingAppointments } from "@/lib/appointmentUtils";
+import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
   try {
@@ -13,31 +13,62 @@ export async function GET(request: Request) {
     if (consulteeId) {
       consultations = await prisma.consultation.findMany({
         where: {
-          requestedById: consulteeId
+          requestedBy: { id: consulteeId }
+        },
+        include: {
+          consultationPlan: true,
+          requestedBy: true,
+          appointment: {
+            include: {
+              slotOfAppointment: true
+            }
+          }
         }
       });
     } else if (consultantId) {
       consultations = await prisma.consultation.findMany({
         where: {
           consultationPlan: {
-            consultantProfileId: consultantId
+            consultantProfile: { id: consultantId }
+          }
+        },
+        include: {
+          consultationPlan: {
+            include: {
+              consultantProfile: true
+            }
+          },
+          requestedBy: true,
+          appointment: {
+            include: {
+              slotOfAppointment: true
+            }
           }
         }
       });
     } else {
-      consultations = await prisma.consultation.findMany({});
+      consultations = await prisma.consultation.findMany({
+        include: {
+          consultationPlan: true,
+          requestedBy: true,
+          appointment: {
+            include: {
+              slotOfAppointment: true
+            }
+          }
+        }
+      });
     }
 
     return NextResponse.json({ data: consultations }, { status: 200 });
   } catch (error) {
-    console.error(error);
+    console.error("Error fetching consultations:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while fetching consultations" },
       { status: 500 }
     );
   }
 }
-
 
 export async function POST(request: Request) {
   try {
@@ -62,16 +93,12 @@ export async function POST(request: Request) {
       const consultation = await prisma.consultation.create({
         data: {
           consultationPlan: {
-            connect: {
-              id: body.consultationPlanId,
-            },
+            connect: { id: body.consultationPlanId },
           },
           requestedBy: {
-            connect: {
-              id: body.consulteeProfileId,
-            },
+            connect: { id: body.consulteeProfileId },
           },
-          appointmentRequestStatus: "PENDING",
+          requestStatus: "PENDING",
           directlyBooked: true,
         },
       });
@@ -80,30 +107,14 @@ export async function POST(request: Request) {
         data: {
           appointmentType: "CONSULTATION",
           consultation: {
-            connect: {
-              id: consultation.id,
-            },
+            connect: { id: consultation.id },
           },
           slotOfAppointment: {
             create: {
-              appointmentStartTimeInUTC: new Date(body.startTime),
-              appointmentEndTimeInUTC: new Date(body.endTime),
-              appointmentsType: "CONSULTATION",
+              slotStartTimeInUTC: new Date(body.startTime),
+              slotEndTimeInUTC: new Date(body.endTime),
               consulteeProfile: {
-                connect: {
-                  id: body.consulteeProfileId,
-                },
-              },
-              slotOfAvailabilityCustom: {
-                create: {
-                  slotStartTimeInUTC: new Date(body.startTime),
-                  slotEndTimeInUTC: new Date(body.endTime),
-                  consultantProfile: {
-                    connect: {
-                      id: body.consultantProfileId,
-                    },
-                  },
-                },
+                connect: { id: body.consulteeProfileId },
               },
             },
           },
@@ -118,9 +129,9 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ data: result }, { status: 201 });
   } catch (error) {
-    console.error(error);
+    console.error("Error creating consultation:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while creating the consultation" },
       { status: 500 }
     );
   }

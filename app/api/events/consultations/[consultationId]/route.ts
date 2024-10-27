@@ -12,13 +12,12 @@ export async function GET(
       where: { id: consultationId },
       include: {
         consultationPlan: true,
+        requestedBy: true,
         appointment: {
           include: {
             slotOfAppointment: {
               include: {
                 consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
               },
             },
           },
@@ -37,9 +36,9 @@ export async function GET(
         { status: 404 }
       );
     }
-    console.error(error);
+    console.error("Error fetching consultation:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while fetching the consultation" },
       { status: 500 }
     );
   }
@@ -56,26 +55,28 @@ export async function PUT(
     const consultation = await prisma.consultation.update({
       where: { id: consultationId },
       data: {
-        consultationPlan: {
+        requestStatus: body.requestStatus,
+        directlyBooked: body.directlyBooked,
+        preferredDateTime: body.preferredDateTime,
+        requestNotes: body.requestNotes,
+        feedbackFromConsultee: body.feedbackFromConsultee,
+        feedbackFromConsultant: body.feedbackFromConsultant,
+        rating: body.rating,
+        consultationPlan: body.consultationPlanId ? {
           connect: { id: body.consultationPlanId },
-        },
-        appointment: {
-          update: {
-            slotOfAppointment: {
-              connect: { id: body.slotOfAppointmentId },
-            },
-          },
-        },
+        } : undefined,
+        appointment: body.appointmentId ? {
+          connect: { id: body.appointmentId },
+        } : undefined,
       },
       include: {
         consultationPlan: true,
+        requestedBy: true,
         appointment: {
           include: {
             slotOfAppointment: {
               include: {
                 consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
               },
             },
           },
@@ -85,9 +86,9 @@ export async function PUT(
 
     return NextResponse.json({ data: consultation }, { status: 200 });
   } catch (error) {
-    console.error(error);
+    console.error("Error updating consultation:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while updating the consultation" },
       { status: 500 }
     );
   }
@@ -104,13 +105,12 @@ export async function DELETE(
       where: { id: consultationId },
       include: {
         consultationPlan: true,
+        requestedBy: true,
         appointment: {
           include: {
             slotOfAppointment: {
               include: {
                 consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
               },
             },
           },
@@ -120,9 +120,9 @@ export async function DELETE(
 
     return NextResponse.json({ data: consultation }, { status: 200 });
   } catch (error) {
-    console.error(error);
+    console.error("Error deleting consultation:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while deleting the consultation" },
       { status: 500 }
     );
   }

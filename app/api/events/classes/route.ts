@@ -15,8 +15,22 @@ export async function GET(request: Request) {
           appointment: {
             some: {
               slotOfAppointment: {
-                consulteeProfile: {
-                  id: consulteeId
+                some: {
+                  consulteeProfile: {
+                    id: consulteeId
+                  }
+                }
+              }
+            }
+          }
+        },
+        include: {
+          classPlan: true,
+          appointment: {
+            include: {
+              slotOfAppointment: {
+                include: {
+                  consulteeProfile: true
                 }
               }
             }
@@ -26,20 +40,35 @@ export async function GET(request: Request) {
     } else if (consultantId) {
       classes = await prisma.class.findMany({
         where: {
-          classPlans: {
-            consultantProfileId: consultantId
+          classPlan: {
+            consultantProfile: {
+              id: consultantId
+            }
           }
+        },
+        include: {
+          classPlan: {
+            include: {
+              consultantProfile: true
+            }
+          },
+          appointment: true
         }
       });
     } else {
-      classes = await prisma.class.findMany({});
+      classes = await prisma.class.findMany({
+        include: {
+          classPlan: true,
+          appointment: true
+        }
+      });
     }
 
     return NextResponse.json({ data: classes }, { status: 200 });
   } catch (error) {
-    console.error(error);
+    console.error("Error fetching classes:", error);
     return NextResponse.json(
-      { error: "Something went wrong" },
+      { error: "An error occurred while fetching classes" },
       { status: 500 }
     );
   }

@@ -1,5 +1,5 @@
 import { faker } from "@faker-js/faker";
-import { PaymentGateway, PaymentStatus } from "@prisma/client";
+import { PaymentGateway, PaymentStatus, Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./createUsers";
 
@@ -12,12 +12,6 @@ export async function createPayments(users: UserWithProfiles[]) {
     where: {
       payment: null // Only get appointments without payments
     },
-    include: {
-      consultation: true,
-      subscription: true,
-      webinar: true,
-      class: true,
-    },
     take: NUM_PAYMENTS, // Limit to the number of payments we want to create
   });
 
@@ -26,25 +20,25 @@ export async function createPayments(users: UserWithProfiles[]) {
     const appointment = appointments[i];
 
     try {
-      let paymentData: any = {
-        userId: user.id,
+      const paymentData: Prisma.PaymentCreateInput = {
+        user: { connect: { id: user.id } },
         amount: faker.number.int({ min: 1000, max: 100000 }), // Amount in cents
         currency: faker.helpers.arrayElement(['USD', 'EUR', 'GBP']),
+        description: faker.lorem.sentence(),
+        receiptUrl: faker.internet.url(),
         paymentMethod: faker.helpers.arrayElement(['credit_card', 'paypal', 'bank_transfer']),
         paymentIntent: faker.string.uuid(),
         paymentGateway: faker.helpers.arrayElement(Object.values(PaymentGateway)),
         paymentStatus: faker.helpers.arrayElement(Object.values(PaymentStatus)),
-        description: faker.lorem.sentence(),
-        receiptUrl: faker.internet.url(),
-        appointmentId: appointment.id,
+        appointment: { connect: { id: appointment.id } },
+        ...(faker.datatype.boolean() && discountCodes.length > 0
+          ? { discountCode: { connect: { id: faker.helpers.arrayElement(discountCodes).id } } }
+          : {})
       };
 
-      // Randomly assign a discount code to some payments
-      if (faker.datatype.boolean() && discountCodes.length > 0) {
-        paymentData.discountCode = { connect: { id: faker.helpers.arrayElement(discountCodes).id } };
-      }
-
-      await prisma.payment.create({ data: paymentData });
+      await prisma.payment.create({ 
+        data: paymentData 
+      });
     } catch (error) {
       console.error(`Failed to create payment for user ${user.id}:`, error);
     }

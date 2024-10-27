@@ -6,35 +6,54 @@ export async function GET(req: NextRequest) {
     try {
         const { searchParams } = new URL(req.url);
         const consultantProfileId = searchParams.get('consultantProfileId');
+        const page = parseInt(searchParams.get('page') || '1');
+        const limit = parseInt(searchParams.get('limit') || '10');
 
         if (!consultantProfileId) {
             return NextResponse.json({ error: "consultantProfileId is required" }, { status: 400 });
         }
 
-        const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
-            where: {
-                consultantProfileId: consultantProfileId
-            },
-            orderBy: [
-                { dayOfWeekforStartTimeInUTC: 'asc' },
-                { slotStartTimeInUTC: 'asc' }
-            ],
-            include: {
-                consultantProfile: {
-                    select: {
-                        id: true,
-                        user: {
-                            select: {
-                                name: true,
-                                email: true
+        const skip = (page - 1) * limit;
+
+        const [weeklySlots, total] = await Promise.all([
+            prisma.slotOfAvailabilityWeekly.findMany({
+                where: {
+                    consultantProfileId: consultantProfileId
+                },
+                orderBy: [
+                    { dayOfWeekforStartTimeInUTC: 'asc' },
+                    { slotStartTimeInUTC: 'asc' }
+                ],
+                include: {
+                    consultantProfile: {
+                        select: {
+                            id: true,
+                            user: {
+                                select: {
+                                    name: true,
+                                    email: true
+                                }
                             }
                         }
                     }
-                }
-            }
-        });
+                },
+                skip,
+                take: limit,
+            }),
+            prisma.slotOfAvailabilityWeekly.count({
+                where: { consultantProfileId: consultantProfileId }
+            })
+        ]);
 
-        return NextResponse.json(weeklySlots, { status: 200 });
+        return NextResponse.json({
+            data: weeklySlots,
+            meta: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit),
+            }
+        }, { status: 200 });
     } catch (error) {
         console.error("Error fetching weekly slots:", error);
         return NextResponse.json(
@@ -68,6 +87,32 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Start time must be before end time" }, { status: 400 });
         }
 
+        // Check for overlapping slots
+        const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
+            where: {
+                consultantProfileId,
+                dayOfWeekforStartTimeInUTC,
+                OR: [
+                    {
+                        slotStartTimeInUTC: { lte: startTime },
+                        slotEndTimeInUTC: { gt: startTime }
+                    },
+                    {
+                        slotStartTimeInUTC: { lt: endTime },
+                        slotEndTimeInUTC: { gte: endTime }
+                    },
+                    {
+                        slotStartTimeInUTC: { gte: startTime },
+                        slotEndTimeInUTC: { lte: endTime }
+                    }
+                ]
+            }
+        });
+
+        if (overlappingSlot) {
+            return NextResponse.json({ error: "This slot overlaps with an existing slot" }, { status: 409 });
+        }
+
         const newWeeklySlot = await prisma.slotOfAvailabilityWeekly.create({
             data: {
                 consultantProfileId,
@@ -91,7 +136,7 @@ export async function POST(req: NextRequest) {
             }
         });
 
-        return NextResponse.json(newWeeklySlot, { status: 201 });
+        return NextResponse.json({ data: newWeeklySlot }, { status: 201 });
     } catch (error) {
         console.error("Error creating weekly slot:", error);
         return NextResponse.json(

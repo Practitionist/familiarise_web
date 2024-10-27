@@ -12,13 +12,12 @@ export async function GET(
       where: { id: subscriptionId },
       include: {
         plan: true,
-        appointment: {
+        requestedBy: true,
+        appointments: {
           include: {
             slotOfAppointment: {
               include: {
                 consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
               },
             },
           },
@@ -37,9 +36,9 @@ export async function GET(
         { status: 404 }
       );
     }
-    console.error(error);
+    console.error("Error fetching subscription:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while fetching the subscription" },
       { status: 500 }
     );
   }
@@ -58,22 +57,25 @@ export async function PUT(
       data: {
         startDate: body.startDate,
         endDate: body.endDate,
-        plan: {
+        requestStatus: body.requestStatus,
+        tentativeStartDate: body.tentativeStartDate,
+        tentativeSchedule: body.tentativeSchedule,
+        requestNotes: body.requestNotes,
+        feedbackFromConsultee: body.feedbackFromConsultee,
+        feedbackFromConsultant: body.feedbackFromConsultant,
+        rating: body.rating,
+        plan: body.planId ? {
           connect: { id: body.planId },
-        },
-        appointment: body.appointmentId ? {
-          connect: { id: body.appointmentId },
         } : undefined,
       },
       include: {
         plan: true,
-        appointment: {
+        requestedBy: true,
+        appointments: {
           include: {
             slotOfAppointment: {
               include: {
                 consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
               },
             },
           },
@@ -83,9 +85,9 @@ export async function PUT(
 
     return NextResponse.json({ data: subscriptionData }, { status: 200 });
   } catch (error) {
-    console.error(error);
+    console.error("Error updating subscription:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while updating the subscription" },
       { status: 500 }
     );
   }
@@ -102,13 +104,12 @@ export async function DELETE(
       where: { id: subscriptionId },
       include: {
         plan: true,
-        appointment: {
+        requestedBy: true,
+        appointments: {
           include: {
             slotOfAppointment: {
               include: {
                 consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
               },
             },
           },
@@ -118,9 +119,9 @@ export async function DELETE(
 
     return NextResponse.json({ data: subscriptionData }, { status: 200 });
   } catch (error) {
-    console.error(error);
+    console.error("Error deleting subscription:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while deleting the subscription" },
       { status: 500 }
     );
   }

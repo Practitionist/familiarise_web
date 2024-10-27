@@ -41,7 +41,11 @@ export async function POST(request: Request) {
         tentativeStartDate: new Date(tentativeStartDate),
         tentativeSchedule,
         requestNotes,
-        appointmentRequestStatus: 'PENDING',
+        requestStatus: 'PENDING',
+      },
+      include: {
+        plan: true,
+        requestedBy: true,
       },
     });
 
@@ -50,6 +54,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ subscription }, { status: 201 });
   } catch (error) {
     console.error('Error booking subscription:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: 'An error occurred while booking the subscription' }, { status: 500 });
   }
 }

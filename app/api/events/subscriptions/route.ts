@@ -13,26 +13,58 @@ export async function GET(request: Request) {
     if (consulteeId) {
       subscriptions = await prisma.subscription.findMany({
         where: {
-          requestedById: consulteeId
+          requestedBy: { id: consulteeId }
+        },
+        include: {
+          plan: true,
+          requestedBy: true,
+          appointments: {
+            include: {
+              slotOfAppointment: true
+            }
+          }
         }
       });
     } else if (consultantId) {
       subscriptions = await prisma.subscription.findMany({
         where: {
           plan: {
-            consultantProfileId: consultantId
+            consultantProfile: { id: consultantId }
+          }
+        },
+        include: {
+          plan: {
+            include: {
+              consultantProfile: true
+            }
+          },
+          requestedBy: true,
+          appointments: {
+            include: {
+              slotOfAppointment: true
+            }
           }
         }
       });
     } else {
-      subscriptions = await prisma.subscription.findMany({});
+      subscriptions = await prisma.subscription.findMany({
+        include: {
+          plan: true,
+          requestedBy: true,
+          appointments: {
+            include: {
+              slotOfAppointment: true
+            }
+          }
+        }
+      });
     }
 
     return NextResponse.json({ data: subscriptions }, { status: 200 });
   } catch (error) {
-    console.error(error);
+    console.error("Error fetching subscriptions:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while fetching subscriptions" },
       { status: 500 }
     );
   }
@@ -88,7 +120,7 @@ export async function POST(request: Request) {
               id: body.consulteeProfileId,
             },
           },
-          appointmentRequestStatus: "PENDING",
+          requestStatus: "PENDING",
         },
       });
 
@@ -97,26 +129,14 @@ export async function POST(request: Request) {
           return prisma.appointment.create({
             data: {
               appointmentType: "SUBSCRIPTION",
-              subscriptionId: subscription.id,
+              subscription: { connect: { id: subscription.id } },
               slotOfAppointment: {
                 create: {
-                  appointmentStartTimeInUTC: new Date(appointment.startTime),
-                  appointmentEndTimeInUTC: new Date(appointment.endTime),
-                  appointmentsType: "SUBSCRIPTION",
+                  slotStartTimeInUTC: new Date(appointment.startTime),
+                  slotEndTimeInUTC: new Date(appointment.endTime),
                   consulteeProfile: {
                     connect: {
                       id: body.consulteeProfileId,
-                    },
-                  },
-                  slotOfAvailabilityCustom: {
-                    create: {
-                      slotStartTimeInUTC: new Date(appointment.startTime),
-                      slotEndTimeInUTC: new Date(appointment.endTime),
-                      consultantProfile: {
-                        connect: {
-                          id: body.consultantProfileId,
-                        },
-                      },
                     },
                   },
                 },
@@ -134,9 +154,9 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ data: result }, { status: 201 });
   } catch (error) {
-    console.error(error);
+    console.error("Error creating subscription:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "An error occurred while creating the subscription" },
       { status: 500 }
     );
   }

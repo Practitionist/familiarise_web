@@ -7,6 +7,8 @@ export async function GET(req: NextRequest) {
         const consultantProfileId = searchParams.get('consultantProfileId');
         const startDate = searchParams.get('startDate');
         const endDate = searchParams.get('endDate');
+        const page = parseInt(searchParams.get('page') || '1');
+        const limit = parseInt(searchParams.get('limit') || '10');
 
         if (!consultantProfileId) {
             return NextResponse.json({ error: "consultantProfileId is required" }, { status: 400 });
@@ -28,27 +30,40 @@ export async function GET(req: NextRequest) {
             };
         }
 
-        const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
-            where: whereClause,
-            orderBy: {
-                slotStartTimeInUTC: 'asc'
-            },
-            include: {
-                consultantProfile: {
-                    select: {
-                        id: true,
-                        user: {
-                            select: {
-                                name: true,
-                                email: true
+        const [customSlots, total] = await Promise.all([
+            prisma.slotOfAvailabilityCustom.findMany({
+                where: whereClause,
+                orderBy: {
+                    slotStartTimeInUTC: 'asc'
+                },
+                include: {
+                    consultantProfile: {
+                        select: {
+                            id: true,
+                            user: {
+                                select: {
+                                    name: true,
+                                    email: true
+                                }
                             }
                         }
                     }
-                }
-            }
-        });
+                },
+                skip: (page - 1) * limit,
+                take: limit,
+            }),
+            prisma.slotOfAvailabilityCustom.count({ where: whereClause }),
+        ]);
 
-        return NextResponse.json(customSlots, { status: 200 });
+        return NextResponse.json({
+            data: customSlots,
+            meta: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit),
+            }
+        }, { status: 200 });
     } catch (error) {
         console.error("Error fetching custom slots:", error);
         return NextResponse.json(
@@ -71,15 +86,43 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
         }
 
-        if (new Date(slotStartTimeInUTC) >= new Date(slotEndTimeInUTC)) {
+        const startTime = new Date(slotStartTimeInUTC);
+        const endTime = new Date(slotEndTimeInUTC);
+
+        if (startTime >= endTime) {
             return NextResponse.json({ error: "Start time must be before end time" }, { status: 400 });
+        }
+
+        // Check for overlapping slots
+        const overlappingSlot = await prisma.slotOfAvailabilityCustom.findFirst({
+            where: {
+                consultantProfileId,
+                OR: [
+                    {
+                        slotStartTimeInUTC: { lte: startTime },
+                        slotEndTimeInUTC: { gt: startTime }
+                    },
+                    {
+                        slotStartTimeInUTC: { lt: endTime },
+                        slotEndTimeInUTC: { gte: endTime }
+                    },
+                    {
+                        slotStartTimeInUTC: { gte: startTime },
+                        slotEndTimeInUTC: { lte: endTime }
+                    }
+                ]
+            }
+        });
+
+        if (overlappingSlot) {
+            return NextResponse.json({ error: "This slot overlaps with an existing slot" }, { status: 409 });
         }
 
         const newCustomSlot = await prisma.slotOfAvailabilityCustom.create({
             data: {
                 consultantProfileId,
-                slotStartTimeInUTC: new Date(slotStartTimeInUTC),
-                slotEndTimeInUTC: new Date(slotEndTimeInUTC)
+                slotStartTimeInUTC: startTime,
+                slotEndTimeInUTC: endTime
             },
             include: {
                 consultantProfile: {
@@ -96,7 +139,7 @@ export async function POST(req: NextRequest) {
             }
         });
 
-        return NextResponse.json(newCustomSlot, { status: 201 });
+        return NextResponse.json({ data: newCustomSlot }, { status: 201 });
     } catch (error) {
         console.error("Error creating custom slot:", error);
         return NextResponse.json(
