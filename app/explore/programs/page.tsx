@@ -1,11 +1,20 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
 import Image from "next/image"
+
+interface ConsultantProfile {
+  id: string
+  description: string
+  qualifications: string
+  specialization: string
+  experience: string
+  rating: number
+}
 
 interface Program {
   id: string
@@ -13,46 +22,52 @@ interface Program {
   description: string
   price: number
   type: 'class' | 'webinar'
-  language?: string
-  level?: string
+  language: string
+  level: string
   maxParticipants: number
   imageUrl: string
-}
-
-interface PaginationMeta {
-  total: number
-  page: number
-  limit: number
-  totalPages: number
+  consultantProfile: ConsultantProfile
+  prerequisites: string
+  materialProvided: string
+  learningOutcomes: string[]
 }
 
 export default function Programs() {
   const [programs, setPrograms] = useState<Program[]>([])
-  const [meta, setMeta] = useState<PaginationMeta>({ total: 0, page: 1, limit: 9, totalPages: 0 })
+  const [page, setPage] = useState(1)
+  const [loading, setLoading] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("all")
   const [sortBy, setSortBy] = useState("")
   const [viewMode, setViewMode] = useState("grid")
-  const [loading, setLoading] = useState(true)
+  const observer = useRef<IntersectionObserver>()
+  const ITEMS_PER_PAGE = 9
 
-  const fetchPrograms = async (page: number) => {
+  const lastElementRef = useCallback((node: HTMLDivElement) => {
+    if (loading) return
+    if (observer.current) observer.current.disconnect()
+    observer.current = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting && hasMore) {
+        setPage(prevPage => prevPage + 1)
+      }
+    })
+    if (node) observer.current.observe(node)
+  }, [loading, hasMore])
+
+  const fetchPrograms = async (pageNum: number, isNewSearch: boolean = false) => {
     try {
       setLoading(true)
       const [classesRes, webinarsRes] = await Promise.all([
-        fetch(`/api/plans/classes?page=${page}&limit=${meta.limit}`),
-        fetch(`/api/plans/webinars?page=${page}&limit=${meta.limit}`)
+        fetch(`/api/plans/classes?page=${pageNum}&limit=${ITEMS_PER_PAGE}`),
+        fetch(`/api/plans/webinars?page=${pageNum}&limit=${ITEMS_PER_PAGE}`)
       ])
 
       const classesData = await classesRes.json()
       const webinarsData = await webinarsRes.json()
 
       const formattedClasses = classesData.data.map((item: any) => ({
-        id: item.id,
-        title: item.title,
-        description: item.description,
-        price: item.price,
-        type: 'class',
-        language: item.language,
+        ...item,
         type: 'class',
         imageUrl: `https://picsum.photos/seed/${item.id}/600/400`
       }))
@@ -63,16 +78,10 @@ export default function Programs() {
         imageUrl: `https://picsum.photos/seed/${item.id}/600/400`
       }))
 
-      setPrograms([...formattedClasses, ...formattedWebinars])
+      const newPrograms = [...formattedClasses, ...formattedWebinars]
       
-      // Combine meta data from both endpoints
-      const totalItems = classesData.meta.total + webinarsData.meta.total
-      setMeta({
-        total: totalItems,
-        page: page,
-        limit: meta.limit,
-        totalPages: Math.ceil(totalItems / meta.limit)
-      })
+      setPrograms(prev => isNewSearch ? newPrograms : [...prev, ...newPrograms])
+      setHasMore(newPrograms.length === ITEMS_PER_PAGE * 2) // Since we're fetching from two endpoints
     } catch (error) {
       console.error('Error fetching programs:', error)
     } finally {
@@ -80,16 +89,31 @@ export default function Programs() {
     }
   }
 
+  // Initial load
   useEffect(() => {
-    fetchPrograms(1)
+    fetchPrograms(1, true)
   }, [])
+
+  // Handle page changes for infinite scroll
+  useEffect(() => {
+    if (page > 1) {
+      fetchPrograms(page, false)
+    }
+  }, [page])
+
+  // Handle search and filter changes
+  useEffect(() => {
+    setPrograms([])
+    setPage(1)
+    setHasMore(true)
+    fetchPrograms(1, true)
+  }, [searchTerm, selectedCategory])
 
   const filteredAndSortedPrograms = programs
     .filter((item) => {
       const searchMatch = item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.description.toLowerCase().includes(searchTerm.toLowerCase())
-      const categoryMatch = selectedCategory === "all" ? true : 
-        (item.topics?.some(topic => topic.name === selectedCategory))
+      const categoryMatch = selectedCategory === "all" ? true : item.level === selectedCategory
       return searchMatch && categoryMatch
     })
     .sort((a, b) => {
@@ -107,59 +131,52 @@ export default function Programs() {
       }
     })
 
-  const uniqueCategories = Array.from(new Set(
-    programs.flatMap(program => program.topics?.map(topic => topic.name) || [])
-  ))
-
-  const handlePageChange = (newPage: number) => {
-    if (newPage >= 1 && newPage <= meta.totalPages) {
-      fetchPrograms(newPage)
-    }
-  }
+  const uniqueLevels = Array.from(new Set(programs.map(program => program.level)))
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-32">
-      <div className="mb-8 text-center">
-        <h1 className="text-3xl font-bold mb-2 bg-gradient-to-r from-black via-gray-700 to-gray-400 text-transparent bg-clip-text">
+    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-40 pb-32">
+      <div className="mb-12 text-center">
+        <h1 className="text-4xl font-bold mb-3 text-black">
           Search Classes and Webinars
         </h1>
-        <p className="text-muted-foreground bg-gradient-to-r from-gray-800 via-gray-600 to-gray-400 text-transparent bg-clip-text">
+        <p className="text-gray-600 text-lg">
           Find the perfect class or webinar to suit your needs.
         </p>
       </div>
 
-      <div className="bg-muted rounded-lg p-4 sm:p-6 mb-8">
-        <form className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="bg-white shadow-lg rounded-xl p-6 mb-12">
+        <form className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           <div>
-            <Label htmlFor="search">Search</Label>
+            <Label htmlFor="search" className="text-black font-medium">Search</Label>
             <Input
               id="search"
               type="text"
               placeholder="Search classes and webinars"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              className="mt-1"
             />
           </div>
           <div>
-            <Label htmlFor="category">Category</Label>
+            <Label htmlFor="category" className="text-black font-medium">Level</Label>
             <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-              <SelectTrigger id="category">
-                <SelectValue placeholder="Select a category" />
+              <SelectTrigger id="category" className="mt-1">
+                <SelectValue placeholder="Select a level" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all" className="bg-white">All Categories</SelectItem>
-                {uniqueCategories.map((category) => (
-                  <SelectItem key={category} value={category} className="bg-white">
-                    {category}
+                <SelectItem value="all" className="bg-white">All Levels</SelectItem>
+                {uniqueLevels.map((level) => (
+                  <SelectItem key={level} value={level} className="bg-white">
+                    {level}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <div>
-            <Label htmlFor="sort">Sort By</Label>
+            <Label htmlFor="sort" className="text-black font-medium">Sort By</Label>
             <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger id="sort">
+              <SelectTrigger id="sort" className="mt-1">
                 <SelectValue placeholder="Select sorting option" />
               </SelectTrigger>
               <SelectContent>
@@ -173,30 +190,33 @@ export default function Programs() {
         </form>
       </div>
 
-      <div className="flex items-center justify-between mb-4">
-        <div>
+      <div className="flex items-center justify-between mb-8">
+        <div className="space-x-3">
           <Button
             variant={viewMode === "grid" ? "night" : "default"}
             onClick={() => setViewMode("grid")}
-            className="mr-2"
+            className="shadow-sm hover:shadow-md transition-shadow"
           >
             Grid View
           </Button>
           <Button 
             variant={viewMode === "list" ? "night" : "default"} 
             onClick={() => setViewMode("list")}
+            className="shadow-sm hover:shadow-md transition-shadow"
           >
             List View
           </Button>
         </div>
       </div>
 
-      {loading ? (
-        <div className="text-center py-10">Loading...</div>
-      ) : viewMode === "grid" ? (
+      {viewMode === "grid" ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredAndSortedPrograms.map((item) => (
-            <div key={item.id} className="bg-muted rounded-lg overflow-hidden">
+          {filteredAndSortedPrograms.map((item, index) => (
+            <div 
+              key={item.id} 
+              ref={index === filteredAndSortedPrograms.length - 1 ? lastElementRef : null}
+              className="bg-muted rounded-lg overflow-hidden"
+            >
               <Image
                 src={item.imageUrl}
                 alt={item.title}
@@ -223,8 +243,12 @@ export default function Programs() {
         </div>
       ) : (
         <div className="space-y-4">
-          {filteredAndSortedPrograms.map((item) => (
-            <div key={item.id} className="bg-muted rounded-lg overflow-hidden flex">
+          {filteredAndSortedPrograms.map((item, index) => (
+            <div 
+              key={item.id}
+              ref={index === filteredAndSortedPrograms.length - 1 ? lastElementRef : null}
+              className="bg-muted rounded-lg overflow-hidden flex"
+            >
               <Image
                 src={item.imageUrl}
                 alt={item.title}
@@ -251,34 +275,9 @@ export default function Programs() {
         </div>
       )}
 
-      {/* Pagination Controls */}
-      <div className="mt-8 flex justify-center gap-2">
-        <Button
-          variant="outline"
-          onClick={() => handlePageChange(meta.page - 1)}
-          disabled={meta.page === 1}
-        >
-          Previous
-        </Button>
-        <div className="flex items-center gap-2">
-          {Array.from({ length: meta.totalPages }, (_, i) => i + 1).map((pageNum) => (
-            <Button
-              key={pageNum}
-              variant={pageNum === meta.page ? "night" : "outline"}
-              onClick={() => handlePageChange(pageNum)}
-            >
-              {pageNum}
-            </Button>
-          ))}
-        </div>
-        <Button
-          variant="outline"
-          onClick={() => handlePageChange(meta.page + 1)}
-          disabled={meta.page === meta.totalPages}
-        >
-          Next
-        </Button>
-      </div>
+      {loading && (
+        <div className="text-center py-4">Loading more...</div>
+      )}
     </div>
   )
 }
