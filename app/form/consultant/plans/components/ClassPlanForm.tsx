@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ClassPlan, classPlanSchema, PlanEmailSupport } from "@/schemas/PlanSchema";
+import { ClassPlan, ClassPlanSchema } from "@/schemas/PlanSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React from "react";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
@@ -15,7 +15,7 @@ interface Props {
 }
 
 const ClassPlanFormSchema = z.object({
-  plans: classPlanSchema.array().min(1, "At least one class plan is required"),
+  plans: ClassPlanSchema.array().min(1, "At least one class plan is required"),
 });
 
 type FormData = z.infer<typeof ClassPlanFormSchema>;
@@ -38,14 +38,21 @@ const ClassPlanForm: React.FC<Props> = ({
         : [
             {
               id: crypto.randomUUID(),
-              durationInMonths: 1,
+              title: "",
+              description: "",
               price: 0,
+              certificateProvided: false,
+              durationInMonths: 1,
               callsPerWeek: 1,
               videoMeetings: 1,
-              emailSupport: PlanEmailSupport.GENERAL,
-              consultantProfileId: null,
-              createdAt: new Date(),
-              updatedAt: new Date(),
+              emailSupport: "GENERAL",
+              maxParticipants: 1,
+              language: "English",
+              level: "Beginner",
+              prerequisites: "",
+              materialProvided: "",
+              learningOutcomes: [],
+              topics: []
             },
           ],
     },
@@ -56,10 +63,10 @@ const ClassPlanForm: React.FC<Props> = ({
     name: "plans",
   });
 
-  const onSubmitForm = (data: FormData) => {
+  const onSubmitForm = async (data: FormData) => {
     console.log("Form submitted:", data);
     try {
-       onSubmit(data.plans);
+      onSubmit(data.plans);
       console.log("onSubmit function called successfully");
     } catch (error) {
       console.error("Error in onSubmit function:", error);
@@ -75,12 +82,30 @@ const ClassPlanForm: React.FC<Props> = ({
       {fields.map((field, index) => (
         <div key={field.id} className="space-y-2 p-4 border rounded">
           <div className="space-y-2">
+            <Label htmlFor={`plans.${index}.title`}>Title</Label>
+            <Input
+              id={`plans.${index}.title`}
+              type="text"
+              {...register(`plans.${index}.title` as const)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor={`plans.${index}.description`}>Description</Label>
+            <Input
+              id={`plans.${index}.description`}
+              type="text"
+              {...register(`plans.${index}.description` as const)}
+            />
+          </div>
+
+          <div className="space-y-2">
             <Label htmlFor={`plans.${index}.durationInMonths`}>Duration</Label>
             <Controller
               name={`plans.${index}.durationInMonths` as const}
               control={control}
               render={({ field }) => (
-                <Select onValueChange={field.onChange} value={field.value?.toString()}>
+                <Select onValueChange={(value: string) => field.onChange(parseInt(value))} value={field.value?.toString()}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select duration" />
                   </SelectTrigger>
@@ -93,7 +118,7 @@ const ClassPlanForm: React.FC<Props> = ({
                 </Select>
               )}
             />
-            {errors.plans?.[index]?.durationInMonths && (
+            {errors.plans && errors.plans[index]?.durationInMonths?.message && (
               <p className="text-red-500">{errors.plans[index]?.durationInMonths?.message}</p>
             )}
           </div>
@@ -105,7 +130,7 @@ const ClassPlanForm: React.FC<Props> = ({
               type="number"
               {...register(`plans.${index}.price` as const, { valueAsNumber: true })}
             />
-            {errors.plans?.[index]?.price && (
+            {errors.plans && errors.plans[index]?.price?.message && (
               <p className="text-red-500">{errors.plans[index]?.price?.message}</p>
             )}
           </div>
@@ -117,7 +142,7 @@ const ClassPlanForm: React.FC<Props> = ({
               type="number"
               {...register(`plans.${index}.callsPerWeek` as const, { valueAsNumber: true })}
             />
-            {errors.plans?.[index]?.callsPerWeek && (
+            {errors.plans && errors.plans[index]?.callsPerWeek?.message && (
               <p className="text-red-500">{errors.plans[index]?.callsPerWeek?.message}</p>
             )}
           </div>
@@ -129,7 +154,7 @@ const ClassPlanForm: React.FC<Props> = ({
               type="number"
               {...register(`plans.${index}.videoMeetings` as const, { valueAsNumber: true })}
             />
-            {errors.plans?.[index]?.videoMeetings && (
+            {errors.plans && errors.plans[index]?.videoMeetings?.message && (
               <p className="text-red-500">{errors.plans[index]?.videoMeetings?.message}</p>
             )}
           </div>
@@ -145,14 +170,14 @@ const ClassPlanForm: React.FC<Props> = ({
                     <SelectValue placeholder="Select email support level" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={PlanEmailSupport.GENERAL}>General</SelectItem>
-                    <SelectItem value={PlanEmailSupport.PRIORITY}>Priority</SelectItem>
-                    <SelectItem value={PlanEmailSupport.DEDICATED}>Dedicated</SelectItem>
+                    <SelectItem value="GENERAL">General</SelectItem>
+                    <SelectItem value="PRIORITY">Priority</SelectItem>
+                    <SelectItem value="DEDICATED">Dedicated</SelectItem>
                   </SelectContent>
                 </Select>
               )}
             />
-            {errors.plans?.[index]?.emailSupport && (
+            {errors.plans && errors.plans[index]?.emailSupport?.message && (
               <p className="text-red-500">{errors.plans[index]?.emailSupport?.message}</p>
             )}
           </div>
@@ -169,14 +194,21 @@ const ClassPlanForm: React.FC<Props> = ({
         type="button"
         onClick={() => append({
           id: crypto.randomUUID(),
-          durationInMonths: 1,
+          title: "",
+          description: "",
           price: 0,
+          certificateProvided: false,
+          durationInMonths: 1,
           callsPerWeek: 1,
           videoMeetings: 1,
-          emailSupport: PlanEmailSupport.GENERAL,
-          consultantProfileId: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
+          emailSupport: "GENERAL",
+          maxParticipants: 1,
+          language: "English",
+          level: "Beginner",
+          prerequisites: "",
+          materialProvided: "",
+          learningOutcomes: [],
+          topics: []
         })}
         variant="outline"
       >

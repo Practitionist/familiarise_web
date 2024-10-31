@@ -3,6 +3,12 @@
 ConsultX is going to be the one-stop platform for all experts, mentors, coaches, consultants, teachers and advisors to share their wisdom with the masses.
 Kind of like Swiggy with different restaurants for people.
 
+## Architecture
+
+### Entity Relationship Diagram
+
+[Check this out](https://claude.site/artifacts/cba3bcba-1810-49d4-93f4-2e5c63bde35e) (Last updated: 31st October 2024)
+
 ## Setting Up Environment Variables for Development
 
 Welcome to our development team! To help you get started, we've outlined the essential environment variables you need to configure for our projects. These environment variables are used to securely store sensitive information like API keys, secrets, and credentials.

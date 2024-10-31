@@ -11,15 +11,12 @@ export async function GET(
     const classData = await prisma.class.findUniqueOrThrow({
       where: { id: classId },
       include: {
-        classPlans: true,
-        topics: true,
+        classPlan: true,
         appointment: {
           include: {
             slotOfAppointment: {
               include: {
                 consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
               },
             },
           },
@@ -57,27 +54,22 @@ export async function PUT(
     const classData = await prisma.class.update({
       where: { id: classId },
       data: {
-        title: body.title,
-        description: body.description,
         startDate: body.startDate,
         endDate: body.endDate,
-        classPlans: {
-          connect: { id: body.classPlanId },
-        },
-        topics: {
-          set: body.topicIds ? body.topicIds.map((id: string) => ({ id })) : [],
-        },
+        status: body.status,
+        tentativeStartDate: body.tentativeStartDate,
+        tentativeSchedule: body.tentativeSchedule,
+        currentParticipants: body.currentParticipants,
+        recordingUrls: body.recordingUrls,
+        feedbackSummary: body.feedbackSummary,
       },
       include: {
-        classPlans: true,
-        topics: true,
+        classPlan: true,
         appointment: {
           include: {
             slotOfAppointment: {
               include: {
                 consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
               },
             },
           },
@@ -105,15 +97,12 @@ export async function DELETE(
     const classData = await prisma.class.delete({
       where: { id: classId },
       include: {
-        classPlans: true,
-        topics: true,
+        classPlan: true,
         appointment: {
           include: {
             slotOfAppointment: {
               include: {
                 consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
               },
             },
           },

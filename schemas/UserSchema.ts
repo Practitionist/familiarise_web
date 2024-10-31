@@ -64,11 +64,21 @@ export const ConsulteeProfileSchema = z.object({
   preferredCommunicationMethod: z.enum(["VIDEO", "AUDIO", "IN_PERSON"]).default("VIDEO"),
   preferredLanguage: z.string().optional(),
   specialRequirements: z.string().optional(),
-  interests: z.string().optional(),
-  goals: z.string().optional(),
+  interests: z.array(z.string()).optional(),
+  goals: z.array(z.string()).optional(),
 });
 
 export type ConsulteeProfile = z.infer<typeof ConsulteeProfileSchema>;
+
+export const ConsulteePreferencesSchema = z.object({
+  preferredCommunicationMethod: z.enum(["VIDEO", "AUDIO", "IN_PERSON"]).default("VIDEO"),
+  preferredLanguage: z.string().optional(),
+  specialRequirements: z.string().optional(),
+  interests: z.array(z.string()).optional(),
+  goals: z.array(z.string()).optional(),
+});
+
+export type ConsulteePreferences = z.infer<typeof ConsulteePreferencesSchema>;
 
 export const StaffProfileSchema = z.object({
   department: z.string().optional(),

@@ -29,7 +29,7 @@ import StaffResponsibilitiesForm from "./components/StaffResponsibilitiesForm";
 import StaffReviewForm from "./components/StaffReviewForm";
 import ConsulteePreferencesForm from "./components/ConsulteePreferencesForm";
 
-type FormData = PersonalInfoAndRole &
+type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsultantProfile> &
   Partial<ConsulteeProfile> &
   Partial<StaffProfile> &
@@ -49,25 +49,34 @@ type FormData = PersonalInfoAndRole &
       slotStartTimeInUTC: string;
       slotEndTimeInUTC: string;
     }[];
+    preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
+    interests?: string[];
+    goals?: string[];
   };
 
 const MultiStepForm: React.FC = () => {
   const { data: session, update: updateSession } = useSession();
   const [step, setStep] = useState(0);
-  const [formData, setFormData] = useState<FormData>({} as FormData);
+  const [formData, setFormData] = useState<OnboardingFormData>({
+    preferredCommunicationMethod: "VIDEO",
+  } as OnboardingFormData);
   const router = useRouter();
 
-  const methods = useForm<FormData>({
+  const methods = useForm<OnboardingFormData>({
     resolver: zodResolver(PersonalInfoAndRoleSchema),
-    defaultValues: {} as FormData,
+    defaultValues: {
+      preferredCommunicationMethod: "VIDEO",
+    } as OnboardingFormData,
   });
 
-  const handleNext = (stepData: Partial<FormData>) => {
+  const handleNext = (stepData: Partial<OnboardingFormData>) => {
     setFormData((prevData) => {
-      // Merge the new data with existing data, preserving all fields
-      const updatedData = { ...prevData, ...stepData };
-      
-      // For schedule data, ensure we preserve the complete slot information
+      const updatedData = {
+        ...prevData,
+        ...stepData,
+        preferredCommunicationMethod: stepData.preferredCommunicationMethod || prevData.preferredCommunicationMethod || "VIDEO"
+      };
+
       if (stepData.scheduleType) {
         updatedData.scheduleType = stepData.scheduleType;
         if (stepData.weeklySlots) {
@@ -77,7 +86,7 @@ const MultiStepForm: React.FC = () => {
           updatedData.customSlots = [...stepData.customSlots];
         }
       }
-      
+
       return updatedData;
     });
     setStep((prevStep) => prevStep + 1);
@@ -87,7 +96,7 @@ const MultiStepForm: React.FC = () => {
     setStep((prevStep) => prevStep - 1);
   };
 
-const handleSubmit = async (data: FormData) => {
+  const handleSubmit = async (data: OnboardingFormData) => {
     const finalData = { ...formData, ...data };
     console.log("Finally Submitted Data:", finalData);
 
@@ -97,8 +106,7 @@ const handleSubmit = async (data: FormData) => {
         throw new Error("User ID not found in session");
       }
 
-      // Format custom slots to include milliseconds and UTC timezone
-      const formattedCustomSlots = finalData.customSlots?.map(slot => ({
+      const formattedCustomSlots = finalData.customSlots?.map((slot: { slotStartTimeInUTC: string; slotEndTimeInUTC: string }) => ({
         slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC).toISOString(),
         slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC).toISOString()
       }));
@@ -118,15 +126,15 @@ const handleSubmit = async (data: FormData) => {
             specialization: finalData.specialization ?? "",
             experience: finalData.experience ?? "",
             domain: { connect: { id: finalData.domain!.id } },
-            subDomains: finalData.subDomains?.length ? { 
-              connect: finalData.subDomains.map(sd => ({ id: sd.id })) 
+            subDomains: finalData.subDomains?.length ? {
+              connect: finalData.subDomains.map((sd: SubDomain) => ({ id: sd.id }))
             } : undefined,
-            tags: finalData.tags?.length ? { 
-              connect: finalData.tags.map(t => ({ id: t.id })) 
+            tags: finalData.tags?.length ? {
+              connect: finalData.tags.map((t: Tag) => ({ id: t.id }))
             } : undefined,
             scheduleType: finalData.scheduleType ?? "WEEKLY",
             slotsOfAvailabilityWeekly: finalData.weeklySlots?.length ? {
-              create: finalData.weeklySlots.map(slot => ({
+              create: finalData.weeklySlots.map((slot) => ({
                 dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
                 slotStartTimeInUTC: slot.slotStartTimeInUTC,
                 dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
@@ -146,8 +154,8 @@ const handleSubmit = async (data: FormData) => {
             preferredCommunicationMethod: finalData.preferredCommunicationMethod ?? "VIDEO",
             preferredLanguage: finalData.preferredLanguage ?? "",
             specialRequirements: finalData.specialRequirements ?? "",
-            interests: finalData.interests ?? "",
-            goals: finalData.goals ?? "",
+            interests: finalData.interests ?? [],
+            goals: finalData.goals ?? [],
           }
         } : undefined,
         staffProfile: finalData.role === "STAFF" ? {
@@ -179,7 +187,7 @@ const handleSubmit = async (data: FormData) => {
           console.error("Error parsing response:", parseError);
           const errorText = await response.text();
           console.error("Server response:", errorText);
-          
+
           if (response.status === 404) {
             errorMessage = "User not found. Please sign out and sign in again.";
             toast({
@@ -207,7 +215,6 @@ const handleSubmit = async (data: FormData) => {
         variant: "default",
       });
 
-      // Update the session
       await updateSession({
         ...session,
         user: {
@@ -220,7 +227,6 @@ const handleSubmit = async (data: FormData) => {
         },
       });
 
-      // Redirect based on the user's role
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
         router.push(`/dashboard/consultant/${result.user.consultantProfileId}`);
       } else if (finalData.role === "CONSULTEE" && result.user.consulteeProfileId) {
@@ -251,7 +257,6 @@ const handleSubmit = async (data: FormData) => {
       });
     }
   };
-
 
   const renderFormStep = () => {
     switch (step) {
@@ -428,4 +433,3 @@ function LogInIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
 }
 
 export default MultiStepForm;
-

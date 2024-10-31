@@ -1,128 +1,93 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ConsultantProfile, PersonalInfoAndRole } from "@/schemas/UserSchema";
+import { ConsultantProfile, PersonalInfoAndRole, PreferredSchedule } from "@/schemas/UserSchema";
+import { Domain, SubDomain, Tag } from "@/schemas/PlanSchema";
 
-interface Props {
-  onSubmit: (data: FormData) => void;
-  onBack: () => void;
-  formData: FormData;
-}
-
-type FormData = PersonalInfoAndRole & 
-  Partial<ConsultantProfile> & {
+type OnboardingFormData = PersonalInfoAndRole &
+  Partial<ConsultantProfile> &
+  Partial<PreferredSchedule> & {
     termsAccepted?: boolean;
     privacyAccepted?: boolean;
+    domain?: Domain;
+    subDomains?: SubDomain[];
+    tags?: Tag[];
+    weeklySlots?: {
+      dayOfWeekforStartTimeInUTC: "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
+      slotStartTimeInUTC: string;
+      dayOfWeekforEndTimeInUTC: "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
+      slotEndTimeInUTC: string;
+    }[];
+    customSlots?: {
+      slotStartTimeInUTC: string;
+      slotEndTimeInUTC: string;
+    }[];
+    preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
   };
+
+interface Props {
+  onSubmit: (data: OnboardingFormData) => void;
+  onBack: () => void;
+  formData: OnboardingFormData;
+}
 
 const ConsultantReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
   const handleSubmit = () => {
-    onSubmit(formData);
+    onSubmit({
+      ...formData,
+      preferredCommunicationMethod: formData.preferredCommunicationMethod || "VIDEO",
+    });
   };
 
   const formatTime = (timeString: string) => {
     try {
-      // If timeString is already in HH:mm format, format it to 12-hour time
-      if (/^\d{2}:\d{2}$/.test(timeString)) {
-        const [hours, minutes] = timeString.split(':').map(Number);
-        const date = new Date();
-        date.setHours(hours, minutes, 0, 0);
-        return date.toLocaleTimeString('en-US', { 
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true 
-        });
-      }
-
-      // If timeString is a full ISO date string, extract and format the time part
-      if (timeString.includes('T')) {
-        const date = new Date(timeString);
-        if (isNaN(date.getTime())) {
-          return timeString; // Return original if date is invalid
-        }
-        return date.toLocaleTimeString('en-US', { 
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true 
-        });
-      }
-
-      // Return original string if we can't parse it
-      return timeString;
+      const date = new Date(timeString);
+      return date.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
     } catch (error) {
       console.error('Error formatting time:', error);
       return timeString;
     }
   };
 
-  const formatDay = (day: string) => {
-    return day.charAt(0) + day.slice(1).toLowerCase();
-  };
-
   const renderSchedule = () => {
-    if (formData.scheduleType === "WEEKLY") {
-      // Group slots by day for better organization
-      const slotsByDay = formData.weeklySlots?.reduce((acc, slot) => {
-        const day = slot.dayOfWeekforStartTimeInUTC;
-        if (!acc[day]) acc[day] = [];
-        acc[day].push(slot);
-        return acc;
-      }, {} as Record<string, typeof formData.weeklySlots>);
+    if (!formData.scheduleType) return null;
 
-      return (
-        <div>
-          <h4 className="font-semibold">Weekly Schedule:</h4>
-          {Object.entries(slotsByDay || {}).map(([day, slots]) => (
-            <div key={`weekly-${day}`} className="mb-2">
-              <p className="font-medium">{formatDay(day)}:</p>
-              {slots?.map((slot, index) => (
-                <p key={`weekly-${day}-${index}`} className="ml-4">
-                  {formatTime(slot.slotStartTimeInUTC)} - {formatTime(slot.slotEndTimeInUTC)}
-                </p>
+    return (
+      <div>
+        <h3 className="font-semibold">Schedule</h3>
+        <p>Schedule Type: {formData.scheduleType}</p>
+        {formData.scheduleType === 'WEEKLY' && formData.weeklySlots && (
+          <div>
+            <h4 className="font-medium">Weekly Slots:</h4>
+            <ul className="list-disc pl-5">
+              {formData.weeklySlots.map((slot, index) => (
+                <li key={index}>
+                  {slot.dayOfWeekforStartTimeInUTC} {formatTime(slot.slotStartTimeInUTC)} to{' '}
+                  {slot.dayOfWeekforEndTimeInUTC} {formatTime(slot.slotEndTimeInUTC)}
+                </li>
               ))}
-            </div>
-          ))}
-        </div>
-      );
-    } else if (formData.scheduleType === "CUSTOM") {
-      // Group slots by date for better organization
-      const slotsByDate = formData.customSlots?.reduce((acc, slot) => {
-        try {
-          const date = new Date(slot.slotStartTimeInUTC);
-          if (isNaN(date.getTime())) {
-            return acc;
-          }
-          const dateString = date.toISOString().split('T')[0];
-          if (!acc[dateString]) acc[dateString] = [];
-          acc[dateString].push(slot);
-        } catch (error) {
-          console.error('Error processing slot:', error);
-        }
-        return acc;
-      }, {} as Record<string, typeof formData.customSlots>);
-
-      return (
-        <div>
-          <h4 className="font-semibold">Custom Schedule:</h4>
-          {Object.entries(slotsByDate || {}).map(([date, slots]) => (
-            <div key={`custom-${date}`} className="mb-2">
-              <p className="font-medium">{new Date(date).toLocaleDateString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-              })}:</p>
-              {slots?.map((slot, index) => (
-                <p key={`custom-${date}-${index}`} className="ml-4">
-                  {formatTime(slot.slotStartTimeInUTC)} - {formatTime(slot.slotEndTimeInUTC)}
-                </p>
+            </ul>
+          </div>
+        )}
+        {formData.scheduleType === 'CUSTOM' && formData.customSlots && (
+          <div>
+            <h4 className="font-medium">Custom Slots:</h4>
+            <ul className="list-disc pl-5">
+              {formData.customSlots.map((slot, index) => (
+                <li key={index}>
+                  {new Date(slot.slotStartTimeInUTC).toLocaleDateString()} {formatTime(slot.slotStartTimeInUTC)} to{' '}
+                  {formatTime(slot.slotEndTimeInUTC)}
+                </li>
               ))}
-            </div>
-          ))}
-        </div>
-      );
-    }
-    return null;
+            </ul>
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -136,24 +101,43 @@ const ConsultantReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) =
             <h3 className="font-semibold">Personal Information</h3>
             <p>Name: {formData.name}</p>
             <p>Email: {formData.email}</p>
-            <p>Phone: {formData.phone}</p>
-            <p>Address: {formData.address}</p>
+            <p>Phone: {formData.phone || 'Not provided'}</p>
+            <p>Address: {formData.address || 'Not provided'}</p>
           </div>
           <div>
-            <h3 className="font-semibold">Consultant Profile</h3>
-            <p>Description: {formData.description}</p>
-            <p>Qualifications: {formData.qualifications}</p>
-            <p>Specialization: {formData.specialization}</p>
-            <p>Experience: {formData.experience}</p>
-            <p>Domain: {formData.domain?.name}</p>
-            <p>Sub-Domains: {formData.subDomains?.map(sd => sd.name).join(", ")}</p>
-            <p>Tags: {formData.tags?.map(t => t.name).join(", ")}</p>
+            <h3 className="font-semibold">Professional Details</h3>
+            <p>Description: {formData.description || 'Not provided'}</p>
+            <p>Qualifications: {formData.qualifications || 'Not provided'}</p>
+            <p>Specialization: {formData.specialization || 'Not provided'}</p>
+            <p>Experience: {formData.experience || 'Not provided'}</p>
           </div>
           <div>
-            <h3 className="font-semibold">Preferred Schedule</h3>
-            <p>Schedule Type: {formData.scheduleType}</p>
-            {renderSchedule()}
+            <h3 className="font-semibold">Domain & Tags</h3>
+            <p>Domain: {formData.domain?.name || 'Not selected'}</p>
+            <div>
+              <h4 className="font-medium">Sub-Domains:</h4>
+              <ul className="list-disc pl-5">
+                {formData.subDomains?.map((subDomain) => (
+                  <li key={subDomain.id}>{subDomain.name}</li>
+                ))}
+                {(!formData.subDomains || formData.subDomains.length === 0) && (
+                  <li>No sub-domains selected</li>
+                )}
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-medium">Tags:</h4>
+              <ul className="list-disc pl-5">
+                {formData.tags?.map((tag) => (
+                  <li key={tag.id}>{tag.name}</li>
+                ))}
+                {(!formData.tags || formData.tags.length === 0) && (
+                  <li>No tags selected</li>
+                )}
+              </ul>
+            </div>
           </div>
+          {renderSchedule()}
         </CardContent>
       </Card>
       <div className="flex justify-between">

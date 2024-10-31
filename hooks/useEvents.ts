@@ -1,12 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useToast } from "@/components/ui/use-toast";
-import { Consultation, Webinar, Class, Subscription } from '@prisma/client';
+import { Consultation, Webinar, Class, Subscription, ConsultationPlan, SubscriptionPlan, WebinarPlan, ClassPlan } from '@prisma/client';
+
+export type ConsultationWithPlan = Consultation & { consultationPlan: ConsultationPlan };
+export type SubscriptionWithPlan = Subscription & { plan: SubscriptionPlan };
+export type WebinarWithPlan = Webinar & { webinarPlan: WebinarPlan };
+export type ClassWithPlan = Class & { classPlan: ClassPlan };
 
 export const useEvents = (consulteeId: string) => {
-  const [consultations, setConsultations] = useState<Consultation[]>([]);
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
-  const [webinars, setWebinars] = useState<Webinar[]>([]);
-  const [classes, setClasses] = useState<Class[]>([]);
+  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>([]);
+  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>([]);
+  const [webinars, setWebinars] = useState<WebinarWithPlan[]>([]);
+  const [classes, setClasses] = useState<ClassWithPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const { toast } = useToast();

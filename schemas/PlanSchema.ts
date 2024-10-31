@@ -103,6 +103,14 @@ export const ClassContentSchema = z.object({
   hoursAllotted: z.number(),
 });
 
+// Add ConsultantPlans schema
+export const ConsultantPlansSchema = z.object({
+  consultationPlans: z.array(ConsultationPlanSchema),
+  subscriptionPlans: z.array(SubscriptionPlanSchema),
+  webinarPlans: z.array(WebinarPlanSchema),
+  classPlans: z.array(ClassPlanSchema),
+});
+
 export type Domain = z.infer<typeof DomainSchema>;
 export type SubDomain = z.infer<typeof SubDomainSchema>;
 export type Tag = z.infer<typeof TagSchema>;
@@ -112,3 +120,4 @@ export type SubscriptionPlan = z.infer<typeof SubscriptionPlanSchema>;
 export type WebinarPlan = z.infer<typeof WebinarPlanSchema>;
 export type ClassPlan = z.infer<typeof ClassPlanSchema>;
 export type ClassContent = z.infer<typeof ClassContentSchema>;
+export type ConsultantPlans = z.infer<typeof ConsultantPlansSchema>;

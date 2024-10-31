@@ -1,9 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { webinarPlanSchema } from "@/schemas/PlanSchema";
+import { WebinarPlan, WebinarPlanSchema } from "@/schemas/PlanSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { WebinarPlan } from "@prisma/client";
 import React from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { z } from "zod";
@@ -15,7 +14,7 @@ interface Props {
 }
 
 const WebinarPlanFormSchema = z.object({
-    plans: webinarPlanSchema.array().min(1, "At least one webinar plan is required"),
+    plans: WebinarPlanSchema.array().min(1, "At least one webinar plan is required"),
 });
 
 type FormData = z.infer<typeof WebinarPlanFormSchema>;
@@ -36,12 +35,18 @@ const WebinarPlanForm: React.FC<Props> = ({
             plans: initialData.length 
                 ? initialData 
                 : [{ 
-                    id: Date.now().toString(), 
-                    durationInHours: 1, 
-                    price: 0, 
-                    consultantProfileId: null, 
-                    createdAt: new Date(), 
-                    updatedAt: new Date() 
+                    id: crypto.randomUUID(),
+                    title: "",
+                    description: "",
+                    price: 0,
+                    durationInHours: 1,
+                    maxParticipants: 100,
+                    language: "English",
+                    level: "Beginner",
+                    prerequisites: "",
+                    materialProvided: "",
+                    learningOutcomes: [],
+                    topics: []
                 }] 
         },
     });
@@ -51,7 +56,7 @@ const WebinarPlanForm: React.FC<Props> = ({
         name: "plans",
     });
 
-    const onSubmit = (data: FormData) => {
+    const onSubmit = async (data: FormData) => {
         console.log("Form submitted:", data);
         try {
             onNext(data.plans);
@@ -70,14 +75,38 @@ const WebinarPlanForm: React.FC<Props> = ({
             {fields.map((field, index) => (
                 <div key={field.id} className="space-y-2 p-4 border rounded">
                     <div className="space-y-2">
-                        <Label htmlFor={`plans.${index}.duration`}>Duration (hours)</Label>
+                        <Label htmlFor={`plans.${index}.title`}>Title</Label>
                         <Input
-                            id={`plans.${index}.duration`}
+                            id={`plans.${index}.title`}
+                            type="text"
+                            {...register(`plans.${index}.title` as const)}
+                        />
+                        {errors.plans && errors.plans[index]?.title?.message && (
+                            <p className="text-red-500">{errors.plans[index]?.title?.message}</p>
+                        )}
+                    </div>
+
+                    <div className="space-y-2">
+                        <Label htmlFor={`plans.${index}.description`}>Description</Label>
+                        <Input
+                            id={`plans.${index}.description`}
+                            type="text"
+                            {...register(`plans.${index}.description` as const)}
+                        />
+                        {errors.plans && errors.plans[index]?.description?.message && (
+                            <p className="text-red-500">{errors.plans[index]?.description?.message}</p>
+                        )}
+                    </div>
+
+                    <div className="space-y-2">
+                        <Label htmlFor={`plans.${index}.durationInHours`}>Duration (hours)</Label>
+                        <Input
+                            id={`plans.${index}.durationInHours`}
                             type="number"
                             step="0.5"
                             {...register(`plans.${index}.durationInHours` as const, { valueAsNumber: true })}
                         />
-                        {errors.plans?.[index]?.durationInHours && (
+                        {errors.plans && errors.plans[index]?.durationInHours?.message && (
                             <p className="text-red-500">{errors.plans[index]?.durationInHours?.message}</p>
                         )}
                     </div>
@@ -89,8 +118,20 @@ const WebinarPlanForm: React.FC<Props> = ({
                             type="number"
                             {...register(`plans.${index}.price` as const, { valueAsNumber: true })}
                         />
-                        {errors.plans?.[index]?.price && (
+                        {errors.plans && errors.plans[index]?.price?.message && (
                             <p className="text-red-500">{errors.plans[index]?.price?.message}</p>
+                        )}
+                    </div>
+
+                    <div className="space-y-2">
+                        <Label htmlFor={`plans.${index}.maxParticipants`}>Max Participants</Label>
+                        <Input
+                            id={`plans.${index}.maxParticipants`}
+                            type="number"
+                            {...register(`plans.${index}.maxParticipants` as const, { valueAsNumber: true })}
+                        />
+                        {errors.plans && errors.plans[index]?.maxParticipants?.message && (
+                            <p className="text-red-500">{errors.plans[index]?.maxParticipants?.message}</p>
                         )}
                     </div>
 
@@ -105,12 +146,18 @@ const WebinarPlanForm: React.FC<Props> = ({
             <Button
                 type="button"
                 onClick={() => append({
-                    id: Date.now().toString(),
-                    durationInHours: 1,
+                    id: crypto.randomUUID(),
+                    title: "",
+                    description: "",
                     price: 0,
-                    consultantProfileId: null,
-                    createdAt: new Date(),
-                    updatedAt: new Date()
+                    durationInHours: 1,
+                    maxParticipants: 100,
+                    language: "English",
+                    level: "Beginner",
+                    prerequisites: "",
+                    materialProvided: "",
+                    learningOutcomes: [],
+                    topics: []
                 })}
                 variant="outline"
             >

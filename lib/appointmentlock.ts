@@ -2,11 +2,13 @@ import prisma from "./prisma";
 
 ///////////////////////////////////////////////////// CONSULTATION LOCK /////////////////////////////////////////////////////
 
-async function createConsultationLock(consultationId: string): Promise<boolean> {
+async function createConsultationLock(appointmentId: string): Promise<boolean> {
     try {
         await prisma.appointmentLock.create({
             data: {
-                consultationId,
+                appointment: {
+                    connect: { id: appointmentId }
+                },
                 expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes expiration
             },
         });
@@ -19,19 +21,21 @@ async function createConsultationLock(consultationId: string): Promise<boolean> 
     }
 }
 
-async function releaseConsultationLock(consultationId: string): Promise<void> {
+async function releaseConsultationLock(appointmentId: string): Promise<void> {
     await prisma.appointmentLock.delete({
-        where: { consultationId },
+        where: { appointmentId },
     });
 }
 
 ///////////////////////////////////////////////////// SUBSCRIPTION LOCK /////////////////////////////////////////////////////
 
-async function createSubscriptionLock(subscriptionId: string): Promise<boolean> {
+async function createSubscriptionLock(appointmentId: string): Promise<boolean> {
     try {
         await prisma.appointmentLock.create({
             data: {
-                subscriptionId,
+                appointment: {
+                    connect: { id: appointmentId }
+                },
                 expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes expiration
             },
         });
@@ -44,8 +48,15 @@ async function createSubscriptionLock(subscriptionId: string): Promise<boolean> 
     }
 }
 
-async function releaseSubscriptionLock(subscriptionId: string): Promise<void> {
+async function releaseSubscriptionLock(appointmentId: string): Promise<void> {
     await prisma.appointmentLock.delete({
-        where: { subscriptionId },
+        where: { appointmentId },
     });
 }
+
+export {
+    createConsultationLock,
+    releaseConsultationLock,
+    createSubscriptionLock,
+    releaseSubscriptionLock
+};

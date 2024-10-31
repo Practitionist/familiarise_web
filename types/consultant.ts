@@ -19,6 +19,7 @@ export type TConsultantProfile = Prisma.ConsultantProfileGetPayload<{
     user: true,
     domain:true,
     subDomains: true,
+    tags: true,
     slotsOfAvailabilityWeekly: true,
     slotsOfAvailabilityCustom: true,
     consultationPlans: true,

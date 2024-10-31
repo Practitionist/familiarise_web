@@ -1,18 +1,19 @@
 "use client"
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Separator } from "@/components/ui/separator"
-import { CheckIcon } from "lucide-react"
-import { useSearchParams } from "next/navigation"
-import { JSX, SVGProps, useEffect, useState } from "react"
-import { z } from "zod"
-import { ConsultantProfile, ConsultantReview, User } from "@prisma/client"
-import { fetchConsultantDetails, fetchReviews, fetchUserDetails } from "@/hooks/useUserData"
-import { motion } from "framer-motion"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { CheckIcon } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { JSX, SVGProps, useEffect, useState } from "react";
+import { z } from "zod";
+import { ConsultantReview, User } from "@prisma/client";
+import { fetchConsultantDetails, fetchReviews, fetchUserDetails } from "@/hooks/useUserData";
+import { motion } from "framer-motion";
+import { TConsultantProfile } from "@/types/consultant";
 
 const eventSchemas = {
   consultation: z.object({
@@ -62,7 +63,7 @@ export default function CheckoutPage({ params }: { params: { appointmentType: st
   const [consultantId, setConsultantId] = useState<string | null>(null);
 
   const [userDetails, setUserDetails] = useState<User | null>(null);
-  const [consultantDetails, setConsultantDetails] = useState<ConsultantProfile | null>(null);
+  const [consultantDetails, setConsultantDetails] = useState<TConsultantProfile | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
 
 
@@ -205,10 +206,6 @@ export default function CheckoutPage({ params }: { params: { appointmentType: st
               <div>{consultantDetails?.experience || "Not specified"}</div>
             </div>
             <div className="flex items-center justify-between">
-              <div className="text-muted-foreground">Location</div>
-              <div>{consultantDetails?.location || "Not specified"}</div>
-            </div>
-            <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Description</div>
               <div className="text-right">
                 {consultantDetails?.description || "No description available"}
@@ -217,20 +214,20 @@ export default function CheckoutPage({ params }: { params: { appointmentType: st
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Tags</div>
               <div className="flex gap-2">
-                {consultantDetails?.tags.map((tag, index) => (
-                  <Badge key={index} variant="outline">{tag}</Badge>
+                {consultantDetails?.tags.map((tag) => (
+                  <Badge key={tag.id} variant="outline">{tag.name}</Badge>
                 ))}
               </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Domain</div>
-              <div>{consultantDetails?.domain || "Not specified"}</div>
+              <div>{consultantDetails?.domain?.name || "Not specified"}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Sub-Domains</div>
               <div className="flex gap-2">
-                {consultantDetails?.subDomains.map((subDomain, index) => (
-                  <Badge key={index} variant="outline">{subDomain}</Badge>
+                {consultantDetails?.subDomains.map((subDomain) => (
+                  <Badge key={subDomain.id} variant="outline">{subDomain.name}</Badge>
                 ))}
               </div>
             </div>
@@ -384,7 +381,7 @@ export default function CheckoutPage({ params }: { params: { appointmentType: st
         </div>
       </div>
     </motion.div>
-  )
+  );
 }
 
 function CreditCardIcon(props: JSX.IntrinsicAttributes & SVGProps<SVGSVGElement>) {
@@ -404,5 +401,5 @@ function CreditCardIcon(props: JSX.IntrinsicAttributes & SVGProps<SVGSVGElement>
       <rect width="20" height="14" x="2" y="5" rx="2" />
       <line x1="2" x2="22" y1="10" y2="10" />
     </svg>
-  )
+  );
 }

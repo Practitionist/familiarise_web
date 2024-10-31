@@ -286,8 +286,8 @@ model SlotOfAppointment {
   slotStartTimeInUTC DateTime @db.Timestamptz()
   slotEndTimeInUTC   DateTime @db.Timestamptz()
 
-  appointment      Appointment      @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  appointmentId    String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentId String
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -424,7 +424,6 @@ model Webinar {
   scheduledAt     DateTime
   endAt           DateTime
   status          WebinarStatus @default(SCHEDULED)
-  recordingUrl    String?
   feedbackSummary String?
   waitlist        Waitlist[]
 
@@ -432,6 +431,7 @@ model Webinar {
   webinarPlanId String
 
   appointment Appointment[]
+  meetingRoom MeetingRoom?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -488,6 +488,7 @@ model Class {
   classPlanId String
 
   appointment Appointment[]
+  meetingRoom MeetingRoom?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -591,6 +592,55 @@ model Waitlist {
   @@unique([userId, classId])
 }
 
+////////////////////////////////////////////// MEETINGS ////////////////////////////////////////////////////
+
+model MeetingRoom {
+  id         String   @id @default(cuid())
+  platform   Platform @default(STREAM)
+  meetingUrl String
+  meetingId  String?
+  passcode   String?
+  hostKeys   String[]
+
+  // For webinar we will have multiple recordings
+  // For class we will have single recording per class
+  // The recording feature is not available for consultation and subscription
+  // The recording feature will come soon for webinar and class
+  recordings Recording[]
+
+  webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarId String?  @unique
+
+  class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classId String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// New model for storing recording details
+model Recording {
+  id           String   @id @default(cuid())
+  title        String
+  recordingUrl String
+  duration     Int // in minutes
+  recordedAt   DateTime
+
+  meetingRoom   MeetingRoom @relation(fields: [meetingRoomId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingRoomId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum Platform {
+  ZOOM
+  GOOGLE_MEET
+  MICROSOFT_TEAMS
+  STREAM
+  CUSTOM
+}
+
 ////////////////////////////////////////////// PAYMENT STUFF ////////////////////////////////////////////////////
 
 model Payment {
@@ -617,8 +667,8 @@ model Payment {
 
 enum PaymentGateway {
   STRIPE
-  PAYPAL
   RAZORPAY
+  CARD
 }
 
 enum PaymentStatus {

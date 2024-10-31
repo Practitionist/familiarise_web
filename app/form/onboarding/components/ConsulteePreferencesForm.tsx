@@ -3,15 +3,28 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ConsulteeProfile, ConsulteeProfileSchema } from "@/schemas/UserSchema";
+import { ConsulteeProfile, ConsulteePreferences, PersonalInfoAndRole } from "@/schemas/UserSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React from "react";
 import { useForm, Controller } from "react-hook-form";
 
+type OnboardingFormData = PersonalInfoAndRole &
+  Partial<ConsulteeProfile> &
+  Partial<ConsulteePreferences> & {
+    preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
+    interests?: string[];
+    goals?: string[];
+  };
+
+interface FormValues extends Omit<OnboardingFormData, 'interests' | 'goals'> {
+  interests?: string;
+  goals?: string;
+}
+
 interface Props {
-  onNext: (data: Partial<ConsulteeProfile>) => void;
+  onNext: (data: Partial<OnboardingFormData>) => void;
   onBack: () => void;
-  initialData: Partial<ConsulteeProfile>;
+  initialData: Partial<OnboardingFormData>;
 }
 
 const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
@@ -20,13 +33,26 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
     handleSubmit,
     formState: { errors },
     control,
-  } = useForm<ConsulteeProfile>({
-    resolver: zodResolver(ConsulteeProfileSchema),
-    defaultValues: initialData,
+  } = useForm<FormValues>({
+    defaultValues: {
+      ...initialData,
+      preferredCommunicationMethod: initialData.preferredCommunicationMethod || "VIDEO",
+      interests: initialData.interests?.join(', '),
+      goals: initialData.goals?.join(', '),
+    },
   });
 
-  const onSubmit = (data: ConsulteeProfile) => {
-    onNext(data);
+  const onSubmit = (data: FormValues) => {
+    // Convert comma-separated strings to arrays
+    const interests = data.interests?.split(',').map(i => i.trim()).filter(Boolean) || [];
+    const goals = data.goals?.split(',').map(g => g.trim()).filter(Boolean) || [];
+
+    onNext({
+      ...data,
+      interests,
+      goals,
+      preferredCommunicationMethod: data.preferredCommunicationMethod || "VIDEO",
+    });
   };
 
   return (
@@ -36,8 +62,9 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
         <Controller
           name="preferredCommunicationMethod"
           control={control}
+          defaultValue="VIDEO"
           render={({ field }) => (
-            <Select onValueChange={field.onChange} value={field.value}>
+            <Select onValueChange={field.onChange} value={field.value || "VIDEO"}>
               <SelectTrigger>
                 <SelectValue placeholder="Select communication method" />
               </SelectTrigger>
@@ -74,15 +101,23 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
 
       <div className="space-y-2">
         <Label htmlFor="interests">Interests (comma-separated)</Label>
-        <Input id="interests" {...register("interests")} />
+        <Input 
+          id="interests" 
+          {...register("interests")} 
+          placeholder="e.g., Career Growth, Leadership, Technology"
+        />
         {errors.interests && (
           <p className="text-red-500">{errors.interests.message}</p>
         )}
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="goals">Goals</Label>
-        <Textarea id="goals" {...register("goals")} />
+        <Label htmlFor="goals">Goals (comma-separated)</Label>
+        <Textarea 
+          id="goals" 
+          {...register("goals")}
+          placeholder="e.g., Improve leadership skills, Learn new technologies"
+        />
         {errors.goals && (
           <p className="text-red-500">{errors.goals.message}</p>
         )}

@@ -4,7 +4,7 @@ import { useSession } from 'next-auth/react';
 import React, { useState } from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
 
-import { ClassPlan, ConsultantPlans, consultantPlansSchema, ConsultationPlan, SubscriptionPlan, WebinarPlan } from '@/schemas/PlanSchema';
+import { ClassPlan, ConsultantPlans, ConsultantPlansSchema, ConsultationPlan, SubscriptionPlan, WebinarPlan } from '@/schemas/PlanSchema';
 import ClassPlanForm from './components/ClassPlanForm';
 import ConsultationPlanForm from './components/ConsultationPlanForm';
 import SubscriptionPlanForm from './components/SubscriptionPlanForm';
@@ -17,13 +17,13 @@ const ConsultantPlansForm: React.FC = () => {
   const [formData, setFormData] = useState<Partial<ConsultantPlans>>({});
 
   const methods = useForm<ConsultantPlans>({
-    resolver: zodResolver(consultantPlansSchema),
+    resolver: zodResolver(ConsultantPlansSchema),
     defaultValues: formData,
   });
 
   const handleNext = async (stepData: Partial<ConsultantPlans>) => {
     console.log('handleNext called with data:', stepData);
-    setFormData(prevData => ({ ...prevData, ...stepData }));
+    setFormData((prevData: Partial<ConsultantPlans>) => ({ ...prevData, ...stepData }));
     setStep(prevStep => prevStep + 1);
   };
 
@@ -65,33 +65,33 @@ const ConsultantPlansForm: React.FC = () => {
       case 0:
         return (
           <ConsultationPlanForm
-            onNext={async (plans) => await handleNext({ consultationPlans: plans as ConsultationPlan[] })}
+            onNext={async (plans) => await handleNext({ consultationPlans: plans })}
             onBack={handleBack}
-            initialData={formData.consultationPlans as ConsultationPlan[] || []}
+            initialData={formData.consultationPlans || []}
           />
         );
       case 1:
         return (
           <SubscriptionPlanForm
-            onNext={async (plans) => await handleNext({ subscriptionPlans: plans as SubscriptionPlan[] })}
+            onNext={async (plans) => await handleNext({ subscriptionPlans: plans })}
             onBack={handleBack}
-            initialData={formData.subscriptionPlans as SubscriptionPlan[] || []}
+            initialData={formData.subscriptionPlans || []}
           />
         );
       case 2:
         return (
           <WebinarPlanForm
-            onNext={async (plans) => await handleNext({ webinarPlans: plans as WebinarPlan[] })}
+            onNext={async (plans) => await handleNext({ webinarPlans: plans })}
             onBack={handleBack}
-            initialData={formData.webinarPlans as WebinarPlan[] || []}
+            initialData={formData.webinarPlans || []}
           />
         );
       case 3:
         return (
           <ClassPlanForm
-            onSubmit={async (plans) => await handleSubmit({ ...formData, classPlans: plans as ClassPlan[] } as ConsultantPlans)}
+            onSubmit={async (plans) => await handleSubmit({ ...formData, classPlans: plans } as ConsultantPlans)}
             onBack={handleBack}
-            initialData={formData.classPlans as ClassPlan[] || []}
+            initialData={formData.classPlans || []}
           />
         );
       default:

@@ -27,6 +27,11 @@ export async function GET(
           },
         },
         waitlist: true,
+        meetingRoom: {
+          include: {
+            recordings: true,
+          },
+        },
       },
     });
 
@@ -63,7 +68,6 @@ export async function PUT(
         scheduledAt: body.scheduledAt,
         endAt: body.endAt,
         status: body.status,
-        recordingUrl: body.recordingUrl,
         feedbackSummary: body.feedbackSummary,
         webinarPlan: body.webinarPlanId ? {
           connect: { id: body.webinarPlanId }
@@ -89,6 +93,11 @@ export async function PUT(
           },
         },
         waitlist: true,
+        meetingRoom: {
+          include: {
+            recordings: true,
+          },
+        },
       },
     });
 
@@ -128,6 +137,11 @@ export async function DELETE(
           },
         },
         waitlist: true,
+        meetingRoom: {
+          include: {
+            recordings: true,
+          },
+        },
       },
     });
 

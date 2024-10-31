@@ -22,7 +22,7 @@ export async function POST(request: Request) {
 
     const classData = await prisma.class.findUnique({
       where: { id: classId },
-      include: { classPlans: true },
+      include: { classPlan: true },
     });
 
     if (!classData) {
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
       where: { classId: classId },
     });
 
-    if (participantCount >= classData.maxParticipants) {
+    if (participantCount >= classData.currentParticipants) {
       // If the class is full, add the user to the waitlist
       await prisma.waitlist.create({
         data: {
@@ -53,9 +53,8 @@ export async function POST(request: Request) {
         slotOfAppointment: {
           create: {
             consulteeProfile: { connect: { id: consultee.id } },
-            appointmentStartTimeInUTC: classData.startDate!,
-            appointmentEndTimeInUTC: classData.endDate!,
-            appointmentsType: 'CLASS',
+            slotStartTimeInUTC: classData.startDate!,
+            slotEndTimeInUTC: classData.endDate!,
           },
         },
       },
@@ -64,13 +63,13 @@ export async function POST(request: Request) {
     // Create a payment record (status will be updated after successful payment)
     const payment = await prisma.payment.create({
       data: {
-        amount: classData.classPlans.price,
+        amount: classData.classPlan?.price || 0,
         currency: 'USD', // Assuming USD, adjust as needed
         paymentStatus: 'PENDING',
         paymentMethod: 'STRIPE', // Default to Stripe, can be changed later
         paymentGateway: 'STRIPE', // Default to Stripe, can be changed later
         paymentIntent: '', // This will be updated after initiating payment
-        description: `Payment for Class: ${classData.title}`,
+        description: `Payment for Class ID: ${classId}`,
         user: { connect: { id: session.user.id } },
         appointment: { connect: { id: appointment.id } },
       },

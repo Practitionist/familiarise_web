@@ -156,7 +156,7 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
     },
     class: {
       include: {
-        classPlans: {
+        classPlan: {
           include: {
             consultantProfile: {
               include: {
@@ -226,73 +226,13 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
             slotsOfAppointment: true,
             consultantReviews: true,
           }
-        },
-        slotOfAvailabilityCustom: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                    phone: true,
-                    address: true,
-                    onlineStatus: true,
-                    currentTimezone: true,
-                    onboardingCompleted: true,
-                    role: true,
-                  }
-                },
-                reviews: true,
-                slotsOfAvailabilityWeekly: true,
-                slotsOfAvailabilityCustom: true,
-                consultationPlans: true,
-                subscriptionPlans: true,
-                webinarPlans: true,
-                classPlans: true,
-              }
-            }
-          }
-        },
-        slotOfAvailabilityWeekly: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                    phone: true,
-                    address: true,
-                    onlineStatus: true,
-                    currentTimezone: true,
-                    onboardingCompleted: true,
-                    role: true,
-                  }
-                },
-                reviews: true,
-                slotsOfAvailabilityWeekly: true,
-                slotsOfAvailabilityCustom: true,
-                consultationPlans: true,
-                subscriptionPlans: true,
-                webinarPlans: true,
-                classPlans: true,
-              }
-            }
-          }
-        },
+        }
       }
     }
   }
 }>;
 
 // Additional type definitions for better type checking and autocompletion
-export type TConsultantProfile = NonNullable<TAppointment['consultation']>['consultationPlan']['consultantProfile'];
-export type TConsulteeProfile = NonNullable<TAppointment['slotOfAppointment']>['consulteeProfile'];
 export type TConsultation = NonNullable<TAppointment['consultation']>;
 export type TSubscription = NonNullable<TAppointment['subscription']>;
 export type TWebinar = NonNullable<TAppointment['webinar']>;

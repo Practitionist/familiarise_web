@@ -12,25 +12,20 @@ export async function checkOverlappingAppointments(
     where: {
       AND: [
         {
-          OR: [
-            {
-              slotOfAvailabilityWeekly: {
-                consultantProfileId: consultantProfileId,
-              },
-            },
-            {
-              slotOfAvailabilityCustom: {
-                consultantProfileId: consultantProfileId,
-              },
-            },
-          ],
+          appointment: {
+            class: {
+              classPlan: {
+                consultantProfileId: consultantProfileId
+              }
+            }
+          }
         },
         {
           OR: [
             // Partial overlaps
             // Start within the range of an existing appointment 
             { 
-              appointmentStartTimeInUTC: {
+              slotStartTimeInUTC: {
                 gte: startTime,
                 lt: endTime,
               },
@@ -38,7 +33,7 @@ export async function checkOverlappingAppointments(
 
             // End within the range of an existing appointment
             {
-              appointmentEndTimeInUTC: {
+              slotEndTimeInUTC: {
                 gt: startTime,
                 lte: endTime,
               },
@@ -47,8 +42,8 @@ export async function checkOverlappingAppointments(
             // Completely encompasses the new appointment
             {
               AND: [
-                { appointmentStartTimeInUTC: { lte: startTime } },
-                { appointmentEndTimeInUTC: { gte: endTime } },
+                { slotStartTimeInUTC: { lte: startTime } },
+                { slotEndTimeInUTC: { gte: endTime } },
               ],
             },
           ],

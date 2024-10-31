@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ConsultationPlan, consultationPlanSchema } from "@/schemas/PlanSchema";
+import { ConsultationPlan, ConsultationPlanSchema } from "@/schemas/PlanSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React from "react";
 import { useFieldArray, useForm } from "react-hook-form";
@@ -14,7 +14,7 @@ interface Props {
 }
 
 const ConsultationPlanFormSchema = z.object({
-  plans: consultationPlanSchema.array().min(1, "At least one consultation plan is required"),
+  plans: ConsultationPlanSchema.array().min(1, "At least one consultation plan is required"),
 });
 
 type FormData = z.infer<typeof ConsultationPlanFormSchema>;
@@ -33,12 +33,16 @@ const ConsultationPlanForm: React.FC<Props> = ({
     resolver: zodResolver(ConsultationPlanFormSchema),
     defaultValues: { 
       plans: initialData.length ? initialData : [{
-        id: '',
+        id: crypto.randomUUID(),
+        title: "",
+        description: "",
         durationInHours: 1,
         price: 0,
-        consultantProfileId: null,
-        createdAt: new Date(),
-        updatedAt: new Date()
+        language: "English",
+        level: "Beginner",
+        prerequisites: "",
+        materialProvided: "",
+        learningOutcomes: []
       }]
     },
   });
@@ -48,7 +52,7 @@ const ConsultationPlanForm: React.FC<Props> = ({
     name: "plans",
   });
 
-  const onSubmit = (data: FormData) => {
+  const onSubmit = async (data: FormData) => {
     console.log("Form submitted:", data);
     try {
       onNext(data.plans);
@@ -67,14 +71,38 @@ const ConsultationPlanForm: React.FC<Props> = ({
       {fields.map((field, index) => (
         <div key={field.id} className="space-y-2 p-4 border rounded">
           <div className="space-y-2">
-            <Label htmlFor={`plans.${index}.duration`}>Duration (hours)</Label>
+            <Label htmlFor={`plans.${index}.title`}>Title</Label>
             <Input
-              id={`plans.${index}.duration`}
+              id={`plans.${index}.title`}
+              type="text"
+              {...register(`plans.${index}.title` as const)}
+            />
+            {errors.plans && errors.plans[index]?.title?.message && (
+              <p className="text-red-500">{errors.plans[index]?.title?.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor={`plans.${index}.description`}>Description</Label>
+            <Input
+              id={`plans.${index}.description`}
+              type="text"
+              {...register(`plans.${index}.description` as const)}
+            />
+            {errors.plans && errors.plans[index]?.description?.message && (
+              <p className="text-red-500">{errors.plans[index]?.description?.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor={`plans.${index}.durationInHours`}>Duration (hours)</Label>
+            <Input
+              id={`plans.${index}.durationInHours`}
               type="number"
               step="0.5"
               {...register(`plans.${index}.durationInHours` as const, { valueAsNumber: true })}
             />
-            {errors.plans?.[index]?.durationInHours && (
+            {errors.plans && errors.plans[index]?.durationInHours?.message && (
               <p className="text-red-500">{errors.plans[index]?.durationInHours?.message}</p>
             )}
           </div>
@@ -86,7 +114,7 @@ const ConsultationPlanForm: React.FC<Props> = ({
               type="number"
               {...register(`plans.${index}.price` as const, { valueAsNumber: true })}
             />
-            {errors.plans?.[index]?.price && (
+            {errors.plans && errors.plans[index]?.price?.message && (
               <p className="text-red-500">{errors.plans[index]?.price?.message}</p>
             )}
           </div>
@@ -103,12 +131,16 @@ const ConsultationPlanForm: React.FC<Props> = ({
         type="button"
         onClick={() =>
           append({
-            id: '',
+            id: crypto.randomUUID(),
+            title: "",
+            description: "",
             durationInHours: 1,
             price: 0,
-            consultantProfileId: null,
-            createdAt: new Date(),
-            updatedAt: new Date(),
+            language: "English",
+            level: "Beginner",
+            prerequisites: "",
+            materialProvided: "",
+            learningOutcomes: []
           })
         }
         variant="outline"

@@ -6,8 +6,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useEvents } from '@/hooks/useEvents';
-import { Class, Consultation, Subscription, User, Webinar } from '@prisma/client';
+import { useEvents, ConsultationWithPlan, SubscriptionWithPlan, WebinarWithPlan, ClassWithPlan } from '@/hooks/useEvents';
+import { User } from '@prisma/client';
 import { motion } from "framer-motion";
 
 interface HomeTabProps {
@@ -15,27 +15,15 @@ interface HomeTabProps {
   consulteeId: string;
 }
 
-type EventType = 
-  | (Consultation & { type: 'Consultation' })
-  | (Subscription & { type: 'Subscription' })
-  | (Webinar & { type: 'Webinar' })
-  | (Class & { type: 'Class' });
-
-// Simulated function to fetch trending events
-// TODO: Replace with actual API call
-const fetchTrendingEvents = (): EventType[] => {
-  // This is a placeholder. In a real application, you would fetch this data from an API
-  return [
-    { type: 'Webinar', title: 'Introduction to AI', scheduledAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
-    { type: 'Class', title: 'Advanced JavaScript', startDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) },
-    { type: 'Consultation', title: 'Career Guidance', preferredDateTime: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) },
-  ] as EventType[];
-};
+type EventWithType = 
+  | (ConsultationWithPlan & { type: 'Consultation' })
+  | (SubscriptionWithPlan & { type: 'Subscription' })
+  | (WebinarWithPlan & { type: 'Webinar' })
+  | (ClassWithPlan & { type: 'Class' });
 
 export default function HomeTab({ userDetails, consulteeId }: HomeTabProps) {
   const { consultations, subscriptions, webinars, classes, isLoading, error } = useEvents(consulteeId);
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const trendingEvents = fetchTrendingEvents();
 
   if (!userDetails || isLoading) {
     return <div>Loading user data...</div>;
@@ -46,7 +34,7 @@ export default function HomeTab({ userDetails, consulteeId }: HomeTabProps) {
   }
 
   // Combine all event types into a single array and sort by date
-  const allEvents: EventType[] = [
+  const allEvents: EventWithType[] = [
     ...consultations.map(c => ({ ...c, type: 'Consultation' as const })),
     ...subscriptions.map(s => ({ ...s, type: 'Subscription' as const })),
     ...webinars.map(w => ({ ...w, type: 'Webinar' as const })),
@@ -142,28 +130,13 @@ export default function HomeTab({ userDetails, consulteeId }: HomeTabProps) {
               </div>
             </CardContent>
           </Card>
-          <Card className="w-full mt-6 rounded-lg shadow-lg bg-white">
-            <CardHeader>
-              <CardTitle className="text-xl font-semibold">Trending Events</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {trendingEvents.map((event, index) => (
-                  <TrendingEventCard key={index} event={event} />
-                ))}
-                {trendingEvents.length === 0 && (
-                  <p className="text-center text-gray-500">No trending events available</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
         </div>
       </div>
     </div>
   );
 }
 
-function EventCard({ event }: { event: EventType }) {
+function EventCard({ event }: { event: EventWithType }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -189,31 +162,7 @@ function EventCard({ event }: { event: EventType }) {
   )
 }
 
-function TrendingEventCard({ event }: { event: EventType }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.1 }}
-    >
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg font-semibold">{getEventTitle(event)}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm text-muted-foreground">{new Date(getEventDate(event)).toLocaleString()}</div>
-            </div>
-            <Button variant="outline" size="sm">Register</Button>
-          </div>
-        </CardContent>
-      </Card>
-    </motion.div>
-  )
-}
-
-function getEventDate(event: EventType): string {
+function getEventDate(event: EventWithType): string {
   switch (event.type) {
     case 'Consultation':
       return event.preferredDateTime?.toString() || "Unknown";
@@ -226,26 +175,27 @@ function getEventDate(event: EventType): string {
   }
 }
 
-function getEventStatus(event: EventType): string {
+function getEventStatus(event: EventWithType): string {
   switch (event.type) {
     case 'Consultation':
     case 'Subscription':
-      return event.appointmentRequestStatus || "Pending";
+      return event.requestStatus;
     case 'Webinar':
+      return event.status;
     case 'Class':
-      const eventDate = getEventDate(event);
-      return new Date(eventDate) > new Date() ? "Upcoming" : "Completed";
+      return event.status;
   }
 }
 
-function getEventTitle(event: EventType): string {
+function getEventTitle(event: EventWithType): string {
   switch (event.type) {
     case 'Consultation':
-      return `Consultation`;
+      return event.consultationPlan.title;
     case 'Subscription':
-      return `Subscription`;
+      return event.plan.title;
     case 'Webinar':
+      return event.webinarPlan.title;
     case 'Class':
-      return event.title || event.type;
+      return event.classPlan.title;
   }
 }
