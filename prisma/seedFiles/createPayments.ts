@@ -10,9 +10,37 @@ export async function createPayments(users: UserWithProfiles[]) {
   const discountCodes = await prisma.discountCode.findMany();
   const appointments = await prisma.appointment.findMany({
     where: {
-      payment: null // Only get appointments without payments
+      payment: null, // Only get appointments without payments
+      OR: [
+        { consultation: { requestStatus: "APPROVED" } },
+        { subscription: { requestStatus: "APPROVED" } },
+        { webinar: { status: "SCHEDULED" } },
+        { class: { status: "SCHEDULED" } },
+      ]
     },
-    take: NUM_PAYMENTS, // Limit to the number of payments we want to create
+    include: {
+      consultation: {
+        include: {
+          consultationPlan: true,
+        },
+      },
+      subscription: {
+        include: {
+          plan: true,
+        },
+      },
+      webinar: {
+        include: {
+          webinarPlan: true,
+        },
+      },
+      class: {
+        include: {
+          classPlan: true,
+        },
+      },
+    },
+    take: NUM_PAYMENTS,
   });
 
   for (let i = 0; i < appointments.length; i++) {
@@ -20,20 +48,45 @@ export async function createPayments(users: UserWithProfiles[]) {
     const appointment = appointments[i];
 
     try {
+      // Determine the amount based on the appointment type and plan
+      let amount = 0;
+      if (appointment.consultation?.consultationPlan) {
+        amount = appointment.consultation.consultationPlan.price;
+      } else if (appointment.subscription?.plan) {
+        amount = appointment.subscription.plan.price;
+      } else if (appointment.webinar?.webinarPlan) {
+        amount = appointment.webinar.webinarPlan.price;
+      } else if (appointment.class?.classPlan) {
+        amount = appointment.class.classPlan.price;
+      }
+
+      // Apply discount if available
+      const useDiscount = faker.datatype.boolean() && discountCodes.length > 0;
+      const discountCode = useDiscount ? faker.helpers.arrayElement(discountCodes) : null;
+      if (discountCode) {
+        switch (discountCode.discountType) {
+          case "PERCENTAGE":
+            amount = Math.round(amount * (1 - discountCode.discountValue / 100));
+            break;
+          case "FIXED_AMOUNT":
+            amount = Math.max(0, amount - discountCode.discountValue);
+            break;
+          // FREE_SHIPPING doesn't affect the amount in this context
+        }
+      }
+
       const paymentData: Prisma.PaymentCreateInput = {
         user: { connect: { id: user.id } },
-        amount: faker.number.int({ min: 1000, max: 100000 }), // Amount in cents
+        amount: amount,
         currency: faker.helpers.arrayElement(['USD', 'EUR', 'GBP']),
         description: faker.lorem.sentence(),
         receiptUrl: faker.internet.url(),
-        paymentMethod: faker.helpers.arrayElement(['credit_card', 'paypal', 'bank_transfer']),
+        paymentMethod: faker.helpers.arrayElement(['credit_card', 'debit_card', 'bank_transfer', 'wallet']),
         paymentIntent: faker.string.uuid(),
         paymentGateway: faker.helpers.arrayElement(Object.values(PaymentGateway)),
         paymentStatus: faker.helpers.arrayElement(Object.values(PaymentStatus)),
         appointment: { connect: { id: appointment.id } },
-        ...(faker.datatype.boolean() && discountCodes.length > 0
-          ? { discountCode: { connect: { id: faker.helpers.arrayElement(discountCodes).id } } }
-          : {})
+        ...(discountCode ? { discountCode: { connect: { id: discountCode.id } } } : {})
       };
 
       await prisma.payment.create({ 

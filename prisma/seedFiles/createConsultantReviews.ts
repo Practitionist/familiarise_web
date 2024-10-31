@@ -5,27 +5,97 @@ import { UserWithProfiles } from "./createUsers";
 export async function createConsultantReviews(consultants: UserWithProfiles[], consultees: UserWithProfiles[]) {
   console.log(`Creating consultant reviews...`);
   let totalReviews = 0;
+
   for (const consultant of consultants) {
-    if (!consultant.consultantProfile) continue;
+    if (!consultant.consultantProfile) {
+      console.warn(`Skipping consultant ${consultant.id} - no profile found`);
+      continue;
+    }
 
-    const numReviews = faker.number.int({ min: 1, max: 5 });
-    for (let i = 0; i < numReviews; i++) {
-      const consultee = faker.helpers.arrayElement(consultees);
-      if (!consultee.consulteeProfile) continue;
+    try {
+      // Get completed appointments for this consultant
+      const completedAppointments = await prisma.appointment.findMany({
+        where: {
+          OR: [
+            {
+              consultation: {
+                consultationPlan: {
+                  consultantProfile: { id: consultant.consultantProfile.id }
+                },
+                requestStatus: "APPROVED"
+              }
+            },
+            {
+              subscription: {
+                plan: {
+                  consultantProfile: { id: consultant.consultantProfile.id }
+                },
+                requestStatus: "APPROVED"
+              }
+            },
+            {
+              webinar: {
+                webinarPlan: {
+                  consultantProfile: { id: consultant.consultantProfile.id }
+                },
+                status: "COMPLETED"
+              }
+            },
+            {
+              class: {
+                classPlan: {
+                  consultantProfile: { id: consultant.consultantProfile.id }
+                },
+                status: "COMPLETED"
+              }
+            }
+          ]
+        },
+        include: {
+          slotOfAppointment: {
+            include: {
+              consulteeProfile: true
+            }
+          }
+        }
+      });
 
-      try {
+      // Create reviews for a random subset of completed appointments
+      const numReviews = faker.number.int({ min: 1, max: Math.min(5, completedAppointments.length) });
+      const appointmentsToReview = faker.helpers.arrayElements(completedAppointments, numReviews);
+
+      for (const appointment of appointmentsToReview) {
+        const consulteeProfile = appointment.slotOfAppointment[0]?.consulteeProfile;
+        if (!consulteeProfile) continue;
+
+        const rating = faker.number.int({ min: 1, max: 5 });
+        
         await prisma.consultantReview.create({
           data: {
-            rating: faker.number.int({ min: 1, max: 5 }),
+            rating: rating,
             reviewDescription: faker.lorem.paragraph(),
             consultantProfile: { connect: { id: consultant.consultantProfile.id } },
-            consulteeProfile: { connect: { id: consultee.consulteeProfile.id } },
+            consulteeProfile: { connect: { id: consulteeProfile.id } },
           },
         });
+
+        // Update consultant's average rating
+        const allReviews = await prisma.consultantReview.findMany({
+          where: { consultantProfileId: consultant.consultantProfile.id },
+          select: { rating: true },
+        });
+
+        const averageRating = allReviews.reduce((acc, review) => acc + review.rating, 0) / allReviews.length;
+
+        await prisma.consultantProfile.update({
+          where: { id: consultant.consultantProfile.id },
+          data: { rating: averageRating },
+        });
+
         totalReviews++;
-      } catch (error) {
-        console.error(`Failed to create review for consultant ${consultant.id}:`, error);
       }
+    } catch (error) {
+      console.error(`Failed to create reviews for consultant ${consultant.id}:`, error);
     }
   }
   console.log(`Created ${totalReviews} consultant reviews`);

@@ -13,9 +13,11 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
     }
     try {
       const topics = await prisma.topic.findMany({ take: 5 });
-      await prisma.classPlan.createMany({
-        data: [
-          {
+      
+      // Create class plans with proper data structure
+      const classPlans = await Promise.all([
+        prisma.classPlan.create({
+          data: {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Beginner Class",
             description: faker.lorem.paragraph(),
@@ -31,8 +33,23 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             materialProvided: faker.lorem.sentence(),
             learningOutcomes: faker.helpers.arrayElements(["Understand basic concepts", "Gain practical skills", "Improve problem-solving abilities"], { min: 1, max: 3 }),
             certificateProvided: faker.datatype.boolean(),
+            topics: {
+              connect: faker.helpers.arrayElements(topics, { min: 1, max: 3 }).map(topic => ({ id: topic.id })),
+            },
+            classContents: {
+              create: Array.from({ length: faker.number.int({ min: 3, max: 6 }) }, (_, index) => ({
+                title: faker.lorem.words(3),
+                description: faker.lorem.paragraph(),
+                contentType: faker.helpers.arrayElement(["Video", "Text", "Quiz", "Assignment"]),
+                contentUrl: faker.internet.url(),
+                order: index + 1,
+                hoursAllotted: faker.number.float({ min: 1, max: 5, multipleOf: 0.5 }),
+              })),
+            },
           },
-          {
+        }),
+        prisma.classPlan.create({
+          data: {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Intermediate Class",
             description: faker.lorem.paragraph(),
@@ -48,8 +65,23 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             materialProvided: faker.lorem.sentence(),
             learningOutcomes: faker.helpers.arrayElements(["Master advanced techniques", "Develop strategic thinking", "Enhance decision-making skills"], { min: 1, max: 3 }),
             certificateProvided: faker.datatype.boolean(),
+            topics: {
+              connect: faker.helpers.arrayElements(topics, { min: 1, max: 3 }).map(topic => ({ id: topic.id })),
+            },
+            classContents: {
+              create: Array.from({ length: faker.number.int({ min: 4, max: 8 }) }, (_, index) => ({
+                title: faker.lorem.words(3),
+                description: faker.lorem.paragraph(),
+                contentType: faker.helpers.arrayElement(["Video", "Text", "Quiz", "Assignment"]),
+                contentUrl: faker.internet.url(),
+                order: index + 1,
+                hoursAllotted: faker.number.float({ min: 1, max: 5, multipleOf: 0.5 }),
+              })),
+            },
           },
-          {
+        }),
+        prisma.classPlan.create({
+          data: {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Advanced Class",
             description: faker.lorem.paragraph(),
@@ -65,24 +97,11 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             materialProvided: faker.lorem.sentence(),
             learningOutcomes: faker.helpers.arrayElements(["Develop expertise in the field", "Create comprehensive strategies", "Implement best practices"], { min: 1, max: 3 }),
             certificateProvided: faker.datatype.boolean(),
-          },
-        ],
-      });
-
-      // Add topics and class contents to each class plan
-      const classPlans = await prisma.classPlan.findMany({
-        where: { consultantProfileId: consultant.consultantProfile.id },
-      });
-
-      for (const plan of classPlans) {
-        await prisma.classPlan.update({
-          where: { id: plan.id },
-          data: {
             topics: {
               connect: faker.helpers.arrayElements(topics, { min: 1, max: 3 }).map(topic => ({ id: topic.id })),
             },
             classContents: {
-              create: Array.from({ length: faker.number.int({ min: 3, max: 6 }) }, (_, index) => ({
+              create: Array.from({ length: faker.number.int({ min: 5, max: 10 }) }, (_, index) => ({
                 title: faker.lorem.words(3),
                 description: faker.lorem.paragraph(),
                 contentType: faker.helpers.arrayElement(["Video", "Text", "Quiz", "Assignment"]),
@@ -92,8 +111,8 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
               })),
             },
           },
-        });
-      }
+        }),
+      ]);
     } catch (error) {
       console.error(
         `Failed to create class plans for consultant ${consultant.id}:`,
