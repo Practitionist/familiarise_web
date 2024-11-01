@@ -4,10 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params, searchParams }: {
-    params: { classId: string },
-    searchParams: { [key: string]: string | string[] | undefined }
-  }
+  { params }: { params: { classId: string } }
 ) {
   try {
     const { classId } = params;
@@ -48,10 +45,7 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params, searchParams }: {
-    params: { classId: string },
-    searchParams: { [key: string]: string | string[] | undefined }
-  }
+  { params }: { params: { classId: string } }
 ) {
   try {
     const { classId } = params;
@@ -95,10 +89,7 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params, searchParams }: {
-    params: { classId: string },
-    searchParams: { [key: string]: string | string[] | undefined }
-  }
+  { params }: { params: { classId: string } }
 ) {
   try {
     const { classId } = params;
