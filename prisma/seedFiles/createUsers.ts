@@ -26,9 +26,17 @@ const NUM_CONSULTEES = 60;
 
 // Predefined domains, subdomains, and tags
 const domains = [
-  { name: "Technology", subdomains: ["Web Development", "Mobile Development", "Data Science"], tags: ["JavaScript", "Python", "React", "Machine Learning"] },
-  { name: "Business", subdomains: ["Marketing", "Finance", "Management"], tags: ["Digital Marketing", "Financial Planning", "Leadership"] },
-  { name: "Health", subdomains: ["Nutrition", "Fitness", "Mental Health"], tags: ["Diet", "Yoga", "Meditation"] },
+  { name: "Technology", subdomains: ["Web Development", "Mobile Development", "Data Science", "Cloud Computing", "Cybersecurity", "DevOps", "Artificial Intelligence", "Blockchain"], tags: ["JavaScript", "Python", "React", "Machine Learning", "AWS", "Docker", "Kubernetes", "Node.js", "TypeScript", "Angular", "Vue.js", "TensorFlow", "Cyber Defense", "Cloud Architecture", "Smart Contracts"] },
+  
+  { name: "Business", subdomains: ["Marketing", "Finance", "Management", "Entrepreneurship", "Sales", "Operations", "Human Resources", "Strategy", "Supply Chain"], tags: ["Digital Marketing", "Financial Planning", "Leadership", "Business Analytics", "Project Management", "Risk Management", "Strategic Planning", "Brand Development", "Market Research", "Investment Strategy", "Team Building", "Change Management"] },
+  
+  { name: "Health", subdomains: ["Nutrition", "Fitness", "Mental Health", "Preventive Care", "Physical Therapy", "Sports Medicine", "Holistic Health", "Wellness Coaching"], tags: ["Diet", "Yoga", "Meditation", "Stress Management", "Exercise Science", "Mindfulness", "Sports Performance", "Injury Prevention", "Healthy Lifestyle", "Weight Management", "Mental Wellness"] },
+  
+  { name: "Education", subdomains: ["K-12 Education", "Higher Education", "Special Education", "Online Learning", "Educational Technology", "Curriculum Development"], tags: ["Teaching Methods", "E-Learning", "Educational Psychology", "Instructional Design", "Student Assessment", "Learning Management Systems", "STEM Education"] },
+  
+  { name: "Creative Arts", subdomains: ["Graphic Design", "Digital Art", "Photography", "Video Production", "Animation", "UI/UX Design"], tags: ["Adobe Creative Suite", "Visual Design", "Motion Graphics", "Color Theory", "Typography", "Digital Photography", "Video Editing", "User Interface Design"] },
+  
+  { name: "Personal Development", subdomains: ["Career Coaching", "Life Coaching", "Communication Skills", "Time Management", "Personal Finance"], tags: ["Goal Setting", "Public Speaking", "Emotional Intelligence", "Productivity", "Work-Life Balance", "Personal Branding", "Networking Skills"] }
 ];
 
 async function createDomainsSubdomainsTags() {
