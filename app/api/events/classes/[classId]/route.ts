@@ -1,10 +1,13 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
-  request: Request,
-  { params }: { params: { classId: string } }
+  request: NextRequest,
+  { params, searchParams }: {
+    params: { classId: string },
+    searchParams: { [key: string]: string | string[] | undefined }
+  }
 ) {
   try {
     const { classId } = params;
@@ -44,8 +47,11 @@ export async function GET(
 }
 
 export async function PUT(
-  request: Request,
-  { params }: { params: { classId: string } }
+  request: NextRequest,
+  { params, searchParams }: {
+    params: { classId: string },
+    searchParams: { [key: string]: string | string[] | undefined }
+  }
 ) {
   try {
     const { classId } = params;
@@ -88,8 +94,11 @@ export async function PUT(
 }
 
 export async function DELETE(
-  request: Request,
-  { params }: { params: { classId: string } }
+  request: NextRequest,
+  { params, searchParams }: {
+    params: { classId: string },
+    searchParams: { [key: string]: string | string[] | undefined }
+  }
 ) {
   try {
     const { classId } = params;
