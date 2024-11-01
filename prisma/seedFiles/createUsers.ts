@@ -49,19 +49,20 @@ async function createDomainsSubdomainsTags() {
 }
 
 async function createConsultantProfileData() {
-  const domain = await prisma.domain.findFirst({
+  // Get all domains with their subdomains and tags
+  const allDomains = await prisma.domain.findMany({
     include: {
       subDomains: true,
       tags: true,
     },
-    orderBy: {
-      id: 'asc',
-    },
   });
 
-  if (!domain) {
-    throw new Error("No domain found");
+  if (allDomains.length === 0) {
+    throw new Error("No domains found");
   }
+
+  // Randomly select a domain
+  const domain = faker.helpers.arrayElement(allDomains);
 
   const subDomains = faker.helpers.arrayElements(domain.subDomains, { min: 1, max: 2 });
   const tags = faker.helpers.arrayElements(domain.tags, { min: 2, max: 4 });

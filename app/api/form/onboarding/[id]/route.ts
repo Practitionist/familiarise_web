@@ -205,6 +205,15 @@ async function updateConsulteeProfile(id: string, body: any) {
     throw new Error("Missing consultee profile data");
   }
 
+  // Convert arrays to comma-separated strings
+  const interests = Array.isArray(profileData.interests) 
+    ? profileData.interests.join(', ')
+    : profileData.interests || "";
+    
+  const goals = Array.isArray(profileData.goals)
+    ? profileData.goals.join(', ')
+    : profileData.goals || "";
+
   const consulteeProfile = await prisma.consulteeProfile.upsert({
     where: { userId: id },
     create: {
@@ -215,8 +224,8 @@ async function updateConsulteeProfile(id: string, body: any) {
       preferredCommunicationMethod: (profileData.preferredCommunicationMethod || "VIDEO") as ConsultationMode,
       preferredLanguage: profileData.preferredLanguage || "",
       specialRequirements: profileData.specialRequirements || "",
-      interests: profileData.interests || "",
-      goals: profileData.goals || "",
+      interests: interests,
+      goals: goals,
     },
     update: {
       education: profileData.education || "",
@@ -225,8 +234,8 @@ async function updateConsulteeProfile(id: string, body: any) {
       preferredCommunicationMethod: (profileData.preferredCommunicationMethod || "VIDEO") as ConsultationMode,
       preferredLanguage: profileData.preferredLanguage || "",
       specialRequirements: profileData.specialRequirements || "",
-      interests: profileData.interests || "",
-      goals: profileData.goals || "",
+      interests: interests,
+      goals: goals,
     },
   });
 

@@ -16,17 +16,6 @@ export async function GET(
 
     const user = await prisma.user.findUnique({
       where: { id: params.id },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        image: true,
-        phone: true,
-        address: true,
-        onboardingCompleted: true,
-        role: true,
-        currentTimezone: true,
-      },
     });
 
     if (!user) {

@@ -54,7 +54,7 @@ const apiEndpoints = {
   class: (classId: string) => `/api/events/classes/${classId}`,
 };
 
-export default function CheckoutPage({ params }: { params: { appointmentType: string } }) {
+export default function CheckoutPage({ params }: Readonly<{ params: { appointmentType: string } }>) {
   const searchParams = useSearchParams();
   const { appointmentType } = params;
   const [eventData, setEventData] = useState(null);
