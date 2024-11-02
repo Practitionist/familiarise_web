@@ -1,5 +1,12 @@
-import React from 'react';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import React from "react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 
 interface Approval {
@@ -14,7 +21,9 @@ interface ApprovalsTableProps {
   approvals: Approval[];
 }
 
-export const ApprovalsTable: React.FC<ApprovalsTableProps> = ({ approvals }) => (
+export const ApprovalsTable: React.FC<ApprovalsTableProps> = ({
+  approvals,
+}) => (
   <Table>
     <TableHeader>
       <TableRow>

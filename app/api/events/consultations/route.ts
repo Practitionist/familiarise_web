@@ -5,46 +5,46 @@ import { NextResponse } from "next/server";
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const consulteeId = searchParams.get('consulteeId');
-    const consultantId = searchParams.get('consultantId');
+    const consulteeId = searchParams.get("consulteeId");
+    const consultantId = searchParams.get("consultantId");
 
     let consultations;
 
     if (consulteeId) {
       consultations = await prisma.consultation.findMany({
         where: {
-          requestedBy: { id: consulteeId }
+          requestedBy: { id: consulteeId },
         },
         include: {
           consultationPlan: true,
           requestedBy: true,
           appointment: {
             include: {
-              slotOfAppointment: true
-            }
-          }
-        }
+              slotOfAppointment: true,
+            },
+          },
+        },
       });
     } else if (consultantId) {
       consultations = await prisma.consultation.findMany({
         where: {
           consultationPlan: {
-            consultantProfile: { id: consultantId }
-          }
+            consultantProfile: { id: consultantId },
+          },
         },
         include: {
           consultationPlan: {
             include: {
-              consultantProfile: true
-            }
+              consultantProfile: true,
+            },
           },
           requestedBy: true,
           appointment: {
             include: {
-              slotOfAppointment: true
-            }
-          }
-        }
+              slotOfAppointment: true,
+            },
+          },
+        },
       });
     } else {
       consultations = await prisma.consultation.findMany({
@@ -53,10 +53,10 @@ export async function GET(request: Request) {
           requestedBy: true,
           appointment: {
             include: {
-              slotOfAppointment: true
-            }
-          }
-        }
+              slotOfAppointment: true,
+            },
+          },
+        },
       });
     }
 
@@ -65,7 +65,7 @@ export async function GET(request: Request) {
     console.error("Error fetching consultations:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching consultations" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -78,13 +78,13 @@ export async function POST(request: Request) {
     const isOverlapping = await checkOverlappingAppointments(
       new Date(body.startTime),
       new Date(body.endTime),
-      body.consultantProfileId
+      body.consultantProfileId,
     );
 
     if (isOverlapping) {
       return NextResponse.json(
         { error: "This time slot is already booked" },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
@@ -132,7 +132,7 @@ export async function POST(request: Request) {
     console.error("Error creating consultation:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the consultation" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

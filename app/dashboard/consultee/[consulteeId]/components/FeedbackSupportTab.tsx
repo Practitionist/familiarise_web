@@ -1,23 +1,35 @@
-"use client"
+"use client";
 
-import React from 'react';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
-import { Input } from "@/components/ui/input"
+import React from "react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 
 export default function FeedbackSupportTab() {
   return (
     <div className="min-h-[calc(100vh-200px)] space-y-6 overflow-y-auto">
       <h2 className="text-3xl font-bold mb-6">Feedback & Support</h2>
-      
+
       <Card className="bg-white">
         <CardHeader>
           <CardTitle>Provide Feedback</CardTitle>
-          <CardDescription>We value your opinion and would love to hear from you</CardDescription>
+          <CardDescription>
+            We value your opinion and would love to hear from you
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <Textarea placeholder="Type your feedback here..." className="min-h-[150px] bg-gray-200" />
+          <Textarea
+            placeholder="Type your feedback here..."
+            className="min-h-[150px] bg-gray-200"
+          />
         </CardContent>
         <CardFooter>
           <Button className="bg-black text-white">Submit Feedback</Button>
@@ -27,12 +39,17 @@ export default function FeedbackSupportTab() {
       <Card className="bg-white">
         <CardHeader>
           <CardTitle>Contact Support</CardTitle>
-          <CardDescription>Need help? Our support team is here for you</CardDescription>
+          <CardDescription>
+            Need help? Our support team is here for you
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <form className="space-y-4">
             <Input placeholder="Subject" />
-            <Textarea placeholder="Describe your issue..." className="min-h-[150px] bg-gray-200" />
+            <Textarea
+              placeholder="Describe your issue..."
+              className="min-h-[150px] bg-gray-200"
+            />
           </form>
         </CardContent>
         <CardFooter>

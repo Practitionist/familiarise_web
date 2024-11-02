@@ -1,7 +1,13 @@
-'use client';
+"use client";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 export function ClassNotFound() {
   return (
@@ -12,7 +18,8 @@ export function ClassNotFound() {
         </CardHeader>
         <CardContent>
           <p className="text-muted-foreground">
-            Sorry, the class you're looking for doesn't exist or may have been removed.
+            Sorry, the class you're looking for doesn't exist or may have been
+            removed.
           </p>
         </CardContent>
         <CardFooter className="justify-center">

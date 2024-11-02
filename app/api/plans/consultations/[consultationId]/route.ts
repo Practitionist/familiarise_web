@@ -4,8 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ consultationId: string }> }) {
-
+  { params }: { params: Promise<{ consultationId: string }> },
+) {
   try {
     const { consultationId } = await params;
     const consultationPlan = await prisma.consultationPlan.findUniqueOrThrow({
@@ -24,21 +24,21 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Consultation plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
     console.error("Error fetching consultation plan:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the consultation plan" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ consultationId: string }> }) {
-
+  { params }: { params: Promise<{ consultationId: string }> },
+) {
   try {
     const { consultationId } = await params;
     const body = await request.json();
@@ -47,14 +47,14 @@ export async function PUT(
     if (body.durationInHours && body.durationInHours <= 0) {
       return NextResponse.json(
         { error: "Duration must be a positive number" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (body.price && body.price <= 0) {
       return NextResponse.json(
         { error: "Price must be a positive number" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -70,9 +70,11 @@ export async function PUT(
         prerequisites: body.prerequisites,
         materialProvided: body.materialProvided,
         learningOutcomes: body.learningOutcomes,
-        consultantProfile: body.consultantProfileId ? {
-          connect: { id: body.consultantProfileId },
-        } : undefined,
+        consultantProfile: body.consultantProfileId
+          ? {
+              connect: { id: body.consultantProfileId },
+            }
+          : undefined,
       },
       include: {
         consultantProfile: true,
@@ -88,21 +90,21 @@ export async function PUT(
     ) {
       return NextResponse.json(
         { error: "Consultation plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
     console.error("Error updating consultation plan:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the consultation plan" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ consultationId: string }> }) {
-
+  { params }: { params: Promise<{ consultationId: string }> },
+) {
   try {
     const { consultationId } = await params;
 
@@ -113,8 +115,11 @@ export async function DELETE(
 
     if (associatedConsultations.length > 0) {
       return NextResponse.json(
-        { error: "Cannot delete consultation plan with associated consultations" },
-        { status: 400 }
+        {
+          error:
+            "Cannot delete consultation plan with associated consultations",
+        },
+        { status: 400 },
       );
     }
 
@@ -133,13 +138,13 @@ export async function DELETE(
     ) {
       return NextResponse.json(
         { error: "Consultation plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
     console.error("Error deleting consultation plan:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the consultation plan" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

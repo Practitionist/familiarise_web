@@ -57,7 +57,6 @@ import { useSession } from "next-auth/react";
 import Image from "next/image";
 import { useState } from "react";
 
-
 export default function Profile() {
   const { data: session } = useSession();
   const [name, setName] = useState(session?.user?.name ?? "");
@@ -79,7 +78,7 @@ export default function Profile() {
       if (res.ok) {
         // Profile updated successfully
         const updatedUser: User = await res.json();
-        
+
         // Update the UI with new user data (optional)
         setName(updatedUser.name ?? "");
         setPhone(updatedUser.phone ?? "");
@@ -90,8 +89,7 @@ export default function Profile() {
           title: "Profile Updated",
           description: "Your profile has been updated successfully.",
           variant: "default",
-        })
-        
+        });
       } else {
         // Handle error
         console.error("Failed to update profile");
@@ -182,18 +180,14 @@ export default function Profile() {
                   <MailIcon className="w-5 h-5 text-gray-400 mr-2" />
                   <div>
                     <p className="text-sm font-medium">Address</p>
-                    <p className="text-sm">
-                      {session?.user?.address || ""}
-                    </p>
+                    <p className="text-sm">{session?.user?.address || ""}</p>
                   </div>
                 </div>
                 <div className="flex items-center">
                   <PhoneIcon className="w-5 h-5 text-gray-400 mr-2" />
                   <div>
                     <p className="text-sm font-medium">Phone</p>
-                    <p className="text-sm">
-                      {session?.user?.phone ?? ""}
-                    </p>
+                    <p className="text-sm">{session?.user?.phone ?? ""}</p>
                   </div>
                 </div>
               </div>

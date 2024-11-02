@@ -4,10 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  ConsulteeProfile,
-  ConsulteeProfileSchema,
-} from "@/schemas/UserSchema";
+import { ConsulteeProfile, ConsulteeProfileSchema } from "@/schemas/UserSchema";
 import { Textarea } from "@/components/ui/textarea";
 
 interface Props {
@@ -67,11 +64,7 @@ const ConsulteeProfileForm: React.FC<Props> = ({
         <Button type="button" onClick={onBack} variant="outline">
           Back
         </Button>
-        <Button 
-          type="submit" 
-          variant="night"
-          disabled={isSubmitting}
-        >
+        <Button type="submit" variant="night" disabled={isSubmitting}>
           {isSubmitting ? "Submitting..." : "Next"}
         </Button>
       </div>

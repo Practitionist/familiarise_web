@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 interface Activity {
@@ -12,7 +12,9 @@ interface ClientActivityProps {
   activities: Activity[];
 }
 
-export const ClientActivity: React.FC<ClientActivityProps> = ({ activities }) => (
+export const ClientActivity: React.FC<ClientActivityProps> = ({
+  activities,
+}) => (
   <div className="space-y-4">
     {activities.map((activity) => (
       <div key={activity.id} className="flex items-center justify-between">

@@ -1,7 +1,11 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ConsultantProfile, PersonalInfoAndRole, PreferredSchedule } from "@/schemas/UserSchema";
+import {
+  ConsultantProfile,
+  PersonalInfoAndRole,
+  PreferredSchedule,
+} from "@/schemas/UserSchema";
 import { Domain, SubDomain, Tag } from "@/schemas/PlanSchema";
 
 type OnboardingFormData = PersonalInfoAndRole &
@@ -13,9 +17,23 @@ type OnboardingFormData = PersonalInfoAndRole &
     subDomains?: SubDomain[];
     tags?: Tag[];
     weeklySlots?: {
-      dayOfWeekforStartTimeInUTC: "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
+      dayOfWeekforStartTimeInUTC:
+        | "MONDAY"
+        | "TUESDAY"
+        | "WEDNESDAY"
+        | "THURSDAY"
+        | "FRIDAY"
+        | "SATURDAY"
+        | "SUNDAY";
       slotStartTimeInUTC: string;
-      dayOfWeekforEndTimeInUTC: "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
+      dayOfWeekforEndTimeInUTC:
+        | "MONDAY"
+        | "TUESDAY"
+        | "WEDNESDAY"
+        | "THURSDAY"
+        | "FRIDAY"
+        | "SATURDAY"
+        | "SUNDAY";
       slotEndTimeInUTC: string;
     }[];
     customSlots?: {
@@ -31,24 +49,29 @@ interface Props {
   formData: OnboardingFormData;
 }
 
-const ConsultantReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
+const ConsultantReviewForm: React.FC<Props> = ({
+  onSubmit,
+  onBack,
+  formData,
+}) => {
   const handleSubmit = () => {
     onSubmit({
       ...formData,
-      preferredCommunicationMethod: formData.preferredCommunicationMethod || "VIDEO",
+      preferredCommunicationMethod:
+        formData.preferredCommunicationMethod || "VIDEO",
     });
   };
 
   const formatTime = (timeString: string) => {
     try {
       const date = new Date(timeString);
-      return date.toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true
+      return date.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
       });
     } catch (error) {
-      console.error('Error formatting time:', error);
+      console.error("Error formatting time:", error);
       return timeString;
     }
   };
@@ -60,26 +83,29 @@ const ConsultantReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) =
       <div>
         <h3 className="font-semibold">Schedule</h3>
         <p>Schedule Type: {formData.scheduleType}</p>
-        {formData.scheduleType === 'WEEKLY' && formData.weeklySlots && (
+        {formData.scheduleType === "WEEKLY" && formData.weeklySlots && (
           <div>
             <h4 className="font-medium">Weekly Slots:</h4>
             <ul className="list-disc pl-5">
               {formData.weeklySlots.map((slot, index) => (
                 <li key={index}>
-                  {slot.dayOfWeekforStartTimeInUTC} {formatTime(slot.slotStartTimeInUTC)} to{' '}
-                  {slot.dayOfWeekforEndTimeInUTC} {formatTime(slot.slotEndTimeInUTC)}
+                  {slot.dayOfWeekforStartTimeInUTC}{" "}
+                  {formatTime(slot.slotStartTimeInUTC)} to{" "}
+                  {slot.dayOfWeekforEndTimeInUTC}{" "}
+                  {formatTime(slot.slotEndTimeInUTC)}
                 </li>
               ))}
             </ul>
           </div>
         )}
-        {formData.scheduleType === 'CUSTOM' && formData.customSlots && (
+        {formData.scheduleType === "CUSTOM" && formData.customSlots && (
           <div>
             <h4 className="font-medium">Custom Slots:</h4>
             <ul className="list-disc pl-5">
               {formData.customSlots.map((slot, index) => (
                 <li key={index}>
-                  {new Date(slot.slotStartTimeInUTC).toLocaleDateString()} {formatTime(slot.slotStartTimeInUTC)} to{' '}
+                  {new Date(slot.slotStartTimeInUTC).toLocaleDateString()}{" "}
+                  {formatTime(slot.slotStartTimeInUTC)} to{" "}
                   {formatTime(slot.slotEndTimeInUTC)}
                 </li>
               ))}
@@ -101,19 +127,19 @@ const ConsultantReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) =
             <h3 className="font-semibold">Personal Information</h3>
             <p>Name: {formData.name}</p>
             <p>Email: {formData.email}</p>
-            <p>Phone: {formData.phone || 'Not provided'}</p>
-            <p>Address: {formData.address || 'Not provided'}</p>
+            <p>Phone: {formData.phone || "Not provided"}</p>
+            <p>Address: {formData.address || "Not provided"}</p>
           </div>
           <div>
             <h3 className="font-semibold">Professional Details</h3>
-            <p>Description: {formData.description || 'Not provided'}</p>
-            <p>Qualifications: {formData.qualifications || 'Not provided'}</p>
-            <p>Specialization: {formData.specialization || 'Not provided'}</p>
-            <p>Experience: {formData.experience || 'Not provided'}</p>
+            <p>Description: {formData.description || "Not provided"}</p>
+            <p>Qualifications: {formData.qualifications || "Not provided"}</p>
+            <p>Specialization: {formData.specialization || "Not provided"}</p>
+            <p>Experience: {formData.experience || "Not provided"}</p>
           </div>
           <div>
             <h3 className="font-semibold">Domain & Tags</h3>
-            <p>Domain: {formData.domain?.name || 'Not selected'}</p>
+            <p>Domain: {formData.domain?.name || "Not selected"}</p>
             <div>
               <h4 className="font-medium">Sub-Domains:</h4>
               <ul className="list-disc pl-5">
@@ -128,9 +154,7 @@ const ConsultantReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) =
             <div>
               <h4 className="font-medium">Tags:</h4>
               <ul className="list-disc pl-5">
-                {formData.tags?.map((tag) => (
-                  <li key={tag.id}>{tag.name}</li>
-                ))}
+                {formData.tags?.map((tag) => <li key={tag.id}>{tag.name}</li>)}
                 {(!formData.tags || formData.tags.length === 0) && (
                   <li>No tags selected</li>
                 )}

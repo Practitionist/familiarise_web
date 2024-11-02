@@ -1,7 +1,18 @@
-import React from 'react';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import React from "react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { FileEditIcon, DeleteIcon, DownloadIcon } from '../../../../../assets/icons';
+import {
+  FileEditIcon,
+  DeleteIcon,
+  DownloadIcon,
+} from "../../../../../assets/icons";
 
 interface Document {
   invoiceNo: string;
@@ -14,7 +25,9 @@ interface DocumentReviewTableProps {
   documents: Document[];
 }
 
-export const DocumentReviewTable: React.FC<DocumentReviewTableProps> = ({ documents }) => (
+export const DocumentReviewTable: React.FC<DocumentReviewTableProps> = ({
+  documents,
+}) => (
   <Table>
     <TableHeader>
       <TableRow>

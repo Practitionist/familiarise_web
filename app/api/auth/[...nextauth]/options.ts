@@ -58,15 +58,20 @@ const authOptions: NextAuthOptions = {
      * @param {Object} params - Contains token, user, account, trigger, and session information
      * @returns {Promise<JWT>} - Updated token object
      */
-    async jwt({ token, user, account, trigger, session }: {
+    async jwt({
+      token,
+      user,
+      account,
+      trigger,
+      session,
+    }: {
       token: JWT;
       user: User | undefined;
       account: Account | null;
       trigger?: "update" | "signIn" | "signUp";
-      session?: any
+      session?: any;
     }): Promise<JWT> {
       if (trigger === "update" && session?.user) {
-        
         // Update token with new session data
         // This is used to update the session when the user's role changes
         token.onboardingCompleted = session.user.onboardingCompleted;
@@ -74,12 +79,10 @@ const authOptions: NextAuthOptions = {
         token.consultantProfileId = session.user.consultantProfileId;
         token.consulteeProfileId = session.user.consulteeProfileId;
         token.staffProfileId = session.user.staffProfileId;
-
       } else if (user) {
-        
         // Set user ID in token
         token.sub = user.id;
-        
+
         // Fetch user data from database
         const dbUser = await prisma.user.findUnique({
           where: { id: user.id },
@@ -95,7 +98,7 @@ const authOptions: NextAuthOptions = {
         if (dbUser) {
           // Update token with user data
           token.onboardingCompleted = dbUser.onboardingCompleted ?? false;
-          token.role = dbUser.role ?? '';
+          token.role = dbUser.role ?? "";
           token.consultantProfileId = dbUser.consultantProfile?.id ?? undefined;
           token.consulteeProfileId = dbUser.consulteeProfile?.id ?? undefined;
           token.staffProfileId = dbUser.staffProfile?.id ?? undefined;
@@ -112,15 +115,27 @@ const authOptions: NextAuthOptions = {
      * @param {Object} params - Contains session and token information
      * @returns {Promise<Session>} - Updated session object
      */
-    async session({ session, token }: { session: Session; token: JWT }): Promise<Session> {
+    async session({
+      session,
+      token,
+    }: {
+      session: Session;
+      token: JWT;
+    }): Promise<Session> {
       if (session?.user && token) {
         // Update session with token data
         session.user.id = token.sub as string;
         session.user.onboardingCompleted = token.onboardingCompleted as boolean;
         session.user.role = token.role as string;
-        session.user.consultantProfileId = token.consultantProfileId as string | undefined;
-        session.user.consulteeProfileId = token.consulteeProfileId as string | undefined;
-        session.user.staffProfileId = token.staffProfileId as string | undefined;
+        session.user.consultantProfileId = token.consultantProfileId as
+          | string
+          | undefined;
+        session.user.consulteeProfileId = token.consulteeProfileId as
+          | string
+          | undefined;
+        session.user.staffProfileId = token.staffProfileId as
+          | string
+          | undefined;
 
         // Fetch additional user data from database
         const user = await prisma.user.findUnique({
@@ -141,7 +156,9 @@ const authOptions: NextAuthOptions = {
             ...user,
             phone: user.phone ?? "",
             address: user.address ?? "",
-            currentTimezone: user.currentTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+            currentTimezone:
+              user.currentTimezone ??
+              Intl.DateTimeFormat().resolvedOptions().timeZone,
           });
         }
       }

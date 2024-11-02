@@ -1,23 +1,31 @@
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth/next";
-import authOptions from '@/app/api/auth/[...nextauth]/options';
+import authOptions from "@/app/api/auth/[...nextauth]/options";
 
 export async function POST(request: Request) {
   try {
     const session = await getServerSession(authOptions);
     if (!session || !session.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { subscriptionPlanId, tentativeStartDate, tentativeSchedule, requestNotes } = await request.json();
+    const {
+      subscriptionPlanId,
+      tentativeStartDate,
+      tentativeSchedule,
+      requestNotes,
+    } = await request.json();
 
     const consultee = await prisma.consulteeProfile.findUnique({
       where: { userId: session.user.id },
     });
 
     if (!consultee) {
-      return NextResponse.json({ error: 'Consultee profile not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: "Consultee profile not found" },
+        { status: 404 },
+      );
     }
 
     const subscriptionPlan = await prisma.subscriptionPlan.findUnique({
@@ -26,7 +34,10 @@ export async function POST(request: Request) {
     });
 
     if (!subscriptionPlan) {
-      return NextResponse.json({ error: 'Subscription plan not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: "Subscription plan not found" },
+        { status: 404 },
+      );
     }
 
     const endDate = new Date(tentativeStartDate);
@@ -41,7 +52,7 @@ export async function POST(request: Request) {
         tentativeStartDate: new Date(tentativeStartDate),
         tentativeSchedule,
         requestNotes,
-        requestStatus: 'PENDING',
+        requestStatus: "PENDING",
       },
       include: {
         plan: true,
@@ -53,7 +64,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ subscription }, { status: 201 });
   } catch (error) {
-    console.error('Error booking subscription:', error);
-    return NextResponse.json({ error: 'An error occurred while booking the subscription' }, { status: 500 });
+    console.error("Error booking subscription:", error);
+    return NextResponse.json(
+      { error: "An error occurred while booking the subscription" },
+      { status: 500 },
+    );
   }
 }

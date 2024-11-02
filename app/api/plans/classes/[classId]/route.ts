@@ -4,8 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> }) {
-
+  { params }: { params: Promise<{ classId: string }> },
+) {
   try {
     const { classId } = await params;
     const classPlan = await prisma.classPlan.findUniqueOrThrow({
@@ -26,21 +26,21 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Class plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
     console.error("Error fetching class plan:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the class plan" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> }) {
-
+  { params }: { params: Promise<{ classId: string }> },
+) {
   try {
     const { classId } = await params;
     const body = await request.json();
@@ -49,42 +49,45 @@ export async function PUT(
     if (body.durationInMonths && body.durationInMonths <= 0) {
       return NextResponse.json(
         { error: "Duration must be a positive number" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (body.price && body.price <= 0) {
       return NextResponse.json(
         { error: "Price must be a positive number" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (body.callsPerWeek && body.callsPerWeek < 0) {
       return NextResponse.json(
         { error: "Calls per week must be a non-negative number" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (body.videoMeetings && body.videoMeetings < 0) {
       return NextResponse.json(
         { error: "Video meetings must be a non-negative number" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (body.maxParticipants && body.maxParticipants <= 0) {
       return NextResponse.json(
         { error: "Maximum participants must be a positive number" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    if (body.emailSupport && !Object.values(PlanEmailSupport).includes(body.emailSupport)) {
+    if (
+      body.emailSupport &&
+      !Object.values(PlanEmailSupport).includes(body.emailSupport)
+    ) {
       return NextResponse.json(
         { error: "Invalid email support value" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -104,23 +107,29 @@ export async function PUT(
         prerequisites: body.prerequisites,
         materialProvided: body.materialProvided,
         learningOutcomes: body.learningOutcomes,
-        consultantProfile: body.consultantProfileId ? {
-          connect: { id: body.consultantProfileId },
-        } : undefined,
-        topics: body.topicIds ? {
-          set: body.topicIds.map((id: string) => ({ id })),
-        } : undefined,
-        classContents: body.classContents ? {
-          deleteMany: {},
-          create: body.classContents.map((content: any) => ({
-            title: content.title,
-            description: content.description,
-            contentType: content.contentType,
-            contentUrl: content.contentUrl,
-            order: content.order,
-            hoursAllotted: content.hoursAllotted,
-          })),
-        } : undefined,
+        consultantProfile: body.consultantProfileId
+          ? {
+              connect: { id: body.consultantProfileId },
+            }
+          : undefined,
+        topics: body.topicIds
+          ? {
+              set: body.topicIds.map((id: string) => ({ id })),
+            }
+          : undefined,
+        classContents: body.classContents
+          ? {
+              deleteMany: {},
+              create: body.classContents.map((content: any) => ({
+                title: content.title,
+                description: content.description,
+                contentType: content.contentType,
+                contentUrl: content.contentUrl,
+                order: content.order,
+                hoursAllotted: content.hoursAllotted,
+              })),
+            }
+          : undefined,
       },
       include: {
         consultantProfile: true,
@@ -138,21 +147,21 @@ export async function PUT(
     ) {
       return NextResponse.json(
         { error: "Class plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
     console.error("Error updating class plan:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the class plan" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> }) {
-
+  { params }: { params: Promise<{ classId: string }> },
+) {
   try {
     const { classId } = await params;
 
@@ -164,7 +173,7 @@ export async function DELETE(
     if (associatedClasses.length > 0) {
       return NextResponse.json(
         { error: "Cannot delete class plan with associated classes" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -185,13 +194,13 @@ export async function DELETE(
     ) {
       return NextResponse.json(
         { error: "Class plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
     console.error("Error deleting class plan:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the class plan" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

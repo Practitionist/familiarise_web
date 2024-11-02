@@ -1,7 +1,11 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ConsulteeProfile, ConsulteePreferences, PersonalInfoAndRole } from "@/schemas/UserSchema";
+import {
+  ConsulteeProfile,
+  ConsulteePreferences,
+  PersonalInfoAndRole,
+} from "@/schemas/UserSchema";
 
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsulteeProfile> &
@@ -17,7 +21,11 @@ interface Props {
   formData: OnboardingFormData;
 }
 
-const ConsulteeReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
+const ConsulteeReviewForm: React.FC<Props> = ({
+  onSubmit,
+  onBack,
+  formData,
+}) => {
   const handleSubmit = () => {
     onSubmit(formData);
   };
@@ -33,20 +41,27 @@ const ConsulteeReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) =>
             <h3 className="font-semibold">Personal Information</h3>
             <p>Name: {formData.name}</p>
             <p>Email: {formData.email}</p>
-            <p>Phone: {formData.phone || 'Not provided'}</p>
-            <p>Address: {formData.address || 'Not provided'}</p>
+            <p>Phone: {formData.phone || "Not provided"}</p>
+            <p>Address: {formData.address || "Not provided"}</p>
           </div>
           <div>
             <h3 className="font-semibold">Consultee Profile</h3>
-            <p>Education: {formData.education || 'Not provided'}</p>
-            <p>Occupation: {formData.occupation || 'Not provided'}</p>
-            <p>About Me: {formData.aboutMe || 'Not provided'}</p>
+            <p>Education: {formData.education || "Not provided"}</p>
+            <p>Occupation: {formData.occupation || "Not provided"}</p>
+            <p>About Me: {formData.aboutMe || "Not provided"}</p>
           </div>
           <div>
             <h3 className="font-semibold">Preferences</h3>
-            <p>Preferred Communication Method: {formData.preferredCommunicationMethod}</p>
-            <p>Preferred Language: {formData.preferredLanguage || 'Not provided'}</p>
-            <p>Special Requirements: {formData.specialRequirements || 'None'}</p>
+            <p>
+              Preferred Communication Method:{" "}
+              {formData.preferredCommunicationMethod}
+            </p>
+            <p>
+              Preferred Language: {formData.preferredLanguage || "Not provided"}
+            </p>
+            <p>
+              Special Requirements: {formData.specialRequirements || "None"}
+            </p>
             <h3 className="font-semibold">Interests</h3>
             <ul className="list-disc pl-5">
               {formData.interests?.map((interest: string, index: number) => (

@@ -2,7 +2,11 @@ import React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ConsulteeProfile, ConsulteePreferences, PersonalInfoAndRole } from "@/schemas/UserSchema";
+import {
+  ConsulteeProfile,
+  ConsulteePreferences,
+  PersonalInfoAndRole,
+} from "@/schemas/UserSchema";
 
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsulteeProfile> &
@@ -20,16 +24,25 @@ interface Props {
   formData: OnboardingFormData;
 }
 
-const ConsulteeAgreementForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
-  const [termsAccepted, setTermsAccepted] = React.useState(formData.termsAccepted || false);
-  const [privacyAccepted, setPrivacyAccepted] = React.useState(formData.privacyAccepted || false);
+const ConsulteeAgreementForm: React.FC<Props> = ({
+  onSubmit,
+  onBack,
+  formData,
+}) => {
+  const [termsAccepted, setTermsAccepted] = React.useState(
+    formData.termsAccepted || false,
+  );
+  const [privacyAccepted, setPrivacyAccepted] = React.useState(
+    formData.privacyAccepted || false,
+  );
 
   const handleSubmit = () => {
     onSubmit({
       ...formData,
       termsAccepted,
       privacyAccepted,
-      preferredCommunicationMethod: formData.preferredCommunicationMethod || "VIDEO",
+      preferredCommunicationMethod:
+        formData.preferredCommunicationMethod || "VIDEO",
     });
   };
 
@@ -45,7 +58,9 @@ const ConsulteeAgreementForm: React.FC<Props> = ({ onSubmit, onBack, formData })
               <Checkbox
                 id="terms"
                 checked={termsAccepted}
-                onCheckedChange={(checked) => setTermsAccepted(checked as boolean)}
+                onCheckedChange={(checked) =>
+                  setTermsAccepted(checked as boolean)
+                }
               />
               <label
                 htmlFor="terms"
@@ -58,7 +73,9 @@ const ConsulteeAgreementForm: React.FC<Props> = ({ onSubmit, onBack, formData })
               <Checkbox
                 id="privacy"
                 checked={privacyAccepted}
-                onCheckedChange={(checked) => setPrivacyAccepted(checked as boolean)}
+                onCheckedChange={(checked) =>
+                  setPrivacyAccepted(checked as boolean)
+                }
               />
               <label
                 htmlFor="privacy"

@@ -1,6 +1,18 @@
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { responsibilitiesAndPermissions } from "@/schemas/ResponsibilitiesAndPermissionsSchema";
@@ -14,7 +26,11 @@ interface Props {
   initialData: Partial<StaffProfile & PersonalInfoAndRole>;
 }
 
-const StaffResponsibilitiesForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
+const StaffResponsibilitiesForm: React.FC<Props> = ({
+  onNext,
+  onBack,
+  initialData,
+}) => {
   const [department, setDepartment] = useState<string | null>(null);
   const [position, setPosition] = useState<string | null>(null);
 
@@ -36,7 +52,7 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({ onNext, onBack, initialDat
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Validate that at least one responsibility and permission is selected
     if (Object.keys(responsibilities).length === 0) {
       setValue("responsibilities", {}, { shouldValidate: true });
@@ -59,7 +75,9 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({ onNext, onBack, initialDat
     return (
       <Card className="w-full max-w-md">
         <CardContent className="pt-6">
-          <p className="text-center text-gray-600">Please complete the Staff Profile form first.</p>
+          <p className="text-center text-gray-600">
+            Please complete the Staff Profile form first.
+          </p>
         </CardContent>
       </Card>
     );
@@ -72,7 +90,10 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({ onNext, onBack, initialDat
     return (
       <Card className="w-full max-w-md">
         <CardContent className="pt-6">
-          <p className="text-center text-gray-600">Invalid department or position. Please go back and select valid options.</p>
+          <p className="text-center text-gray-600">
+            Invalid department or position. Please go back and select valid
+            options.
+          </p>
         </CardContent>
       </Card>
     );
@@ -102,7 +123,9 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({ onNext, onBack, initialDat
     <Card className="w-full max-w-md">
       <CardHeader>
         <CardTitle>Staff Responsibilities</CardTitle>
-        <CardDescription>Select your responsibilities and permissions</CardDescription>
+        <CardDescription>
+          Select your responsibilities and permissions
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -111,28 +134,36 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({ onNext, onBack, initialDat
               <AccordionTrigger>Responsibilities</AccordionTrigger>
               <AccordionContent>
                 <div className="space-y-4">
-                  {Object.entries(positionData.responsibilities).map(([category, items]) => (
-                    <div key={category} className="space-y-2">
-                      <Label className="font-semibold">{category}</Label>
-                      {items.map((item, index) => (
-                        <div key={index} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`responsibility-${category}-${index}`}
-                            checked={!!responsibilities[item]}
-                            onCheckedChange={(checked) => 
-                              handleResponsibilityChange(item, checked as boolean)
-                            }
-                          />
-                          <Label 
-                            htmlFor={`responsibility-${category}-${index}`} 
-                            className="text-sm"
+                  {Object.entries(positionData.responsibilities).map(
+                    ([category, items]) => (
+                      <div key={category} className="space-y-2">
+                        <Label className="font-semibold">{category}</Label>
+                        {items.map((item, index) => (
+                          <div
+                            key={index}
+                            className="flex items-center space-x-2"
                           >
-                            {item}
-                          </Label>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
+                            <Checkbox
+                              id={`responsibility-${category}-${index}`}
+                              checked={!!responsibilities[item]}
+                              onCheckedChange={(checked) =>
+                                handleResponsibilityChange(
+                                  item,
+                                  checked as boolean,
+                                )
+                              }
+                            />
+                            <Label
+                              htmlFor={`responsibility-${category}-${index}`}
+                              className="text-sm"
+                            >
+                              {item}
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                    ),
+                  )}
                 </div>
                 {errors.responsibilities && (
                   <p className="text-red-500 text-sm mt-2">
@@ -146,28 +177,33 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({ onNext, onBack, initialDat
               <AccordionTrigger>Permissions</AccordionTrigger>
               <AccordionContent>
                 <div className="space-y-4">
-                  {Object.entries(positionData.permissions).map(([category, items]) => (
-                    <div key={category} className="space-y-2">
-                      <Label className="font-semibold">{category}</Label>
-                      {items.map((item, index) => (
-                        <div key={index} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`permission-${category}-${index}`}
-                            checked={!!permissions[item]}
-                            onCheckedChange={(checked) => 
-                              handlePermissionChange(item, checked as boolean)
-                            }
-                          />
-                          <Label 
-                            htmlFor={`permission-${category}-${index}`} 
-                            className="text-sm"
+                  {Object.entries(positionData.permissions).map(
+                    ([category, items]) => (
+                      <div key={category} className="space-y-2">
+                        <Label className="font-semibold">{category}</Label>
+                        {items.map((item, index) => (
+                          <div
+                            key={index}
+                            className="flex items-center space-x-2"
                           >
-                            {item}
-                          </Label>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
+                            <Checkbox
+                              id={`permission-${category}-${index}`}
+                              checked={!!permissions[item]}
+                              onCheckedChange={(checked) =>
+                                handlePermissionChange(item, checked as boolean)
+                              }
+                            />
+                            <Label
+                              htmlFor={`permission-${category}-${index}`}
+                              className="text-sm"
+                            >
+                              {item}
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                    ),
+                  )}
                 </div>
                 {errors.permissions && (
                   <p className="text-red-500 text-sm mt-2">

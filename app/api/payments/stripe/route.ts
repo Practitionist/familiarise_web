@@ -4,22 +4,22 @@ import Stripe from "stripe";
 
 const stripe = process.env.STRIPE_SECRET_KEY
   ? new Stripe(process.env.STRIPE_SECRET_KEY, {
-    apiVersion: "2024-09-30.acacia",
-  })
-  : {
-    paymentIntents: {
-      create: async () => ({
-        id: "mock_payment_intent_id",
-        client_secret: "mock_client_secret",
-        status: "succeeded",
-      }),
-      retrieve: async () => ({
-        id: "mock_payment_intent_id",
-        status: "succeeded",
-        receipt_email: "mock_receipt@example.com",
-      }),
-    },
-  } as unknown as Stripe;
+      apiVersion: "2024-09-30.acacia",
+    })
+  : ({
+      paymentIntents: {
+        create: async () => ({
+          id: "mock_payment_intent_id",
+          client_secret: "mock_client_secret",
+          status: "succeeded",
+        }),
+        retrieve: async () => ({
+          id: "mock_payment_intent_id",
+          status: "succeeded",
+          receipt_email: "mock_receipt@example.com",
+        }),
+      },
+    } as unknown as Stripe);
 
 export async function POST(req: NextRequest) {
   try {
@@ -38,7 +38,10 @@ export async function POST(req: NextRequest) {
     });
 
     if (!appointment) {
-      return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Appointment not found" },
+        { status: 404 },
+      );
     }
 
     // Determine the amount to charge based on the appointment type
@@ -83,14 +86,13 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       clientSecret: paymentIntent.client_secret,
-      paymentId: payment.id
+      paymentId: payment.id,
     });
-
   } catch (error) {
     console.error("Error processing payment:", error);
     return NextResponse.json(
       { error: "An error occurred while processing the payment" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -107,18 +109,18 @@ export async function PUT(req: NextRequest) {
     const updatedPayment = await prisma.payment.update({
       where: { id: paymentId },
       data: {
-        paymentStatus: paymentIntent.status === "succeeded" ? "SUCCEEDED" : "FAILED",
+        paymentStatus:
+          paymentIntent.status === "succeeded" ? "SUCCEEDED" : "FAILED",
         receiptUrl: paymentIntent.receipt_email, // TODO: fix this
       },
     });
 
     return NextResponse.json({ payment: updatedPayment });
-
   } catch (error) {
     console.error("Error updating payment status:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the payment status" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

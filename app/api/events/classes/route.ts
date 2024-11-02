@@ -4,8 +4,8 @@ import { NextResponse } from "next/server";
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const consulteeId = searchParams.get('consulteeId');
-    const consultantId = searchParams.get('consultantId');
+    const consulteeId = searchParams.get("consulteeId");
+    const consultantId = searchParams.get("consultantId");
 
     let classes;
 
@@ -17,12 +17,12 @@ export async function GET(request: Request) {
               slotOfAppointment: {
                 some: {
                   consulteeProfile: {
-                    id: consulteeId
-                  }
-                }
-              }
-            }
-          }
+                    id: consulteeId,
+                  },
+                },
+              },
+            },
+          },
         },
         include: {
           classPlan: true,
@@ -30,38 +30,38 @@ export async function GET(request: Request) {
             include: {
               slotOfAppointment: {
                 include: {
-                  consulteeProfile: true
-                }
-              }
-            }
-          }
-        }
+                  consulteeProfile: true,
+                },
+              },
+            },
+          },
+        },
       });
     } else if (consultantId) {
       classes = await prisma.class.findMany({
         where: {
           classPlan: {
             consultantProfile: {
-              id: consultantId
-            }
-          }
+              id: consultantId,
+            },
+          },
         },
         include: {
           classPlan: {
             include: {
-              consultantProfile: true
-            }
+              consultantProfile: true,
+            },
           },
-          appointment: true
-        }
+          appointment: true,
+        },
       });
-      console.log('classes', classes);
+      console.log("classes", classes);
     } else {
       classes = await prisma.class.findMany({
         include: {
           classPlan: true,
-          appointment: true
-        }
+          appointment: true,
+        },
       });
     }
 
@@ -70,7 +70,7 @@ export async function GET(request: Request) {
     console.error("Error fetching classes:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching classes" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -10,8 +10,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { LayoutGrid, List, Search } from "lucide-react";
-import Link from 'next/link';
-import { useCallback } from 'react';
+import Link from "next/link";
+import { useCallback } from "react";
 
 export function SearchControls({
   searchQuery,
@@ -33,7 +33,7 @@ export function SearchControls({
       newParams.set(name, value);
       return newParams.toString();
     },
-    [params]
+    [params],
   );
 
   return (
@@ -45,14 +45,14 @@ export function SearchControls({
           className="pl-8"
           defaultValue={searchQuery}
           onChange={(e) => {
-            router.push('?' + createQueryString('search', e.target.value));
+            router.push("?" + createQueryString("search", e.target.value));
           }}
         />
       </div>
       <Select
         defaultValue={sortOption}
         onValueChange={(value) => {
-          router.push('?' + createQueryString('sort', value));
+          router.push("?" + createQueryString("sort", value));
         }}
       >
         <SelectTrigger className="w-40">
@@ -67,18 +67,14 @@ export function SearchControls({
       </Select>
       <div className="flex gap-1 border rounded-md p-1">
         <Link
-          href={{ query: { ...searchParams, view: 'grid' } }}
-          className={`p-2 rounded ${
-            currentView === 'grid' ? 'bg-muted' : ''
-          }`}
+          href={{ query: { ...searchParams, view: "grid" } }}
+          className={`p-2 rounded ${currentView === "grid" ? "bg-muted" : ""}`}
         >
           <LayoutGrid className="h-4 w-4" />
         </Link>
         <Link
-          href={{ query: { ...searchParams, view: 'list' } }}
-          className={`p-2 rounded ${
-            currentView === 'list' ? 'bg-muted' : ''
-          }`}
+          href={{ query: { ...searchParams, view: "list" } }}
+          className={`p-2 rounded ${currentView === "list" ? "bg-muted" : ""}`}
         >
           <List className="h-4 w-4" />
         </Link>

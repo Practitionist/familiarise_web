@@ -1,10 +1,16 @@
 "use client";
 
-import { useState, useEffect } from 'react';
-import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useUserData } from '@/hooks/useUserData';
+import { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { useUserData } from "@/hooks/useUserData";
 import { useToast } from "@/components/ui/use-toast";
 
 export default function Dashboard() {
@@ -14,10 +20,14 @@ export default function Dashboard() {
   const { toast } = useToast();
 
   const userId = session?.user?.id;
-  const { userDetails, isLoading: isUserDataLoading, error } = useUserData(userId || '');
+  const {
+    userDetails,
+    isLoading: isUserDataLoading,
+    error,
+  } = useUserData(userId || "");
 
   useEffect(() => {
-    if (status === 'authenticated' && !isUserDataLoading) {
+    if (status === "authenticated" && !isUserDataLoading) {
       if (error) {
         toast({
           title: "Error loading user data",
@@ -32,29 +42,35 @@ export default function Dashboard() {
         // Simulating a 3-5 second loading time
         const timer = setTimeout(() => {
           setIsLoading(false);
-          
+
           // Redirect based on user role and profile ID
           switch (userDetails.role) {
-            case 'CONSULTANT':
-              router.push(userDetails.consultantProfileId 
-                ? `/dashboard/consultant/${userDetails.consultantProfileId}`
-                : '/');
+            case "CONSULTANT":
+              router.push(
+                userDetails.consultantProfileId
+                  ? `/dashboard/consultant/${userDetails.consultantProfileId}`
+                  : "/",
+              );
               break;
-            case 'CONSULTEE':
-              router.push(userDetails.consulteeProfileId
-                ? `/dashboard/consultee/${userDetails.consulteeProfileId}`
-                : '/');
+            case "CONSULTEE":
+              router.push(
+                userDetails.consulteeProfileId
+                  ? `/dashboard/consultee/${userDetails.consulteeProfileId}`
+                  : "/",
+              );
               break;
-            case 'ADMIN':
-              router.push('/dashboard/admin');
+            case "ADMIN":
+              router.push("/dashboard/admin");
               break;
-            case 'STAFF':
-              router.push(userDetails.staffProfileId
-                ? `/dashboard/staff/${userDetails.staffProfileId}`
-                : '/');
+            case "STAFF":
+              router.push(
+                userDetails.staffProfileId
+                  ? `/dashboard/staff/${userDetails.staffProfileId}`
+                  : "/",
+              );
               break;
             default:
-              router.push('/dashboard/error');
+              router.push("/dashboard/error");
           }
         }, 1000); // 1 second delay
 
@@ -63,7 +79,7 @@ export default function Dashboard() {
     }
   }, [status, isUserDataLoading, userDetails, router, error, toast]);
 
-  if (status === 'loading' || isLoading || isUserDataLoading) {
+  if (status === "loading" || isLoading || isUserDataLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
         <Card className="w-[300px]">
@@ -71,8 +87,17 @@ export default function Dashboard() {
             <CardDescription>Loading your dashboard...</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700" role="progressbar" aria-valuenow={45} aria-valuemin={0} aria-valuemax={100}>
-              <div className="bg-blue-600 h-2.5 rounded-full" style={{width: '45%'}}></div>
+            <div
+              className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700"
+              role="progressbar"
+              aria-valuenow={45}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div
+                className="bg-blue-600 h-2.5 rounded-full"
+                style={{ width: "45%" }}
+              ></div>
             </div>
           </CardContent>
         </Card>
@@ -88,8 +113,14 @@ export default function Dashboard() {
             <CardTitle>Error loading dashboard</CardTitle>
           </CardHeader>
           <CardContent>
-            <p>There was an error loading your dashboard: {error ? error.message : 'Unknown error'}</p>
-            <p>Please try refreshing the page or contact support if the problem persists.</p>
+            <p>
+              There was an error loading your dashboard:{" "}
+              {error ? error.message : "Unknown error"}
+            </p>
+            <p>
+              Please try refreshing the page or contact support if the problem
+              persists.
+            </p>
           </CardContent>
         </Card>
       </div>

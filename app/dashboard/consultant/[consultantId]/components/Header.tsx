@@ -1,6 +1,6 @@
-import React from 'react';
+import React from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { SearchIcon, SettingsIcon, SignalIcon } from '@/assets/icons';
+import { SearchIcon, SettingsIcon, SignalIcon } from "@/assets/icons";
 
 interface HeaderProps {
   name: string;
@@ -13,7 +13,12 @@ export const Header: React.FC<HeaderProps> = ({ name, role }) => (
       <div className="mr-6">
         <Avatar>
           <AvatarImage alt={name} src="/placeholder.svg" />
-          <AvatarFallback>{name.split(' ').map(n => n[0]).join('')}</AvatarFallback>
+          <AvatarFallback>
+            {name
+              .split(" ")
+              .map((n) => n[0])
+              .join("")}
+          </AvatarFallback>
         </Avatar>
       </div>
       <div>

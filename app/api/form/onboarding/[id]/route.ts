@@ -4,10 +4,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }) {
-
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
-    console.log("Received request to update onboarding information", JSON.stringify(params, null, 2));
+    console.log(
+      "Received request to update onboarding information",
+      JSON.stringify(params, null, 2),
+    );
     const { id } = await params;
     const body = await req.json();
     console.log("Request Body:", JSON.stringify(body, null, 2));
@@ -35,14 +38,19 @@ export async function PATCH(
       console.error("Error stack:", error.stack);
     }
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "An error occurred while updating onboarding information" },
-      { status: 500 }
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "An error occurred while updating onboarding information",
+      },
+      { status: 500 },
     );
   }
 }
 
 function validateRequiredFields(body: any) {
-  const requiredFields = ['name', 'email', 'role'];
+  const requiredFields = ["name", "email", "role"];
   for (const field of requiredFields) {
     if (!body[field]) {
       throw new Error(`Missing required field: ${field}`);
@@ -109,13 +117,19 @@ async function updateUserProfile(id: string, body: any, existingUser: any) {
   }
 }
 
-async function updateConsultantProfile(id: string, body: any, existingUser: any) {
+async function updateConsultantProfile(
+  id: string,
+  body: any,
+  existingUser: any,
+) {
   const profileData = body.consultantProfile?.create;
   if (!profileData) {
     throw new Error("Missing consultant profile data");
   }
 
-  const scheduleTypeEnum = (profileData.scheduleType || "WEEKLY").toUpperCase() as ScheduleType;
+  const scheduleTypeEnum = (
+    profileData.scheduleType || "WEEKLY"
+  ).toUpperCase() as ScheduleType;
   const domainId = profileData.domain?.connect?.id;
   if (!domainId) {
     throw new Error("Domain ID is required");
@@ -168,9 +182,12 @@ async function updateConsultantProfile(id: string, body: any, existingUser: any)
   }
 
   // Update slots based on schedule type
-  if (scheduleTypeEnum === ScheduleType.WEEKLY && profileData.slotsOfAvailabilityWeekly?.create?.length) {
+  if (
+    scheduleTypeEnum === ScheduleType.WEEKLY &&
+    profileData.slotsOfAvailabilityWeekly?.create?.length
+  ) {
     await prisma.slotOfAvailabilityWeekly.deleteMany({
-      where: { consultantProfileId: consultantProfile.id }
+      where: { consultantProfileId: consultantProfile.id },
     });
     await prisma.slotOfAvailabilityWeekly.createMany({
       data: profileData.slotsOfAvailabilityWeekly.create.map((slot: any) => ({
@@ -183,9 +200,12 @@ async function updateConsultantProfile(id: string, body: any, existingUser: any)
     });
   }
 
-  if (scheduleTypeEnum === ScheduleType.CUSTOM && profileData.slotsOfAvailabilityCustom?.create?.length) {
+  if (
+    scheduleTypeEnum === ScheduleType.CUSTOM &&
+    profileData.slotsOfAvailabilityCustom?.create?.length
+  ) {
     await prisma.slotOfAvailabilityCustom.deleteMany({
-      where: { consultantProfileId: consultantProfile.id }
+      where: { consultantProfileId: consultantProfile.id },
     });
     await prisma.slotOfAvailabilityCustom.createMany({
       data: profileData.slotsOfAvailabilityCustom.create.map((slot: any) => ({
@@ -207,11 +227,11 @@ async function updateConsulteeProfile(id: string, body: any) {
 
   // Convert arrays to comma-separated strings
   const interests = Array.isArray(profileData.interests)
-    ? profileData.interests.join(', ')
+    ? profileData.interests.join(", ")
     : profileData.interests || "";
 
   const goals = Array.isArray(profileData.goals)
-    ? profileData.goals.join(', ')
+    ? profileData.goals.join(", ")
     : profileData.goals || "";
 
   const consulteeProfile = await prisma.consulteeProfile.upsert({
@@ -221,7 +241,8 @@ async function updateConsulteeProfile(id: string, body: any) {
       education: profileData.education || "",
       occupation: profileData.occupation || "",
       aboutMe: profileData.aboutMe || "",
-      preferredCommunicationMethod: (profileData.preferredCommunicationMethod || "VIDEO") as ConsultationMode,
+      preferredCommunicationMethod: (profileData.preferredCommunicationMethod ||
+        "VIDEO") as ConsultationMode,
       preferredLanguage: profileData.preferredLanguage || "",
       specialRequirements: profileData.specialRequirements || "",
       interests: interests,
@@ -231,7 +252,8 @@ async function updateConsulteeProfile(id: string, body: any) {
       education: profileData.education || "",
       occupation: profileData.occupation || "",
       aboutMe: profileData.aboutMe || "",
-      preferredCommunicationMethod: (profileData.preferredCommunicationMethod || "VIDEO") as ConsultationMode,
+      preferredCommunicationMethod: (profileData.preferredCommunicationMethod ||
+        "VIDEO") as ConsultationMode,
       preferredLanguage: profileData.preferredLanguage || "",
       specialRequirements: profileData.specialRequirements || "",
       interests: interests,

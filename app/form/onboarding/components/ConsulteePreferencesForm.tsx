@@ -1,9 +1,19 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ConsulteeProfile, ConsulteePreferences, PersonalInfoAndRole } from "@/schemas/UserSchema";
+import {
+  ConsulteeProfile,
+  ConsulteePreferences,
+  PersonalInfoAndRole,
+} from "@/schemas/UserSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React from "react";
 import { useForm, Controller } from "react-hook-form";
@@ -16,7 +26,7 @@ type OnboardingFormData = PersonalInfoAndRole &
     goals?: string[];
   };
 
-interface FormValues extends Omit<OnboardingFormData, 'interests' | 'goals'> {
+interface FormValues extends Omit<OnboardingFormData, "interests" | "goals"> {
   interests?: string;
   goals?: string;
 }
@@ -27,7 +37,11 @@ interface Props {
   initialData: Partial<OnboardingFormData>;
 }
 
-const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
+const ConsulteePreferencesForm: React.FC<Props> = ({
+  onNext,
+  onBack,
+  initialData,
+}) => {
   const {
     register,
     handleSubmit,
@@ -36,35 +50,53 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
   } = useForm<FormValues>({
     defaultValues: {
       ...initialData,
-      preferredCommunicationMethod: initialData.preferredCommunicationMethod || "VIDEO",
-      interests: initialData.interests?.join(', '),
-      goals: initialData.goals?.join(', '),
+      preferredCommunicationMethod:
+        initialData.preferredCommunicationMethod || "VIDEO",
+      interests: initialData.interests?.join(", "),
+      goals: initialData.goals?.join(", "),
     },
   });
 
   const onSubmit = (data: FormValues) => {
     // Convert comma-separated strings to arrays
-    const interests = data.interests?.split(',').map(i => i.trim()).filter(Boolean) || [];
-    const goals = data.goals?.split(',').map(g => g.trim()).filter(Boolean) || [];
+    const interests =
+      data.interests
+        ?.split(",")
+        .map((i) => i.trim())
+        .filter(Boolean) || [];
+    const goals =
+      data.goals
+        ?.split(",")
+        .map((g) => g.trim())
+        .filter(Boolean) || [];
 
     onNext({
       ...data,
       interests,
       goals,
-      preferredCommunicationMethod: data.preferredCommunicationMethod || "VIDEO",
+      preferredCommunicationMethod:
+        data.preferredCommunicationMethod || "VIDEO",
     });
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="w-full max-w-md space-y-4">
+    <form
+      onSubmit={handleSubmit(onSubmit)}
+      className="w-full max-w-md space-y-4"
+    >
       <div className="space-y-2">
-        <Label htmlFor="preferredCommunicationMethod">Preferred Communication Method</Label>
+        <Label htmlFor="preferredCommunicationMethod">
+          Preferred Communication Method
+        </Label>
         <Controller
           name="preferredCommunicationMethod"
           control={control}
           defaultValue="VIDEO"
           render={({ field }) => (
-            <Select onValueChange={field.onChange} value={field.value || "VIDEO"}>
+            <Select
+              onValueChange={field.onChange}
+              value={field.value || "VIDEO"}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select communication method" />
               </SelectTrigger>
@@ -79,7 +111,9 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
           )}
         />
         {errors.preferredCommunicationMethod && (
-          <p className="text-red-500">{errors.preferredCommunicationMethod.message}</p>
+          <p className="text-red-500">
+            {errors.preferredCommunicationMethod.message}
+          </p>
         )}
       </div>
 
@@ -92,8 +126,13 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="specialRequirements">Special Requirements (Optional)</Label>
-        <Textarea id="specialRequirements" {...register("specialRequirements")} />
+        <Label htmlFor="specialRequirements">
+          Special Requirements (Optional)
+        </Label>
+        <Textarea
+          id="specialRequirements"
+          {...register("specialRequirements")}
+        />
         {errors.specialRequirements && (
           <p className="text-red-500">{errors.specialRequirements.message}</p>
         )}
@@ -101,9 +140,9 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
 
       <div className="space-y-2">
         <Label htmlFor="interests">Interests (comma-separated)</Label>
-        <Input 
-          id="interests" 
-          {...register("interests")} 
+        <Input
+          id="interests"
+          {...register("interests")}
           placeholder="e.g., Career Growth, Leadership, Technology"
         />
         {errors.interests && (
@@ -113,14 +152,12 @@ const ConsulteePreferencesForm: React.FC<Props> = ({ onNext, onBack, initialData
 
       <div className="space-y-2">
         <Label htmlFor="goals">Goals (comma-separated)</Label>
-        <Textarea 
-          id="goals" 
+        <Textarea
+          id="goals"
           {...register("goals")}
           placeholder="e.g., Improve leadership skills, Learn new technologies"
         />
-        {errors.goals && (
-          <p className="text-red-500">{errors.goals.message}</p>
-        )}
+        {errors.goals && <p className="text-red-500">{errors.goals.message}</p>}
       </div>
 
       <div className="flex justify-between">

@@ -40,9 +40,23 @@ type OnboardingFormData = PersonalInfoAndRole &
     subDomains?: SubDomain[];
     tags?: Tag[];
     weeklySlots?: {
-      dayOfWeekforStartTimeInUTC: "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
+      dayOfWeekforStartTimeInUTC:
+        | "MONDAY"
+        | "TUESDAY"
+        | "WEDNESDAY"
+        | "THURSDAY"
+        | "FRIDAY"
+        | "SATURDAY"
+        | "SUNDAY";
       slotStartTimeInUTC: string;
-      dayOfWeekforEndTimeInUTC: "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
+      dayOfWeekforEndTimeInUTC:
+        | "MONDAY"
+        | "TUESDAY"
+        | "WEDNESDAY"
+        | "THURSDAY"
+        | "FRIDAY"
+        | "SATURDAY"
+        | "SUNDAY";
       slotEndTimeInUTC: string;
     }[];
     customSlots?: {
@@ -74,7 +88,10 @@ const MultiStepForm: React.FC = () => {
       const updatedData = {
         ...prevData,
         ...stepData,
-        preferredCommunicationMethod: stepData.preferredCommunicationMethod || prevData.preferredCommunicationMethod || "VIDEO"
+        preferredCommunicationMethod:
+          stepData.preferredCommunicationMethod ||
+          prevData.preferredCommunicationMethod ||
+          "VIDEO",
       };
 
       if (stepData.scheduleType) {
@@ -106,10 +123,12 @@ const MultiStepForm: React.FC = () => {
         throw new Error("User ID not found in session");
       }
 
-      const formattedCustomSlots = finalData.customSlots?.map((slot: { slotStartTimeInUTC: string; slotEndTimeInUTC: string }) => ({
-        slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC).toISOString(),
-        slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC).toISOString()
-      }));
+      const formattedCustomSlots = finalData.customSlots?.map(
+        (slot: { slotStartTimeInUTC: string; slotEndTimeInUTC: string }) => ({
+          slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC).toISOString(),
+          slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC).toISOString(),
+        }),
+      );
 
       const requestBody = {
         name: finalData.name,
@@ -119,53 +138,75 @@ const MultiStepForm: React.FC = () => {
         currentTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         role: finalData.role,
         onboardingCompleted: true,
-        consultantProfile: finalData.role === "CONSULTANT" ? {
-          create: {
-            description: finalData.description ?? "",
-            qualifications: finalData.qualifications ?? "",
-            specialization: finalData.specialization ?? "",
-            experience: finalData.experience ?? "",
-            domain: { connect: { id: finalData.domain!.id } },
-            subDomains: finalData.subDomains?.length ? {
-              connect: finalData.subDomains.map((sd: SubDomain) => ({ id: sd.id }))
-            } : undefined,
-            tags: finalData.tags?.length ? {
-              connect: finalData.tags.map((t: Tag) => ({ id: t.id }))
-            } : undefined,
-            scheduleType: finalData.scheduleType ?? "WEEKLY",
-            slotsOfAvailabilityWeekly: finalData.weeklySlots?.length ? {
-              create: finalData.weeklySlots.map((slot) => ({
-                dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
-                slotStartTimeInUTC: slot.slotStartTimeInUTC,
-                dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
-                slotEndTimeInUTC: slot.slotEndTimeInUTC,
-              }))
-            } : undefined,
-            slotsOfAvailabilityCustom: formattedCustomSlots?.length ? {
-              create: formattedCustomSlots
-            } : undefined,
-          }
-        } : undefined,
-        consulteeProfile: finalData.role === "CONSULTEE" ? {
-          create: {
-            education: finalData.education ?? "",
-            occupation: finalData.occupation ?? "",
-            aboutMe: finalData.aboutMe ?? "",
-            preferredCommunicationMethod: finalData.preferredCommunicationMethod ?? "VIDEO",
-            preferredLanguage: finalData.preferredLanguage ?? "",
-            specialRequirements: finalData.specialRequirements ?? "",
-            interests: finalData.interests ?? [],
-            goals: finalData.goals ?? [],
-          }
-        } : undefined,
-        staffProfile: finalData.role === "STAFF" ? {
-          create: {
-            department: finalData.department ?? "",
-            position: finalData.position ?? "",
-            permissions: finalData.permissions ?? {},
-            responsibilities: finalData.responsibilities ?? {},
-          }
-        } : undefined,
+        consultantProfile:
+          finalData.role === "CONSULTANT"
+            ? {
+                create: {
+                  description: finalData.description ?? "",
+                  qualifications: finalData.qualifications ?? "",
+                  specialization: finalData.specialization ?? "",
+                  experience: finalData.experience ?? "",
+                  domain: { connect: { id: finalData.domain!.id } },
+                  subDomains: finalData.subDomains?.length
+                    ? {
+                        connect: finalData.subDomains.map((sd: SubDomain) => ({
+                          id: sd.id,
+                        })),
+                      }
+                    : undefined,
+                  tags: finalData.tags?.length
+                    ? {
+                        connect: finalData.tags.map((t: Tag) => ({ id: t.id })),
+                      }
+                    : undefined,
+                  scheduleType: finalData.scheduleType ?? "WEEKLY",
+                  slotsOfAvailabilityWeekly: finalData.weeklySlots?.length
+                    ? {
+                        create: finalData.weeklySlots.map((slot) => ({
+                          dayOfWeekforStartTimeInUTC:
+                            slot.dayOfWeekforStartTimeInUTC,
+                          slotStartTimeInUTC: slot.slotStartTimeInUTC,
+                          dayOfWeekforEndTimeInUTC:
+                            slot.dayOfWeekforEndTimeInUTC,
+                          slotEndTimeInUTC: slot.slotEndTimeInUTC,
+                        })),
+                      }
+                    : undefined,
+                  slotsOfAvailabilityCustom: formattedCustomSlots?.length
+                    ? {
+                        create: formattedCustomSlots,
+                      }
+                    : undefined,
+                },
+              }
+            : undefined,
+        consulteeProfile:
+          finalData.role === "CONSULTEE"
+            ? {
+                create: {
+                  education: finalData.education ?? "",
+                  occupation: finalData.occupation ?? "",
+                  aboutMe: finalData.aboutMe ?? "",
+                  preferredCommunicationMethod:
+                    finalData.preferredCommunicationMethod ?? "VIDEO",
+                  preferredLanguage: finalData.preferredLanguage ?? "",
+                  specialRequirements: finalData.specialRequirements ?? "",
+                  interests: finalData.interests ?? [],
+                  goals: finalData.goals ?? [],
+                },
+              }
+            : undefined,
+        staffProfile:
+          finalData.role === "STAFF"
+            ? {
+                create: {
+                  department: finalData.department ?? "",
+                  position: finalData.position ?? "",
+                  permissions: finalData.permissions ?? {},
+                  responsibilities: finalData.responsibilities ?? {},
+                },
+              }
+            : undefined,
       };
 
       console.log("Request Body:", JSON.stringify(requestBody, null, 2));
@@ -211,7 +252,8 @@ const MultiStepForm: React.FC = () => {
       const result = await response.json();
       toast({
         title: "Onboarding Completed",
-        description: "Your onboarding information has been updated successfully.",
+        description:
+          "Your onboarding information has been updated successfully.",
         variant: "default",
       });
 
@@ -229,14 +271,16 @@ const MultiStepForm: React.FC = () => {
 
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
         router.push(`/dashboard/consultant/${result.user.consultantProfileId}`);
-      } else if (finalData.role === "CONSULTEE" && result.user.consulteeProfileId) {
+      } else if (
+        finalData.role === "CONSULTEE" &&
+        result.user.consulteeProfileId
+      ) {
         router.push(`/dashboard/consultee/${result.user.consulteeProfileId}`);
       } else if (finalData.role === "STAFF" && result.user.staffProfileId) {
         router.push(`/dashboard/staff/${result.user.staffProfileId}`);
       } else {
-        router.push('/dashboard');
+        router.push("/dashboard");
       }
-
     } catch (error: unknown) {
       console.error("Error updating onboarding information:", error);
       if (error instanceof Error) {
@@ -252,7 +296,10 @@ const MultiStepForm: React.FC = () => {
       }
       toast({
         title: "Something went wrong. Please try again later.",
-        description: error instanceof Error ? error.message : "An error occurred while updating onboarding information",
+        description:
+          error instanceof Error
+            ? error.message
+            : "An error occurred while updating onboarding information",
         variant: "destructive",
       });
     }

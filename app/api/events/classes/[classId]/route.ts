@@ -4,7 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> }) {
+  { params }: { params: Promise<{ classId: string }> },
+) {
   try {
     const { classId } = await params;
     const classData = await prisma.class.findUniqueOrThrow({
@@ -29,22 +30,20 @@ export async function GET(
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
     ) {
-      return NextResponse.json(
-        { error: "Class not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
     }
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> }) {
+  { params }: { params: Promise<{ classId: string }> },
+) {
   try {
     const { classId } = await params;
     const body = await request.json();
@@ -80,14 +79,15 @@ export async function PUT(
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> }) {
+  { params }: { params: Promise<{ classId: string }> },
+) {
   try {
     const { classId } = await params;
 
@@ -112,7 +112,7 @@ export async function DELETE(
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

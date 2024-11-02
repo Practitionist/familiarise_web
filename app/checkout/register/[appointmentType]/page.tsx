@@ -1,4 +1,4 @@
-"use client"
+"use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -11,23 +11,31 @@ import { useSearchParams } from "next/navigation";
 import { JSX, SVGProps, use, useEffect, useState } from "react";
 import { z } from "zod";
 import { ConsultantReview, User } from "@prisma/client";
-import { fetchConsultantDetails, fetchReviews, fetchUserDetails } from "@/hooks/useUserData";
+import {
+  fetchConsultantDetails,
+  fetchReviews,
+  fetchUserDetails,
+} from "@/hooks/useUserData";
 import { motion } from "framer-motion";
 import { TConsultantProfile } from "@/types/consultant";
 
 const eventSchemas = {
-  consultation: z.object({
-    consultationPlanId: z.string(),
-    slotOfAvailabilityWeeklyId: z.string().optional(),
-    slotOfAvailabilityCustomId: z.string().optional(),
-    discountCode: z.string().optional(),
-  }).refine(
-    data => data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId,
-    {
-      message: "Either slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
-      path: ["slotOfAvailabilityWeeklyId", "slotOfAvailabilityCustomId"],
-    }
-  ),
+  consultation: z
+    .object({
+      consultationPlanId: z.string(),
+      slotOfAvailabilityWeeklyId: z.string().optional(),
+      slotOfAvailabilityCustomId: z.string().optional(),
+      discountCode: z.string().optional(),
+    })
+    .refine(
+      (data) =>
+        data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId,
+      {
+        message:
+          "Either slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
+        path: ["slotOfAvailabilityWeeklyId", "slotOfAvailabilityCustomId"],
+      },
+    ),
   subscription: z.object({
     subscriptionPlanId: z.string(),
     discountCode: z.string().optional(),
@@ -54,13 +62,13 @@ const apiEndpoints = {
   class: (classId: string) => `/api/events/classes/${classId}`,
 };
 
-
 type Params = Promise<{ appointmentType: string }>;
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
 // Not Async since useState cannot be called in async function
-export default function CheckoutPage(props: Readonly<{ params: Params; searchParams: SearchParams }>) {
-  
+export default function CheckoutPage(
+  props: Readonly<{ params: Params; searchParams: SearchParams }>,
+) {
   // Nextjs 15 Synchrnous params and searchParams
   const params = use(props.params);
   const searchParams = use(props.searchParams);
@@ -73,16 +81,17 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
   const [error, setError] = useState<string | null>(null);
   const [consultantId, setConsultantId] = useState<string | null>(null);
   const [userDetails, setUserDetails] = useState<User | null>(null);
-  const [consultantDetails, setConsultantDetails] = useState<TConsultantProfile | null>(null);
+  const [consultantDetails, setConsultantDetails] =
+    useState<TConsultantProfile | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
-
 
   useEffect(() => {
     async function fetchEventData() {
       setIsLoading(true);
       try {
         // Get the schema for the current appointment type
-        const schema = eventSchemas[appointmentType as keyof typeof eventSchemas];
+        const schema =
+          eventSchemas[appointmentType as keyof typeof eventSchemas];
         if (!schema) {
           throw new Error("Invalid appointment type");
         }
@@ -92,16 +101,20 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
 
         if (!parsedParams.success) {
           const issues = parsedParams.error.issues;
-          const missingFields = issues.map(issue => issue.path[0]).join(', ');
+          const missingFields = issues.map((issue) => issue.path[0]).join(", ");
           throw new Error(`Missing required fields: ${missingFields}`);
         }
 
         // Construct the API endpoint based on the appointment type and params
-        const endpoint = apiEndpoints[appointmentType as keyof typeof apiEndpoints](
+        const endpoint = apiEndpoints[
+          appointmentType as keyof typeof apiEndpoints
+        ](
           // Use the appropriate ID based on the appointment type, fallback to planId or empty string
-          parsedParams.data[`${appointmentType}Id` as keyof typeof parsedParams.data] ||
-          (parsedParams.data as { planId?: string }).planId ||
-          ''
+          parsedParams.data[
+            `${appointmentType}Id` as keyof typeof parsedParams.data
+          ] ||
+            (parsedParams.data as { planId?: string }).planId ||
+            "",
         );
 
         // Fetch data from the API
@@ -115,9 +128,15 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
 
         // Extract consultant ID from the response data
         let extractedConsultantId;
-        if (appointmentType === 'consultation' || appointmentType === 'subscription') {
+        if (
+          appointmentType === "consultation" ||
+          appointmentType === "subscription"
+        ) {
           extractedConsultantId = data.data.consultantProfileId;
-        } else if (appointmentType === 'webinar' || appointmentType === 'class') {
+        } else if (
+          appointmentType === "webinar" ||
+          appointmentType === "class"
+        ) {
           extractedConsultantId = data.data.consultantProfile?.id;
         }
 
@@ -132,7 +151,7 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
         const [consultantData, userData, reviewsData] = await Promise.all([
           fetchConsultantDetails(extractedConsultantId),
           fetchUserDetails(extractedConsultantId),
-          fetchReviews(extractedConsultantId)
+          fetchReviews(extractedConsultantId),
         ]);
 
         setConsultantDetails(consultantData);
@@ -140,11 +159,13 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
         setReviews(reviewsData);
       } catch (error) {
         console.error("Error fetching event data:", error);
-        let errorMessage = 'An unexpected error occurred. Please try again.';
+        let errorMessage = "An unexpected error occurred. Please try again.";
 
         if (error instanceof Error) {
-          if (error.message.includes('Missing required fields')) {
-            errorMessage = error.message + '. Please ensure you have provided all necessary information.';
+          if (error.message.includes("Missing required fields")) {
+            errorMessage =
+              error.message +
+              ". Please ensure you have provided all necessary information.";
           } else {
             errorMessage = error.message;
           }
@@ -170,10 +191,16 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
   if (error) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4" role="alert">
+        <div
+          className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4"
+          role="alert"
+        >
           <p className="font-bold">Oops! Something went wrong</p>
           <p>{error}</p>
-          <p className="mt-2">Please check your selection and try again. If the problem persists, contact support.</p>
+          <p className="mt-2">
+            Please check your selection and try again. If the problem persists,
+            contact support.
+          </p>
         </div>
       </div>
     );
@@ -190,17 +217,31 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Avatar className="w-12 h-12 border">
-              <AvatarImage src={userDetails?.image || "/placeholder-user.jpg"} alt={userDetails?.name || "Consultant"} />
-              <AvatarFallback>{userDetails?.name ? userDetails.name.charAt(0) : "C"}</AvatarFallback>
+              <AvatarImage
+                src={userDetails?.image || "/placeholder-user.jpg"}
+                alt={userDetails?.name || "Consultant"}
+              />
+              <AvatarFallback>
+                {userDetails?.name ? userDetails.name.charAt(0) : "C"}
+              </AvatarFallback>
             </Avatar>
             <div>
-              <div className="font-semibold">{userDetails?.name || "Consultant Name"}</div>
-              <div className="text-sm text-muted-foreground">{consultantDetails?.specialization || "Consultant"}</div>
+              <div className="font-semibold">
+                {userDetails?.name || "Consultant Name"}
+              </div>
+              <div className="text-sm text-muted-foreground">
+                {consultantDetails?.specialization || "Consultant"}
+              </div>
             </div>
           </div>
           <div className="text-right">
-            <div className="font-semibold">{appointmentType.charAt(0).toUpperCase() + appointmentType.slice(1)}</div>
-            <div className="text-sm text-muted-foreground">Date and time to be scheduled</div>
+            <div className="font-semibold">
+              {appointmentType.charAt(0).toUpperCase() +
+                appointmentType.slice(1)}
+            </div>
+            <div className="text-sm text-muted-foreground">
+              Date and time to be scheduled
+            </div>
           </div>
         </div>
         <Separator className="bg-gray-300" />
@@ -225,7 +266,9 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
               <div className="text-muted-foreground">Tags</div>
               <div className="flex gap-2">
                 {consultantDetails?.tags.map((tag) => (
-                  <Badge key={tag.id} variant="outline">{tag.name}</Badge>
+                  <Badge key={tag.id} variant="outline">
+                    {tag.name}
+                  </Badge>
                 ))}
               </div>
             </div>
@@ -237,7 +280,9 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
               <div className="text-muted-foreground">Sub-Domains</div>
               <div className="flex gap-2">
                 {consultantDetails?.subDomains.map((subDomain) => (
-                  <Badge key={subDomain.id} variant="outline">{subDomain.name}</Badge>
+                  <Badge key={subDomain.id} variant="outline">
+                    {subDomain.name}
+                  </Badge>
                 ))}
               </div>
             </div>
@@ -247,14 +292,20 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
         <div className="grid gap-4">
           <div className="font-semibold">Discount Codes</div>
           <div className="flex items-center gap-2">
-            <Input type="text" placeholder="Enter discount code" className="flex-1" />
+            <Input
+              type="text"
+              placeholder="Enter discount code"
+              className="flex-1"
+            />
             <Button variant="outline">Apply</Button>
           </div>
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-medium">SUMMERSALE10</div>
-                <div className="text-sm text-muted-foreground">Get 10% off your purchase during the summer sale</div>
+                <div className="text-sm text-muted-foreground">
+                  Get 10% off your purchase during the summer sale
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <div className="text-muted-foreground">10% off</div>
@@ -266,7 +317,9 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-medium">NEWCUSTOMER15</div>
-                <div className="text-sm text-muted-foreground">New customers get 15% off their first order</div>
+                <div className="text-sm text-muted-foreground">
+                  New customers get 15% off their first order
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <div className="text-muted-foreground">15% off</div>
@@ -278,7 +331,9 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-medium">FREESHIP</div>
-                <div className="text-sm text-muted-foreground">Enjoy free shipping on your order</div>
+                <div className="text-sm text-muted-foreground">
+                  Enjoy free shipping on your order
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <div className="text-muted-foreground">Free Shipping</div>
@@ -290,7 +345,9 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
             <div className="flex items-center justify-between">
               <div>
                 <div className="font-medium">HOLIDAY20</div>
-                <div className="text-sm text-muted-foreground">Get 20% off during the holiday season</div>
+                <div className="text-sm text-muted-foreground">
+                  Get 20% off during the holiday season
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <div className="text-muted-foreground">20% off</div>
@@ -352,7 +409,9 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
         <div className="grid gap-4">
           <div className="grid gap-2">
             <div className="font-semibold">Payment</div>
-            <div className="text-muted-foreground">Select your preferred payment method</div>
+            <div className="text-muted-foreground">
+              Select your preferred payment method
+            </div>
           </div>
           <Card>
             <CardHeader>
@@ -364,7 +423,9 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
                   <CreditCardIcon className="w-8 h-8" />
                   <div>
                     <div className="font-semibold">Credit/Debit Card</div>
-                    <div className="text-sm text-muted-foreground">Securely pay with your card</div>
+                    <div className="text-sm text-muted-foreground">
+                      Securely pay with your card
+                    </div>
                   </div>
                 </div>
                 <Button variant="outline">Pay with Stripe</Button>
@@ -381,7 +442,9 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
                   <CreditCardIcon className="w-8 h-8" />
                   <div>
                     <div className="font-semibold">Credit/Debit Card</div>
-                    <div className="text-sm text-muted-foreground">Securely pay with your card</div>
+                    <div className="text-sm text-muted-foreground">
+                      Securely pay with your card
+                    </div>
                   </div>
                 </div>
                 <Button variant="outline">Pay with Razorpay</Button>
@@ -394,7 +457,9 @@ export default function CheckoutPage(props: Readonly<{ params: Params; searchPar
   );
 }
 
-function CreditCardIcon(props: JSX.IntrinsicAttributes & SVGProps<SVGSVGElement>) {
+function CreditCardIcon(
+  props: JSX.IntrinsicAttributes & SVGProps<SVGSVGElement>,
+) {
   return (
     <svg
       {...props}

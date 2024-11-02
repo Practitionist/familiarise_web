@@ -4,9 +4,9 @@ import { NextRequest, NextResponse } from "next/server";
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const consultantId = searchParams.get('consultantId');
-    const page = parseInt(searchParams.get('page') || '1');
-    const limit = parseInt(searchParams.get('limit') || '10');
+    const consultantId = searchParams.get("consultantId");
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "10");
     const skip = (page - 1) * limit;
 
     const where = consultantId ? { consultantProfileId: consultantId } : {};
@@ -24,20 +24,23 @@ export async function GET(request: NextRequest) {
       prisma.webinarPlan.count({ where }),
     ]);
 
-    return NextResponse.json({
-      data: webinarPlans,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+    return NextResponse.json(
+      {
+        data: webinarPlans,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
       },
-    }, { status: 200 });
+      { status: 200 },
+    );
   } catch (error) {
     console.error("Error fetching webinar plans:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching webinar plans" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -61,17 +64,23 @@ export async function POST(request: NextRequest) {
     } = body;
 
     // Input validation
-    if (!title || !durationInHours || !price || !maxParticipants || !consultantProfileId) {
+    if (
+      !title ||
+      !durationInHours ||
+      !price ||
+      !maxParticipants ||
+      !consultantProfileId
+    ) {
       return NextResponse.json(
         { error: "Missing required fields" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (durationInHours <= 0 || price <= 0 || maxParticipants <= 0) {
       return NextResponse.json(
         { error: "Invalid numeric values" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -88,7 +97,9 @@ export async function POST(request: NextRequest) {
         materialProvided,
         learningOutcomes,
         consultantProfile: { connect: { id: consultantProfileId } },
-        topics: topicIds ? { connect: topicIds.map((id: string) => ({ id })) } : undefined,
+        topics: topicIds
+          ? { connect: topicIds.map((id: string) => ({ id })) }
+          : undefined,
       },
       include: {
         consultantProfile: true,
@@ -101,7 +112,7 @@ export async function POST(request: NextRequest) {
     console.error("Error creating webinar plan:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the webinar plan" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

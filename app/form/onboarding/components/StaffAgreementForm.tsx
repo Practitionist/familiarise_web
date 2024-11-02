@@ -7,13 +7,20 @@ import TermsAndPrivacyAgreement from "./TermsAndPrivacyAgreement";
 interface Props {
   onNext: (data: any) => void;
   onBack: () => void;
-  initialData: Partial<StaffProfile & PersonalInfoAndRole & {
-    termsAccepted?: boolean;
-    privacyAccepted?: boolean;
-  }>;
+  initialData: Partial<
+    StaffProfile &
+      PersonalInfoAndRole & {
+        termsAccepted?: boolean;
+        privacyAccepted?: boolean;
+      }
+  >;
 }
 
-const StaffAgreementForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
+const StaffAgreementForm: React.FC<Props> = ({
+  onNext,
+  onBack,
+  initialData,
+}) => {
   const {
     setValue,
     watch,
@@ -44,7 +51,10 @@ const StaffAgreementForm: React.FC<Props> = ({ onNext, onBack, initialData }) =>
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="w-full max-w-md space-y-4">
+    <form
+      onSubmit={handleSubmit(onSubmit)}
+      className="w-full max-w-md space-y-4"
+    >
       <TermsAndPrivacyAgreement
         onTermsChange={handleTermsChange}
         onPrivacyChange={handlePrivacyChange}
@@ -53,16 +63,17 @@ const StaffAgreementForm: React.FC<Props> = ({ onNext, onBack, initialData }) =>
       />
       {(errors.termsAccepted || errors.privacyAccepted) && (
         <p className="text-red-500 text-sm">
-          Please accept both the Terms of Service and Privacy Policy to continue.
+          Please accept both the Terms of Service and Privacy Policy to
+          continue.
         </p>
       )}
       <div className="flex justify-between">
         <Button type="button" onClick={onBack} variant="outline">
           Back
         </Button>
-        <Button 
-          type="submit" 
-          variant="night" 
+        <Button
+          type="submit"
+          variant="night"
           disabled={!termsAccepted || !privacyAccepted}
         >
           Next

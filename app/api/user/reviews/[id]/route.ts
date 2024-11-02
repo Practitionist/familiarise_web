@@ -3,8 +3,8 @@ import prisma from "@/lib/prisma";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }) {
-
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const { id } = await params;
 
@@ -23,14 +23,17 @@ export async function GET(
     return NextResponse.json(review, { status: 200 });
   } catch (error) {
     console.error("Error getting review:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal Server Error" },
+      { status: 500 },
+    );
   }
 }
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }) {
-
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const { id } = await params;
 
@@ -50,14 +53,17 @@ export async function PUT(
     return NextResponse.json(updatedReview, { status: 200 });
   } catch (error) {
     console.error("Error updating review:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal Server Error" },
+      { status: 500 },
+    );
   }
 }
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }) {
-
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const { id } = await params;
 
@@ -65,9 +71,15 @@ export async function DELETE(
       where: { id: id },
     });
 
-    return NextResponse.json({ message: "Review deleted successfully" }, { status: 200 });
+    return NextResponse.json(
+      { message: "Review deleted successfully" },
+      { status: 200 },
+    );
   } catch (error) {
     console.error("Error deleting review:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal Server Error" },
+      { status: 500 },
+    );
   }
 }

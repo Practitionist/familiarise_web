@@ -14,7 +14,10 @@ interface Props {
 }
 
 const ConsultationPlanFormSchema = z.object({
-  plans: ConsultationPlanSchema.array().min(1, "At least one consultation plan is required"),
+  plans: ConsultationPlanSchema.array().min(
+    1,
+    "At least one consultation plan is required",
+  ),
 });
 
 type FormData = z.infer<typeof ConsultationPlanFormSchema>;
@@ -31,19 +34,23 @@ const ConsultationPlanForm: React.FC<Props> = ({
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
     resolver: zodResolver(ConsultationPlanFormSchema),
-    defaultValues: { 
-      plans: initialData.length ? initialData : [{
-        id: crypto.randomUUID(),
-        title: "",
-        description: "",
-        durationInHours: 1,
-        price: 0,
-        language: "English",
-        level: "Beginner",
-        prerequisites: "",
-        materialProvided: "",
-        learningOutcomes: []
-      }]
+    defaultValues: {
+      plans: initialData.length
+        ? initialData
+        : [
+            {
+              id: crypto.randomUUID(),
+              title: "",
+              description: "",
+              durationInHours: 1,
+              price: 0,
+              language: "English",
+              level: "Beginner",
+              prerequisites: "",
+              materialProvided: "",
+              learningOutcomes: [],
+            },
+          ],
     },
   });
 
@@ -78,7 +85,9 @@ const ConsultationPlanForm: React.FC<Props> = ({
               {...register(`plans.${index}.title` as const)}
             />
             {errors.plans && errors.plans[index]?.title?.message && (
-              <p className="text-red-500">{errors.plans[index]?.title?.message}</p>
+              <p className="text-red-500">
+                {errors.plans[index]?.title?.message}
+              </p>
             )}
           </div>
 
@@ -90,20 +99,28 @@ const ConsultationPlanForm: React.FC<Props> = ({
               {...register(`plans.${index}.description` as const)}
             />
             {errors.plans && errors.plans[index]?.description?.message && (
-              <p className="text-red-500">{errors.plans[index]?.description?.message}</p>
+              <p className="text-red-500">
+                {errors.plans[index]?.description?.message}
+              </p>
             )}
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor={`plans.${index}.durationInHours`}>Duration (hours)</Label>
+            <Label htmlFor={`plans.${index}.durationInHours`}>
+              Duration (hours)
+            </Label>
             <Input
               id={`plans.${index}.durationInHours`}
               type="number"
               step="0.5"
-              {...register(`plans.${index}.durationInHours` as const, { valueAsNumber: true })}
+              {...register(`plans.${index}.durationInHours` as const, {
+                valueAsNumber: true,
+              })}
             />
             {errors.plans && errors.plans[index]?.durationInHours?.message && (
-              <p className="text-red-500">{errors.plans[index]?.durationInHours?.message}</p>
+              <p className="text-red-500">
+                {errors.plans[index]?.durationInHours?.message}
+              </p>
             )}
           </div>
 
@@ -112,15 +129,23 @@ const ConsultationPlanForm: React.FC<Props> = ({
             <Input
               id={`plans.${index}.price`}
               type="number"
-              {...register(`plans.${index}.price` as const, { valueAsNumber: true })}
+              {...register(`plans.${index}.price` as const, {
+                valueAsNumber: true,
+              })}
             />
             {errors.plans && errors.plans[index]?.price?.message && (
-              <p className="text-red-500">{errors.plans[index]?.price?.message}</p>
+              <p className="text-red-500">
+                {errors.plans[index]?.price?.message}
+              </p>
             )}
           </div>
 
           {fields.length > 1 && (
-            <Button type="button" onClick={() => remove(index)} variant="outline">
+            <Button
+              type="button"
+              onClick={() => remove(index)}
+              variant="outline"
+            >
               Remove Plan
             </Button>
           )}
@@ -140,7 +165,7 @@ const ConsultationPlanForm: React.FC<Props> = ({
             level: "Beginner",
             prerequisites: "",
             materialProvided: "",
-            learningOutcomes: []
+            learningOutcomes: [],
           })
         }
         variant="outline"
@@ -157,7 +182,7 @@ const ConsultationPlanForm: React.FC<Props> = ({
           Back
         </Button>
         <Button type="submit" variant="night" disabled={isSubmitting}>
-          {isSubmitting ? 'Submitting...' : 'Next'}
+          {isSubmitting ? "Submitting..." : "Next"}
         </Button>
       </div>
 

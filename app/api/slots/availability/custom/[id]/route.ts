@@ -4,8 +4,8 @@ import { Prisma } from "@prisma/client";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }) {
-
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const { id } = await params;
     const customSlot = await prisma.slotOfAvailabilityCustom.findUnique({
@@ -18,25 +18,24 @@ export async function GET(
     if (!customSlot) {
       return NextResponse.json(
         { error: "Custom slot not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     return NextResponse.json({ data: customSlot }, { status: 200 });
-
   } catch (error) {
     console.error("Error fetching custom slot:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the custom slot" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }) {
-
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const { id } = await params;
     const body = await req.json();
@@ -44,7 +43,7 @@ export async function PUT(
     if (!body.slotStartTimeInUTC || !body.slotEndTimeInUTC) {
       return NextResponse.json(
         { error: "Missing required fields" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -52,7 +51,10 @@ export async function PUT(
     const endTime = new Date(body.slotEndTimeInUTC);
 
     if (startTime >= endTime) {
-      return NextResponse.json({ error: "Start time must be before end time" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Start time must be before end time" },
+        { status: 400 },
+      );
     }
 
     // Check for overlapping slots
@@ -63,22 +65,25 @@ export async function PUT(
         OR: [
           {
             slotStartTimeInUTC: { lte: startTime },
-            slotEndTimeInUTC: { gt: startTime }
+            slotEndTimeInUTC: { gt: startTime },
           },
           {
             slotStartTimeInUTC: { lt: endTime },
-            slotEndTimeInUTC: { gte: endTime }
+            slotEndTimeInUTC: { gte: endTime },
           },
           {
             slotStartTimeInUTC: { gte: startTime },
-            slotEndTimeInUTC: { lte: endTime }
-          }
-        ]
-      }
+            slotEndTimeInUTC: { lte: endTime },
+          },
+        ],
+      },
     });
 
     if (overlappingSlot) {
-      return NextResponse.json({ error: "This slot overlaps with an existing slot" }, { status: 409 });
+      return NextResponse.json(
+        { error: "This slot overlaps with an existing slot" },
+        { status: 409 },
+      );
     }
 
     const updatedSlot = await prisma.slotOfAvailabilityCustom.update({
@@ -86,7 +91,9 @@ export async function PUT(
       data: {
         slotStartTimeInUTC: startTime,
         slotEndTimeInUTC: endTime,
-        consultantProfile: body.consultantProfileId ? { connect: { id: body.consultantProfileId } } : undefined,
+        consultantProfile: body.consultantProfileId
+          ? { connect: { id: body.consultantProfileId } }
+          : undefined,
       },
       include: {
         consultantProfile: true,
@@ -97,24 +104,24 @@ export async function PUT(
   } catch (error) {
     console.error("Error updating custom slot:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === 'P2025') {
+      if (error.code === "P2025") {
         return NextResponse.json(
           { error: "Custom slot not found" },
-          { status: 404 }
+          { status: 404 },
         );
       }
     }
     return NextResponse.json(
       { error: "An error occurred while updating the custom slot" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }) {
-
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const { id } = await params;
     const body = await req.json();
@@ -126,41 +133,52 @@ export async function PATCH(
     if (!currentSlot) {
       return NextResponse.json(
         { error: "Custom slot not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
-    const startTime = body.slotStartTimeInUTC ? new Date(body.slotStartTimeInUTC) : currentSlot.slotStartTimeInUTC;
-    const endTime = body.slotEndTimeInUTC ? new Date(body.slotEndTimeInUTC) : currentSlot.slotEndTimeInUTC;
+    const startTime = body.slotStartTimeInUTC
+      ? new Date(body.slotStartTimeInUTC)
+      : currentSlot.slotStartTimeInUTC;
+    const endTime = body.slotEndTimeInUTC
+      ? new Date(body.slotEndTimeInUTC)
+      : currentSlot.slotEndTimeInUTC;
 
     if (startTime >= endTime) {
-      return NextResponse.json({ error: "Start time must be before end time" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Start time must be before end time" },
+        { status: 400 },
+      );
     }
 
     // Check for overlapping slots
     const overlappingSlot = await prisma.slotOfAvailabilityCustom.findFirst({
       where: {
         id: { not: id },
-        consultantProfileId: body.consultantProfileId || currentSlot.consultantProfileId,
+        consultantProfileId:
+          body.consultantProfileId || currentSlot.consultantProfileId,
         OR: [
           {
             slotStartTimeInUTC: { lte: startTime },
-            slotEndTimeInUTC: { gt: startTime }
+            slotEndTimeInUTC: { gt: startTime },
           },
           {
             slotStartTimeInUTC: { lt: endTime },
-            slotEndTimeInUTC: { gte: endTime }
+            slotEndTimeInUTC: { gte: endTime },
           },
           {
             slotStartTimeInUTC: { gte: startTime },
-            slotEndTimeInUTC: { lte: endTime }
-          }
-        ]
-      }
+            slotEndTimeInUTC: { lte: endTime },
+          },
+        ],
+      },
     });
 
     if (overlappingSlot) {
-      return NextResponse.json({ error: "This slot overlaps with an existing slot" }, { status: 409 });
+      return NextResponse.json(
+        { error: "This slot overlaps with an existing slot" },
+        { status: 409 },
+      );
     }
 
     const updatedSlot = await prisma.slotOfAvailabilityCustom.update({
@@ -168,7 +186,9 @@ export async function PATCH(
       data: {
         slotStartTimeInUTC: startTime,
         slotEndTimeInUTC: endTime,
-        consultantProfile: body.consultantProfileId ? { connect: { id: body.consultantProfileId } } : undefined,
+        consultantProfile: body.consultantProfileId
+          ? { connect: { id: body.consultantProfileId } }
+          : undefined,
       },
       include: {
         consultantProfile: true,
@@ -179,24 +199,24 @@ export async function PATCH(
   } catch (error) {
     console.error("Error partially updating custom slot:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === 'P2025') {
+      if (error.code === "P2025") {
         return NextResponse.json(
           { error: "Custom slot not found" },
-          { status: 404 }
+          { status: 404 },
         );
       }
     }
     return NextResponse.json(
       { error: "An error occurred while updating the custom slot" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }) {
-
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const { id } = await params;
     // Check if there are any associated appointments
@@ -207,7 +227,7 @@ export async function DELETE(
     if (associatedAppointments.length > 0) {
       return NextResponse.json(
         { error: "Cannot delete custom slot with associated appointments" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -220,21 +240,21 @@ export async function DELETE(
 
     return NextResponse.json(
       { message: "Custom slot deleted successfully", data: deletedSlot },
-      { status: 200 }
+      { status: 200 },
     );
   } catch (error) {
     console.error("Error deleting custom slot:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === 'P2025') {
+      if (error.code === "P2025") {
         return NextResponse.json(
           { error: "Custom slot not found" },
-          { status: 404 }
+          { status: 404 },
         );
       }
     }
     return NextResponse.json(
       { error: "An error occurred while deleting the custom slot" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

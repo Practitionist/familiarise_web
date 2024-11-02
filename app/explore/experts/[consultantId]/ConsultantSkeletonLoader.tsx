@@ -1,15 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export const ConsultantSkeletonLoader: React.FC = () => {
-  const [loadingText, setLoadingText] = useState("Please wait while we are fetching consultant details");
+  const [loadingText, setLoadingText] = useState(
+    "Please wait while we are fetching consultant details",
+  );
 
   useEffect(() => {
     const dots = [".", "..", "..."];
     let dotIndex = 0;
 
     const interval = setInterval(() => {
-      setLoadingText(prevText => {
+      setLoadingText((prevText) => {
         const baseText = "Please wait while we are fetching consultant details";
         return `${baseText}${dots[dotIndex]}`;
       });
@@ -21,7 +23,9 @@ export const ConsultantSkeletonLoader: React.FC = () => {
 
   return (
     <div className="flex flex-col justify-center items-center min-h-screen">
-      <div className="text-2xl font-semibold mb-8 text-center animate-pulse">{loadingText}</div>
+      <div className="text-2xl font-semibold mb-8 text-center animate-pulse">
+        {loadingText}
+      </div>
       <div className="flex justify-center w-full max-w-6xl">
         <div className="flex flex-col w-1/2">
           <Skeleton className="h-8 w-32 mb-2" />

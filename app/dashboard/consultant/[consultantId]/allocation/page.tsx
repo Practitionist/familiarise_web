@@ -1,26 +1,33 @@
 "use client";
 
-import { ArrowLeftIcon, ArrowRightIcon, CalendarIcon, MenuIcon, OptionIcon, SearchIcon, TargetIcon, TimerIcon, UserIcon } from "@/assets/icons";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  CalendarIcon,
+  MenuIcon,
+  OptionIcon,
+  SearchIcon,
+  TargetIcon,
+  TimerIcon,
+  UserIcon,
+} from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/use-toast";
-import { format } from 'date-fns';
-import { useCallback, useMemo, useState } from 'react';
-import { AddScheduleDialog } from './components/AddScheduleDialog';
-import { MonthView } from './components/MonthView';
-import { WeekView } from './components/WeekView';
-import { useCalendarNavigation } from './hooks/useCalendarNavigation';
-import { useSlots } from './hooks/useSlots';
-import {
-  DayOfWeek,
-  NewSlot
-} from './utils';
+import { format } from "date-fns";
+import { useCallback, useMemo, useState } from "react";
+import { AddScheduleDialog } from "./components/AddScheduleDialog";
+import { MonthView } from "./components/MonthView";
+import { WeekView } from "./components/WeekView";
+import { useCalendarNavigation } from "./hooks/useCalendarNavigation";
+import { useSlots } from "./hooks/useSlots";
+import { DayOfWeek, NewSlot } from "./utils";
 
 export default function EnhancedSlotAllocationCalendar() {
   const [isAddScheduleOpen, setIsAddScheduleOpen] = useState(false);
   const [newSlot, setNewSlot] = useState<NewSlot>({
-    type: 'weekly',
-    dayOfWeekforStartTimeInUTC: 'MONDAY',
-    dayOfWeekforEndTimeInUTC: 'MONDAY',
+    type: "weekly",
+    dayOfWeekforStartTimeInUTC: "MONDAY",
+    dayOfWeekforEndTimeInUTC: "MONDAY",
     slotStartTimeInUTC: new Date(),
     slotEndTimeInUTC: new Date(),
   });
@@ -34,10 +41,10 @@ export default function EnhancedSlotAllocationCalendar() {
       setIsAddScheduleOpen(false);
       toast({
         title: "Slot added",
-        description: `New slot added: ${format(newSlot.slotStartTimeInUTC, 'PPpp')} - ${format(newSlot.slotEndTimeInUTC, 'PPpp')}`,
+        description: `New slot added: ${format(newSlot.slotStartTimeInUTC, "PPpp")} - ${format(newSlot.slotEndTimeInUTC, "PPpp")}`,
       });
     } catch (error) {
-      console.error('Error adding slot:', error);
+      console.error("Error adding slot:", error);
       toast({
         title: "Error",
         description: "Failed to add slot. Please try again.",
@@ -46,26 +53,55 @@ export default function EnhancedSlotAllocationCalendar() {
     }
   }, [addSlot, newSlot]);
 
-  const handleCellClick = useCallback((day: Date, hour: number) => {
-    const startTime = new Date(day);
-    startTime.setHours(hour, 0, 0, 0);
-    const endTime = new Date(startTime);
-    endTime.setHours(hour + 1, 0, 0, 0);
+  const handleCellClick = useCallback(
+    (day: Date, hour: number) => {
+      const startTime = new Date(day);
+      startTime.setHours(hour, 0, 0, 0);
+      const endTime = new Date(startTime);
+      endTime.setHours(hour + 1, 0, 0, 0);
 
-    setNewSlot({
-      type: view === 'week' ? 'weekly' : 'custom',
-      dayOfWeekforStartTimeInUTC: ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'][day.getDay()] as DayOfWeek,
-      dayOfWeekforEndTimeInUTC: ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'][day.getDay()] as DayOfWeek,
-      slotStartTimeInUTC: startTime,
-      slotEndTimeInUTC: endTime,
-    });
-    setIsAddScheduleOpen(true);
-  }, [view]);
+      setNewSlot({
+        type: view === "week" ? "weekly" : "custom",
+        dayOfWeekforStartTimeInUTC: [
+          "SUNDAY",
+          "MONDAY",
+          "TUESDAY",
+          "WEDNESDAY",
+          "THURSDAY",
+          "FRIDAY",
+          "SATURDAY",
+        ][day.getDay()] as DayOfWeek,
+        dayOfWeekforEndTimeInUTC: [
+          "SUNDAY",
+          "MONDAY",
+          "TUESDAY",
+          "WEDNESDAY",
+          "THURSDAY",
+          "FRIDAY",
+          "SATURDAY",
+        ][day.getDay()] as DayOfWeek,
+        slotStartTimeInUTC: startTime,
+        slotEndTimeInUTC: endTime,
+      });
+      setIsAddScheduleOpen(true);
+    },
+    [view],
+  );
 
   const calendarContent = useMemo(() => {
-    return view === 'week'
-      ? <WeekView currentDate={currentDate} slots={slots} onCellClick={handleCellClick} />
-      : <MonthView currentDate={currentDate} slots={slots} onCellClick={handleCellClick} />;
+    return view === "week" ? (
+      <WeekView
+        currentDate={currentDate}
+        slots={slots}
+        onCellClick={handleCellClick}
+      />
+    ) : (
+      <MonthView
+        currentDate={currentDate}
+        slots={slots}
+        onCellClick={handleCellClick}
+      />
+    );
   }, [view, currentDate, slots, handleCellClick]);
 
   return (
@@ -83,10 +119,14 @@ export default function EnhancedSlotAllocationCalendar() {
       <div className="flex flex-1">
         <aside className="w-64 p-4 bg-white border-r">
           <div className="mb-6">
-            <h2 className="text-xl font-semibold text-gray-800">{format(currentDate, 'MMMM yyyy')}</h2>
+            <h2 className="text-xl font-semibold text-gray-800">
+              {format(currentDate, "MMMM yyyy")}
+            </h2>
           </div>
           <div className="mb-4">
-            <h2 className="text-lg font-semibold text-gray-700 mb-2">Scheduled</h2>
+            <h2 className="text-lg font-semibold text-gray-700 mb-2">
+              Scheduled
+            </h2>
             <ul className="space-y-2">
               <li className="flex items-center space-x-2 text-gray-600 hover:text-gray-800">
                 <CalendarIcon className="w-4 h-4" />
@@ -119,15 +159,15 @@ export default function EnhancedSlotAllocationCalendar() {
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center space-x-4">
               <Button
-                variant={view === 'week' ? 'default' : 'outline'}
-                onClick={() => setView('week')}
+                variant={view === "week" ? "default" : "outline"}
+                onClick={() => setView("week")}
                 className="text-sm font-medium"
               >
                 Week
               </Button>
               <Button
-                variant={view === 'month' ? 'default' : 'outline'}
-                onClick={() => setView('month')}
+                variant={view === "month" ? "default" : "outline"}
+                onClick={() => setView("month")}
                 className="text-sm font-medium"
               >
                 Month
@@ -135,11 +175,21 @@ export default function EnhancedSlotAllocationCalendar() {
             </div>
             <div className="flex items-center space-x-4">
               <TimerIcon className="w-6 h-6 text-gray-600" />
-              <span className="text-lg font-medium text-gray-800">{format(currentDate, 'MMMM yyyy')}</span>
-              <Button variant="outline" size="icon" onClick={() => navigate('prev')}>
+              <span className="text-lg font-medium text-gray-800">
+                {format(currentDate, "MMMM yyyy")}
+              </span>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => navigate("prev")}
+              >
                 <ArrowLeftIcon className="w-4 h-4" />
               </Button>
-              <Button variant="outline" size="icon" onClick={() => navigate('next')}>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => navigate("next")}
+              >
                 <ArrowRightIcon className="w-4 h-4" />
               </Button>
             </div>

@@ -4,8 +4,8 @@ import { NextResponse } from "next/server";
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const consulteeId = searchParams.get('consulteeId');
-    const consultantId = searchParams.get('consultantId');
+    const consulteeId = searchParams.get("consulteeId");
+    const consultantId = searchParams.get("consultantId");
 
     let webinars;
 
@@ -17,59 +17,59 @@ export async function GET(request: Request) {
               slotOfAppointment: {
                 some: {
                   consulteeProfile: {
-                    id: consulteeId
-                  }
-                }
-              }
-            }
-          }
+                    id: consulteeId,
+                  },
+                },
+              },
+            },
+          },
         },
         include: {
           webinarPlan: {
             include: {
               consultantProfile: true,
-              topics: true
-            }
+              topics: true,
+            },
           },
           appointment: {
             include: {
               slotOfAppointment: {
                 include: {
-                  consulteeProfile: true
-                }
-              }
-            }
+                  consulteeProfile: true,
+                },
+              },
+            },
           },
-          waitlist: true
-        }
+          waitlist: true,
+        },
       });
     } else if (consultantId) {
       webinars = await prisma.webinar.findMany({
         where: {
           webinarPlan: {
             consultantProfile: {
-              id: consultantId
-            }
-          }
+              id: consultantId,
+            },
+          },
         },
         include: {
           webinarPlan: {
             include: {
               consultantProfile: true,
-              topics: true
-            }
+              topics: true,
+            },
           },
           appointment: {
             include: {
               slotOfAppointment: {
                 include: {
-                  consulteeProfile: true
-                }
-              }
-            }
+                  consulteeProfile: true,
+                },
+              },
+            },
           },
-          waitlist: true
-        }
+          waitlist: true,
+        },
       });
     } else {
       webinars = await prisma.webinar.findMany({
@@ -77,20 +77,20 @@ export async function GET(request: Request) {
           webinarPlan: {
             include: {
               consultantProfile: true,
-              topics: true
-            }
+              topics: true,
+            },
           },
           appointment: {
             include: {
               slotOfAppointment: {
                 include: {
-                  consulteeProfile: true
-                }
-              }
-            }
+                  consulteeProfile: true,
+                },
+              },
+            },
           },
-          waitlist: true
-        }
+          waitlist: true,
+        },
       });
     }
 
@@ -99,7 +99,7 @@ export async function GET(request: Request) {
     console.error("Error fetching webinars:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching webinars" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -114,27 +114,27 @@ export async function POST(request: Request) {
         endAt: new Date(body.endAt),
         status: body.status,
         webinarPlan: {
-          connect: { id: body.webinarPlanId }
-        }
+          connect: { id: body.webinarPlanId },
+        },
       },
       include: {
         webinarPlan: {
           include: {
             consultantProfile: true,
-            topics: true
-          }
+            topics: true,
+          },
         },
         appointment: {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true
-              }
-            }
-          }
+                consulteeProfile: true,
+              },
+            },
+          },
         },
-        waitlist: true
-      }
+        waitlist: true,
+      },
     });
 
     return NextResponse.json({ data: webinar }, { status: 201 });
@@ -142,7 +142,7 @@ export async function POST(request: Request) {
     console.error("Error creating webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the webinar" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -24,7 +24,7 @@ jobs:
         run: npm ci
 
       - name: Prettier Check
-        run: npx prettier --check "src/**/*.{js,jsx,ts,tsx,json,css,scss,md}"
+        run: npx prettier --check "app/**/*.{js,jsx,ts,tsx,json,css,scss,md}"
 
       - name: ESLint Check
         run: npx eslint . --ext .js,.jsx,.ts,.tsx

@@ -11,7 +11,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Domain, SubDomain, Tag, ConsultationPlan, SubscriptionPlan, WebinarPlan, ClassPlan } from "@prisma/client";
+import {
+  Domain,
+  SubDomain,
+  Tag,
+  ConsultationPlan,
+  SubscriptionPlan,
+  WebinarPlan,
+  ClassPlan,
+} from "@prisma/client";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -58,7 +66,9 @@ function FindExperts() {
   const [experienceYears, setExperienceYears] = useState(0);
   const [pricing, setPricing] = useState(0);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
-  const [selectedSubdomain, setSelectedSubdomain] = useState<string | null>(null);
+  const [selectedSubdomain, setSelectedSubdomain] = useState<string | null>(
+    null,
+  );
 
   const router = useRouter();
 
@@ -68,7 +78,7 @@ function FindExperts() {
       try {
         const [metaResponse, consultantsResponse] = await Promise.all([
           fetch("/api/user/consultants/meta"),
-          fetch("/api/user/consultants")
+          fetch("/api/user/consultants"),
         ]);
         const metaData = await metaResponse.json();
         const consultantsData = await consultantsResponse.json();
@@ -101,11 +111,12 @@ function FindExperts() {
     setIsDropdownOpen(true);
   };
 
-  const filteredTags = metadata?.tags.filter(
-    (tag) =>
-      tag.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
-      !selectedTags.includes(tag.name)
-  ) || [];
+  const filteredTags =
+    metadata?.tags.filter(
+      (tag) =>
+        tag.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
+        !selectedTags.includes(tag.name),
+    ) || [];
 
   if (isLoading) {
     return <div>Loading experts...</div>;
@@ -131,17 +142,17 @@ function FindExperts() {
             >
               Domain
             </label>
-            <Select
-              onValueChange={(value) => setSelectedDomain(value)}
-            >
+            <Select onValueChange={(value) => setSelectedDomain(value)}>
               <SelectTrigger id="domain" aria-label="Select domain">
-                <SelectValue
-                  placeholder="Select domain"
-                />
+                <SelectValue placeholder="Select domain" />
               </SelectTrigger>
               <SelectContent>
                 {metadata?.domains.map((domain) => (
-                  <SelectItem key={domain.id} value={domain.id} className="bg-slate-200 text-black">
+                  <SelectItem
+                    key={domain.id}
+                    value={domain.id}
+                    className="bg-slate-200 text-black"
+                  >
                     {domain.name}
                   </SelectItem>
                 ))}
@@ -160,15 +171,17 @@ function FindExperts() {
               onValueChange={(value) => setSelectedSubdomain(value)}
             >
               <SelectTrigger id="subdomain" aria-label="Select subdomain">
-                <SelectValue
-                  placeholder="Select subdomain"
-                />
+                <SelectValue placeholder="Select subdomain" />
               </SelectTrigger>
               <SelectContent>
                 {metadata?.subdomains
                   .filter((subdomain) => subdomain.domainId === selectedDomain)
                   .map((subdomain) => (
-                    <SelectItem key={subdomain.id} value={subdomain.id} className="bg-slate-200 text-black">
+                    <SelectItem
+                      key={subdomain.id}
+                      value={subdomain.id}
+                      className="bg-slate-200 text-black"
+                    >
                       {subdomain.name}
                     </SelectItem>
                   ))}
@@ -291,155 +304,239 @@ function FindExperts() {
       </div>
       <div className="space-y-4">
         {metadata?.domains.map((domain) => {
-          const domainConsultants = consultants?.filter((consultant) => consultant.domainId === domain.id) ?? [];
+          const domainConsultants =
+            consultants?.filter(
+              (consultant) => consultant.domainId === domain.id,
+            ) ?? [];
 
           return (
             <div key={domain.id} className="space-y-4">
               <h2 className="text-2xl font-bold">{domain.name}</h2>
               {domainConsultants.length > 0 ? (
-                domainConsultants.map((consultant) => (
-                  console.log(consultant),
-                  <div
-                    key={consultant.id}
-                    className="border border-gray-200 rounded-lg p-4 flex items-start justify-between space-x-4 dark:border-gray-800"
-                  >
-                    <div
-                      className="flex items-start space-x-4 cursor-pointer"
-                      onClick={() => router.push(`/explore/experts/${consultant.id}`)}
-                    >
-                      <Image
-                        alt={`Portrait of ${consultant.user.name}`}
-                        className="rounded-full overflow-hidden"
-                        height="80"
-                        src={consultant.user.image || "/placeholder.svg"}
-                        style={{ aspectRatio: "80/80", objectFit: "cover" }}
-                        width="80"
-                      />
-                      <div className="space-y-2">
-                        <div className="flex items-center space-x-2">
-                          <h3 className="font-semibold text-lg">{consultant.user.name}</h3>
-                          <span className="text-sm text-gray-500 dark:text-gray-400">
-                            @{consultant.user.email.split('@')[0]}
-                          </span>
+                domainConsultants.map(
+                  (consultant) => (
+                    console.log(consultant),
+                    (
+                      <div
+                        key={consultant.id}
+                        className="border border-gray-200 rounded-lg p-4 flex items-start justify-between space-x-4 dark:border-gray-800"
+                      >
+                        <div
+                          className="flex items-start space-x-4 cursor-pointer"
+                          onClick={() =>
+                            router.push(`/explore/experts/${consultant.id}`)
+                          }
+                        >
+                          <Image
+                            alt={`Portrait of ${consultant.user.name}`}
+                            className="rounded-full overflow-hidden"
+                            height="80"
+                            src={consultant.user.image || "/placeholder.svg"}
+                            style={{ aspectRatio: "80/80", objectFit: "cover" }}
+                            width="80"
+                          />
+                          <div className="space-y-2">
+                            <div className="flex items-center space-x-2">
+                              <h3 className="font-semibold text-lg">
+                                {consultant.user.name}
+                              </h3>
+                              <span className="text-sm text-gray-500 dark:text-gray-400">
+                                @{consultant.user.email.split("@")[0]}
+                              </span>
+                            </div>
+                            <div className="text-sm space-y-2">
+                              <p className="text-black dark:text-black">
+                                {consultant.description}
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                <span className="text-black dark:text-black">
+                                  Experience: {consultant.experience}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <span className="text-black dark:text-black">
+                                  Specialization: {consultant.specialization}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <span className="text-black dark:text-black">
+                                  Qualifications: {consultant.qualifications}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <span className="text-black dark:text-black">
+                                  Domain:
+                                </span>
+                                <span className="bg-gray-200 text-black dark:bg-gray-700 dark:text-white px-2 py-1 rounded-full">
+                                  {
+                                    metadata?.domains.find(
+                                      (d) => d.id === consultant.domainId,
+                                    )?.name
+                                  }
+                                </span>
+                                <span className="text-black dark:text-black">
+                                  Subdomains:
+                                </span>
+                                {metadata?.subdomains
+                                  .filter(
+                                    (sd) => sd.domainId === consultant.domainId,
+                                  )
+                                  .map((sd) => (
+                                    <span
+                                      key={sd.id}
+                                      className="bg-gray-200 text-black dark:bg-gray-700 dark:text-white px-2 py-1 rounded-full"
+                                    >
+                                      {sd.name}
+                                    </span>
+                                  ))}
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <span className="text-black dark:text-black">
+                                  Tags:
+                                </span>
+                                {metadata?.tags
+                                  .filter(
+                                    (t) => t.domainId === consultant.domainId,
+                                  )
+                                  .map((t) => (
+                                    <span
+                                      key={t.id}
+                                      className="bg-gray-200 text-black dark:bg-gray-700 dark:text-white px-2 py-1 rounded-full"
+                                    >
+                                      {t.name}
+                                    </span>
+                                  ))}
+                              </div>
+                              <div className="flex items-center space-x-2 text-black dark:text-black">
+                                <StarIcon className="w-4 h-4" />
+                                <span>
+                                  {consultant.rating.toFixed(1)} (
+                                  {consultant.reviews?.length || 0} reviews)
+                                </span>
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                        <div className="text-sm space-y-2">
-                          <p className="text-black dark:text-black">{consultant.description}</p>
-                          <div className="flex flex-wrap gap-2">
-                            <span className="text-black dark:text-black">Experience: {consultant.experience}</span>
+                        <div className="flex">
+                          <div className="bg-card rounded-lg shadow-lg w-[320px] mr-4">
+                            {consultant.subscriptionPlans &&
+                            consultant.subscriptionPlans.length > 0 ? (
+                              <Tabs defaultValue="1" className="w-full">
+                                <TabsList className="flex border-b">
+                                  {Array.from(
+                                    consultant.subscriptionPlans || [],
+                                  )
+                                    .sort(
+                                      (a, b) =>
+                                        a.durationInMonths - b.durationInMonths,
+                                    )
+                                    .map((plan: SubscriptionPlan) => (
+                                      <TabsTrigger
+                                        key={plan.id}
+                                        value={plan.durationInMonths.toString()}
+                                        className="flex-1 data-[state=active]:bg-black data-[state=active]:text-white rounded-md transition-all duration-200 ease-in-out"
+                                      >
+                                        {(() => {
+                                          switch (plan.durationInMonths) {
+                                            case 1:
+                                              return "1 Month";
+                                            case 3:
+                                              return "3 Months";
+                                            case 6:
+                                              return "6 Months";
+                                            case 12:
+                                              return "12 Months";
+                                            default:
+                                              return `${plan.durationInMonths} Months`;
+                                          }
+                                        })()}
+                                      </TabsTrigger>
+                                    ))}
+                                </TabsList>
+                                {Array.from(consultant.subscriptionPlans || [])
+                                  .sort(
+                                    (a, b) =>
+                                      a.durationInMonths - b.durationInMonths,
+                                  )
+                                  .map((plan: SubscriptionPlan) => (
+                                    <TabsContent
+                                      key={plan.id}
+                                      value={plan.durationInMonths.toString()}
+                                    >
+                                      <Card className="rounded-b-lg">
+                                        <CardContent className="grid gap-4 p-6">
+                                          <div className="flex items-center justify-between">
+                                            <div className="text-4xl font-bold">
+                                              ${plan.price / 100}
+                                            </div>
+                                            <div className="text-muted-foreground">
+                                              {(() => {
+                                                switch (plan.durationInMonths) {
+                                                  case 1:
+                                                    return "1 month";
+                                                  case 3:
+                                                    return "3 months";
+                                                  case 6:
+                                                    return "6 months";
+                                                  case 12:
+                                                    return "12 months";
+                                                  default:
+                                                    return `${plan.durationInMonths} months`;
+                                                }
+                                              })()}
+                                            </div>
+                                          </div>
+                                          <div className="flex items-center justify-between">
+                                            <div>Calls per week</div>
+                                            <div className="font-medium">
+                                              {plan.callsPerWeek}
+                                            </div>
+                                          </div>
+                                          <div className="flex items-center justify-between">
+                                            <div>Email support</div>
+                                            <div className="font-medium">
+                                              {plan.emailSupport}
+                                            </div>
+                                          </div>
+                                          <div className="flex items-center justify-between">
+                                            <div>Video meetings</div>
+                                            <div className="font-medium">
+                                              {plan.videoMeetings} per month
+                                            </div>
+                                          </div>
+                                        </CardContent>
+                                      </Card>
+                                    </TabsContent>
+                                  ))}
+                              </Tabs>
+                            ) : (
+                              <div className="flex items-center justify-center h-full p-6 text-muted-foreground">
+                                <p className="text-center">
+                                  No subscription plans available at the moment.
+                                </p>
+                              </div>
+                            )}
                           </div>
-                          <div className="flex flex-wrap gap-2">
-                            <span className="text-black dark:text-black">Specialization: {consultant.specialization}</span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <span className="text-black dark:text-black">Qualifications: {consultant.qualifications}</span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <span className="text-black dark:text-black">Domain:</span>
-                            <span className="bg-gray-200 text-black dark:bg-gray-700 dark:text-white px-2 py-1 rounded-full">
-                              {metadata?.domains.find(d => d.id === consultant.domainId)?.name}
-                            </span>
-                            <span className="text-black dark:text-black">Subdomains:</span>
-                            {metadata?.subdomains.filter(sd => sd.domainId === consultant.domainId).map(sd => (
-                              <span key={sd.id} className="bg-gray-200 text-black dark:bg-gray-700 dark:text-white px-2 py-1 rounded-full">{sd.name}</span>
-                            ))}
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <span className="text-black dark:text-black">Tags:</span>
-                            {metadata?.tags.filter(t => t.domainId === consultant.domainId).map(t => (
-                              <span key={t.id} className="bg-gray-200 text-black dark:bg-gray-700 dark:text-white px-2 py-1 rounded-full">{t.name}</span>
-                            ))}
-                          </div>
-                          <div className="flex items-center space-x-2 text-black dark:text-black">
-                            <StarIcon className="w-4 h-4" />
-                            <span>{consultant.rating.toFixed(1)} ({consultant.reviews?.length || 0} reviews)</span>
+                          <div className="flex flex-col items-center space-y-2 pt-5 justify-start">
+                            <Button className="w-[140px]" variant="outline">
+                              Book a Free Trial
+                            </Button>
+                            <Button className="w-[140px]" variant="outline">
+                              Book a Session
+                            </Button>
+                            <Button className="w-[140px]" variant="outline">
+                              Book Mentorship
+                            </Button>
                           </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="flex">
-                      <div className="bg-card rounded-lg shadow-lg w-[320px] mr-4">
-                        {consultant.subscriptionPlans && consultant.subscriptionPlans.length > 0 ? (
-                          <Tabs defaultValue="1" className="w-full">
-                            <TabsList className="flex border-b">
-                              {Array.from(consultant.subscriptionPlans || [])
-                                .sort((a, b) => a.durationInMonths - b.durationInMonths)
-                                .map((plan: SubscriptionPlan) => (
-                                  <TabsTrigger
-                                    key={plan.id}
-                                    value={plan.durationInMonths.toString()}
-                                    className="flex-1 data-[state=active]:bg-black data-[state=active]:text-white rounded-md transition-all duration-200 ease-in-out"
-                                  >
-                                    {(() => {
-                                      switch (plan.durationInMonths) {
-                                        case 1: return '1 Month';
-                                        case 3: return '3 Months';
-                                        case 6: return '6 Months';
-                                        case 12: return '12 Months';
-                                        default: return `${plan.durationInMonths} Months`;
-                                      }
-                                    })()}
-                                  </TabsTrigger>
-                                ))}
-                            </TabsList>
-                            {Array.from(consultant.subscriptionPlans || [])
-                              .sort((a, b) => a.durationInMonths - b.durationInMonths)
-                              .map((plan: SubscriptionPlan) => (
-                                <TabsContent key={plan.id} value={plan.durationInMonths.toString()}>
-                                  <Card className="rounded-b-lg">
-                                    <CardContent className="grid gap-4 p-6">
-                                      <div className="flex items-center justify-between">
-                                        <div className="text-4xl font-bold">${plan.price / 100}</div>
-                                        <div className="text-muted-foreground">
-                                          {(() => {
-                                            switch (plan.durationInMonths) {
-                                              case 1: return '1 month';
-                                              case 3: return '3 months';
-                                              case 6: return '6 months';
-                                              case 12: return '12 months';
-                                              default: return `${plan.durationInMonths} months`;
-                                            }
-                                          })()}
-                                        </div>
-                                      </div>
-                                      <div className="flex items-center justify-between">
-                                        <div>Calls per week</div>
-                                        <div className="font-medium">{plan.callsPerWeek}</div>
-                                      </div>
-                                      <div className="flex items-center justify-between">
-                                        <div>Email support</div>
-                                        <div className="font-medium">{plan.emailSupport}</div>
-                                      </div>
-                                      <div className="flex items-center justify-between">
-                                        <div>Video meetings</div>
-                                        <div className="font-medium">{plan.videoMeetings} per month</div>
-                                      </div>
-                                    </CardContent>
-                                  </Card>
-                                </TabsContent>
-                              ))}
-                          </Tabs>
-                        ) : (
-                          <div className="flex items-center justify-center h-full p-6 text-muted-foreground">
-                            <p className="text-center">No subscription plans available at the moment.</p>
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex flex-col items-center space-y-2 pt-5 justify-start">
-                        <Button className="w-[140px]" variant="outline">
-                          Book a Free Trial
-                        </Button>
-                        <Button className="w-[140px]" variant="outline">
-                          Book a Session
-                        </Button>
-                        <Button className="w-[140px]" variant="outline">
-                          Book Mentorship
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ))
+                    )
+                  ),
+                )
               ) : (
-                <p className="text-gray-500">No consultants available in this domain at the moment.</p>
+                <p className="text-gray-500">
+                  No consultants available in this domain at the moment.
+                </p>
               )}
             </div>
           );
@@ -528,7 +625,8 @@ export default function ExploreExperts() {
           <div className="mx-auto w-full max-w-sm space-y-2">
             <Avatar className="w-12 h-12" />
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              &ldquo;The expert I consulted with was incredibly knowledgeable and helped me solve my business challenges quickly.&ldquo;
+              &ldquo;The expert I consulted with was incredibly knowledgeable
+              and helped me solve my business challenges quickly.&ldquo;
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400">
               - Satisfied Client

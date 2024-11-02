@@ -4,7 +4,8 @@ import { NextResponse } from "next/server";
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ subscriptionId: string }> }) {
+  { params }: { params: Promise<{ subscriptionId: string }> },
+) {
   try {
     const { subscriptionId } = await params;
     const subscriptionData = await prisma.subscription.findUniqueOrThrow({
@@ -32,21 +33,21 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Subscription not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
     console.error("Error fetching subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the subscription" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
   request: Request,
-  { params }: { params: Promise<{ subscriptionId: string }> }) {
-
+  { params }: { params: Promise<{ subscriptionId: string }> },
+) {
   try {
     const { subscriptionId } = await params;
     const body = await request.json();
@@ -63,9 +64,11 @@ export async function PUT(
         feedbackFromConsultee: body.feedbackFromConsultee,
         feedbackFromConsultant: body.feedbackFromConsultant,
         rating: body.rating,
-        plan: body.planId ? {
-          connect: { id: body.planId },
-        } : undefined,
+        plan: body.planId
+          ? {
+              connect: { id: body.planId },
+            }
+          : undefined,
       },
       include: {
         plan: true,
@@ -87,14 +90,15 @@ export async function PUT(
     console.error("Error updating subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the subscription" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
   request: Request,
-  { params }: { params: Promise<{ subscriptionId: string }> }) {
+  { params }: { params: Promise<{ subscriptionId: string }> },
+) {
   try {
     const { subscriptionId } = await params;
 
@@ -120,7 +124,7 @@ export async function DELETE(
     console.error("Error deleting subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the subscription" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

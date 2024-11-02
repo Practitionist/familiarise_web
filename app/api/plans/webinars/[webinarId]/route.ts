@@ -4,8 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> }) {
-
+  { params }: { params: Promise<{ webinarId: string }> },
+) {
   try {
     const { webinarId } = await params;
     const webinarPlan = await prisma.webinarPlan.findUniqueOrThrow({
@@ -25,21 +25,21 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Webinar plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
     console.error("Error fetching webinar plan:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the webinar plan" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> }) {
-
+  { params }: { params: Promise<{ webinarId: string }> },
+) {
   try {
     const { webinarId } = await params;
     const body = await request.json();
@@ -48,21 +48,21 @@ export async function PUT(
     if (body.durationInHours && body.durationInHours <= 0) {
       return NextResponse.json(
         { error: "Duration must be a positive number" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (body.price && body.price <= 0) {
       return NextResponse.json(
         { error: "Price must be a positive number" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (body.maxParticipants && body.maxParticipants <= 0) {
       return NextResponse.json(
         { error: "Maximum participants must be a positive number" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -79,12 +79,16 @@ export async function PUT(
         prerequisites: body.prerequisites,
         materialProvided: body.materialProvided,
         learningOutcomes: body.learningOutcomes,
-        consultantProfile: body.consultantProfileId ? {
-          connect: { id: body.consultantProfileId },
-        } : undefined,
-        topics: body.topicIds ? {
-          set: body.topicIds.map((id: string) => ({ id })),
-        } : undefined,
+        consultantProfile: body.consultantProfileId
+          ? {
+              connect: { id: body.consultantProfileId },
+            }
+          : undefined,
+        topics: body.topicIds
+          ? {
+              set: body.topicIds.map((id: string) => ({ id })),
+            }
+          : undefined,
       },
       include: {
         consultantProfile: true,
@@ -101,21 +105,21 @@ export async function PUT(
     ) {
       return NextResponse.json(
         { error: "Webinar plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
     console.error("Error updating webinar plan:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the webinar plan" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> }) {
-
+  { params }: { params: Promise<{ webinarId: string }> },
+) {
   try {
     const { webinarId } = await params;
 
@@ -127,7 +131,7 @@ export async function DELETE(
     if (associatedWebinars.length > 0) {
       return NextResponse.json(
         { error: "Cannot delete webinar plan with associated webinars" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -147,13 +151,13 @@ export async function DELETE(
     ) {
       return NextResponse.json(
         { error: "Webinar plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
     console.error("Error deleting webinar plan:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the webinar plan" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

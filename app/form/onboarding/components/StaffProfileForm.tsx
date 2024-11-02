@@ -1,6 +1,12 @@
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { responsibilitiesAndPermissions } from "@/schemas/ResponsibilitiesAndPermissionsSchema";
 import { StaffProfile, PersonalInfoAndRole } from "@/schemas/UserSchema";
 import React, { useEffect, useState } from "react";
@@ -42,7 +48,8 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
   useEffect(() => {
     if (watchDepartment) {
       // Update available positions when department changes
-      const departmentData = responsibilitiesAndPermissions.departments[watchDepartment];
+      const departmentData =
+        responsibilitiesAndPermissions.departments[watchDepartment];
       if (departmentData) {
         setPositions(Object.keys(departmentData.positions));
       } else {
@@ -63,7 +70,10 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="w-full max-w-md space-y-4">
+    <form
+      onSubmit={handleSubmit(onSubmit)}
+      className="w-full max-w-md space-y-4"
+    >
       <div className="space-y-2">
         <Label htmlFor="department">Department</Label>
         <Controller
@@ -71,10 +81,7 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
           control={control}
           rules={{ required: "Department is required" }}
           render={({ field }) => (
-            <Select
-              onValueChange={field.onChange}
-              value={field.value}
-            >
+            <Select onValueChange={field.onChange} value={field.value}>
               <SelectTrigger>
                 <SelectValue placeholder="Select a department" />
               </SelectTrigger>
@@ -89,7 +96,9 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
           )}
         />
         {errors.department && (
-          <p className="text-red-500 text-sm">{errors.department.message as string}</p>
+          <p className="text-red-500 text-sm">
+            {errors.department.message as string}
+          </p>
         )}
       </div>
 
@@ -119,7 +128,9 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
           )}
         />
         {errors.position && (
-          <p className="text-red-500 text-sm">{errors.position.message as string}</p>
+          <p className="text-red-500 text-sm">
+            {errors.position.message as string}
+          </p>
         )}
       </div>
 

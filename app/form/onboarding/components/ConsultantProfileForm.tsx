@@ -5,9 +5,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ConsultantProfile, ConsultantProfileSchema, PersonalInfoAndRole } from "@/schemas/UserSchema";
+import {
+  ConsultantProfile,
+  ConsultantProfileSchema,
+  PersonalInfoAndRole,
+} from "@/schemas/UserSchema";
 import { Domain, SubDomain, Tag } from "@/schemas/PlanSchema";
 
 interface Props {
@@ -16,7 +26,7 @@ interface Props {
   initialData: FormData;
 }
 
-type FormData = PersonalInfoAndRole & 
+type FormData = PersonalInfoAndRole &
   Partial<ConsultantProfile> & {
     domain?: Domain;
     subDomains?: SubDomain[];
@@ -55,9 +65,9 @@ const ConsultantProfileForm: React.FC<Props> = ({
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch('/api/user/consultants/meta');
+        const response = await fetch("/api/user/consultants/meta");
         if (!response.ok) {
-          throw new Error('Failed to fetch metadata');
+          throw new Error("Failed to fetch metadata");
         }
         const { data } = await response.json();
         setDomains(data.domains);
@@ -66,8 +76,8 @@ const ConsultantProfileForm: React.FC<Props> = ({
         setFilteredSubDomains(data.subdomains);
         setFilteredTags(data.tags);
       } catch (error) {
-        console.error('Error fetching metadata:', error);
-        setError('Failed to load form data. Please try again.');
+        console.error("Error fetching metadata:", error);
+        setError("Failed to load form data. Please try again.");
       } finally {
         setIsLoading(false);
       }
@@ -77,14 +87,28 @@ const ConsultantProfileForm: React.FC<Props> = ({
 
   useEffect(() => {
     if (selectedDomain) {
-      const filteredSubs = subDomains.filter(sub => sub.domainId === selectedDomain.id);
-      const filteredTgs = tags.filter(tag => tag.domainId === selectedDomain.id);
+      const filteredSubs = subDomains.filter(
+        (sub) => sub.domainId === selectedDomain.id,
+      );
+      const filteredTgs = tags.filter(
+        (tag) => tag.domainId === selectedDomain.id,
+      );
       setFilteredSubDomains(filteredSubs);
       setFilteredTags(filteredTgs);
-      
+
       // Clear selected subdomains and tags that are no longer valid
-      setValue('subDomains', (watch('subDomains') || []).filter(sd => filteredSubs.some(fs => fs.id === sd.id)));
-      setValue('tags', (watch('tags') || []).filter(t => filteredTgs.some(ft => ft.id === t.id)));
+      setValue(
+        "subDomains",
+        (watch("subDomains") || []).filter((sd) =>
+          filteredSubs.some((fs) => fs.id === sd.id),
+        ),
+      );
+      setValue(
+        "tags",
+        (watch("tags") || []).filter((t) =>
+          filteredTgs.some((ft) => ft.id === t.id),
+        ),
+      );
     } else {
       setFilteredSubDomains(subDomains);
       setFilteredTags(tags);
@@ -146,9 +170,9 @@ const ConsultantProfileForm: React.FC<Props> = ({
           name="domain"
           control={control}
           render={({ field }) => (
-            <Select 
+            <Select
               onValueChange={(value) => {
-                const selectedDomain = domains.find(d => d.id === value);
+                const selectedDomain = domains.find((d) => d.id === value);
                 field.onChange(selectedDomain);
               }}
               value={field.value?.id ?? ""}
@@ -158,7 +182,9 @@ const ConsultantProfileForm: React.FC<Props> = ({
               </SelectTrigger>
               <SelectContent>
                 {domains.map((domain) => (
-                  <SelectItem key={domain.id} value={domain.id!}>{domain.name}</SelectItem>
+                  <SelectItem key={domain.id} value={domain.id!}>
+                    {domain.name}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -180,15 +206,21 @@ const ConsultantProfileForm: React.FC<Props> = ({
                 <div key={subDomain.id} className="flex items-center space-x-2">
                   <Checkbox
                     id={`subDomain-${subDomain.id}`}
-                    checked={field.value?.some(sd => sd.id === subDomain.id) || false}
+                    checked={
+                      field.value?.some((sd) => sd.id === subDomain.id) || false
+                    }
                     onCheckedChange={(checked) => {
                       const updatedSubDomains = checked
                         ? [...(field.value || []), subDomain]
-                        : (field.value || []).filter(sd => sd.id !== subDomain.id);
+                        : (field.value || []).filter(
+                            (sd) => sd.id !== subDomain.id,
+                          );
                       field.onChange(updatedSubDomains);
                     }}
                   />
-                  <Label htmlFor={`subDomain-${subDomain.id}`}>{subDomain.name}</Label>
+                  <Label htmlFor={`subDomain-${subDomain.id}`}>
+                    {subDomain.name}
+                  </Label>
                 </div>
               ))}
             </div>
@@ -210,11 +242,11 @@ const ConsultantProfileForm: React.FC<Props> = ({
                 <div key={tag.id} className="flex items-center space-x-2">
                   <Checkbox
                     id={`tag-${tag.id}`}
-                    checked={field.value?.some(t => t.id === tag.id) || false}
+                    checked={field.value?.some((t) => t.id === tag.id) || false}
                     onCheckedChange={(checked) => {
                       const updatedTags = checked
                         ? [...(field.value || []), tag]
-                        : (field.value || []).filter(t => t.id !== tag.id);
+                        : (field.value || []).filter((t) => t.id !== tag.id);
                       field.onChange(updatedTags);
                     }}
                   />
@@ -224,9 +256,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
             </div>
           )}
         />
-        {errors.tags && (
-          <p className="text-red-500">{errors.tags?.message}</p>
-        )}
+        {errors.tags && <p className="text-red-500">{errors.tags?.message}</p>}
       </div>
 
       <div className="space-y-2">
@@ -250,7 +280,9 @@ const ConsultantProfileForm: React.FC<Props> = ({
             </div>
           )}
         />
-        {errors.scheduleType && <p className="text-red-500">{errors.scheduleType?.message}</p>}
+        {errors.scheduleType && (
+          <p className="text-red-500">{errors.scheduleType?.message}</p>
+        )}
       </div>
 
       <div className="flex justify-between">

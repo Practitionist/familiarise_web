@@ -6,45 +6,56 @@ import React from "react";
 import { useFormContext } from "react-hook-form";
 
 interface Props {
-  onSubmit: (data: any) => void;  // Match parent component's type
+  onSubmit: (data: any) => void; // Match parent component's type
   onBack: () => void;
-  formData: PersonalInfoAndRole & Partial<StaffProfile> & {
-    termsAccepted?: boolean;
-    privacyAccepted?: boolean;
-  };
+  formData: PersonalInfoAndRole &
+    Partial<StaffProfile> & {
+      termsAccepted?: boolean;
+      privacyAccepted?: boolean;
+    };
 }
 
 const StaffReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
   const { handleSubmit } = useFormContext();
 
   const getResponsibilitiesList = () => {
-    if (!formData.department || !formData.position || !formData.responsibilities) return [];
-    
-    const departmentData = responsibilitiesAndPermissions.departments[formData.department];
+    if (
+      !formData.department ||
+      !formData.position ||
+      !formData.responsibilities
+    )
+      return [];
+
+    const departmentData =
+      responsibilitiesAndPermissions.departments[formData.department];
     const positionData = departmentData?.positions[formData.position];
     if (!positionData) return [];
 
     const selectedResponsibilities: string[] = [];
-    Object.entries(positionData.responsibilities).forEach(([category, items]) => {
-      items.forEach(item => {
-        if (formData.responsibilities?.[item]) {
-          selectedResponsibilities.push(`${category}: ${item}`);
-        }
-      });
-    });
+    Object.entries(positionData.responsibilities).forEach(
+      ([category, items]) => {
+        items.forEach((item) => {
+          if (formData.responsibilities?.[item]) {
+            selectedResponsibilities.push(`${category}: ${item}`);
+          }
+        });
+      },
+    );
     return selectedResponsibilities;
   };
 
   const getPermissionsList = () => {
-    if (!formData.department || !formData.position || !formData.permissions) return [];
-    
-    const departmentData = responsibilitiesAndPermissions.departments[formData.department];
+    if (!formData.department || !formData.position || !formData.permissions)
+      return [];
+
+    const departmentData =
+      responsibilitiesAndPermissions.departments[formData.department];
     const positionData = departmentData?.positions[formData.position];
     if (!positionData) return [];
 
     const selectedPermissions: string[] = [];
     Object.entries(positionData.permissions).forEach(([category, items]) => {
-      items.forEach(item => {
+      items.forEach((item) => {
         if (formData.permissions?.[item]) {
           selectedPermissions.push(`${category}: ${item}`);
         }
@@ -105,13 +116,17 @@ const StaffReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
           </div>
 
           <div className="space-y-4">
-            <h3 className="font-semibold text-lg">Responsibilities and Permissions</h3>
-            
+            <h3 className="font-semibold text-lg">
+              Responsibilities and Permissions
+            </h3>
+
             <div className="space-y-2">
               <h4 className="font-medium">Responsibilities:</h4>
               <ul className="list-disc list-inside text-sm space-y-1">
                 {responsibilitiesList.map((responsibility, index) => (
-                  <li key={index} className="text-muted-foreground">{responsibility}</li>
+                  <li key={index} className="text-muted-foreground">
+                    {responsibility}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -120,7 +135,9 @@ const StaffReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
               <h4 className="font-medium">Permissions:</h4>
               <ul className="list-disc list-inside text-sm space-y-1">
                 {permissionsList.map((permission, index) => (
-                  <li key={index} className="text-muted-foreground">{permission}</li>
+                  <li key={index} className="text-muted-foreground">
+                    {permission}
+                  </li>
                 ))}
               </ul>
             </div>
@@ -142,9 +159,9 @@ const StaffReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
         <Button type="button" onClick={onBack} variant="outline">
           Back
         </Button>
-        <Button 
-          type="button" 
-          onClick={handleSubmit(onSubmitForm)} 
+        <Button
+          type="button"
+          onClick={handleSubmit(onSubmitForm)}
           variant="night"
           disabled={!formData.termsAccepted || !formData.privacyAccepted}
         >

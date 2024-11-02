@@ -3,173 +3,208 @@ import prisma from "@/lib/prisma";
 import { Prisma, AppointmentsType } from "@prisma/client";
 
 export async function GET(
-    request: NextRequest,
-    { params }: { params: Promise<{ appointmentId: string }> }) {
+  request: NextRequest,
+  { params }: { params: Promise<{ appointmentId: string }> },
+) {
+  try {
+    const { appointmentId } = await params;
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        slotOfAppointment: {
+          include: {
+            consulteeProfile: true,
+          },
+        },
+        consultation: {
+          include: {
+            consultationPlan: true,
+          },
+        },
+        subscription: {
+          include: {
+            plan: true,
+          },
+        },
+        webinar: {
+          include: {
+            webinarPlan: true,
+          },
+        },
+        class: {
+          include: {
+            classPlan: true,
+          },
+        },
+        payment: true,
+      },
+    });
 
-    try {
-        const { appointmentId } = await params;
-        const appointment = await prisma.appointment.findUnique({
-            where: { id: appointmentId },
-            include: {
-                slotOfAppointment: {
-                    include: {
-                        consulteeProfile: true,
-                    },
-                },
-                consultation: {
-                    include: {
-                        consultationPlan: true,
-                    },
-                },
-                subscription: {
-                    include: {
-                        plan: true,
-                    },
-                },
-                webinar: {
-                    include: {
-                        webinarPlan: true,
-                    },
-                },
-                class: {
-                    include: {
-                        classPlan: true,
-                    },
-                },
-                payment: true,
-            },
-        });
-
-        if (!appointment) {
-            return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
-        }
-
-        return NextResponse.json({ data: appointment }, { status: 200 });
-    } catch (error) {
-        console.error("Error fetching appointment:", error);
-        return NextResponse.json({ error: "An error occurred while fetching the appointment" }, { status: 500 });
+    if (!appointment) {
+      return NextResponse.json(
+        { error: "Appointment not found" },
+        { status: 404 },
+      );
     }
+
+    return NextResponse.json({ data: appointment }, { status: 200 });
+  } catch (error) {
+    console.error("Error fetching appointment:", error);
+    return NextResponse.json(
+      { error: "An error occurred while fetching the appointment" },
+      { status: 500 },
+    );
+  }
 }
 
 export async function PUT(
-    request: NextRequest,
-    { params }: { params: Promise<{ appointmentId: string }> }) {
+  request: NextRequest,
+  { params }: { params: Promise<{ appointmentId: string }> },
+) {
+  try {
+    const { appointmentId } = await params;
+    const body = await request.json();
 
-    try {
-        const { appointmentId } = await params;
-        const body = await request.json();
-
-        if (body.appointmentType && !Object.values(AppointmentsType).includes(body.appointmentType)) {
-            return NextResponse.json({ error: "Invalid appointment type" }, { status: 400 });
-        }
-
-        const updatedAppointment = await prisma.appointment.update({
-            where: { id: appointmentId },
-            data: {
-                appointmentType: body.appointmentType,
-                slotOfAppointment: body.slotOfAppointmentId ? { connect: { id: body.slotOfAppointmentId } } : undefined,
-                consultation: body.consultationId ? { connect: { id: body.consultationId } } : undefined,
-                subscription: body.subscriptionId ? { connect: { id: body.subscriptionId } } : undefined,
-                webinar: body.webinarId ? { connect: { id: body.webinarId } } : undefined,
-                class: body.classId ? { connect: { id: body.classId } } : undefined,
-            },
-            include: {
-                slotOfAppointment: {
-                    include: {
-                        consulteeProfile: true,
-                    },
-                },
-                consultation: {
-                    include: {
-                        consultationPlan: true,
-                    },
-                },
-                subscription: {
-                    include: {
-                        plan: true,
-                    },
-                },
-                webinar: {
-                    include: {
-                        webinarPlan: true,
-                    },
-                },
-                class: {
-                    include: {
-                        classPlan: true,
-                    },
-                },
-                payment: true,
-            },
-        });
-
-        return NextResponse.json({ data: updatedAppointment }, { status: 200 });
-    } catch (error) {
-        console.error("Error updating appointment:", error);
-        if (error instanceof Prisma.PrismaClientKnownRequestError) {
-            if (error.code === 'P2025') {
-                return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
-            }
-        }
-        return NextResponse.json({ error: "An error occurred while updating the appointment" }, { status: 500 });
+    if (
+      body.appointmentType &&
+      !Object.values(AppointmentsType).includes(body.appointmentType)
+    ) {
+      return NextResponse.json(
+        { error: "Invalid appointment type" },
+        { status: 400 },
+      );
     }
+
+    const updatedAppointment = await prisma.appointment.update({
+      where: { id: appointmentId },
+      data: {
+        appointmentType: body.appointmentType,
+        slotOfAppointment: body.slotOfAppointmentId
+          ? { connect: { id: body.slotOfAppointmentId } }
+          : undefined,
+        consultation: body.consultationId
+          ? { connect: { id: body.consultationId } }
+          : undefined,
+        subscription: body.subscriptionId
+          ? { connect: { id: body.subscriptionId } }
+          : undefined,
+        webinar: body.webinarId
+          ? { connect: { id: body.webinarId } }
+          : undefined,
+        class: body.classId ? { connect: { id: body.classId } } : undefined,
+      },
+      include: {
+        slotOfAppointment: {
+          include: {
+            consulteeProfile: true,
+          },
+        },
+        consultation: {
+          include: {
+            consultationPlan: true,
+          },
+        },
+        subscription: {
+          include: {
+            plan: true,
+          },
+        },
+        webinar: {
+          include: {
+            webinarPlan: true,
+          },
+        },
+        class: {
+          include: {
+            classPlan: true,
+          },
+        },
+        payment: true,
+      },
+    });
+
+    return NextResponse.json({ data: updatedAppointment }, { status: 200 });
+  } catch (error) {
+    console.error("Error updating appointment:", error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2025") {
+        return NextResponse.json(
+          { error: "Appointment not found" },
+          { status: 404 },
+        );
+      }
+    }
+    return NextResponse.json(
+      { error: "An error occurred while updating the appointment" },
+      { status: 500 },
+    );
+  }
 }
 
 export async function DELETE(
-    request: NextRequest,
-    { params }: { params: Promise<{ appointmentId: string }> }) {
+  request: NextRequest,
+  { params }: { params: Promise<{ appointmentId: string }> },
+) {
+  try {
+    const { appointmentId } = await params;
+    // Check if there's an associated payment
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: { payment: true },
+    });
 
-    try {
-        const { appointmentId } = await params;
-        // Check if there's an associated payment
-        const appointment = await prisma.appointment.findUnique({
-            where: { id: appointmentId },
-            include: { payment: true },
-        });
-
-        if (appointment?.payment) {
-            return NextResponse.json({ error: "Cannot delete appointment with associated payment" }, { status: 400 });
-        }
-
-        const deletedAppointment = await prisma.appointment.delete({
-            where: { id: appointmentId },
-            include: {
-                slotOfAppointment: {
-                    include: {
-                        consulteeProfile: true,
-                    },
-                },
-                consultation: {
-                    include: {
-                        consultationPlan: true,
-                    },
-                },
-                subscription: {
-                    include: {
-                        plan: true,
-                    },
-                },
-                webinar: {
-                    include: {
-                        webinarPlan: true,
-                    },
-                },
-                class: {
-                    include: {
-                        classPlan: true,
-                    },
-                },
-            },
-        });
-
-        return NextResponse.json({ data: deletedAppointment }, { status: 200 });
-    } catch (error) {
-        console.error("Error deleting appointment:", error);
-        if (error instanceof Prisma.PrismaClientKnownRequestError) {
-            if (error.code === 'P2025') {
-                return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
-            }
-        }
-        return NextResponse.json({ error: "An error occurred while deleting the appointment" }, { status: 500 });
+    if (appointment?.payment) {
+      return NextResponse.json(
+        { error: "Cannot delete appointment with associated payment" },
+        { status: 400 },
+      );
     }
+
+    const deletedAppointment = await prisma.appointment.delete({
+      where: { id: appointmentId },
+      include: {
+        slotOfAppointment: {
+          include: {
+            consulteeProfile: true,
+          },
+        },
+        consultation: {
+          include: {
+            consultationPlan: true,
+          },
+        },
+        subscription: {
+          include: {
+            plan: true,
+          },
+        },
+        webinar: {
+          include: {
+            webinarPlan: true,
+          },
+        },
+        class: {
+          include: {
+            classPlan: true,
+          },
+        },
+      },
+    });
+
+    return NextResponse.json({ data: deletedAppointment }, { status: 200 });
+  } catch (error) {
+    console.error("Error deleting appointment:", error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2025") {
+        return NextResponse.json(
+          { error: "Appointment not found" },
+          { status: 404 },
+        );
+      }
+    }
+    return NextResponse.json(
+      { error: "An error occurred while deleting the appointment" },
+      { status: 500 },
+    );
+  }
 }

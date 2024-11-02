@@ -4,7 +4,8 @@ import { NextResponse } from "next/server";
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ consultationId: string }> }) {
+  { params }: { params: Promise<{ consultationId: string }> },
+) {
   try {
     const { consultationId } = await params;
     const consultation = await prisma.consultation.findUniqueOrThrow({
@@ -32,20 +33,21 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Consultation not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
     console.error("Error fetching consultation:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the consultation" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
   request: Request,
-  { params }: { params: Promise<{ consultationId: string }> }) {
+  { params }: { params: Promise<{ consultationId: string }> },
+) {
   try {
     const { consultationId } = await params;
     const body = await request.json();
@@ -60,12 +62,16 @@ export async function PUT(
         feedbackFromConsultee: body.feedbackFromConsultee,
         feedbackFromConsultant: body.feedbackFromConsultant,
         rating: body.rating,
-        consultationPlan: body.consultationPlanId ? {
-          connect: { id: body.consultationPlanId },
-        } : undefined,
-        appointment: body.appointmentId ? {
-          connect: { id: body.appointmentId },
-        } : undefined,
+        consultationPlan: body.consultationPlanId
+          ? {
+              connect: { id: body.consultationPlanId },
+            }
+          : undefined,
+        appointment: body.appointmentId
+          ? {
+              connect: { id: body.appointmentId },
+            }
+          : undefined,
       },
       include: {
         consultationPlan: true,
@@ -87,14 +93,15 @@ export async function PUT(
     console.error("Error updating consultation:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the consultation" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
   request: Request,
-  { params }: { params: Promise<{ consultationId: string }> }) {
+  { params }: { params: Promise<{ consultationId: string }> },
+) {
   try {
     const { consultationId } = await params;
 
@@ -120,7 +127,7 @@ export async function DELETE(
     console.error("Error deleting consultation:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the consultation" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

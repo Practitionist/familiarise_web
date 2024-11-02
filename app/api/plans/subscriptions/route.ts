@@ -5,9 +5,9 @@ import { PlanEmailSupport } from "@prisma/client";
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const consultantId = searchParams.get('consultantId');
-    const page = parseInt(searchParams.get('page') || '1');
-    const limit = parseInt(searchParams.get('limit') || '10');
+    const consultantId = searchParams.get("consultantId");
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "10");
     const skip = (page - 1) * limit;
 
     const where = consultantId ? { consultantProfileId: consultantId } : {};
@@ -24,20 +24,23 @@ export async function GET(request: NextRequest) {
       prisma.subscriptionPlan.count({ where }),
     ]);
 
-    return NextResponse.json({
-      data: subscriptionPlans,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+    return NextResponse.json(
+      {
+        data: subscriptionPlans,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
       },
-    }, { status: 200 });
+      { status: 200 },
+    );
   } catch (error) {
     console.error("Error fetching subscription plans:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching subscription plans" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -65,21 +68,26 @@ export async function POST(request: NextRequest) {
     if (!title || !durationInMonths || !price || !consultantProfileId) {
       return NextResponse.json(
         { error: "Missing required fields" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    if (durationInMonths <= 0 || price <= 0 || callsPerWeek < 0 || videoMeetings < 0) {
+    if (
+      durationInMonths <= 0 ||
+      price <= 0 ||
+      callsPerWeek < 0 ||
+      videoMeetings < 0
+    ) {
       return NextResponse.json(
         { error: "Invalid numeric values" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!Object.values(PlanEmailSupport).includes(emailSupport)) {
       return NextResponse.json(
         { error: "Invalid email support value" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -109,7 +117,7 @@ export async function POST(request: NextRequest) {
     console.error("Error creating subscription plan:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the subscription plan" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth/next";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
@@ -7,7 +7,7 @@ export async function POST(request: Request) {
   try {
     const session = await getServerSession(authOptions);
     if (!session || !session.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { webinarId } = await request.json();
@@ -17,7 +17,10 @@ export async function POST(request: Request) {
     });
 
     if (!consultee) {
-      return NextResponse.json({ error: 'Consultee profile not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: "Consultee profile not found" },
+        { status: 404 },
+      );
     }
 
     const webinar = await prisma.webinar.findUnique({
@@ -26,7 +29,7 @@ export async function POST(request: Request) {
     });
 
     if (!webinar) {
-      return NextResponse.json({ error: 'Webinar not found' }, { status: 404 });
+      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
     }
 
     // Check if the webinar has reached its maximum capacity
@@ -42,13 +45,19 @@ export async function POST(request: Request) {
           webinar: { connect: { id: webinarId } },
         },
       });
-      return NextResponse.json({ message: 'Webinar is full. You have been added to the waitlist.', waitlistEntry }, { status: 202 });
+      return NextResponse.json(
+        {
+          message: "Webinar is full. You have been added to the waitlist.",
+          waitlistEntry,
+        },
+        { status: 202 },
+      );
     }
 
     // Create an appointment for the webinar
     const appointment = await prisma.appointment.create({
       data: {
-        appointmentType: 'WEBINAR',
+        appointmentType: "WEBINAR",
         webinar: { connect: { id: webinarId } },
         slotOfAppointment: {
           create: {
@@ -67,11 +76,11 @@ export async function POST(request: Request) {
     const payment = await prisma.payment.create({
       data: {
         amount: webinar.webinarPlan.price,
-        currency: 'USD', // Assuming USD, adjust as needed
-        paymentStatus: 'PENDING',
-        paymentMethod: 'STRIPE', // Default to Stripe, can be changed later
-        paymentGateway: 'STRIPE', // Default to Stripe, can be changed later
-        paymentIntent: '', // This will be updated after initiating payment
+        currency: "USD", // Assuming USD, adjust as needed
+        paymentStatus: "PENDING",
+        paymentMethod: "STRIPE", // Default to Stripe, can be changed later
+        paymentGateway: "STRIPE", // Default to Stripe, can be changed later
+        paymentIntent: "", // This will be updated after initiating payment
         description: `Payment for Webinar: ${webinar.webinarPlan.title}`,
         user: { connect: { id: session.user.id } },
         appointment: { connect: { id: appointment.id } },
@@ -80,7 +89,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ appointment, payment }, { status: 201 });
   } catch (error) {
-    console.error('Error booking webinar:', error);
-    return NextResponse.json({ error: 'An error occurred while booking the webinar' }, { status: 500 });
+    console.error("Error booking webinar:", error);
+    return NextResponse.json(
+      { error: "An error occurred while booking the webinar" },
+      { status: 500 },
+    );
   }
 }

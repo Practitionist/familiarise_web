@@ -5,46 +5,46 @@ import { checkOverlappingAppointments } from "@/lib/appointmentUtils";
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const consulteeId = searchParams.get('consulteeId');
-    const consultantId = searchParams.get('consultantId');
+    const consulteeId = searchParams.get("consulteeId");
+    const consultantId = searchParams.get("consultantId");
 
     let subscriptions;
 
     if (consulteeId) {
       subscriptions = await prisma.subscription.findMany({
         where: {
-          requestedBy: { id: consulteeId }
+          requestedBy: { id: consulteeId },
         },
         include: {
           plan: true,
           requestedBy: true,
           appointments: {
             include: {
-              slotOfAppointment: true
-            }
-          }
-        }
+              slotOfAppointment: true,
+            },
+          },
+        },
       });
     } else if (consultantId) {
       subscriptions = await prisma.subscription.findMany({
         where: {
           plan: {
-            consultantProfile: { id: consultantId }
-          }
+            consultantProfile: { id: consultantId },
+          },
         },
         include: {
           plan: {
             include: {
-              consultantProfile: true
-            }
+              consultantProfile: true,
+            },
           },
           requestedBy: true,
           appointments: {
             include: {
-              slotOfAppointment: true
-            }
-          }
-        }
+              slotOfAppointment: true,
+            },
+          },
+        },
       });
     } else {
       subscriptions = await prisma.subscription.findMany({
@@ -53,10 +53,10 @@ export async function GET(request: Request) {
           requestedBy: true,
           appointments: {
             include: {
-              slotOfAppointment: true
-            }
-          }
-        }
+              slotOfAppointment: true,
+            },
+          },
+        },
       });
     }
 
@@ -65,7 +65,7 @@ export async function GET(request: Request) {
     console.error("Error fetching subscriptions:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching subscriptions" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -93,13 +93,15 @@ export async function POST(request: Request) {
       const isOverlapping = await checkOverlappingAppointments(
         new Date(appointment.startTime),
         new Date(appointment.endTime),
-        body.consultantProfileId
+        body.consultantProfileId,
       );
 
       if (isOverlapping) {
         return NextResponse.json(
-          { error: `Time slot ${appointment.startTime} to ${appointment.endTime} is already booked` },
-          { status: 409 }
+          {
+            error: `Time slot ${appointment.startTime} to ${appointment.endTime} is already booked`,
+          },
+          { status: 409 },
         );
       }
     }
@@ -125,28 +127,30 @@ export async function POST(request: Request) {
       });
 
       const appointments = await Promise.all(
-        body.appointmentSchedule.map(async (appointment: AppointmentSchedule) => {
-          return prisma.appointment.create({
-            data: {
-              appointmentType: "SUBSCRIPTION",
-              subscription: { connect: { id: subscription.id } },
-              slotOfAppointment: {
-                create: {
-                  slotStartTimeInUTC: new Date(appointment.startTime),
-                  slotEndTimeInUTC: new Date(appointment.endTime),
-                  consulteeProfile: {
-                    connect: {
-                      id: body.consulteeProfileId,
+        body.appointmentSchedule.map(
+          async (appointment: AppointmentSchedule) => {
+            return prisma.appointment.create({
+              data: {
+                appointmentType: "SUBSCRIPTION",
+                subscription: { connect: { id: subscription.id } },
+                slotOfAppointment: {
+                  create: {
+                    slotStartTimeInUTC: new Date(appointment.startTime),
+                    slotEndTimeInUTC: new Date(appointment.endTime),
+                    consulteeProfile: {
+                      connect: {
+                        id: body.consulteeProfileId,
+                      },
                     },
                   },
                 },
               },
-            },
-            include: {
-              slotOfAppointment: true,
-            },
-          });
-        })
+              include: {
+                slotOfAppointment: true,
+              },
+            });
+          },
+        ),
       );
 
       return { subscription, appointments };
@@ -157,7 +161,7 @@ export async function POST(request: Request) {
     console.error("Error creating subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the subscription" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
