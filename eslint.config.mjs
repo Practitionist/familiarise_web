@@ -62,8 +62,16 @@ export default [
       // Warns when var is used instead of let or const
       "no-var": "warn",
 
+      // Warn when using == and != instead of === and !==
+      "no-case-declarations": "warn",
+
       // Warn when React props are missing type definitions
       "react/prop-types": "warn", 
+
+      // These rules are turned off since React 17+ doesn't require importing React
+      // when using JSX, as the new JSX transform handles this automatically
+      "react/jsx-uses-react": "off",
+      "react/react-in-jsx-scope": "off",
 
       // Warn when empty object types are used (e.g. 'type Foo = {}')
       "@typescript-eslint/no-empty-object-type": "warn",
