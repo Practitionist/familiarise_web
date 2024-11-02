@@ -3,11 +3,13 @@ import prisma from "@/lib/prisma";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
+
     const review = await prisma.consultantReview.findUnique({
-      where: { id: params.id },
+      where: { id: id },
       include: {
         consultantProfile: true,
         consulteeProfile: true,
@@ -27,12 +29,14 @@ export async function GET(
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
+
     const body = await req.json();
     const updatedReview = await prisma.consultantReview.update({
-      where: { id: params.id },
+      where: { id: id },
       data: {
         rating: body.rating,
         reviewDescription: body.reviewDescription,
@@ -52,11 +56,13 @@ export async function PUT(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
+
     await prisma.consultantReview.delete({
-      where: { id: params.id },
+      where: { id: id },
     });
 
     return NextResponse.json({ message: "Review deleted successfully" }, { status: 200 });

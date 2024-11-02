@@ -4,11 +4,12 @@ import { Prisma, DayOfWeek } from "@prisma/client";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
     const weeklySlot = await prisma.slotOfAvailabilityWeekly.findUnique({
-      where: { id: params.id },
+      where: { id: id },
       include: {
         consultantProfile: true,
       },
@@ -34,9 +35,10 @@ export async function GET(
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
     const body = await req.json();
 
     if (!body.dayOfWeekforStartTimeInUTC || !body.dayOfWeekforEndTimeInUTC || !body.slotStartTimeInUTC || !body.slotEndTimeInUTC) {
@@ -63,7 +65,7 @@ export async function PUT(
     // Check for overlapping slots
     const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
       where: {
-        id: { not: params.id },
+        id: { not: id },
         consultantProfileId: body.consultantProfileId,
         dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
         OR: [
@@ -88,7 +90,7 @@ export async function PUT(
     }
 
     const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
-      where: { id: params.id },
+      where: { id: id },
       data: {
         dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
         dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
@@ -121,9 +123,10 @@ export async function PUT(
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
     const body = await req.json();
 
     if (body.dayOfWeekforStartTimeInUTC && !Object.values(DayOfWeek).includes(body.dayOfWeekforStartTimeInUTC)) {
@@ -141,7 +144,7 @@ export async function PATCH(
     }
 
     const currentSlot = await prisma.slotOfAvailabilityWeekly.findUnique({
-      where: { id: params.id },
+      where: { id: id },
     });
 
     if (!currentSlot) {
@@ -161,7 +164,7 @@ export async function PATCH(
     // Check for overlapping slots
     const overlappingSlot = await prisma.slotOfAvailabilityWeekly.findFirst({
       where: {
-        id: { not: params.id },
+        id: { not: id },
         consultantProfileId: body.consultantProfileId || currentSlot.consultantProfileId,
         dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC || currentSlot.dayOfWeekforStartTimeInUTC,
         OR: [
@@ -186,7 +189,7 @@ export async function PATCH(
     }
 
     const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
-      where: { id: params.id },
+      where: { id: id },
       data: {
         dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
         dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
@@ -219,12 +222,13 @@ export async function PATCH(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
     // Check if there are any associated appointments
     const associatedAppointments = await prisma.slotOfAppointment.findMany({
-      where: { id: params.id },
+      where: { id: id },
     });
 
     if (associatedAppointments.length > 0) {
@@ -235,7 +239,7 @@ export async function DELETE(
     }
 
     const deletedSlot = await prisma.slotOfAvailabilityWeekly.delete({
-      where: { id: params.id },
+      where: { id: id },
       include: {
         consultantProfile: true,
       },

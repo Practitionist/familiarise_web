@@ -4,10 +4,10 @@ import { NextResponse } from "next/server";
 
 export async function GET(
   request: Request,
-  { params }: { params: { webinarId: string } }
-) {
+  { params }: { params: Promise<{ webinarId: string }> }) {
+
   try {
-    const { webinarId } = params;
+    const { webinarId } = await params;
     const webinarData = await prisma.webinar.findUniqueOrThrow({
       where: { id: webinarId },
       include: {
@@ -56,10 +56,10 @@ export async function GET(
 
 export async function PUT(
   request: Request,
-  { params }: { params: { webinarId: string } }
-) {
+  { params }: { params: Promise<{ webinarId: string }> }) {
+
   try {
-    const { webinarId } = params;
+    const { webinarId } = await params;
     const body = await request.json();
 
     const webinarData = await prisma.webinar.update({
@@ -113,10 +113,10 @@ export async function PUT(
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { webinarId: string } }
-) {
+  { params }: { params: Promise<{ webinarId: string }> }) {
+
   try {
-    const { webinarId } = params;
+    const { webinarId } = await params;
 
     const webinarData = await prisma.webinar.delete({
       where: { id: webinarId },

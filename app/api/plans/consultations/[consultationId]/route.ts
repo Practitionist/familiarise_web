@@ -4,10 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { consultationId: string } }
-) {
+  { params }: { params: Promise<{ consultationId: string }> }) {
+
   try {
-    const { consultationId } = params;
+    const { consultationId } = await params;
     const consultationPlan = await prisma.consultationPlan.findUniqueOrThrow({
       where: { id: consultationId },
       include: {
@@ -37,10 +37,10 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { consultationId: string } }
-) {
+  { params }: { params: Promise<{ consultationId: string }> }) {
+
   try {
-    const { consultationId } = params;
+    const { consultationId } = await params;
     const body = await request.json();
 
     // Input validation
@@ -101,10 +101,10 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { consultationId: string } }
-) {
+  { params }: { params: Promise<{ consultationId: string }> }) {
+
   try {
-    const { consultationId } = params;
+    const { consultationId } = await params;
 
     // Check if there are any associated consultations
     const associatedConsultations = await prisma.consultation.findMany({

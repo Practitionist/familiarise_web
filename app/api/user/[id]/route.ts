@@ -6,16 +6,17 @@ import { UserRole } from "@prisma/client";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
     // const session = await getServerSession(authOptions);
-    // if (!session || (session.user.id !== params.id && session.user.role !== 'ADMIN')) {
+    // if (!session || (session.user.id !== id && session.user.role !== 'ADMIN')) {
     //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     // }
 
     const user = await prisma.user.findUnique({
-      where: { id: params.id },
+      where: { id: id },
     });
 
     if (!user) {
@@ -34,11 +35,13 @@ export async function GET(
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
+
     const session = await getServerSession(authOptions);
-    if (!session || (session.user.id !== params.id && session.user.role !== 'ADMIN')) {
+    if (!session || (session.user.id !== id && session.user.role !== 'ADMIN')) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -55,7 +58,7 @@ export async function PUT(
     }
 
     const updatedUser = await prisma.user.update({
-      where: { id: params.id },
+      where: { id: id },
       data: {
         name,
         email,
@@ -91,20 +94,22 @@ export async function PUT(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
+
     const session = await getServerSession(authOptions);
     if (!session || session.user.role !== 'ADMIN') {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = await prisma.user.findUnique({ where: { id: params.id } });
+    const user = await prisma.user.findUnique({ where: { id: id } });
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    await prisma.user.delete({ where: { id: params.id } });
+    await prisma.user.delete({ where: { id: id } });
 
     return NextResponse.json({ message: "User deleted successfully" }, { status: 200 });
   } catch (error) {

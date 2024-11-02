@@ -4,11 +4,12 @@ import { Prisma } from "@prisma/client";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
     const customSlot = await prisma.slotOfAvailabilityCustom.findUnique({
-      where: { id: params.id },
+      where: { id: id },
       include: {
         consultantProfile: true,
       },
@@ -34,9 +35,10 @@ export async function GET(
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
     const body = await req.json();
 
     if (!body.slotStartTimeInUTC || !body.slotEndTimeInUTC) {
@@ -56,7 +58,7 @@ export async function PUT(
     // Check for overlapping slots
     const overlappingSlot = await prisma.slotOfAvailabilityCustom.findFirst({
       where: {
-        id: { not: params.id },
+        id: { not: id },
         consultantProfileId: body.consultantProfileId,
         OR: [
           {
@@ -80,7 +82,7 @@ export async function PUT(
     }
 
     const updatedSlot = await prisma.slotOfAvailabilityCustom.update({
-      where: { id: params.id },
+      where: { id: id },
       data: {
         slotStartTimeInUTC: startTime,
         slotEndTimeInUTC: endTime,
@@ -111,13 +113,14 @@ export async function PUT(
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
     const body = await req.json();
 
     const currentSlot = await prisma.slotOfAvailabilityCustom.findUnique({
-      where: { id: params.id },
+      where: { id: id },
     });
 
     if (!currentSlot) {
@@ -137,7 +140,7 @@ export async function PATCH(
     // Check for overlapping slots
     const overlappingSlot = await prisma.slotOfAvailabilityCustom.findFirst({
       where: {
-        id: { not: params.id },
+        id: { not: id },
         consultantProfileId: body.consultantProfileId || currentSlot.consultantProfileId,
         OR: [
           {
@@ -161,7 +164,7 @@ export async function PATCH(
     }
 
     const updatedSlot = await prisma.slotOfAvailabilityCustom.update({
-      where: { id: params.id },
+      where: { id: id },
       data: {
         slotStartTimeInUTC: startTime,
         slotEndTimeInUTC: endTime,
@@ -192,12 +195,13 @@ export async function PATCH(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
     // Check if there are any associated appointments
     const associatedAppointments = await prisma.slotOfAppointment.findMany({
-      where: { id: params.id },
+      where: { id: id },
     });
 
     if (associatedAppointments.length > 0) {
@@ -208,7 +212,7 @@ export async function DELETE(
     }
 
     const deletedSlot = await prisma.slotOfAvailabilityCustom.delete({
-      where: { id: params.id },
+      where: { id: id },
       include: {
         consultantProfile: true,
       },

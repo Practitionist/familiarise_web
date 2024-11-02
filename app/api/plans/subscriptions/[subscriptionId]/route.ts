@@ -4,10 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { subscriptionId: string } }
-) {
+  { params }: { params: Promise<{ subscriptionId: string }> }) {
+
   try {
-    const { subscriptionId } = params;
+    const { subscriptionId } = await params;
     const subscriptionPlan = await prisma.subscriptionPlan.findUniqueOrThrow({
       where: { id: subscriptionId },
       include: {
@@ -37,10 +37,10 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { subscriptionId: string } }
-) {
+  { params }: { params: Promise<{ subscriptionId: string }> }) {
+
   try {
-    const { subscriptionId } = params;
+    const { subscriptionId } = await params;
     const body = await request.json();
 
     // Input validation
@@ -125,10 +125,10 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { subscriptionId: string } }
-) {
+  { params }: { params: Promise<{ subscriptionId: string }> }) {
+
   try {
-    const { subscriptionId } = params;
+    const { subscriptionId } = await params;
 
     // Check if there are any associated subscriptions
     const associatedSubscriptions = await prisma.subscription.findMany({

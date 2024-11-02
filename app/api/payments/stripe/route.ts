@@ -2,9 +2,24 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import Stripe from "stripe";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-09-30.acacia",
-});
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? new Stripe(process.env.STRIPE_SECRET_KEY, {
+    apiVersion: "2024-09-30.acacia",
+  })
+  : {
+    paymentIntents: {
+      create: async () => ({
+        id: "mock_payment_intent_id",
+        client_secret: "mock_client_secret",
+        status: "succeeded",
+      }),
+      retrieve: async () => ({
+        id: "mock_payment_intent_id",
+        status: "succeeded",
+        receipt_email: "mock_receipt@example.com",
+      }),
+    },
+  } as unknown as Stripe;
 
 export async function POST(req: NextRequest) {
   try {
@@ -66,7 +81,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       clientSecret: paymentIntent.client_secret,
       paymentId: payment.id
     });

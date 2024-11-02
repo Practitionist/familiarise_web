@@ -4,10 +4,9 @@ import { NextResponse } from "next/server";
 
 export async function GET(
   request: Request,
-  { params }: { params: { subscriptionId: string } }
-) {
+  { params }: { params: Promise<{ subscriptionId: string }> }) {
   try {
-    const { subscriptionId } = params;
+    const { subscriptionId } = await params;
     const subscriptionData = await prisma.subscription.findUniqueOrThrow({
       where: { id: subscriptionId },
       include: {
@@ -46,10 +45,10 @@ export async function GET(
 
 export async function PUT(
   request: Request,
-  { params }: { params: { subscriptionId: string } }
-) {
+  { params }: { params: Promise<{ subscriptionId: string }> }) {
+
   try {
-    const { subscriptionId } = params;
+    const { subscriptionId } = await params;
     const body = await request.json();
 
     const subscriptionData = await prisma.subscription.update({
@@ -95,10 +94,9 @@ export async function PUT(
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { subscriptionId: string } }
-) {
+  { params }: { params: Promise<{ subscriptionId: string }> }) {
   try {
-    const { subscriptionId } = params;
+    const { subscriptionId } = await params;
 
     const subscriptionData = await prisma.subscription.delete({
       where: { id: subscriptionId },

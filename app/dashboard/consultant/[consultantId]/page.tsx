@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useEffect, useState } from 'react';
+import React, { Suspense, use, useEffect, useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -24,7 +24,14 @@ import {
   Approval
 } from './utils';
 
-export default function ConsultantDashboard({ params }: { readonly params: { consultantId: string } }) {
+type Params = Promise<{ consultantId: string }>
+type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>
+
+export default function ConsultantDashboard(props: Readonly<{
+  params: Params,
+  searchParams: SearchParams
+}>) {
+  const params = use(props.params);
   const consultantId = params.consultantId;
   const [activeSection, setActiveSection] = useState('Home');
   const [consultant, setConsultant] = useState<Consultant | null>(null);

@@ -3,12 +3,13 @@ import prisma from "@/lib/prisma";
 import { Prisma, AppointmentsType } from "@prisma/client";
 
 export async function GET(
-    req: NextRequest,
-    { params }: { params: { appointmentId: string } }
-) {
+    request: NextRequest,
+    { params }: { params: Promise<{ appointmentId: string }> }) {
+
     try {
+        const { appointmentId } = await params;
         const appointment = await prisma.appointment.findUnique({
-            where: { id: params.appointmentId },
+            where: { id: appointmentId },
             include: {
                 slotOfAppointment: {
                     include: {
@@ -51,18 +52,19 @@ export async function GET(
 }
 
 export async function PUT(
-    req: NextRequest,
-    { params }: { params: { appointmentId: string } }
-) {
+    request: NextRequest,
+    { params }: { params: Promise<{ appointmentId: string }> }) {
+
     try {
-        const body = await req.json();
+        const { appointmentId } = await params;
+        const body = await request.json();
 
         if (body.appointmentType && !Object.values(AppointmentsType).includes(body.appointmentType)) {
             return NextResponse.json({ error: "Invalid appointment type" }, { status: 400 });
         }
 
         const updatedAppointment = await prisma.appointment.update({
-            where: { id: params.appointmentId },
+            where: { id: appointmentId },
             data: {
                 appointmentType: body.appointmentType,
                 slotOfAppointment: body.slotOfAppointmentId ? { connect: { id: body.slotOfAppointmentId } } : undefined,
@@ -114,13 +116,14 @@ export async function PUT(
 }
 
 export async function DELETE(
-    req: NextRequest,
-    { params }: { params: { appointmentId: string } }
-) {
+    request: NextRequest,
+    { params }: { params: Promise<{ appointmentId: string }> }) {
+
     try {
+        const { appointmentId } = await params;
         // Check if there's an associated payment
         const appointment = await prisma.appointment.findUnique({
-            where: { id: params.appointmentId },
+            where: { id: appointmentId },
             include: { payment: true },
         });
 
@@ -129,7 +132,7 @@ export async function DELETE(
         }
 
         const deletedAppointment = await prisma.appointment.delete({
-            where: { id: params.appointmentId },
+            where: { id: appointmentId },
             include: {
                 slotOfAppointment: {
                     include: {

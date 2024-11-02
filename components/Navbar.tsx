@@ -7,6 +7,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import consultxlogo from "../public/static/assets/logos/ConsultX-logos/ConsultX-logos_transparent.png";
+import { Button } from "./ui/button";
 
 const Navbar = () => {
   const router = useRouter();
@@ -71,12 +72,12 @@ const Navbar = () => {
         >
           🔥 Exciting sale coming soon! Get ready for amazing discounts on
           consultancy sessions! 🔥
-          <button
+          <Button
             style={{ color: "white", marginRight: "10px" }}
             onClick={handleClose}
           >
             X
-          </button>
+          </Button>
         </div>
       )}
 

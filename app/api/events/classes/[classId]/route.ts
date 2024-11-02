@@ -4,10 +4,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { classId: string } }
-) {
+  { params }: { params: Promise<{ classId: string }> }) {
   try {
-    const { classId } = params;
+    const { classId } = await params;
     const classData = await prisma.class.findUniqueOrThrow({
       where: { id: classId },
       include: {
@@ -45,10 +44,9 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { classId: string } }
-) {
+  { params }: { params: Promise<{ classId: string }> }) {
   try {
-    const { classId } = params;
+    const { classId } = await params;
     const body = await request.json();
 
     const classData = await prisma.class.update({
@@ -89,10 +87,9 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { classId: string } }
-) {
+  { params }: { params: Promise<{ classId: string }> }) {
   try {
-    const { classId } = params;
+    const { classId } = await params;
 
     const classData = await prisma.class.delete({
       where: { id: classId },

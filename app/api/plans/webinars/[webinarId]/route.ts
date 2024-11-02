@@ -4,10 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { webinarId: string } }
-) {
+  { params }: { params: Promise<{ webinarId: string }> }) {
+
   try {
-    const { webinarId } = params;
+    const { webinarId } = await params;
     const webinarPlan = await prisma.webinarPlan.findUniqueOrThrow({
       where: { id: webinarId },
       include: {
@@ -38,10 +38,10 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { webinarId: string } }
-) {
+  { params }: { params: Promise<{ webinarId: string }> }) {
+
   try {
-    const { webinarId } = params;
+    const { webinarId } = await params;
     const body = await request.json();
 
     // Input validation
@@ -114,10 +114,10 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { webinarId: string } }
-) {
+  { params }: { params: Promise<{ webinarId: string }> }) {
+
   try {
-    const { webinarId } = params;
+    const { webinarId } = await params;
 
     // Check if there are any associated webinars
     const associatedWebinars = await prisma.webinar.findMany({

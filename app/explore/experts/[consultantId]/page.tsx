@@ -50,7 +50,19 @@ const Review: React.FC<ConsultantReview> = ({ consulteeProfileId, createdAt, rat
   </div>
 );
 
-export default function ExpertProfile({ params }: { readonly params: { consultantId: string } }) {
+
+import { use } from 'react';
+
+type Params = Promise<{ consultantId: string }>;
+type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
+
+export default function ExpertProfile(props: Readonly<{
+  params: Params,
+  searchParams: SearchParams
+}>) {
+  const params = use(props.params);
+  const searchParams = use(props.searchParams);
+  
   const [userDetails, setUserDetails] = useState<User | null>(null);
   const [consultantDetails, setConsultantDetails] = useState<TConsultantProfile | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);

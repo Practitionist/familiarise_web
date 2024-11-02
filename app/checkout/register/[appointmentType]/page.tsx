@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { CheckIcon } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { JSX, SVGProps, useEffect, useState } from "react";
+import { JSX, SVGProps, use, useEffect, useState } from "react";
 import { z } from "zod";
 import { ConsultantReview, User } from "@prisma/client";
 import { fetchConsultantDetails, fetchReviews, fetchUserDetails } from "@/hooks/useUserData";
@@ -54,14 +54,24 @@ const apiEndpoints = {
   class: (classId: string) => `/api/events/classes/${classId}`,
 };
 
-export default function CheckoutPage({ params }: Readonly<{ params: { appointmentType: string } }>) {
-  const searchParams = useSearchParams();
-  const { appointmentType } = params;
+
+type Params = Promise<{ appointmentType: string }>;
+type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
+
+// Not Async since useState cannot be called in async function
+export default function CheckoutPage(props: Readonly<{ params: Params; searchParams: SearchParams }>) {
+  
+  // Nextjs 15 Synchrnous params and searchParams
+  const params = use(props.params);
+  const searchParams = use(props.searchParams);
+
+  const appointmentType = params.appointmentType;
+
+  // All the states
   const [eventData, setEventData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [consultantId, setConsultantId] = useState<string | null>(null);
-
   const [userDetails, setUserDetails] = useState<User | null>(null);
   const [consultantDetails, setConsultantDetails] = useState<TConsultantProfile | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
@@ -78,7 +88,7 @@ export default function CheckoutPage({ params }: Readonly<{ params: { appointmen
         }
 
         // Parse and validate the search params using the schema
-        const parsedParams = schema.safeParse(Object.fromEntries(searchParams));
+        const parsedParams = schema.safeParse(searchParams);
 
         if (!parsedParams.success) {
           const issues = parsedParams.error.issues;

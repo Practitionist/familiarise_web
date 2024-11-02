@@ -27,7 +27,7 @@ export default function HeroSection({ images }: { images: ImageType[] }) {
           <div className="flex space-x-4">
             <Link
               className="inline-flex h-12 items-center justify-center rounded-md bg-gray-900 px-6 py-3 text-sm font-medium text-white shadow transition-colors hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-950"
-              href="#"
+              href="/explore/experts"
             >
               Book an Expert Session
             </Link>

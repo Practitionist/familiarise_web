@@ -6,16 +6,17 @@ import authOptions from "../../../auth/[...nextauth]/options";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
     // const session = await getServerSession(authOptions);
     // if (!session) {
     //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     // }
 
     const consultant = await prisma.consultantProfile.findUnique({
-      where: { id: params.id },
+      where: { id: id },
       include: {
         user: {
           select: {
@@ -41,7 +42,7 @@ export async function GET(
       return NextResponse.json({ error: "Consultant not found" }, { status: 404 });
     }
 
-    return NextResponse.json( {data: consultant} , { status: 200 });
+    return NextResponse.json({ data: consultant }, { status: 200 });
   } catch (error) {
     console.error("Error fetching consultant:", error);
     return NextResponse.json({ error: "An error occurred while fetching the consultant" }, { status: 500 });
@@ -50,11 +51,13 @@ export async function GET(
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
+
     const session = await getServerSession(authOptions);
-    if (!session || (session.user.id !== params.id && session.user.role !== UserRole.ADMIN)) {
+    if (!session || (session.user.id !== id && session.user.role !== UserRole.ADMIN)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -69,7 +72,7 @@ export async function PUT(
     }
 
     const consultant = await prisma.consultantProfile.update({
-      where: { id: params.id },
+      where: { id: id },
       data: {
         scheduleType: body.scheduleType as ScheduleType,
         description: body.description,
@@ -108,9 +111,11 @@ export async function PUT(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
+    const { id } = await params;
+
     const session = await getServerSession(authOptions);
     if (!session || session.user.role !== UserRole.ADMIN) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -118,7 +123,7 @@ export async function DELETE(
 
     // Check for associated data
     const associatedData = await prisma.consultantProfile.findUnique({
-      where: { id: params.id },
+      where: { id: id },
       select: {
         _count: {
           select: {
@@ -139,7 +144,7 @@ export async function DELETE(
     }
 
     const consultant = await prisma.consultantProfile.delete({
-      where: { id: params.id },
+      where: { id: id },
       include: {
         user: {
           select: {

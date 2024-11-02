@@ -1,9 +1,11 @@
-import React from 'react';
+'use client'
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import prisma from "@/lib/prisma";
-import { WebinarNotFound } from "./WebinarNotFound";
 import type { Prisma } from "@prisma/client";
+import { use } from 'react';
+import { WebinarNotFound } from "./WebinarNotFound";
 
 type WebinarPlanWithRelations = Prisma.WebinarPlanGetPayload<{
   include: {
@@ -31,8 +33,12 @@ async function getWebinarPlan(webinarId: string): Promise<WebinarPlanWithRelatio
   return webinarPlan;
 }
 
-export default async function WebinarPage({ params }: Readonly<{ params: { webinarId: string } }>) {
-  const webinarPlan = await getWebinarPlan(params.webinarId);
+
+type Params = Promise<{ webinarId: string }>
+
+export default function WebinarPage(props: Readonly<{ params: Params }>) {
+  const params = use(props.params)
+  const webinarPlan = use(getWebinarPlan(params.webinarId));
 
   if (!webinarPlan) {
     return <WebinarNotFound />;

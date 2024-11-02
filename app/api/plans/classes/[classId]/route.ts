@@ -4,10 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { classId: string } }
-) {
+  { params }: { params: Promise<{ classId: string }> }) {
+
   try {
-    const { classId } = params;
+    const { classId } = await params;
     const classPlan = await prisma.classPlan.findUniqueOrThrow({
       where: { id: classId },
       include: {
@@ -39,10 +39,10 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { classId: string } }
-) {
+  { params }: { params: Promise<{ classId: string }> }) {
+
   try {
-    const { classId } = params;
+    const { classId } = await params;
     const body = await request.json();
 
     // Input validation
@@ -151,10 +151,10 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { classId: string } }
-) {
+  { params }: { params: Promise<{ classId: string }> }) {
+
   try {
-    const { classId } = params;
+    const { classId } = await params;
 
     // Check if there are any associated classes
     const associatedClasses = await prisma.class.findMany({

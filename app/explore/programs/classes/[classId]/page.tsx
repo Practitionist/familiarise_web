@@ -1,11 +1,13 @@
-import React from 'react';
+'use client'
+
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import prisma from "@/lib/prisma";
-import { ClassNotFound } from "./ClassNotFound";
 import type { Prisma } from "@prisma/client";
+import { ClassNotFound } from "./ClassNotFound";
+import { use } from 'react';
 
 type ClassPlanWithRelations = Prisma.ClassPlanGetPayload<{
   include: {
@@ -35,8 +37,12 @@ async function getClassPlan(classId: string): Promise<ClassPlanWithRelations | n
   return classPlan;
 }
 
-export default async function ClassDetailsPage({ params }: Readonly<{ params: { classId: string } }>) {
-  const classPlan = await getClassPlan(params.classId);
+
+type Params = Promise<{ classId: string }>
+
+export default function ClassDetailsPage(props: Readonly<{ params: Params }>) {
+  const params = use(props.params)
+  const classPlan = use(getClassPlan(params.classId));
 
   if (!classPlan) {
     return <ClassNotFound />;

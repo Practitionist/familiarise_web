@@ -4,11 +4,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+  { params }: { params: Promise<{ id: string }> }) {
+
   try {
     console.log("Received request to update onboarding information", JSON.stringify(params, null, 2));
-    const { id } = params;
+    const { id } = await params;
     const body = await req.json();
     console.log("Request Body:", JSON.stringify(body, null, 2));
 
@@ -206,10 +206,10 @@ async function updateConsulteeProfile(id: string, body: any) {
   }
 
   // Convert arrays to comma-separated strings
-  const interests = Array.isArray(profileData.interests) 
+  const interests = Array.isArray(profileData.interests)
     ? profileData.interests.join(', ')
     : profileData.interests || "";
-    
+
   const goals = Array.isArray(profileData.goals)
     ? profileData.goals.join(', ')
     : profileData.goals || "";
