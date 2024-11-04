@@ -1,4 +1,7 @@
-import { SlotOfAvailabilityCustom, SlotOfAvailabilityWeekly } from "@prisma/client";
+import {
+  SlotOfAvailabilityCustom,
+  SlotOfAvailabilityWeekly,
+} from "@prisma/client";
 import {
   addDays,
   addMonths,
@@ -24,7 +27,6 @@ export type DayOfWeek =
   | "SUNDAY";
 
 // Define types based on the actual schema models
-
 
 export type SlotOfAvailability =
   | SlotOfAvailabilityWeekly
