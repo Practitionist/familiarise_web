@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { SlotOfAvailabilityCustom, SlotOfAvailabilityWeekly } from "@prisma/client";
 import {
   addDays,
   addMonths,
@@ -23,10 +23,9 @@ export type DayOfWeek =
   | "SATURDAY"
   | "SUNDAY";
 
-export type SlotOfAvailabilityWeekly =
-  Prisma.SlotOfAvailabilityWeeklyGetPayload<{}>;
-export type SlotOfAvailabilityCustom =
-  Prisma.SlotOfAvailabilityCustomGetPayload<{}>;
+// Define types based on the actual schema models
+
+
 export type SlotOfAvailability =
   | SlotOfAvailabilityWeekly
   | SlotOfAvailabilityCustom;
@@ -93,26 +92,16 @@ export const filterSlotsByDay = (
 };
 
 export const formatSlotTime = (slot: SlotOfAvailability) => {
-  const startTime =
-    "dayOfWeekforStartTimeInUTC" in slot
-      ? new Date(slot.slotStartTimeInUTC)
-      : new Date(slot.slotStartTimeInUTC);
-  const endTime =
-    "dayOfWeekforEndTimeInUTC" in slot
-      ? new Date(slot.slotEndTimeInUTC)
-      : new Date(slot.slotEndTimeInUTC);
+  // Both branches were returning the same value, so we can simplify
+  const startTime = new Date(slot.slotStartTimeInUTC);
+  const endTime = new Date(slot.slotEndTimeInUTC);
   return `${format(startTime, "HH:mm")} - ${format(endTime, "HH:mm")}`;
 };
 
 export const calculateSlotPosition = (slot: SlotOfAvailability) => {
-  const startTime =
-    "dayOfWeekforStartTimeInUTC" in slot
-      ? new Date(slot.slotStartTimeInUTC)
-      : new Date(slot.slotStartTimeInUTC);
-  const endTime =
-    "dayOfWeekforEndTimeInUTC" in slot
-      ? new Date(slot.slotEndTimeInUTC)
-      : new Date(slot.slotEndTimeInUTC);
+  // Both branches were returning the same value, so we can simplify
+  const startTime = new Date(slot.slotStartTimeInUTC);
+  const endTime = new Date(slot.slotEndTimeInUTC);
   const startMinutes = startTime.getHours() * 60 + startTime.getMinutes();
   const endMinutes = endTime.getHours() * 60 + endTime.getMinutes();
   const duration = endMinutes - startMinutes;
