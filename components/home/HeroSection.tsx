@@ -20,8 +20,8 @@ export default function HeroSection({ images }: { images: ImageType[] }) {
           </h1>
           <p className="max-w-[700px] text-xl md:text-2xl text-gray-800 italic">
             <q>
-              A platform where experts share their advice through 1-1
-              sessions, classes, webinars, and conferences.
+              A platform where experts share their advice through 1-1 sessions,
+              classes, webinars, and conferences.
             </q>
           </p>
           <div className="flex space-x-4">

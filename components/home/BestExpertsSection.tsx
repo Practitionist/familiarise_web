@@ -2,7 +2,11 @@ import Link from "next/link";
 import { ImageType } from "@/hooks/useImages";
 import { renderImage } from "@/lib/image";
 
-export default function BestExpertsSection({ images }: { images: ImageType[] }) {
+export default function BestExpertsSection({
+  images,
+}: {
+  images: ImageType[];
+}) {
   return (
     <section className="w-full border-y pt-6 md:pt-12 lg:pt-16 xl:pt-20">
       <div className="px-4 md:px-6 space-y-10 xl:space-y-16">
@@ -14,8 +18,8 @@ export default function BestExpertsSection({ images }: { images: ImageType[] }) 
           </div>
           <div className="flex flex-col items-start space-y-4">
             <p className="mx-auto max-w-[700px] text-gray-500 md:text-xl dark:text-gray-400">
-              Explore our wide range of consultants and find the right one
-              for your business.
+              Explore our wide range of consultants and find the right one for
+              your business.
             </p>
             <div className="space-x-4">
               <Link

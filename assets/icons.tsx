@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 
 export function SettingsIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -17,7 +17,7 @@ export function SettingsIcon(props: React.SVGProps<SVGSVGElement>) {
       <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
       <circle cx="12" cy="12" r="3" />
     </svg>
-  )
+  );
 }
 
 export function SignalIcon(props: React.SVGProps<SVGSVGElement>) {
@@ -40,7 +40,7 @@ export function SignalIcon(props: React.SVGProps<SVGSVGElement>) {
       <path d="M17 20V8" />
       <path d="M22 4v16" />
     </svg>
-  )
+  );
 }
 
 export function SearchIcon(props: React.SVGProps<SVGSVGElement>) {
@@ -60,7 +60,7 @@ export function SearchIcon(props: React.SVGProps<SVGSVGElement>) {
       <circle cx="11" cy="11" r="8" />
       <path d="m21 21-4.3-4.3" />
     </svg>
-  )
+  );
 }
 
 export function FileEditIcon(props: React.SVGProps<SVGSVGElement>) {
@@ -81,7 +81,7 @@ export function FileEditIcon(props: React.SVGProps<SVGSVGElement>) {
       <polyline points="14 2 14 8 20 8" />
       <path d="M10.42 12.61a2.1 2.1 0 1 1 2.97 2.97L7.95 21 4 22l.99-3.95 5.43-5.44Z" />
     </svg>
-  )
+  );
 }
 
 export function DeleteIcon(props: React.SVGProps<SVGSVGElement>) {
@@ -102,7 +102,7 @@ export function DeleteIcon(props: React.SVGProps<SVGSVGElement>) {
       <line x1="18" x2="12" y1="9" y2="15" />
       <line x1="12" x2="18" y1="9" y2="15" />
     </svg>
-  )
+  );
 }
 
 export function DownloadIcon(props: React.SVGProps<SVGSVGElement>) {
@@ -123,11 +123,10 @@ export function DownloadIcon(props: React.SVGProps<SVGSVGElement>) {
       <polyline points="7 10 12 15 17 10" />
       <line x1="12" x2="12" y1="15" y2="3" />
     </svg>
-  )
+  );
 }
 
-export 
-function ArrowLeftIcon(props: React.SVGProps<SVGSVGElement>) {
+export function ArrowLeftIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
       {...props}
@@ -144,9 +143,8 @@ function ArrowLeftIcon(props: React.SVGProps<SVGSVGElement>) {
       <path d="m12 19-7-7 7-7" />
       <path d="M19 12H5" />
     </svg>
-  )
+  );
 }
-
 
 export function ArrowRightIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -165,9 +163,8 @@ export function ArrowRightIcon(props: React.SVGProps<SVGSVGElement>) {
       <path d="M5 12h14" />
       <path d="m12 5 7 7-7 7" />
     </svg>
-  )
+  );
 }
-
 
 export function BellIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -186,9 +183,8 @@ export function BellIcon(props: React.SVGProps<SVGSVGElement>) {
       <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
       <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
     </svg>
-  )
+  );
 }
-
 
 export function FigmaIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -210,9 +206,8 @@ export function FigmaIcon(props: React.SVGProps<SVGSVGElement>) {
       <path d="M5 19.5A3.5 3.5 0 0 1 8.5 16H12v3.5a3.5 3.5 0 1 1-7 0z" />
       <path d="M5 12.5A3.5 3.5 0 0 1 8.5 9H12v7H8.5A3.5 3.5 0 0 1 5 12.5z" />
     </svg>
-  )
+  );
 }
-
 
 export function CalendarIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -233,9 +228,8 @@ export function CalendarIcon(props: React.SVGProps<SVGSVGElement>) {
       <rect width="18" height="18" x="3" y="4" rx="2" />
       <path d="M3 10h18" />
     </svg>
-  )
+  );
 }
-
 
 export function DoorClosedIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -255,9 +249,8 @@ export function DoorClosedIcon(props: React.SVGProps<SVGSVGElement>) {
       <path d="M2 20h20" />
       <path d="M14 12v.01" />
     </svg>
-  )
+  );
 }
-
 
 export function MenuIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -277,9 +270,8 @@ export function MenuIcon(props: React.SVGProps<SVGSVGElement>) {
       <line x1="4" x2="20" y1="6" y2="6" />
       <line x1="4" x2="20" y1="18" y2="18" />
     </svg>
-  )
+  );
 }
-
 
 export function OptionIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -298,9 +290,8 @@ export function OptionIcon(props: React.SVGProps<SVGSVGElement>) {
       <path d="M3 3h6l6 18h6" />
       <path d="M14 3h7" />
     </svg>
-  )
+  );
 }
-
 
 export function TargetIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -320,9 +311,8 @@ export function TargetIcon(props: React.SVGProps<SVGSVGElement>) {
       <circle cx="12" cy="12" r="6" />
       <circle cx="12" cy="12" r="2" />
     </svg>
-  )
+  );
 }
-
 
 export function TimerIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -342,9 +332,8 @@ export function TimerIcon(props: React.SVGProps<SVGSVGElement>) {
       <line x1="12" x2="15" y1="14" y2="11" />
       <circle cx="12" cy="14" r="8" />
     </svg>
-  )
+  );
 }
-
 
 export function UserIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -363,7 +352,7 @@ export function UserIcon(props: React.SVGProps<SVGSVGElement>) {
       <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
       <circle cx="12" cy="7" r="4" />
     </svg>
-  )
+  );
 }
 
 export function TrashIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {

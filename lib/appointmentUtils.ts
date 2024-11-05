@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -6,7 +6,7 @@ export async function checkOverlappingAppointments(
   startTime: Date,
   endTime: Date,
   consultantProfileId: string,
-  excludeAppointmentId?: string
+  excludeAppointmentId?: string,
 ): Promise<boolean> {
   const overlappingAppointments = await prisma.slotOfAppointment.findFirst({
     where: {
@@ -15,16 +15,16 @@ export async function checkOverlappingAppointments(
           appointment: {
             class: {
               classPlan: {
-                consultantProfileId: consultantProfileId
-              }
-            }
-          }
+                consultantProfileId: consultantProfileId,
+              },
+            },
+          },
         },
         {
           OR: [
             // Partial overlaps
-            // Start within the range of an existing appointment 
-            { 
+            // Start within the range of an existing appointment
+            {
               slotStartTimeInUTC: {
                 gte: startTime,
                 lt: endTime,

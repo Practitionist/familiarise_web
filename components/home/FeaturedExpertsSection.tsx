@@ -12,8 +12,8 @@ export default function FeaturedExpertsSection() {
             Meet our Featured Experts
           </h2>
           <p className="mt-4 mx-auto max-w-[700px] text-gray-500 md:text-xl">
-            We have a diverse team of experts ready to share their
-            knowledge and expertise with you.
+            We have a diverse team of experts ready to share their knowledge and
+            expertise with you.
           </p>
           <Button className="mt-8 dark:bg-gray-800 text-white hover:bg-gray-700 transition-colors duration-300">
             View All Experts
@@ -21,7 +21,10 @@ export default function FeaturedExpertsSection() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-8">
           {EXPERTS.map((expert, index) => (
-            <Card key={index} className="hover:shadow-xl transition-shadow duration-300 hover:-translate-y-1">
+            <Card
+              key={index}
+              className="hover:shadow-xl transition-shadow duration-300 hover:-translate-y-1"
+            >
               <CardHeader>
                 <Avatar className="mx-auto mb-4" />
                 <h3 className="text-lg font-bold">{expert.name}</h3>

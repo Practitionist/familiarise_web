@@ -83,8 +83,9 @@ const Navbar = () => {
 
       {/* Main Navbar */}
       <nav
-        className={`fixed top-0 w-full z-50 py-2 bg-white ${isAnnouncementBarOpen ? "pt-12" : "pt-0"
-          } px-6 lg:px-0 ${isScrolled ? "shadow-md" : ""}`}
+        className={`fixed top-0 w-full z-50 py-2 bg-white ${
+          isAnnouncementBarOpen ? "pt-12" : "pt-0"
+        } px-6 lg:px-0 ${isScrolled ? "shadow-md" : ""}`}
       >
         <div className="flex justify-between items-center">
           <Link href="/">

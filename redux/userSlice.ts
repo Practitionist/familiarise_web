@@ -50,10 +50,12 @@ const userSlice = createSlice({
   },
 });
 
-export const { setUser, setLoading, setError, updateUserProfile, clearUser } = userSlice.actions;
+export const { setUser, setLoading, setError, updateUserProfile, clearUser } =
+  userSlice.actions;
 
 export const selectUser = (state: { user: UserState }) => state.user.user;
-export const selectIsLoading = (state: { user: UserState }) => state.user.isLoading;
+export const selectIsLoading = (state: { user: UserState }) =>
+  state.user.isLoading;
 export const selectError = (state: { user: UserState }) => state.user.error;
 
 export default userSlice.reducer;

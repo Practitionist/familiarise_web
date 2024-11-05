@@ -8,7 +8,9 @@ export async function createDiscountCodes() {
   console.log(`Creating ${NUM_DISCOUNT_CODES} discount codes...`);
   for (let i = 0; i < NUM_DISCOUNT_CODES; i++) {
     try {
-      const discountType = faker.helpers.arrayElement(Object.values(DiscountType));
+      const discountType = faker.helpers.arrayElement(
+        Object.values(DiscountType),
+      );
       let discountValue: number;
 
       switch (discountType) {

@@ -2,7 +2,11 @@ import Link from "next/link";
 import { ImageType } from "@/hooks/useImages";
 import { renderImage } from "@/lib/image";
 
-export default function TransformCareerSection({ images }: { images: ImageType[] }) {
+export default function TransformCareerSection({
+  images,
+}: {
+  images: ImageType[];
+}) {
   return (
     <section className="w-full py-16 md:py-24 lg:py-32">
       <div className="container mx-auto px-4 md:px-6">
@@ -13,13 +17,21 @@ export default function TransformCareerSection({ images }: { images: ImageType[]
             </h2>
             <ul className="space-y-4 text-lg text-gray-600 md:text-xl">
               <li>
-                <span className="font-semibold">✓ Accelerate Your Growth:</span> Gain years of industry insights in just hours through our 1-1 sessions.
+                <span className="font-semibold">✓ Accelerate Your Growth:</span>{" "}
+                Gain years of industry insights in just hours through our 1-1
+                sessions.
               </li>
               <li>
-                <span className="font-semibold">✓ Expand Your Network:</span> Connect with industry leaders and peers in our exclusive classes and webinars.
+                <span className="font-semibold">✓ Expand Your Network:</span>{" "}
+                Connect with industry leaders and peers in our exclusive classes
+                and webinars.
               </li>
               <li>
-                <span className="font-semibold">✓ Stay Ahead of the Curve:</span> Access cutting-edge knowledge and trends through our conferences.
+                <span className="font-semibold">
+                  ✓ Stay Ahead of the Curve:
+                </span>{" "}
+                Access cutting-edge knowledge and trends through our
+                conferences.
               </li>
             </ul>
             <Link

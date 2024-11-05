@@ -1,13 +1,13 @@
 import prisma from "@/lib/prisma";
 
 async function cleanupExpiredLocks() {
-    const now = new Date();
+  const now = new Date();
 
-    await prisma.appointmentLock.deleteMany({
-        where: {
-            expiresAt: { lt: now },
-        },
-    });
+  await prisma.appointmentLock.deleteMany({
+    where: {
+      expiresAt: { lt: now },
+    },
+  });
 
-    console.log('Expired locks cleaned up');
+  console.log("Expired locks cleaned up");
 }

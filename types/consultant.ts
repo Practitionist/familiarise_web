@@ -1,9 +1,9 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from "@prisma/client";
 
 /**
  * Represents a ConsultantProfile with specific included relations.
  * This type uses Prisma's generated types to ensure type safety and consistency with the database schema.
- * 
+ *
  * @typedef {Object} TConsultantProfile
  * @property {Object} user - The user associated with this consultant profile.
  * @property {Object[]} slotOfAvailabilityWeekly - Weekly availability slots for recurring schedules.
@@ -16,18 +16,18 @@ import { Prisma } from '@prisma/client';
  */
 export type TConsultantProfile = Prisma.ConsultantProfileGetPayload<{
   include: {
-    user: true,
-    domain:true,
-    subDomains: true,
-    tags: true,
-    slotsOfAvailabilityWeekly: true,
-    slotsOfAvailabilityCustom: true,
-    consultationPlans: true,
-    subscriptionPlans: true,
-    webinarPlans: true,
-    classPlans: true,
-    reviews: true,
-  }
+    user: true;
+    domain: true;
+    subDomains: true;
+    tags: true;
+    slotsOfAvailabilityWeekly: true;
+    slotsOfAvailabilityCustom: true;
+    consultationPlans: true;
+    subscriptionPlans: true;
+    webinarPlans: true;
+    classPlans: true;
+    reviews: true;
+  };
 }>;
 
 // By using Prisma.ConsultantProfileGetPayload, we ensure that the type

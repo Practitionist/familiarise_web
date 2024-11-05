@@ -19,7 +19,7 @@ const config = {
       },
       {
         hostname: "picsum.photos",
-      }
+      },
     ],
   },
 };

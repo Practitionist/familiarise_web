@@ -4,7 +4,9 @@ import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./createUsers";
 
 export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
-  console.log(`Creating subscription plans for ${consultants.length} consultants...`);
+  console.log(
+    `Creating subscription plans for ${consultants.length} consultants...`,
+  );
   for (let i = 0; i < consultants.length; i++) {
     const consultant = consultants[i];
     if (!consultant.consultantProfile) {
@@ -23,11 +25,24 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             callsPerWeek: 1,
             videoMeetings: 1,
             emailSupport: PlanEmailSupport.GENERAL,
-            language: faker.helpers.arrayElement(["English", "Spanish", "French", "German", "Chinese"]),
+            language: faker.helpers.arrayElement([
+              "English",
+              "Spanish",
+              "French",
+              "German",
+              "Chinese",
+            ]),
             level: "Beginner",
             prerequisites: "None",
             materialProvided: faker.lorem.sentence(),
-            learningOutcomes: faker.helpers.arrayElements(["Understand basic concepts", "Gain practical skills", "Improve problem-solving abilities"], { min: 1, max: 3 }),
+            learningOutcomes: faker.helpers.arrayElements(
+              [
+                "Understand basic concepts",
+                "Gain practical skills",
+                "Improve problem-solving abilities",
+              ],
+              { min: 1, max: 3 },
+            ),
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
@@ -38,11 +53,24 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             callsPerWeek: 2,
             videoMeetings: 2,
             emailSupport: PlanEmailSupport.PRIORITY,
-            language: faker.helpers.arrayElement(["English", "Spanish", "French", "German", "Chinese"]),
+            language: faker.helpers.arrayElement([
+              "English",
+              "Spanish",
+              "French",
+              "German",
+              "Chinese",
+            ]),
             level: "Intermediate",
             prerequisites: faker.lorem.sentence(),
             materialProvided: faker.lorem.sentence(),
-            learningOutcomes: faker.helpers.arrayElements(["Master advanced techniques", "Develop strategic thinking", "Enhance decision-making skills"], { min: 1, max: 3 }),
+            learningOutcomes: faker.helpers.arrayElements(
+              [
+                "Master advanced techniques",
+                "Develop strategic thinking",
+                "Enhance decision-making skills",
+              ],
+              { min: 1, max: 3 },
+            ),
           },
           {
             consultantProfileId: consultant.consultantProfile.id,
@@ -53,18 +81,31 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             callsPerWeek: 3,
             videoMeetings: 4,
             emailSupport: PlanEmailSupport.DEDICATED,
-            language: faker.helpers.arrayElement(["English", "Spanish", "French", "German", "Chinese"]),
+            language: faker.helpers.arrayElement([
+              "English",
+              "Spanish",
+              "French",
+              "German",
+              "Chinese",
+            ]),
             level: "Advanced",
             prerequisites: faker.lorem.sentence(),
             materialProvided: faker.lorem.sentence(),
-            learningOutcomes: faker.helpers.arrayElements(["Develop expertise in the field", "Create comprehensive strategies", "Implement best practices"], { min: 1, max: 3 }),
+            learningOutcomes: faker.helpers.arrayElements(
+              [
+                "Develop expertise in the field",
+                "Create comprehensive strategies",
+                "Implement best practices",
+              ],
+              { min: 1, max: 3 },
+            ),
           },
         ],
       });
     } catch (error) {
       console.error(
         `Failed to create subscription plans for consultant ${consultant.id}:`,
-        error
+        error,
       );
     }
     if ((i + 1) % 10 === 0 || i === consultants.length - 1) {

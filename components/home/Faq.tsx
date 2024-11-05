@@ -14,24 +14,29 @@ import { CardContent, Card } from "@/components/ui/card";
 const faqItems = [
   {
     question: "What services does our consultancy provide?",
-    answer: "We offer a range of services including business strategy, market research, and project management."
+    answer:
+      "We offer a range of services including business strategy, market research, and project management.",
   },
   {
     question: "How can our consultancy help your business grow?",
-    answer: "We provide expert advice and strategies tailored to your business needs, helping you to improve efficiency and increase profits."
+    answer:
+      "We provide expert advice and strategies tailored to your business needs, helping you to improve efficiency and increase profits.",
   },
   {
     question: "What industries do we specialize in?",
-    answer: "Our consultants have experience in a wide range of industries, including technology, healthcare, and finance."
+    answer:
+      "Our consultants have experience in a wide range of industries, including technology, healthcare, and finance.",
   },
   {
     question: "How can you get started with our consultancy?",
-    answer: "Contact us to schedule a consultation. We will discuss your business needs and how our services can help you achieve your goals."
+    answer:
+      "Contact us to schedule a consultation. We will discuss your business needs and how our services can help you achieve your goals.",
   },
   {
     question: "What is our consultancy approach to problem-solving?",
-    answer: "We use a collaborative approach, working closely with your team to understand your business and develop effective solutions."
-  }
+    answer:
+      "We use a collaborative approach, working closely with your team to understand your business and develop effective solutions.",
+  },
 ];
 
 export function Faq() {
@@ -42,14 +47,15 @@ export function Faq() {
           <h2 className="text-2xl font-semibold">Frequently Asked Questions</h2>
           <Accordion className="w-full mt-4" type="multiple" defaultValue={[]}>
             {faqItems.map((item, index) => (
-              <AccordionItem key={`item-${index + 1}`} value={`item-${index + 1}`}>
+              <AccordionItem
+                key={`item-${index + 1}`}
+                value={`item-${index + 1}`}
+              >
                 <AccordionTrigger className="w-full text-left">
                   <span className="flex-1">{item.question}</span>
                 </AccordionTrigger>
                 <AccordionContent>
-                  <p className="text-sm text-gray-600">
-                    {item.answer}
-                  </p>
+                  <p className="text-sm text-gray-600">{item.answer}</p>
                 </AccordionContent>
               </AccordionItem>
             ))}

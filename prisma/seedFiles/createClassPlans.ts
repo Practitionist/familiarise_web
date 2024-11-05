@@ -13,7 +13,7 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
     }
     try {
       const topics = await prisma.topic.findMany({ take: 5 });
-      
+
       // Create class plans with proper data structure
       const classPlans = await Promise.all([
         prisma.classPlan.create({
@@ -27,24 +27,51 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             videoMeetings: 4,
             emailSupport: PlanEmailSupport.GENERAL,
             maxParticipants: faker.number.int({ min: 5, max: 15 }),
-            language: faker.helpers.arrayElement(["English", "Spanish", "French", "German", "Chinese"]),
+            language: faker.helpers.arrayElement([
+              "English",
+              "Spanish",
+              "French",
+              "German",
+              "Chinese",
+            ]),
             level: "Beginner",
             prerequisites: "None",
             materialProvided: faker.lorem.sentence(),
-            learningOutcomes: faker.helpers.arrayElements(["Understand basic concepts", "Gain practical skills", "Improve problem-solving abilities"], { min: 1, max: 3 }),
+            learningOutcomes: faker.helpers.arrayElements(
+              [
+                "Understand basic concepts",
+                "Gain practical skills",
+                "Improve problem-solving abilities",
+              ],
+              { min: 1, max: 3 },
+            ),
             certificateProvided: faker.datatype.boolean(),
             topics: {
-              connect: faker.helpers.arrayElements(topics, { min: 1, max: 3 }).map(topic => ({ id: topic.id })),
+              connect: faker.helpers
+                .arrayElements(topics, { min: 1, max: 3 })
+                .map((topic) => ({ id: topic.id })),
             },
             classContents: {
-              create: Array.from({ length: faker.number.int({ min: 3, max: 6 }) }, (_, index) => ({
-                title: faker.lorem.words(3),
-                description: faker.lorem.paragraph(),
-                contentType: faker.helpers.arrayElement(["Video", "Text", "Quiz", "Assignment"]),
-                contentUrl: faker.internet.url(),
-                order: index + 1,
-                hoursAllotted: faker.number.float({ min: 1, max: 5, multipleOf: 0.5 }),
-              })),
+              create: Array.from(
+                { length: faker.number.int({ min: 3, max: 6 }) },
+                (_, index) => ({
+                  title: faker.lorem.words(3),
+                  description: faker.lorem.paragraph(),
+                  contentType: faker.helpers.arrayElement([
+                    "Video",
+                    "Text",
+                    "Quiz",
+                    "Assignment",
+                  ]),
+                  contentUrl: faker.internet.url(),
+                  order: index + 1,
+                  hoursAllotted: faker.number.float({
+                    min: 1,
+                    max: 5,
+                    multipleOf: 0.5,
+                  }),
+                }),
+              ),
             },
           },
         }),
@@ -59,24 +86,51 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             videoMeetings: 8,
             emailSupport: PlanEmailSupport.PRIORITY,
             maxParticipants: faker.number.int({ min: 5, max: 12 }),
-            language: faker.helpers.arrayElement(["English", "Spanish", "French", "German", "Chinese"]),
+            language: faker.helpers.arrayElement([
+              "English",
+              "Spanish",
+              "French",
+              "German",
+              "Chinese",
+            ]),
             level: "Intermediate",
             prerequisites: faker.lorem.sentence(),
             materialProvided: faker.lorem.sentence(),
-            learningOutcomes: faker.helpers.arrayElements(["Master advanced techniques", "Develop strategic thinking", "Enhance decision-making skills"], { min: 1, max: 3 }),
+            learningOutcomes: faker.helpers.arrayElements(
+              [
+                "Master advanced techniques",
+                "Develop strategic thinking",
+                "Enhance decision-making skills",
+              ],
+              { min: 1, max: 3 },
+            ),
             certificateProvided: faker.datatype.boolean(),
             topics: {
-              connect: faker.helpers.arrayElements(topics, { min: 1, max: 3 }).map(topic => ({ id: topic.id })),
+              connect: faker.helpers
+                .arrayElements(topics, { min: 1, max: 3 })
+                .map((topic) => ({ id: topic.id })),
             },
             classContents: {
-              create: Array.from({ length: faker.number.int({ min: 4, max: 8 }) }, (_, index) => ({
-                title: faker.lorem.words(3),
-                description: faker.lorem.paragraph(),
-                contentType: faker.helpers.arrayElement(["Video", "Text", "Quiz", "Assignment"]),
-                contentUrl: faker.internet.url(),
-                order: index + 1,
-                hoursAllotted: faker.number.float({ min: 1, max: 5, multipleOf: 0.5 }),
-              })),
+              create: Array.from(
+                { length: faker.number.int({ min: 4, max: 8 }) },
+                (_, index) => ({
+                  title: faker.lorem.words(3),
+                  description: faker.lorem.paragraph(),
+                  contentType: faker.helpers.arrayElement([
+                    "Video",
+                    "Text",
+                    "Quiz",
+                    "Assignment",
+                  ]),
+                  contentUrl: faker.internet.url(),
+                  order: index + 1,
+                  hoursAllotted: faker.number.float({
+                    min: 1,
+                    max: 5,
+                    multipleOf: 0.5,
+                  }),
+                }),
+              ),
             },
           },
         }),
@@ -91,24 +145,51 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             videoMeetings: 12,
             emailSupport: PlanEmailSupport.DEDICATED,
             maxParticipants: faker.number.int({ min: 3, max: 10 }),
-            language: faker.helpers.arrayElement(["English", "Spanish", "French", "German", "Chinese"]),
+            language: faker.helpers.arrayElement([
+              "English",
+              "Spanish",
+              "French",
+              "German",
+              "Chinese",
+            ]),
             level: "Advanced",
             prerequisites: faker.lorem.sentence(),
             materialProvided: faker.lorem.sentence(),
-            learningOutcomes: faker.helpers.arrayElements(["Develop expertise in the field", "Create comprehensive strategies", "Implement best practices"], { min: 1, max: 3 }),
+            learningOutcomes: faker.helpers.arrayElements(
+              [
+                "Develop expertise in the field",
+                "Create comprehensive strategies",
+                "Implement best practices",
+              ],
+              { min: 1, max: 3 },
+            ),
             certificateProvided: faker.datatype.boolean(),
             topics: {
-              connect: faker.helpers.arrayElements(topics, { min: 1, max: 3 }).map(topic => ({ id: topic.id })),
+              connect: faker.helpers
+                .arrayElements(topics, { min: 1, max: 3 })
+                .map((topic) => ({ id: topic.id })),
             },
             classContents: {
-              create: Array.from({ length: faker.number.int({ min: 5, max: 10 }) }, (_, index) => ({
-                title: faker.lorem.words(3),
-                description: faker.lorem.paragraph(),
-                contentType: faker.helpers.arrayElement(["Video", "Text", "Quiz", "Assignment"]),
-                contentUrl: faker.internet.url(),
-                order: index + 1,
-                hoursAllotted: faker.number.float({ min: 1, max: 5, multipleOf: 0.5 }),
-              })),
+              create: Array.from(
+                { length: faker.number.int({ min: 5, max: 10 }) },
+                (_, index) => ({
+                  title: faker.lorem.words(3),
+                  description: faker.lorem.paragraph(),
+                  contentType: faker.helpers.arrayElement([
+                    "Video",
+                    "Text",
+                    "Quiz",
+                    "Assignment",
+                  ]),
+                  contentUrl: faker.internet.url(),
+                  order: index + 1,
+                  hoursAllotted: faker.number.float({
+                    min: 1,
+                    max: 5,
+                    multipleOf: 0.5,
+                  }),
+                }),
+              ),
             },
           },
         }),
@@ -116,7 +197,7 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
     } catch (error) {
       console.error(
         `Failed to create class plans for consultant ${consultant.id}:`,
-        error
+        error,
       );
     }
     if ((i + 1) % 10 === 0 || i === consultants.length - 1) {

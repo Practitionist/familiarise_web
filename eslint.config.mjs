@@ -9,13 +9,13 @@ export default [
   {
     ignores: [
       ".next/**",
-      "node_modules/**", 
+      "node_modules/**",
       "dist/**",
       "build/**",
       "out/**",
       "coverage/**",
-      "public/static/**"
-    ]
+      "public/static/**",
+    ],
   },
 
   // Base config for all JavaScript/TypeScript files
@@ -35,8 +35,8 @@ export default [
         Buffer: true,
         // React globals
         React: true,
-        JSX: true
-      }
+        JSX: true,
+      },
     },
   },
 
@@ -51,11 +51,10 @@ export default [
     ...pluginReact.configs.flat.recommended,
     settings: {
       react: {
-        version: "detect"
-      }
+        version: "detect",
+      },
     },
     rules: {
-
       // Warns when let is used where const could be used instead
       "prefer-const": "warn",
 
@@ -66,7 +65,7 @@ export default [
       "no-case-declarations": "warn",
 
       // Warn when React props are missing type definitions
-      "react/prop-types": "warn", 
+      "react/prop-types": "warn",
 
       // These rules are turned off since React 17+ doesn't require importing React
       // when using JSX, as the new JSX transform handles this automatically
@@ -83,14 +82,17 @@ export default [
       "@typescript-eslint/no-require-imports": "warn",
 
       // Warn on unused variables, but allow ones starting with underscore
-      "@typescript-eslint/no-unused-vars": ["warn", { 
-        "varsIgnorePattern": "^_", // Ignore variables starting with _
-        "argsIgnorePattern": "^_"  // Ignore parameters starting with _
-      }],
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          varsIgnorePattern: "^_", // Ignore variables starting with _
+          argsIgnorePattern: "^_", // Ignore parameters starting with _
+        },
+      ],
 
       // Error on references to undefined variables
       // typeof check ensures typeof checks don't trigger the error
-      "no-undef": ["error", { "typeof": true }]
-    }
-  }
+      "no-undef": ["error", { typeof: true }],
+    },
+  },
 ];

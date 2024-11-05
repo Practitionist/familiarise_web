@@ -10,7 +10,12 @@ const URLS = {
 };
 
 const ROUTES = {
-  PROTECTED_ROUTES: ["/form/**", "/dashboard/**", "/settings/**", "/profile/**"],
+  PROTECTED_ROUTES: [
+    "/form/**",
+    "/dashboard/**",
+    "/settings/**",
+    "/profile/**",
+  ],
   PUBLIC_AUTH_ROUTES: ["/auth/**"],
   PRIVATE_API: ["/api/inngest/**"],
   PROTECTED_API: ["/api/form/onboarding/**"], // Added onboarding API route
@@ -21,7 +26,7 @@ const ROUTES = {
 interface Token {
   name: string;
   email: string;
-  role: 'CONSULTANT' | 'CONSULTEE' | 'STAFF';
+  role: "CONSULTANT" | "CONSULTEE" | "STAFF";
   onboardingCompleted: boolean;
   consultantProfileId?: string;
   consulteeProfileId?: string;
@@ -43,13 +48,14 @@ const isMatchingRoute = (pathname: string, patterns: string[]): boolean =>
  * Get the correct dashboard URL based on user role and profile
  */
 const getCorrectDashboardUrl = (token: Token): string | null => {
-  const { role, consultantProfileId, consulteeProfileId, staffProfileId } = token;
+  const { role, consultantProfileId, consulteeProfileId, staffProfileId } =
+    token;
 
-  if (role === 'CONSULTANT' && consultantProfileId) {
+  if (role === "CONSULTANT" && consultantProfileId) {
     return `/dashboard/consultant/${consultantProfileId}`;
-  } else if (role === 'CONSULTEE' && consulteeProfileId) {
+  } else if (role === "CONSULTEE" && consulteeProfileId) {
     return `/dashboard/consultee/${consulteeProfileId}`;
-  } else if (role === 'STAFF' && staffProfileId) {
+  } else if (role === "STAFF" && staffProfileId) {
     return `/dashboard/staff/${staffProfileId}`;
   }
 
@@ -59,7 +65,10 @@ const getCorrectDashboardUrl = (token: Token): string | null => {
 /**
  * Handle authentication check and redirection
  */
-const handleAuthCheck = (isAuthenticated: boolean, req: NextRequest): NextResponse | null => {
+const handleAuthCheck = (
+  isAuthenticated: boolean,
+  req: NextRequest,
+): NextResponse | null => {
   if (!isAuthenticated) {
     return NextResponse.redirect(new URL(URLS.SIGNIN, req.url));
   }
@@ -69,7 +78,11 @@ const handleAuthCheck = (isAuthenticated: boolean, req: NextRequest): NextRespon
 /**
  * Handle onboarding check and redirection
  */
-const handleOnboardingCheck = (isOnboarded: boolean, pathname: string, req: NextRequest): NextResponse | null => {
+const handleOnboardingCheck = (
+  isOnboarded: boolean,
+  pathname: string,
+  req: NextRequest,
+): NextResponse | null => {
   if (!isOnboarded && pathname !== URLS.ONBOARDING) {
     return NextResponse.redirect(new URL(URLS.ONBOARDING, req.url));
   }
@@ -79,7 +92,11 @@ const handleOnboardingCheck = (isOnboarded: boolean, pathname: string, req: Next
 /**
  * Handle dashboard redirection
  */
-const handleDashboardRedirect = (token: Token, pathname: string, req: NextRequest): NextResponse | null => {
+const handleDashboardRedirect = (
+  token: Token,
+  pathname: string,
+  req: NextRequest,
+): NextResponse | null => {
   const correctDashboardUrl = getCorrectDashboardUrl(token);
   if (correctDashboardUrl && pathname !== correctDashboardUrl) {
     return NextResponse.redirect(new URL(correctDashboardUrl, req.url));
@@ -91,16 +108,15 @@ const handleDashboardRedirect = (token: Token, pathname: string, req: NextReques
  * Middleware function to handle authentication and authorization for routes.
  */
 export async function middleware(req: NextRequest): Promise<NextResponse> {
-
   const { pathname } = req.nextUrl;
-  const token = await getToken({ req }) as Token | null;
+  const token = (await getToken({ req })) as Token | null;
   const isAuthenticated = !!token;
 
   const isOnboarded = token?.onboardingCompleted ?? false;
 
   // Handle private API routes (including Inngest and Auth)
   if (isMatchingRoute(pathname, ROUTES.PRIVATE_API)) {
-        return isAuthenticated
+    return isAuthenticated
       ? NextResponse.next()
       : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -125,7 +141,9 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
       if (token) {
         const correctDashboardUrl = getCorrectDashboardUrl(token);
-        return NextResponse.redirect(new URL(correctDashboardUrl || URLS.DASHBOARD, req.url));
+        return NextResponse.redirect(
+          new URL(correctDashboardUrl || URLS.DASHBOARD, req.url),
+        );
       }
     }
     return NextResponse.next();
@@ -144,7 +162,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
       if (dashboardRedirect) return dashboardRedirect;
     }
 
-    if (pathname.startsWith('/dashboard/') && token) {
+    if (pathname.startsWith("/dashboard/") && token) {
       const dashboardRedirect = handleDashboardRedirect(token, pathname, req);
       if (dashboardRedirect) return dashboardRedirect;
     }
