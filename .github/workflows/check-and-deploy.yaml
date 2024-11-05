@@ -32,9 +32,6 @@ jobs:
       - name: TypeScript Check
         run: npx tsc --noEmit
 
-      - name: Build Check
-        run: npm run build
-
   deploy-preview:
     needs: quality-checks
     runs-on: ubuntu-latest
@@ -66,7 +63,7 @@ jobs:
         uses: nwtgck/actions-netlify@v3.0
         with:
           publish-dir: .next
-          production-branch: master
+          production-branch: prod
           github-token: ${{ secrets.GITHUB_TOKEN }}
           deploy-message: "Deploy Preview from PR"
           enable-pull-request-comment: false
