@@ -51,3 +51,44 @@ next-env.d.ts
 # IDE specific files
 .idea/
 .vscode/
+
+
+# Dependency directories
+node_modules/
+bower_components/
+
+# Logs
+logs/
+*.log
+
+# Build output
+dist/
+build/
+
+# Coverage reports
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+temp/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor backup files
+*~
+*.swp
+*.swo
+*.bak
+
+
+# Github specific
+/home/*
