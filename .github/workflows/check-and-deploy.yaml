@@ -24,7 +24,7 @@ jobs:
         run: npm ci
 
       - name: Prettier Check
-        run: npx prettier --check "app/**/*.{js,jsx,ts,tsx,json,css,scss,md}"
+        run: npm run format:check"
 
       - name: ESLint Check
         run: npx eslint .
@@ -32,48 +32,5 @@ jobs:
       - name: TypeScript Check
         run: npx tsc --noEmit
 
-  build-and-deploy-preview:
-    needs: quality-checks
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
+      - name: Build Check
         run: npm run build
-
-      - name: Check Netlify Credentials
-        run: |
-          if [ -z "${{ secrets.NETLIFY_AUTH_TOKEN }}" ] || [ -z "${{ secrets.NETLIFY_SITE_ID }}" ]; then
-            echo "Error: Netlify credentials not provided. Please set NETLIFY_AUTH_TOKEN and NETLIFY_SITE_ID secrets in your repository settings."
-            exit 1
-          fi
-
-      # Deploy to Netlify with a personalized message
-      - name: 🚀 Deploy to Netlify
-        id: deploy-netlify
-        uses: netlify/actions/cli@master
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-        with:
-          args: deploy -m 'v${{ steps.package-version.outputs.current-version}} ・ ${{ github.head_ref }}'
-
-      # Publish the inspect and preview link to the PR
-      - name: 👓 Netlify Preview URL
-        uses: unsplash/comment-on-pr@master
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OUTPUT: "This pull request is being automatically deployed to Netlify.\n\n🔍 Inspect: ${{ steps.deploy-netlify.outputs.NETLIFY_LOGS_URL }}\n✅ Preview: ${{ steps.deploy-netlify.outputs.NETLIFY_URL }}"
-        with:
-          msg: ${{ env.OUTPUT }}
-          check_for_duplicate_msg: false
