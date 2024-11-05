@@ -61,22 +61,43 @@ jobs:
             exit 1
           fi
 
-      # Deploy to Netlify with a personalized message
-      - name: 🚀 Deploy to Netlify
+      - name: Deploy to Netlify
         id: deploy-netlify
-        uses: netlify/actions/cli@master
+        uses: nwtgck/actions-netlify@v3.0
+        with:
+          publish-dir: .next
+          production-branch: master
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          deploy-message: "Deploy Preview from PR"
+          enable-pull-request-comment: false
+          enable-commit-comment: true
+          overwrites-pull-request-comment: true
+          fails-without-credentials: true
+          alias: deploy-preview-${{ github.event.number }}
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-        with:
-          args: deploy -m 'v${{ steps.package-version.outputs.current-version}} ・ ${{ github.head_ref }}'
+        timeout-minutes: 5
 
-      # Publish the inspect and preview link to the PR
-      - name: 👓 Netlify Preview URL
-        uses: unsplash/comment-on-pr@master
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OUTPUT: "This pull request is being automatically deployed to Netlify.\n\n🔍 Inspect: ${{ steps.deploy-netlify.outputs.NETLIFY_LOGS_URL }}\n✅ Preview: ${{ steps.deploy-netlify.outputs.NETLIFY_URL }}"
+      - name: Create Deployment Status Comment
+        if: github.event_name == 'pull_request' && steps.deploy-netlify.outputs.NETLIFY_URL != ''
+        uses: actions/github-script@v6
         with:
-          msg: ${{ env.OUTPUT }}
-          check_for_duplicate_msg: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const deployUrl = '${{ steps.deploy-netlify.outputs.NETLIFY_URL }}';
+            const logsUrl = '${{ steps.deploy-netlify.outputs.NETLIFY_LOGS_URL }}';
+            
+            const body = `🚀 Netlify Deployment Status
+            
+            🔍 Inspect: ${logsUrl}
+            ✅ Preview: ${deployUrl}
+            
+            *Deployed at: ${new Date().toUTCString()}*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.name,
+              body: body
+            });
