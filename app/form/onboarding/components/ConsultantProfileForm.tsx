@@ -59,6 +59,8 @@ const ConsultantProfileForm: React.FC<Props> = ({
   });
 
   const selectedDomain = watch("domain");
+  const currentSubDomains = watch("subDomains") || [];
+  const currentTags = watch("tags") || [];
 
   useEffect(() => {
     const fetchMetadata = async () => {
@@ -85,35 +87,39 @@ const ConsultantProfileForm: React.FC<Props> = ({
     fetchMetadata();
   }, []);
 
+  // Update filtered lists when domain changes
   useEffect(() => {
-    if (selectedDomain) {
-      const filteredSubs = subDomains.filter(
-        (sub) => sub.domainId === selectedDomain.id,
-      );
-      const filteredTgs = tags.filter(
-        (tag) => tag.domainId === selectedDomain.id,
-      );
-      setFilteredSubDomains(filteredSubs);
-      setFilteredTags(filteredTgs);
-
-      // Clear selected subdomains and tags that are no longer valid
-      setValue(
-        "subDomains",
-        (watch("subDomains") || []).filter((sd) =>
-          filteredSubs.some((fs) => fs.id === sd.id),
-        ),
-      );
-      setValue(
-        "tags",
-        (watch("tags") || []).filter((t) =>
-          filteredTgs.some((ft) => ft.id === t.id),
-        ),
-      );
-    } else {
+    if (!selectedDomain) {
       setFilteredSubDomains(subDomains);
       setFilteredTags(tags);
+      return;
     }
-  }, [selectedDomain, subDomains, tags, setValue, watch]);
+
+    const newFilteredSubs = subDomains.filter(
+      (sub) => sub.domainId === selectedDomain.id
+    );
+    const newFilteredTags = tags.filter(
+      (tag) => tag.domainId === selectedDomain.id
+    );
+
+    setFilteredSubDomains(newFilteredSubs);
+    setFilteredTags(newFilteredTags);
+
+    // Update selected values only if they're invalid for the new domain
+    const validSubDomains = currentSubDomains.filter((sd) =>
+      newFilteredSubs.some((fs) => fs.id === sd.id)
+    );
+    const validTags = currentTags.filter((t) =>
+      newFilteredTags.some((ft) => ft.id === t.id)
+    );
+
+    if (validSubDomains.length !== currentSubDomains.length) {
+      setValue("subDomains", validSubDomains, { shouldDirty: true });
+    }
+    if (validTags.length !== currentTags.length) {
+      setValue("tags", validTags, { shouldDirty: true });
+    }
+  }, [selectedDomain?.id]); // Only depend on the domain ID
 
   const onSubmit = (data: FormData) => {
     onNext(data);
