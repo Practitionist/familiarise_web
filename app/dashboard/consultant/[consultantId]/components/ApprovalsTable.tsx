@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Table,
   TableBody,
@@ -29,9 +29,12 @@ export const ApprovalsTable: React.FC<ApprovalsTableProps> = ({
 }) => {
   const params = useParams();
   const consultantId = params.consultantId as string;
+  const [loading, setLoading] = useState<{ [key: string]: boolean }>({});
 
   const handleApproval = async (id: string, status: 'APPROVED' | 'REJECTED', type: string) => {
     try {
+      setLoading(prev => ({ ...prev, [id]: true }));
+
       await updateApprovalStatus(
         consultantId, 
         id, 
@@ -47,13 +50,35 @@ export const ApprovalsTable: React.FC<ApprovalsTableProps> = ({
       // Refresh the page to update the data
       window.location.reload();
     } catch (error) {
+      console.error('Error updating approval status:', error);
       toast({
         title: "Error",
         description: "Failed to update request status",
         variant: "destructive",
       });
+    } finally {
+      setLoading(prev => ({ ...prev, [id]: false }));
     }
   };
+
+  // Log props for debugging
+  console.log('ApprovalsTable props:', {
+    approvals: approvals.map(a => ({
+      id: a.id,
+      name: a.name,
+      type: a.type,
+      date: a.date,
+      time: a.time
+    }))
+  });
+
+  if (approvals.length === 0) {
+    return (
+      <div className="text-center py-4 text-gray-500">
+        No pending approvals
+      </div>
+    );
+  }
 
   return (
     <Table>
@@ -78,14 +103,16 @@ export const ApprovalsTable: React.FC<ApprovalsTableProps> = ({
                 <Button 
                   className="bg-green-500 text-white hover:bg-green-600"
                   onClick={() => handleApproval(approval.id, 'APPROVED', approval.type)}
+                  disabled={loading[approval.id]}
                 >
-                  Accept
+                  {loading[approval.id] ? 'Processing...' : 'Accept'}
                 </Button>
                 <Button 
                   className="bg-red-500 text-white hover:bg-red-600"
                   onClick={() => handleApproval(approval.id, 'REJECTED', approval.type)}
+                  disabled={loading[approval.id]}
                 >
-                  Reject
+                  {loading[approval.id] ? 'Processing...' : 'Reject'}
                 </Button>
               </div>
             </TableCell>

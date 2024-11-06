@@ -33,19 +33,31 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
 
   // Determine badge style based on timing
   const getBadgeStyle = (badge: string) => {
+    if (badge === 'Completed') {
+      return 'bg-gray-400 text-white';
+    }
     if (badge.includes('5 min')) {
-      return 'bg-red-500 text-white hover:bg-red-600';
+      return 'bg-red-500 text-white';
     }
     if (badge.includes('2 hours')) {
-      return 'bg-blue-500 text-white hover:bg-blue-600';
+      return 'bg-blue-500 text-white';
     }
-    if (badge.includes('Tomorrow')) {
-      return 'bg-gray-500 text-white hover:bg-gray-600';
+    if (badge === 'Tomorrow') {
+      return 'bg-purple-500 text-white';
     }
-    if (badge.includes('Next Week')) {
-      return 'bg-gray-500 text-white hover:bg-gray-600';
+    if (badge.startsWith('In ')) {
+      if (badge.includes('week')) {
+        return 'bg-green-500 text-white';
+      }
+      if (badge.includes('month')) {
+        return 'bg-yellow-500 text-white';
+      }
+      if (badge.includes('year')) {
+        return 'bg-orange-500 text-white';
+      }
+      return 'bg-gray-500 text-white'; // For "In X days"
     }
-    return 'bg-gray-400 text-white hover:bg-gray-500';
+    return 'bg-gray-400 text-white';
   };
 
   // Determine if join button should be enabled and its style
@@ -53,6 +65,16 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
   const joinButtonStyle = isJoinable 
     ? "bg-black text-white hover:bg-gray-800" 
     : "bg-gray-400 text-white cursor-not-allowed";
+
+  // Log props for debugging
+  console.log('AppointmentCard props:', {
+    name,
+    description,
+    time,
+    badge,
+    isJoinable,
+    badgeStyle: getBadgeStyle(badge)
+  });
 
   return (
     <Card className="bg-purple-100">
@@ -77,7 +99,7 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
         {badge === 'Schedule unavailable' ? (
           <Badge 
             variant="secondary" 
-            className="bg-gray-400 text-white hover:bg-gray-500"
+            className="bg-gray-400 text-white"
           >
             Schedule unavailable
           </Badge>

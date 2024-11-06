@@ -88,28 +88,36 @@ function getClientName(appointment: any): string {
 }
 
 
-function getBadgeText(startTime: Date): string {
+
+function getBadgeText(startTimeUTC: string): string {
   const now = new Date();
-  const startTimeLocal = new Date(startTime);
+  const startTimeLocal = new Date(startTimeUTC);
   const diffInMinutes = Math.floor((startTimeLocal.getTime() - now.getTime()) / (1000 * 60));
+  const diffInDays = Math.floor(diffInMinutes / (24 * 60));
+  const diffInWeeks = Math.floor(diffInDays / 7);
+  const diffInMonths = Math.floor(diffInDays / 30.44); // Average days in a month
+  const diffInYears = Math.floor(diffInDays / 365.25); // Account for leap years
   
   // Log time calculations for debugging
   console.log('Badge time debug:', {
-    now: now.toLocaleString(),
-    startTime: startTimeLocal.toLocaleString(),
-    diffInMinutes,
-    diffInHours: Math.floor(diffInMinutes / 60),
-    isToday: startTimeLocal.toDateString() === now.toDateString(),
-    isTomorrow: startTimeLocal.toDateString() === new Date(now.getTime() + 24 * 60 * 60 * 1000).toDateString(),
-    currentTime: {
-      hours: now.getHours(),
-      minutes: now.getMinutes()
-    },
-    appointmentTime: {
-      hours: startTimeLocal.getHours(),
-      minutes: startTimeLocal.getMinutes()
+    nowUTC: now.toISOString(),
+    startTimeUTC,
+    nowLocal: now.toLocaleString(),
+    startTimeLocal: startTimeLocal.toLocaleString(),
+    calculations: {
+      diffInMinutes,
+      diffInHours: Math.floor(diffInMinutes / 60),
+      diffInDays,
+      diffInWeeks,
+      diffInMonths,
+      diffInYears
     }
   });
+
+  // If the meeting is in the past
+  if (diffInMinutes < -30) {
+    return 'Completed';
+  }
 
   // If the meeting is happening now or within the next 5 minutes
   if (diffInMinutes >= -5 && diffInMinutes <= 5) {
@@ -122,18 +130,35 @@ function getBadgeText(startTime: Date): string {
   }
 
   // Check if it's tomorrow
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
   tomorrow.setHours(0, 0, 0, 0);
   const dayAfterTomorrow = new Date(tomorrow);
   dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
 
+  // If it's tomorrow
   if (startTimeLocal >= tomorrow && startTimeLocal < dayAfterTomorrow) {
     return 'Tomorrow';
   }
 
   // If it's beyond tomorrow
-  return 'Next Week';
+  if (diffInYears > 0) {
+    const years = Math.floor(diffInYears);
+    return `In ${years} ${years === 1 ? 'year' : 'years'}`;
+  }
+
+  if (diffInMonths > 0) {
+    const months = Math.floor(diffInMonths);
+    return `In ${months} ${months === 1 ? 'month' : 'months'}`;
+  }
+
+  if (diffInWeeks > 0) {
+    const weeks = Math.floor(diffInWeeks);
+    return `In ${weeks} ${weeks === 1 ? 'week' : 'weeks'}`;
+  }
+
+  const days = Math.floor(diffInDays);
+  return `In ${days} ${days === 1 ? 'day' : 'days'}`;
 }
 
 function formatTimeRange(startTime: Date, endTime: Date): string {
@@ -145,12 +170,18 @@ function formatTimeRange(startTime: Date, endTime: Date): string {
     }).replace(':00', ''); // Remove seconds if present
   };
 
+  const formatDate = (date: Date) => {
+    return date.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
-  const dayAfterTomorrow = new Date(tomorrow);
-  dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
 
   // Convert UTC dates to local
   const startTimeLocal = new Date(startTime);
@@ -167,12 +198,7 @@ function formatTimeRange(startTime: Date, endTime: Date): string {
     reference: {
       today: today.toLocaleString(),
       tomorrow: tomorrow.toLocaleString(),
-      dayAfterTomorrow: dayAfterTomorrow.toLocaleString()
-    },
-    comparison: {
-      isToday: startTimeLocal >= today && startTimeLocal < tomorrow,
-      isTomorrow: startTimeLocal >= tomorrow && startTimeLocal < dayAfterTomorrow,
-      isFuture: startTimeLocal >= dayAfterTomorrow
+      currentTime: new Date().toLocaleString()
     }
   });
 
@@ -181,16 +207,12 @@ function formatTimeRange(startTime: Date, endTime: Date): string {
   if (startTimeLocal >= today && startTimeLocal < tomorrow) {
     // Today - no date needed
   } else {
-    // Format: "Sat, Jan 11" or "Thu, Jan 1"
-    dateStr = startTimeLocal.toLocaleDateString('en-US', { 
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric'
-    }) + ', ';
+    dateStr = formatDate(startTimeLocal) + ', ';
   }
 
   return `${dateStr}${formatTime(startTimeLocal)} - ${formatTime(endTimeLocal)}`;
 }
+
 
 export async function fetchConsultantData(id: string): Promise<Consultant> {
   const response = await fetch(`/api/user/consultants/${id}`);
@@ -209,8 +231,6 @@ export async function fetchConsultantData(id: string): Promise<Consultant> {
     rating: data.rating,
   };
 }
-
-// ... (rest of the code remains the same)
 
 export async function fetchAppointments(consultantId: string): Promise<Appointment[]> {
   const response = await fetch(`/api/slots/appointments?consultantProfileId=${consultantId}`);
@@ -281,7 +301,7 @@ export async function fetchAppointments(consultantId: string): Promise<Appointme
       });
 
       const timeRange = formatTimeRange(startTime, endTime);
-      const badge = getBadgeText(startTime);
+      const badge = getBadgeText(startTime.toISOString()); // Convert Date to ISO string
 
       return {
         id: appointment.id,
@@ -426,3 +446,4 @@ export async function updateApprovalStatus(
   const { data } = await response.json();
   return data;
 }
+

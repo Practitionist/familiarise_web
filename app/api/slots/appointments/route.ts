@@ -37,8 +37,7 @@ export async function GET(request: NextRequest) {
       slot: a.slotOfAppointment?.[0] ? {
         startUTC: a.slotOfAppointment[0].slotStartTimeInUTC,
         endUTC: a.slotOfAppointment[0].slotEndTimeInUTC,
-        startLocal: new Date(a.slotOfAppointment[0].slotStartTimeInUTC).toLocaleString(),
-        endLocal: new Date(a.slotOfAppointment[0].slotEndTimeInUTC).toLocaleString(),
+        currentUTC: new Date().toISOString()
       } : null,
       users: {
         consultee: a.slotOfAppointment?.[0]?.consulteeProfile?.user?.name,
@@ -79,11 +78,14 @@ async function getAppointments(
   const now = new Date();
   now.setHours(0, 0, 0, 0);
 
+  // Get current time in UTC
+  const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+
   const whereClause: any = {
     slotOfAppointment: {
       some: {
         slotStartTimeInUTC: {
-          gte: now,
+          gte: thirtyMinutesAgo, // Include appointments from 30 minutes ago
         },
       },
     },
@@ -291,8 +293,9 @@ async function getAppointments(
   console.log('Sorted appointments:', JSON.stringify(sortedAppointments.map(a => ({
     id: a.id,
     type: a.appointmentType,
-    startTime: a.slotOfAppointment[0]?.slotStartTimeInUTC,
-    endTime: a.slotOfAppointment[0]?.slotEndTimeInUTC,
+    startTimeUTC: a.slotOfAppointment[0]?.slotStartTimeInUTC,
+    endTimeUTC: a.slotOfAppointment[0]?.slotEndTimeInUTC,
+    currentUTC: new Date().toISOString(),
     consultee: a.slotOfAppointment[0]?.consulteeProfile?.user?.name,
     requestedBy: a.consultation?.requestedBy?.user?.name || a.subscription?.requestedBy?.user?.name,
     consultant: a.consultation?.consultationPlan?.consultantProfile?.user?.name ||
@@ -362,28 +365,14 @@ export async function POST(request: NextRequest) {
               include: {
                 consultantProfile: {
                   include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
+                    user: true,
                   },
                 },
               },
             },
             requestedBy: {
               include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
+                user: true,
               },
             },
           },
@@ -394,28 +383,14 @@ export async function POST(request: NextRequest) {
               include: {
                 consultantProfile: {
                   include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
+                    user: true,
                   },
                 },
               },
             },
             requestedBy: {
               include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
+                user: true,
               },
             },
           },
@@ -426,14 +401,7 @@ export async function POST(request: NextRequest) {
               include: {
                 consultantProfile: {
                   include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
+                    user: true,
                   },
                 },
               },
@@ -446,14 +414,7 @@ export async function POST(request: NextRequest) {
               include: {
                 consultantProfile: {
                   include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
+                    user: true,
                   },
                 },
               },
