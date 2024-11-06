@@ -7,58 +7,98 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const consulteeId = searchParams.get("consulteeId");
     const consultantId = searchParams.get("consultantId");
+    const status = searchParams.get("status");
 
-    let consultations;
+    let whereClause: any = {};
 
     if (consulteeId) {
-      consultations = await prisma.consultation.findMany({
-        where: {
-          requestedBy: { id: consulteeId },
-        },
-        include: {
-          consultationPlan: true,
-          requestedBy: true,
-          appointment: {
-            include: {
-              slotOfAppointment: true,
-            },
-          },
-        },
-      });
-    } else if (consultantId) {
-      consultations = await prisma.consultation.findMany({
-        where: {
-          consultationPlan: {
-            consultantProfile: { id: consultantId },
-          },
-        },
-        include: {
-          consultationPlan: {
-            include: {
-              consultantProfile: true,
-            },
-          },
-          requestedBy: true,
-          appointment: {
-            include: {
-              slotOfAppointment: true,
-            },
-          },
-        },
-      });
-    } else {
-      consultations = await prisma.consultation.findMany({
-        include: {
-          consultationPlan: true,
-          requestedBy: true,
-          appointment: {
-            include: {
-              slotOfAppointment: true,
-            },
-          },
-        },
-      });
+      whereClause.requestedBy = { id: consulteeId };
     }
+
+    if (consultantId) {
+      whereClause.consultationPlan = {
+        consultantProfile: { id: consultantId },
+      };
+    }
+
+    if (status) {
+      whereClause.requestStatus = status;
+    }
+
+    const consultations = await prisma.consultation.findMany({
+      where: whereClause,
+      include: {
+        consultationPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        requestedBy: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+        appointment: {
+          include: {
+            slotOfAppointment: {
+              include: {
+                consulteeProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        requestedAt: 'desc',
+      },
+    });
+
+    // Log the consultations data for debugging
+    console.log('Consultations data:', JSON.stringify(consultations.map(c => ({
+      id: c.id,
+      status: c.requestStatus,
+      requestedBy: c.requestedBy?.user?.name,
+      consultant: c.consultationPlan?.consultantProfile?.user?.name,
+      consultee: c.appointment?.slotOfAppointment?.[0]?.consulteeProfile?.user?.name,
+      plan: c.consultationPlan?.title,
+      requestedAt: c.requestedAt,
+      appointment: c.appointment ? {
+        id: c.appointment.id,
+        slot: c.appointment.slotOfAppointment?.[0] ? {
+          start: c.appointment.slotOfAppointment[0].slotStartTimeInUTC,
+          end: c.appointment.slotOfAppointment[0].slotEndTimeInUTC,
+        } : null
+      } : null
+    })), null, 2));
 
     return NextResponse.json({ data: consultations }, { status: 200 });
   } catch (error) {
@@ -101,6 +141,22 @@ export async function POST(request: Request) {
           requestStatus: "PENDING",
           directlyBooked: true,
         },
+        include: {
+          consultationPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+          requestedBy: {
+            include: {
+              user: true,
+            },
+          },
+        },
       });
 
       const appointment = await prisma.appointment.create({
@@ -120,7 +176,15 @@ export async function POST(request: Request) {
           },
         },
         include: {
-          slotOfAppointment: true,
+          slotOfAppointment: {
+            include: {
+              consulteeProfile: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
         },
       });
 

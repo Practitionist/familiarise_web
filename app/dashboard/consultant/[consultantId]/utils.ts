@@ -17,6 +17,7 @@ export interface Appointment {
 }
 
 export interface Document {
+  id: string;
   invoiceNo: string;
   clientName: string;
   title: string;
@@ -38,6 +39,159 @@ export interface Approval {
   time: string;
 }
 
+function getSessionType(appointment: any): string {
+  if (!appointment) return 'Unknown Session Type';
+  
+  if (appointment.consultation?.consultationPlan) {
+    return 'Basic Consultation';
+  }
+  
+  if (appointment.subscription?.plan) {
+    return 'Extended Consultation';
+  }
+  
+  if (appointment.webinar?.webinarPlan) {
+    return appointment.webinar.webinarPlan.title || 'Webinar Session';
+  }
+  
+  if (appointment.class?.classPlan) {
+    return appointment.class.classPlan.title || 'Class Session';
+  }
+  
+  return 'Unknown Session Type';
+}
+
+function getClientName(appointment: any): string {
+  try {
+    // First try to get the consultee's name
+    const consultee = appointment.slotOfAppointment?.[0]?.consulteeProfile?.user;
+    if (consultee?.name) {
+      return consultee.name;
+    }
+
+    // If no consultee name, try consultation requestedBy
+    if (appointment.consultation?.requestedBy?.user?.name) {
+      return appointment.consultation.requestedBy.user.name;
+    }
+
+    // If no consultation name, try subscription requestedBy
+    if (appointment.subscription?.requestedBy?.user?.name) {
+      return appointment.subscription.requestedBy.user.name;
+    }
+
+    // If no name found anywhere, return Anonymous
+    return 'Anonymous';
+  } catch (error) {
+    console.error('Error getting client name:', error);
+    return 'Anonymous';
+  }
+}
+
+
+function getBadgeText(startTime: Date): string {
+  const now = new Date();
+  const startTimeLocal = new Date(startTime);
+  const diffInMinutes = Math.floor((startTimeLocal.getTime() - now.getTime()) / (1000 * 60));
+  
+  // Log time calculations for debugging
+  console.log('Badge time debug:', {
+    now: now.toLocaleString(),
+    startTime: startTimeLocal.toLocaleString(),
+    diffInMinutes,
+    diffInHours: Math.floor(diffInMinutes / 60),
+    isToday: startTimeLocal.toDateString() === now.toDateString(),
+    isTomorrow: startTimeLocal.toDateString() === new Date(now.getTime() + 24 * 60 * 60 * 1000).toDateString(),
+    currentTime: {
+      hours: now.getHours(),
+      minutes: now.getMinutes()
+    },
+    appointmentTime: {
+      hours: startTimeLocal.getHours(),
+      minutes: startTimeLocal.getMinutes()
+    }
+  });
+
+  // If the meeting is happening now or within the next 5 minutes
+  if (diffInMinutes >= -5 && diffInMinutes <= 5) {
+    return 'Meeting in 5 min';
+  }
+
+  // If the meeting is within the next 2 hours
+  if (diffInMinutes > 5 && diffInMinutes <= 120) {
+    return 'Meeting in 2 hours';
+  }
+
+  // Check if it's tomorrow
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+  const dayAfterTomorrow = new Date(tomorrow);
+  dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
+
+  if (startTimeLocal >= tomorrow && startTimeLocal < dayAfterTomorrow) {
+    return 'Tomorrow';
+  }
+
+  // If it's beyond tomorrow
+  return 'Next Week';
+}
+
+function formatTimeRange(startTime: Date, endTime: Date): string {
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    }).replace(':00', ''); // Remove seconds if present
+  };
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const dayAfterTomorrow = new Date(tomorrow);
+  dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
+
+  // Convert UTC dates to local
+  const startTimeLocal = new Date(startTime);
+  const endTimeLocal = new Date(endTime);
+
+  // Log time formatting for debugging
+  console.log('Time format debug:', {
+    input: {
+      startUTC: startTime.toISOString(),
+      endUTC: endTime.toISOString(),
+      startLocal: startTimeLocal.toLocaleString(),
+      endLocal: endTimeLocal.toLocaleString()
+    },
+    reference: {
+      today: today.toLocaleString(),
+      tomorrow: tomorrow.toLocaleString(),
+      dayAfterTomorrow: dayAfterTomorrow.toLocaleString()
+    },
+    comparison: {
+      isToday: startTimeLocal >= today && startTimeLocal < tomorrow,
+      isTomorrow: startTimeLocal >= tomorrow && startTimeLocal < dayAfterTomorrow,
+      isFuture: startTimeLocal >= dayAfterTomorrow
+    }
+  });
+
+  // Format date part
+  let dateStr = '';
+  if (startTimeLocal >= today && startTimeLocal < tomorrow) {
+    // Today - no date needed
+  } else {
+    // Format: "Sat, Jan 11" or "Thu, Jan 1"
+    dateStr = startTimeLocal.toLocaleDateString('en-US', { 
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric'
+    }) + ', ';
+  }
+
+  return `${dateStr}${formatTime(startTimeLocal)} - ${formatTime(endTimeLocal)}`;
+}
+
 export async function fetchConsultantData(id: string): Promise<Consultant> {
   const response = await fetch(`/api/user/consultants/${id}`);
   if (!response.ok) {
@@ -56,62 +210,7 @@ export async function fetchConsultantData(id: string): Promise<Consultant> {
   };
 }
 
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  }).replace(':00', ''); // Remove seconds if present
-}
-
-function getSessionType(appointment: any): string {
-  if (!appointment) return 'Unknown Session Type';
-  
-  if (appointment.consultation?.consultationPlan) {
-    return appointment.consultation.consultationPlan.title || 'Basic Consultation';
-  }
-  
-  if (appointment.subscription?.plan) {
-    return appointment.subscription.plan.title || 'Extended Consultation';
-  }
-  
-  if (appointment.webinar?.webinarPlan) {
-    return appointment.webinar.webinarPlan.title || 'Webinar Session';
-  }
-  
-  if (appointment.class?.classPlan) {
-    return appointment.class.classPlan.title || 'Class Session';
-  }
-  
-  return 'Unknown Session Type';
-}
-
-function getClientName(appointment: any): string {
-  const consultee = appointment.slotOfAppointment?.[0]?.consulteeProfile;
-  if (consultee?.user?.name) {
-    return consultee.user.name;
-  }
-  return 'Anonymous';
-}
-
-function getBadgeText(startTime: Date): string {
-  const now = new Date();
-  const diffInMinutes = Math.floor((startTime.getTime() - now.getTime()) / (1000 * 60));
-  
-  if (diffInMinutes <= 5 && diffInMinutes > -30) { // Include recently started meetings
-    return 'Meeting in 5 min';
-  }
-  
-  if (diffInMinutes <= 120) {
-    return 'Meeting in 2 hours';
-  }
-  
-  if (startTime.getDate() === now.getDate() + 1) {
-    return 'Tomorrow';
-  }
-  
-  return 'Next Week';
-}
+// ... (rest of the code remains the same)
 
 export async function fetchAppointments(consultantId: string): Promise<Appointment[]> {
   const response = await fetch(`/api/slots/appointments?consultantProfileId=${consultantId}`);
@@ -132,6 +231,7 @@ export async function fetchAppointments(consultantId: string): Promise<Appointme
         throw new Error('No slot data available');
       }
 
+      // Parse dates and ensure they're in the correct timezone
       const startTime = new Date(slot.slotStartTimeInUTC);
       const endTime = new Date(slot.slotEndTimeInUTC);
       
@@ -139,9 +239,48 @@ export async function fetchAppointments(consultantId: string): Promise<Appointme
         throw new Error('Invalid date values');
       }
 
-      const name = getClientName(appointment);
-      const description = getSessionType(appointment);
-      const timeRange = `${formatTime(startTime)} - ${formatTime(endTime)}`;
+      // Get client name from the appropriate source
+      let name = 'Anonymous';
+      let description = 'Unknown Session Type';
+
+      if (appointment.consultation) {
+        name = appointment.consultation.requestedBy?.user?.name || 'Anonymous';
+        description = appointment.consultation.consultationPlan?.title || 'Basic Consultation';
+      } else if (appointment.subscription) {
+        name = appointment.subscription.requestedBy?.user?.name || 'Anonymous';
+        description = appointment.subscription.plan?.title || 'Extended Consultation';
+      } else if (appointment.webinar) {
+        name = slot.consulteeProfile?.user?.name || 'Anonymous';
+        description = appointment.webinar.webinarPlan?.title || 'Webinar Session';
+      } else if (appointment.class) {
+        name = slot.consulteeProfile?.user?.name || 'Anonymous';
+        description = appointment.class.classPlan?.title || 'Class Session';
+      }
+
+      // Log appointment details for debugging
+      console.log('Appointment debug:', {
+        id: appointment.id,
+        type: appointment.appointmentType,
+        name,
+        description,
+        timing: {
+          startUTC: startTime.toISOString(),
+          endUTC: endTime.toISOString(),
+          startLocal: startTime.toLocaleString(),
+          endLocal: endTime.toLocaleString()
+        },
+        users: {
+          consultee: slot.consulteeProfile?.user?.name,
+          requestedBy: appointment.consultation?.requestedBy?.user?.name || 
+                      appointment.subscription?.requestedBy?.user?.name,
+          consultant: appointment.consultation?.consultationPlan?.consultantProfile?.user?.name ||
+                     appointment.subscription?.plan?.consultantProfile?.user?.name ||
+                     appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ||
+                     appointment.class?.classPlan?.consultantProfile?.user?.name
+        }
+      });
+
+      const timeRange = formatTimeRange(startTime, endTime);
       const badge = getBadgeText(startTime);
 
       return {
@@ -162,31 +301,40 @@ export async function fetchAppointments(consultantId: string): Promise<Appointme
         badge: 'Schedule unavailable'
       };
     }
-  }).filter(Boolean);
+  }).filter(Boolean).sort((a, b) => {
+    // Sort by time, assuming the time string starts with the date when it's not today
+    const aTime = a.time.includes(',') ? a.time : `Today, ${a.time}`;
+    const bTime = b.time.includes(',') ? b.time : `Today, ${b.time}`;
+    return aTime.localeCompare(bTime);
+  });
 }
 
 export async function fetchDocuments(id: string): Promise<Document[]> {
   // For now returning mock data as there's no document review system in schema yet
   return [
     {
+      id: "1",
       invoiceNo: "2150",
       clientName: "Andrea Jennings",
       title: "2020 - Tax Statement",
       tag: "2023",
     },
     {
+      id: "2",
       invoiceNo: "2151",
       clientName: "Stacey Larson",
       title: "2021 - Tax Statement",
       tag: "2023",
     },
     {
+      id: "3",
       invoiceNo: "2152",
       clientName: "Yvonne Breiner",
       title: "2022 - Tax Statement",
       tag: "2023",
     },
     {
+      id: "4",
       invoiceNo: "2153",
       clientName: "Steven Glover",
       title: "2023 - Tax Statement",

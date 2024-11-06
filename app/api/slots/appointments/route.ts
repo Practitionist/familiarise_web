@@ -29,6 +29,27 @@ export async function GET(request: NextRequest) {
       page,
       limit,
     );
+
+    // Log the appointments data for debugging
+    console.log('Raw appointments data:', JSON.stringify(appointments.map(a => ({
+      id: a.id,
+      type: a.appointmentType,
+      slot: a.slotOfAppointment?.[0] ? {
+        startUTC: a.slotOfAppointment[0].slotStartTimeInUTC,
+        endUTC: a.slotOfAppointment[0].slotEndTimeInUTC,
+        startLocal: new Date(a.slotOfAppointment[0].slotStartTimeInUTC).toLocaleString(),
+        endLocal: new Date(a.slotOfAppointment[0].slotEndTimeInUTC).toLocaleString(),
+      } : null,
+      users: {
+        consultee: a.slotOfAppointment?.[0]?.consulteeProfile?.user?.name,
+        requestedBy: a.consultation?.requestedBy?.user?.name || a.subscription?.requestedBy?.user?.name,
+        consultant: a.consultation?.consultationPlan?.consultantProfile?.user?.name || 
+                   a.subscription?.plan?.consultantProfile?.user?.name ||
+                   a.webinar?.webinarPlan?.consultantProfile?.user?.name ||
+                   a.class?.classPlan?.consultantProfile?.user?.name
+      }
+    })), null, 2));
+
     return NextResponse.json({
       data: appointments,
       meta: {
@@ -45,6 +66,242 @@ export async function GET(request: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+async function getAppointments(
+  type?: AppointmentsType,
+  consultantProfileId?: string | null,
+  consulteeProfileId?: string | null,
+  page: number = 1,
+  limit: number = 10,
+) {
+  const skip = (page - 1) * limit;
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  const whereClause: any = {
+    slotOfAppointment: {
+      some: {
+        slotStartTimeInUTC: {
+          gte: now,
+        },
+      },
+    },
+  };
+
+  if (consultantProfileId) {
+    whereClause.OR = [
+      {
+        consultation: {
+          consultationPlan: {
+            consultantProfileId,
+          },
+        },
+      },
+      {
+        subscription: {
+          plan: {
+            consultantProfileId,
+          },
+        },
+      },
+      {
+        webinar: {
+          webinarPlan: {
+            consultantProfileId,
+          },
+        },
+      },
+      {
+        class: {
+          classPlan: {
+            consultantProfileId,
+          },
+        },
+      },
+    ];
+  }
+
+  if (type) {
+    whereClause.appointmentType = type;
+  }
+
+  if (consulteeProfileId) {
+    whereClause.slotOfAppointment = {
+      ...whereClause.slotOfAppointment,
+      some: {
+        ...whereClause.slotOfAppointment.some,
+        consulteeProfileId,
+      },
+    };
+  }
+
+  const [appointments, total] = await Promise.all([
+    prisma.appointment.findMany({
+      where: whereClause,
+      include: {
+        slotOfAppointment: {
+          include: {
+            consulteeProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        consultation: {
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        subscription: {
+          include: {
+            plan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        webinar: {
+          include: {
+            webinarPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        class: {
+          include: {
+            classPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: [
+        {
+          slotOfAppointment: {
+            _count: 'desc',
+          },
+        },
+        {
+          createdAt: 'desc',
+        },
+      ],
+      skip,
+      take: limit,
+    }),
+    prisma.appointment.count({ where: whereClause }),
+  ]);
+
+  // Sort appointments by slot start time
+  const sortedAppointments = appointments
+    .filter(appointment => appointment.slotOfAppointment?.length > 0)
+    .sort((a, b) => {
+      const aTime = a.slotOfAppointment[0]?.slotStartTimeInUTC;
+      const bTime = b.slotOfAppointment[0]?.slotStartTimeInUTC;
+      if (!aTime || !bTime) return 0;
+      return new Date(aTime).getTime() - new Date(bTime).getTime();
+    });
+
+  // Log the sorted appointments for debugging
+  console.log('Sorted appointments:', JSON.stringify(sortedAppointments.map(a => ({
+    id: a.id,
+    type: a.appointmentType,
+    startTime: a.slotOfAppointment[0]?.slotStartTimeInUTC,
+    endTime: a.slotOfAppointment[0]?.slotEndTimeInUTC,
+    consultee: a.slotOfAppointment[0]?.consulteeProfile?.user?.name,
+    requestedBy: a.consultation?.requestedBy?.user?.name || a.subscription?.requestedBy?.user?.name,
+    consultant: a.consultation?.consultationPlan?.consultantProfile?.user?.name ||
+               a.subscription?.plan?.consultantProfile?.user?.name ||
+               a.webinar?.webinarPlan?.consultantProfile?.user?.name ||
+               a.class?.classPlan?.consultantProfile?.user?.name
+  })), null, 2));
+
+  return { appointments: sortedAppointments, total };
 }
 
 export async function POST(request: NextRequest) {
@@ -85,14 +342,124 @@ export async function POST(request: NextRequest) {
       include: {
         slotOfAppointment: {
           include: {
-            consulteeProfile: true,
+            consulteeProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
           },
         },
-        consultation: true,
-        subscription: true,
-        webinar: true,
-        class: true,
-        payment: true,
+        consultation: {
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        subscription: {
+          include: {
+            plan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        webinar: {
+          include: {
+            webinarPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        class: {
+          include: {
+            classPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -104,97 +471,4 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
-}
-
-async function getAppointments(
-  type?: AppointmentsType,
-  consultantProfileId?: string | null,
-  consulteeProfileId?: string | null,
-  page: number = 1,
-  limit: number = 10,
-) {
-  const skip = (page - 1) * limit;
-  const whereClause: any = {};
-
-  if (type) {
-    whereClause.appointmentType = type;
-  }
-
-  if (consultantProfileId) {
-    switch (type) {
-      case AppointmentsType.CONSULTATION:
-        whereClause.consultation = {
-          consultationPlan: {
-            consultantProfileId,
-          },
-        };
-        break;
-      case AppointmentsType.SUBSCRIPTION:
-        whereClause.subscription = {
-          plan: {
-            consultantProfileId,
-          },
-        };
-        break;
-      case AppointmentsType.WEBINAR:
-        whereClause.webinar = {
-          webinarPlan: {
-            consultantProfileId,
-          },
-        };
-        break;
-      case AppointmentsType.CLASS:
-        whereClause.class = {
-          classPlan: {
-            consultantProfileId,
-          },
-        };
-        break;
-    }
-  }
-
-  if (consulteeProfileId) {
-    whereClause.slotOfAppointment = {
-      consulteeProfileId,
-    };
-  }
-
-  const [appointments, total] = await Promise.all([
-    prisma.appointment.findMany({
-      where: whereClause,
-      include: {
-        slotOfAppointment: {
-          include: {
-            consulteeProfile: true,
-          },
-        },
-        consultation: {
-          include: {
-            consultationPlan: true,
-          },
-        },
-        subscription: {
-          include: {
-            plan: true,
-          },
-        },
-        webinar: {
-          include: {
-            webinarPlan: true,
-          },
-        },
-        class: {
-          include: {
-            classPlan: true,
-          },
-        },
-        payment: true,
-      },
-      skip,
-      take: limit,
-    }),
-    prisma.appointment.count({ where: whereClause }),
-  ]);
-
-  return { appointments, total };
 }

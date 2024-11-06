@@ -7,58 +7,100 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const consulteeId = searchParams.get("consulteeId");
     const consultantId = searchParams.get("consultantId");
+    const status = searchParams.get("status");
 
-    let subscriptions;
+    let whereClause: any = {};
 
     if (consulteeId) {
-      subscriptions = await prisma.subscription.findMany({
-        where: {
-          requestedBy: { id: consulteeId },
-        },
-        include: {
-          plan: true,
-          requestedBy: true,
-          appointments: {
-            include: {
-              slotOfAppointment: true,
-            },
-          },
-        },
-      });
-    } else if (consultantId) {
-      subscriptions = await prisma.subscription.findMany({
-        where: {
-          plan: {
-            consultantProfile: { id: consultantId },
-          },
-        },
-        include: {
-          plan: {
-            include: {
-              consultantProfile: true,
-            },
-          },
-          requestedBy: true,
-          appointments: {
-            include: {
-              slotOfAppointment: true,
-            },
-          },
-        },
-      });
-    } else {
-      subscriptions = await prisma.subscription.findMany({
-        include: {
-          plan: true,
-          requestedBy: true,
-          appointments: {
-            include: {
-              slotOfAppointment: true,
-            },
-          },
-        },
-      });
+      whereClause.requestedBy = { id: consulteeId };
     }
+
+    if (consultantId) {
+      whereClause.plan = {
+        consultantProfile: { id: consultantId },
+      };
+    }
+
+    if (status) {
+      whereClause.requestStatus = status;
+    }
+
+    const subscriptions = await prisma.subscription.findMany({
+      where: whereClause,
+      include: {
+        plan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        requestedBy: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+        appointments: {
+          include: {
+            slotOfAppointment: {
+              include: {
+                consulteeProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        requestedAt: 'desc',
+      },
+    });
+
+    // Log the subscriptions data for debugging
+    console.log('Subscriptions data:', JSON.stringify(subscriptions.map(s => ({
+      id: s.id,
+      status: s.requestStatus,
+      requestedBy: s.requestedBy?.user?.name,
+      consultant: s.plan?.consultantProfile?.user?.name,
+      plan: s.plan?.title,
+      startDate: s.startDate,
+      endDate: s.endDate,
+      requestedAt: s.requestedAt,
+      appointments: s.appointments.map(a => ({
+        id: a.id,
+        slot: a.slotOfAppointment?.[0] ? {
+          start: a.slotOfAppointment[0].slotStartTimeInUTC,
+          end: a.slotOfAppointment[0].slotEndTimeInUTC,
+          consultee: a.slotOfAppointment[0].consulteeProfile?.user?.name
+        } : null
+      }))
+    })), null, 2));
 
     return NextResponse.json({ data: subscriptions }, { status: 200 });
   } catch (error) {
@@ -124,6 +166,22 @@ export async function POST(request: Request) {
           },
           requestStatus: "PENDING",
         },
+        include: {
+          plan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+          requestedBy: {
+            include: {
+              user: true,
+            },
+          },
+        },
       });
 
       const appointments = await Promise.all(
@@ -146,7 +204,15 @@ export async function POST(request: Request) {
                 },
               },
               include: {
-                slotOfAppointment: true,
+                slotOfAppointment: {
+                  include: {
+                    consulteeProfile: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                  },
+                },
               },
             });
           },

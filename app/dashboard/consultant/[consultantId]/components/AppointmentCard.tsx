@@ -33,15 +33,26 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
 
   // Determine badge style based on timing
   const getBadgeStyle = (badge: string) => {
-    if (badge.includes('5 min')) return 'bg-red-500 text-white';
-    if (badge.includes('2 hours')) return 'bg-blue-500 text-white';
-    if (badge.includes('Tomorrow')) return 'bg-gray-500 text-white';
-    if (badge.includes('Next Week')) return 'bg-gray-500 text-white';
-    return 'bg-gray-400 text-white';
+    if (badge.includes('5 min')) {
+      return 'bg-red-500 text-white hover:bg-red-600';
+    }
+    if (badge.includes('2 hours')) {
+      return 'bg-blue-500 text-white hover:bg-blue-600';
+    }
+    if (badge.includes('Tomorrow')) {
+      return 'bg-gray-500 text-white hover:bg-gray-600';
+    }
+    if (badge.includes('Next Week')) {
+      return 'bg-gray-500 text-white hover:bg-gray-600';
+    }
+    return 'bg-gray-400 text-white hover:bg-gray-500';
   };
 
   // Determine if join button should be enabled and its style
   const isJoinable = badge.includes('5 min');
+  const joinButtonStyle = isJoinable 
+    ? "bg-black text-white hover:bg-gray-800" 
+    : "bg-gray-400 text-white cursor-not-allowed";
 
   return (
     <Card className="bg-purple-100">
@@ -66,7 +77,7 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
         {badge === 'Schedule unavailable' ? (
           <Badge 
             variant="secondary" 
-            className="bg-gray-400 text-white"
+            className="bg-gray-400 text-white hover:bg-gray-500"
           >
             Schedule unavailable
           </Badge>
@@ -80,7 +91,7 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
         )}
         <Button 
           variant="default" 
-          className={isJoinable ? "bg-black text-white" : "bg-gray-400 text-white"}
+          className={joinButtonStyle}
           disabled={!isJoinable}
         >
           Join meet

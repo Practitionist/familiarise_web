@@ -17,24 +17,22 @@ import {
   fetchDocuments,
   fetchActivities,
   fetchApprovals,
-  Consultant,
-  Appointment,
-  Document,
-  Activity,
-  Approval,
+  type Consultant,
+  type Appointment,
+  type Document,
+  type Activity,
+  type Approval,
 } from "./utils";
 
-type Params = Promise<{ consultantId: string }>;
-type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
+type PageProps = {
+  params: Promise<{ consultantId: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+};
 
-export default function ConsultantDashboard(
-  props: Readonly<{
-    params: Params;
-    searchParams: SearchParams;
-  }>,
-) {
-  const params = use(props.params);
-  const consultantId = params.consultantId;
+export default function ConsultantDashboard({ params, searchParams }: PageProps) {
+  const resolvedParams = use(params);
+  const consultantId = resolvedParams.consultantId;
+  
   const [activeSection, setActiveSection] = useState("Home");
   const [consultant, setConsultant] = useState<Consultant | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -50,6 +48,9 @@ export default function ConsultantDashboard(
         setIsLoading(true);
         setError(null);
 
+        // Log current time for debugging
+        console.log('Fetching data at:', new Date().toLocaleString());
+
         const [
           consultantData,
           appointmentsData,
@@ -64,12 +65,28 @@ export default function ConsultantDashboard(
           fetchApprovals(consultantId),
         ]);
 
+        // Log fetched data for debugging
+        console.log('Fetched data:', {
+          consultant: consultantData,
+          appointments: appointmentsData.map((a: Appointment) => ({
+            id: a.id,
+            name: a.name,
+            description: a.description,
+            time: a.time,
+            badge: a.badge
+          })),
+          documents: documentsData.length,
+          activities: activitiesData.length,
+          approvals: approvalsData.length
+        });
+
         setConsultant(consultantData);
         setAppointments(appointmentsData);
         setDocuments(documentsData);
         setActivities(activitiesData);
         setApprovals(approvalsData);
       } catch (err) {
+        console.error('Error fetching data:', err);
         setError(err instanceof Error ? err.message : "An error occurred");
       } finally {
         setIsLoading(false);
@@ -101,6 +118,23 @@ export default function ConsultantDashboard(
     );
   }
 
+  // Get today's appointments
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayEnd = new Date();
+  todayEnd.setHours(23, 59, 59, 999);
+
+  const todayAppointments = appointments.filter(appointment => {
+    const appointmentTime = new Date(appointment.time.split(' - ')[0]);
+    return appointmentTime >= todayStart && appointmentTime <= todayEnd;
+  });
+
+  // Get upcoming appointments (not today)
+  const upcomingAppointments = appointments.filter(appointment => {
+    const appointmentTime = new Date(appointment.time.split(' - ')[0]);
+    return appointmentTime > todayEnd;
+  });
+
   const renderContent = () => {
     switch (activeSection) {
       case "Home":
@@ -113,9 +147,12 @@ export default function ConsultantDashboard(
                     Today's Appointments
                   </h2>
                   <div className="grid grid-cols-2 gap-4">
-                    {appointments.slice(0, 2).map((appointment) => (
+                    {todayAppointments.map((appointment) => (
                       <AppointmentCard key={appointment.id} {...appointment} />
                     ))}
+                    {todayAppointments.length === 0 && (
+                      <p className="text-gray-500 col-span-2">No appointments for today</p>
+                    )}
                   </div>
                 </div>
               </Suspense>
@@ -125,37 +162,38 @@ export default function ConsultantDashboard(
                     Upcoming Appointments
                   </h2>
                   <ul className="space-y-4">
-                    {appointments
-                      .slice(2, 4)
-                      .map(({ id, name, description, time, badge }) => (
-                        <li key={id} className="flex items-center space-x-4">
-                          <Avatar>
-                            <AvatarImage alt={name} src="/placeholder.svg" />
-                            <AvatarFallback>
-                              {name
-                                .split(" ")
-                                .map((n) => n[0])
-                                .join("")}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="flex-grow">
-                            <h3 className="text-lg font-semibold">{name}</h3>
-                            <p className="text-sm text-gray-500">
-                              {description}
-                            </p>
-                            <p className="text-sm">{time}</p>
-                            <Badge
-                              variant="secondary"
-                              className="bg-blue-500 text-white"
-                            >
-                              {badge}
-                            </Badge>
-                          </div>
-                          <Button className="bg-blue-500 text-white">
-                            Chat
-                          </Button>
-                        </li>
-                      ))}
+                    {upcomingAppointments.slice(0, 2).map((appointment) => (
+                      <li key={appointment.id} className="flex items-center space-x-4">
+                        <Avatar>
+                          <AvatarImage alt={appointment.name} src="/placeholder.svg" />
+                          <AvatarFallback>
+                            {appointment.name
+                              .split(" ")
+                              .map((n: string) => n[0])
+                              .join("")}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-grow">
+                          <h3 className="text-lg font-semibold">{appointment.name}</h3>
+                          <p className="text-sm text-gray-500">
+                            {appointment.description}
+                          </p>
+                          <p className="text-sm">{appointment.time}</p>
+                          <Badge
+                            variant="secondary"
+                            className="bg-blue-500 text-white"
+                          >
+                            {appointment.badge}
+                          </Badge>
+                        </div>
+                        <Button className="bg-blue-500 text-white">
+                          Chat
+                        </Button>
+                      </li>
+                    ))}
+                    {upcomingAppointments.length === 0 && (
+                      <p className="text-gray-500">No upcoming appointments</p>
+                    )}
                   </ul>
                 </div>
               </Suspense>
@@ -213,7 +251,7 @@ export default function ConsultantDashboard(
                       <AvatarFallback>
                         {appointment.name
                           .split(" ")
-                          .map((n) => n[0])
+                          .map((n: string) => n[0])
                           .join("")}
                       </AvatarFallback>
                     </Avatar>
