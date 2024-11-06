@@ -41,19 +41,64 @@ export default function ConsultantDashboard(
   const [documents, setDocuments] = useState<Document[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (consultantId) {
-      fetchConsultantData(consultantId).then(setConsultant);
-      fetchAppointments(consultantId).then(setAppointments);
-      fetchDocuments(consultantId).then(setDocuments);
-      fetchActivities(consultantId).then(setActivities);
-      fetchApprovals(consultantId).then(setApprovals);
+    async function fetchData() {
+      try {
+        setIsLoading(true);
+        setError(null);
+
+        const [
+          consultantData,
+          appointmentsData,
+          documentsData,
+          activitiesData,
+          approvalsData,
+        ] = await Promise.all([
+          fetchConsultantData(consultantId),
+          fetchAppointments(consultantId),
+          fetchDocuments(consultantId),
+          fetchActivities(consultantId),
+          fetchApprovals(consultantId),
+        ]);
+
+        setConsultant(consultantData);
+        setAppointments(appointmentsData);
+        setDocuments(documentsData);
+        setActivities(activitiesData);
+        setApprovals(approvalsData);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "An error occurred");
+      } finally {
+        setIsLoading(false);
+      }
     }
+
+    fetchData();
   }, [consultantId]);
 
-  if (!consultant) {
-    return <div>Loading...</div>;
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="bg-white p-8 rounded-lg shadow-md">
+          <h2 className="text-2xl font-bold text-red-600 mb-4">Error</h2>
+          <p className="text-gray-700">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading || !consultant) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="bg-white p-8 rounded-lg shadow-md">
+          <h2 className="text-2xl font-bold mb-4">Loading...</h2>
+          <p className="text-gray-700">Please wait while we fetch your data.</p>
+        </div>
+      </div>
+    );
   }
 
   const renderContent = () => {

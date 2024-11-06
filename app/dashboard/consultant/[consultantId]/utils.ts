@@ -1,6 +1,11 @@
 export interface Consultant {
   name: string;
   role: string;
+  description?: string | null;
+  qualifications?: string | null;
+  specialization?: string | null;
+  experience?: string | null;
+  rating: number;
 }
 
 export interface Appointment {
@@ -34,49 +39,134 @@ export interface Approval {
 }
 
 export async function fetchConsultantData(id: string): Promise<Consultant> {
-  // Implement API call to fetch consultant data
-  // Return mock data for now
-  return { name: "Mike Steele", role: "Manager" };
+  const response = await fetch(`/api/user/consultants/${id}`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch consultant data");
+  }
+  const { data } = await response.json();
+  
+  return {
+    name: data.user.name || "Anonymous",
+    role: "CONSULTANT",
+    description: data.description,
+    qualifications: data.qualifications,
+    specialization: data.specialization,
+    experience: data.experience,
+    rating: data.rating,
+  };
 }
 
-export async function fetchAppointments(id: string): Promise<Appointment[]> {
-  // Implement API call to fetch appointments
-  // Return mock data for now
-  return [
-    {
-      id: "1",
-      name: "Olga Nunez",
-      description: "Invoice Negotiation",
-      time: "3:00 PM - 3:30 PM",
-      badge: "Meeting in 5 min",
-    },
-    {
-      id: "2",
-      name: "John Doe",
-      description: "Project Review",
-      time: "4:00 PM - 4:30 PM",
-      badge: "Meeting in 2 hours",
-    },
-    {
-      id: "3",
-      name: "Jane Smith",
-      description: "Consultation",
-      time: "10:00 AM - 11:00 AM",
-      badge: "Tomorrow",
-    },
-    {
-      id: "4",
-      name: "Bob Johnson",
-      description: "Follow-up",
-      time: "2:00 PM - 2:30 PM",
-      badge: "Next Week",
-    },
-  ];
+function formatTime(date: Date): string {
+  return date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  }).replace(':00', ''); // Remove seconds if present
+}
+
+function getSessionType(appointment: any): string {
+  if (!appointment) return 'Unknown Session Type';
+  
+  if (appointment.consultation?.consultationPlan) {
+    return appointment.consultation.consultationPlan.title || 'Basic Consultation';
+  }
+  
+  if (appointment.subscription?.plan) {
+    return appointment.subscription.plan.title || 'Extended Consultation';
+  }
+  
+  if (appointment.webinar?.webinarPlan) {
+    return appointment.webinar.webinarPlan.title || 'Webinar Session';
+  }
+  
+  if (appointment.class?.classPlan) {
+    return appointment.class.classPlan.title || 'Class Session';
+  }
+  
+  return 'Unknown Session Type';
+}
+
+function getClientName(appointment: any): string {
+  const consultee = appointment.slotOfAppointment?.[0]?.consulteeProfile;
+  if (consultee?.user?.name) {
+    return consultee.user.name;
+  }
+  return 'Anonymous';
+}
+
+function getBadgeText(startTime: Date): string {
+  const now = new Date();
+  const diffInMinutes = Math.floor((startTime.getTime() - now.getTime()) / (1000 * 60));
+  
+  if (diffInMinutes <= 5 && diffInMinutes > -30) { // Include recently started meetings
+    return 'Meeting in 5 min';
+  }
+  
+  if (diffInMinutes <= 120) {
+    return 'Meeting in 2 hours';
+  }
+  
+  if (startTime.getDate() === now.getDate() + 1) {
+    return 'Tomorrow';
+  }
+  
+  return 'Next Week';
+}
+
+export async function fetchAppointments(consultantId: string): Promise<Appointment[]> {
+  const response = await fetch(`/api/slots/appointments?consultantProfileId=${consultantId}`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch appointments");
+  }
+  const { data } = await response.json();
+  
+  if (!Array.isArray(data)) {
+    console.error('Expected array of appointments, got:', data);
+    return [];
+  }
+
+  return data.map((appointment: any) => {
+    try {
+      const slot = appointment.slotOfAppointment?.[0];
+      if (!slot) {
+        throw new Error('No slot data available');
+      }
+
+      const startTime = new Date(slot.slotStartTimeInUTC);
+      const endTime = new Date(slot.slotEndTimeInUTC);
+      
+      if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
+        throw new Error('Invalid date values');
+      }
+
+      const name = getClientName(appointment);
+      const description = getSessionType(appointment);
+      const timeRange = `${formatTime(startTime)} - ${formatTime(endTime)}`;
+      const badge = getBadgeText(startTime);
+
+      return {
+        id: appointment.id,
+        name,
+        description,
+        time: timeRange,
+        badge
+      };
+    } catch (error) {
+      console.error('Error processing appointment:', error);
+      console.error('Problematic appointment data:', appointment);
+      return {
+        id: appointment.id || 'unknown',
+        name: 'Anonymous',
+        description: 'Unknown Session Type',
+        time: 'Time not available',
+        badge: 'Schedule unavailable'
+      };
+    }
+  }).filter(Boolean);
 }
 
 export async function fetchDocuments(id: string): Promise<Document[]> {
-  // Implement API call to fetch documents
-  // Return mock data for now
+  // For now returning mock data as there's no document review system in schema yet
   return [
     {
       invoiceNo: "2150",
@@ -106,8 +196,7 @@ export async function fetchDocuments(id: string): Promise<Document[]> {
 }
 
 export async function fetchActivities(id: string): Promise<Activity[]> {
-  // Implement API call to fetch activities
-  // Return mock data for now
+  // For now returning mock data as there's no activity tracking in schema yet
   return [
     {
       id: "1",
@@ -131,36 +220,61 @@ export async function fetchActivities(id: string): Promise<Activity[]> {
 }
 
 export async function fetchApprovals(id: string): Promise<Approval[]> {
-  // Implement API call to fetch approvals
-  // Return mock data for now
-  return [
-    {
-      id: "1",
-      name: "John Smith",
-      type: "Consultation",
-      date: "2023-07-01",
-      time: "10:00 AM",
-    },
-    {
-      id: "2",
-      name: "Jane Doe",
-      type: "Subscription",
-      date: "2023-07-02",
-      time: "2:00 PM",
-    },
-    {
-      id: "3",
-      name: "Bob Johnson",
-      type: "Consultation",
-      date: "2023-07-03",
-      time: "11:30 AM",
-    },
-    {
-      id: "4",
-      name: "Alice Brown",
-      type: "Subscription",
-      date: "2023-07-04",
-      time: "3:30 PM",
-    },
+  // Fetch both consultation and subscription requests
+  const [consultationsRes, subscriptionsRes] = await Promise.all([
+    fetch(`/api/events/consultations?consultantId=${id}&status=PENDING`),
+    fetch(`/api/events/subscriptions?consultantId=${id}&status=PENDING`)
+  ]);
+
+  if (!consultationsRes.ok || !subscriptionsRes.ok) {
+    throw new Error("Failed to fetch approvals");
+  }
+
+  const { data: consultations } = await consultationsRes.json();
+  const { data: subscriptions } = await subscriptionsRes.json();
+
+  const approvals = [
+    ...(consultations || []).map((consultation: any) => ({
+      id: consultation.id,
+      name: consultation.requestedBy?.user?.name || 'Anonymous',
+      type: 'Consultation',
+      date: new Date(consultation.requestedAt).toLocaleDateString(),
+      time: new Date(consultation.requestedAt).toLocaleTimeString()
+    })),
+    ...(subscriptions || []).map((subscription: any) => ({
+      id: subscription.id,
+      name: subscription.requestedBy?.user?.name || 'Anonymous',
+      type: 'Subscription',
+      date: new Date(subscription.requestedAt).toLocaleDateString(),
+      time: new Date(subscription.requestedAt).toLocaleTimeString()
+    }))
   ];
+
+  return approvals.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+}
+
+export async function updateApprovalStatus(
+  consultantId: string, 
+  approvalId: string, 
+  status: 'APPROVED' | 'REJECTED',
+  type: 'consultation' | 'subscription'
+) {
+  const endpoint = type === 'consultation' 
+    ? `/api/events/consultations/${approvalId}`
+    : `/api/events/subscriptions/${approvalId}`;
+
+  const response = await fetch(endpoint, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ status }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to update ${type} status`);
+  }
+
+  const { data } = await response.json();
+  return data;
 }

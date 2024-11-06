@@ -12,7 +12,7 @@ import {
   FileEditIcon,
   DeleteIcon,
   DownloadIcon,
-} from "../../../../../assets/icons";
+} from "@/assets/icons";
 
 interface Document {
   invoiceNo: string;
@@ -48,9 +48,9 @@ export const DocumentReviewTable: React.FC<DocumentReviewTableProps> = ({
             <Badge variant="secondary">{doc.tag}</Badge>
           </TableCell>
           <TableCell className="flex space-x-2">
-            <FileEditIcon className="text-gray-500" />
-            <DeleteIcon className="text-gray-500" />
-            <DownloadIcon className="text-gray-500" />
+            <FileEditIcon className="text-gray-500 cursor-pointer hover:text-blue-500" />
+            <DeleteIcon className="text-gray-500 cursor-pointer hover:text-red-500" />
+            <DownloadIcon className="text-gray-500 cursor-pointer hover:text-green-500" />
           </TableCell>
         </TableRow>
       ))}
