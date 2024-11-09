@@ -17,6 +17,7 @@ export default function Dashboard() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
+  const [progress, setProgress] = useState(0);
   const { toast } = useToast();
 
   const userId = session?.user?.id;
@@ -25,6 +26,30 @@ export default function Dashboard() {
     isLoading: isUserDataLoading,
     error,
   } = useUserData(userId || "");
+
+  // Handle progress animation
+  useEffect(() => {
+    let progressInterval: ReturnType<typeof setInterval>;
+
+    if (isLoading || isUserDataLoading) {
+      // Start from current progress or 0
+      let currentProgress = progress;
+
+      progressInterval = setInterval(() => {
+        // Increment progress but slow down as it gets higher
+        const increment = Math.max(1, (100 - currentProgress) / 20);
+        currentProgress = Math.min(90, currentProgress + increment);
+        setProgress(currentProgress);
+      }, 100);
+    } else {
+      // When loading is complete, quickly fill to 100%
+      setProgress(100);
+    }
+
+    return () => {
+      if (progressInterval) clearInterval(progressInterval);
+    };
+  }, [isLoading, isUserDataLoading]);
 
   useEffect(() => {
     if (status === "authenticated" && !isUserDataLoading) {
@@ -87,18 +112,11 @@ export default function Dashboard() {
             <CardDescription>Loading your dashboard...</CardDescription>
           </CardHeader>
           <CardContent>
-            <div
-              className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700"
-              role="progressbar"
-              aria-valuenow={45}
-              aria-valuemin={0}
-              aria-valuemax={100}
-            >
-              <div
-                className="bg-blue-600 h-2.5 rounded-full"
-                style={{ width: "45%" }}
-              ></div>
-            </div>
+            <progress
+              className="w-full h-2.5 rounded-full"
+              value={progress}
+              max={100}
+            />
           </CardContent>
         </Card>
       </div>
