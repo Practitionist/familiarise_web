@@ -10,70 +10,40 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Appointment, BADGE_STYLES } from "../types";
 
-interface AppointmentCardProps {
-  name: string;
-  description: string;
-  time: string;
-  badge: string;
+interface AppointmentCardProps extends Appointment {
+  getBadgeStyle: (badge: string) => string;
 }
 
-export const AppointmentCard: React.FC<AppointmentCardProps> = ({
+export function AppointmentCard({
   name,
   description,
   time,
   badge,
-}) => {
+  getBadgeStyle,
+}: Readonly<AppointmentCardProps>) {
   // Get initials for avatar fallback
   const initials = name
     .split(" ")
-    .map(n => n[0])
+    .map((n) => n[0])
     .join("")
     .toUpperCase();
 
-  // Determine badge style based on timing
-  const getBadgeStyle = (badge: string) => {
-    if (badge === 'Completed') {
-      return 'bg-gray-400 text-white';
-    }
-    if (badge.includes('5 min')) {
-      return 'bg-red-500 text-white';
-    }
-    if (badge.includes('2 hours')) {
-      return 'bg-blue-500 text-white';
-    }
-    if (badge === 'Tomorrow') {
-      return 'bg-purple-500 text-white';
-    }
-    if (badge.startsWith('In ')) {
-      if (badge.includes('week')) {
-        return 'bg-green-500 text-white';
-      }
-      if (badge.includes('month')) {
-        return 'bg-yellow-500 text-white';
-      }
-      if (badge.includes('year')) {
-        return 'bg-orange-500 text-white';
-      }
-      return 'bg-gray-500 text-white'; // For "In X days"
-    }
-    return 'bg-gray-400 text-white';
-  };
-
   // Determine if join button should be enabled and its style
-  const isJoinable = badge.includes('5 min');
-  const joinButtonStyle = isJoinable 
-    ? "bg-black text-white hover:bg-gray-800" 
+  const isJoinable = badge.includes("5 min");
+  const joinButtonStyle = isJoinable
+    ? "bg-black text-white hover:bg-gray-800"
     : "bg-gray-400 text-white cursor-not-allowed";
 
   // Log props for debugging
-  console.log('AppointmentCard props:', {
+  console.log("AppointmentCard props:", {
     name,
     description,
     time,
     badge,
     isJoinable,
-    badgeStyle: getBadgeStyle(badge)
+    badgeStyle: getBadgeStyle(badge),
   });
 
   return (
@@ -82,7 +52,7 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
         <div className="flex items-center space-x-4">
           <Avatar>
             <AvatarImage alt={name} src="/placeholder.svg" />
-            <AvatarFallback>{initials || '?'}</AvatarFallback>
+            <AvatarFallback>{initials || "?"}</AvatarFallback>
           </Avatar>
           <div>
             <CardTitle className="text-base font-medium">{name}</CardTitle>
@@ -96,23 +66,17 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
         <p className="text-sm font-medium text-gray-700">{time}</p>
       </CardContent>
       <CardFooter className="flex justify-between items-center">
-        {badge === 'Schedule unavailable' ? (
-          <Badge 
-            variant="secondary" 
-            className="bg-gray-400 text-white"
-          >
+        {badge === "Schedule unavailable" ? (
+          <Badge variant="secondary" className={BADGE_STYLES.default}>
             Schedule unavailable
           </Badge>
         ) : (
-          <Badge 
-            variant="secondary" 
-            className={getBadgeStyle(badge)}
-          >
+          <Badge variant="secondary" className={getBadgeStyle(badge)}>
             {badge}
           </Badge>
         )}
-        <Button 
-          variant="default" 
+        <Button
+          variant="default"
           className={joinButtonStyle}
           disabled={!isJoinable}
         >
@@ -121,4 +85,4 @@ export const AppointmentCard: React.FC<AppointmentCardProps> = ({
       </CardFooter>
     </Card>
   );
-};
+}

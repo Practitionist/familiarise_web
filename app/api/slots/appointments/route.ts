@@ -31,23 +31,35 @@ export async function GET(request: NextRequest) {
     );
 
     // Log the appointments data for debugging
-    console.log('Raw appointments data:', JSON.stringify(appointments.map(a => ({
-      id: a.id,
-      type: a.appointmentType,
-      slot: a.slotOfAppointment?.[0] ? {
-        startUTC: a.slotOfAppointment[0].slotStartTimeInUTC,
-        endUTC: a.slotOfAppointment[0].slotEndTimeInUTC,
-        currentUTC: new Date().toISOString()
-      } : null,
-      users: {
-        consultee: a.slotOfAppointment?.[0]?.consulteeProfile?.user?.name,
-        requestedBy: a.consultation?.requestedBy?.user?.name || a.subscription?.requestedBy?.user?.name,
-        consultant: a.consultation?.consultationPlan?.consultantProfile?.user?.name || 
-                   a.subscription?.plan?.consultantProfile?.user?.name ||
-                   a.webinar?.webinarPlan?.consultantProfile?.user?.name ||
-                   a.class?.classPlan?.consultantProfile?.user?.name
-      }
-    })), null, 2));
+    console.log(
+      "Raw appointments data:",
+      JSON.stringify(
+        appointments.map((a) => ({
+          id: a.id,
+          type: a.appointmentType,
+          slot: a.slotOfAppointment?.[0]
+            ? {
+                startUTC: a.slotOfAppointment[0].slotStartTimeInUTC,
+                endUTC: a.slotOfAppointment[0].slotEndTimeInUTC,
+                currentUTC: new Date().toISOString(),
+              }
+            : null,
+          users: {
+            consultee: a.slotOfAppointment?.[0]?.consulteeProfile?.user?.name,
+            requestedBy:
+              a.consultation?.requestedBy?.user?.name ||
+              a.subscription?.requestedBy?.user?.name,
+            consultant:
+              a.consultation?.consultationPlan?.consultantProfile?.user?.name ||
+              a.subscription?.plan?.consultantProfile?.user?.name ||
+              a.webinar?.webinarPlan?.consultantProfile?.user?.name ||
+              a.class?.classPlan?.consultantProfile?.user?.name,
+          },
+        })),
+        null,
+        2,
+      ),
+    );
 
     return NextResponse.json({
       data: appointments,
@@ -266,11 +278,11 @@ async function getAppointments(
       orderBy: [
         {
           slotOfAppointment: {
-            _count: 'desc',
+            _count: "desc",
           },
         },
         {
-          createdAt: 'desc',
+          createdAt: "desc",
         },
       ],
       skip,
@@ -281,7 +293,7 @@ async function getAppointments(
 
   // Sort appointments by slot start time
   const sortedAppointments = appointments
-    .filter(appointment => appointment.slotOfAppointment?.length > 0)
+    .filter((appointment) => appointment.slotOfAppointment?.length > 0)
     .sort((a, b) => {
       const aTime = a.slotOfAppointment[0]?.slotStartTimeInUTC;
       const bTime = b.slotOfAppointment[0]?.slotStartTimeInUTC;
@@ -290,19 +302,29 @@ async function getAppointments(
     });
 
   // Log the sorted appointments for debugging
-  console.log('Sorted appointments:', JSON.stringify(sortedAppointments.map(a => ({
-    id: a.id,
-    type: a.appointmentType,
-    startTimeUTC: a.slotOfAppointment[0]?.slotStartTimeInUTC,
-    endTimeUTC: a.slotOfAppointment[0]?.slotEndTimeInUTC,
-    currentUTC: new Date().toISOString(),
-    consultee: a.slotOfAppointment[0]?.consulteeProfile?.user?.name,
-    requestedBy: a.consultation?.requestedBy?.user?.name || a.subscription?.requestedBy?.user?.name,
-    consultant: a.consultation?.consultationPlan?.consultantProfile?.user?.name ||
-               a.subscription?.plan?.consultantProfile?.user?.name ||
-               a.webinar?.webinarPlan?.consultantProfile?.user?.name ||
-               a.class?.classPlan?.consultantProfile?.user?.name
-  })), null, 2));
+  console.log(
+    "Sorted appointments:",
+    JSON.stringify(
+      sortedAppointments.map((a) => ({
+        id: a.id,
+        type: a.appointmentType,
+        startTimeUTC: a.slotOfAppointment[0]?.slotStartTimeInUTC,
+        endTimeUTC: a.slotOfAppointment[0]?.slotEndTimeInUTC,
+        currentUTC: new Date().toISOString(),
+        consultee: a.slotOfAppointment[0]?.consulteeProfile?.user?.name,
+        requestedBy:
+          a.consultation?.requestedBy?.user?.name ||
+          a.subscription?.requestedBy?.user?.name,
+        consultant:
+          a.consultation?.consultationPlan?.consultantProfile?.user?.name ||
+          a.subscription?.plan?.consultantProfile?.user?.name ||
+          a.webinar?.webinarPlan?.consultantProfile?.user?.name ||
+          a.class?.classPlan?.consultantProfile?.user?.name,
+      })),
+      null,
+      2,
+    ),
+  );
 
   return { appointments: sortedAppointments, total };
 }

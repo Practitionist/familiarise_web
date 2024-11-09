@@ -1,35 +1,23 @@
 import React from "react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { SearchIcon, SettingsIcon, SignalIcon } from "@/assets/icons";
+import { Consultant } from "../types";
 
-interface HeaderProps {
-  name: string;
-  role: string;
-}
+type HeaderProps = Pick<Consultant, "name" | "role">;
 
-export const Header: React.FC<HeaderProps> = ({ name, role }) => (
-  <header className="flex items-center justify-between pb-6">
-    <div className="flex items-center">
-      <div className="mr-6">
-        <Avatar>
-          <AvatarImage alt={name} src="/placeholder.svg" />
-          <AvatarFallback>
-            {name
-              .split(" ")
-              .map((n) => n[0])
-              .join("")}
-          </AvatarFallback>
-        </Avatar>
-      </div>
+export function Header({ name, role }: Readonly<HeaderProps>) {
+  return (
+    <div className="flex items-center justify-between">
       <div>
-        <h1 className="text-2xl font-semibold">{name}</h1>
-        <p className="text-sm text-gray-500">{role}</p>
+        <h1 className="text-4xl font-bold text-gray-900">Hello {name}</h1>
+        <p className="text-gray-700 text-lg">{role}</p>
+      </div>
+      <div className="flex items-center space-x-4">
+        <button className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
+          Edit Profile
+        </button>
+        <button className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors">
+          Settings
+        </button>
       </div>
     </div>
-    <div className="flex space-x-4">
-      <SettingsIcon className="text-gray-500" />
-      <SignalIcon className="text-gray-500" />
-      <SearchIcon className="text-gray-500" />
-    </div>
-  </header>
-);
+  );
+}

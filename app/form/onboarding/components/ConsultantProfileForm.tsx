@@ -96,10 +96,10 @@ const ConsultantProfileForm: React.FC<Props> = ({
     }
 
     const newFilteredSubs = subDomains.filter(
-      (sub) => sub.domainId === selectedDomain.id
+      (sub) => sub.domainId === selectedDomain.id,
     );
     const newFilteredTags = tags.filter(
-      (tag) => tag.domainId === selectedDomain.id
+      (tag) => tag.domainId === selectedDomain.id,
     );
 
     setFilteredSubDomains(newFilteredSubs);
@@ -107,10 +107,10 @@ const ConsultantProfileForm: React.FC<Props> = ({
 
     // Update selected values only if they're invalid for the new domain
     const validSubDomains = currentSubDomains.filter((sd) =>
-      newFilteredSubs.some((fs) => fs.id === sd.id)
+      newFilteredSubs.some((fs) => fs.id === sd.id),
     );
     const validTags = currentTags.filter((t) =>
-      newFilteredTags.some((ft) => ft.id === t.id)
+      newFilteredTags.some((ft) => ft.id === t.id),
     );
 
     if (validSubDomains.length !== currentSubDomains.length) {

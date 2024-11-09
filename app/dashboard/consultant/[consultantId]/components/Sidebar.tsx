@@ -1,40 +1,33 @@
 import React from "react";
-import { Button } from "@/components/ui/button";
+import { DashboardSection, SidebarProps } from "../types";
 
-interface SidebarProps {
-  activeSection: string;
-  setActiveSection: (section: string) => void;
+export function Sidebar({ activeSection, setActiveSection }: SidebarProps) {
+  const sections = [
+    DashboardSection.Home,
+    DashboardSection.Chats,
+    DashboardSection.Appointments,
+    DashboardSection.Requests,
+    DashboardSection.Documents,
+    DashboardSection.Help,
+  ];
+
+  return (
+    <aside className="col-span-2">
+      <nav className="space-y-2">
+        {sections.map((section) => (
+          <button
+            key={section}
+            onClick={() => setActiveSection(section)}
+            className={`w-full text-left px-4 py-2 rounded-lg transition-colors ${
+              activeSection === section
+                ? "bg-blue-500 text-white"
+                : "hover:bg-gray-200"
+            }`}
+          >
+            {section}
+          </button>
+        ))}
+      </nav>
+    </aside>
+  );
 }
-
-export const Sidebar: React.FC<SidebarProps> = ({
-  activeSection,
-  setActiveSection,
-}) => (
-  <aside className="col-span-2">
-    <nav className="space-y-1">
-      {[
-        "Home",
-        "Chats",
-        "Appointments",
-        "Requests",
-        "Documents for Review",
-        "Help",
-      ].map((item) => (
-        <button
-          key={item}
-          className={`block w-full text-left p-3 rounded-lg ${activeSection === item ? "bg-blue-500 text-white" : "text-gray-600 hover:bg-gray-200"}`}
-          onClick={() => setActiveSection(item)}
-        >
-          {item}
-        </button>
-      ))}
-    </nav>
-    <div className="mt-6 p-4 bg-white rounded-lg shadow">
-      <h2 className="text-lg font-semibold mb-2">Upgrade Now</h2>
-      <p className="text-sm text-gray-600 mb-4">
-        Find out what an improved account offers
-      </p>
-      <Button className="bg-blue-500 text-white">Explore Plans</Button>
-    </div>
-  </aside>
-);

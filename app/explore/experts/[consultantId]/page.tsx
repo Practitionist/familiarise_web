@@ -1,31 +1,31 @@
 "use client";
 
-import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import {
   fetchConsultantDetails,
-  fetchUserDetails,
   fetchReviews,
+  fetchUserDetails,
 } from "@/hooks/useUserData";
 
+import { TConsultantProfile } from "@/types/consultant";
+import { TSlotTiming } from "@/types/slots";
 import {
   ConsultantReview,
-  User,
   ConsultationPlan,
   SubscriptionPlan,
+  User,
 } from "@prisma/client";
 import { StarIcon } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { ClassesAndWebinars } from "./ClassesAndWebinars";
 import { ConsultantSkeletonLoader } from "./ConsultantSkeletonLoader";
-import PricingToggle from "./PricingToggle";
-import { TConsultantProfile } from "@/types/consultant";
-import { TSlotTiming } from "@/types/slots";
 import { CustomAvailability } from "./CustomAvailability";
+import PricingToggle from "./PricingToggle";
+import Review from "./Review";
 import { WeeklyAvailability } from "./WeeklyAvailability";
 
 interface PricingOption {
@@ -35,42 +35,6 @@ interface PricingOption {
   duration: string;
   features?: string[];
 }
-
-const Review: React.FC<ConsultantReview> = ({
-  consulteeProfileId,
-  createdAt,
-  rating,
-  reviewDescription,
-}) => (
-  <div className="flex items-start space-x-4 p-4 bg-white rounded-lg shadow-sm">
-    <Avatar className="w-10 h-10" />
-    <div className="flex-1">
-      <div className="flex items-center justify-between mb-2">
-        <div>
-          <h4 className="text-md font-semibold text-gray-800">
-            {consulteeProfileId}
-          </h4>
-          <p className="text-xs text-gray-500">
-            {new Date(createdAt).toLocaleDateString()}
-          </p>
-        </div>
-        <div className="flex items-center">
-          {[...Array(5)].map((_, i) => (
-            <StarIcon
-              key={`star-${rating}-${i}`}
-              className={`w-4 h-4 ${i < rating ? "text-yellow-400" : "text-gray-200"}`}
-            />
-          ))}
-        </div>
-      </div>
-      <p className="text-sm text-gray-600 leading-relaxed">
-        {reviewDescription}
-      </p>
-    </div>
-  </div>
-);
-
-import { use } from "react";
 
 type Params = Promise<{ consultantId: string }>;
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;

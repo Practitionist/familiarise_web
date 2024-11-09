@@ -1,32 +1,111 @@
 import prisma from "@/lib/prisma";
-import { checkOverlappingAppointments } from "@/lib/appointmentUtils";
-import { NextResponse } from "next/server";
+import { RequestStatus } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const consultantProfileId = searchParams.get("consultantProfileId");
+  const status = searchParams.get("status") as RequestStatus | null;
+  const page = parseInt(searchParams.get("page") || "1");
+  const limit = parseInt(searchParams.get("limit") || "10");
+
+  if (!consultantProfileId) {
+    return NextResponse.json(
+      { error: "Consultant profile ID is required" },
+      { status: 400 },
+    );
+  }
+
   try {
-    const { searchParams } = new URL(request.url);
-    const consulteeId = searchParams.get("consulteeId");
-    const consultantId = searchParams.get("consultantId");
-    const status = searchParams.get("status");
-
-    let whereClause: any = {};
-
-    if (consulteeId) {
-      whereClause.requestedBy = { id: consulteeId };
-    }
-
-    if (consultantId) {
-      whereClause.consultationPlan = {
-        consultantProfile: { id: consultantId },
-      };
-    }
+    const whereClause: any = {
+      consultationPlan: {
+        consultantProfileId,
+      },
+    };
 
     if (status) {
       whereClause.requestStatus = status;
     }
 
-    const consultations = await prisma.consultation.findMany({
-      where: whereClause,
+    const [consultations, total] = await Promise.all([
+      prisma.consultation.findMany({
+        where: whereClause,
+        include: {
+          consultationPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          requestedBy: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          requestedAt: "desc",
+        },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.consultation.count({ where: whereClause }),
+    ]);
+
+    return NextResponse.json({
+      data: consultations,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching consultations:", error);
+    return NextResponse.json(
+      { error: "An error occurred while fetching consultations" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { id, status } = body;
+
+    if (!id || !status) {
+      return NextResponse.json(
+        { error: "ID and status are required" },
+        { status: 400 },
+      );
+    }
+
+    if (!Object.values(RequestStatus).includes(status as RequestStatus)) {
+      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+    }
+
+    const consultation = await prisma.consultation.update({
+      where: { id },
+      data: { requestStatus: status },
       include: {
         consultationPlan: {
           include: {
@@ -56,146 +135,14 @@ export async function GET(request: Request) {
             },
           },
         },
-        appointment: {
-          include: {
-            slotOfAppointment: {
-              include: {
-                consulteeProfile: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      orderBy: {
-        requestedAt: 'desc',
       },
     });
 
-    // Log the consultations data for debugging
-    console.log('Consultations data:', JSON.stringify(consultations.map(c => ({
-      id: c.id,
-      status: c.requestStatus,
-      requestedBy: c.requestedBy?.user?.name,
-      consultant: c.consultationPlan?.consultantProfile?.user?.name,
-      consultee: c.appointment?.slotOfAppointment?.[0]?.consulteeProfile?.user?.name,
-      plan: c.consultationPlan?.title,
-      requestedAt: c.requestedAt,
-      appointment: c.appointment ? {
-        id: c.appointment.id,
-        slot: c.appointment.slotOfAppointment?.[0] ? {
-          start: c.appointment.slotOfAppointment[0].slotStartTimeInUTC,
-          end: c.appointment.slotOfAppointment[0].slotEndTimeInUTC,
-        } : null
-      } : null
-    })), null, 2));
-
-    return NextResponse.json({ data: consultations }, { status: 200 });
+    return NextResponse.json({ data: consultation });
   } catch (error) {
-    console.error("Error fetching consultations:", error);
+    console.error("Error updating consultation:", error);
     return NextResponse.json(
-      { error: "An error occurred while fetching consultations" },
-      { status: 500 },
-    );
-  }
-}
-
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-
-    // Check for overlapping appointments
-    const isOverlapping = await checkOverlappingAppointments(
-      new Date(body.startTime),
-      new Date(body.endTime),
-      body.consultantProfileId,
-    );
-
-    if (isOverlapping) {
-      return NextResponse.json(
-        { error: "This time slot is already booked" },
-        { status: 409 },
-      );
-    }
-
-    // Create the consultation and associated appointment in a transaction
-    const result = await prisma.$transaction(async (prisma) => {
-      const consultation = await prisma.consultation.create({
-        data: {
-          consultationPlan: {
-            connect: { id: body.consultationPlanId },
-          },
-          requestedBy: {
-            connect: { id: body.consulteeProfileId },
-          },
-          requestStatus: "PENDING",
-          directlyBooked: true,
-        },
-        include: {
-          consultationPlan: {
-            include: {
-              consultantProfile: {
-                include: {
-                  user: true,
-                },
-              },
-            },
-          },
-          requestedBy: {
-            include: {
-              user: true,
-            },
-          },
-        },
-      });
-
-      const appointment = await prisma.appointment.create({
-        data: {
-          appointmentType: "CONSULTATION",
-          consultation: {
-            connect: { id: consultation.id },
-          },
-          slotOfAppointment: {
-            create: {
-              slotStartTimeInUTC: new Date(body.startTime),
-              slotEndTimeInUTC: new Date(body.endTime),
-              consulteeProfile: {
-                connect: { id: body.consulteeProfileId },
-              },
-            },
-          },
-        },
-        include: {
-          slotOfAppointment: {
-            include: {
-              consulteeProfile: {
-                include: {
-                  user: true,
-                },
-              },
-            },
-          },
-        },
-      });
-
-      return { consultation, appointment };
-    });
-
-    return NextResponse.json({ data: result }, { status: 201 });
-  } catch (error) {
-    console.error("Error creating consultation:", error);
-    return NextResponse.json(
-      { error: "An error occurred while creating the consultation" },
+      { error: "An error occurred while updating consultation" },
       { status: 500 },
     );
   }

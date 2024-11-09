@@ -7,7 +7,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { CheckIcon } from "lucide-react";
-import { useSearchParams } from "next/navigation";
 import { JSX, SVGProps, use, useEffect, useState } from "react";
 import { z } from "zod";
 import { ConsultantReview, User } from "@prisma/client";
