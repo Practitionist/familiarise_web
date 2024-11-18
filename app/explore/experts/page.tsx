@@ -401,7 +401,7 @@ function FindExperts() {
                                   .map((t) => (
                                     <span
                                       key={t.id}
-                                      className="bg-gray-200 text-black dark:bg-gray-700 dark:text-white px-2 py-1 rounded-full"
+                                      className="bg-white text-black border border-black px-2 py-1 rounded-full"
                                     >
                                       {t.name}
                                     </span>
