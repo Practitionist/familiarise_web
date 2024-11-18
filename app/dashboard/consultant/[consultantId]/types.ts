@@ -1,9 +1,4 @@
-export interface Consultant {
-  name: string;
-  role: string;
-  email?: string;
-  image?: string;
-}
+import { TConsultantProfile } from "@/types/consultant";
 
 export interface Appointment {
   id: string;
@@ -120,4 +115,5 @@ export type ApiResponse<T> = {
 export interface SidebarProps {
   activeSection: DashboardSection;
   setActiveSection: (section: DashboardSection) => void;
+  consultant?: TConsultantProfile;
 }

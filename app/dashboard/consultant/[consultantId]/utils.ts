@@ -1,21 +1,22 @@
+import { ConsultantProfile } from "@prisma/client";
 import {
-  Consultant,
   Appointment,
   Document,
   Activity,
   Approval,
   ApiResponse,
 } from "./types";
+import { TConsultantProfile } from "@/types/consultant";
 
 export async function fetchConsultantData(
   consultantId: string,
-): Promise<Consultant> {
+): Promise<TConsultantProfile> {
   try {
     const response = await fetch(`/api/user/consultants/${consultantId}`);
     if (!response.ok) {
       throw new Error("Failed to fetch consultant data");
     }
-    const data: ApiResponse<Consultant> = await response.json();
+    const data: ApiResponse<TConsultantProfile> = await response.json();
     return data.data;
   } catch (error) {
     console.error("Error fetching consultant data:", error);

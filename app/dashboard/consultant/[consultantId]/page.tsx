@@ -17,7 +17,6 @@ import {
   fetchApprovals,
 } from "./utils";
 import {
-  type Consultant,
   type Appointment,
   type Document,
   type Activity,
@@ -26,6 +25,7 @@ import {
   BADGE_STYLES,
   TIME_CONSTANTS,
 } from "./types";
+import { TConsultantProfile } from "@/types/consultant";
 
 type PageProps = {
   params: Promise<{ consultantId: string }>;
@@ -42,7 +42,7 @@ export default function ConsultantDashboard({
   const [activeSection, setActiveSection] = useState<DashboardSection>(
     DashboardSection.Home,
   );
-  const [consultant, setConsultant] = useState<Consultant | null>(null);
+  const [consultant, setConsultant] = useState<TConsultantProfile | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -225,11 +225,12 @@ export default function ConsultantDashboard({
   return (
     <div className="bg-gray-100 min-h-screen">
       <div className="w-full pt-32 pb-12 px-4">
-        <Header name={consultant.name} role={consultant.role} />
+        <Header name={consultant.user.name ?? ""} role={consultant.user.role ?? ""} />
         <main className="grid grid-cols-12 gap-6 mt-6">
           <Sidebar
             activeSection={activeSection}
             setActiveSection={setActiveSection}
+            consultant={consultant}
           />
           <section className="col-span-10">{renderContent()}</section>
         </main>

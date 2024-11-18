@@ -119,7 +119,7 @@ export function RequestsTab({ approvals }: RequestsTabProps) {
                   <TableCell>{approval.date}</TableCell>
                   <TableCell>{approval.time}</TableCell>
                   <TableCell>
-                    <div className="flex space-x-2">
+                    <div className="flex flex-col space-y-2">
                       <Button
                         variant="default"
                         size="sm"
