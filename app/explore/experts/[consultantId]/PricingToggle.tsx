@@ -132,7 +132,8 @@ export default function PricingToggle({
   slotTimings,
   selectedSlot,
   setSelectedSlot,
-}: PricingToggleProps) {
+  userDetails,
+}: Readonly<PricingToggleProps>) {
   const [activeTab, setActiveTab] = useState("consultation");
   const [activeConsultationOption, setActiveConsultationOption] = useState(
     consultationOptions.length > 0
@@ -150,6 +151,20 @@ export default function PricingToggle({
       <div className="w-full max-w-4xl mx-auto py-16 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
         <div className="text-center text-gray-300">
           <p>No pricing options available at the moment.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Restrict access to consultees only
+  if (userDetails?.role !== 'consultee') {
+    return (
+      <div className="w-full max-w-4xl mx-auto py-16 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
+        <div className="text-center text-gray-300 space-y-3">
+          <h3 className="text-2xl font-medium tracking-tight">Consultee Access Required</h3>
+          <p className="text-gray-400">
+            To book consultations or subscribe to services, please sign in with a consultee account.
+          </p>
         </div>
       </div>
     );
@@ -207,7 +222,7 @@ export default function PricingToggle({
                     animate={{
                       opacity:
                         activeConsultationOption ===
-                        option.title.toLowerCase().replace(" ", "-")
+                          option.title.toLowerCase().replace(" ", "-")
                           ? 1
                           : 0,
                       y: 0,
@@ -215,7 +230,7 @@ export default function PricingToggle({
                     transition={{ duration: 0.3 }}
                     className={
                       activeConsultationOption ===
-                      option.title.toLowerCase().replace(" ", "-")
+                        option.title.toLowerCase().replace(" ", "-")
                         ? "block"
                         : "hidden"
                     }
@@ -333,19 +348,18 @@ export default function PricingToggle({
                                             key={slot.slotId}
                                             variant={
                                               selectedSlot?.slotId ===
-                                              slot.slotId
+                                                slot.slotId
                                                 ? "secondary"
                                                 : "outline"
                                             }
                                             onClick={() =>
                                               setSelectedSlot(slot)
                                             }
-                                            className={`w-full justify-center text-sm py-3 ${
-                                              selectedSlot?.slotId ===
-                                              slot.slotId
+                                            className={`w-full justify-center text-sm py-3 ${selectedSlot?.slotId ===
+                                                slot.slotId
                                                 ? "bg-gray-200 text-gray-900"
                                                 : "text-gray-200 hover:bg-gray-700"
-                                            }`}
+                                              }`}
                                           >
                                             {startTime} - {endTime}
                                           </Button>
@@ -422,7 +436,7 @@ export default function PricingToggle({
                     animate={{
                       opacity:
                         activeSubscriptionOption ===
-                        option.title.toLowerCase().replace(" ", "-")
+                          option.title.toLowerCase().replace(" ", "-")
                           ? 1
                           : 0,
                       y: 0,
@@ -430,7 +444,7 @@ export default function PricingToggle({
                     transition={{ duration: 0.3 }}
                     className={
                       activeSubscriptionOption ===
-                      option.title.toLowerCase().replace(" ", "-")
+                        option.title.toLowerCase().replace(" ", "-")
                         ? "block"
                         : "hidden"
                     }
