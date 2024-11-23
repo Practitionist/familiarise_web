@@ -19,6 +19,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { ClockIcon } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { useState } from "react";
 
 interface PricingOption {
@@ -132,8 +133,8 @@ export default function PricingToggle({
   slotTimings,
   selectedSlot,
   setSelectedSlot,
-  userDetails,
 }: Readonly<PricingToggleProps>) {
+  const { data: session } = useSession();
   const [activeTab, setActiveTab] = useState("consultation");
   const [activeConsultationOption, setActiveConsultationOption] = useState(
     consultationOptions.length > 0
@@ -155,9 +156,8 @@ export default function PricingToggle({
       </div>
     );
   }
-
-  // Restrict access to consultees only
-  if (userDetails?.role !== "consultee") {
+  // Restrict access to consultees only using session
+  if (!session?.user?.role || session.user.role.toLowerCase() !== "consultee") {
     return (
       <div className="w-full max-w-4xl mx-auto py-16 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
         <div className="text-center text-gray-300 space-y-3">

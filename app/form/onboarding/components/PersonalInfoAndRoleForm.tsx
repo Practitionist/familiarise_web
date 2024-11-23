@@ -8,6 +8,7 @@ import {
   PersonalInfoAndRole,
   PersonalInfoAndRoleSchema,
 } from "@/schemas/UserSchema";
+import { useSession } from "next-auth/react";
 
 interface Props {
   onNext: (data: PersonalInfoAndRole) => void;
@@ -15,6 +16,7 @@ interface Props {
 }
 
 const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
+  const { data: session } = useSession();
   const {
     register,
     handleSubmit,
@@ -22,11 +24,19 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
     formState: { errors },
   } = useForm<PersonalInfoAndRole>({
     resolver: zodResolver(PersonalInfoAndRoleSchema),
-    defaultValues: initialData,
+    defaultValues: {
+      ...initialData,
+      email: session?.user?.email || "",
+    },
   });
 
   const onSubmit = (data: PersonalInfoAndRole) => {
-    onNext(data);
+    // Ensure email from session is used
+    const submissionData = {
+      ...data,
+      email: session?.user?.email || "",
+    };
+    onNext(submissionData);
   };
 
   return (
@@ -42,8 +52,13 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
 
       <div className="space-y-2">
         <Label htmlFor="email">Email</Label>
-        <Input id="email" type="email" {...register("email")} />
-        {errors.email && <p className="text-red-500">{errors.email.message}</p>}
+        <Input
+          id="email"
+          type="email"
+          value={session?.user?.email || ""}
+          disabled
+          className="bg-gray-100"
+        />
       </div>
 
       <div className="space-y-2">
