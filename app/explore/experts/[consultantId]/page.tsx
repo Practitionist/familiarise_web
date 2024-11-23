@@ -429,21 +429,25 @@ export default function ExpertProfile(
 
             <div>
               <h3 className="text-xl font-semibold mb-2">
-                Expertise and Education
+                Education & Background
               </h3>
               <p className="text-gray-600">
-                {userDetails.name}'s expertise spans multiple industries, with a
-                particular focus on {consultantDetails?.subDomains.join(", ")}.
+                {userDetails.name} has experience across multiple industries,
+                with a particular focus on{" "}
+                {consultantDetails?.subDomains
+                  ?.map((domain) => domain.name)
+                  .join(", ")}
+                .
               </p>
             </div>
 
             <div>
               <h3 className="text-xl font-semibold mb-2">
-                Client Testimonials
+                Skills & Specialties
               </h3>
               <p className="text-gray-600">
-                Clients commend {userDetails.name} for their strategic insights
-                and result-oriented approach.
+                {userDetails.name} focuses on{" "}
+                {consultantDetails.tags?.map((tag) => tag.name).join(", ")}.
               </p>
             </div>
           </div>
