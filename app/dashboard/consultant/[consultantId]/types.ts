@@ -97,6 +97,7 @@ export enum DashboardSection {
   Requests = "Requests",
   Documents = "Documents for Review",
   Help = "Help",
+  Settings = "Settings",
 }
 
 // Type for API responses

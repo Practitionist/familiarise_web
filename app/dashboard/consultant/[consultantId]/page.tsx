@@ -9,6 +9,7 @@ import { AppointmentsTab } from "./components/AppointmentsTab";
 import { RequestsTab } from "./components/RequestsTab";
 import { DocumentsTab } from "./components/DocumentsTab";
 import { HelpTab } from "./components/HelpTab";
+import { SettingsTab } from "./components/SettingsTab";
 import {
   fetchConsultantData,
   fetchAppointments,
@@ -217,6 +218,8 @@ export default function ConsultantDashboard({
         return <DocumentsTab documents={documents} />;
       case DashboardSection.Help:
         return <HelpTab />;
+      case DashboardSection.Settings:
+        return <SettingsTab />;
       default:
         return null;
     }

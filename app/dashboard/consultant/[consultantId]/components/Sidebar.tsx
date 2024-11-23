@@ -25,6 +25,8 @@ const getIcon = (section: DashboardSection) => {
       return FileText;
     case DashboardSection.Help:
       return HelpCircle;
+    case DashboardSection.Settings:
+      return Settings;
     default:
       return LayoutDashboard;
   }
@@ -66,9 +68,6 @@ export function Sidebar({
               <h3 className="font-semibold text-gray-900">
                 {consultant?.user?.name}
               </h3>
-              {/* <p className="text-sm text-gray-500">
-                {consultant?.specialization}
-              </p> */}
               <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-full">
                 {consultant?.specialization}
               </span>
@@ -105,8 +104,22 @@ export function Sidebar({
 
       {/* Bottom Section */}
       <div className="p-4 border-t border-gray-200">
-        <button className="w-full text-left px-4 py-3 rounded-lg transition-all duration-200 flex items-center gap-3 text-gray-600 hover:bg-gray-100">
-          <Settings size={20} className="text-gray-500" />
+        <button
+          onClick={() => setActiveSection(DashboardSection.Settings)}
+          className={`w-full text-left px-4 py-3 rounded-lg transition-all duration-200 flex items-center gap-3 ${
+            activeSection === DashboardSection.Settings
+              ? "bg-blue-50 text-blue-600 font-medium"
+              : "text-gray-600 hover:bg-gray-100"
+          }`}
+        >
+          <Settings
+            size={20}
+            className={
+              activeSection === DashboardSection.Settings
+                ? "text-blue-600"
+                : "text-gray-500"
+            }
+          />
           <span>Settings</span>
         </button>
         <button className="w-full text-left px-4 py-3 rounded-lg transition-all duration-200 flex items-center gap-3 text-red-600 hover:bg-red-50">
