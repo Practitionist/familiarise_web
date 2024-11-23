@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { RequestStatus } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -35,28 +35,14 @@ export async function GET(request: NextRequest) {
             include: {
               consultantProfile: {
                 include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      email: true,
-                      image: true,
-                    },
-                  },
+                  user: true,
                 },
               },
             },
           },
           requestedBy: {
             include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  image: true,
-                },
-              },
+              user: true,
             },
           },
         },
@@ -111,28 +97,14 @@ export async function PATCH(request: NextRequest) {
           include: {
             consultantProfile: {
               include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
+                user: true,
               },
             },
           },
         },
         requestedBy: {
           include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
+            user: true,
           },
         },
       },

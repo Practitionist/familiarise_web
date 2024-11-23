@@ -1,4 +1,3 @@
-import { ConsultantProfile } from "@prisma/client";
 import {
   Appointment,
   Document,
@@ -7,6 +6,11 @@ import {
   ApiResponse,
 } from "./types";
 import { TConsultantProfile } from "@/types/consultant";
+import {
+  TAppointment,
+  TConsultation,
+  TSubscription,
+} from "@/types/appointment";
 
 export async function fetchConsultantData(
   consultantId: string,
@@ -34,7 +38,7 @@ export async function fetchAppointments(
     if (!response.ok) {
       throw new Error("Failed to fetch appointments");
     }
-    const data: ApiResponse<any[]> = await response.json();
+    const data: ApiResponse<TAppointment[]> = await response.json();
 
     // Transform the API response to match our Appointment type
     return data.data.map((appointment) => ({
@@ -44,10 +48,10 @@ export async function fetchAppointments(
         "Unknown",
       description: getAppointmentDescription(appointment),
       time: formatAppointmentTime(
-        appointment.slotOfAppointment?.[0]?.slotStartTimeInUTC,
+        appointment.slotOfAppointment?.[0]?.slotStartTimeInUTC?.toString(),
       ),
       badge: getAppointmentBadge(
-        appointment.slotOfAppointment?.[0]?.slotStartTimeInUTC,
+        appointment.slotOfAppointment?.[0]?.slotStartTimeInUTC?.toString(),
       ),
     }));
   } catch (error) {
@@ -79,23 +83,23 @@ export async function fetchApprovals(
 
     // Transform consultations into approvals
     const consultationApprovals = consultationsData.data.map(
-      (consultation: any) => ({
+      (consultation: TConsultation) => ({
         id: consultation.id,
         type: "Consultation",
         name: consultation.requestedBy?.user?.name || "Unknown",
-        date: formatDate(consultation.requestedAt),
-        time: formatTime(consultation.requestedAt),
+        date: formatDate(new Date(consultation.requestedAt)),
+        time: formatTime(new Date(consultation.requestedAt)),
       }),
     );
 
     // Transform subscriptions into approvals
     const subscriptionApprovals = subscriptionsData.data.map(
-      (subscription: any) => ({
+      (subscription: TSubscription) => ({
         id: subscription.id,
         type: "Subscription",
         name: subscription.requestedBy?.user?.name || "Unknown",
-        date: formatDate(subscription.requestedAt),
-        time: formatTime(subscription.requestedAt),
+        date: formatDate(new Date(subscription.requestedAt)),
+        time: formatTime(new Date(subscription.requestedAt)),
       }),
     );
 
@@ -112,21 +116,21 @@ export async function fetchApprovals(
 }
 
 export async function fetchActivities(
-  consultantId: string,
+  _consultantId: string,
 ): Promise<Activity[]> {
   // TODO: Implement activity tracking
   return [];
 }
 
 export async function fetchDocuments(
-  consultantId: string,
+  _consultantId: string,
 ): Promise<Document[]> {
   // TODO: Implement document management
   return [];
 }
 
 // Helper functions
-function getAppointmentDescription(appointment: any): string {
+function getAppointmentDescription(appointment: TAppointment): string {
   const type = appointment.appointmentType?.toLowerCase();
   switch (type) {
     case "consultation":
@@ -185,9 +189,8 @@ function getAppointmentBadge(dateString: string): string {
   return `In ${Math.floor(diffInDays / 365)} years`;
 }
 
-function formatDate(dateString: string): string {
-  if (!dateString) return "Date not set";
-  const date = new Date(dateString);
+function formatDate(date: Date): string {
+  if (!date) return "Date not set";
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
@@ -195,9 +198,8 @@ function formatDate(dateString: string): string {
   });
 }
 
-function formatTime(dateString: string): string {
-  if (!dateString) return "Time not set";
-  const date = new Date(dateString);
+function formatTime(date: Date): string {
+  if (!date) return "Time not set";
   return date.toLocaleString("en-US", {
     hour: "numeric",
     minute: "2-digit",

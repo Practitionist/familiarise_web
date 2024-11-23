@@ -35,28 +35,14 @@ export async function GET(request: NextRequest) {
             include: {
               consultantProfile: {
                 include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      email: true,
-                      image: true,
-                    },
-                  },
+                  user: true,
                 },
               },
             },
           },
           requestedBy: {
             include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  image: true,
-                },
-              },
+              user: true,
             },
           },
         },
@@ -111,28 +97,14 @@ export async function PATCH(request: NextRequest) {
           include: {
             consultantProfile: {
               include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
+                user: true,
               },
             },
           },
         },
         requestedBy: {
           include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
+            user: true,
           },
         },
       },
