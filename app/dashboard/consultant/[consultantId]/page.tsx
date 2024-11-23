@@ -225,7 +225,10 @@ export default function ConsultantDashboard({
   return (
     <div className="bg-gray-100 min-h-screen">
       <div className="w-full pt-32 pb-12 px-4">
-        <Header name={consultant.user.name ?? ""} role={consultant.user.role ?? ""} />
+        <Header
+          name={consultant.user.name ?? ""}
+          role={consultant.user.role ?? ""}
+        />
         <main className="grid grid-cols-12 gap-6 mt-6">
           <Sidebar
             activeSection={activeSection}

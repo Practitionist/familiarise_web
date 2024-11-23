@@ -8,7 +8,7 @@ import {
   FileText,
   HelpCircle,
   LogOut,
-  Settings
+  Settings,
 } from "lucide-react";
 
 const getIcon = (section: DashboardSection) => {
@@ -30,7 +30,11 @@ const getIcon = (section: DashboardSection) => {
   }
 };
 
-export function Sidebar({ activeSection, setActiveSection,consultant }: Readonly<SidebarProps>) {
+export function Sidebar({
+  activeSection,
+  setActiveSection,
+  consultant,
+}: Readonly<SidebarProps>) {
   const sections = [
     DashboardSection.Home,
     DashboardSection.Chats,
@@ -46,8 +50,8 @@ export function Sidebar({ activeSection, setActiveSection,consultant }: Readonly
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-3">
             {consultant?.user?.image ? (
-              <img 
-                src={consultant.user.image} 
+              <img
+                src={consultant.user.image}
                 alt={consultant.user.name ?? ""}
                 className="w-10 h-10 rounded-full"
               />
@@ -66,8 +70,8 @@ export function Sidebar({ activeSection, setActiveSection,consultant }: Readonly
                 {consultant?.specialization}
               </p> */}
               <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-full">
-              {consultant?.specialization}
-            </span>
+                {consultant?.specialization}
+              </span>
             </div>
           </div>
         </div>
@@ -89,7 +93,9 @@ export function Sidebar({ activeSection, setActiveSection,consultant }: Readonly
             >
               <Icon
                 size={20}
-                className={activeSection === section ? "text-blue-600" : "text-gray-500"}
+                className={
+                  activeSection === section ? "text-blue-600" : "text-gray-500"
+                }
               />
               <span>{section}</span>
             </button>
