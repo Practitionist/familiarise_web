@@ -219,7 +219,7 @@ export default function ConsultantDashboard({
       case DashboardSection.Help:
         return <HelpTab />;
       case DashboardSection.Settings:
-        return <SettingsTab />;
+        return consultant ? <SettingsTab consultant={consultant} /> : null;
       default:
         return null;
     }
