@@ -45,15 +45,23 @@ interface SettingsTabProps {
 export function SettingsTab({ consultant }: SettingsTabProps) {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
-  const [weeklySlots, setWeeklySlots] = useState<SlotsType>(getInitialWeeklySlots(consultant));
+  const [weeklySlots, setWeeklySlots] = useState<SlotsType>(
+    getInitialWeeklySlots(consultant),
+  );
   const [customSlots, setCustomSlots] = useState<SlotsType>({});
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [scheduleType, setScheduleType] = useState<ScheduleType>(consultant.scheduleType);
-  const [formData, setFormData] = useState<FormData>(getInitialFormData(consultant));
-  const [serviceSettings, setServiceSettings] = useState<ServiceSettings>(getInitialServiceSettings(consultant));
+  const [scheduleType, setScheduleType] = useState<ScheduleType>(
+    consultant.scheduleType,
+  );
+  const [formData, setFormData] = useState<FormData>(
+    getInitialFormData(consultant),
+  );
+  const [serviceSettings, setServiceSettings] = useState<ServiceSettings>(
+    getInitialServiceSettings(consultant),
+  );
 
   const handleInputChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
@@ -62,78 +70,91 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
     }));
   };
 
-  const handleAddSlot = useCallback((day: string) => {
-    if (scheduleType === ScheduleType.WEEKLY) {
-      setWeeklySlots((prev) => ({
-        ...prev,
-        [day]: [
-          ...(prev[day] || []),
-          { startTime: "", endTime: "", isValid: false },
-        ],
-      }));
-    } else {
-      setCustomSlots((prev) => ({
-        ...prev,
-        [day]: [
-          ...(prev[day] || []),
-          { startTime: "", endTime: "", isValid: false },
-        ],
-      }));
-    }
-  }, [scheduleType]);
-
-  const handleUpdateSlot = useCallback((
-    day: string,
-    index: number,
-    field: "startTime" | "endTime",
-    value: string
-  ) => {
-    const updateSlots = (prev: SlotsType) => {
-      const updatedSlots = {
-        ...prev,
-        [day]: prev[day].map((slot, i) =>
-          i === index ? { ...slot, [field]: value } : slot
-        ),
-      };
-      updatedSlots[day][index] = validateSlot(
-        updatedSlots[day][index],
-        updatedSlots[day].filter((_, i) => i !== index)
-      );
-      return updatedSlots;
-    };
-
-    if (scheduleType === ScheduleType.WEEKLY) {
-      setWeeklySlots(updateSlots);
-    } else {
-      setCustomSlots(updateSlots);
-    }
-  }, [scheduleType]);
-
-  const handleDeleteSlot = useCallback((day: string, index: number) => {
-    const deleteSlot = (prev: SlotsType) => {
-      const updatedSlots = {
-        ...prev,
-        [day]: prev[day].filter((_, i) => i !== index),
-      };
-      if (updatedSlots[day].length === 0) {
-        delete updatedSlots[day];
+  const handleAddSlot = useCallback(
+    (day: string) => {
+      if (scheduleType === ScheduleType.WEEKLY) {
+        setWeeklySlots((prev) => ({
+          ...prev,
+          [day]: [
+            ...(prev[day] || []),
+            { startTime: "", endTime: "", isValid: false },
+          ],
+        }));
+      } else {
+        setCustomSlots((prev) => ({
+          ...prev,
+          [day]: [
+            ...(prev[day] || []),
+            { startTime: "", endTime: "", isValid: false },
+          ],
+        }));
       }
-      return updatedSlots;
-    };
+    },
+    [scheduleType],
+  );
 
-    if (scheduleType === ScheduleType.WEEKLY) {
-      setWeeklySlots(deleteSlot);
-    } else {
-      setCustomSlots(deleteSlot);
-    }
-  }, [scheduleType]);
+  const handleUpdateSlot = useCallback(
+    (
+      day: string,
+      index: number,
+      field: "startTime" | "endTime",
+      value: string,
+    ) => {
+      const updateSlots = (prev: SlotsType) => {
+        const updatedSlots = {
+          ...prev,
+          [day]: prev[day].map((slot, i) =>
+            i === index ? { ...slot, [field]: value } : slot,
+          ),
+        };
+        updatedSlots[day][index] = validateSlot(
+          updatedSlots[day][index],
+          updatedSlots[day].filter((_, i) => i !== index),
+        );
+        return updatedSlots;
+      };
+
+      if (scheduleType === ScheduleType.WEEKLY) {
+        setWeeklySlots(updateSlots);
+      } else {
+        setCustomSlots(updateSlots);
+      }
+    },
+    [scheduleType],
+  );
+
+  const handleDeleteSlot = useCallback(
+    (day: string, index: number) => {
+      const deleteSlot = (prev: SlotsType) => {
+        const updatedSlots = {
+          ...prev,
+          [day]: prev[day].filter((_, i) => i !== index),
+        };
+        if (updatedSlots[day].length === 0) {
+          delete updatedSlots[day];
+        }
+        return updatedSlots;
+      };
+
+      if (scheduleType === ScheduleType.WEEKLY) {
+        setWeeklySlots(deleteSlot);
+      } else {
+        setCustomSlots(deleteSlot);
+      }
+    },
+    [scheduleType],
+  );
 
   const handlePrevMonth = useCallback(() => {
-    setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+    setCurrentDate(
+      (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
+    );
   }, []);
 
   const handleNextMonth = useCallback(() => {
-    setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+    setCurrentDate(
+      (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
+    );
   }, []);
 
   const renderCalendar = useCallback(() => {
@@ -148,7 +169,11 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
 
     // Calendar days
     for (let i = 1; i <= daysInMonth; i++) {
-      const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), i);
+      const date = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth(),
+        i,
+      );
       const dateString = getLocalDateString(date);
       const isSelected = customSlots[dateString] !== undefined;
 
@@ -171,7 +196,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
           }}
         >
           {i}
-        </button>
+        </button>,
       );
     }
 
@@ -188,14 +213,14 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
       });
       return;
     }
-    
+
     setIsLoading(true);
     try {
       await updateConsultantSettings(
         consultant.id,
         formData,
         scheduleType,
-        scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots
+        scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots,
       );
 
       toast({
@@ -222,7 +247,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
         <p className="text-sm text-gray-500 mb-6">
           Update your professional information and expertise
         </p>
-        
+
         <div className="grid grid-cols-2 gap-6">
           <div className="space-y-4">
             <div>
@@ -253,7 +278,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
               />
             </div>
           </div>
-          
+
           <div className="space-y-4">
             <div>
               <Label>Professional Description</Label>
@@ -291,7 +316,9 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
               </Label>
               <RadioGroupItem id="WEEKLY" value={ScheduleType.WEEKLY} />
             </div>
-            <div className={`space-y-4 ${scheduleType !== ScheduleType.WEEKLY ? "opacity-50 pointer-events-none" : ""}`}>
+            <div
+              className={`space-y-4 ${scheduleType !== ScheduleType.WEEKLY ? "opacity-50 pointer-events-none" : ""}`}
+            >
               {DAYS_OF_WEEK.map((day) => (
                 <div key={day} className="space-y-2">
                   <div className="flex justify-between items-center">
@@ -316,7 +343,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                               day.toLowerCase(),
                               index,
                               "startTime",
-                              e.target.value
+                              e.target.value,
                             )
                           }
                           className={`col-span-3 ${!slot.isValid ? "border-red-500" : ""}`}
@@ -331,7 +358,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                               day.toLowerCase(),
                               index,
                               "endTime",
-                              e.target.value
+                              e.target.value,
                             )
                           }
                           className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
@@ -339,11 +366,15 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                         />
                         <TrashIcon
                           className="w-5 h-5 cursor-pointer"
-                          onClick={() => handleDeleteSlot(day.toLowerCase(), index)}
+                          onClick={() =>
+                            handleDeleteSlot(day.toLowerCase(), index)
+                          }
                         />
                       </div>
                       {!slot.isValid && slot.errorMessage && (
-                        <p className="text-red-500 text-sm">{slot.errorMessage}</p>
+                        <p className="text-red-500 text-sm">
+                          {slot.errorMessage}
+                        </p>
                       )}
                     </div>
                   ))}
@@ -360,7 +391,9 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
               </Label>
               <RadioGroupItem id="CUSTOM" value={ScheduleType.CUSTOM} />
             </div>
-            <div className={`space-y-4 ${scheduleType !== ScheduleType.CUSTOM ? "opacity-50 pointer-events-none" : ""}`}>
+            <div
+              className={`space-y-4 ${scheduleType !== ScheduleType.CUSTOM ? "opacity-50 pointer-events-none" : ""}`}
+            >
               <div className="calendar-container bg-white border p-4 rounded-lg">
                 <div className="flex justify-between items-center mb-4">
                   <button
@@ -370,7 +403,9 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                   >
                     &larr;
                   </button>
-                  <span className="font-medium">{getMonthYearString(currentDate)}</span>
+                  <span className="font-medium">
+                    {getMonthYearString(currentDate)}
+                  </span>
                   <button
                     type="button"
                     className="text-black hover:bg-gray-100 p-2 rounded-full"
@@ -423,7 +458,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                                   dateString,
                                   index,
                                   "startTime",
-                                  e.target.value
+                                  e.target.value,
                                 )
                               }
                               className={`col-span-3 ${!slot.isValid ? "border-red-500" : ""}`}
@@ -438,7 +473,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                                   dateString,
                                   index,
                                   "endTime",
-                                  e.target.value
+                                  e.target.value,
                                 )
                               }
                               className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
@@ -446,11 +481,15 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                             />
                             <TrashIcon
                               className="w-5 h-5 cursor-pointer"
-                              onClick={() => handleDeleteSlot(dateString, index)}
+                              onClick={() =>
+                                handleDeleteSlot(dateString, index)
+                              }
                             />
                           </div>
                           {!slot.isValid && slot.errorMessage && (
-                            <p className="text-red-500 text-sm">{slot.errorMessage}</p>
+                            <p className="text-red-500 text-sm">
+                              {slot.errorMessage}
+                            </p>
                           )}
                         </div>
                       ))}
@@ -544,10 +583,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
         >
           Cancel
         </Button>
-        <Button 
-          onClick={handleSubmit}
-          disabled={isLoading}
-        >
+        <Button onClick={handleSubmit} disabled={isLoading}>
           {isLoading ? "Saving..." : "Save Changes"}
         </Button>
       </div>

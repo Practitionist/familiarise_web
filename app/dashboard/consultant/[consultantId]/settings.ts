@@ -42,14 +42,16 @@ export const formatDayDisplay = (day: DayOfWeek): string => {
 };
 
 export const formatTimeFromDate = (date: Date): string => {
-  return date.toLocaleTimeString('en-US', {
+  return date.toLocaleTimeString("en-US", {
     hour12: false,
-    hour: '2-digit',
-    minute: '2-digit'
+    hour: "2-digit",
+    minute: "2-digit",
   });
 };
 
-export const getInitialFormData = (consultant: TConsultantProfile): FormData => ({
+export const getInitialFormData = (
+  consultant: TConsultantProfile,
+): FormData => ({
   description: consultant?.description || "",
   qualifications: consultant?.qualifications || "",
   specialization: consultant?.specialization || "",
@@ -60,7 +62,9 @@ export const getInitialFormData = (consultant: TConsultantProfile): FormData => 
   prerequisites: "",
 });
 
-export const getInitialServiceSettings = (consultant: TConsultantProfile): ServiceSettings => {
+export const getInitialServiceSettings = (
+  consultant: TConsultantProfile,
+): ServiceSettings => {
   // Get service settings from the first available plan
   const firstConsultationPlan = consultant.consultationPlans?.[0];
   const firstSubscriptionPlan = consultant.subscriptionPlans?.[0];
@@ -68,25 +72,30 @@ export const getInitialServiceSettings = (consultant: TConsultantProfile): Servi
   const firstClassPlan = consultant.classPlans?.[0];
 
   return {
-    language: firstConsultationPlan?.language || 
-              firstSubscriptionPlan?.language || 
-              firstWebinarPlan?.language || 
-              firstClassPlan?.language || 
-              "English",
-    level: firstConsultationPlan?.level || 
-           firstSubscriptionPlan?.level || 
-           firstWebinarPlan?.level || 
-           firstClassPlan?.level || 
-           "Beginner",
-    prerequisites: firstConsultationPlan?.prerequisites || 
-                  firstSubscriptionPlan?.prerequisites || 
-                  firstWebinarPlan?.prerequisites || 
-                  firstClassPlan?.prerequisites || 
-                  "",
+    language:
+      firstConsultationPlan?.language ||
+      firstSubscriptionPlan?.language ||
+      firstWebinarPlan?.language ||
+      firstClassPlan?.language ||
+      "English",
+    level:
+      firstConsultationPlan?.level ||
+      firstSubscriptionPlan?.level ||
+      firstWebinarPlan?.level ||
+      firstClassPlan?.level ||
+      "Beginner",
+    prerequisites:
+      firstConsultationPlan?.prerequisites ||
+      firstSubscriptionPlan?.prerequisites ||
+      firstWebinarPlan?.prerequisites ||
+      firstClassPlan?.prerequisites ||
+      "",
   };
 };
 
-export const getInitialWeeklySlots = (consultant: TConsultantProfile): SlotsType => {
+export const getInitialWeeklySlots = (
+  consultant: TConsultantProfile,
+): SlotsType => {
   if (!consultant.slotsOfAvailabilityWeekly?.length) return {};
 
   const formattedWeeklySlots: SlotsType = {};
@@ -104,7 +113,10 @@ export const getInitialWeeklySlots = (consultant: TConsultantProfile): SlotsType
   return formattedWeeklySlots;
 };
 
-export const validateSlot = (slot: SlotType, otherSlots: SlotType[]): SlotType => {
+export const validateSlot = (
+  slot: SlotType,
+  otherSlots: SlotType[],
+): SlotType => {
   const getMinutes = (time: string): number | null => {
     const [hours, minutes] = time.split(":").map(Number);
     return !isNaN(hours) && !isNaN(minutes) ? hours * 60 + minutes : null;
@@ -147,7 +159,8 @@ export const validateSlot = (slot: SlotType, otherSlots: SlotType[]): SlotType =
     if (otherStartMinutes === null || otherEndMinutes === null) continue;
 
     if (
-      (startMinutes >= otherStartMinutes && startMinutes < otherEndMinutes + 15) ||
+      (startMinutes >= otherStartMinutes &&
+        startMinutes < otherEndMinutes + 15) ||
       (endMinutes > otherStartMinutes - 15 && endMinutes <= otherEndMinutes) ||
       (startMinutes <= otherStartMinutes && endMinutes >= otherEndMinutes)
     ) {
@@ -164,19 +177,24 @@ export const validateSlot = (slot: SlotType, otherSlots: SlotType[]): SlotType =
 
 export const formatSlotsForApi = (weeklySlots: SlotsType) => {
   return Object.entries(weeklySlots).flatMap(([day, slots]) =>
-    slots.filter(slot => slot.isValid).map(slot => ({
-      dayOfWeekforStartTimeInUTC: day.toUpperCase(),
-      dayOfWeekforEndTimeInUTC: day.toUpperCase(),
-      slotStartTimeInUTC: `2024-01-01T${slot.startTime}:00Z`,
-      slotEndTimeInUTC: `2024-01-01T${slot.endTime}:00Z`,
-    }))
+    slots
+      .filter((slot) => slot.isValid)
+      .map((slot) => ({
+        dayOfWeekforStartTimeInUTC: day.toUpperCase(),
+        dayOfWeekforEndTimeInUTC: day.toUpperCase(),
+        slotStartTimeInUTC: `2024-01-01T${slot.startTime}:00Z`,
+        slotEndTimeInUTC: `2024-01-01T${slot.endTime}:00Z`,
+      })),
   );
 };
 
-export const validateAllSlots = (weeklySlots: SlotsType, scheduleType: ScheduleType): boolean => {
+export const validateAllSlots = (
+  weeklySlots: SlotsType,
+  scheduleType: ScheduleType,
+): boolean => {
   if (scheduleType === ScheduleType.WEEKLY) {
     return Object.values(weeklySlots).every((daySlots) =>
-      daySlots.every((slot) => slot.isValid)
+      daySlots.every((slot) => slot.isValid),
     );
   }
   return true;
@@ -186,7 +204,7 @@ export const updateConsultantSettings = async (
   consultantId: string,
   formData: FormData,
   scheduleType: ScheduleType,
-  weeklySlots: SlotsType
+  weeklySlots: SlotsType,
 ) => {
   const response = await fetch(`/api/user/consultants/${consultantId}`, {
     method: "PUT",
@@ -210,7 +228,7 @@ export const updateConsultantSettings = async (
 // Calendar utilities
 export const getCurrentDate = () => {
   const date = new Date();
-  return date.toISOString().split('T')[0];
+  return date.toISOString().split("T")[0];
 };
 
 export const getDaysInMonth = (date: Date) => {
