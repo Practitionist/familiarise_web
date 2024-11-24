@@ -13,48 +13,72 @@ const dateTimeSchema = z.string().datetime({ offset: true });
 
 // Zod schema for weekly slot
 const weeklySlotSchema = z.object({
-  dayOfWeekforStartTimeInUTC: z.enum(['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY']),
-  dayOfWeekforEndTimeInUTC: z.enum(['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY']),
+  dayOfWeekforStartTimeInUTC: z.enum([
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+    "SUNDAY",
+  ]),
+  dayOfWeekforEndTimeInUTC: z.enum([
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+    "SUNDAY",
+  ]),
   slotStartTimeInUTC: dateTimeSchema,
-  slotEndTimeInUTC: dateTimeSchema
+  slotEndTimeInUTC: dateTimeSchema,
 });
 
 // Zod schema for custom slot
 const customSlotSchema = z.object({
   slotStartTimeInUTC: dateTimeSchema,
-  slotEndTimeInUTC: dateTimeSchema
+  slotEndTimeInUTC: dateTimeSchema,
 });
 
 // Main request body schema
-const updateConsultantSchema = z.object({
-  description: z.string().optional(),
-  qualifications: z.string().optional(),
-  specialization: z.string().optional(),
-  experience: z.string().optional(),
-  scheduleType: z.enum(['WEEKLY', 'CUSTOM']),
-  language: z.string().optional(),
-  level: z.string().optional(),
-  prerequisites: z.string().optional(),
-  domainId: uuidSchema,
-  subDomainIds: z.array(uuidSchema),
-  tagIds: z.array(uuidSchema),
-  slotsOfAvailabilityWeekly: z.array(weeklySlotSchema).optional(),
-  slotsOfAvailabilityCustom: z.array(customSlotSchema).optional()
-}).refine(
-  (data) => {
-    if (data.scheduleType === 'WEEKLY') {
-      return data.slotsOfAvailabilityWeekly && data.slotsOfAvailabilityWeekly.length > 0;
-    }
-    if (data.scheduleType === 'CUSTOM') {
-      return data.slotsOfAvailabilityCustom && data.slotsOfAvailabilityCustom.length > 0;
-    }
-    return false;
-  },
-  {
-    message: "Must provide corresponding slots array based on scheduleType",
-    path: ["scheduleType"]
-  }
-);
+const updateConsultantSchema = z
+  .object({
+    description: z.string().optional(),
+    qualifications: z.string().optional(),
+    specialization: z.string().optional(),
+    experience: z.string().optional(),
+    scheduleType: z.enum(["WEEKLY", "CUSTOM"]),
+    language: z.string().optional(),
+    level: z.string().optional(),
+    prerequisites: z.string().optional(),
+    domainId: uuidSchema,
+    subDomainIds: z.array(uuidSchema),
+    tagIds: z.array(uuidSchema),
+    slotsOfAvailabilityWeekly: z.array(weeklySlotSchema).optional(),
+    slotsOfAvailabilityCustom: z.array(customSlotSchema).optional(),
+  })
+  .refine(
+    (data) => {
+      if (data.scheduleType === "WEEKLY") {
+        return (
+          data.slotsOfAvailabilityWeekly &&
+          data.slotsOfAvailabilityWeekly.length > 0
+        );
+      }
+      if (data.scheduleType === "CUSTOM") {
+        return (
+          data.slotsOfAvailabilityCustom &&
+          data.slotsOfAvailabilityCustom.length > 0
+        );
+      }
+      return false;
+    },
+    {
+      message: "Must provide corresponding slots array based on scheduleType",
+      path: ["scheduleType"],
+    },
+  );
 
 export async function GET(
   request: NextRequest,
@@ -116,20 +140,24 @@ export async function PUT(
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    
+
     const { id } = await params;
     const requestData = await request.json();
-    
+
     // Validate request body using zod schema
     const validationResult = updateConsultantSchema.safeParse(requestData);
     if (!validationResult.success) {
       return NextResponse.json(
-        { error: "Validation failed", details: validationResult.error.format() },
-        { status: 400 }
+        {
+          error: "Validation failed",
+          details: validationResult.error.format(),
+        },
+        { status: 400 },
       );
     }
 
     const data = validationResult.data;
+    console.log("Request data:", data);
     const {
       description,
       qualifications,

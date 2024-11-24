@@ -29,11 +29,11 @@ import {
   getInitialServiceSettings,
   validateSlot,
   validateAllSlots,
-  updateConsultantSettings,
   getDaysInMonth,
   getFirstDayOfMonth,
   getMonthYearString,
   getLocalDateString,
+  formatSlotsForApi,
   type FormData,
   type SlotType,
   type SlotsType,
@@ -205,6 +205,22 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
     }));
   }, []);
 
+  // Update schedule type and clear irrelevant slots
+  const handleScheduleTypeChange = useCallback((value: ScheduleType) => {
+    setScheduleType(value);
+    setFormData((prev) => ({
+      ...prev,
+      scheduleType: value,
+    }));
+
+    // Clear slots for the inactive schedule type
+    if (value === ScheduleType.WEEKLY) {
+      setCustomSlots({});
+    } else {
+      setWeeklySlots({});
+    }
+  }, []);
+
   const handleAddSlot = useCallback(
     (day: string) => {
       const updateSlots = (prev: SlotsType) => ({
@@ -360,12 +376,34 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
 
     setIsLoading(true);
     try {
-      await updateConsultantSettings(
-        consultant.id,
-        formData,
-        weeklySlots,
-        customSlots,
-      );
+      // Only send slots for the current schedule type
+      const updatedData = {
+        ...formData,
+        language: serviceSettings.language,
+        level: serviceSettings.level,
+        prerequisites: serviceSettings.prerequisites,
+        scheduleType, // Ensure we're using the current scheduleType
+        slotsOfAvailabilityWeekly:
+          scheduleType === ScheduleType.WEEKLY
+            ? formatSlotsForApi(weeklySlots, true)
+            : [],
+        slotsOfAvailabilityCustom:
+          scheduleType === ScheduleType.CUSTOM
+            ? formatSlotsForApi(customSlots, false)
+            : [],
+      };
+
+      const response = await fetch(`/api/user/consultants/${consultant.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(updatedData),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update settings");
+      }
 
       toast({
         title: "Settings updated",
@@ -507,7 +545,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
 
         <RadioGroup
           value={scheduleType}
-          onValueChange={(value: ScheduleType) => setScheduleType(value)}
+          onValueChange={handleScheduleTypeChange}
           className="flex flex-col md:flex-row md:space-x-8 space-y-4 md:space-y-0"
         >
           {/* Weekly Schedule */}
