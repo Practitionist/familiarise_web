@@ -2,35 +2,59 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "../../../auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { ScheduleType, DayOfWeek, Prisma } from "@prisma/client";
+import { ScheduleType, Prisma } from "@prisma/client";
+import { z } from "zod";
 
-interface WeeklySlot {
-  dayOfWeekforStartTimeInUTC: DayOfWeek;
-  dayOfWeekforEndTimeInUTC: DayOfWeek;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
-}
+// Zod schema for UUID validation
+const uuidSchema = z.string().uuid();
 
-interface CustomSlot {
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
-}
+// Zod schema for date-time string validation
+const dateTimeSchema = z.string().datetime({ offset: true });
 
-interface UpdateConsultantData {
-  description?: string;
-  qualifications?: string;
-  specialization?: string;
-  experience?: string;
-  scheduleType: ScheduleType;
-  domainId: string;
-  subDomainIds: string[];
-  tagIds: string[];
-  slotsOfAvailabilityWeekly?: WeeklySlot[];
-  slotsOfAvailabilityCustom?: CustomSlot[];
-  language?: string;
-  level?: string;
-  prerequisites?: string;
-}
+// Zod schema for weekly slot
+const weeklySlotSchema = z.object({
+  dayOfWeekforStartTimeInUTC: z.enum(['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY']),
+  dayOfWeekforEndTimeInUTC: z.enum(['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY']),
+  slotStartTimeInUTC: dateTimeSchema,
+  slotEndTimeInUTC: dateTimeSchema
+});
+
+// Zod schema for custom slot
+const customSlotSchema = z.object({
+  slotStartTimeInUTC: dateTimeSchema,
+  slotEndTimeInUTC: dateTimeSchema
+});
+
+// Main request body schema
+const updateConsultantSchema = z.object({
+  description: z.string().optional(),
+  qualifications: z.string().optional(),
+  specialization: z.string().optional(),
+  experience: z.string().optional(),
+  scheduleType: z.enum(['WEEKLY', 'CUSTOM']),
+  language: z.string().optional(),
+  level: z.string().optional(),
+  prerequisites: z.string().optional(),
+  domainId: uuidSchema,
+  subDomainIds: z.array(uuidSchema),
+  tagIds: z.array(uuidSchema),
+  slotsOfAvailabilityWeekly: z.array(weeklySlotSchema).optional(),
+  slotsOfAvailabilityCustom: z.array(customSlotSchema).optional()
+}).refine(
+  (data) => {
+    if (data.scheduleType === 'WEEKLY') {
+      return data.slotsOfAvailabilityWeekly && data.slotsOfAvailabilityWeekly.length > 0;
+    }
+    if (data.scheduleType === 'CUSTOM') {
+      return data.slotsOfAvailabilityCustom && data.slotsOfAvailabilityCustom.length > 0;
+    }
+    return false;
+  },
+  {
+    message: "Must provide corresponding slots array based on scheduleType",
+    path: ["scheduleType"]
+  }
+);
 
 export async function GET(
   request: NextRequest,
@@ -92,9 +116,20 @@ export async function PUT(
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-
+    
     const { id } = await params;
-    const data: UpdateConsultantData = await request.json();
+    const requestData = await request.json();
+    
+    // Validate request body using zod schema
+    const validationResult = updateConsultantSchema.safeParse(requestData);
+    if (!validationResult.success) {
+      return NextResponse.json(
+        { error: "Validation failed", details: validationResult.error.format() },
+        { status: 400 }
+      );
+    }
+
+    const data = validationResult.data;
     const {
       description,
       qualifications,
@@ -110,14 +145,6 @@ export async function PUT(
       level,
       prerequisites,
     } = data;
-
-    // Validate required fields
-    if (!domainId) {
-      return NextResponse.json(
-        { error: "Domain is required" },
-        { status: 400 },
-      );
-    }
 
     // Update consultant profile
     const updatedConsultant = await prisma.consultantProfile.update({
