@@ -19,6 +19,7 @@ import { ScheduleType } from "@prisma/client";
 import { TConsultantProfile } from "@/types/consultant";
 import { useToast } from "@/components/ui/use-toast";
 import { TrashIcon } from "@/assets/icons";
+import { MultiSelect, type Option } from "./MultiSelect";
 import {
   DAYS_OF_WEEK,
   formatDayDisplay,
@@ -46,26 +47,6 @@ interface SettingsTabProps {
   consultant: TConsultantProfile;
 }
 
-interface MultiSelectProps {
-  value: string[];
-  onValueChange: (value: string[]) => void;
-  children: React.ReactNode;
-}
-
-const MultiSelect = ({ value, onValueChange, children }: MultiSelectProps) => (
-  <div className="relative">
-    <Select
-      value={value.join(",")}
-      onValueChange={(newValue) => {
-        const values = newValue.split(",").filter(Boolean);
-        onValueChange(values);
-      }}
-    >
-      {children}
-    </Select>
-  </div>
-);
-
 export function SettingsTab({ consultant }: SettingsTabProps) {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
@@ -89,6 +70,29 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [subDomains, setSubDomains] = useState<SubDomain[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+
+  // Convert subdomains and tags to options format
+  const subDomainOptions = React.useMemo<Option[]>(
+    () =>
+      (subDomains || [])
+        .filter((sd) => sd.domainId === formData.domainId)
+        .map((sd) => ({
+          value: sd.id,
+          label: sd.name,
+        })),
+    [subDomains, formData.domainId],
+  );
+
+  const tagOptions = React.useMemo<Option[]>(
+    () =>
+      (tags || [])
+        .filter((tag) => tag.domainId === formData.domainId)
+        .map((tag) => ({
+          value: tag.id,
+          label: tag.name,
+        })),
+    [tags, formData.domainId],
+  );
 
   // Fetch domains, subdomains, and tags
   useEffect(() => {
@@ -173,28 +177,36 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
     }));
   };
 
-  const handleDomainChange = (value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      domainId: value,
-      subDomainIds: [], // Reset subdomains when domain changes
-      tagIds: [], // Reset tags when domain changes
-    }));
-  };
+  const handleDomainChange = useCallback((value: string, e?: Event) => {
+    e?.preventDefault();
+    requestAnimationFrame(() => {
+      setFormData((prev) => ({
+        ...prev,
+        domainId: value || "",
+        subDomainIds: [], // Reset subdomains when domain changes
+        tagIds: [], // Reset tags when domain changes
+      }));
+    });
+  }, []);
 
-  const handleSubDomainChange = (values: string[]) => {
+  // Rest of the handlers remain the same...
+  const handleSubDomainChange = useCallback((values: string[]) => {
+    // Ensure we're working with an array
+    const safeValues = Array.isArray(values) ? values : [];
     setFormData((prev) => ({
       ...prev,
-      subDomainIds: values,
+      subDomainIds: safeValues,
     }));
-  };
+  }, []);
 
-  const handleTagChange = (values: string[]) => {
+  const handleTagChange = useCallback((values: string[]) => {
+    // Ensure we're working with an array
+    const safeValues = Array.isArray(values) ? values : [];
     setFormData((prev) => ({
       ...prev,
-      tagIds: values,
+      tagIds: safeValues,
     }));
-  };
+  }, []);
 
   const handleAddSlot = useCallback(
     (day: string) => {
@@ -386,7 +398,19 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
   }
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow space-y-8">
+    <form
+      onSubmit={handleSubmit}
+      className="bg-white p-6 rounded-lg shadow space-y-8"
+      onClick={(e) => {
+        // Prevent form submission when clicking inside the form
+        if (
+          (e.target as HTMLElement).tagName !== "BUTTON" ||
+          (e.target as HTMLButtonElement).type !== "submit"
+        ) {
+          e.preventDefault();
+        }
+      }}
+    >
       {/* Professional Profile */}
       <div>
         <h2 className="text-xl font-semibold mb-2">Professional Profile</h2>
@@ -399,14 +423,14 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
             <div>
               <Label>Domain</Label>
               <Select
-                value={formData.domainId}
+                value={formData.domainId || ""}
                 onValueChange={handleDomainChange}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select a domain" />
                 </SelectTrigger>
                 <SelectContent>
-                  {domains.map((domain) => (
+                  {(domains || []).map((domain) => (
                     <SelectItem key={domain.id} value={domain.id}>
                       {domain.name}
                     </SelectItem>
@@ -417,42 +441,22 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
             <div>
               <Label>Sub Domains</Label>
               <MultiSelect
-                value={formData.subDomainIds}
-                onValueChange={handleSubDomainChange}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select sub domains" />
-                </SelectTrigger>
-                <SelectContent>
-                  {subDomains
-                    .filter((sd) => sd.domainId === formData.domainId)
-                    .map((subDomain) => (
-                      <SelectItem key={subDomain.id} value={subDomain.id}>
-                        {subDomain.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </MultiSelect>
+                options={subDomainOptions}
+                selected={formData.subDomainIds || []}
+                onChange={handleSubDomainChange}
+                placeholder="Select sub domains"
+                searchPlaceholder="Search sub domains..."
+              />
             </div>
             <div>
               <Label>Tags</Label>
               <MultiSelect
-                value={formData.tagIds}
-                onValueChange={handleTagChange}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select tags" />
-                </SelectTrigger>
-                <SelectContent>
-                  {tags
-                    .filter((tag) => tag.domainId === formData.domainId)
-                    .map((tag) => (
-                      <SelectItem key={tag.id} value={tag.id}>
-                        {tag.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </MultiSelect>
+                options={tagOptions}
+                selected={formData.tagIds || []}
+                onChange={handleTagChange}
+                placeholder="Select tags"
+                searchPlaceholder="Search tags..."
+              />
             </div>
             <div>
               <Label>Qualifications</Label>
@@ -787,10 +791,10 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
         >
           Cancel
         </Button>
-        <Button onClick={handleSubmit} disabled={isLoading}>
+        <Button type="submit" disabled={isLoading}>
           {isLoading ? "Saving..." : "Save Changes"}
         </Button>
       </div>
-    </div>
+    </form>
   );
 }
