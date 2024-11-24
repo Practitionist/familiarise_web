@@ -71,28 +71,30 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
   const [subDomains, setSubDomains] = useState<SubDomain[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
 
-  // Convert subdomains and tags to options format
-  const subDomainOptions = React.useMemo<Option[]>(
-    () =>
-      (subDomains || [])
-        .filter((sd) => sd.domainId === formData.domainId)
-        .map((sd) => ({
-          value: sd.id,
-          label: sd.name,
-        })),
-    [subDomains, formData.domainId],
-  );
+  // Convert subdomains and tags to options format with safety checks
+  const subDomainOptions = React.useMemo<Option[]>(() => {
+    if (!subDomains || !Array.isArray(subDomains) || !formData.domainId) {
+      return [];
+    }
+    return subDomains
+      .filter((sd) => sd && sd.domainId === formData.domainId)
+      .map((sd) => ({
+        value: sd.id,
+        label: sd.name,
+      }));
+  }, [subDomains, formData.domainId]);
 
-  const tagOptions = React.useMemo<Option[]>(
-    () =>
-      (tags || [])
-        .filter((tag) => tag.domainId === formData.domainId)
-        .map((tag) => ({
-          value: tag.id,
-          label: tag.name,
-        })),
-    [tags, formData.domainId],
-  );
+  const tagOptions = React.useMemo<Option[]>(() => {
+    if (!tags || !Array.isArray(tags) || !formData.domainId) {
+      return [];
+    }
+    return tags
+      .filter((tag) => tag && tag.domainId === formData.domainId)
+      .map((tag) => ({
+        value: tag.id,
+        label: tag.name,
+      }));
+  }, [tags, formData.domainId]);
 
   // Fetch domains, subdomains, and tags
   useEffect(() => {
@@ -112,9 +114,9 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
             tagsRes.json(),
           ]);
 
-          setDomains(domainsData);
-          setSubDomains(subDomainsData);
-          setTags(tagsData);
+          setDomains(domainsData || []);
+          setSubDomains(subDomainsData || []);
+          setTags(tagsData || []);
         }
       } catch (error) {
         console.error("Error fetching data:", error);
@@ -149,8 +151,8 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
             tagsRes.json(),
           ]);
 
-          setSubDomains(subDomainsData);
-          setTags(tagsData);
+          setSubDomains(subDomainsData || []);
+          setTags(tagsData || []);
         }
       } catch (error) {
         console.error("Error fetching domain content:", error);
@@ -189,22 +191,17 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
     });
   }, []);
 
-  // Rest of the handlers remain the same...
   const handleSubDomainChange = useCallback((values: string[]) => {
-    // Ensure we're working with an array
-    const safeValues = Array.isArray(values) ? values : [];
     setFormData((prev) => ({
       ...prev,
-      subDomainIds: safeValues,
+      subDomainIds: values || [],
     }));
   }, []);
 
   const handleTagChange = useCallback((values: string[]) => {
-    // Ensure we're working with an array
-    const safeValues = Array.isArray(values) ? values : [];
     setFormData((prev) => ({
       ...prev,
-      tagIds: safeValues,
+      tagIds: values || [],
     }));
   }, []);
 
@@ -402,7 +399,6 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
       onSubmit={handleSubmit}
       className="bg-white p-6 rounded-lg shadow space-y-8"
       onClick={(e) => {
-        // Prevent form submission when clicking inside the form
         if (
           (e.target as HTMLElement).tagName !== "BUTTON" ||
           (e.target as HTMLButtonElement).type !== "submit"
@@ -445,7 +441,6 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                 selected={formData.subDomainIds || []}
                 onChange={handleSubDomainChange}
                 placeholder="Select sub domains"
-                searchPlaceholder="Search sub domains..."
               />
             </div>
             <div>
@@ -455,7 +450,6 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                 selected={formData.tagIds || []}
                 onChange={handleTagChange}
                 placeholder="Select tags"
-                searchPlaceholder="Search tags..."
               />
             </div>
             <div>

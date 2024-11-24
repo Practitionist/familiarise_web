@@ -1,22 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { X } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-} from "@/components/ui/command";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 
 export interface Option {
   value: string;
@@ -28,8 +12,6 @@ interface MultiSelectProps {
   selected: string[];
   onChange: (values: string[]) => void;
   placeholder?: string;
-  searchPlaceholder?: string;
-  emptyMessage?: string;
 }
 
 export function MultiSelect({
@@ -37,10 +19,10 @@ export function MultiSelect({
   selected = [],
   onChange,
   placeholder = "Select options",
-  searchPlaceholder = "Search options...",
-  emptyMessage = "No options found.",
 }: MultiSelectProps) {
-  const [open, setOpen] = React.useState(false);
+  const [isOpen, setIsOpen] = React.useState(false);
+  const [searchTerm, setSearchTerm] = React.useState("");
+  const containerRef = React.useRef<HTMLDivElement>(null);
 
   // Ensure we're working with arrays
   const safeSelected = Array.isArray(selected) ? selected : [];
@@ -50,107 +32,102 @@ export function MultiSelect({
     safeSelected.includes(option.value),
   );
 
-  const handleSelect = React.useCallback(
-    (value: string) => {
-      const newSelected = safeSelected.includes(value)
-        ? safeSelected.filter((item) => item !== value)
-        : [...safeSelected, value];
-      onChange(newSelected);
-    },
-    [safeSelected, onChange],
+  const filteredOptions = safeOptions.filter((option) =>
+    option.label.toLowerCase().includes(searchTerm.toLowerCase()),
   );
 
-  const handleRemove = React.useCallback(
-    (valueToRemove: string, e: React.MouseEvent | React.KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const newSelected = safeSelected.filter(
-        (value) => value !== valueToRemove,
-      );
-      onChange(newSelected);
-    },
-    [safeSelected, onChange],
-  );
+  // Handle clicking outside to close dropdown
+  React.useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  const handleToggleOption = (value: string) => {
+    const newSelected = safeSelected.includes(value)
+      ? safeSelected.filter((item) => item !== value)
+      : [...safeSelected, value];
+    onChange(newSelected);
+  };
+
+  const handleRemoveOption = (e: React.MouseEvent, valueToRemove: string) => {
+    e.stopPropagation();
+    const newSelected = safeSelected.filter((value) => value !== valueToRemove);
+    onChange(newSelected);
+  };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          className="w-full justify-between"
-          onClick={(e) => {
-            e.preventDefault();
-            setOpen(!open);
-          }}
-          type="button"
-        >
-          <div className="flex flex-wrap gap-1">
-            {selectedOptions.length > 0 ? (
-              selectedOptions.map((option) => (
-                <Badge
-                  key={option.value}
-                  variant="secondary"
-                  className="mr-1 mb-1"
-                >
-                  {option.label}
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    className="ml-1 ring-offset-background rounded-full outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        handleRemove(option.value, e);
-                      }
-                    }}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={(e) => handleRemove(option.value, e)}
-                  >
-                    <X className="h-3 w-3" />
-                  </div>
-                </Badge>
-              ))
-            ) : (
-              <span className="text-muted-foreground">{placeholder}</span>
-            )}
-          </div>
-          <span className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        className="w-full p-0"
-        onOpenAutoFocus={(e) => e.preventDefault()}
+    <div className="relative" ref={containerRef}>
+      <div
+        className="min-h-[38px] px-3 py-2 border rounded-md cursor-pointer bg-white flex flex-wrap gap-1 items-center"
+        onClick={() => setIsOpen(!isOpen)}
       >
-        <Command>
-          <CommandInput placeholder={searchPlaceholder} className="h-9" />
-          <CommandEmpty>{emptyMessage}</CommandEmpty>
-          <CommandGroup className="max-h-64 overflow-auto">
-            {safeOptions.map((option) => (
-              <CommandItem
-                key={option.value}
-                onSelect={() => {
-                  handleSelect(option.value);
-                  setOpen(true);
-                }}
-                onMouseDown={(e) => e.preventDefault()}
+        {selectedOptions.length > 0 ? (
+          selectedOptions.map((option) => (
+            <span
+              key={option.value}
+              className="bg-gray-100 px-2 py-1 rounded-md text-sm flex items-center gap-1"
+            >
+              {option.label}
+              <button
+                onClick={(e) => handleRemoveOption(e, option.value)}
+                className="ml-1 text-gray-500 hover:text-gray-700"
               >
-                <div
-                  className={cn(
-                    "mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary",
-                    safeSelected.includes(option.value)
-                      ? "bg-primary text-primary-foreground"
-                      : "opacity-50 [&_svg]:invisible",
-                  )}
-                >
-                  <span className="h-4 w-4 text-xs">✓</span>
-                </div>
-                {option.label}
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        </Command>
-      </PopoverContent>
-    </Popover>
+                ×
+              </button>
+            </span>
+          ))
+        ) : (
+          <span className="text-gray-400">{placeholder}</span>
+        )}
+      </div>
+
+      {isOpen && (
+        <div className="absolute z-10 w-full mt-1 bg-white border rounded-md shadow-lg max-h-60 overflow-auto">
+          <div className="sticky top-0 bg-white border-b p-2">
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full px-2 py-1 border rounded-md"
+              placeholder="Search..."
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+          {filteredOptions.map((option) => (
+            <div
+              key={option.value}
+              className={`px-3 py-2 cursor-pointer hover:bg-gray-100 ${
+                safeSelected.includes(option.value) ? "bg-gray-50" : ""
+              }`}
+              onClick={() => handleToggleOption(option.value)}
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={safeSelected.includes(option.value)}
+                  onChange={() => {}}
+                  className="h-4 w-4"
+                />
+                <span>{option.label}</span>
+              </div>
+            </div>
+          ))}
+          {filteredOptions.length === 0 && (
+            <div className="px-3 py-2 text-gray-500">No options available</div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
