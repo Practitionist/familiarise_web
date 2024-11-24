@@ -34,7 +34,7 @@ interface UpdateConsultantData {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -42,8 +42,16 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { id } = await params;
+    if (!id) {
+      return NextResponse.json(
+        { error: "Consultant ID is required" },
+        { status: 400 },
+      );
+    }
+
     const consultant = await prisma.consultantProfile.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         user: true,
         domain: true,
@@ -77,7 +85,7 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -85,6 +93,7 @@ export async function PUT(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { id } = await params;
     const data: UpdateConsultantData = await request.json();
     const {
       description,
@@ -112,7 +121,7 @@ export async function PUT(
 
     // Update consultant profile
     const updatedConsultant = await prisma.consultantProfile.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         description,
         qualifications,
@@ -135,14 +144,14 @@ export async function PUT(
     if (scheduleType === ScheduleType.WEEKLY) {
       // Delete existing weekly slots
       await prisma.slotOfAvailabilityWeekly.deleteMany({
-        where: { consultantProfileId: params.id },
+        where: { consultantProfileId: id },
       });
 
       // Create new weekly slots
       if (slotsOfAvailabilityWeekly?.length) {
         const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
           slotsOfAvailabilityWeekly.map((slot) => ({
-            consultantProfileId: params.id,
+            consultantProfileId: id,
             dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
             dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
             slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
@@ -159,14 +168,14 @@ export async function PUT(
     if (scheduleType === ScheduleType.CUSTOM) {
       // Delete existing custom slots
       await prisma.slotOfAvailabilityCustom.deleteMany({
-        where: { consultantProfileId: params.id },
+        where: { consultantProfileId: id },
       });
 
       // Create new custom slots
       if (slotsOfAvailabilityCustom?.length) {
         const customSlotData: Prisma.SlotOfAvailabilityCustomCreateManyInput[] =
           slotsOfAvailabilityCustom.map((slot) => ({
-            consultantProfileId: params.id,
+            consultantProfileId: id,
             slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
             slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
           }));
@@ -182,7 +191,7 @@ export async function PUT(
       await Promise.all([
         // Update consultation plans
         prisma.consultationPlan.updateMany({
-          where: { consultantProfileId: params.id },
+          where: { consultantProfileId: id },
           data: {
             ...(language && { language }),
             ...(level && { level }),
@@ -191,7 +200,7 @@ export async function PUT(
         }),
         // Update subscription plans
         prisma.subscriptionPlan.updateMany({
-          where: { consultantProfileId: params.id },
+          where: { consultantProfileId: id },
           data: {
             ...(language && { language }),
             ...(level && { level }),
@@ -200,7 +209,7 @@ export async function PUT(
         }),
         // Update webinar plans
         prisma.webinarPlan.updateMany({
-          where: { consultantProfileId: params.id },
+          where: { consultantProfileId: id },
           data: {
             ...(language && { language }),
             ...(level && { level }),
@@ -209,7 +218,7 @@ export async function PUT(
         }),
         // Update class plans
         prisma.classPlan.updateMany({
-          where: { consultantProfileId: params.id },
+          where: { consultantProfileId: id },
           data: {
             ...(language && { language }),
             ...(level && { level }),
@@ -234,7 +243,7 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -242,38 +251,40 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { id } = await params;
+
     // Delete all related records first
     await prisma.$transaction([
       // Delete slots
       prisma.slotOfAvailabilityWeekly.deleteMany({
-        where: { consultantProfileId: params.id },
+        where: { consultantProfileId: id },
       }),
       prisma.slotOfAvailabilityCustom.deleteMany({
-        where: { consultantProfileId: params.id },
+        where: { consultantProfileId: id },
       }),
 
       // Delete plans
       prisma.consultationPlan.deleteMany({
-        where: { consultantProfileId: params.id },
+        where: { consultantProfileId: id },
       }),
       prisma.subscriptionPlan.deleteMany({
-        where: { consultantProfileId: params.id },
+        where: { consultantProfileId: id },
       }),
       prisma.webinarPlan.deleteMany({
-        where: { consultantProfileId: params.id },
+        where: { consultantProfileId: id },
       }),
       prisma.classPlan.deleteMany({
-        where: { consultantProfileId: params.id },
+        where: { consultantProfileId: id },
       }),
 
       // Delete reviews
       prisma.consultantReview.deleteMany({
-        where: { consultantProfileId: params.id },
+        where: { consultantProfileId: id },
       }),
 
       // Delete the consultant profile
       prisma.consultantProfile.delete({
-        where: { id: params.id },
+        where: { id },
       }),
     ]);
 
