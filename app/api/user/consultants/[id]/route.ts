@@ -1,36 +1,56 @@
-import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { ScheduleType, UserRole } from "@prisma/client";
-import { getServerSession } from "next-auth/next";
+import { getServerSession } from "next-auth";
 import authOptions from "../../../auth/[...nextauth]/options";
+import prisma from "@/lib/prisma";
+import { ScheduleType, DayOfWeek, Prisma } from "@prisma/client";
+
+interface WeeklySlot {
+  dayOfWeekforStartTimeInUTC: DayOfWeek;
+  dayOfWeekforEndTimeInUTC: DayOfWeek;
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
+}
+
+interface CustomSlot {
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
+}
+
+interface UpdateConsultantData {
+  description?: string;
+  qualifications?: string;
+  specialization?: string;
+  experience?: string;
+  scheduleType: ScheduleType;
+  domainId: string;
+  subDomainIds: string[];
+  tagIds: string[];
+  slotsOfAvailabilityWeekly?: WeeklySlot[];
+  slotsOfAvailabilityCustom?: CustomSlot[];
+  language?: string;
+  level?: string;
+  prerequisites?: string;
+}
 
 export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  request: NextRequest,
+  { params }: { params: { id: string } },
 ) {
   try {
-    const { id } = await params;
-    // const session = await getServerSession(authOptions);
-    // if (!session) {
-    //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    // }
+    const session = await getServerSession(authOptions);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const consultant = await prisma.consultantProfile.findUnique({
-      where: { id: id },
+      where: { id: params.id },
       include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-          },
-        },
+        user: true,
         domain: true,
         subDomains: true,
         tags: true,
-        slotsOfAvailabilityCustom: true,
         slotsOfAvailabilityWeekly: true,
+        slotsOfAvailabilityCustom: true,
         consultationPlans: true,
         subscriptionPlans: true,
         webinarPlans: true,
@@ -45,165 +65,226 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ data: consultant }, { status: 200 });
+    return NextResponse.json({ data: consultant });
   } catch (error) {
     console.error("Error fetching consultant:", error);
     return NextResponse.json(
-      { error: "An error occurred while fetching the consultant" },
+      { error: "Internal server error" },
       { status: 500 },
     );
   }
 }
 
 export async function PUT(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  request: NextRequest,
+  { params }: { params: { id: string } },
 ) {
   try {
-    const { id } = await params;
-
     const session = await getServerSession(authOptions);
-    if (
-      !session ||
-      (session.user.id !== id && session.user.role !== UserRole.ADMIN)
-    ) {
+    if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await req.json();
+    const data: UpdateConsultantData = await request.json();
+    const {
+      description,
+      qualifications,
+      specialization,
+      experience,
+      scheduleType,
+      domainId,
+      subDomainIds,
+      tagIds,
+      slotsOfAvailabilityWeekly,
+      slotsOfAvailabilityCustom,
+      language,
+      level,
+      prerequisites,
+    } = data;
 
-    if (
-      body.scheduleType &&
-      !Object.values(ScheduleType).includes(body.scheduleType)
-    ) {
+    // Validate required fields
+    if (!domainId) {
       return NextResponse.json(
-        { error: "Invalid scheduleType" },
+        { error: "Domain is required" },
         { status: 400 },
       );
     }
 
-    if (
-      body.domainId &&
-      (!body.subDomainIds ||
-        !Array.isArray(body.subDomainIds) ||
-        body.subDomainIds.length === 0)
-    ) {
-      return NextResponse.json(
-        { error: "When updating domain, subDomains must also be provided" },
-        { status: 400 },
-      );
-    }
-
-    const consultant = await prisma.consultantProfile.update({
-      where: { id: id },
+    // Update consultant profile
+    const updatedConsultant = await prisma.consultantProfile.update({
+      where: { id: params.id },
       data: {
-        scheduleType: body.scheduleType as ScheduleType,
-        description: body.description,
-        qualifications: body.qualifications,
-        specialization: body.specialization,
-        experience: body.experience,
-        domain: body.domainId ? { connect: { id: body.domainId } } : undefined,
-        subDomains: body.subDomainIds
-          ? {
-              set: body.subDomainIds.map((id: string) => ({ id })),
-            }
-          : undefined,
-        tags: body.tagIds
-          ? {
-              set: body.tagIds.map((id: string) => ({ id })),
-            }
-          : undefined,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-          },
+        description,
+        qualifications,
+        specialization,
+        experience,
+        scheduleType,
+        domain: {
+          connect: { id: domainId },
         },
-        domain: true,
-        subDomains: true,
-        tags: true,
+        subDomains: {
+          set: subDomainIds.map((id: string) => ({ id })),
+        },
+        tags: {
+          set: tagIds.map((id: string) => ({ id })),
+        },
       },
     });
 
-    return NextResponse.json({ data: consultant }, { status: 200 });
+    // Update weekly slots if schedule type is WEEKLY
+    if (scheduleType === ScheduleType.WEEKLY) {
+      // Delete existing weekly slots
+      await prisma.slotOfAvailabilityWeekly.deleteMany({
+        where: { consultantProfileId: params.id },
+      });
+
+      // Create new weekly slots
+      if (slotsOfAvailabilityWeekly?.length) {
+        const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
+          slotsOfAvailabilityWeekly.map((slot) => ({
+            consultantProfileId: params.id,
+            dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
+            dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
+            slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
+            slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+          }));
+
+        await prisma.slotOfAvailabilityWeekly.createMany({
+          data: weeklySlotData,
+        });
+      }
+    }
+
+    // Update custom slots if schedule type is CUSTOM
+    if (scheduleType === ScheduleType.CUSTOM) {
+      // Delete existing custom slots
+      await prisma.slotOfAvailabilityCustom.deleteMany({
+        where: { consultantProfileId: params.id },
+      });
+
+      // Create new custom slots
+      if (slotsOfAvailabilityCustom?.length) {
+        const customSlotData: Prisma.SlotOfAvailabilityCustomCreateManyInput[] =
+          slotsOfAvailabilityCustom.map((slot) => ({
+            consultantProfileId: params.id,
+            slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
+            slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+          }));
+
+        await prisma.slotOfAvailabilityCustom.createMany({
+          data: customSlotData,
+        });
+      }
+    }
+
+    // Update service settings in all plans if provided
+    if (language || level || prerequisites) {
+      await Promise.all([
+        // Update consultation plans
+        prisma.consultationPlan.updateMany({
+          where: { consultantProfileId: params.id },
+          data: {
+            ...(language && { language }),
+            ...(level && { level }),
+            ...(prerequisites && { prerequisites }),
+          },
+        }),
+        // Update subscription plans
+        prisma.subscriptionPlan.updateMany({
+          where: { consultantProfileId: params.id },
+          data: {
+            ...(language && { language }),
+            ...(level && { level }),
+            ...(prerequisites && { prerequisites }),
+          },
+        }),
+        // Update webinar plans
+        prisma.webinarPlan.updateMany({
+          where: { consultantProfileId: params.id },
+          data: {
+            ...(language && { language }),
+            ...(level && { level }),
+            ...(prerequisites && { prerequisites }),
+          },
+        }),
+        // Update class plans
+        prisma.classPlan.updateMany({
+          where: { consultantProfileId: params.id },
+          data: {
+            ...(language && { language }),
+            ...(level && { level }),
+            ...(prerequisites && { prerequisites }),
+          },
+        }),
+      ]);
+    }
+
+    return NextResponse.json({ data: updatedConsultant });
   } catch (error) {
     console.error("Error updating consultant:", error);
+    if (error instanceof Error) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json(
-      { error: "An error occurred while updating the consultant" },
+      { error: "Internal server error" },
       { status: 500 },
     );
   }
 }
 
 export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  request: NextRequest,
+  { params }: { params: { id: string } },
 ) {
   try {
-    const { id } = await params;
-
     const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== UserRole.ADMIN) {
+    if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Check for associated data
-    const associatedData = await prisma.consultantProfile.findUnique({
-      where: { id: id },
-      select: {
-        _count: {
-          select: {
-            reviews: true,
-            slotsOfAvailabilityWeekly: true,
-            slotsOfAvailabilityCustom: true,
-            consultationPlans: true,
-            subscriptionPlans: true,
-            webinarPlans: true,
-            classPlans: true,
-          },
-        },
-      },
-    });
+    // Delete all related records first
+    await prisma.$transaction([
+      // Delete slots
+      prisma.slotOfAvailabilityWeekly.deleteMany({
+        where: { consultantProfileId: params.id },
+      }),
+      prisma.slotOfAvailabilityCustom.deleteMany({
+        where: { consultantProfileId: params.id },
+      }),
 
-    if (
-      associatedData &&
-      Object.values(associatedData._count).some((count) => count > 0)
-    ) {
-      return NextResponse.json(
-        { error: "Cannot delete consultant profile with associated data" },
-        { status: 400 },
-      );
-    }
+      // Delete plans
+      prisma.consultationPlan.deleteMany({
+        where: { consultantProfileId: params.id },
+      }),
+      prisma.subscriptionPlan.deleteMany({
+        where: { consultantProfileId: params.id },
+      }),
+      prisma.webinarPlan.deleteMany({
+        where: { consultantProfileId: params.id },
+      }),
+      prisma.classPlan.deleteMany({
+        where: { consultantProfileId: params.id },
+      }),
 
-    const consultant = await prisma.consultantProfile.delete({
-      where: { id: id },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-          },
-        },
-        domain: true,
-        subDomains: true,
-        tags: true,
-      },
-    });
+      // Delete reviews
+      prisma.consultantReview.deleteMany({
+        where: { consultantProfileId: params.id },
+      }),
 
-    return NextResponse.json(
-      { data: consultant, message: "Consultant profile deleted successfully" },
-      { status: 200 },
-    );
+      // Delete the consultant profile
+      prisma.consultantProfile.delete({
+        where: { id: params.id },
+      }),
+    ]);
+
+    return NextResponse.json({ message: "Consultant deleted successfully" });
   } catch (error) {
     console.error("Error deleting consultant:", error);
+    if (error instanceof Error) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json(
-      { error: "An error occurred while deleting the consultant" },
+      { error: "Internal server error" },
       { status: 500 },
     );
   }

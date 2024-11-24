@@ -24,6 +24,7 @@ import {
   formatDayDisplay,
   getInitialFormData,
   getInitialWeeklySlots,
+  getInitialCustomSlots,
   getInitialServiceSettings,
   validateSlot,
   validateAllSlots,
@@ -36,19 +37,45 @@ import {
   type SlotType,
   type SlotsType,
   type ServiceSettings,
+  type Domain,
+  type SubDomain,
+  type Tag,
 } from "../settings";
 
 interface SettingsTabProps {
   consultant: TConsultantProfile;
 }
 
+interface MultiSelectProps {
+  value: string[];
+  onValueChange: (value: string[]) => void;
+  children: React.ReactNode;
+}
+
+const MultiSelect = ({ value, onValueChange, children }: MultiSelectProps) => (
+  <div className="relative">
+    <Select
+      value={value.join(",")}
+      onValueChange={(newValue) => {
+        const values = newValue.split(",").filter(Boolean);
+        onValueChange(values);
+      }}
+    >
+      {children}
+    </Select>
+  </div>
+);
+
 export function SettingsTab({ consultant }: SettingsTabProps) {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+  const [isContentLoading, setIsContentLoading] = useState(true);
   const [weeklySlots, setWeeklySlots] = useState<SlotsType>(
     getInitialWeeklySlots(consultant),
   );
-  const [customSlots, setCustomSlots] = useState<SlotsType>({});
+  const [customSlots, setCustomSlots] = useState<SlotsType>(
+    getInitialCustomSlots(consultant),
+  );
   const [currentDate, setCurrentDate] = useState(new Date());
   const [scheduleType, setScheduleType] = useState<ScheduleType>(
     consultant.scheduleType,
@@ -59,6 +86,82 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
   const [serviceSettings, setServiceSettings] = useState<ServiceSettings>(
     getInitialServiceSettings(consultant),
   );
+  const [domains, setDomains] = useState<Domain[]>([]);
+  const [subDomains, setSubDomains] = useState<SubDomain[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+
+  // Fetch domains, subdomains, and tags
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setIsContentLoading(true);
+        const [domainsRes, subDomainsRes, tagsRes] = await Promise.all([
+          fetch("/api/user/content/domains"),
+          fetch("/api/user/content/subdomains"),
+          fetch("/api/user/content/tags"),
+        ]);
+
+        if (domainsRes.ok && subDomainsRes.ok && tagsRes.ok) {
+          const [domainsData, subDomainsData, tagsData] = await Promise.all([
+            domainsRes.json(),
+            subDomainsRes.json(),
+            tagsRes.json(),
+          ]);
+
+          setDomains(domainsData);
+          setSubDomains(subDomainsData);
+          setTags(tagsData);
+        }
+      } catch (error) {
+        console.error("Error fetching data:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load domain data. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsContentLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [toast]);
+
+  // Update subdomains and tags when domain changes
+  useEffect(() => {
+    const fetchDomainContent = async () => {
+      if (!formData.domainId) return;
+
+      try {
+        setIsContentLoading(true);
+        const [subDomainsRes, tagsRes] = await Promise.all([
+          fetch(`/api/user/content/subdomains?domainId=${formData.domainId}`),
+          fetch(`/api/user/content/tags?domainId=${formData.domainId}`),
+        ]);
+
+        if (subDomainsRes.ok && tagsRes.ok) {
+          const [subDomainsData, tagsData] = await Promise.all([
+            subDomainsRes.json(),
+            tagsRes.json(),
+          ]);
+
+          setSubDomains(subDomainsData);
+          setTags(tagsData);
+        }
+      } catch (error) {
+        console.error("Error fetching domain content:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load domain content. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsContentLoading(false);
+      }
+    };
+
+    fetchDomainContent();
+  }, [formData.domainId, toast]);
 
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
@@ -70,24 +173,43 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
     }));
   };
 
+  const handleDomainChange = (value: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      domainId: value,
+      subDomainIds: [], // Reset subdomains when domain changes
+      tagIds: [], // Reset tags when domain changes
+    }));
+  };
+
+  const handleSubDomainChange = (values: string[]) => {
+    setFormData((prev) => ({
+      ...prev,
+      subDomainIds: values,
+    }));
+  };
+
+  const handleTagChange = (values: string[]) => {
+    setFormData((prev) => ({
+      ...prev,
+      tagIds: values,
+    }));
+  };
+
   const handleAddSlot = useCallback(
     (day: string) => {
+      const updateSlots = (prev: SlotsType) => ({
+        ...prev,
+        [day]: [
+          ...(prev[day] || []),
+          { startTime: "", endTime: "", isValid: false },
+        ],
+      });
+
       if (scheduleType === ScheduleType.WEEKLY) {
-        setWeeklySlots((prev) => ({
-          ...prev,
-          [day]: [
-            ...(prev[day] || []),
-            { startTime: "", endTime: "", isValid: false },
-          ],
-        }));
+        setWeeklySlots(updateSlots);
       } else {
-        setCustomSlots((prev) => ({
-          ...prev,
-          [day]: [
-            ...(prev[day] || []),
-            { startTime: "", endTime: "", isValid: false },
-          ],
-        }));
+        setCustomSlots(updateSlots);
       }
     },
     [scheduleType],
@@ -205,10 +327,23 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!consultant?.id || !validateAllSlots(weeklySlots, scheduleType)) {
+    if (!consultant?.id) return;
+
+    const currentSlots =
+      scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots;
+    if (!validateAllSlots(currentSlots)) {
       toast({
         title: "Validation Error",
         description: "Please ensure all time slots are valid before saving.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!formData.domainId) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a domain before saving.",
         variant: "destructive",
       });
       return;
@@ -219,8 +354,8 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
       await updateConsultantSettings(
         consultant.id,
         formData,
-        scheduleType,
-        scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots,
+        weeklySlots,
+        customSlots,
       );
 
       toast({
@@ -239,6 +374,17 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
     }
   };
 
+  if (isContentLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-t-black border-r-black border-b-gray-200 border-l-gray-200 rounded-full animate-spin mb-4"></div>
+          <p className="text-gray-500">Loading settings...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-white p-6 rounded-lg shadow space-y-8">
       {/* Professional Profile */}
@@ -250,6 +396,64 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
 
         <div className="grid grid-cols-2 gap-6">
           <div className="space-y-4">
+            <div>
+              <Label>Domain</Label>
+              <Select
+                value={formData.domainId}
+                onValueChange={handleDomainChange}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a domain" />
+                </SelectTrigger>
+                <SelectContent>
+                  {domains.map((domain) => (
+                    <SelectItem key={domain.id} value={domain.id}>
+                      {domain.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Sub Domains</Label>
+              <MultiSelect
+                value={formData.subDomainIds}
+                onValueChange={handleSubDomainChange}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select sub domains" />
+                </SelectTrigger>
+                <SelectContent>
+                  {subDomains
+                    .filter((sd) => sd.domainId === formData.domainId)
+                    .map((subDomain) => (
+                      <SelectItem key={subDomain.id} value={subDomain.id}>
+                        {subDomain.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </MultiSelect>
+            </div>
+            <div>
+              <Label>Tags</Label>
+              <MultiSelect
+                value={formData.tagIds}
+                onValueChange={handleTagChange}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select tags" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tags
+                    .filter((tag) => tag.domainId === formData.domainId)
+                    .map((tag) => (
+                      <SelectItem key={tag.id} value={tag.id}>
+                        {tag.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </MultiSelect>
+            </div>
             <div>
               <Label>Qualifications</Label>
               <Textarea

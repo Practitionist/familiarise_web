@@ -19,12 +19,32 @@ export interface FormData {
   language: string;
   level: string;
   prerequisites: string;
+  domainId: string;
+  subDomainIds: string[];
+  tagIds: string[];
 }
 
 export interface ServiceSettings {
   language: string;
   level: string;
   prerequisites: string;
+}
+
+export interface Domain {
+  id: string;
+  name: string;
+}
+
+export interface SubDomain {
+  id: string;
+  name: string;
+  domainId: string;
+}
+
+export interface Tag {
+  id: string;
+  name: string;
+  domainId: string;
 }
 
 export const DAYS_OF_WEEK: DayOfWeek[] = [
@@ -60,12 +80,14 @@ export const getInitialFormData = (
   language: "English",
   level: "Beginner",
   prerequisites: "",
+  domainId: consultant?.domain?.id || "",
+  subDomainIds: consultant?.subDomains?.map((sd) => sd.id) || [],
+  tagIds: consultant?.tags?.map((t) => t.id) || [],
 });
 
 export const getInitialServiceSettings = (
   consultant: TConsultantProfile,
 ): ServiceSettings => {
-  // Get service settings from the first available plan
   const firstConsultationPlan = consultant.consultationPlans?.[0];
   const firstSubscriptionPlan = consultant.subscriptionPlans?.[0];
   const firstWebinarPlan = consultant.webinarPlans?.[0];
@@ -111,6 +133,28 @@ export const getInitialWeeklySlots = (
     });
   });
   return formattedWeeklySlots;
+};
+
+export const getInitialCustomSlots = (
+  consultant: TConsultantProfile,
+): SlotsType => {
+  if (!consultant.slotsOfAvailabilityCustom?.length) return {};
+
+  const formattedCustomSlots: SlotsType = {};
+  consultant.slotsOfAvailabilityCustom.forEach((slot) => {
+    const date = new Date(slot.slotStartTimeInUTC);
+    const dateString = getLocalDateString(date);
+
+    if (!formattedCustomSlots[dateString]) {
+      formattedCustomSlots[dateString] = [];
+    }
+    formattedCustomSlots[dateString].push({
+      startTime: formatTimeFromDate(new Date(slot.slotStartTimeInUTC)),
+      endTime: formatTimeFromDate(new Date(slot.slotEndTimeInUTC)),
+      isValid: true,
+    });
+  });
+  return formattedCustomSlots;
 };
 
 export const validateSlot = (
@@ -175,36 +219,39 @@ export const validateSlot = (
   return { ...slot, isValid: true, errorMessage: undefined };
 };
 
-export const formatSlotsForApi = (weeklySlots: SlotsType) => {
-  return Object.entries(weeklySlots).flatMap(([day, slots]) =>
+export const formatSlotsForApi = (slots: SlotsType, isWeekly: boolean) => {
+  return Object.entries(slots).flatMap(([key, slots]) =>
     slots
       .filter((slot) => slot.isValid)
-      .map((slot) => ({
-        dayOfWeekforStartTimeInUTC: day.toUpperCase(),
-        dayOfWeekforEndTimeInUTC: day.toUpperCase(),
-        slotStartTimeInUTC: `2024-01-01T${slot.startTime}:00Z`,
-        slotEndTimeInUTC: `2024-01-01T${slot.endTime}:00Z`,
-      })),
+      .map((slot) => {
+        if (isWeekly) {
+          return {
+            dayOfWeekforStartTimeInUTC: key.toUpperCase(),
+            dayOfWeekforEndTimeInUTC: key.toUpperCase(),
+            slotStartTimeInUTC: `2024-01-01T${slot.startTime}:00Z`,
+            slotEndTimeInUTC: `2024-01-01T${slot.endTime}:00Z`,
+          };
+        } else {
+          return {
+            slotStartTimeInUTC: `${key}T${slot.startTime}:00Z`,
+            slotEndTimeInUTC: `${key}T${slot.endTime}:00Z`,
+          };
+        }
+      }),
   );
 };
 
-export const validateAllSlots = (
-  weeklySlots: SlotsType,
-  scheduleType: ScheduleType,
-): boolean => {
-  if (scheduleType === ScheduleType.WEEKLY) {
-    return Object.values(weeklySlots).every((daySlots) =>
-      daySlots.every((slot) => slot.isValid),
-    );
-  }
-  return true;
+export const validateAllSlots = (slots: SlotsType): boolean => {
+  return Object.values(slots).every((daySlots) =>
+    daySlots.every((slot) => slot.isValid),
+  );
 };
 
 export const updateConsultantSettings = async (
   consultantId: string,
   formData: FormData,
-  scheduleType: ScheduleType,
   weeklySlots: SlotsType,
+  customSlots: SlotsType,
 ) => {
   const response = await fetch(`/api/user/consultants/${consultantId}`, {
     method: "PUT",
@@ -213,8 +260,8 @@ export const updateConsultantSettings = async (
     },
     body: JSON.stringify({
       ...formData,
-      scheduleType,
-      slotsOfAvailabilityWeekly: formatSlotsForApi(weeklySlots),
+      slotsOfAvailabilityWeekly: formatSlotsForApi(weeklySlots, true),
+      slotsOfAvailabilityCustom: formatSlotsForApi(customSlots, false),
     }),
   });
 
