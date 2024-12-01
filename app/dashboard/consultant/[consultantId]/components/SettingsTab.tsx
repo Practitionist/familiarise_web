@@ -447,89 +447,131 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
     >
       {/* Professional Profile */}
       <div>
-        <h2 className="text-xl font-semibold mb-2">Professional Profile</h2>
-        <p className="text-sm text-gray-500 mb-6">
-          Update your professional information and expertise
+        <h2 className="text-2xl font-bold mb-3">Professional Profile</h2>
+        <p className="text-sm text-gray-600 mb-8">
+          Showcase your expertise and professional background
         </p>
 
-        <div className="grid grid-cols-2 gap-6">
-          <div className="space-y-4">
-            <div>
-              <Label>Domain</Label>
-              <Select
-                value={formData.domainId || ""}
-                onValueChange={handleDomainChange}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a domain" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(domains || []).map((domain) => (
-                    <SelectItem key={domain.id} value={domain.id}>
-                      {domain.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Left Column - Core Info */}
+          <div className="space-y-6">
+            <div className="bg-gray-50 p-6 rounded-lg">
+              <Label className="text-lg font-semibold mb-4 block">
+                Domain Expertise
+              </Label>
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-sm text-gray-600">
+                    Primary Domain
+                  </Label>
+                  <Select
+                    value={formData.domainId || ""}
+                    onValueChange={handleDomainChange}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Select your primary domain" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(domains || []).map((domain) => (
+                        <SelectItem key={domain.id} value={domain.id}>
+                          {domain.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label className="text-sm text-gray-600">Sub Domains</Label>
+                  <div className="mt-1">
+                    <MultiSelect
+                      options={subDomainOptions}
+                      selected={formData.subDomainIds || []}
+                      onChange={handleSubDomainChange}
+                      placeholder="Select relevant sub domains"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <Label className="text-sm text-gray-600">
+                    Expertise Tags
+                  </Label>
+                  <div className="mt-1">
+                    <MultiSelect
+                      options={tagOptions}
+                      selected={formData.tagIds || []}
+                      onChange={handleTagChange}
+                      placeholder="Add expertise tags"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
-            <div>
-              <Label>Sub Domains</Label>
-              <MultiSelect
-                options={subDomainOptions}
-                selected={formData.subDomainIds || []}
-                onChange={handleSubDomainChange}
-                placeholder="Select sub domains"
-              />
-            </div>
-            <div>
-              <Label>Tags</Label>
-              <MultiSelect
-                options={tagOptions}
-                selected={formData.tagIds || []}
-                onChange={handleTagChange}
-                placeholder="Select tags"
-              />
-            </div>
-            <div>
-              <Label>Qualifications</Label>
-              <Textarea
-                name="qualifications"
-                value={formData.qualifications}
-                onChange={handleInputChange}
-                placeholder="Your professional qualifications"
-              />
-            </div>
-            <div>
-              <Label>Specialization</Label>
-              <Input
-                name="specialization"
-                value={formData.specialization}
-                onChange={handleInputChange}
-                placeholder="Your area of expertise"
-              />
-            </div>
-            <div>
-              <Label>Experience</Label>
-              <Input
-                name="experience"
-                value={formData.experience}
-                onChange={handleInputChange}
-                placeholder="Years of professional experience"
-              />
+
+            <div className="bg-gray-50 p-6 rounded-lg">
+              <Label className="text-lg font-semibold mb-4 block">
+                Professional Background
+              </Label>
+              <div className="space-y-4">
+                <div>
+                  <Label className="text-sm text-gray-600">
+                    Qualifications
+                  </Label>
+                  <Textarea
+                    name="qualifications"
+                    value={formData.qualifications}
+                    onChange={handleInputChange}
+                    placeholder="List your degrees, certifications, and relevant qualifications"
+                    className="mt-1 resize-none h-24"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-sm text-gray-600">
+                    Specialization
+                  </Label>
+                  <Input
+                    name="specialization"
+                    value={formData.specialization}
+                    onChange={handleInputChange}
+                    placeholder="Your core area of expertise"
+                    className="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-sm text-gray-600">
+                    Years of Experience
+                  </Label>
+                  <Input
+                    name="experience"
+                    value={formData.experience}
+                    onChange={handleInputChange}
+                    placeholder="e.g. 5+ years in machine learning"
+                    className="mt-1"
+                  />
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="space-y-4">
-            <div>
-              <Label>Professional Description</Label>
-              <Textarea
-                name="description"
-                value={formData.description}
-                onChange={handleInputChange}
-                placeholder="Describe your professional background and expertise"
-                className="h-[calc(100%-2rem)]"
-              />
-            </div>
+          {/* Right Column - Description */}
+          <div className="bg-gray-50 p-6 rounded-lg h-full">
+            <Label className="text-lg font-semibold mb-4 block">
+              Professional Summary
+            </Label>
+            <p className="text-sm text-gray-600 mb-3">
+              Write a compelling description of your expertise and what makes
+              you unique
+            </p>
+            <Textarea
+              name="description"
+              value={formData.description}
+              onChange={handleInputChange}
+              placeholder="Share your professional journey, achievements, and what clients can expect when working with you..."
+              className="h-[calc(100%-6rem)] resize-none"
+            />
           </div>
         </div>
       </div>

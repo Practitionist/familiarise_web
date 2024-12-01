@@ -157,7 +157,6 @@ export async function PUT(
     }
 
     const data = validationResult.data;
-    console.log("Request data:", data);
     const {
       description,
       qualifications,
@@ -175,7 +174,7 @@ export async function PUT(
     } = data;
 
     // Update consultant profile
-    const updatedConsultant = await prisma.consultantProfile.update({
+    await prisma.consultantProfile.update({
       where: { id },
       data: {
         description,
@@ -282,6 +281,23 @@ export async function PUT(
         }),
       ]);
     }
+
+    // Fetch and return the updated consultant with all relations
+    const updatedConsultant = await prisma.consultantProfile.findUnique({
+      where: { id },
+      include: {
+        user: true,
+        domain: true,
+        subDomains: true,
+        tags: true,
+        slotsOfAvailabilityWeekly: true,
+        slotsOfAvailabilityCustom: true,
+        consultationPlans: true,
+        subscriptionPlans: true,
+        webinarPlans: true,
+        classPlans: true,
+      },
+    });
 
     return NextResponse.json({ data: updatedConsultant });
   } catch (error) {

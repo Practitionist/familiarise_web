@@ -77,9 +77,25 @@ export const getInitialFormData = (
   specialization: consultant?.specialization || "",
   experience: consultant?.experience || "",
   scheduleType: consultant?.scheduleType || ScheduleType.WEEKLY,
-  language: "English",
-  level: "Beginner",
-  prerequisites: "",
+  // Use consultant's service settings if available
+  language:
+    consultant?.consultationPlans?.[0]?.language ||
+    consultant?.subscriptionPlans?.[0]?.language ||
+    consultant?.webinarPlans?.[0]?.language ||
+    consultant?.classPlans?.[0]?.language ||
+    "English",
+  level:
+    consultant?.consultationPlans?.[0]?.level ||
+    consultant?.subscriptionPlans?.[0]?.level ||
+    consultant?.webinarPlans?.[0]?.level ||
+    consultant?.classPlans?.[0]?.level ||
+    "beginner",
+  prerequisites:
+    consultant?.consultationPlans?.[0]?.prerequisites ||
+    consultant?.subscriptionPlans?.[0]?.prerequisites ||
+    consultant?.webinarPlans?.[0]?.prerequisites ||
+    consultant?.classPlans?.[0]?.prerequisites ||
+    "",
   domainId: consultant?.domain?.id || "",
   subDomainIds: consultant?.subDomains?.map((sd) => sd.id) || [],
   tagIds: consultant?.tags?.map((t) => t.id) || [],
@@ -88,29 +104,41 @@ export const getInitialFormData = (
 export const getInitialServiceSettings = (
   consultant: TConsultantProfile,
 ): ServiceSettings => {
-  const firstConsultationPlan = consultant.consultationPlans?.[0];
-  const firstSubscriptionPlan = consultant.subscriptionPlans?.[0];
-  const firstWebinarPlan = consultant.webinarPlans?.[0];
-  const firstClassPlan = consultant.classPlans?.[0];
+  // Get the most recently updated plan's settings
+  const allPlans = [
+    ...(consultant.consultationPlans || []),
+    ...(consultant.subscriptionPlans || []),
+    ...(consultant.webinarPlans || []),
+    ...(consultant.classPlans || []),
+  ].sort((a, b) => {
+    const dateA = new Date(a.updatedAt);
+    const dateB = new Date(b.updatedAt);
+    return dateB.getTime() - dateA.getTime();
+  });
+
+  const mostRecentPlan = allPlans[0];
 
   return {
     language:
-      firstConsultationPlan?.language ||
-      firstSubscriptionPlan?.language ||
-      firstWebinarPlan?.language ||
-      firstClassPlan?.language ||
+      mostRecentPlan?.language ||
+      consultant?.consultationPlans?.[0]?.language ||
+      consultant?.subscriptionPlans?.[0]?.language ||
+      consultant?.webinarPlans?.[0]?.language ||
+      consultant?.classPlans?.[0]?.language ||
       "English",
     level:
-      firstConsultationPlan?.level ||
-      firstSubscriptionPlan?.level ||
-      firstWebinarPlan?.level ||
-      firstClassPlan?.level ||
-      "Beginner",
+      mostRecentPlan?.level ||
+      consultant?.consultationPlans?.[0]?.level ||
+      consultant?.subscriptionPlans?.[0]?.level ||
+      consultant?.webinarPlans?.[0]?.level ||
+      consultant?.classPlans?.[0]?.level ||
+      "beginner",
     prerequisites:
-      firstConsultationPlan?.prerequisites ||
-      firstSubscriptionPlan?.prerequisites ||
-      firstWebinarPlan?.prerequisites ||
-      firstClassPlan?.prerequisites ||
+      mostRecentPlan?.prerequisites ||
+      consultant?.consultationPlans?.[0]?.prerequisites ||
+      consultant?.subscriptionPlans?.[0]?.prerequisites ||
+      consultant?.webinarPlans?.[0]?.prerequisites ||
+      consultant?.classPlans?.[0]?.prerequisites ||
       "",
   };
 };
