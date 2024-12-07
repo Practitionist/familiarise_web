@@ -19,7 +19,7 @@ import { ScheduleType } from "@prisma/client";
 import { TConsultantProfile } from "@/types/consultant";
 import { useToast } from "@/components/ui/use-toast";
 import { TrashIcon } from "@/assets/icons";
-import { MultiSelect, type Option } from "./MultiSelect";
+import { MultiSelect, type Option } from "../components/MultiSelect";
 import {
   DAYS_OF_WEEK,
   formatDayDisplay,

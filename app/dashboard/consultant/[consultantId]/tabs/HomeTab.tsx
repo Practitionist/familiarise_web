@@ -2,8 +2,8 @@ import React, { Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { AppointmentCard } from "./AppointmentCard";
-import { ClientActivity } from "./ClientActivity";
+import { AppointmentCard } from "../components/AppointmentCard";
+import { ClientActivity } from "../components/ClientActivity";
 import { RequestsTab } from "./RequestsTab";
 import { HomeTabProps } from "../types";
 

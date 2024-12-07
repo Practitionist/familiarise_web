@@ -3,13 +3,13 @@
 import React, { use, useEffect, useState } from "react";
 import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
-import { HomeTab } from "./components/HomeTab";
-import { ChatsTab } from "./components/ChatsTab";
-import { AppointmentsTab } from "./components/AppointmentsTab";
-import { RequestsTab } from "./components/RequestsTab";
-import { DocumentsTab } from "./components/DocumentsTab";
-import { HelpTab } from "./components/HelpTab";
-import { SettingsTab } from "./components/SettingsTab";
+import { HomeTab } from "./tabs/HomeTab";
+import { ChatsTab } from "./tabs/ChatsTab";
+import { AppointmentsTab } from "./tabs/AppointmentsTab";
+import { RequestsTab } from "./tabs/RequestsTab";
+import { DocumentsTab } from "./tabs/DocumentsTab";
+import { HelpTab } from "./tabs/HelpTab";
+import { SettingsTab } from "./tabs/SettingsTab";
 import {
   fetchConsultantData,
   fetchAppointments,

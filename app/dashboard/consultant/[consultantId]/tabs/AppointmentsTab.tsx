@@ -2,7 +2,7 @@ import React from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { AppointmentCard } from "./AppointmentCard";
+import { AppointmentCard } from "../components/AppointmentCard";
 import { AppointmentsTabProps } from "../types";
 
 export function AppointmentsTab({
