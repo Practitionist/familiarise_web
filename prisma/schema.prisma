@@ -379,8 +379,8 @@ model Subscription {
   feedbackFromConsultant String?
   rating                 Float?
 
-  plan   SubscriptionPlan @relation(fields: [planId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  planId String
+  subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  subscriptionPlanId String
 
   appointments Appointment[]
 

@@ -3,6 +3,13 @@ import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth/next";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 
+interface BookSubscriptionRequest {
+  subscriptionPlanId: string;
+  tentativeStartDate: string;
+  tentativeSchedule?: string;
+  requestNotes?: string;
+}
+
 export async function POST(request: Request) {
   try {
     const session = await getServerSession(authOptions);
@@ -15,10 +22,20 @@ export async function POST(request: Request) {
       tentativeStartDate,
       tentativeSchedule,
       requestNotes,
-    } = await request.json();
+    }: BookSubscriptionRequest = await request.json();
 
     const consultee = await prisma.consulteeProfile.findUnique({
       where: { userId: session.user.id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+          },
+        },
+      },
     });
 
     if (!consultee) {
@@ -30,7 +47,20 @@ export async function POST(request: Request) {
 
     const subscriptionPlan = await prisma.subscriptionPlan.findUnique({
       where: { id: subscriptionPlanId },
-      include: { consultantProfile: true },
+      include: {
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!subscriptionPlan) {
@@ -45,7 +75,7 @@ export async function POST(request: Request) {
 
     const subscription = await prisma.subscription.create({
       data: {
-        plan: { connect: { id: subscriptionPlanId } },
+        subscriptionPlan: { connect: { id: subscriptionPlanId } },
         requestedBy: { connect: { id: consultee.id } },
         startDate: new Date(tentativeStartDate),
         endDate: endDate,
@@ -55,8 +85,34 @@ export async function POST(request: Request) {
         requestStatus: "PENDING",
       },
       include: {
-        plan: true,
-        requestedBy: true,
+        subscriptionPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        requestedBy: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
       },
     });
 

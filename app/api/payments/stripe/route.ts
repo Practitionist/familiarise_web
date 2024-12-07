@@ -2,6 +2,31 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import Stripe from "stripe";
 
+interface StripeMock {
+  paymentIntents: {
+    create: () => Promise<{
+      id: string;
+      client_secret: string;
+      status: string;
+    }>;
+    retrieve: () => Promise<{
+      id: string;
+      status: string;
+      receipt_email: string;
+    }>;
+  };
+}
+
+interface CreatePaymentRequest {
+  appointmentId: string;
+  userId: string;
+}
+
+interface UpdatePaymentRequest {
+  paymentIntentId: string;
+  paymentId: string;
+}
+
 const stripe = process.env.STRIPE_SECRET_KEY
   ? new Stripe(process.env.STRIPE_SECRET_KEY, {
       apiVersion: "2024-10-28.acacia",
@@ -19,21 +44,97 @@ const stripe = process.env.STRIPE_SECRET_KEY
           receipt_email: "mock_receipt@example.com",
         }),
       },
-    } as unknown as Stripe);
+    } as StripeMock);
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body: CreatePaymentRequest = await req.json();
     const { appointmentId, userId } = body;
 
     // Fetch the appointment and related data
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
       include: {
-        consultation: { include: { consultationPlan: true } },
-        subscription: { include: { plan: true } },
-        webinar: { include: { webinarPlan: true } },
-        class: { include: { classPlan: true } },
+        consultation: {
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        subscription: {
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        webinar: {
+          include: {
+            webinarPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        class: {
+          include: {
+            classPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -51,8 +152,8 @@ export async function POST(req: NextRequest) {
       amount = appointment.consultation.consultationPlan.price;
       description = `Payment for Consultation: ${appointment.consultation.consultationPlan.title}`;
     } else if (appointment.subscription) {
-      amount = appointment.subscription.plan.price;
-      description = `Payment for Subscription: ${appointment.subscription.plan.title}`;
+      amount = appointment.subscription.subscriptionPlan.price;
+      description = `Payment for Subscription: ${appointment.subscription.subscriptionPlan.title}`;
     } else if (appointment.webinar) {
       amount = appointment.webinar.webinarPlan.price;
       description = `Payment for Webinar: ${appointment.webinar.webinarPlan.title}`;
@@ -82,6 +183,100 @@ export async function POST(req: NextRequest) {
         user: { connect: { id: userId } },
         appointment: { connect: { id: appointmentId } },
       },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+          },
+        },
+        appointment: {
+          include: {
+            consultation: {
+              include: {
+                consultationPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: {
+                          select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            image: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            subscription: {
+              include: {
+                subscriptionPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: {
+                          select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            image: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            webinar: {
+              include: {
+                webinarPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: {
+                          select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            image: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            class: {
+              include: {
+                classPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: {
+                          select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            image: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     });
 
     return NextResponse.json({
@@ -99,7 +294,7 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body: UpdatePaymentRequest = await req.json();
     const { paymentIntentId, paymentId } = body;
 
     // Retrieve the PaymentIntent from Stripe
@@ -111,7 +306,101 @@ export async function PUT(req: NextRequest) {
       data: {
         paymentStatus:
           paymentIntent.status === "succeeded" ? "SUCCEEDED" : "FAILED",
-        receiptUrl: paymentIntent.receipt_email, // TODO: fix this
+        receiptUrl: paymentIntent.receipt_email,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+          },
+        },
+        appointment: {
+          include: {
+            consultation: {
+              include: {
+                consultationPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: {
+                          select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            image: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            subscription: {
+              include: {
+                subscriptionPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: {
+                          select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            image: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            webinar: {
+              include: {
+                webinarPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: {
+                          select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            image: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            class: {
+              include: {
+                classPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: {
+                          select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            image: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
 

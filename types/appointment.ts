@@ -23,7 +23,7 @@ export type TConsultation = Prisma.ConsultationGetPayload<{
 // Custom type for Subscription with specific nesting depth
 export type TSubscription = Prisma.SubscriptionGetPayload<{
   include: {
-    plan: {
+    subscriptionPlan: {
       include: {
         consultantProfile: {
           include: {
@@ -58,7 +58,7 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
     };
     subscription: {
       include: {
-        plan: {
+        subscriptionPlan: {
           include: {
             consultantProfile: {
               include: {

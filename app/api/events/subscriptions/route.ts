@@ -1,6 +1,11 @@
 import prisma from "@/lib/prisma";
-import { RequestStatus } from "@prisma/client";
+import { Prisma, RequestStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+
+interface UpdateSubscriptionRequest {
+  id: string;
+  status: RequestStatus;
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -17,8 +22,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const whereClause: any = {
-      plan: {
+    const whereClause: Prisma.SubscriptionWhereInput = {
+      subscriptionPlan: {
         consultantProfileId,
       },
     };
@@ -31,18 +36,32 @@ export async function GET(request: NextRequest) {
       prisma.subscription.findMany({
         where: whereClause,
         include: {
-          plan: {
+          subscriptionPlan: {
             include: {
               consultantProfile: {
                 include: {
-                  user: true,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      image: true,
+                    },
+                  },
                 },
               },
             },
           },
           requestedBy: {
             include: {
-              user: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
+              },
             },
           },
         },
@@ -75,7 +94,7 @@ export async function GET(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body: UpdateSubscriptionRequest = await request.json();
     const { id, status } = body;
 
     if (!id || !status) {
@@ -85,7 +104,7 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    if (!Object.values(RequestStatus).includes(status as RequestStatus)) {
+    if (!Object.values(RequestStatus).includes(status)) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
 
@@ -93,18 +112,32 @@ export async function PATCH(request: NextRequest) {
       where: { id },
       data: { requestStatus: status },
       include: {
-        plan: {
+        subscriptionPlan: {
           include: {
             consultantProfile: {
               include: {
-                user: true,
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
               },
             },
           },
         },
         requestedBy: {
           include: {
-            user: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
           },
         },
       },

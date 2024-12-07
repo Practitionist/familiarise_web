@@ -5,6 +5,8 @@ import {
   Platform,
   WebinarStatus,
   ClassStatus,
+  SlotOfAvailabilityWeekly,
+  SlotOfAvailabilityCustom,
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./createUsers";
@@ -21,6 +23,16 @@ type SubscriptionCreate = NonNullable<
 >["create"];
 type WebinarCreate = NonNullable<TAppointmentCreateInput["webinar"]>["create"];
 type ClassCreate = NonNullable<TAppointmentCreateInput["class"]>["create"];
+
+type SlotData =
+  | {
+      type: "weekly";
+      slot: SlotOfAvailabilityWeekly;
+    }
+  | {
+      type: "custom";
+      slot: SlotOfAvailabilityCustom;
+    };
 
 // Helper function to generate tentative schedule
 function generateTentativeSchedule(
@@ -60,7 +72,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   const webinarPlans = await prisma.webinarPlan.findMany();
   const classPlans = await prisma.classPlan.findMany();
 
-  const allSlots = [
+  const allSlots: SlotData[] = [
     ...weeklySlots.map((slot) => ({ type: "weekly" as const, slot })),
     ...customSlots.map((slot) => ({ type: "custom" as const, slot })),
   ];
@@ -154,7 +166,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
 
           case AppointmentsType.SUBSCRIPTION:
             const subscriptionData: SubscriptionCreate = {
-              plan: {
+              subscriptionPlan: {
                 connect: {
                   id: faker.helpers.arrayElement(subscriptionPlans).id,
                 },

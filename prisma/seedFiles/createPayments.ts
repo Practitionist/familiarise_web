@@ -1,9 +1,39 @@
 import { faker } from "@faker-js/faker";
-import { PaymentGateway, PaymentStatus, Prisma } from "@prisma/client";
+import {
+  PaymentGateway,
+  PaymentStatus,
+  Prisma,
+  DiscountType,
+} from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./createUsers";
 
 const NUM_PAYMENTS = 100;
+
+type AppointmentWithPlans = Prisma.AppointmentGetPayload<{
+  include: {
+    consultation: {
+      include: {
+        consultationPlan: true;
+      };
+    };
+    subscription: {
+      include: {
+        subscriptionPlan: true;
+      };
+    };
+    webinar: {
+      include: {
+        webinarPlan: true;
+      };
+    };
+    class: {
+      include: {
+        classPlan: true;
+      };
+    };
+  };
+}>;
 
 export async function createPayments(users: UserWithProfiles[]) {
   console.log(`Creating payments...`);
@@ -26,7 +56,7 @@ export async function createPayments(users: UserWithProfiles[]) {
       },
       subscription: {
         include: {
-          plan: true,
+          subscriptionPlan: true,
         },
       },
       webinar: {
@@ -45,19 +75,25 @@ export async function createPayments(users: UserWithProfiles[]) {
 
   for (let i = 0; i < appointments.length; i++) {
     const user = faker.helpers.arrayElement(users);
-    const appointment = appointments[i];
+    const appointment = appointments[i] as AppointmentWithPlans;
 
     try {
       // Determine the amount based on the appointment type and plan
       let amount = 0;
+      let description = "";
+
       if (appointment.consultation?.consultationPlan) {
         amount = appointment.consultation.consultationPlan.price;
-      } else if (appointment.subscription?.plan) {
-        amount = appointment.subscription.plan.price;
+        description = `Payment for Consultation: ${appointment.consultation.consultationPlan.title}`;
+      } else if (appointment.subscription?.subscriptionPlan) {
+        amount = appointment.subscription.subscriptionPlan.price;
+        description = `Payment for Subscription: ${appointment.subscription.subscriptionPlan.title}`;
       } else if (appointment.webinar?.webinarPlan) {
         amount = appointment.webinar.webinarPlan.price;
+        description = `Payment for Webinar: ${appointment.webinar.webinarPlan.title}`;
       } else if (appointment.class?.classPlan) {
         amount = appointment.class.classPlan.price;
+        description = `Payment for Class: ${appointment.class.classPlan.title}`;
       }
 
       // Apply discount if available
@@ -65,15 +101,17 @@ export async function createPayments(users: UserWithProfiles[]) {
       const discountCode = useDiscount
         ? faker.helpers.arrayElement(discountCodes)
         : null;
+
+      let finalAmount = amount;
       if (discountCode) {
         switch (discountCode.discountType) {
-          case "PERCENTAGE":
-            amount = Math.round(
+          case DiscountType.PERCENTAGE:
+            finalAmount = Math.round(
               amount * (1 - discountCode.discountValue / 100),
             );
             break;
-          case "FIXED_AMOUNT":
-            amount = Math.max(0, amount - discountCode.discountValue);
+          case DiscountType.FIXED_AMOUNT:
+            finalAmount = Math.max(0, amount - discountCode.discountValue);
             break;
           // FREE_SHIPPING doesn't affect the amount in this context
         }
@@ -81,9 +119,9 @@ export async function createPayments(users: UserWithProfiles[]) {
 
       const paymentData: Prisma.PaymentCreateInput = {
         user: { connect: { id: user.id } },
-        amount: amount,
+        amount: finalAmount,
         currency: faker.helpers.arrayElement(["USD", "EUR", "GBP"]),
-        description: faker.lorem.sentence(),
+        description,
         receiptUrl: faker.internet.url(),
         paymentMethod: faker.helpers.arrayElement([
           "credit_card",
@@ -92,10 +130,12 @@ export async function createPayments(users: UserWithProfiles[]) {
           "wallet",
         ]),
         paymentIntent: faker.string.uuid(),
-        paymentGateway: faker.helpers.arrayElement(
+        paymentGateway: faker.helpers.arrayElement<PaymentGateway>(
           Object.values(PaymentGateway),
         ),
-        paymentStatus: faker.helpers.arrayElement(Object.values(PaymentStatus)),
+        paymentStatus: faker.helpers.arrayElement<PaymentStatus>(
+          Object.values(PaymentStatus),
+        ),
         appointment: { connect: { id: appointment.id } },
         ...(discountCode
           ? { discountCode: { connect: { id: discountCode.id } } }
@@ -106,11 +146,16 @@ export async function createPayments(users: UserWithProfiles[]) {
         data: paymentData,
       });
     } catch (error) {
-      console.error(`Failed to create payment for user ${user.id}:`, error);
+      console.error(
+        `Failed to create payment for user ${user.id}:`,
+        error instanceof Error ? error.message : String(error),
+      );
     }
 
     if ((i + 1) % 20 === 0 || i === appointments.length - 1) {
       console.log(`Created ${i + 1} payments`);
     }
   }
+
+  console.log(`Finished creating payments`);
 }

@@ -18,7 +18,9 @@ export async function fetchConsultantData(
   try {
     const response = await fetch(`/api/user/consultants/${consultantId}`);
     if (!response.ok) {
-      throw new Error("Failed to fetch consultant data");
+      throw new Error(
+        `Failed to fetch consultant data: ${response.statusText}`,
+      );
     }
     const data: ApiResponse<TConsultantProfile> = await response.json();
     return data.data;
@@ -36,7 +38,7 @@ export async function fetchAppointments(
       `/api/slots/appointments?consultantProfileId=${consultantId}`,
     );
     if (!response.ok) {
-      throw new Error("Failed to fetch appointments");
+      throw new Error(`Failed to fetch appointments: ${response.statusText}`);
     }
     const data: ApiResponse<TAppointment[]> = await response.json();
 
@@ -44,14 +46,14 @@ export async function fetchAppointments(
     return data.data.map((appointment) => ({
       id: appointment.id,
       name:
-        appointment.slotOfAppointment?.[0]?.consulteeProfile?.user?.name ||
+        appointment.slotOfAppointment?.[0]?.consulteeProfile?.user?.name ??
         "Unknown",
       description: getAppointmentDescription(appointment),
       time: formatAppointmentTime(
-        appointment.slotOfAppointment?.[0]?.slotStartTimeInUTC?.toString(),
+        appointment.slotOfAppointment?.[0]?.slotStartTimeInUTC,
       ),
       badge: getAppointmentBadge(
-        appointment.slotOfAppointment?.[0]?.slotStartTimeInUTC?.toString(),
+        appointment.slotOfAppointment?.[0]?.slotStartTimeInUTC,
       ),
     }));
   } catch (error) {
@@ -74,21 +76,30 @@ export async function fetchApprovals(
       ),
     ]);
 
-    if (!consultationsRes.ok || !subscriptionsRes.ok) {
-      throw new Error("Failed to fetch approvals");
+    if (!consultationsRes.ok) {
+      throw new Error(
+        `Failed to fetch consultations: ${consultationsRes.statusText}`,
+      );
+    }
+    if (!subscriptionsRes.ok) {
+      throw new Error(
+        `Failed to fetch subscriptions: ${subscriptionsRes.statusText}`,
+      );
     }
 
-    const consultationsData = await consultationsRes.json();
-    const subscriptionsData = await subscriptionsRes.json();
+    const consultationsData: ApiResponse<TConsultation[]> =
+      await consultationsRes.json();
+    const subscriptionsData: ApiResponse<TSubscription[]> =
+      await subscriptionsRes.json();
 
     // Transform consultations into approvals
     const consultationApprovals = consultationsData.data.map(
       (consultation: TConsultation) => ({
         id: consultation.id,
         type: "Consultation",
-        name: consultation.requestedBy?.user?.name || "Unknown",
-        date: formatDate(new Date(consultation.requestedAt)),
-        time: formatTime(new Date(consultation.requestedAt)),
+        name: consultation.requestedBy?.user?.name ?? "Unknown",
+        date: formatDate(consultation.requestedAt),
+        time: formatTime(consultation.requestedAt),
       }),
     );
 
@@ -97,17 +108,17 @@ export async function fetchApprovals(
       (subscription: TSubscription) => ({
         id: subscription.id,
         type: "Subscription",
-        name: subscription.requestedBy?.user?.name || "Unknown",
-        date: formatDate(new Date(subscription.requestedAt)),
-        time: formatTime(new Date(subscription.requestedAt)),
+        name: subscription.requestedBy?.user?.name ?? "Unknown",
+        date: formatDate(subscription.requestedAt),
+        time: formatTime(subscription.requestedAt),
       }),
     );
 
     // Combine and sort by requestedAt
     return [...consultationApprovals, ...subscriptionApprovals].sort(
       (a, b) =>
-        new Date(b.date + " " + b.time).getTime() -
-        new Date(a.date + " " + a.time).getTime(),
+        new Date(`${b.date} ${b.time}`).getTime() -
+        new Date(`${a.date} ${a.time}`).getTime(),
     );
   } catch (error) {
     console.error("Error fetching approvals:", error);
@@ -134,21 +145,23 @@ function getAppointmentDescription(appointment: TAppointment): string {
   const type = appointment.appointmentType?.toLowerCase();
   switch (type) {
     case "consultation":
-      return `Consultation - ${appointment.consultation?.consultationPlan?.title || "No title"}`;
+      return `Consultation - ${appointment.consultation?.consultationPlan?.title ?? "No title"}`;
     case "subscription":
-      return `Subscription - ${appointment.subscription?.plan?.title || "No title"}`;
+      return `Subscription - ${appointment.subscription?.subscriptionPlan?.title ?? "No title"}`;
     case "webinar":
-      return `Webinar - ${appointment.webinar?.webinarPlan?.title || "No title"}`;
+      return `Webinar - ${appointment.webinar?.webinarPlan?.title ?? "No title"}`;
     case "class":
-      return `Class - ${appointment.class?.classPlan?.title || "No title"}`;
+      return `Class - ${appointment.class?.classPlan?.title ?? "No title"}`;
     default:
       return "Appointment";
   }
 }
 
-function formatAppointmentTime(dateString: string): string {
+function formatAppointmentTime(dateString?: string | Date | null): string {
   if (!dateString) return "Time not set";
   const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "Invalid date";
+
   return date.toLocaleString("en-US", {
     weekday: "short",
     month: "short",
@@ -159,10 +172,12 @@ function formatAppointmentTime(dateString: string): string {
   });
 }
 
-function getAppointmentBadge(dateString: string): string {
+function getAppointmentBadge(dateString?: string | Date | null): string {
   if (!dateString) return "Schedule unavailable";
 
   const appointmentTime = new Date(dateString);
+  if (isNaN(appointmentTime.getTime())) return "Invalid date";
+
   const now = new Date();
   const diffInMinutes = Math.floor(
     (appointmentTime.getTime() - now.getTime()) / (1000 * 60),
@@ -189,8 +204,11 @@ function getAppointmentBadge(dateString: string): string {
   return `In ${Math.floor(diffInDays / 365)} years`;
 }
 
-function formatDate(date: Date): string {
-  if (!date) return "Date not set";
+function formatDate(dateString?: string | Date | null): string {
+  if (!dateString) return "Date not set";
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "Invalid date";
+
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
@@ -198,8 +216,11 @@ function formatDate(date: Date): string {
   });
 }
 
-function formatTime(date: Date): string {
-  if (!date) return "Time not set";
+function formatTime(dateString?: string | Date | null): string {
+  if (!dateString) return "Time not set";
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "Invalid time";
+
   return date.toLocaleString("en-US", {
     hour: "numeric",
     minute: "2-digit",

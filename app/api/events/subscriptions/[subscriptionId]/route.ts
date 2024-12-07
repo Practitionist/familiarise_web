@@ -11,13 +11,50 @@ export async function GET(
     const subscriptionData = await prisma.subscription.findUniqueOrThrow({
       where: { id: subscriptionId },
       include: {
-        plan: true,
-        requestedBy: true,
+        subscriptionPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        requestedBy: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
         appointments: {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
+                consulteeProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
               },
             },
           },
@@ -64,20 +101,57 @@ export async function PUT(
         feedbackFromConsultee: body.feedbackFromConsultee,
         feedbackFromConsultant: body.feedbackFromConsultant,
         rating: body.rating,
-        plan: body.planId
+        subscriptionPlan: body.planId
           ? {
               connect: { id: body.planId },
             }
           : undefined,
       },
       include: {
-        plan: true,
-        requestedBy: true,
+        subscriptionPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        requestedBy: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
         appointments: {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
+                consulteeProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
               },
             },
           },
@@ -105,13 +179,50 @@ export async function DELETE(
     const subscriptionData = await prisma.subscription.delete({
       where: { id: subscriptionId },
       include: {
-        plan: true,
-        requestedBy: true,
+        subscriptionPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        requestedBy: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
         appointments: {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
+                consulteeProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
               },
             },
           },

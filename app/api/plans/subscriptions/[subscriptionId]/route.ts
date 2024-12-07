@@ -2,6 +2,22 @@ import prisma from "@/lib/prisma";
 import { Prisma, PlanEmailSupport } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 
+interface UpdateSubscriptionPlanRequest {
+  title?: string;
+  description?: string;
+  durationInMonths?: number;
+  price?: number;
+  callsPerWeek?: number;
+  videoMeetings?: number;
+  emailSupport?: PlanEmailSupport;
+  language?: string;
+  level?: string;
+  prerequisites?: string;
+  materialProvided?: string;
+  learningOutcomes?: string[];
+  consultantProfileId?: string;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ subscriptionId: string }> },
@@ -11,8 +27,34 @@ export async function GET(
     const subscriptionPlan = await prisma.subscriptionPlan.findUniqueOrThrow({
       where: { id: subscriptionId },
       include: {
-        consultantProfile: true,
-        subscriptions: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+        subscriptions: {
+          include: {
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -41,7 +83,7 @@ export async function PUT(
 ) {
   try {
     const { subscriptionId } = await params;
-    const body = await request.json();
+    const body: UpdateSubscriptionPlanRequest = await request.json();
 
     // Input validation
     if (body.durationInMonths && body.durationInMonths <= 0) {
@@ -91,7 +133,7 @@ export async function PUT(
         price: body.price ? Math.round(body.price) : undefined, // Ensure price is an integer
         callsPerWeek: body.callsPerWeek,
         videoMeetings: body.videoMeetings,
-        emailSupport: body.emailSupport as PlanEmailSupport,
+        emailSupport: body.emailSupport,
         language: body.language,
         level: body.level,
         prerequisites: body.prerequisites,
@@ -104,8 +146,34 @@ export async function PUT(
           : undefined,
       },
       include: {
-        consultantProfile: true,
-        subscriptions: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+        subscriptions: {
+          include: {
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -137,7 +205,7 @@ export async function DELETE(
 
     // Check if there are any associated subscriptions
     const associatedSubscriptions = await prisma.subscription.findMany({
-      where: { planId: subscriptionId },
+      where: { subscriptionPlanId: subscriptionId },
     });
 
     if (associatedSubscriptions.length > 0) {
@@ -153,7 +221,18 @@ export async function DELETE(
     const subscriptionPlan = await prisma.subscriptionPlan.delete({
       where: { id: subscriptionId },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
       },
     });
 

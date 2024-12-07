@@ -1,6 +1,17 @@
 import { faker } from "@faker-js/faker";
+import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./createUsers";
+
+type CompletedAppointment = Prisma.AppointmentGetPayload<{
+  include: {
+    slotOfAppointment: {
+      include: {
+        consulteeProfile: true;
+      };
+    };
+  };
+}>;
 
 export async function createConsultantReviews(
   consultants: UserWithProfiles[],
@@ -30,7 +41,7 @@ export async function createConsultantReviews(
             },
             {
               subscription: {
-                plan: {
+                subscriptionPlan: {
                   consultantProfile: { id: consultant.consultantProfile.id },
                 },
                 requestStatus: "APPROVED",
@@ -68,15 +79,21 @@ export async function createConsultantReviews(
         min: 1,
         max: Math.min(5, completedAppointments.length),
       });
-      const appointmentsToReview = faker.helpers.arrayElements(
-        completedAppointments,
-        numReviews,
-      );
+      const appointmentsToReview =
+        faker.helpers.arrayElements<CompletedAppointment>(
+          completedAppointments,
+          numReviews,
+        );
 
       for (const appointment of appointmentsToReview) {
         const consulteeProfile =
           appointment.slotOfAppointment[0]?.consulteeProfile;
-        if (!consulteeProfile) continue;
+        if (!consulteeProfile) {
+          console.warn(
+            `Skipping review - no consultee profile found for appointment ${appointment.id}`,
+          );
+          continue;
+        }
 
         const rating = faker.number.int({ min: 1, max: 5 });
 
@@ -97,21 +114,30 @@ export async function createConsultantReviews(
           select: { rating: true },
         });
 
-        const averageRating =
-          allReviews.reduce((acc, review) => acc + review.rating, 0) /
-          allReviews.length;
+        if (allReviews.length > 0) {
+          const totalRating = allReviews.reduce<number>(
+            (acc, review) => acc + review.rating,
+            0,
+          );
+          const averageRating = Number(
+            (totalRating / allReviews.length).toFixed(2),
+          );
 
-        await prisma.consultantProfile.update({
-          where: { id: consultant.consultantProfile.id },
-          data: { rating: averageRating },
-        });
+          await prisma.consultantProfile.update({
+            where: { id: consultant.consultantProfile.id },
+            data: { rating: averageRating },
+          });
+        }
 
         totalReviews++;
+        if (totalReviews % 10 === 0) {
+          console.log(`Created ${totalReviews} reviews so far...`);
+        }
       }
     } catch (error) {
       console.error(
         `Failed to create reviews for consultant ${consultant.id}:`,
-        error,
+        error instanceof Error ? error.message : String(error),
       );
     }
   }

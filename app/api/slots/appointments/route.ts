@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { AppointmentsType } from "@prisma/client";
+import { AppointmentsType, Prisma } from "@prisma/client";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
               a.subscription?.requestedBy?.user?.name,
             consultant:
               a.consultation?.consultationPlan?.consultantProfile?.user?.name ||
-              a.subscription?.plan?.consultantProfile?.user?.name ||
+              a.subscription?.subscriptionPlan?.consultantProfile?.user?.name ||
               a.webinar?.webinarPlan?.consultantProfile?.user?.name ||
               a.class?.classPlan?.consultantProfile?.user?.name,
           },
@@ -93,11 +93,11 @@ async function getAppointments(
   // Get current time in UTC
   const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
 
-  const whereClause: any = {
+  const whereClause: Prisma.AppointmentWhereInput = {
     slotOfAppointment: {
       some: {
         slotStartTimeInUTC: {
-          gte: thirtyMinutesAgo, // Include appointments from 30 minutes ago
+          gte: thirtyMinutesAgo,
         },
       },
     },
@@ -114,7 +114,7 @@ async function getAppointments(
       },
       {
         subscription: {
-          plan: {
+          subscriptionPlan: {
             consultantProfileId,
           },
         },
@@ -142,9 +142,8 @@ async function getAppointments(
 
   if (consulteeProfileId) {
     whereClause.slotOfAppointment = {
-      ...whereClause.slotOfAppointment,
       some: {
-        ...whereClause.slotOfAppointment.some,
+        ...whereClause.slotOfAppointment?.some,
         consulteeProfileId,
       },
     };
@@ -204,7 +203,7 @@ async function getAppointments(
         },
         subscription: {
           include: {
-            plan: {
+            subscriptionPlan: {
               include: {
                 consultantProfile: {
                   include: {
@@ -277,11 +276,6 @@ async function getAppointments(
       },
       orderBy: [
         {
-          slotOfAppointment: {
-            _count: "desc",
-          },
-        },
-        {
           createdAt: "desc",
         },
       ],
@@ -317,7 +311,7 @@ async function getAppointments(
           a.subscription?.requestedBy?.user?.name,
         consultant:
           a.consultation?.consultationPlan?.consultantProfile?.user?.name ||
-          a.subscription?.plan?.consultantProfile?.user?.name ||
+          a.subscription?.subscriptionPlan?.consultantProfile?.user?.name ||
           a.webinar?.webinarPlan?.consultantProfile?.user?.name ||
           a.class?.classPlan?.consultantProfile?.user?.name,
       })),
@@ -401,7 +395,7 @@ export async function POST(request: NextRequest) {
         },
         subscription: {
           include: {
-            plan: {
+            subscriptionPlan: {
               include: {
                 consultantProfile: {
                   include: {
