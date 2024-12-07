@@ -50,6 +50,19 @@ export default function ConsultantDashboard({
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Prevent body scroll when sidebar is open on mobile
+  useEffect(() => {
+    if (isSidebarOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "unset";
+    }
+    return () => {
+      document.body.style.overflow = "unset";
+    };
+  }, [isSidebarOpen]);
 
   useEffect(() => {
     async function fetchData() {
@@ -87,11 +100,18 @@ export default function ConsultantDashboard({
     fetchData();
   }, [consultantId]);
 
+  // Handle sidebar toggle for mobile
+  const toggleSidebar = () => {
+    setIsSidebarOpen(!isSidebarOpen);
+  };
+
   if (error) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-100">
-        <div className="bg-white p-8 rounded-lg shadow-md">
-          <h2 className="text-2xl font-bold text-red-600 mb-4">Error</h2>
+        <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
+          <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
+            Error
+          </h2>
           <p className="text-gray-700">{error}</p>
         </div>
       </div>
@@ -101,8 +121,8 @@ export default function ConsultantDashboard({
   if (isLoading || !consultant) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-100">
-        <div className="bg-white p-8 rounded-lg shadow-md">
-          <h2 className="text-2xl font-bold mb-4">Loading...</h2>
+        <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
+          <h2 className="text-xl sm:text-2xl font-bold mb-4">Loading...</h2>
           <p className="text-gray-700">Please wait while we fetch your data.</p>
         </div>
       </div>
@@ -226,19 +246,47 @@ export default function ConsultantDashboard({
   };
 
   return (
-    <div className="bg-gray-100 min-h-screen">
-      <div className="w-full pt-32 pb-12 px-4">
+    <div className="bg-gray-100 min-h-screen relative">
+      <div className="w-full pt-16 sm:pt-24 lg:pt-32 pb-6 sm:pb-8 lg:pb-12 px-2 sm:px-4 lg:px-6">
         <Header
           name={consultant.user.name ?? ""}
           role={consultant.user.role ?? ""}
+          onMenuClick={toggleSidebar}
         />
-        <main className="grid grid-cols-12 gap-6 mt-6">
-          <Sidebar
-            activeSection={activeSection}
-            setActiveSection={setActiveSection}
-            consultant={consultant}
+        <main className="relative flex flex-col lg:flex-row gap-4 lg:gap-6 mt-4 lg:mt-6">
+          {/* Mobile sidebar overlay */}
+          <div
+            className={`
+              fixed inset-0 bg-black/50 z-40 lg:hidden
+              transition-opacity duration-200
+              ${isSidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none"}
+            `}
+            onClick={toggleSidebar}
+            aria-hidden="true"
           />
-          <section className="col-span-10">{renderContent()}</section>
+
+          {/* Sidebar container */}
+          <div
+            className={`
+              fixed lg:relative inset-y-0 left-0 z-50
+              w-[280px] lg:w-auto lg:flex-shrink-0 lg:flex-grow-0 lg:basis-2/12
+              transform ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}
+              lg:translate-x-0 transition-transform duration-200 ease-out
+              overflow-hidden
+            `}
+          >
+            <Sidebar
+              activeSection={activeSection}
+              setActiveSection={(section) => {
+                setActiveSection(section);
+                setIsSidebarOpen(false);
+              }}
+              consultant={consultant}
+            />
+          </div>
+
+          {/* Main content */}
+          <div className="lg:flex-grow lg:basis-10/12">{renderContent()}</div>
         </main>
       </div>
     </div>

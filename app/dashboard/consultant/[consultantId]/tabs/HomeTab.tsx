@@ -19,12 +19,14 @@ export function HomeTab({
   }
 
   return (
-    <div className="grid grid-cols-3 gap-6">
-      <div className="col-span-2 space-y-6">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
+      <div className="lg:col-span-2 space-y-4 lg:space-y-6">
         <Suspense fallback={<div>Loading appointments...</div>}>
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h2 className="text-xl font-semibold mb-4">Today's Appointments</h2>
-            <div className="grid grid-cols-2 gap-4">
+          <div className="bg-white p-4 lg:p-6 rounded-lg shadow">
+            <h2 className="text-lg lg:text-xl font-semibold mb-3 lg:mb-4">
+              Today's Appointments
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 lg:gap-4">
               {todayAppointments.map((appointment) => (
                 <AppointmentCard
                   key={appointment.id}
@@ -33,7 +35,7 @@ export function HomeTab({
                 />
               ))}
               {todayAppointments.length === 0 && (
-                <p className="text-gray-500 col-span-2">
+                <p className="text-gray-500 col-span-1 sm:col-span-2">
                   No appointments for today
                 </p>
               )}
@@ -41,17 +43,17 @@ export function HomeTab({
           </div>
         </Suspense>
         <Suspense fallback={<div>Loading upcoming appointments...</div>}>
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h2 className="text-xl font-semibold mb-4">
+          <div className="bg-white p-4 lg:p-6 rounded-lg shadow">
+            <h2 className="text-lg lg:text-xl font-semibold mb-3 lg:mb-4">
               Upcoming Appointments
             </h2>
-            <ul className="space-y-4">
+            <ul className="space-y-3 lg:space-y-4">
               {upcomingAppointments.slice(0, 2).map((appointment) => (
                 <li
                   key={appointment.id}
-                  className="flex items-center space-x-4"
+                  className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-2 hover:bg-gray-50 rounded-lg transition-colors"
                 >
-                  <Avatar>
+                  <Avatar className="w-10 h-10 lg:w-12 lg:h-12">
                     <AvatarImage
                       alt={appointment.name}
                       src="/placeholder.svg"
@@ -63,8 +65,8 @@ export function HomeTab({
                         .join("")}
                     </AvatarFallback>
                   </Avatar>
-                  <div className="flex-grow">
-                    <h3 className="text-lg font-semibold">
+                  <div className="flex-grow space-y-1">
+                    <h3 className="text-base lg:text-lg font-semibold">
                       {appointment.name}
                     </h3>
                     <p className="text-sm text-gray-500">
@@ -78,7 +80,9 @@ export function HomeTab({
                       {appointment.badge}
                     </Badge>
                   </div>
-                  <Button className="bg-blue-500 text-white">Chat</Button>
+                  <Button className="bg-blue-500 text-white w-full sm:w-auto">
+                    Chat
+                  </Button>
                 </li>
               ))}
               {upcomingAppointments.length === 0 && (
@@ -88,19 +92,21 @@ export function HomeTab({
           </div>
         </Suspense>
       </div>
-      <div className="space-y-6">
+      <div className="space-y-4 lg:space-y-6">
         <Suspense fallback={<div>Loading client activity...</div>}>
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h2 className="text-xl font-semibold mb-4">Clients Activity</h2>
+          <div className="bg-white p-4 lg:p-6 rounded-lg shadow">
+            <h2 className="text-lg lg:text-xl font-semibold mb-3 lg:mb-4">
+              Clients Activity
+            </h2>
             <ClientActivity activities={activities} />
-            <Button className="mt-4 w-full bg-blue-500 text-white">
+            <Button className="mt-3 lg:mt-4 w-full bg-blue-500 text-white">
               Login Report
             </Button>
           </div>
         </Suspense>
         <Suspense fallback={<div>Loading approvals...</div>}>
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h2 className="text-xl font-semibold mb-4">
+          <div className="bg-white p-4 lg:p-6 rounded-lg shadow">
+            <h2 className="text-lg lg:text-xl font-semibold mb-3 lg:mb-4">
               Approvals for Consultations and Subscriptions
             </h2>
             <div className="max-h-[300px] overflow-auto">

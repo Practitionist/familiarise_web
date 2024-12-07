@@ -36,48 +36,50 @@ export function AppointmentCard({
     ? "bg-black text-white hover:bg-gray-800"
     : "bg-gray-400 text-white cursor-not-allowed";
 
-  // Log props for debugging
-  console.log("AppointmentCard props:", {
-    name,
-    description,
-    time,
-    badge,
-    isJoinable,
-    badgeStyle: getBadgeStyle(badge),
-  });
-
   return (
-    <Card className="bg-purple-100">
-      <CardHeader>
-        <div className="flex items-center space-x-4">
-          <Avatar>
+    <Card className="bg-purple-100 hover:bg-purple-50 transition-colors">
+      <CardHeader className="p-3 sm:p-4">
+        <div className="flex items-center gap-2 sm:gap-4">
+          <Avatar className="w-8 h-8 sm:w-10 sm:h-10">
             <AvatarImage alt={name} src="/placeholder.svg" />
-            <AvatarFallback>{initials || "?"}</AvatarFallback>
+            <AvatarFallback className="text-sm sm:text-base">
+              {initials || "?"}
+            </AvatarFallback>
           </Avatar>
-          <div>
-            <CardTitle className="text-base font-medium">{name}</CardTitle>
-            <CardDescription className="text-sm text-gray-600">
+          <div className="min-w-0 flex-1">
+            <CardTitle className="text-sm sm:text-base font-medium truncate">
+              {name}
+            </CardTitle>
+            <CardDescription className="text-xs sm:text-sm text-gray-600 line-clamp-2">
               {description}
             </CardDescription>
           </div>
         </div>
       </CardHeader>
-      <CardContent>
-        <p className="text-sm font-medium text-gray-700">{time}</p>
+      <CardContent className="px-3 sm:px-4 py-2">
+        <p className="text-xs sm:text-sm font-medium text-gray-700">{time}</p>
       </CardContent>
-      <CardFooter className="flex justify-between items-center">
-        {badge === "Schedule unavailable" ? (
-          <Badge variant="secondary" className={BADGE_STYLES.default}>
-            Schedule unavailable
-          </Badge>
-        ) : (
-          <Badge variant="secondary" className={getBadgeStyle(badge)}>
-            {badge}
-          </Badge>
-        )}
+      <CardFooter className="p-3 sm:p-4 flex flex-col sm:flex-row gap-2 sm:gap-4 sm:items-center sm:justify-between">
+        <div className="w-full sm:w-auto">
+          {badge === "Schedule unavailable" ? (
+            <Badge
+              variant="secondary"
+              className={`${BADGE_STYLES.default} text-xs sm:text-sm w-full sm:w-auto justify-center sm:justify-start`}
+            >
+              Schedule unavailable
+            </Badge>
+          ) : (
+            <Badge
+              variant="secondary"
+              className={`${getBadgeStyle(badge)} text-xs sm:text-sm w-full sm:w-auto justify-center sm:justify-start`}
+            >
+              {badge}
+            </Badge>
+          )}
+        </div>
         <Button
           variant="default"
-          className={joinButtonStyle}
+          className={`${joinButtonStyle} text-xs sm:text-sm w-full sm:w-auto`}
           disabled={!isJoinable}
         >
           Join meet
