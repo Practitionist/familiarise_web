@@ -18,17 +18,10 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
-import { ClockIcon } from "lucide-react";
+import { ClockIcon, X } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { useState } from "react";
-
-interface PricingOption {
-  title: string;
-  description: string;
-  price: number;
-  duration?: string;
-  features?: string[];
-}
+import { useState, useMemo } from "react";
+import { PricingOption, defaultConsultationOptions, defaultSubscriptionOptions } from "./defaults";
 
 interface PricingToggleProps {
   consultationOptions?: PricingOption[];
@@ -52,75 +45,22 @@ const formatTime = (isoString: string): string => {
     if (isNaN(date.getTime())) {
       throw new Error("Invalid date");
     }
-    return date.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    });
+    
+    let hours = date.getHours();
+    const minutes = date.getMinutes();
+    const ampm = hours >= 12 ? 'pm' : 'am';
+    
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+    
+    const minutesStr = minutes < 10 ? '0' + minutes : minutes;
+    
+    return `${hours}:${minutesStr} ${ampm}`;
   } catch (error) {
     console.error("Error formatting time:", error);
     return "Invalid Time";
   }
 };
-
-const defaultConsultationOptions: PricingOption[] = [
-  {
-    title: "One Hour",
-    description: "Get a quick consultation",
-    price: 99,
-    duration: "1 hour",
-  },
-  {
-    title: "Two Hour",
-    description: "Dive deeper into your needs",
-    price: 199,
-    duration: "2 hours",
-  },
-  {
-    title: "Three Hour",
-    description: "Comprehensive consultation",
-    price: 299,
-    duration: "3 hours",
-  },
-];
-
-const defaultSubscriptionOptions: PricingOption[] = [
-  {
-    title: "One Month Subscription",
-    description: "Get access to our full suite of services for one month.",
-    price: 49,
-    duration: "1 month",
-    features: [
-      "Unlimited consultations",
-      "Priority support",
-      "Access to all tools and resources",
-    ],
-  },
-  {
-    title: "Three Month Subscription",
-    description: "Get access to our full suite of services for three months.",
-    price: 129,
-    duration: "3 months",
-    features: [
-      "Unlimited consultations",
-      "Priority support",
-      "Access to all tools and resources",
-      "10% discount on all services",
-    ],
-  },
-  {
-    title: "Six Month Subscription",
-    description: "Get access to our full suite of services for six months.",
-    price: 249,
-    duration: "6 months",
-    features: [
-      "Unlimited consultations",
-      "Priority support",
-      "Access to all tools and resources",
-      "15% discount on all services",
-    ],
-  },
-];
 
 export default function PricingToggle({
   consultationOptions = defaultConsultationOptions,
@@ -147,6 +87,24 @@ export default function PricingToggle({
       : defaultSubscriptionOptions[0].title.toLowerCase().replace(" ", "-"),
   );
 
+  // Sort slot timings by start time
+  const sortedSlotTimings = useMemo(() => {
+    if (!selectedDate || !slotTimings.length) return [];
+
+    const selectedDay = selectedDate.getDay();
+    
+    return slotTimings
+      .filter(slot => {
+        const slotDate = new Date(slot.slotStartTimeInUTC);
+        return slotDate.getDay() === selectedDay;
+      })
+      .sort((a, b) => {
+        const dateA = new Date(a.slotStartTimeInUTC);
+        const dateB = new Date(b.slotStartTimeInUTC);
+        return dateA.getTime() - dateB.getTime();
+      });
+  }, [slotTimings, selectedDate]);
+
   if (consultationOptions.length === 0 && subscriptionOptions.length === 0) {
     return (
       <div className="w-full max-w-4xl mx-auto py-16 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
@@ -156,7 +114,7 @@ export default function PricingToggle({
       </div>
     );
   }
-  // Restrict access to consultees only using session
+
   if (session?.user?.role && ["consultant", "staff"].includes(session.user.role.toLowerCase())) {
     return (
       <div className="w-full max-w-4xl mx-auto py-16 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
@@ -184,7 +142,7 @@ export default function PricingToggle({
           {consultationOptions.length > 0 && (
             <TabsTrigger
               value="consultation"
-              className={`${activeTab === "consultation" ? "bg-gray-200 text-black" : "text-gray-300"} px-6 py-3 rounded-full transition-all duration-300 ease-in-out`}
+              className={`${activeTab === "consultation" ? "bg-white text-black" : "text-white"} px-6 py-3 rounded-full transition-all duration-300 ease-in-out hover:bg-white/10`}
             >
               Consultation
             </TabsTrigger>
@@ -192,7 +150,7 @@ export default function PricingToggle({
           {subscriptionOptions.length > 0 && (
             <TabsTrigger
               value="subscription"
-              className={`${activeTab === "subscription" ? "bg-gray-200 text-black" : "text-gray-300"} px-6 py-3 rounded-full transition-all duration-300 ease-in-out`}
+              className={`${activeTab === "subscription" ? "bg-white text-black" : "text-white"} px-6 py-3 rounded-full transition-all duration-300 ease-in-out hover:bg-white/10`}
             >
               Subscription
             </TabsTrigger>
@@ -211,7 +169,7 @@ export default function PricingToggle({
                   <TabsTrigger
                     key={option.title}
                     value={option.title.toLowerCase().replace(" ", "-")}
-                    className={`${activeConsultationOption === option.title.toLowerCase().replace(" ", "-") ? "bg-gray-200 text-black" : "text-gray-300"} px-6 py-3 rounded-full transition-all duration-300 ease-in-out`}
+                    className={`${activeConsultationOption === option.title.toLowerCase().replace(" ", "-") ? "bg-white text-black" : "text-white"} px-6 py-3 rounded-full transition-all duration-300 ease-in-out hover:bg-white/10`}
                   >
                     {option.title}
                   </TabsTrigger>
@@ -240,35 +198,37 @@ export default function PricingToggle({
                   >
                     <Card className="bg-gray-800/50 border-gray-700 shadow-lg hover:shadow-xl transition-all duration-300 backdrop-blur-sm">
                       <CardHeader>
-                        <CardTitle className="text-2xl font-bold text-gray-100">
+                        <CardTitle className="text-2xl font-bold text-white">
                           {option.title}
                         </CardTitle>
-                        <CardDescription className="text-gray-400">
+                        <CardDescription className="text-gray-300">
                           {option.description}
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="space-y-6">
-                        <div className="text-5xl font-bold text-gray-100">
+                        <div className="text-5xl font-bold text-white">
                           ${option.price}
                         </div>
                         <Dialog>
                           <DialogTrigger asChild>
                             <Button
                               variant="outline"
-                              className="w-full bg-gray-200 text-black hover:bg-gray-300 transition-colors duration-300"
+                              className="w-full bg-white text-black hover:bg-gray-100 transition-colors duration-300"
                             >
                               Book Now
                             </Button>
                           </DialogTrigger>
-                          <DialogContent className="sm:max-w-[425px] lg:max-w-[700px] bg-gray-900 text-gray-100 p-0 border border-gray-700 rounded-lg">
+                          <DialogContent className="sm:max-w-[425px] lg:max-w-[700px] bg-[#15171B] text-white p-0 border-0 rounded-lg">
+                            <DialogHeader className="p-6 border-b border-gray-800">
+                              <DialogTitle>Book Consultation</DialogTitle>
+                            </DialogHeader>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
                               {/* Calendar Section */}
                               <div>
-                                <h3 className="text-xl font-semibold mb-4 flex items-center">
-                                  <CalendarIcon className="mr-2" /> Select a
-                                  Date
+                                <h3 className="text-lg font-semibold mb-4 flex items-center">
+                                  <CalendarIcon className="mr-2 h-5 w-5" /> Select a Date
                                 </h3>
-                                <div className="calendar-container bg-gray-800 p-4 rounded-lg border border-gray-700">
+                                <div className="calendar-container bg-gray-800/60 p-4 rounded-lg">
                                   <div className="flex justify-between items-center mb-4">
                                     <Button
                                       variant="ghost"
@@ -281,7 +241,7 @@ export default function PricingToggle({
                                           ),
                                         )
                                       }
-                                      className="text-gray-300 hover:text-gray-100"
+                                      className="text-white hover:text-gray-300"
                                     >
                                       &lt;
                                     </Button>
@@ -302,7 +262,7 @@ export default function PricingToggle({
                                           ),
                                         )
                                       }
-                                      className="text-gray-300 hover:text-gray-100"
+                                      className="text-white hover:text-gray-300"
                                     >
                                       &gt;
                                     </Button>
@@ -318,7 +278,7 @@ export default function PricingToggle({
                                       "Sa",
                                     ].map((day) => (
                                       <div
-                                        key={day}
+                                        key={`header-${day}`}
                                         className="text-sm font-medium text-gray-400"
                                       >
                                         {day}
@@ -331,14 +291,13 @@ export default function PricingToggle({
 
                               {/* Time Slots Section */}
                               <div>
-                                <h3 className="text-xl font-semibold mb-4 flex items-center">
-                                  <ClockIcon className="mr-2" /> Available Time
-                                  Slots
+                                <h3 className="text-lg font-semibold mb-4 flex items-center">
+                                  <ClockIcon className="mr-2 h-5 w-5" /> Available Time Slots
                                 </h3>
-                                <div className="bg-gray-800 p-4 rounded-lg border border-gray-700 h-[400px] overflow-y-auto">
-                                  {slotTimings.length > 0 ? (
+                                <div className="bg-gray-800/60 p-4 rounded-lg h-[400px] overflow-y-auto">
+                                  {sortedSlotTimings.length > 0 ? (
                                     <div className="grid grid-cols-1 gap-2">
-                                      {slotTimings.map((slot) => {
+                                      {sortedSlotTimings.map((slot) => {
                                         const startTime = formatTime(
                                           slot.slotStartTimeInUTC,
                                         );
@@ -348,7 +307,7 @@ export default function PricingToggle({
 
                                         return (
                                           <Button
-                                            key={slot.slotId}
+                                            key={`slot-${slot.slotId}`}
                                             variant={
                                               selectedSlot?.slotId ===
                                               slot.slotId
@@ -361,8 +320,8 @@ export default function PricingToggle({
                                             className={`w-full justify-center text-sm py-3 ${
                                               selectedSlot?.slotId ===
                                               slot.slotId
-                                                ? "bg-gray-200 text-gray-900"
-                                                : "text-gray-200 hover:bg-gray-700"
+                                                ? "bg-gray-700 text-white border-gray-600"
+                                                : "bg-gray-800 text-white border-gray-700 hover:bg-gray-700/50"
                                             }`}
                                           >
                                             {startTime} - {endTime}
@@ -384,25 +343,24 @@ export default function PricingToggle({
                               </div>
                             </div>
 
-                            <DialogFooter className="p-6 bg-gray-800 rounded-b-lg">
-                              <Button
-                                variant="outline"
-                                onClick={() => {
-                                  /* handle cancel */
-                                }}
-                                className="text-gray-300 border-gray-600 hover:bg-gray-700"
-                              >
-                                Cancel
-                              </Button>
+                            <div className="flex justify-end gap-3 p-6 bg-gray-800/60">
+                              <DialogTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  className="text-white border-gray-700 hover:bg-gray-700/50"
+                                >
+                                  Cancel
+                                </Button>
+                              </DialogTrigger>
                               <Button
                                 variant="default"
                                 onClick={handleBooking}
                                 disabled={!selectedDate || !selectedSlot}
-                                className="bg-gray-200 text-black hover:bg-gray-300"
+                                className="bg-white text-black hover:bg-gray-100"
                               >
                                 Book Consultation
                               </Button>
-                            </DialogFooter>
+                            </div>
                           </DialogContent>
                         </Dialog>
                       </CardContent>
@@ -426,7 +384,7 @@ export default function PricingToggle({
                   <TabsTrigger
                     key={option.title}
                     value={option.title.toLowerCase().replace(" ", "-")}
-                    className={`${activeSubscriptionOption === option.title.toLowerCase().replace(" ", "-") ? "bg-gray-200 text-black" : "text-gray-300"} px-6 py-3 rounded-full transition-all duration-300 ease-in-out`}
+                    className={`${activeSubscriptionOption === option.title.toLowerCase().replace(" ", "-") ? "bg-white text-black" : "text-white"} px-6 py-3 rounded-full transition-all duration-300 ease-in-out hover:bg-white/10`}
                   >
                     {option.title.split(" ")[0]} {option.title.split(" ")[1]}
                   </TabsTrigger>
@@ -455,30 +413,30 @@ export default function PricingToggle({
                   >
                     <Card className="bg-gray-800/50 border-gray-700 shadow-lg hover:shadow-xl transition-all duration-300 backdrop-blur-sm">
                       <CardHeader>
-                        <CardTitle className="text-2xl font-bold text-gray-100">
+                        <CardTitle className="text-2xl font-bold text-white">
                           {option.title}
                         </CardTitle>
-                        <CardDescription className="text-gray-400">
+                        <CardDescription className="text-gray-300">
                           {option.description}
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="space-y-6">
-                        <div className="text-5xl font-bold text-gray-100">
+                        <div className="text-5xl font-bold text-white">
                           ${option.price}
-                          <span className="text-xl text-gray-400">
+                          <span className="text-xl text-gray-300">
                             /{option.duration}
                           </span>
                         </div>
                         <div className="space-y-2">
-                          <p className="text-gray-300">Includes:</p>
+                          <p className="text-white">Includes:</p>
                           <ul className="space-y-1 pl-4">
                             {option.features?.map((feature, index) => (
                               <li
-                                key={index}
-                                className="text-gray-400 flex items-center"
+                                key={`feature-${index}`}
+                                className="text-gray-300 flex items-center"
                               >
                                 <svg
-                                  className="w-4 h-4 mr-2 text-gray-200"
+                                  className="w-4 h-4 mr-2 text-white"
                                   fill="none"
                                   stroke="currentColor"
                                   viewBox="0 0 24 24"
@@ -500,32 +458,34 @@ export default function PricingToggle({
                           <DialogTrigger asChild>
                             <Button
                               variant="outline"
-                              className="w-full bg-gray-200 text-black hover:bg-gray-300 transition-colors duration-300"
+                              className="w-full bg-white text-black hover:bg-gray-100 transition-colors duration-300"
                             >
                               Subscribe
                             </Button>
                           </DialogTrigger>
-                          <DialogContent className="sm:max-w-[425px] bg-gray-900 text-gray-100 border border-gray-700">
+                          <DialogContent className="sm:max-w-[425px] bg-[#15171B] text-white border-0">
                             <DialogHeader>
                               <DialogTitle>Confirm Subscription</DialogTitle>
-                              <DialogDescription className="text-gray-400">
+                              <DialogDescription className="text-gray-300">
                                 Are you sure you want to subscribe to this plan?
                               </DialogDescription>
                             </DialogHeader>
-                            <DialogFooter>
-                              <Button
-                                variant="outline"
-                                className="text-gray-300 border-gray-600 hover:bg-gray-700"
-                              >
-                                Cancel
-                              </Button>
+                            <div className="flex justify-end gap-3 mt-6">
+                              <DialogTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  className="text-white border-gray-700 hover:bg-gray-700/50"
+                                >
+                                  Cancel
+                                </Button>
+                              </DialogTrigger>
                               <Button
                                 variant="default"
-                                className="bg-gray-200 text-black hover:bg-gray-300"
+                                className="bg-white text-black hover:bg-gray-100"
                               >
                                 Confirm Subscription
                               </Button>
-                            </DialogFooter>
+                            </div>
                           </DialogContent>
                         </Dialog>
                       </CardContent>
