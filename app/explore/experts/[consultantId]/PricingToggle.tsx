@@ -157,7 +157,7 @@ export default function PricingToggle({
     );
   }
   // Restrict access to consultees only using session
-  if (!session?.user?.role || session.user.role.toLowerCase() !== "consultee") {
+  if (session?.user?.role && ["consultant", "staff"].includes(session.user.role.toLowerCase())) {
     return (
       <div className="w-full max-w-4xl mx-auto py-16 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
         <div className="text-center text-gray-300 space-y-3">
