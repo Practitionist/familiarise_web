@@ -1,9 +1,8 @@
-import React, { useEffect, useState } from "react";
-import { useToast } from "@/components/ui/use-toast";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { ClassPlan, WebinarPlan } from "@prisma/client";
 import { CalendarIcon, ClockIcon } from "lucide-react";
-import { Class, Webinar, ClassPlan, WebinarPlan } from "@prisma/client";
+import React from "react";
 
 interface ClassesAndWebinarsProps {
   classPlans: ClassPlan[];

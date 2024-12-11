@@ -11,17 +11,16 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
+  DialogTrigger
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
-import { ClockIcon, X } from "lucide-react";
+import { ClockIcon } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { useState, useMemo } from "react";
-import { PricingOption, defaultConsultationOptions, defaultSubscriptionOptions } from "./defaults";
+import { useMemo, useState } from "react";
+import { PricingOption, defaultConsultationOptions, defaultSubscriptionOptions } from "../defaults";
 
 interface PricingToggleProps {
   consultationOptions?: PricingOption[];

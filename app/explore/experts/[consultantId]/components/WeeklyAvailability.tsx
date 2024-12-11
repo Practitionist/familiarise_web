@@ -15,14 +15,18 @@ interface WeeklyAvailabilityProps {
   selectedSlotId?: string;
 }
 
+function convertUTCToLocal(date: Date): Date {
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - (offset * 60 * 1000));
+}
+
 const formatTime = (isoString: string): string => {
   try {
-    // Extract hours and minutes from the ISO string
-    const date = new Date(isoString);
-    if (isNaN(date.getTime())) {
-      throw new Error("Invalid date");
-    }
-    return date.toLocaleTimeString([], {
+    // Convert UTC time to local time
+    const utcDate = new Date(isoString);
+    const localDate = convertUTCToLocal(utcDate);
+    
+    return localDate.toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
       hour12: true,

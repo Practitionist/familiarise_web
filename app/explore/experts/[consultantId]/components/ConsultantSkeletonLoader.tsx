@@ -11,7 +11,7 @@ export const ConsultantSkeletonLoader: React.FC = () => {
     let dotIndex = 0;
 
     const interval = setInterval(() => {
-      setLoadingText((prevText) => {
+      setLoadingText(() => {
         const baseText = "Please wait while we are fetching consultant details";
         return `${baseText}${dots[dotIndex]}`;
       });
