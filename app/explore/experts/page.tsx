@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Domain, SubDomain, Tag } from "@prisma/client";
 import { TConsultantProfile } from "@/types/consultant";
 import { FiltersSection } from "./components/FiltersSection";
@@ -24,161 +24,118 @@ interface MetaData {
   };
 }
 
+const CONSULTANTS_PER_PAGE = 10;
+
 function FindExperts() {
   const [metadata, setMetadata] = useState<MetaData | null>(null);
   const [consultants, setConsultants] = useState<TConsultantProfile[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMetadata, setIsLoadingMetadata] = useState(true);
+  const [isLoadingConsultants, setIsLoadingConsultants] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [page, setPage] = useState(1);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [experienceYears, setExperienceYears] = useState(0);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
-  const [selectedSubdomain, setSelectedSubdomain] = useState<string | null>(
-    null,
-  );
+  const [selectedSubdomain, setSelectedSubdomain] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>("nameAsc");
 
-  useEffect(() => {
-    async function fetchData() {
-      setIsLoading(true);
-      try {
-        const [metaResponse, consultantsResponse] = await Promise.all([
-          fetch("/api/user/consultants/meta"),
-          fetch("/api/user/consultants"),
-        ]);
-        const metaData = await metaResponse.json();
-        const consultantsData = await consultantsResponse.json();
+  const observer = useRef<IntersectionObserver | null>(null);
+  const lastConsultantRef = useCallback((node: HTMLDivElement) => {
+    if (isLoadingMore) return;
+    if (observer.current) observer.current.disconnect();
 
-        setMetadata(metaData.data);
-        setConsultants(consultantsData.data);
-      } catch (error) {
-        console.error("Error fetching data:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    fetchData();
-  }, []);
-
-  // Filter functions
-  const filterBySearch = (consultant: TConsultantProfile) => {
-    if (!searchTerm) return true;
-    const searchLower = searchTerm.toLowerCase();
-
-    // Search in user details
-    if (consultant.user.name?.toLowerCase().includes(searchLower)) return true;
-    if (consultant.user.email?.toLowerCase().includes(searchLower)) return true;
-
-    // Search in consultant details
-    if (consultant.description?.toLowerCase().includes(searchLower))
-      return true;
-    if (consultant.specialization?.toLowerCase().includes(searchLower))
-      return true;
-    if (consultant.qualifications?.toLowerCase().includes(searchLower))
-      return true;
-
-    // Search in domain and subdomain names
-    if (consultant.domain.name.toLowerCase().includes(searchLower)) return true;
-    if (
-      consultant.subDomains.some((sd) =>
-        sd.name.toLowerCase().includes(searchLower),
-      )
-    )
-      return true;
-
-    // Search in tags
-    if (
-      consultant.tags.some((tag) =>
-        tag.name.toLowerCase().includes(searchLower),
-      )
-    )
-      return true;
-
-    return false;
-  };
-
-  const filterByDomain = (consultant: TConsultantProfile) => {
-    if (!selectedDomain) return true;
-    return consultant.domainId === selectedDomain;
-  };
-
-  const filterBySubdomain = (consultant: TConsultantProfile) => {
-    if (!selectedSubdomain) return true;
-    return consultant.subDomains.some((sd) => sd.id === selectedSubdomain);
-  };
-
-  const filterByTags = (consultant: TConsultantProfile) => {
-    if (selectedTags.length === 0) return true;
-    return selectedTags.every((tagName) =>
-      consultant.tags.some((t) => t.name === tagName),
-    );
-  };
-
-  const filterByExperience = (consultant: TConsultantProfile) => {
-    if (experienceYears === 0) return true;
-    if (!consultant.experience) return false;
-
-    // Parse experience range (e.g., "5-10 years" -> 5)
-    const match = consultant.experience.match(/\d+/);
-    if (!match) return false;
-
-    const years = parseInt(match[0]);
-    return years >= experienceYears;
-  };
-
-  // Sort function
-  const sortConsultants = (consultants: TConsultantProfile[]) => {
-    return [...consultants].sort((a, b) => {
-      switch (sortBy) {
-        case "nameAsc":
-          return (a.user.name || "").localeCompare(b.user.name || "");
-        case "nameDesc":
-          return (b.user.name || "").localeCompare(a.user.name || "");
-        case "reviewCount":
-          return (b.reviews?.length || 0) - (a.reviews?.length || 0);
-        case "rating":
-          return (b.rating || 0) - (a.rating || 0);
-        default:
-          return 0;
+    observer.current = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting && hasMore) {
+        setPage(prevPage => prevPage + 1);
       }
     });
-  };
 
-  // Apply all filters and sorting using useMemo
-  const filteredAndSortedConsultants = useMemo(() => {
-    const filtered = consultants.filter(
-      (consultant) =>
-        filterBySearch(consultant) &&
-        filterByDomain(consultant) &&
-        filterBySubdomain(consultant) &&
-        filterByTags(consultant) &&
-        filterByExperience(consultant),
-    );
-    return sortConsultants(filtered);
-  }, [
-    consultants,
-    searchTerm,
-    selectedDomain,
-    selectedSubdomain,
-    selectedTags,
-    experienceYears,
-    sortBy,
-  ]);
+    if (node) observer.current.observe(node);
+  }, [isLoadingMore, hasMore]);
+
+  // Reset page when filters change
+  useEffect(() => {
+    setPage(1);
+    setConsultants([]);
+    setHasMore(true);
+  }, [searchTerm, selectedDomain, selectedSubdomain, selectedTags, experienceYears, sortBy]);
+
+  // Fetch metadata only once
+  useEffect(() => {
+    async function fetchMetadata() {
+      try {
+        const metaResponse = await fetch("/api/user/consultants/meta");
+        const metaData = await metaResponse.json();
+        setMetadata(metaData.data);
+      } catch (error) {
+        console.error("Error fetching metadata:", error);
+      } finally {
+        setIsLoadingMetadata(false);
+      }
+    }
+
+    fetchMetadata();
+  }, []);
+
+  // Fetch consultants
+  useEffect(() => {
+    async function fetchConsultants() {
+      if (page === 1) {
+        setIsLoadingConsultants(true);
+      } else {
+        setIsLoadingMore(true);
+      }
+
+      try {
+        const params = new URLSearchParams({
+          page: page.toString(),
+          limit: CONSULTANTS_PER_PAGE.toString(),
+          ...(selectedDomain && { domain: selectedDomain }),
+          ...(selectedSubdomain && { subdomain: selectedSubdomain }),
+          ...(selectedTags.length && { tags: selectedTags.join(",") }),
+          ...(experienceYears > 0 && { experience: experienceYears.toString() }),
+          ...(searchTerm && { search: searchTerm }),
+          sort: sortBy,
+        });
+
+        const consultantsResponse = await fetch(`/api/user/consultants?${params}`);
+        const consultantsData = await consultantsResponse.json();
+
+        if (page === 1) {
+          setConsultants(consultantsData.data);
+        } else {
+          setConsultants(prev => [...prev, ...consultantsData.data]);
+        }
+
+        setHasMore(consultantsData.data.length === CONSULTANTS_PER_PAGE);
+      } catch (error) {
+        console.error("Error fetching consultants:", error);
+      } finally {
+        setIsLoadingConsultants(false);
+        setIsLoadingMore(false);
+      }
+    }
+
+    fetchConsultants();
+  }, [page, selectedDomain, selectedSubdomain, selectedTags, experienceYears, searchTerm, sortBy]);
 
   // Group consultants by domain
   const groupedConsultants = useMemo(() => {
     const grouped = new Map<string, TConsultantProfile[]>();
-
-    filteredAndSortedConsultants.forEach((consultant) => {
+    
+    consultants.forEach((consultant) => {
       if (!grouped.has(consultant.domain.id)) {
         grouped.set(consultant.domain.id, []);
       }
       grouped.get(consultant.domain.id)?.push(consultant);
     });
-
+    
     return grouped;
-  }, [filteredAndSortedConsultants]);
+  }, [consultants]);
 
-  if (isLoading) {
+  if (isLoadingMetadata) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-900 dark:border-gray-100" />
@@ -193,8 +150,8 @@ function FindExperts() {
           Find an Expert
         </h1>
         <p className="text-gray-500 grid-rows-2 dark:text-gray-400">
-          Search for experts in various fields. Enter keywords to find experts
-          in specific areas.
+          Search for experts in various fields. Enter keywords to find experts in
+          specific areas.
         </p>
       </div>
 
@@ -210,35 +167,64 @@ function FindExperts() {
         setExperienceYears={setExperienceYears}
       />
 
-      <SearchBar onSearch={setSearchTerm} onSort={setSortBy} sortBy={sortBy} />
+      <SearchBar 
+        onSearch={setSearchTerm} 
+        onSort={setSortBy}
+        sortBy={sortBy}
+      />
 
-      <div className="space-y-4">
-        {metadata?.domains.map((domain) => {
-          const domainConsultants = groupedConsultants.get(domain.id) || [];
-
-          if (domainConsultants.length === 0) return null;
-
-          return (
-            <div key={domain.id} className="space-y-4">
-              <h2 className="text-2xl font-bold">{domain.name}</h2>
-              {domainConsultants.map((consultant) => (
-                <ConsultantCard
-                  key={consultant.id}
-                  consultant={consultant}
-                  metadata={metadata}
-                />
-              ))}
-            </div>
-          );
-        })}
-
-        {filteredAndSortedConsultants.length === 0 && (
-          <div className="text-center py-8">
-            <p className="text-gray-500 text-lg">
-              No consultants found matching your criteria. Try adjusting your
-              filters.
-            </p>
+      <div className="space-y-4 min-h-[400px] relative">
+        {isLoadingConsultants ? (
+          <div className="absolute inset-0 flex items-center justify-center bg-white/50 dark:bg-black/50">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-900 dark:border-gray-100" />
           </div>
+        ) : (
+          <>
+            {metadata?.domains.map((domain) => {
+              const domainConsultants = groupedConsultants.get(domain.id) || [];
+
+              if (domainConsultants.length === 0) return null;
+
+              return (
+                <div key={domain.id} className="space-y-4">
+                  <h2 className="text-2xl font-bold">{domain.name}</h2>
+                  {domainConsultants.map((consultant, index) => {
+                    if (domainConsultants.length === index + 1) {
+                      return (
+                        <div key={consultant.id} ref={lastConsultantRef}>
+                          <ConsultantCard
+                            consultant={consultant}
+                            metadata={metadata}
+                          />
+                        </div>
+                      );
+                    }
+                    return (
+                      <ConsultantCard
+                        key={consultant.id}
+                        consultant={consultant}
+                        metadata={metadata}
+                      />
+                    );
+                  })}
+                </div>
+              );
+            })}
+            
+            {consultants.length === 0 && (
+              <div className="text-center py-8">
+                <p className="text-gray-500 text-lg">
+                  No consultants found matching your criteria. Try adjusting your filters.
+                </p>
+              </div>
+            )}
+
+            {isLoadingMore && (
+              <div className="flex justify-center py-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-gray-900 dark:border-gray-100" />
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
