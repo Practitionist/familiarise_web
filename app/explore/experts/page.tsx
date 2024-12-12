@@ -7,7 +7,7 @@ import { FiltersSection } from "./components/FiltersSection";
 import { ConsultantCard } from "./components/ConsultantCard";
 import { FeaturedExperts } from "./components/FeaturedExperts";
 import { Testimonials } from "./components/Testimonials";
-import { SearchBar } from "./components/SearchBar";
+import { SearchBar, SortOption } from "./components/SearchBar";
 
 interface MetaData {
   domains: Domain[];
@@ -31,9 +31,11 @@ function FindExperts() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [experienceYears, setExperienceYears] = useState(0);
-  const [pricing, setPricing] = useState(0);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
-  const [selectedSubdomain, setSelectedSubdomain] = useState<string | null>(null);
+  const [selectedSubdomain, setSelectedSubdomain] = useState<string | null>(
+    null,
+  );
+  const [sortBy, setSortBy] = useState<SortOption>("nameAsc");
 
   useEffect(() => {
     async function fetchData() {
@@ -67,20 +69,29 @@ function FindExperts() {
     if (consultant.user.email?.toLowerCase().includes(searchLower)) return true;
 
     // Search in consultant details
-    if (consultant.description?.toLowerCase().includes(searchLower)) return true;
-    if (consultant.specialization?.toLowerCase().includes(searchLower)) return true;
-    if (consultant.qualifications?.toLowerCase().includes(searchLower)) return true;
+    if (consultant.description?.toLowerCase().includes(searchLower))
+      return true;
+    if (consultant.specialization?.toLowerCase().includes(searchLower))
+      return true;
+    if (consultant.qualifications?.toLowerCase().includes(searchLower))
+      return true;
 
     // Search in domain and subdomain names
     if (consultant.domain.name.toLowerCase().includes(searchLower)) return true;
-    if (consultant.subDomains.some(sd => 
-      sd.name.toLowerCase().includes(searchLower)
-    )) return true;
+    if (
+      consultant.subDomains.some((sd) =>
+        sd.name.toLowerCase().includes(searchLower),
+      )
+    )
+      return true;
 
     // Search in tags
-    if (consultant.tags.some(tag => 
-      tag.name.toLowerCase().includes(searchLower)
-    )) return true;
+    if (
+      consultant.tags.some((tag) =>
+        tag.name.toLowerCase().includes(searchLower),
+      )
+    )
+      return true;
 
     return false;
   };
@@ -98,7 +109,7 @@ function FindExperts() {
   const filterByTags = (consultant: TConsultantProfile) => {
     if (selectedTags.length === 0) return true;
     return selectedTags.every((tagName) =>
-      consultant.tags.some((t) => t.name === tagName)
+      consultant.tags.some((t) => t.name === tagName),
     );
   };
 
@@ -114,25 +125,35 @@ function FindExperts() {
     return years >= experienceYears;
   };
 
-  const filterByPrice = (consultant: TConsultantProfile) => {
-    if (pricing === 0) return true;
-    // Check if any subscription plan's price is less than or equal to the filter price
-    return consultant.subscriptionPlans.some(
-      (plan) => plan.price / 100 <= pricing
-    );
+  // Sort function
+  const sortConsultants = (consultants: TConsultantProfile[]) => {
+    return [...consultants].sort((a, b) => {
+      switch (sortBy) {
+        case "nameAsc":
+          return (a.user.name || "").localeCompare(b.user.name || "");
+        case "nameDesc":
+          return (b.user.name || "").localeCompare(a.user.name || "");
+        case "reviewCount":
+          return (b.reviews?.length || 0) - (a.reviews?.length || 0);
+        case "rating":
+          return (b.rating || 0) - (a.rating || 0);
+        default:
+          return 0;
+      }
+    });
   };
 
-  // Apply all filters using useMemo to optimize performance
-  const filteredConsultants = useMemo(() => {
-    return consultants.filter(
+  // Apply all filters and sorting using useMemo
+  const filteredAndSortedConsultants = useMemo(() => {
+    const filtered = consultants.filter(
       (consultant) =>
         filterBySearch(consultant) &&
         filterByDomain(consultant) &&
         filterBySubdomain(consultant) &&
         filterByTags(consultant) &&
-        filterByExperience(consultant) &&
-        filterByPrice(consultant)
+        filterByExperience(consultant),
     );
+    return sortConsultants(filtered);
   }, [
     consultants,
     searchTerm,
@@ -140,22 +161,22 @@ function FindExperts() {
     selectedSubdomain,
     selectedTags,
     experienceYears,
-    pricing,
+    sortBy,
   ]);
 
   // Group consultants by domain
   const groupedConsultants = useMemo(() => {
     const grouped = new Map<string, TConsultantProfile[]>();
-    
-    filteredConsultants.forEach((consultant) => {
+
+    filteredAndSortedConsultants.forEach((consultant) => {
       if (!grouped.has(consultant.domain.id)) {
         grouped.set(consultant.domain.id, []);
       }
       grouped.get(consultant.domain.id)?.push(consultant);
     });
-    
+
     return grouped;
-  }, [filteredConsultants]);
+  }, [filteredAndSortedConsultants]);
 
   if (isLoading) {
     return (
@@ -172,8 +193,8 @@ function FindExperts() {
           Find an Expert
         </h1>
         <p className="text-gray-500 grid-rows-2 dark:text-gray-400">
-          Search for experts in various fields. Enter keywords to find experts in
-          specific areas.
+          Search for experts in various fields. Enter keywords to find experts
+          in specific areas.
         </p>
       </div>
 
@@ -187,11 +208,9 @@ function FindExperts() {
         setSelectedTags={setSelectedTags}
         experienceYears={experienceYears}
         setExperienceYears={setExperienceYears}
-        pricing={pricing}
-        setPricing={setPricing}
       />
 
-      <SearchBar onSearch={setSearchTerm} />
+      <SearchBar onSearch={setSearchTerm} onSort={setSortBy} sortBy={sortBy} />
 
       <div className="space-y-4">
         {metadata?.domains.map((domain) => {
@@ -212,11 +231,12 @@ function FindExperts() {
             </div>
           );
         })}
-        
-        {filteredConsultants.length === 0 && (
+
+        {filteredAndSortedConsultants.length === 0 && (
           <div className="text-center py-8">
             <p className="text-gray-500 text-lg">
-              No consultants found matching your criteria. Try adjusting your filters.
+              No consultants found matching your criteria. Try adjusting your
+              filters.
             </p>
           </div>
         )}

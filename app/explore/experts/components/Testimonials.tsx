@@ -13,7 +13,8 @@ export function Testimonials() {
             </span>
           </h2>
           <p className="mx-auto max-w-[600px] text-gray-500 md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed dark:text-gray-400">
-            Hear from our valued customers about their experience with our experts.
+            Hear from our valued customers about their experience with our
+            experts.
           </p>
         </div>
         <div className="mx-auto w-full max-w-sm space-y-2">

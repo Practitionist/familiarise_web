@@ -63,7 +63,9 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
             )}
           </div>
           <div className="text-sm space-y-2">
-            <p className="text-black dark:text-black">{consultant.description}</p>
+            <p className="text-black dark:text-black">
+              {consultant.description}
+            </p>
             <div className="flex flex-wrap gap-2">
               <span className="text-black dark:text-black">
                 Experience: {consultant.experience}
@@ -108,8 +110,8 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
             <div className="flex items-center space-x-2 text-black dark:text-black">
               <StarIcon className="w-4 h-4" />
               <span>
-                {consultant.rating.toFixed(1)} ({consultant.reviews?.length || 0}{" "}
-                reviews)
+                {consultant.rating.toFixed(1)} (
+                {consultant.reviews?.length || 0} reviews)
               </span>
             </div>
           </div>

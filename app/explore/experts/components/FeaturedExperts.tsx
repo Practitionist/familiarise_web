@@ -16,8 +16,8 @@ export function FeaturedExperts() {
               Top Consultants
             </h2>
             <p className="max-w-[900px] text-gray-500 md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed dark:text-gray-400">
-              Discover the best of the best. Our top consultants are ready to help
-              you with your business needs.
+              Discover the best of the best. Our top consultants are ready to
+              help you with your business needs.
             </p>
           </div>
         </div>

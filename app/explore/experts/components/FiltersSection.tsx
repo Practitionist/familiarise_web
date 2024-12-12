@@ -1,6 +1,5 @@
 "use client";
 
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -9,7 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Domain, SubDomain, Tag } from "@prisma/client";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 interface FiltersSectionProps {
   metadata: {
@@ -25,8 +24,6 @@ interface FiltersSectionProps {
   setSelectedTags: (tags: string[]) => void;
   experienceYears: number;
   setExperienceYears: (years: number) => void;
-  pricing: number;
-  setPricing: (price: number) => void;
 }
 
 function XIcon(props: React.SVGProps<SVGSVGElement>) {
@@ -59,17 +56,9 @@ export function FiltersSection({
   setSelectedTags,
   experienceYears,
   setExperienceYears,
-  pricing,
-  setPricing,
 }: FiltersSectionProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-
-  // Reset subdomain and tags when domain changes
-  useEffect(() => {
-    setSelectedSubdomain(null);
-    setSelectedTags([]);
-  }, [selectedDomain, setSelectedSubdomain, setSelectedTags]);
 
   const handleDomainChange = (value: string) => {
     setSelectedDomain(value);
@@ -96,15 +85,16 @@ export function FiltersSection({
   };
 
   // Filter tags based on selected domain and search term
-  const filteredTags = metadata?.tags.filter((tag) => {
-    if (selectedDomain && tag.domainId !== selectedDomain) return false;
-    if (!searchTerm) return true;
-    if (selectedTags.includes(tag.name)) return false;
-    return tag.name.toLowerCase().includes(searchTerm.toLowerCase());
-  }) || [];
+  const filteredTags =
+    metadata?.tags.filter((tag) => {
+      if (selectedDomain && tag.domainId !== selectedDomain) return false;
+      if (!searchTerm) return true;
+      if (selectedTags.includes(tag.name)) return false;
+      return tag.name.toLowerCase().includes(searchTerm.toLowerCase());
+    }) || [];
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
       <div className="border border-gray-200 rounded-lg p-4 flex flex-col justify-between dark:border-gray-800">
         <div>
           <label
@@ -176,7 +166,9 @@ export function FiltersSection({
             <input
               className="bg-white border border-gray-300 text-black text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
               id="tags"
-              placeholder={selectedDomain ? "Search tags..." : "Select a domain first"}
+              placeholder={
+                selectedDomain ? "Search tags..." : "Select a domain first"
+              }
               type="text"
               value={searchTerm}
               onChange={handleInputChange}
@@ -240,33 +232,6 @@ export function FiltersSection({
           </div>
           <div className="text-center mt-2 font-semibold text-lg">
             {experienceYears === 30 ? "30+" : experienceYears} years
-          </div>
-        </div>
-      </div>
-      <div className="border border-gray-200 rounded-lg p-4 flex flex-col justify-between dark:border-gray-800">
-        <div>
-          <label
-            className="block mb-2 text-sm font-medium text-black"
-            htmlFor="pricing"
-          >
-            Pricing (per hour)
-          </label>
-          <input
-            type="range"
-            min="0"
-            max="1000"
-            step="10"
-            value={pricing}
-            onChange={(e) => setPricing(Number(e.target.value))}
-            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-          />
-          <div className="flex justify-between mt-2 text-sm text-gray-600">
-            <span>$0</span>
-            <span>$500</span>
-            <span>$1000+</span>
-          </div>
-          <div className="text-center mt-2 font-semibold text-lg">
-            ${pricing === 1000 ? "1000+" : pricing}
           </div>
         </div>
       </div>
