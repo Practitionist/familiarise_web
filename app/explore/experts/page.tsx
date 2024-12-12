@@ -38,29 +38,41 @@ function FindExperts() {
   const [searchTerm, setSearchTerm] = useState("");
   const [experienceYears, setExperienceYears] = useState(0);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
-  const [selectedSubdomain, setSelectedSubdomain] = useState<string | null>(null);
+  const [selectedSubdomain, setSelectedSubdomain] = useState<string | null>(
+    null,
+  );
   const [sortBy, setSortBy] = useState<SortOption>("nameAsc");
 
   const observer = useRef<IntersectionObserver | null>(null);
-  const lastConsultantRef = useCallback((node: HTMLDivElement) => {
-    if (isLoadingMore) return;
-    if (observer.current) observer.current.disconnect();
+  const lastConsultantRef = useCallback(
+    (node: HTMLDivElement) => {
+      if (isLoadingMore) return;
+      if (observer.current) observer.current.disconnect();
 
-    observer.current = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMore) {
-        setPage(prevPage => prevPage + 1);
-      }
-    });
+      observer.current = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting && hasMore) {
+          setPage((prevPage) => prevPage + 1);
+        }
+      });
 
-    if (node) observer.current.observe(node);
-  }, [isLoadingMore, hasMore]);
+      if (node) observer.current.observe(node);
+    },
+    [isLoadingMore, hasMore],
+  );
 
   // Reset page when filters change
   useEffect(() => {
     setPage(1);
     setConsultants([]);
     setHasMore(true);
-  }, [searchTerm, selectedDomain, selectedSubdomain, selectedTags, experienceYears, sortBy]);
+  }, [
+    searchTerm,
+    selectedDomain,
+    selectedSubdomain,
+    selectedTags,
+    experienceYears,
+    sortBy,
+  ]);
 
   // Fetch metadata only once
   useEffect(() => {
@@ -95,18 +107,22 @@ function FindExperts() {
           ...(selectedDomain && { domain: selectedDomain }),
           ...(selectedSubdomain && { subdomain: selectedSubdomain }),
           ...(selectedTags.length && { tags: selectedTags.join(",") }),
-          ...(experienceYears > 0 && { experience: experienceYears.toString() }),
+          ...(experienceYears > 0 && {
+            experience: experienceYears.toString(),
+          }),
           ...(searchTerm && { search: searchTerm }),
           sort: sortBy,
         });
 
-        const consultantsResponse = await fetch(`/api/user/consultants?${params}`);
+        const consultantsResponse = await fetch(
+          `/api/user/consultants?${params}`,
+        );
         const consultantsData = await consultantsResponse.json();
 
         if (page === 1) {
           setConsultants(consultantsData.data);
         } else {
-          setConsultants(prev => [...prev, ...consultantsData.data]);
+          setConsultants((prev) => [...prev, ...consultantsData.data]);
         }
 
         setHasMore(consultantsData.data.length === CONSULTANTS_PER_PAGE);
@@ -119,19 +135,27 @@ function FindExperts() {
     }
 
     fetchConsultants();
-  }, [page, selectedDomain, selectedSubdomain, selectedTags, experienceYears, searchTerm, sortBy]);
+  }, [
+    page,
+    selectedDomain,
+    selectedSubdomain,
+    selectedTags,
+    experienceYears,
+    searchTerm,
+    sortBy,
+  ]);
 
   // Group consultants by domain
   const groupedConsultants = useMemo(() => {
     const grouped = new Map<string, TConsultantProfile[]>();
-    
+
     consultants.forEach((consultant) => {
       if (!grouped.has(consultant.domain.id)) {
         grouped.set(consultant.domain.id, []);
       }
       grouped.get(consultant.domain.id)?.push(consultant);
     });
-    
+
     return grouped;
   }, [consultants]);
 
@@ -150,8 +174,8 @@ function FindExperts() {
           Find an Expert
         </h1>
         <p className="text-gray-500 grid-rows-2 dark:text-gray-400">
-          Search for experts in various fields. Enter keywords to find experts in
-          specific areas.
+          Search for experts in various fields. Enter keywords to find experts
+          in specific areas.
         </p>
       </div>
 
@@ -167,11 +191,7 @@ function FindExperts() {
         setExperienceYears={setExperienceYears}
       />
 
-      <SearchBar 
-        onSearch={setSearchTerm} 
-        onSort={setSortBy}
-        sortBy={sortBy}
-      />
+      <SearchBar onSearch={setSearchTerm} onSort={setSortBy} sortBy={sortBy} />
 
       <div className="space-y-4 min-h-[400px] relative">
         {isLoadingConsultants ? (
@@ -210,11 +230,12 @@ function FindExperts() {
                 </div>
               );
             })}
-            
+
             {consultants.length === 0 && (
               <div className="text-center py-8">
                 <p className="text-gray-500 text-lg">
-                  No consultants found matching your criteria. Try adjusting your filters.
+                  No consultants found matching your criteria. Try adjusting
+                  your filters.
                 </p>
               </div>
             )}

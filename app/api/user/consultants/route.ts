@@ -69,8 +69,14 @@ export async function GET(request: NextRequest) {
           { specialization: { contains: search, mode: "insensitive" } },
           { qualifications: { contains: search, mode: "insensitive" } },
           { domain: { name: { contains: search, mode: "insensitive" } } },
-          { subDomains: { some: { name: { contains: search, mode: "insensitive" } } } },
-          { tags: { some: { name: { contains: search, mode: "insensitive" } } } },
+          {
+            subDomains: {
+              some: { name: { contains: search, mode: "insensitive" } },
+            },
+          },
+          {
+            tags: { some: { name: { contains: search, mode: "insensitive" } } },
+          },
         ],
       });
     }
@@ -138,7 +144,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching consultants:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
