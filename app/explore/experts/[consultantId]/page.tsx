@@ -42,10 +42,12 @@ export default function ExpertProfile(
   }>,
 ) {
   const params = use(props.params);
-  const { timezone: browserTimezone, isLoading: isTimezoneLoading } = useTimezone();
+  const { timezone: browserTimezone, isLoading: isTimezoneLoading } =
+    useTimezone();
 
   const [userDetails, setUserDetails] = useState<User | null>(null);
-  const [consultantDetails, setConsultantDetails] = useState<TConsultantProfile | null>(null);
+  const [consultantDetails, setConsultantDetails] =
+    useState<TConsultantProfile | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -63,7 +65,9 @@ export default function ExpertProfile(
       setIsLoading(true);
       setError(null);
       try {
-        const consultantData = await fetchConsultantDetails(params.consultantId);
+        const consultantData = await fetchConsultantDetails(
+          params.consultantId,
+        );
         setConsultantDetails(consultantData);
         if (consultantData.userId) {
           const userData = await fetchUserDetails(consultantData.userId);
@@ -75,10 +79,13 @@ export default function ExpertProfile(
         }
       } catch (err) {
         console.error("Error fetching data:", err);
-        setError(err instanceof Error ? err : new Error("An unknown error occurred"));
+        setError(
+          err instanceof Error ? err : new Error("An unknown error occurred"),
+        );
         toast({
           title: "Error fetching data",
-          description: err instanceof Error ? err.message : "An unknown error occurred",
+          description:
+            err instanceof Error ? err.message : "An unknown error occurred",
           variant: "destructive",
         });
       } finally {
@@ -91,63 +98,90 @@ export default function ExpertProfile(
 
   useEffect(() => {
     if (selectedDate && consultantDetails && timezone && !isTimezoneLoading) {
-      console.log('Using timezone:', timezone);
-      console.log('Selected date:', selectedDate.toISOString());
-      
+      console.log("Using timezone:", timezone);
+      console.log("Selected date:", selectedDate.toISOString());
+
       if (consultantDetails.scheduleType === "WEEKLY") {
         const selectedDay = dayMap[getLocalDay(selectedDate, timezone)];
-        console.log('Selected day:', selectedDay);
-        
+        console.log("Selected day:", selectedDay);
+
         // Get slots for the selected day
         const relevantSlots = consultantDetails.slotsOfAvailabilityWeekly
           .map(normalizeWeeklySlot)
-          .filter(slot => slot.dayOfWeekforStartTimeInUTC === selectedDay);
+          .filter((slot) => slot.dayOfWeekforStartTimeInUTC === selectedDay);
 
-        const weeklySlots = relevantSlots.map(slot => {
+        const weeklySlots = relevantSlots.map((slot) => {
           // Convert UTC times to local date objects
-          const startDateTime = convertUTCToLocalDate(slot.slotStartTimeInUTC, selectedDate, timezone);
-          let endDateTime = convertUTCToLocalDate(slot.slotEndTimeInUTC, selectedDate, timezone);
+          const startDateTime = convertUTCToLocalDate(
+            slot.slotStartTimeInUTC,
+            selectedDate,
+            timezone,
+          );
+          let endDateTime = convertUTCToLocalDate(
+            slot.slotEndTimeInUTC,
+            selectedDate,
+            timezone,
+          );
 
-          console.log('Processing slot:', {
+          console.log("Processing slot:", {
             utcStart: slot.slotStartTimeInUTC,
             utcEnd: slot.slotEndTimeInUTC,
             localStart: startDateTime.toISOString(),
             localEnd: endDateTime.toISOString(),
-            timezone
+            timezone,
           });
 
           // Create the slot timing
-          return createWeeklySlot(slot, selectedDate, startDateTime, endDateTime, timezone);
+          return createWeeklySlot(
+            slot,
+            selectedDate,
+            startDateTime,
+            endDateTime,
+            timezone,
+          );
         });
 
         // Sort slots by start time
-        const sortedSlots = weeklySlots.sort((a, b) => 
-          new Date(a.slotStartTimeInUTC).getTime() - new Date(b.slotStartTimeInUTC).getTime()
+        const sortedSlots = weeklySlots.sort(
+          (a, b) =>
+            new Date(a.slotStartTimeInUTC).getTime() -
+            new Date(b.slotStartTimeInUTC).getTime(),
         );
 
         // Merge overlapping slots
         const mergedSlots = mergeOverlappingSlots(sortedSlots, timezone);
-        console.log('Final slots:', mergedSlots.map(slot => ({
-          start: slot.localStartTime,
-          end: slot.localEndTime
-        })));
+        console.log(
+          "Final slots:",
+          mergedSlots.map((slot) => ({
+            start: slot.localStartTime,
+            end: slot.localEndTime,
+          })),
+        );
         setSlotTimings(mergedSlots);
       } else if (consultantDetails.scheduleType === "CUSTOM") {
         const customSlots = consultantDetails.slotsOfAvailabilityCustom
           .map(normalizeCustomSlot)
-          .filter(slot => {
+          .filter((slot) => {
             const startDateTime = new Date(slot.slotStartTimeInUTC);
             return isSameLocalDay(startDateTime, selectedDate, timezone);
           })
-          .map(slot => {
+          .map((slot) => {
             const startDateTime = new Date(slot.slotStartTimeInUTC);
             const endDateTime = new Date(slot.slotEndTimeInUTC);
-            return createCustomSlot(slot, selectedDate, startDateTime, endDateTime, timezone);
+            return createCustomSlot(
+              slot,
+              selectedDate,
+              startDateTime,
+              endDateTime,
+              timezone,
+            );
           });
 
         // Sort slots by start time
-        const sortedSlots = customSlots.sort((a, b) => 
-          new Date(a.slotStartTimeInUTC).getTime() - new Date(b.slotStartTimeInUTC).getTime()
+        const sortedSlots = customSlots.sort(
+          (a, b) =>
+            new Date(a.slotStartTimeInUTC).getTime() -
+            new Date(b.slotStartTimeInUTC).getTime(),
         );
 
         setSlotTimings(sortedSlots);
@@ -251,14 +285,14 @@ export default function ExpertProfile(
     <div key={params.consultantId} className="flex justify-center py-40">
       <div className="flex flex-col w-1/2">
         <div className="space-y-8">
-          <ProfileHeader 
-            userDetails={userDetails} 
-            consultantDetails={consultantDetails} 
+          <ProfileHeader
+            userDetails={userDetails}
+            consultantDetails={consultantDetails}
           />
-          
-          <AboutSection 
-            userDetails={userDetails} 
-            consultantDetails={consultantDetails} 
+
+          <AboutSection
+            userDetails={userDetails}
+            consultantDetails={consultantDetails}
           />
 
           <ConsultantAvailability

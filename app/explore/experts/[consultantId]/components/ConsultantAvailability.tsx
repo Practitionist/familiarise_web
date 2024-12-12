@@ -2,11 +2,11 @@ import { TConsultantProfile } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
 import { WeeklyAvailability } from "./WeeklyAvailability";
 import { CustomAvailability } from "./CustomAvailability";
-import { 
-  normalizeWeeklySlot, 
-  normalizeCustomSlot, 
+import {
+  normalizeWeeklySlot,
+  normalizeCustomSlot,
   formatTime,
-  dayMap 
+  dayMap,
 } from "../utils";
 
 interface ConsultantAvailabilityProps {
@@ -20,7 +20,7 @@ export function ConsultantAvailability({
   consultantDetails,
   selectedSlot,
   setSelectedSlot,
-  timezone
+  timezone,
 }: ConsultantAvailabilityProps) {
   return (
     <div>
@@ -30,11 +30,13 @@ export function ConsultantAvailability({
           ? "Weekly schedule. Select a time slot to schedule a meeting."
           : "Custom schedule for the next 7 days. Select a time slot to schedule a meeting."}
       </p>
-      
+
       {consultantDetails.scheduleType === "WEEKLY" ? (
         <WeeklyAvailability
-          slots={consultantDetails.slotsOfAvailabilityWeekly.map(normalizeWeeklySlot)}
-          onSlotSelect={slot => {
+          slots={consultantDetails.slotsOfAvailabilityWeekly.map(
+            normalizeWeeklySlot,
+          )}
+          onSlotSelect={(slot) => {
             const normalizedSlot = normalizeWeeklySlot(slot);
             setSelectedSlot({
               slotId: normalizedSlot.id,
@@ -44,27 +46,44 @@ export function ConsultantAvailability({
               slotEndTimeInUTC: normalizedSlot.slotEndTimeInUTC,
               slotOfAvailabilityId: normalizedSlot.id,
               slotOfAppointmentId: "",
-              localStartTime: formatTime(normalizedSlot.slotStartTimeInUTC, timezone),
-              localEndTime: formatTime(normalizedSlot.slotEndTimeInUTC, timezone),
+              localStartTime: formatTime(
+                normalizedSlot.slotStartTimeInUTC,
+                timezone,
+              ),
+              localEndTime: formatTime(
+                normalizedSlot.slotEndTimeInUTC,
+                timezone,
+              ),
             });
           }}
           selectedSlotId={selectedSlot?.slotId}
         />
       ) : (
         <CustomAvailability
-          slots={consultantDetails.slotsOfAvailabilityCustom.map(normalizeCustomSlot)}
-          onSlotSelect={slot => {
+          slots={consultantDetails.slotsOfAvailabilityCustom.map(
+            normalizeCustomSlot,
+          )}
+          onSlotSelect={(slot) => {
             const normalizedSlot = normalizeCustomSlot(slot);
             setSelectedSlot({
               slotId: normalizedSlot.id,
-              dateInISO: new Date(normalizedSlot.slotStartTimeInUTC).toISOString(),
-              dayOfWeek: dayMap[new Date(normalizedSlot.slotStartTimeInUTC).getDay()],
+              dateInISO: new Date(
+                normalizedSlot.slotStartTimeInUTC,
+              ).toISOString(),
+              dayOfWeek:
+                dayMap[new Date(normalizedSlot.slotStartTimeInUTC).getDay()],
               slotStartTimeInUTC: normalizedSlot.slotStartTimeInUTC,
               slotEndTimeInUTC: normalizedSlot.slotEndTimeInUTC,
               slotOfAvailabilityId: normalizedSlot.id,
               slotOfAppointmentId: "",
-              localStartTime: formatTime(normalizedSlot.slotStartTimeInUTC, timezone),
-              localEndTime: formatTime(normalizedSlot.slotEndTimeInUTC, timezone),
+              localStartTime: formatTime(
+                normalizedSlot.slotStartTimeInUTC,
+                timezone,
+              ),
+              localEndTime: formatTime(
+                normalizedSlot.slotEndTimeInUTC,
+                timezone,
+              ),
             });
           }}
           selectedSlotId={selectedSlot?.slotId}

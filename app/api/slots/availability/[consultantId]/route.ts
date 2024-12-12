@@ -279,7 +279,7 @@ function mapCustomSlotToTiming(
 ): TSlotTiming {
   const slotStart = toZonedTime(slot.slotStartTimeInUTC, userTimeZone);
   const slotEnd = toZonedTime(slot.slotEndTimeInUTC, userTimeZone);
-  
+
   // Get the day of week for the slot's start time
   const dayOfWeek = getDayOfWeek(slotStart);
 

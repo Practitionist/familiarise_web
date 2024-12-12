@@ -8,7 +8,10 @@ interface ProfileHeaderProps {
   consultantDetails: TConsultantProfile;
 }
 
-export function ProfileHeader({ userDetails, consultantDetails }: ProfileHeaderProps) {
+export function ProfileHeader({
+  userDetails,
+  consultantDetails,
+}: ProfileHeaderProps) {
   return (
     <div className="space-y-8">
       <div className="flex items-center space-x-6">

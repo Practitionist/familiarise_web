@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect } from "react";
 
 export function useTimezone() {
   const [timezone, setTimezone] = useState<string | null>(null);
@@ -8,10 +8,10 @@ export function useTimezone() {
     try {
       // Get timezone on client side
       const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      console.log('Browser timezone detected:', browserTimezone);
+      console.log("Browser timezone detected:", browserTimezone);
       setTimezone(browserTimezone);
     } catch (error) {
-      console.error('Error detecting timezone:', error);
+      console.error("Error detecting timezone:", error);
     } finally {
       setIsLoading(false);
     }

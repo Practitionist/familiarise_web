@@ -37,11 +37,11 @@ export function ConsultationPricing({
   renderCalendar,
   slotTimings,
   selectedSlot,
-  setSelectedSlot
+  setSelectedSlot,
 }: ConsultationPricingProps) {
   const formatPricingOptions = (
     plans: (ConsultationPlan | SubscriptionPlan)[],
-    type: "consultation" | "subscription"
+    type: "consultation" | "subscription",
   ): PricingOption[] => {
     return plans.map((plan) => {
       if (type === "consultation" && "durationInHours" in plan) {
@@ -75,11 +75,11 @@ export function ConsultationPricing({
 
   const consultationOptions = formatPricingOptions(
     consultantDetails.consultationPlans,
-    "consultation"
+    "consultation",
   );
   const subscriptionOptions = formatPricingOptions(
     consultantDetails.subscriptionPlans,
-    "subscription"
+    "subscription",
   );
 
   return (

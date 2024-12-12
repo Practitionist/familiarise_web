@@ -3,7 +3,7 @@ import { DayOfWeek } from "@prisma/client";
 import {
   convertUTCToLocalDate,
   formatTime as formatTimeUtil,
-  isSlotRelevantForDay
+  isSlotRelevantForDay,
 } from "../utils";
 
 interface WeeklySlot {
@@ -38,28 +38,39 @@ export const WeeklyAvailability: React.FC<WeeklyAvailabilityProps> = ({
 
   // Get browser's timezone
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  console.log('Using timezone:', timezone);
+  console.log("Using timezone:", timezone);
 
   // Group slots by day and sort by time
   const slotsByDay = daysOfWeek.map((day) => {
     // Get slots that are relevant for this day
-    const daySlots = slots.filter(slot => isSlotRelevantForDay(slot, day, timezone));
+    const daySlots = slots.filter((slot) =>
+      isSlotRelevantForDay(slot, day, timezone),
+    );
 
     // Process each slot to handle timezone and overnight slots
-    const processedSlots = daySlots.map(slot => {
+    const processedSlots = daySlots.map((slot) => {
       // Use a reference date for consistent conversion
       const referenceDate = new Date();
       referenceDate.setHours(0, 0, 0, 0);
 
       // Convert UTC times to local
-      const startDateTime = convertUTCToLocalDate(slot.slotStartTimeInUTC, referenceDate, timezone);
-      let endDateTime = convertUTCToLocalDate(slot.slotEndTimeInUTC, referenceDate, timezone);
+      const startDateTime = convertUTCToLocalDate(
+        slot.slotStartTimeInUTC,
+        referenceDate,
+        timezone,
+      );
+      let endDateTime = convertUTCToLocalDate(
+        slot.slotEndTimeInUTC,
+        referenceDate,
+        timezone,
+      );
 
       // If this slot crosses midnight
-      if (slot.dayOfWeekforStartTimeInUTC !== slot.dayOfWeekforEndTimeInUTC ||
-          endDateTime <= startDateTime ||
-          (endDateTime.getHours() === 0 && endDateTime.getMinutes() === 0)) {
-        
+      if (
+        slot.dayOfWeekforStartTimeInUTC !== slot.dayOfWeekforEndTimeInUTC ||
+        endDateTime <= startDateTime ||
+        (endDateTime.getHours() === 0 && endDateTime.getMinutes() === 0)
+      ) {
         endDateTime = new Date(endDateTime);
         endDateTime.setDate(endDateTime.getDate() + 1);
       }
@@ -67,7 +78,7 @@ export const WeeklyAvailability: React.FC<WeeklyAvailabilityProps> = ({
       return {
         ...slot,
         localStartTime: formatTimeUtil(startDateTime, timezone),
-        localEndTime: formatTimeUtil(endDateTime, timezone)
+        localEndTime: formatTimeUtil(endDateTime, timezone),
       };
     });
 

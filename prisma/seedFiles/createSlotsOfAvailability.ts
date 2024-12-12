@@ -3,15 +3,18 @@ import { DayOfWeek, ScheduleType } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./createUsers";
 
-const MAX_SLOT_DURATION = 6;  // 6 hours
+const MAX_SLOT_DURATION = 6; // 6 hours
 const MIN_SLOT_DURATION = 0.5; // 30 minutes
 const MIN_BREAK_DURATION = 0.5; // 30 minutes
 const MAX_SLOTS_PER_DAY = 4;
 
-function generateSlotTime(existingSlots: Array<{ start: number; end: number }>) {
+function generateSlotTime(
+  existingSlots: Array<{ start: number; end: number }>,
+) {
   // Keep trying until we find a valid slot
   let attempts = 0;
-  while (attempts < 50) { // Prevent infinite loops
+  while (attempts < 50) {
+    // Prevent infinite loops
     // Generate random start hour (0-23)
     const startHour = faker.number.int({ min: 0, max: 23 });
     // Randomly decide if we want to start at half hour
@@ -21,15 +24,18 @@ function generateSlotTime(existingSlots: Array<{ start: number; end: number }>) 
     // Generate random duration between 30 mins and 6 hours
     const possibleDurations = Array.from(
       { length: MAX_SLOT_DURATION * 2 }, // *2 because we're counting in half hours
-      (_, i) => (i + 1) * 0.5 // Generate durations from 0.5 to 6 in 0.5 increments
+      (_, i) => (i + 1) * 0.5, // Generate durations from 0.5 to 6 in 0.5 increments
     );
     const duration = faker.helpers.arrayElement(possibleDurations);
     const end = start + duration;
 
     // Verify this slot doesn't overlap with existing slots
-    const hasOverlap = existingSlots.some(slot => {
+    const hasOverlap = existingSlots.some((slot) => {
       // Add MIN_BREAK_DURATION to ensure minimum break between slots
-      return !(end + MIN_BREAK_DURATION <= slot.start || start >= slot.end + MIN_BREAK_DURATION);
+      return !(
+        end + MIN_BREAK_DURATION <= slot.start ||
+        start >= slot.end + MIN_BREAK_DURATION
+      );
     });
 
     if (!hasOverlap) {
@@ -104,8 +110,10 @@ export async function createSlotsOfAvailability(
                 dayOfWeekforStartTimeInUTC: dayOfWeek,
                 slotStartTimeInUTC: startTime,
                 // If slot crosses midnight, end day is next day
-                dayOfWeekforEndTimeInUTC: endTime <= startTime ? 
-                  daysOfWeek[(daysOfWeek.indexOf(dayOfWeek) + 1) % 7] : dayOfWeek,
+                dayOfWeekforEndTimeInUTC:
+                  endTime <= startTime
+                    ? daysOfWeek[(daysOfWeek.indexOf(dayOfWeek) + 1) % 7]
+                    : dayOfWeek,
                 slotEndTimeInUTC: endTime,
               },
             });
