@@ -61,10 +61,14 @@ export function FiltersSection({
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   const handleDomainChange = (value: string) => {
-    setSelectedDomain(value);
+    setSelectedDomain(value === "all" ? null : value);
     setSelectedSubdomain(null);
     setSelectedTags([]);
     setSearchTerm("");
+  };
+
+  const handleSubdomainChange = (value: string) => {
+    setSelectedSubdomain(value === "all" ? null : value);
   };
 
   const handleTagSelect = (tag: string) => {
@@ -85,13 +89,12 @@ export function FiltersSection({
   };
 
   // Filter tags based on selected domain and search term
-  const filteredTags =
-    metadata?.tags.filter((tag) => {
-      if (selectedDomain && tag.domainId !== selectedDomain) return false;
-      if (!searchTerm) return true;
-      if (selectedTags.includes(tag.name)) return false;
-      return tag.name.toLowerCase().includes(searchTerm.toLowerCase());
-    }) || [];
+  const filteredTags = metadata?.tags.filter((tag) => {
+    if (selectedDomain && tag.domainId !== selectedDomain) return false;
+    if (!searchTerm) return true;
+    if (selectedTags.includes(tag.name)) return false;
+    return tag.name.toLowerCase().includes(searchTerm.toLowerCase());
+  }) || [];
 
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -104,13 +107,16 @@ export function FiltersSection({
             Domain
           </label>
           <Select
-            value={selectedDomain || undefined}
+            value={selectedDomain || "all"}
             onValueChange={handleDomainChange}
           >
             <SelectTrigger id="domain" aria-label="Select domain">
-              <SelectValue placeholder="Select domain" />
+              <SelectValue placeholder="All Domains" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="all" className="bg-slate-200 text-black">
+                All Domains
+              </SelectItem>
               {metadata?.domains.map((domain) => (
                 <SelectItem
                   key={domain.id}
@@ -132,13 +138,16 @@ export function FiltersSection({
           </label>
           <Select
             disabled={!selectedDomain}
-            value={selectedSubdomain || undefined}
-            onValueChange={setSelectedSubdomain}
+            value={selectedSubdomain || "all"}
+            onValueChange={handleSubdomainChange}
           >
             <SelectTrigger id="subdomain" aria-label="Select subdomain">
-              <SelectValue placeholder="Select subdomain" />
+              <SelectValue placeholder={selectedDomain ? "All Subdomains" : "Select a domain first"} />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="all" className="bg-slate-200 text-black">
+                All Subdomains
+              </SelectItem>
               {metadata?.subdomains
                 .filter((subdomain) => subdomain.domainId === selectedDomain)
                 .map((subdomain) => (
@@ -166,9 +175,7 @@ export function FiltersSection({
             <input
               className="bg-white border border-gray-300 text-black text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
               id="tags"
-              placeholder={
-                selectedDomain ? "Search tags..." : "Select a domain first"
-              }
+              placeholder={selectedDomain ? "Search tags..." : "Select a domain first"}
               type="text"
               value={searchTerm}
               onChange={handleInputChange}
