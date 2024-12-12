@@ -10,7 +10,7 @@ import {
 } from "@/hooks/useUserData";
 
 import { TConsultantProfile } from "@/types/consultant";
-import { TSlotTiming } from "@/types/slots";
+import { TSlotTiming, TWeeklySlot, TCustomSlot } from "@/types/slots";
 import {
   ConsultantReview,
   ConsultationPlan,
@@ -31,12 +31,14 @@ import {
   dayMap,
   convertUTCToLocalDate,
   formatTime,
-  getDayAfter,
   createWeeklySlot,
   createCustomSlot,
   mergeOverlappingSlots,
   getLocalDay,
   isSameLocalDay,
+  normalizeWeeklySlot,
+  normalizeCustomSlot,
+  isSlotRelevantForDay,
 } from "./utils";
 import { useTimezone } from "./hooks/useTimezone";
 
@@ -58,7 +60,6 @@ export default function ExpertProfile(
   }>,
 ) {
   const params = use(props.params);
-  const searchParams = use(props.searchParams);
   const { timezone: browserTimezone, isLoading: isTimezoneLoading } = useTimezone();
 
   const [userDetails, setUserDetails] = useState<User | null>(null);
@@ -122,27 +123,11 @@ export default function ExpertProfile(
         console.log('Selected day:', selectedDay);
         
         // Get slots for the selected day
-        const relevantSlots = consultantDetails.slotsOfAvailabilityWeekly.filter(slot => {
-          const startDay = slot.dayOfWeekforStartTimeInUTC;
-          const endDay = slot.dayOfWeekforEndTimeInUTC;
-          
-          const isRelevant = startDay === selectedDay || 
-                 (startDay !== endDay && endDay === selectedDay) ||
-                 (startDay !== endDay && getDayAfter(startDay) === selectedDay);
-          
-          if (isRelevant) {
-            console.log('Found relevant slot:', {
-              startDay,
-              endDay,
-              startTime: slot.slotStartTimeInUTC,
-              endTime: slot.slotEndTimeInUTC
-            });
-          }
-          
-          return isRelevant;
-        });
+        const relevantSlots = consultantDetails.slotsOfAvailabilityWeekly
+          .map(normalizeWeeklySlot)
+          .filter(slot => isSlotRelevantForDay(slot, selectedDay, timezone));
 
-        const weeklySlots = relevantSlots.flatMap(slot => {
+        const weeklySlots = relevantSlots.map(slot => {
           // Convert UTC times to local date objects
           const startDateTime = convertUTCToLocalDate(slot.slotStartTimeInUTC, selectedDate, timezone);
           let endDateTime = convertUTCToLocalDate(slot.slotEndTimeInUTC, selectedDate, timezone);
@@ -155,54 +140,9 @@ export default function ExpertProfile(
             timezone
           });
 
-          // If this slot ends on the next day
-          if (slot.dayOfWeekforStartTimeInUTC !== slot.dayOfWeekforEndTimeInUTC) {
-            if (slot.dayOfWeekforStartTimeInUTC === selectedDay) {
-              // For slots starting on selected day and ending next day,
-              // show only the portion until midnight
-              const nextDay = new Date(startDateTime);
-              nextDay.setDate(nextDay.getDate() + 1);
-              nextDay.setHours(0, 0, 0, 0);
-              console.log('Slot crosses to next day, ending at midnight:', nextDay.toISOString());
-              return [createWeeklySlot(slot, selectedDate, startDateTime, nextDay, timezone)];
-            } else if (slot.dayOfWeekforEndTimeInUTC === selectedDay) {
-              // For slots ending on selected day (started previous day),
-              // show only the portion from midnight
-              const thisDay = new Date(endDateTime);
-              thisDay.setHours(0, 0, 0, 0);
-              console.log('Slot started previous day, starting at midnight:', thisDay.toISOString());
-              return [createWeeklySlot(slot, selectedDate, thisDay, endDateTime, timezone)];
-            } else if (getDayAfter(slot.dayOfWeekforStartTimeInUTC) === selectedDay) {
-              // For slots spanning multiple days, show full day
-              const thisDay = new Date(selectedDate);
-              thisDay.setHours(0, 0, 0, 0);
-              const nextDay = new Date(selectedDate);
-              nextDay.setDate(nextDay.getDate() + 1);
-              nextDay.setHours(0, 0, 0, 0);
-              console.log('Slot spans multiple days:', {
-                start: thisDay.toISOString(),
-                end: nextDay.toISOString()
-              });
-              return [createWeeklySlot(slot, selectedDate, thisDay, nextDay, timezone)];
-            }
-          }
-
-          // For slots within the same day
-          if (endDateTime <= startDateTime) {
-            endDateTime = new Date(endDateTime.getTime() + 24 * 60 * 60 * 1000);
-            console.log('Adjusted end time for same day slot:', endDateTime.toISOString());
-          }
-
-          // Only include slots that overlap with the selected date in local time
-          if (isSameLocalDay(startDateTime, selectedDate, timezone) ||
-              isSameLocalDay(endDateTime, selectedDate, timezone)) {
-            console.log('Slot overlaps with selected date');
-            return [createWeeklySlot(slot, selectedDate, startDateTime, endDateTime, timezone)];
-          }
-
-          console.log('Slot does not overlap with selected date');
-          return [];
-        }).filter(Boolean) as TSlotTiming[];
+          // Create the slot timing
+          return createWeeklySlot(slot, selectedDate, startDateTime, endDateTime, timezone);
+        });
 
         // Sort slots by start time
         const sortedSlots = weeklySlots.sort((a, b) => 
@@ -218,6 +158,7 @@ export default function ExpertProfile(
         setSlotTimings(mergedSlots);
       } else if (consultantDetails.scheduleType === "CUSTOM") {
         const customSlots = consultantDetails.slotsOfAvailabilityCustom
+          .map(normalizeCustomSlot)
           .filter(slot => {
             const startDateTime = new Date(slot.slotStartTimeInUTC);
             return isSameLocalDay(startDateTime, selectedDate, timezone);
@@ -225,12 +166,6 @@ export default function ExpertProfile(
           .map(slot => {
             const startDateTime = new Date(slot.slotStartTimeInUTC);
             const endDateTime = new Date(slot.slotEndTimeInUTC);
-            
-            // If end time is before start time, it means it ends next day
-            if (endDateTime <= startDateTime) {
-              endDateTime.setDate(endDateTime.getDate() + 1);
-            }
-            
             return createCustomSlot(slot, selectedDate, startDateTime, endDateTime, timezone);
           });
 
@@ -321,73 +256,49 @@ export default function ExpertProfile(
 
     if (consultantDetails.scheduleType === "WEEKLY") {
       // Convert Date objects to strings for weekly slots
-      const weeklySlots = consultantDetails.slotsOfAvailabilityWeekly.map(
-        (slot) => ({
-          id: slot.id,
-          dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
-          slotStartTimeInUTC:
-            typeof slot.slotStartTimeInUTC === "string"
-              ? slot.slotStartTimeInUTC
-              : slot.slotStartTimeInUTC.toISOString(),
-          dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
-          slotEndTimeInUTC:
-            typeof slot.slotEndTimeInUTC === "string"
-              ? slot.slotEndTimeInUTC
-              : slot.slotEndTimeInUTC.toISOString(),
-        }),
-      );
+      const weeklySlots = consultantDetails.slotsOfAvailabilityWeekly.map(normalizeWeeklySlot);
 
       return (
         <WeeklyAvailability
           slots={weeklySlots}
-          onSlotSelect={(slot) =>
+          onSlotSelect={slot => {
+            const normalizedSlot = normalizeWeeklySlot(slot);
             setSelectedSlot({
-              slotId: slot.id,
+              slotId: normalizedSlot.id,
               dateInISO: new Date().toISOString(),
-              dayOfWeek: slot.dayOfWeekforStartTimeInUTC,
-              slotStartTimeInUTC: slot.slotStartTimeInUTC,
-              slotEndTimeInUTC: slot.slotEndTimeInUTC,
-              slotOfAvailabilityId: slot.id,
+              dayOfWeek: normalizedSlot.dayOfWeekforStartTimeInUTC,
+              slotStartTimeInUTC: normalizedSlot.slotStartTimeInUTC,
+              slotEndTimeInUTC: normalizedSlot.slotEndTimeInUTC,
+              slotOfAvailabilityId: normalizedSlot.id,
               slotOfAppointmentId: "",
-              localStartTime: formatTime(slot.slotStartTimeInUTC, timezone),
-              localEndTime: formatTime(slot.slotEndTimeInUTC, timezone),
-            })
-          }
+              localStartTime: formatTime(normalizedSlot.slotStartTimeInUTC, timezone),
+              localEndTime: formatTime(normalizedSlot.slotEndTimeInUTC, timezone),
+            });
+          }}
           selectedSlotId={selectedSlot?.slotId}
         />
       );
     } else if (consultantDetails.scheduleType === "CUSTOM") {
       // Convert Date objects to strings for custom slots
-      const customSlots = consultantDetails.slotsOfAvailabilityCustom.map(
-        (slot) => ({
-          id: slot.id,
-          slotStartTimeInUTC:
-            typeof slot.slotStartTimeInUTC === "string"
-              ? slot.slotStartTimeInUTC
-              : slot.slotStartTimeInUTC.toISOString(),
-          slotEndTimeInUTC:
-            typeof slot.slotEndTimeInUTC === "string"
-              ? slot.slotEndTimeInUTC
-              : slot.slotEndTimeInUTC.toISOString(),
-        }),
-      );
+      const customSlots = consultantDetails.slotsOfAvailabilityCustom.map(normalizeCustomSlot);
 
       return (
         <CustomAvailability
           slots={customSlots}
-          onSlotSelect={(slot) =>
+          onSlotSelect={slot => {
+            const normalizedSlot = normalizeCustomSlot(slot);
             setSelectedSlot({
-              slotId: slot.id,
-              dateInISO: new Date(slot.slotStartTimeInUTC).toISOString(),
-              dayOfWeek: dayMap[new Date(slot.slotStartTimeInUTC).getDay()],
-              slotStartTimeInUTC: slot.slotStartTimeInUTC,
-              slotEndTimeInUTC: slot.slotEndTimeInUTC,
-              slotOfAvailabilityId: slot.id,
+              slotId: normalizedSlot.id,
+              dateInISO: new Date(normalizedSlot.slotStartTimeInUTC).toISOString(),
+              dayOfWeek: dayMap[new Date(normalizedSlot.slotStartTimeInUTC).getDay()],
+              slotStartTimeInUTC: normalizedSlot.slotStartTimeInUTC,
+              slotEndTimeInUTC: normalizedSlot.slotEndTimeInUTC,
+              slotOfAvailabilityId: normalizedSlot.id,
               slotOfAppointmentId: "",
-              localStartTime: formatTime(slot.slotStartTimeInUTC, timezone),
-              localEndTime: formatTime(slot.slotEndTimeInUTC, timezone),
-            })
-          }
+              localStartTime: formatTime(normalizedSlot.slotStartTimeInUTC, timezone),
+              localEndTime: formatTime(normalizedSlot.slotEndTimeInUTC, timezone),
+            });
+          }}
           selectedSlotId={selectedSlot?.slotId}
         />
       );
@@ -514,7 +425,7 @@ export default function ExpertProfile(
                 {userDetails.name} has experience across multiple industries,
                 with a particular focus on{" "}
                 {consultantDetails?.subDomains
-                  ?.map((domain) => domain.name)
+                  ?.map((domain: { name: string }) => domain.name)
                   .join(", ")}
                 .
               </p>
@@ -526,7 +437,7 @@ export default function ExpertProfile(
               </h3>
               <p className="text-gray-600">
                 {userDetails.name} focuses on{" "}
-                {consultantDetails.tags?.map((tag) => tag.name).join(", ")}.
+                {consultantDetails.tags?.map((tag: { name: string }) => tag.name).join(", ")}.
               </p>
             </div>
           </div>

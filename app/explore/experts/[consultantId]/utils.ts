@@ -11,6 +11,44 @@ export const dayMap: Record<number, DayOfWeek> = {
   6: DayOfWeek.SATURDAY
 };
 
+export const dayToNumber: Record<DayOfWeek, number> = {
+  [DayOfWeek.SUNDAY]: 0,
+  [DayOfWeek.MONDAY]: 1,
+  [DayOfWeek.TUESDAY]: 2,
+  [DayOfWeek.WEDNESDAY]: 3,
+  [DayOfWeek.THURSDAY]: 4,
+  [DayOfWeek.FRIDAY]: 5,
+  [DayOfWeek.SATURDAY]: 6
+};
+
+// Ensure UTC time is always a string
+export function normalizeUTCTime(time: string | Date): string {
+  return typeof time === 'string' ? time : time.toISOString();
+}
+
+// Normalize weekly slot to ensure all times are strings
+export function normalizeWeeklySlot(slot: TWeeklySlot): TWeeklySlot & { 
+  slotStartTimeInUTC: string; 
+  slotEndTimeInUTC: string; 
+} {
+  return {
+    ...slot,
+    slotStartTimeInUTC: normalizeUTCTime(slot.slotStartTimeInUTC),
+    slotEndTimeInUTC: normalizeUTCTime(slot.slotEndTimeInUTC)
+  };
+}
+
+// Normalize custom slot to ensure all times are strings
+export function normalizeCustomSlot(slot: TCustomSlot): TCustomSlot & {
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
+} {
+  return {
+    ...slot,
+    slotStartTimeInUTC: normalizeUTCTime(slot.slotStartTimeInUTC),
+    slotEndTimeInUTC: normalizeUTCTime(slot.slotEndTimeInUTC)
+  };
+}
 
 export function getLocalDay(date: Date, timezone?: string | null): number {
   if (!timezone) return date.getDay();
@@ -30,9 +68,9 @@ export function getLocalDay(date: Date, timezone?: string | null): number {
   }
 }
 
-export function convertUTCToLocalDate(utcTime: string | Date, selectedDate: Date, timezone?: string | null): Date {
+export function convertUTCToLocalDate(utcTime: string, selectedDate: Date, timezone?: string | null): Date {
   // Parse the UTC time from 1970-01-01 format
-  const utcDate = typeof utcTime === 'string' ? new Date(utcTime) : utcTime;
+  const utcDate = new Date(utcTime);
   const utcHours = utcDate.getUTCHours();
   const utcMinutes = utcDate.getUTCMinutes();
 
@@ -69,6 +107,17 @@ export function convertUTCToLocalDate(utcTime: string | Date, selectedDate: Date
 
     const localDate = new Date(year, month - 1, day, hours, minutes, seconds);
     
+    // Adjust date if the local time is on the previous day
+    const localDay = getLocalDay(localDate, timezone);
+    const selectedDay = getLocalDay(selectedDate, timezone);
+    if (localDay !== selectedDay) {
+      if ((selectedDay === 0 && localDay === 6) || localDay === selectedDay - 1) {
+        localDate.setDate(localDate.getDate() + 1);
+      } else if ((selectedDay === 6 && localDay === 0) || localDay === selectedDay + 1) {
+        localDate.setDate(localDate.getDate() - 1);
+      }
+    }
+
     console.log('UTC to Local conversion:', {
       utcTime: utcDateTime.toISOString(),
       timezone,
@@ -157,6 +206,37 @@ export function isSameLocalDay(date1: Date, date2: Date, timezone?: string | nul
   }
 }
 
+export function isSlotRelevantForDay(
+  slot: TWeeklySlot,
+  selectedDay: DayOfWeek,
+  timezone?: string | null
+): boolean {
+  const startDay = slot.dayOfWeekforStartTimeInUTC;
+  const endDay = slot.dayOfWeekforEndTimeInUTC;
+  
+  // Direct match
+  if (startDay === selectedDay || endDay === selectedDay) {
+    return true;
+  }
+
+  // Handle overnight slots
+  if (startDay !== endDay) {
+    const selectedDayNum = dayToNumber[selectedDay];
+    const startDayNum = dayToNumber[startDay];
+    const endDayNum = dayToNumber[endDay];
+
+    // Handle week wrap-around (e.g., Saturday to Sunday)
+    if (startDayNum > endDayNum) {
+      return selectedDayNum >= startDayNum || selectedDayNum <= endDayNum;
+    }
+
+    // Normal case
+    return selectedDayNum >= startDayNum && selectedDayNum <= endDayNum;
+  }
+
+  return false;
+}
+
 export function createWeeklySlot(
   slot: TWeeklySlot,
   selectedDate: Date,
@@ -165,42 +245,38 @@ export function createWeeklySlot(
   timezone?: string | null
 ): TSlotTiming {
   let adjustedEndDateTime = new Date(endDateTime);
+  const normalizedSlot = normalizeWeeklySlot(slot);
 
   // Handle slots that cross midnight
-  if (slot.dayOfWeekforStartTimeInUTC !== slot.dayOfWeekforEndTimeInUTC) {
-    // If end time is 00:00, it means it ends at midnight of the next day
-    if (adjustedEndDateTime.getHours() === 0 && adjustedEndDateTime.getMinutes() === 0) {
-      adjustedEndDateTime = new Date(endDateTime);
-      adjustedEndDateTime.setDate(adjustedEndDateTime.getDate() + 1);
-    }
-    // If end time is before start time, it means it ends next day
-    else if (adjustedEndDateTime <= startDateTime) {
-      adjustedEndDateTime = new Date(endDateTime);
-      adjustedEndDateTime.setDate(adjustedEndDateTime.getDate() + 1);
-    }
+  if (slot.dayOfWeekforStartTimeInUTC !== slot.dayOfWeekforEndTimeInUTC ||
+      endDateTime <= startDateTime ||
+      (endDateTime.getHours() === 0 && endDateTime.getMinutes() === 0)) {
+    
+    adjustedEndDateTime = new Date(endDateTime);
+    adjustedEndDateTime.setDate(adjustedEndDateTime.getDate() + 1);
   }
 
   const slotTiming = {
-    slotId: slot.id,
+    slotId: normalizedSlot.id,
     dateInISO: selectedDate.toISOString(),
-    dayOfWeek: slot.dayOfWeekforStartTimeInUTC,
+    dayOfWeek: normalizedSlot.dayOfWeekforStartTimeInUTC,
     slotStartTimeInUTC: startDateTime.toISOString(),
     slotEndTimeInUTC: adjustedEndDateTime.toISOString(),
-    slotOfAvailabilityId: slot.id,
+    slotOfAvailabilityId: normalizedSlot.id,
     slotOfAppointmentId: "",
     localStartTime: formatTime(startDateTime, timezone),
     localEndTime: formatTime(adjustedEndDateTime, timezone),
   };
 
   console.log('Created weekly slot:', {
-    startDay: slot.dayOfWeekforStartTimeInUTC,
-    endDay: slot.dayOfWeekforEndTimeInUTC,
-    utcStart: slot.slotStartTimeInUTC,
-    utcEnd: slot.slotEndTimeInUTC,
+    startDay: normalizedSlot.dayOfWeekforStartTimeInUTC,
+    endDay: normalizedSlot.dayOfWeekforEndTimeInUTC,
+    utcStart: normalizedSlot.slotStartTimeInUTC,
+    utcEnd: normalizedSlot.slotEndTimeInUTC,
     localStart: slotTiming.localStartTime,
     localEnd: slotTiming.localEndTime,
     timezone,
-    crossesMidnight: slot.dayOfWeekforStartTimeInUTC !== slot.dayOfWeekforEndTimeInUTC
+    crossesMidnight: normalizedSlot.dayOfWeekforStartTimeInUTC !== normalizedSlot.dayOfWeekforEndTimeInUTC
   });
 
   return slotTiming;
@@ -214,28 +290,30 @@ export function createCustomSlot(
   timezone?: string | null
 ): TSlotTiming {
   let adjustedEndDateTime = new Date(endDateTime);
+  const normalizedSlot = normalizeCustomSlot(slot);
 
-  // If end time is before start time, it means the slot crosses midnight
-  if (adjustedEndDateTime <= startDateTime) {
+  // Handle slots that cross midnight
+  if (endDateTime <= startDateTime ||
+      (endDateTime.getHours() === 0 && endDateTime.getMinutes() === 0)) {
     adjustedEndDateTime = new Date(endDateTime);
     adjustedEndDateTime.setDate(adjustedEndDateTime.getDate() + 1);
   }
 
   const slotTiming = {
-    slotId: slot.id,
+    slotId: normalizedSlot.id,
     dateInISO: selectedDate.toISOString(),
     dayOfWeek: dayMap[getLocalDay(startDateTime, timezone)],
     slotStartTimeInUTC: startDateTime.toISOString(),
     slotEndTimeInUTC: adjustedEndDateTime.toISOString(),
-    slotOfAvailabilityId: slot.id,
+    slotOfAvailabilityId: normalizedSlot.id,
     slotOfAppointmentId: "",
     localStartTime: formatTime(startDateTime, timezone),
     localEndTime: formatTime(adjustedEndDateTime, timezone),
   };
 
   console.log('Created custom slot:', {
-    utcStart: slot.slotStartTimeInUTC,
-    utcEnd: slot.slotEndTimeInUTC,
+    utcStart: normalizedSlot.slotStartTimeInUTC,
+    utcEnd: normalizedSlot.slotEndTimeInUTC,
     localStart: slotTiming.localStartTime,
     localEnd: slotTiming.localEndTime,
     timezone,
@@ -275,4 +353,3 @@ export function mergeOverlappingSlots(slots: TSlotTiming[], timezone?: string | 
     return [...acc, curr];
   }, []);
 }
-
