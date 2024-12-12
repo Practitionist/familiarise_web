@@ -9,7 +9,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Domain, SubDomain, Tag } from "@prisma/client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface FiltersSectionProps {
   metadata: {
@@ -65,6 +65,19 @@ export function FiltersSection({
   const [searchTerm, setSearchTerm] = useState("");
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
+  // Reset subdomain and tags when domain changes
+  useEffect(() => {
+    setSelectedSubdomain(null);
+    setSelectedTags([]);
+  }, [selectedDomain, setSelectedSubdomain, setSelectedTags]);
+
+  const handleDomainChange = (value: string) => {
+    setSelectedDomain(value);
+    setSelectedSubdomain(null);
+    setSelectedTags([]);
+    setSearchTerm("");
+  };
+
   const handleTagSelect = (tag: string) => {
     if (!selectedTags.includes(tag)) {
       setSelectedTags([...selectedTags, tag]);
@@ -82,12 +95,13 @@ export function FiltersSection({
     setIsDropdownOpen(true);
   };
 
-  const filteredTags =
-    metadata?.tags.filter(
-      (tag) =>
-        tag.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
-        !selectedTags.includes(tag.name)
-    ) || [];
+  // Filter tags based on selected domain and search term
+  const filteredTags = metadata?.tags.filter((tag) => {
+    if (selectedDomain && tag.domainId !== selectedDomain) return false;
+    if (!searchTerm) return true;
+    if (selectedTags.includes(tag.name)) return false;
+    return tag.name.toLowerCase().includes(searchTerm.toLowerCase());
+  }) || [];
 
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -99,7 +113,10 @@ export function FiltersSection({
           >
             Domain
           </label>
-          <Select onValueChange={(value) => setSelectedDomain(value)}>
+          <Select
+            value={selectedDomain || undefined}
+            onValueChange={handleDomainChange}
+          >
             <SelectTrigger id="domain" aria-label="Select domain">
               <SelectValue placeholder="Select domain" />
             </SelectTrigger>
@@ -125,7 +142,8 @@ export function FiltersSection({
           </label>
           <Select
             disabled={!selectedDomain}
-            onValueChange={(value) => setSelectedSubdomain(value)}
+            value={selectedSubdomain || undefined}
+            onValueChange={setSelectedSubdomain}
           >
             <SelectTrigger id="subdomain" aria-label="Select subdomain">
               <SelectValue placeholder="Select subdomain" />
@@ -158,13 +176,14 @@ export function FiltersSection({
             <input
               className="bg-white border border-gray-300 text-black text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
               id="tags"
-              placeholder="Search tags..."
+              placeholder={selectedDomain ? "Search tags..." : "Select a domain first"}
               type="text"
               value={searchTerm}
               onChange={handleInputChange}
               onFocus={() => setIsDropdownOpen(true)}
+              disabled={!selectedDomain}
             />
-            {isDropdownOpen && (
+            {isDropdownOpen && filteredTags.length > 0 && (
               <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg">
                 <ul className="py-1 overflow-auto max-h-60">
                   {filteredTags.map((tag) => (

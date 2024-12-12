@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Domain, SubDomain, Tag } from "@prisma/client";
 import { TConsultantProfile } from "@/types/consultant";
 import { FiltersSection } from "./components/FiltersSection";
@@ -13,6 +13,15 @@ interface MetaData {
   domains: Domain[];
   subdomains: SubDomain[];
   tags: Tag[];
+  consultantMetadata: {
+    totalConsultants: number;
+    consultantsByDomain: {
+      id: string;
+      name: string;
+      consultantCount: number;
+    }[];
+    averageRating: number;
+  };
 }
 
 function FindExperts() {
@@ -47,6 +56,106 @@ function FindExperts() {
     }
     fetchData();
   }, []);
+
+  // Filter functions
+  const filterBySearch = (consultant: TConsultantProfile) => {
+    if (!searchTerm) return true;
+    const searchLower = searchTerm.toLowerCase();
+
+    // Search in user details
+    if (consultant.user.name?.toLowerCase().includes(searchLower)) return true;
+    if (consultant.user.email?.toLowerCase().includes(searchLower)) return true;
+
+    // Search in consultant details
+    if (consultant.description?.toLowerCase().includes(searchLower)) return true;
+    if (consultant.specialization?.toLowerCase().includes(searchLower)) return true;
+    if (consultant.qualifications?.toLowerCase().includes(searchLower)) return true;
+
+    // Search in domain and subdomain names
+    if (consultant.domain.name.toLowerCase().includes(searchLower)) return true;
+    if (consultant.subDomains.some(sd => 
+      sd.name.toLowerCase().includes(searchLower)
+    )) return true;
+
+    // Search in tags
+    if (consultant.tags.some(tag => 
+      tag.name.toLowerCase().includes(searchLower)
+    )) return true;
+
+    return false;
+  };
+
+  const filterByDomain = (consultant: TConsultantProfile) => {
+    if (!selectedDomain) return true;
+    return consultant.domainId === selectedDomain;
+  };
+
+  const filterBySubdomain = (consultant: TConsultantProfile) => {
+    if (!selectedSubdomain) return true;
+    return consultant.subDomains.some((sd) => sd.id === selectedSubdomain);
+  };
+
+  const filterByTags = (consultant: TConsultantProfile) => {
+    if (selectedTags.length === 0) return true;
+    return selectedTags.every((tagName) =>
+      consultant.tags.some((t) => t.name === tagName)
+    );
+  };
+
+  const filterByExperience = (consultant: TConsultantProfile) => {
+    if (experienceYears === 0) return true;
+    if (!consultant.experience) return false;
+
+    // Parse experience range (e.g., "5-10 years" -> 5)
+    const match = consultant.experience.match(/\d+/);
+    if (!match) return false;
+
+    const years = parseInt(match[0]);
+    return years >= experienceYears;
+  };
+
+  const filterByPrice = (consultant: TConsultantProfile) => {
+    if (pricing === 0) return true;
+    // Check if any subscription plan's price is less than or equal to the filter price
+    return consultant.subscriptionPlans.some(
+      (plan) => plan.price / 100 <= pricing
+    );
+  };
+
+  // Apply all filters using useMemo to optimize performance
+  const filteredConsultants = useMemo(() => {
+    return consultants.filter(
+      (consultant) =>
+        filterBySearch(consultant) &&
+        filterByDomain(consultant) &&
+        filterBySubdomain(consultant) &&
+        filterByTags(consultant) &&
+        filterByExperience(consultant) &&
+        filterByPrice(consultant)
+    );
+  }, [
+    consultants,
+    searchTerm,
+    selectedDomain,
+    selectedSubdomain,
+    selectedTags,
+    experienceYears,
+    pricing,
+  ]);
+
+  // Group consultants by domain
+  const groupedConsultants = useMemo(() => {
+    const grouped = new Map<string, TConsultantProfile[]>();
+    
+    filteredConsultants.forEach((consultant) => {
+      if (!grouped.has(consultant.domain.id)) {
+        grouped.set(consultant.domain.id, []);
+      }
+      grouped.get(consultant.domain.id)?.push(consultant);
+    });
+    
+    return grouped;
+  }, [filteredConsultants]);
 
   if (isLoading) {
     return (
@@ -86,29 +195,31 @@ function FindExperts() {
 
       <div className="space-y-4">
         {metadata?.domains.map((domain) => {
-          const domainConsultants = consultants?.filter(
-            (consultant) => consultant.domainId === domain.id,
-          ) ?? [];
+          const domainConsultants = groupedConsultants.get(domain.id) || [];
+
+          if (domainConsultants.length === 0) return null;
 
           return (
             <div key={domain.id} className="space-y-4">
               <h2 className="text-2xl font-bold">{domain.name}</h2>
-              {domainConsultants.length > 0 ? (
-                domainConsultants.map((consultant) => (
-                  <ConsultantCard
-                    key={consultant.id}
-                    consultant={consultant}
-                    metadata={metadata}
-                  />
-                ))
-              ) : (
-                <p className="text-gray-500">
-                  No consultants available in this domain at the moment.
-                </p>
-              )}
+              {domainConsultants.map((consultant) => (
+                <ConsultantCard
+                  key={consultant.id}
+                  consultant={consultant}
+                  metadata={metadata}
+                />
+              ))}
             </div>
           );
         })}
+        
+        {filteredConsultants.length === 0 && (
+          <div className="text-center py-8">
+            <p className="text-gray-500 text-lg">
+              No consultants found matching your criteria. Try adjusting your filters.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
