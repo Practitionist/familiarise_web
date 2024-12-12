@@ -11,3 +11,17 @@ export type TSlotTiming = {
   localStartTime: string;
   localEndTime: string;
 };
+
+export type TWeeklySlot = {
+  id: string;
+  dayOfWeekforStartTimeInUTC: DayOfWeek;
+  slotStartTimeInUTC: string | Date;
+  dayOfWeekforEndTimeInUTC: DayOfWeek;
+  slotEndTimeInUTC: string | Date;
+};
+
+export type TCustomSlot = {
+  id: string;
+  slotStartTimeInUTC: string | Date;
+  slotEndTimeInUTC: string | Date;
+};
