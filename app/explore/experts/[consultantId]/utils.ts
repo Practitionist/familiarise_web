@@ -107,13 +107,23 @@ export function convertUTCToLocalDate(utcTime: string, selectedDate: Date, timez
 
     const localDate = new Date(year, month - 1, day, hours, minutes, seconds);
     
-    // Adjust date if the local time is on the previous day
+    // Adjust date if the local time is on a different day
     const localDay = getLocalDay(localDate, timezone);
     const selectedDay = getLocalDay(selectedDate, timezone);
+    
     if (localDay !== selectedDay) {
-      if ((selectedDay === 0 && localDay === 6) || localDay === selectedDay - 1) {
+      // Handle week wrap-around
+      if (selectedDay === 0 && localDay === 6) {
+        // If selected day is Sunday and local day is Saturday, add a day
         localDate.setDate(localDate.getDate() + 1);
-      } else if ((selectedDay === 6 && localDay === 0) || localDay === selectedDay + 1) {
+      } else if (selectedDay === 6 && localDay === 0) {
+        // If selected day is Saturday and local day is Sunday, subtract a day
+        localDate.setDate(localDate.getDate() - 1);
+      } else if (localDay === selectedDay - 1) {
+        // If local day is the previous day, add a day
+        localDate.setDate(localDate.getDate() + 1);
+      } else if (localDay === selectedDay + 1) {
+        // If local day is the next day, subtract a day
         localDate.setDate(localDate.getDate() - 1);
       }
     }
@@ -215,9 +225,7 @@ export function isSlotRelevantForDay(
   const endDay = slot.dayOfWeekforEndTimeInUTC;
   
   // Direct match
-  if (startDay === selectedDay || endDay === selectedDay) {
-    return true;
-  }
+  if (startDay === selectedDay) return true;
 
   // Handle overnight slots
   if (startDay !== endDay) {
@@ -227,10 +235,17 @@ export function isSlotRelevantForDay(
 
     // Handle week wrap-around (e.g., Saturday to Sunday)
     if (startDayNum > endDayNum) {
-      return selectedDayNum >= startDayNum || selectedDayNum <= endDayNum;
+      // For slots that wrap around the week (e.g., Sat 9pm - Sun 3am)
+      // The slot is relevant for both the start day and the end day
+      if (selectedDay === endDay) return true;
+      
+      // For days in between (in case of multi-day slots)
+      const dayAfterStart = (startDayNum + 1) % 7;
+      return selectedDayNum >= startDayNum || selectedDayNum <= endDayNum ||
+             (selectedDayNum >= dayAfterStart && selectedDayNum <= 6);
     }
 
-    // Normal case
+    // Normal case (e.g., Mon 10pm - Tue 2am)
     return selectedDayNum >= startDayNum && selectedDayNum <= endDayNum;
   }
 
@@ -324,6 +339,7 @@ export function createCustomSlot(
 }
 
 export function mergeOverlappingSlots(slots: TSlotTiming[], timezone?: string | null): TSlotTiming[] {
+  // Don't merge slots that are more than 1 minute apart
   return slots.reduce((acc: TSlotTiming[], curr) => {
     if (acc.length === 0) return [curr];
     
@@ -332,21 +348,14 @@ export function mergeOverlappingSlots(slots: TSlotTiming[], timezone?: string | 
     const currStart = new Date(curr.slotStartTimeInUTC);
     const currEnd = new Date(curr.slotEndTimeInUTC);
     
-    // If current slot starts before or at the same time as the last slot ends
-    if (currStart <= lastEnd) {
+    // Only merge if the slots are exactly adjacent (less than 1 minute apart)
+    const diffInMinutes = (currStart.getTime() - lastEnd.getTime()) / (1000 * 60);
+    if (diffInMinutes <= 0) {
       // If current slot ends after the last slot
       if (currEnd > lastEnd) {
         last.slotEndTimeInUTC = curr.slotEndTimeInUTC;
         last.localEndTime = formatTime(currEnd, timezone);
       }
-      return acc;
-    }
-    
-    // If slots are less than 1 minute apart, merge them
-    const diffInMinutes = (currStart.getTime() - lastEnd.getTime()) / (1000 * 60);
-    if (diffInMinutes <= 1) {
-      last.slotEndTimeInUTC = curr.slotEndTimeInUTC;
-      last.localEndTime = formatTime(currEnd, timezone);
       return acc;
     }
     
