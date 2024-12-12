@@ -62,7 +62,7 @@ export function getLocalDay(date: Date, timezone?: string | null): number {
       localDay: localDate.getDay()
     });
     return localDate.getDay();
-  } catch (e) {
+  } catch (_) {
     console.warn('Invalid timezone, using UTC day');
     return date.getUTCDay();
   }
@@ -135,7 +135,7 @@ export function convertUTCToLocalDate(utcTime: string, selectedDate: Date, timez
     });
 
     return localDate;
-  } catch (e) {
+  } catch (_) {
     console.warn('Invalid timezone, using UTC');
     return utcDateTime;
   }
@@ -151,42 +151,14 @@ export function formatTime(date: string | Date, timezone?: string | null): strin
       hour12: true,
       timeZone: timezone || undefined
     }).format(dateObj);
-  } catch (e) {
-    console.warn('Error formatting time:', e);
+  } catch (_) {
+    console.warn('Error formatting time');
     return dateObj.toLocaleTimeString('en-US', {
       hour: 'numeric',
       minute: 'numeric',
       hour12: true
     });
   }
-}
-
-export function getDayBefore(day: DayOfWeek): DayOfWeek {
-  const days = [
-    DayOfWeek.SUNDAY,
-    DayOfWeek.MONDAY,
-    DayOfWeek.TUESDAY,
-    DayOfWeek.WEDNESDAY,
-    DayOfWeek.THURSDAY,
-    DayOfWeek.FRIDAY,
-    DayOfWeek.SATURDAY
-  ];
-  const index = days.indexOf(day);
-  return days[(index - 1 + 7) % 7];
-}
-
-export function getDayAfter(day: DayOfWeek): DayOfWeek {
-  const days = [
-    DayOfWeek.SUNDAY,
-    DayOfWeek.MONDAY,
-    DayOfWeek.TUESDAY,
-    DayOfWeek.WEDNESDAY,
-    DayOfWeek.THURSDAY,
-    DayOfWeek.FRIDAY,
-    DayOfWeek.SATURDAY
-  ];
-  const index = days.indexOf(day);
-  return days[(index + 1) % 7];
 }
 
 export function isSameLocalDay(date1: Date, date2: Date, timezone?: string | null): boolean {
@@ -210,7 +182,7 @@ export function isSameLocalDay(date1: Date, date2: Date, timezone?: string | nul
     });
 
     return result;
-  } catch (e) {
+  } catch (_) {
     console.warn('Invalid timezone');
     return false;
   }
@@ -219,7 +191,7 @@ export function isSameLocalDay(date1: Date, date2: Date, timezone?: string | nul
 export function isSlotRelevantForDay(
   slot: TWeeklySlot,
   selectedDay: DayOfWeek,
-  timezone?: string | null
+  _timezone?: string | null
 ): boolean {
   const startDay = slot.dayOfWeekforStartTimeInUTC;
   const endDay = slot.dayOfWeekforEndTimeInUTC;
@@ -361,4 +333,37 @@ export function mergeOverlappingSlots(slots: TSlotTiming[], timezone?: string | 
     
     return [...acc, curr];
   }, []);
+}
+
+export function breakDownSlotsByDuration(slots: TSlotTiming[], durationInHours: number, timezone?: string | null): TSlotTiming[] {
+  const brokenDownSlots: TSlotTiming[] = [];
+
+  slots.forEach(slot => {
+    const startTime = new Date(slot.slotStartTimeInUTC);
+    const endTime = new Date(slot.slotEndTimeInUTC);
+    const durationMs = durationInHours * 60 * 60 * 1000;
+    
+    // Calculate how many slots of the given duration can fit in this time period
+    let currentStart = new Date(startTime);
+    
+    while (currentStart.getTime() + durationMs <= endTime.getTime()) {
+      const currentEnd = new Date(currentStart.getTime() + durationMs);
+      
+      brokenDownSlots.push({
+        ...slot,
+        slotId: `${slot.slotId}-${currentStart.getTime()}`,
+        slotStartTimeInUTC: currentStart.toISOString(),
+        slotEndTimeInUTC: currentEnd.toISOString(),
+        localStartTime: formatTime(currentStart, timezone),
+        localEndTime: formatTime(currentEnd, timezone)
+      });
+      
+      // Move to next potential slot
+      currentStart = new Date(currentStart.getTime() + durationMs);
+    }
+  });
+
+  return brokenDownSlots.sort((a, b) => 
+    new Date(a.slotStartTimeInUTC).getTime() - new Date(b.slotStartTimeInUTC).getTime()
+  );
 }

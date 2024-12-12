@@ -21,6 +21,9 @@ import { ClockIcon } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useMemo, useState } from "react";
 import { PricingOption, defaultConsultationOptions, defaultSubscriptionOptions } from "../defaults";
+import { breakDownSlotsByDuration, formatTime } from "../utils";
+import { TSlotTiming } from "@/types/slots";
+
 
 interface PricingToggleProps {
   consultationOptions?: PricingOption[];
@@ -33,33 +36,10 @@ interface PricingToggleProps {
   currentDate: Date;
   setCurrentDate: (date: Date) => void;
   renderCalendar: () => JSX.Element[];
-  slotTimings: any[];
-  selectedSlot: any;
-  setSelectedSlot: (slot: any) => void;
+  slotTimings: TSlotTiming[];
+  selectedSlot: TSlotTiming | null;
+  setSelectedSlot: (slot: TSlotTiming | null) => void;
 }
-
-const formatTime = (isoString: string): string => {
-  try {
-    const date = new Date(isoString);
-    if (isNaN(date.getTime())) {
-      throw new Error("Invalid date");
-    }
-    
-    let hours = date.getHours();
-    const minutes = date.getMinutes();
-    const ampm = hours >= 12 ? 'pm' : 'am';
-    
-    hours = hours % 12;
-    hours = hours ? hours : 12;
-    
-    const minutesStr = minutes < 10 ? '0' + minutes : minutes;
-    
-    return `${hours}:${minutesStr} ${ampm}`;
-  } catch (error) {
-    console.error("Error formatting time:", error);
-    return "Invalid Time";
-  }
-};
 
 export default function PricingToggle({
   consultationOptions = defaultConsultationOptions,
@@ -86,27 +66,33 @@ export default function PricingToggle({
       : defaultSubscriptionOptions[0].title.toLowerCase().replace(" ", "-"),
   );
 
-  // Sort slot timings by start time
-  const sortedSlotTimings = useMemo(() => {
+  // Get the duration of the selected consultation option
+  const selectedDuration = useMemo(() => {
+    const option = consultationOptions.find(
+      opt => opt.title.toLowerCase().replace(" ", "-") === activeConsultationOption
+    );
+    return option && option.duration ? parseInt(option.duration.split(" ")[0]) : 1;
+  }, [activeConsultationOption, consultationOptions]);
+
+  // Sort and break down slot timings by duration
+  const availableSlots = useMemo(() => {
     if (!selectedDate || !slotTimings.length) return [];
 
     const selectedDay = selectedDate.getDay();
     
-    return slotTimings
-      .filter(slot => {
-        const slotDate = new Date(slot.slotStartTimeInUTC);
-        return slotDate.getDay() === selectedDay;
-      })
-      .sort((a, b) => {
-        const dateA = new Date(a.slotStartTimeInUTC);
-        const dateB = new Date(b.slotStartTimeInUTC);
-        return dateA.getTime() - dateB.getTime();
-      });
-  }, [slotTimings, selectedDate]);
+    // First filter slots for the selected day
+    const daySlots = slotTimings.filter(slot => {
+      const slotDate = new Date(slot.slotStartTimeInUTC);
+      return slotDate.getDay() === selectedDay;
+    });
+
+    // Then break down the slots based on the selected duration
+    return breakDownSlotsByDuration(daySlots, selectedDuration);
+  }, [slotTimings, selectedDate, selectedDuration]);
 
   if (consultationOptions.length === 0 && subscriptionOptions.length === 0) {
     return (
-      <div className="w-full max-w-4xl mx-auto py-16 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
+      <div className="w-full max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
         <div className="text-center text-gray-300">
           <p>No pricing options available at the moment.</p>
         </div>
@@ -116,7 +102,7 @@ export default function PricingToggle({
 
   if (session?.user?.role && ["consultant", "staff"].includes(session.user.role.toLowerCase())) {
     return (
-      <div className="w-full max-w-4xl mx-auto py-16 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
+      <div className="w-full max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
         <div className="text-center text-gray-300 space-y-3">
           <h3 className="text-2xl font-medium tracking-tight">
             Consultee Access Required
@@ -131,17 +117,17 @@ export default function PricingToggle({
   }
 
   return (
-    <div className="w-full max-w-4xl mx-auto py-16 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
+    <div className="w-full max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
       <Tabs
         value={activeTab}
         onValueChange={setActiveTab}
         className="space-y-8"
       >
-        <TabsList className="flex justify-center gap-4 bg-gray-800/50 rounded-full p-1 backdrop-blur-sm">
+        <TabsList className="flex flex-wrap justify-center gap-4 bg-gray-800/50 rounded-full p-1 backdrop-blur-sm">
           {consultationOptions.length > 0 && (
             <TabsTrigger
               value="consultation"
-              className={`${activeTab === "consultation" ? "bg-white text-black" : "text-white"} px-6 py-3 rounded-full transition-all duration-300 ease-in-out hover:bg-white/10`}
+              className={`${activeTab === "consultation" ? "bg-white text-black" : "text-white"} px-4 py-2 sm:px-6 sm:py-3 rounded-full transition-all duration-300 ease-in-out hover:bg-white/10`}
             >
               Consultation
             </TabsTrigger>
@@ -149,7 +135,7 @@ export default function PricingToggle({
           {subscriptionOptions.length > 0 && (
             <TabsTrigger
               value="subscription"
-              className={`${activeTab === "subscription" ? "bg-white text-black" : "text-white"} px-6 py-3 rounded-full transition-all duration-300 ease-in-out hover:bg-white/10`}
+              className={`${activeTab === "subscription" ? "bg-white text-black" : "text-white"} px-4 py-2 sm:px-6 sm:py-3 rounded-full transition-all duration-300 ease-in-out hover:bg-white/10`}
             >
               Subscription
             </TabsTrigger>
@@ -163,12 +149,12 @@ export default function PricingToggle({
               onValueChange={setActiveConsultationOption}
               className="space-y-8"
             >
-              <TabsList className="flex justify-center gap-4 bg-gray-800/50 rounded-full p-1 backdrop-blur-sm">
+              <TabsList className="flex flex-wrap justify-center gap-4 bg-gray-800/50 rounded-full p-1 backdrop-blur-sm">
                 {consultationOptions.map((option) => (
                   <TabsTrigger
                     key={option.title}
                     value={option.title.toLowerCase().replace(" ", "-")}
-                    className={`${activeConsultationOption === option.title.toLowerCase().replace(" ", "-") ? "bg-white text-black" : "text-white"} px-6 py-3 rounded-full transition-all duration-300 ease-in-out hover:bg-white/10`}
+                    className={`${activeConsultationOption === option.title.toLowerCase().replace(" ", "-") ? "bg-white text-black" : "text-white"} px-4 py-2 sm:px-6 sm:py-3 rounded-full transition-all duration-300 ease-in-out hover:bg-white/10`}
                   >
                     {option.title}
                   </TabsTrigger>
@@ -219,7 +205,10 @@ export default function PricingToggle({
                           </DialogTrigger>
                           <DialogContent className="sm:max-w-[425px] lg:max-w-[700px] bg-[#15171B] text-white p-0 border-0 rounded-lg">
                             <DialogHeader className="p-6 border-b border-gray-800">
-                              <DialogTitle>Book Consultation</DialogTitle>
+                              <DialogTitle>Book {option.title} Consultation</DialogTitle>
+                              <DialogDescription className="text-gray-400">
+                                Select a date and time for your {option.duration} consultation
+                              </DialogDescription>
                             </DialogHeader>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
                               {/* Calendar Section */}
@@ -291,48 +280,37 @@ export default function PricingToggle({
                               {/* Time Slots Section */}
                               <div>
                                 <h3 className="text-lg font-semibold mb-4 flex items-center">
-                                  <ClockIcon className="mr-2 h-5 w-5" /> Available Time Slots
+                                  <ClockIcon className="mr-2 h-5 w-5" /> Available {option.duration} Slots
                                 </h3>
                                 <div className="bg-gray-800/60 p-4 rounded-lg h-[400px] overflow-y-auto">
-                                  {sortedSlotTimings.length > 0 ? (
+                                  {availableSlots.length > 0 ? (
                                     <div className="grid grid-cols-1 gap-2">
-                                      {sortedSlotTimings.map((slot) => {
-                                        const startTime = formatTime(
-                                          slot.slotStartTimeInUTC,
-                                        );
-                                        const endTime = formatTime(
-                                          slot.slotEndTimeInUTC,
-                                        );
-
-                                        return (
-                                          <Button
-                                            key={`slot-${slot.slotId}`}
-                                            variant={
-                                              selectedSlot?.slotId ===
-                                              slot.slotId
-                                                ? "secondary"
-                                                : "outline"
-                                            }
-                                            onClick={() =>
-                                              setSelectedSlot(slot)
-                                            }
-                                            className={`w-full justify-center text-sm py-3 ${
-                                              selectedSlot?.slotId ===
-                                              slot.slotId
-                                                ? "bg-gray-700 text-white border-gray-600"
-                                                : "bg-gray-800 text-white border-gray-700 hover:bg-gray-700/50"
-                                            }`}
-                                          >
-                                            {startTime} - {endTime}
-                                          </Button>
-                                        );
-                                      })}
+                                      {availableSlots.map((slot) => (
+                                        <Button
+                                          key={`slot-${slot.slotId}`}
+                                          variant={
+                                            selectedSlot?.slotId ===
+                                            slot.slotId
+                                              ? "secondary"
+                                              : "outline"
+                                          }
+                                          onClick={() => setSelectedSlot(slot)}
+                                          className={`w-full justify-center text-sm py-3 ${
+                                            selectedSlot?.slotId ===
+                                            slot.slotId
+                                              ? "bg-gray-700 text-white border-gray-600"
+                                              : "bg-gray-800 text-white border-gray-700 hover:bg-gray-700/50"
+                                          }`}
+                                        >
+                                          {slot.localStartTime} - {slot.localEndTime}
+                                        </Button>
+                                      ))}
                                     </div>
                                   ) : (
                                     <div className="flex flex-col items-center justify-center h-full text-center">
                                       <ClockIcon className="w-12 h-12 text-gray-500 mb-2" />
                                       <p className="text-gray-400">
-                                        No available slots for this date.
+                                        No available {option.duration} slots for this date.
                                         <br />
                                         Please select a different date.
                                       </p>
@@ -378,12 +356,12 @@ export default function PricingToggle({
               onValueChange={setActiveSubscriptionOption}
               className="space-y-8"
             >
-              <TabsList className="flex justify-center gap-4 bg-gray-800/50 rounded-full p-1 backdrop-blur-sm">
+              <TabsList className="flex flex-wrap justify-center gap-4 bg-gray-800/50 rounded-full p-1 backdrop-blur-sm">
                 {subscriptionOptions.map((option) => (
                   <TabsTrigger
                     key={option.title}
                     value={option.title.toLowerCase().replace(" ", "-")}
-                    className={`${activeSubscriptionOption === option.title.toLowerCase().replace(" ", "-") ? "bg-white text-black" : "text-white"} px-6 py-3 rounded-full transition-all duration-300 ease-in-out hover:bg-white/10`}
+                    className={`${activeSubscriptionOption === option.title.toLowerCase().replace(" ", "-") ? "bg-white text-black" : "text-white"} px-4 py-2 sm:px-6 sm:py-3 rounded-full transition-all duration-300 ease-in-out hover:bg-white/10`}
                   >
                     {option.title.split(" ")[0]} {option.title.split(" ")[1]}
                   </TabsTrigger>
@@ -499,3 +477,4 @@ export default function PricingToggle({
     </div>
   );
 }
+

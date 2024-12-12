@@ -3,8 +3,7 @@ import { DayOfWeek } from "@prisma/client";
 import {
   convertUTCToLocalDate,
   formatTime as formatTimeUtil,
-  isSlotRelevantForDay,
-  dayToNumber
+  isSlotRelevantForDay
 } from "../utils";
 
 interface WeeklySlot {

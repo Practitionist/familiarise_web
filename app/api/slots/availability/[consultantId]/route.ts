@@ -224,7 +224,6 @@ function setToUserDate(date: Date, userDate: Date): Date {
   );
   return result;
 }
-
 function mapWeeklySlotToTiming(
   slot: {
     id: string;
@@ -252,6 +251,7 @@ function mapWeeklySlotToTiming(
       userTimeZone,
       "yyyy-MM-dd'T'HH:mm:ssXXX",
     ),
+    dayOfWeek: slot.dayOfWeekforStartTimeInUTC,
     slotStartTimeInUTC: formatInTimeZone(
       fromZonedTime(adjustedStart, userTimeZone),
       "UTC",
@@ -279,6 +279,9 @@ function mapCustomSlotToTiming(
 ): TSlotTiming {
   const slotStart = toZonedTime(slot.slotStartTimeInUTC, userTimeZone);
   const slotEnd = toZonedTime(slot.slotEndTimeInUTC, userTimeZone);
+  
+  // Get the day of week for the slot's start time
+  const dayOfWeek = getDayOfWeek(slotStart);
 
   return {
     slotId: slot.id,
@@ -287,6 +290,7 @@ function mapCustomSlotToTiming(
       userTimeZone,
       "yyyy-MM-dd'T'HH:mm:ssXXX",
     ),
+    dayOfWeek,
     slotStartTimeInUTC: formatInTimeZone(
       slot.slotStartTimeInUTC,
       "UTC",
