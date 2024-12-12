@@ -1,5 +1,11 @@
 import React from "react";
 import { DayOfWeek } from "@prisma/client";
+import {
+  convertUTCToLocalDate,
+  formatTime as formatTimeUtil,
+  isSlotRelevantForDay,
+  dayToNumber
+} from "../utils";
 
 interface WeeklySlot {
   id: string;
@@ -14,61 +20,6 @@ interface WeeklyAvailabilityProps {
   onSlotSelect: (slot: WeeklySlot) => void;
   selectedSlotId?: string;
 }
-
-function convertUTCToLocal(date: Date): Date {
-  const offset = date.getTimezoneOffset();
-  return new Date(date.getTime() - (offset * 60 * 1000));
-}
-
-function getDayBefore(day: DayOfWeek): DayOfWeek {
-  const days = [
-    DayOfWeek.SUNDAY,
-    DayOfWeek.MONDAY,
-    DayOfWeek.TUESDAY,
-    DayOfWeek.WEDNESDAY,
-    DayOfWeek.THURSDAY,
-    DayOfWeek.FRIDAY,
-    DayOfWeek.SATURDAY
-  ];
-  const index = days.indexOf(day);
-  return days[(index - 1 + 7) % 7];
-}
-
-function getDayAfter(day: DayOfWeek): DayOfWeek {
-  const days = [
-    DayOfWeek.SUNDAY,
-    DayOfWeek.MONDAY,
-    DayOfWeek.TUESDAY,
-    DayOfWeek.WEDNESDAY,
-    DayOfWeek.THURSDAY,
-    DayOfWeek.FRIDAY,
-    DayOfWeek.SATURDAY
-  ];
-  const index = days.indexOf(day);
-  return days[(index + 1) % 7];
-}
-
-const formatTime = (isoString: string): string => {
-  try {
-    // Create a base date for today
-    const baseDate = new Date();
-    // Parse the time from the ISO string
-    const utcDate = new Date(isoString);
-    // Set the hours and minutes on the base date
-    baseDate.setHours(utcDate.getUTCHours(), utcDate.getUTCMinutes(), 0, 0);
-    // Convert to local time
-    const localDate = convertUTCToLocal(baseDate);
-    
-    return localDate.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    });
-  } catch (error) {
-    console.error("Error formatting time:", error);
-    return "Invalid Time";
-  }
-};
 
 export const WeeklyAvailability: React.FC<WeeklyAvailabilityProps> = ({
   slots,
@@ -86,82 +37,45 @@ export const WeeklyAvailability: React.FC<WeeklyAvailabilityProps> = ({
   ];
   const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+  // Get browser's timezone
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  console.log('Using timezone:', timezone);
+
   // Group slots by day and sort by time
   const slotsByDay = daysOfWeek.map((day) => {
-    // Get slots that:
-    // 1. Start on this day
-    // 2. End on this day (started previous day)
-    // 3. Start on this day and end next day
-    const daySlots = slots.filter((slot) => {
-      const previousDay = getDayBefore(day);
-      const nextDay = getDayAfter(day);
+    // Get slots that are relevant for this day
+    const daySlots = slots.filter(slot => isSlotRelevantForDay(slot, day, timezone));
 
-      // Include slots that:
-      // 1. Start on this day
-      // 2. End on this day (started previous day)
-      // 3. Start on this day and end next day
-      // 4. Start on previous day and end on next day (crosses entire day)
-      return (
-        slot.dayOfWeekforStartTimeInUTC === day ||
-        slot.dayOfWeekforEndTimeInUTC === day ||
-        (slot.dayOfWeekforStartTimeInUTC === previousDay && 
-         slot.dayOfWeekforEndTimeInUTC === nextDay)
-      );
-    });
+    // Process each slot to handle timezone and overnight slots
+    const processedSlots = daySlots.map(slot => {
+      // Use a reference date for consistent conversion
+      const referenceDate = new Date();
+      referenceDate.setHours(0, 0, 0, 0);
 
-    // For each slot, determine if it needs to be split at midnight
-    const processedSlots = daySlots.flatMap((slot) => {
-      // Create a base date for today
-      const baseDate = new Date();
-      // Parse the times from the ISO strings
-      const startTime = new Date(slot.slotStartTimeInUTC);
-      const endTime = new Date(slot.slotEndTimeInUTC);
-      
-      // Set the hours and minutes on the base date
-      const localStartTime = new Date(baseDate);
-      localStartTime.setHours(startTime.getUTCHours(), startTime.getUTCMinutes(), 0, 0);
-      
-      const localEndTime = new Date(baseDate);
-      localEndTime.setHours(endTime.getUTCHours(), endTime.getUTCMinutes(), 0, 0);
+      // Convert UTC times to local
+      const startDateTime = convertUTCToLocalDate(slot.slotStartTimeInUTC, referenceDate, timezone);
+      let endDateTime = convertUTCToLocalDate(slot.slotEndTimeInUTC, referenceDate, timezone);
 
-      // Convert to local time
-      const convertedStartTime = convertUTCToLocal(localStartTime);
-      const convertedEndTime = convertUTCToLocal(localEndTime);
-
-      // If the slot crosses midnight
-      if (convertedEndTime < convertedStartTime) {
-        // Create two slots: one ending at midnight, one starting at midnight
-        const midnightEnd = new Date(convertedStartTime);
-        midnightEnd.setHours(23, 59, 59, 999);
-
-        const midnightStart = new Date(convertedEndTime);
-        midnightStart.setHours(0, 0, 0, 0);
-
-        return [
-          {
-            ...slot,
-            slotStartTimeInUTC: convertedStartTime.toISOString(),
-            slotEndTimeInUTC: midnightEnd.toISOString(),
-          },
-          {
-            ...slot,
-            slotStartTimeInUTC: midnightStart.toISOString(),
-            slotEndTimeInUTC: convertedEndTime.toISOString(),
-          },
-        ];
+      // If this slot crosses midnight
+      if (slot.dayOfWeekforStartTimeInUTC !== slot.dayOfWeekforEndTimeInUTC ||
+          endDateTime <= startDateTime ||
+          (endDateTime.getHours() === 0 && endDateTime.getMinutes() === 0)) {
+        
+        endDateTime = new Date(endDateTime);
+        endDateTime.setDate(endDateTime.getDate() + 1);
       }
 
-      return [{
+      return {
         ...slot,
-        slotStartTimeInUTC: convertedStartTime.toISOString(),
-        slotEndTimeInUTC: convertedEndTime.toISOString(),
-      }];
+        localStartTime: formatTimeUtil(startDateTime, timezone),
+        localEndTime: formatTimeUtil(endDateTime, timezone)
+      };
     });
 
     // Sort slots by start time
     const sortedSlots = processedSlots.sort((a, b) => {
-      const timeA = new Date(a.slotStartTimeInUTC).getTime();
-      const timeB = new Date(b.slotStartTimeInUTC).getTime();
+      const timeA = new Date(`1970-01-01 ${a.localStartTime}`).getTime();
+      const timeB = new Date(`1970-01-01 ${b.localStartTime}`).getTime();
       return timeA - timeB;
     });
 
@@ -189,26 +103,21 @@ export const WeeklyAvailability: React.FC<WeeklyAvailabilityProps> = ({
       <div className="grid grid-cols-7 gap-6">
         {slotsByDay.map(({ day, slots: daySlots }) => (
           <div key={day} className="space-y-3">
-            {daySlots.map((slot) => {
-              const startTime = formatTime(slot.slotStartTimeInUTC);
-              const endTime = formatTime(slot.slotEndTimeInUTC);
-
-              return (
-                <div
-                  key={`${slot.id}-${startTime}-${endTime}`}
-                  className={`bg-blue-50 rounded-md p-2 cursor-pointer ${
-                    selectedSlotId === slot.id
-                      ? "bg-blue-200"
-                      : "hover:bg-blue-100"
-                  } transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center`}
-                  onClick={() => onSlotSelect(slot)}
-                >
-                  <div className="text-xs font-medium text-blue-700">
-                    {startTime} - {endTime}
-                  </div>
+            {daySlots.map((slot) => (
+              <div
+                key={`${slot.id}-${slot.localStartTime}-${slot.localEndTime}`}
+                className={`bg-blue-50 rounded-md p-2 cursor-pointer ${
+                  selectedSlotId === slot.id
+                    ? "bg-blue-200"
+                    : "hover:bg-blue-100"
+                } transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center`}
+                onClick={() => onSlotSelect(slot)}
+              >
+                <div className="text-xs font-medium text-blue-700">
+                  {slot.localStartTime} - {slot.localEndTime}
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         ))}
       </div>
