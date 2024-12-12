@@ -97,6 +97,7 @@ export default function ExpertProfile(
   }, [params.consultantId, toast]);
 
   useEffect(() => {
+    // Only process slots if timezone is available and not loading
     if (selectedDate && consultantDetails && timezone && !isTimezoneLoading) {
       console.log("Using timezone:", timezone);
       console.log("Selected date:", selectedDate.toISOString());
@@ -186,6 +187,9 @@ export default function ExpertProfile(
 
         setSlotTimings(sortedSlots);
       }
+    } else {
+      // Clear slots if timezone is not available
+      setSlotTimings([]);
     }
   }, [selectedDate, consultantDetails, timezone, isTimezoneLoading]);
 

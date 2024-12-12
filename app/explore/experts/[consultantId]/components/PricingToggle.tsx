@@ -49,6 +49,7 @@ export default function PricingToggle({
   subscriptionOptions = defaultSubscriptionOptions,
   handleBooking,
   selectedDate,
+  setSelectedDate,
   currentDate,
   setCurrentDate,
   renderCalendar,
@@ -95,6 +96,12 @@ export default function PricingToggle({
     // Then break down the slots based on the selected duration
     return breakDownSlotsByDuration(daySlots, selectedDuration);
   }, [slotTimings, selectedDate, selectedDuration]);
+
+  const handleBookNowClick = () => {
+    const today = new Date();
+    setSelectedDate(today);
+    setCurrentDate(new Date(today.getFullYear(), today.getMonth(), 1));
+  };
 
   if (consultationOptions.length === 0 && subscriptionOptions.length === 0) {
     return (
@@ -221,6 +228,7 @@ export default function PricingToggle({
                             <Button
                               variant="outline"
                               className="w-full bg-white text-black hover:bg-gray-100 transition-colors duration-300"
+                              onClick={handleBookNowClick}
                             >
                               Book Now
                             </Button>
