@@ -1,54 +1,36 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import {
   fetchConsultantDetails,
   fetchReviews,
   fetchUserDetails,
 } from "@/hooks/useUserData";
-
-import { TConsultantProfile } from "@/types/consultant";
-import { TSlotTiming, TWeeklySlot, TCustomSlot } from "@/types/slots";
-import {
-  ConsultantReview,
-  ConsultationPlan,
-  SubscriptionPlan,
-  User,
-} from "@prisma/client";
-import { StarIcon } from "lucide-react";
-import Image from "next/image";
+import { ConsultantReview, User } from "@prisma/client";
+import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { use, useCallback, useEffect, useMemo, useState } from "react";
-import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
+import { Button } from "@/components/ui/button";
+import { TConsultantProfile } from "@/types/consultant";
+import { TSlotTiming } from "@/types/slots";
+import { useTimezone } from "./hooks/useTimezone";
 import { ConsultantSkeletonLoader } from "./components/ConsultantSkeletonLoader";
-import { CustomAvailability } from "./components/CustomAvailability";
-import PricingToggle from "./components/PricingToggle";
-import Review from "./components/Review";
-import { WeeklyAvailability } from "./components/WeeklyAvailability";
+import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
+import { ProfileHeader } from "./components/ProfileHeader";
+import { AboutSection } from "./components/AboutSection";
+import { ConsultantAvailability } from "./components/ConsultantAvailability";
+import { ReviewsSection } from "./components/ReviewsSection";
+import { ConsultationPricing } from "./components/ConsultationPricing";
 import {
-  dayMap,
-  convertUTCToLocalDate,
-  formatTime,
+  normalizeWeeklySlot,
+  normalizeCustomSlot,
   createWeeklySlot,
   createCustomSlot,
   mergeOverlappingSlots,
   getLocalDay,
   isSameLocalDay,
-  normalizeWeeklySlot,
-  normalizeCustomSlot,
-  isSlotRelevantForDay,
+  dayMap,
+  convertUTCToLocalDate,
 } from "./utils";
-import { useTimezone } from "./hooks/useTimezone";
-
-interface PricingOption {
-  title: string;
-  description: string;
-  price: number;
-  duration: string;
-  features?: string[];
-}
 
 type Params = Promise<{ consultantId: string }>;
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
@@ -63,8 +45,7 @@ export default function ExpertProfile(
   const { timezone: browserTimezone, isLoading: isTimezoneLoading } = useTimezone();
 
   const [userDetails, setUserDetails] = useState<User | null>(null);
-  const [consultantDetails, setConsultantDetails] =
-    useState<TConsultantProfile | null>(null);
+  const [consultantDetails, setConsultantDetails] = useState<TConsultantProfile | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -82,9 +63,7 @@ export default function ExpertProfile(
       setIsLoading(true);
       setError(null);
       try {
-        const consultantData = await fetchConsultantDetails(
-          params.consultantId,
-        );
+        const consultantData = await fetchConsultantDetails(params.consultantId);
         setConsultantDetails(consultantData);
         if (consultantData.userId) {
           const userData = await fetchUserDetails(consultantData.userId);
@@ -96,13 +75,10 @@ export default function ExpertProfile(
         }
       } catch (err) {
         console.error("Error fetching data:", err);
-        setError(
-          err instanceof Error ? err : new Error("An unknown error occurred"),
-        );
+        setError(err instanceof Error ? err : new Error("An unknown error occurred"));
         toast({
           title: "Error fetching data",
-          description:
-            err instanceof Error ? err.message : "An unknown error occurred",
+          description: err instanceof Error ? err.message : "An unknown error occurred",
           variant: "destructive",
         });
       } finally {
@@ -125,7 +101,7 @@ export default function ExpertProfile(
         // Get slots for the selected day
         const relevantSlots = consultantDetails.slotsOfAvailabilityWeekly
           .map(normalizeWeeklySlot)
-          .filter(slot => isSlotRelevantForDay(slot, selectedDay, timezone));
+          .filter(slot => slot.dayOfWeekforStartTimeInUTC === selectedDay);
 
         const weeklySlots = relevantSlots.map(slot => {
           // Convert UTC times to local date objects
@@ -251,110 +227,6 @@ export default function ExpertProfile(
     return days;
   }, [currentDate, selectedDate]);
 
-  const renderAvailability = useMemo(() => {
-    if (!consultantDetails || !timezone) return null;
-
-    if (consultantDetails.scheduleType === "WEEKLY") {
-      // Convert Date objects to strings for weekly slots
-      const weeklySlots = consultantDetails.slotsOfAvailabilityWeekly.map(normalizeWeeklySlot);
-
-      return (
-        <WeeklyAvailability
-          slots={weeklySlots}
-          onSlotSelect={slot => {
-            const normalizedSlot = normalizeWeeklySlot(slot);
-            setSelectedSlot({
-              slotId: normalizedSlot.id,
-              dateInISO: new Date().toISOString(),
-              dayOfWeek: normalizedSlot.dayOfWeekforStartTimeInUTC,
-              slotStartTimeInUTC: normalizedSlot.slotStartTimeInUTC,
-              slotEndTimeInUTC: normalizedSlot.slotEndTimeInUTC,
-              slotOfAvailabilityId: normalizedSlot.id,
-              slotOfAppointmentId: "",
-              localStartTime: formatTime(normalizedSlot.slotStartTimeInUTC, timezone),
-              localEndTime: formatTime(normalizedSlot.slotEndTimeInUTC, timezone),
-            });
-          }}
-          selectedSlotId={selectedSlot?.slotId}
-        />
-      );
-    } else if (consultantDetails.scheduleType === "CUSTOM") {
-      // Convert Date objects to strings for custom slots
-      const customSlots = consultantDetails.slotsOfAvailabilityCustom.map(normalizeCustomSlot);
-
-      return (
-        <CustomAvailability
-          slots={customSlots}
-          onSlotSelect={slot => {
-            const normalizedSlot = normalizeCustomSlot(slot);
-            setSelectedSlot({
-              slotId: normalizedSlot.id,
-              dateInISO: new Date(normalizedSlot.slotStartTimeInUTC).toISOString(),
-              dayOfWeek: dayMap[new Date(normalizedSlot.slotStartTimeInUTC).getDay()],
-              slotStartTimeInUTC: normalizedSlot.slotStartTimeInUTC,
-              slotEndTimeInUTC: normalizedSlot.slotEndTimeInUTC,
-              slotOfAvailabilityId: normalizedSlot.id,
-              slotOfAppointmentId: "",
-              localStartTime: formatTime(normalizedSlot.slotStartTimeInUTC, timezone),
-              localEndTime: formatTime(normalizedSlot.slotEndTimeInUTC, timezone),
-            });
-          }}
-          selectedSlotId={selectedSlot?.slotId}
-        />
-      );
-    }
-    return null;
-  }, [consultantDetails, selectedSlot, timezone]);
-
-  const isConsultationPlan = (
-    plan: ConsultationPlan | SubscriptionPlan,
-  ): plan is ConsultationPlan => {
-    return "durationInHours" in plan;
-  };
-
-  const isSubscriptionPlan = (
-    plan: ConsultationPlan | SubscriptionPlan,
-  ): plan is SubscriptionPlan => {
-    return "durationInMonths" in plan;
-  };
-
-  const formatPricingOptions = useCallback(
-    (
-      plans: (ConsultationPlan | SubscriptionPlan)[],
-      type: "consultation" | "subscription",
-    ): PricingOption[] => {
-      return plans.map((plan) => {
-        if (type === "consultation" && isConsultationPlan(plan)) {
-          return {
-            title: `${plan.durationInHours} Hour${plan.durationInHours > 1 ? "s" : ""}`,
-            description: `${plan.durationInHours} hour consultation`,
-            price: plan.price,
-            duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`,
-          };
-        } else if (type === "subscription" && isSubscriptionPlan(plan)) {
-          return {
-            title: `${plan.durationInMonths} Month${plan.durationInMonths > 1 ? "s" : ""}`,
-            description: `${plan.durationInMonths} month subscription`,
-            price: plan.price,
-            duration: `${plan.durationInMonths} month${plan.durationInMonths > 1 ? "s" : ""}`,
-            features: [
-              `${plan.callsPerWeek} call${plan.callsPerWeek > 1 ? "s" : ""} per week`,
-              `${plan.videoMeetings} video meeting${plan.videoMeetings > 1 ? "s" : ""}`,
-              `${plan.emailSupport} email support`,
-            ],
-          };
-        }
-        return {
-          title: "",
-          description: "",
-          price: 0,
-          duration: "",
-        };
-      });
-    },
-    [],
-  );
-
   if (isLoading) {
     return <ConsultantSkeletonLoader />;
   }
@@ -375,133 +247,49 @@ export default function ExpertProfile(
     );
   }
 
-  const consultationOptions = formatPricingOptions(
-    consultantDetails.consultationPlans,
-    "consultation",
-  );
-  const subscriptionOptions = formatPricingOptions(
-    consultantDetails.subscriptionPlans,
-    "subscription",
-  );
-
   return (
     <div key={params.consultantId} className="flex justify-center py-40">
       <div className="flex flex-col w-1/2">
         <div className="space-y-8">
-          <div className="flex items-center space-x-6">
-            <div className="flex flex-col">
-              <h2 className="text-3xl font-semibold">{userDetails.name}</h2>
-              <div className="flex items-center mt-2">
-                {[...Array(5)].map((_, i) => (
-                  <StarIcon
-                    key={`${i}-${consultantDetails.rating}`}
-                    className={`w-5 h-5 ${i < consultantDetails.rating ? "text-blue-500" : "text-gray-300"}`}
-                  />
-                ))}
-                <span className="ml-2 text-sm text-gray-600">
-                  ({consultantDetails.rating})
-                </span>
-              </div>
-            </div>
-          </div>
+          <ProfileHeader 
+            userDetails={userDetails} 
+            consultantDetails={consultantDetails} 
+          />
+          
+          <AboutSection 
+            userDetails={userDetails} 
+            consultantDetails={consultantDetails} 
+          />
 
-          <div className="space-y-6">
-            <Badge variant="outline">{consultantDetails.specialization}</Badge>
-            <div>
-              <h3 className="text-xl font-semibold mb-2">About</h3>
-              <p className="text-gray-600">
-                {userDetails.name} is a seasoned{" "}
-                {consultantDetails.specialization} with{" "}
-                {consultantDetails.experience} of experience in the{" "}
-                {consultantDetails.domain.name} sector.
-              </p>
-            </div>
-
-            <div>
-              <h3 className="text-xl font-semibold mb-2">
-                Education & Background
-              </h3>
-              <p className="text-gray-600">
-                {userDetails.name} has experience across multiple industries,
-                with a particular focus on{" "}
-                {consultantDetails?.subDomains
-                  ?.map((domain: { name: string }) => domain.name)
-                  .join(", ")}
-                .
-              </p>
-            </div>
-
-            <div>
-              <h3 className="text-xl font-semibold mb-2">
-                Skills & Specialties
-              </h3>
-              <p className="text-gray-600">
-                {userDetails.name} focuses on{" "}
-                {consultantDetails.tags?.map((tag: { name: string }) => tag.name).join(", ")}.
-              </p>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-xl font-semibold mb-4">
-              Consultant Availability
-            </h3>
-            <p className="text-sm text-gray-600 mb-4">
-              {consultantDetails.scheduleType === "WEEKLY"
-                ? "Weekly schedule. Select a time slot to schedule a meeting."
-                : "Custom schedule for the next 7 days. Select a time slot to schedule a meeting."}
-            </p>
-            {renderAvailability}
-          </div>
+          <ConsultantAvailability
+            consultantDetails={consultantDetails}
+            selectedSlot={selectedSlot}
+            setSelectedSlot={setSelectedSlot}
+            timezone={timezone || "UTC"}
+          />
         </div>
+
         <ClassesAndWebinars
           classPlans={consultantDetails.classPlans}
           webinarPlans={consultantDetails.webinarPlans}
         />
-        <div>
-          <h3 className="font-semibold text-lg mb-4">
-            All Reviews ({reviews?.length || 0})
-          </h3>
-          <div className="space-y-4">
-            {reviews && reviews.length > 0 ? (
-              reviews.map((review) => <Review key={review.id} {...review} />)
-            ) : (
-              <p>No reviews available.</p>
-            )}
-          </div>
-        </div>
+
+        <ReviewsSection reviews={reviews} />
       </div>
-      <div className="flex flex-col items-center w-1/4 ml-10">
-        <Image
-          alt="Profile"
-          className="rounded-full mb-6"
-          height="1350"
-          src={userDetails.image || "/placeholder.svg"}
-          style={{
-            aspectRatio: "1080/1350",
-            objectFit: "cover",
-          }}
-          width="1080"
-        />
-        <div className="card p-6 bg-white shadow-lg rounded-lg w-full">
-          <h3 className="text-lg font-semibold mb-4">Consultation Pricing</h3>
-          <PricingToggle
-            consultationOptions={consultationOptions}
-            subscriptionOptions={subscriptionOptions}
-            consultantDetails={consultantDetails}
-            userDetails={userDetails}
-            handleBooking={handleBooking}
-            selectedDate={selectedDate}
-            setSelectedDate={setSelectedDate}
-            currentDate={currentDate}
-            setCurrentDate={setCurrentDate}
-            renderCalendar={renderCalendar}
-            slotTimings={slotTimings}
-            selectedSlot={selectedSlot}
-            setSelectedSlot={setSelectedSlot}
-          />
-        </div>
-      </div>
+
+      <ConsultationPricing
+        userDetails={userDetails}
+        consultantDetails={consultantDetails}
+        handleBooking={handleBooking}
+        selectedDate={selectedDate}
+        setSelectedDate={setSelectedDate}
+        currentDate={currentDate}
+        setCurrentDate={setCurrentDate}
+        renderCalendar={renderCalendar}
+        slotTimings={slotTimings}
+        selectedSlot={selectedSlot}
+        setSelectedSlot={setSelectedSlot}
+      />
     </div>
   );
 }
