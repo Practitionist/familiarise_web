@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { ConsultationMode, ScheduleType, UserRole } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { isValidTimeRange } from "@/lib/timeSlotValidation";
 
 export async function PATCH(
   req: NextRequest,
@@ -116,7 +117,6 @@ async function updateUserProfile(id: string, body: any, existingUser: any) {
       throw new Error("Invalid role");
   }
 }
-
 async function updateConsultantProfile(
   id: string,
   body: any,
@@ -189,15 +189,27 @@ async function updateConsultantProfile(
     await prisma.slotOfAvailabilityWeekly.deleteMany({
       where: { consultantProfileId: consultantProfile.id },
     });
-    await prisma.slotOfAvailabilityWeekly.createMany({
-      data: profileData.slotsOfAvailabilityWeekly.create.map((slot: any) => ({
-        dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
-        slotStartTimeInUTC: slot.slotStartTimeInUTC,
-        dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
-        slotEndTimeInUTC: slot.slotEndTimeInUTC,
-        consultantProfileId: consultantProfile.id,
-      })),
-    });
+
+    // Filter out invalid slots before creating
+    const validWeeklySlots =
+      profileData.slotsOfAvailabilityWeekly.create.filter((slot: any) =>
+        isValidTimeRange(
+          slot.slotStartTimeInUTC.split("T")[1].slice(0, 5),
+          slot.slotEndTimeInUTC.split("T")[1].slice(0, 5),
+        ),
+      );
+
+    if (validWeeklySlots.length > 0) {
+      await prisma.slotOfAvailabilityWeekly.createMany({
+        data: validWeeklySlots.map((slot: any) => ({
+          dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
+          slotStartTimeInUTC: slot.slotStartTimeInUTC,
+          dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
+          slotEndTimeInUTC: slot.slotEndTimeInUTC,
+          consultantProfileId: consultantProfile.id,
+        })),
+      });
+    }
   }
 
   if (
@@ -207,13 +219,25 @@ async function updateConsultantProfile(
     await prisma.slotOfAvailabilityCustom.deleteMany({
       where: { consultantProfileId: consultantProfile.id },
     });
-    await prisma.slotOfAvailabilityCustom.createMany({
-      data: profileData.slotsOfAvailabilityCustom.create.map((slot: any) => ({
-        slotStartTimeInUTC: slot.slotStartTimeInUTC,
-        slotEndTimeInUTC: slot.slotEndTimeInUTC,
-        consultantProfileId: consultantProfile.id,
-      })),
-    });
+
+    // Filter out invalid slots before creating
+    const validCustomSlots =
+      profileData.slotsOfAvailabilityCustom.create.filter((slot: any) =>
+        isValidTimeRange(
+          slot.slotStartTimeInUTC.split("T")[1].slice(0, 5),
+          slot.slotEndTimeInUTC.split("T")[1].slice(0, 5),
+        ),
+      );
+
+    if (validCustomSlots.length > 0) {
+      await prisma.slotOfAvailabilityCustom.createMany({
+        data: validCustomSlots.map((slot: any) => ({
+          slotStartTimeInUTC: slot.slotStartTimeInUTC,
+          slotEndTimeInUTC: slot.slotEndTimeInUTC,
+          consultantProfileId: consultantProfile.id,
+        })),
+      });
+    }
   }
 
   return { consultantProfileId: consultantProfile.id };

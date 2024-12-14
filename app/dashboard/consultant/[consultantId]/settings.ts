@@ -1,6 +1,6 @@
 import { DayOfWeek, ScheduleType } from "@prisma/client";
 import { TConsultantProfile } from "@/types/consultant";
-
+import { validateTimeSlot, isValidTimeRange } from "@/lib/timeSlotValidation";
 export interface SlotType {
   startTime: string;
   endTime: string;
@@ -77,7 +77,6 @@ export const getInitialFormData = (
   specialization: consultant?.specialization || "",
   experience: consultant?.experience || "",
   scheduleType: consultant?.scheduleType || ScheduleType.WEEKLY,
-  // Use consultant's service settings if available
   language:
     consultant?.consultationPlans?.[0]?.language ||
     consultant?.subscriptionPlans?.[0]?.language ||
@@ -104,7 +103,6 @@ export const getInitialFormData = (
 export const getInitialServiceSettings = (
   consultant: TConsultantProfile,
 ): ServiceSettings => {
-  // Get the most recently updated plan's settings
   const allPlans = [
     ...(consultant.consultationPlans || []),
     ...(consultant.subscriptionPlans || []),
@@ -151,14 +149,20 @@ export const getInitialWeeklySlots = (
   const formattedWeeklySlots: SlotsType = {};
   consultant.slotsOfAvailabilityWeekly.forEach((slot) => {
     const day = slot.dayOfWeekforStartTimeInUTC.toLowerCase();
-    if (!formattedWeeklySlots[day]) {
-      formattedWeeklySlots[day] = [];
+    const startTime = formatTimeFromDate(new Date(slot.slotStartTimeInUTC));
+    const endTime = formatTimeFromDate(new Date(slot.slotEndTimeInUTC));
+
+    // Only add valid slots
+    if (isValidTimeRange(startTime, endTime)) {
+      if (!formattedWeeklySlots[day]) {
+        formattedWeeklySlots[day] = [];
+      }
+      formattedWeeklySlots[day].push({
+        startTime,
+        endTime,
+        isValid: true,
+      });
     }
-    formattedWeeklySlots[day].push({
-      startTime: formatTimeFromDate(new Date(slot.slotStartTimeInUTC)),
-      endTime: formatTimeFromDate(new Date(slot.slotEndTimeInUTC)),
-      isValid: true,
-    });
   });
   return formattedWeeklySlots;
 };
@@ -172,85 +176,32 @@ export const getInitialCustomSlots = (
   consultant.slotsOfAvailabilityCustom.forEach((slot) => {
     const date = new Date(slot.slotStartTimeInUTC);
     const dateString = getLocalDateString(date);
+    const startTime = formatTimeFromDate(new Date(slot.slotStartTimeInUTC));
+    const endTime = formatTimeFromDate(new Date(slot.slotEndTimeInUTC));
 
-    if (!formattedCustomSlots[dateString]) {
-      formattedCustomSlots[dateString] = [];
+    // Only add valid slots
+    if (isValidTimeRange(startTime, endTime)) {
+      if (!formattedCustomSlots[dateString]) {
+        formattedCustomSlots[dateString] = [];
+      }
+      formattedCustomSlots[dateString].push({
+        startTime,
+        endTime,
+        isValid: true,
+      });
     }
-    formattedCustomSlots[dateString].push({
-      startTime: formatTimeFromDate(new Date(slot.slotStartTimeInUTC)),
-      endTime: formatTimeFromDate(new Date(slot.slotEndTimeInUTC)),
-      isValid: true,
-    });
   });
   return formattedCustomSlots;
 };
 
-export const validateSlot = (
-  slot: SlotType,
-  otherSlots: SlotType[],
-): SlotType => {
-  const getMinutes = (time: string): number | null => {
-    const [hours, minutes] = time.split(":").map(Number);
-    return !isNaN(hours) && !isNaN(minutes) ? hours * 60 + minutes : null;
-  };
-
-  const startMinutes = getMinutes(slot.startTime);
-  const endMinutes = getMinutes(slot.endTime);
-
-  if (startMinutes === null || endMinutes === null) {
-    return { ...slot, isValid: false, errorMessage: "Invalid time format" };
-  }
-
-  if (endMinutes <= startMinutes) {
-    return {
-      ...slot,
-      isValid: false,
-      errorMessage: "End time must be after start time",
-    };
-  }
-
-  if (startMinutes % 15 !== 0 || endMinutes % 15 !== 0) {
-    return {
-      ...slot,
-      isValid: false,
-      errorMessage: "Times must be in multiples of 15 minutes",
-    };
-  }
-
-  if (endMinutes - startMinutes < 30) {
-    return {
-      ...slot,
-      isValid: false,
-      errorMessage: "Session must be at least 30 minutes long",
-    };
-  }
-
-  for (const otherSlot of otherSlots) {
-    const otherStartMinutes = getMinutes(otherSlot.startTime);
-    const otherEndMinutes = getMinutes(otherSlot.endTime);
-    if (otherStartMinutes === null || otherEndMinutes === null) continue;
-
-    if (
-      (startMinutes >= otherStartMinutes &&
-        startMinutes < otherEndMinutes + 15) ||
-      (endMinutes > otherStartMinutes - 15 && endMinutes <= otherEndMinutes) ||
-      (startMinutes <= otherStartMinutes && endMinutes >= otherEndMinutes)
-    ) {
-      return {
-        ...slot,
-        isValid: false,
-        errorMessage: "Must have at least a 15-minute break between sessions",
-      };
-    }
-  }
-
-  return { ...slot, isValid: true, errorMessage: undefined };
-};
-
+// Re-export the shared validation utility
+export const validateSlot = validateTimeSlot;
 export const formatSlotsForApi = (slots: SlotsType, isWeekly: boolean) => {
   return Object.entries(slots).flatMap(([key, slots]) =>
     slots
       .filter((slot) => slot.isValid)
+      // Add additional validation to prevent 12 AM to 12 AM slots
+      .filter((slot) => isValidTimeRange(slot.startTime, slot.endTime))
       .map((slot) => {
         if (isWeekly) {
           return {
@@ -271,33 +222,10 @@ export const formatSlotsForApi = (slots: SlotsType, isWeekly: boolean) => {
 
 export const validateAllSlots = (slots: SlotsType): boolean => {
   return Object.values(slots).every((daySlots) =>
-    daySlots.every((slot) => slot.isValid),
+    daySlots.every(
+      (slot) => slot.isValid && isValidTimeRange(slot.startTime, slot.endTime),
+    ),
   );
-};
-
-export const updateConsultantSettings = async (
-  consultantId: string,
-  formData: FormData,
-  weeklySlots: SlotsType,
-  customSlots: SlotsType,
-) => {
-  const response = await fetch(`/api/user/consultants/${consultantId}`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      ...formData,
-      slotsOfAvailabilityWeekly: formatSlotsForApi(weeklySlots, true),
-      slotsOfAvailabilityCustom: formatSlotsForApi(customSlots, false),
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to update settings");
-  }
-
-  return response.json();
 };
 
 // Calendar utilities

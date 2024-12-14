@@ -254,9 +254,15 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
             i === index ? { ...slot, [field]: value } : slot,
           ),
         };
+        // Pass the correct context for slot splitting
         updatedSlots[day][index] = validateSlot(
           updatedSlots[day][index],
           updatedSlots[day].filter((_, i) => i !== index),
+          day,
+          scheduleType === ScheduleType.WEEKLY
+            ? setWeeklySlots
+            : setCustomSlots,
+          scheduleType === ScheduleType.WEEKLY,
         );
         return updatedSlots;
       };
@@ -329,7 +335,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
           key={`day-${i}`}
           type="button"
           className={`p-2 rounded-full hover:bg-gray-200
-            ${isSelected ? "bg-black text-white" : ""}`}
+        ${isSelected ? "bg-black text-white" : ""}`}
           onClick={() => {
             const newCustomSlots = { ...customSlots };
             if (isSelected) {

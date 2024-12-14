@@ -15,18 +15,22 @@ import {
   PreferredSchedule,
   PreferredScheduleSchema,
 } from "@/schemas/UserSchema";
+import { validateTimeSlot } from "@/lib/timeSlotValidation";
+import {
+  DAYS_OF_WEEK,
+  type DayOfWeek,
+  convertToUTC,
+  convertToLocalTime,
+  getLocalDateString,
+  isOvernight,
+  formatDayDisplay,
+  getNextDay,
+  getDaysInMonth,
+  getFirstDayOfMonth,
+} from "../timeUtils";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
-
-type DayOfWeek =
-  | "MONDAY"
-  | "TUESDAY"
-  | "WEDNESDAY"
-  | "THURSDAY"
-  | "FRIDAY"
-  | "SATURDAY"
-  | "SUNDAY";
 
 interface SlotType {
   startTime: string;
@@ -43,47 +47,20 @@ interface Props {
   initialData: Partial<PreferredSchedule>;
 }
 
-const DAYS_OF_WEEK: DayOfWeek[] = [
-  "MONDAY",
-  "TUESDAY",
-  "WEDNESDAY",
-  "THURSDAY",
-  "FRIDAY",
-  "SATURDAY",
-  "SUNDAY",
-];
+interface WeeklySlot {
+  dayOfWeekforStartTimeInUTC: DayOfWeek;
+  dayOfWeekforEndTimeInUTC: DayOfWeek;
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
+}
 
-const getLocalDateString = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, "0");
-  const day = date.getDate().toString().padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
+interface CustomSlot {
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
+}
 
-const formatDayDisplay = (day: DayOfWeek): string => {
-  return day.charAt(0) + day.slice(1).toLowerCase();
-};
-
-// Extract time from datetime string (e.g., "2024-01-01T09:30:00" -> "09:30")
-const extractTimeFromDateTime = (dateTimeString: string): string => {
-  try {
-    if (dateTimeString.includes("T")) {
-      const [_, time] = dateTimeString.split("T");
-      return time.substring(0, 5); // Get HH:mm part only
-    }
-    // If it's already in HH:mm format, return as is
-    if (/^\d{2}:\d{2}$/.test(dateTimeString)) {
-      return dateTimeString;
-    }
-    // If it's in HH:mm:ss format, truncate seconds
-    if (/^\d{2}:\d{2}:\d{2}$/.test(dateTimeString)) {
-      return dateTimeString.substring(0, 5);
-    }
-    return "";
-  } catch (error) {
-    console.error("Error extracting time:", error);
-    return "";
-  }
+const isValidSlot = (slot: SlotType): slot is SlotType & { isValid: true } => {
+  return Boolean(slot.startTime && slot.endTime && slot.isValid);
 };
 
 const ConsultantPreferredScheduleForm: React.FC<Props> = ({
@@ -115,8 +92,8 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           formattedWeeklySlots[day] = [];
         }
         formattedWeeklySlots[day].push({
-          startTime: extractTimeFromDateTime(slot.slotStartTimeInUTC),
-          endTime: extractTimeFromDateTime(slot.slotEndTimeInUTC),
+          startTime: convertToLocalTime(slot.slotStartTimeInUTC),
+          endTime: convertToLocalTime(slot.slotEndTimeInUTC),
           isValid: true,
         });
       });
@@ -133,8 +110,8 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             formattedCustomSlots[dateString] = [];
           }
           formattedCustomSlots[dateString].push({
-            startTime: extractTimeFromDateTime(slot.slotStartTimeInUTC),
-            endTime: extractTimeFromDateTime(slot.slotEndTimeInUTC),
+            startTime: convertToLocalTime(slot.slotStartTimeInUTC),
+            endTime: convertToLocalTime(slot.slotEndTimeInUTC),
             isValid: true,
           });
         } catch (error) {
@@ -147,103 +124,101 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 
   useEffect(() => {
     const formattedWeeklySlots = Object.entries(weeklySlots).flatMap(
-      ([day, slots]) =>
-        slots.map((slot) => ({
-          dayOfWeekforStartTimeInUTC: day.toUpperCase() as DayOfWeek,
-          dayOfWeekforEndTimeInUTC: day.toUpperCase() as DayOfWeek,
-          slotStartTimeInUTC: slot.startTime,
-          slotEndTimeInUTC: slot.endTime,
-        })),
+      ([day, slots]) => {
+        return slots.filter(isValidSlot).flatMap((slot): WeeklySlot[] => {
+          const baseDate = "2024-01-01";
+          const nextDate = "2024-01-02";
+          const overnight = isOvernight(slot.startTime, slot.endTime);
+
+          const startUTC = convertToUTC(slot.startTime, baseDate);
+          const endUTC = convertToUTC(
+            slot.endTime,
+            overnight ? nextDate : baseDate,
+          );
+
+          if (!startUTC || !endUTC) return [];
+
+          if (overnight) {
+            const midnightUTC = convertToUTC("00:00", nextDate);
+            if (!midnightUTC) return [];
+
+            const startDay = day.toUpperCase() as DayOfWeek;
+            const endDay = getNextDay(startDay);
+
+            return [
+              {
+                dayOfWeekforStartTimeInUTC: startDay,
+                dayOfWeekforEndTimeInUTC: startDay,
+                slotStartTimeInUTC: startUTC,
+                slotEndTimeInUTC: midnightUTC,
+              },
+              {
+                dayOfWeekforStartTimeInUTC: endDay,
+                dayOfWeekforEndTimeInUTC: endDay,
+                slotStartTimeInUTC: midnightUTC,
+                slotEndTimeInUTC: endUTC,
+              },
+            ];
+          }
+
+          return [
+            {
+              dayOfWeekforStartTimeInUTC: day.toUpperCase() as DayOfWeek,
+              dayOfWeekforEndTimeInUTC: day.toUpperCase() as DayOfWeek,
+              slotStartTimeInUTC: startUTC,
+              slotEndTimeInUTC: endUTC,
+            },
+          ];
+        });
+      },
     );
     setValue("weeklySlots", formattedWeeklySlots);
   }, [weeklySlots, setValue]);
 
   useEffect(() => {
     const formattedCustomSlots = Object.entries(customSlots).flatMap(
-      ([dateString, slots]) =>
-        slots.map((slot) => {
-          const startDateTime = `${dateString}T${slot.startTime}`;
-          const endDateTime = `${dateString}T${slot.endTime}`;
-          return {
-            slotStartTimeInUTC: startDateTime,
-            slotEndTimeInUTC: endDateTime,
-          };
-        }),
+      ([dateString, slots]) => {
+        return slots.filter(isValidSlot).flatMap((slot): CustomSlot[] => {
+          const nextDate = new Date(dateString);
+          nextDate.setDate(nextDate.getDate() + 1);
+          const nextDateStr = getLocalDateString(nextDate);
+          const overnight = isOvernight(slot.startTime, slot.endTime);
+
+          const startUTC = convertToUTC(slot.startTime, dateString);
+          const endUTC = convertToUTC(
+            slot.endTime,
+            overnight ? nextDateStr : dateString,
+          );
+
+          if (!startUTC || !endUTC) return [];
+
+          if (overnight) {
+            const midnightUTC = convertToUTC("00:00", nextDateStr);
+            if (!midnightUTC) return [];
+
+            return [
+              {
+                slotStartTimeInUTC: startUTC,
+                slotEndTimeInUTC: midnightUTC,
+              },
+              {
+                slotStartTimeInUTC: midnightUTC,
+                slotEndTimeInUTC: endUTC,
+              },
+            ];
+          }
+
+          return [
+            {
+              slotStartTimeInUTC: startUTC,
+              slotEndTimeInUTC: endUTC,
+            },
+          ];
+        });
+      },
     );
     setValue("customSlots", formattedCustomSlots);
   }, [customSlots, setValue]);
-
-  const validateSlot = useCallback(
-    (slot: SlotType, otherSlots: SlotType[]): SlotType => {
-      const getMinutes = (time: string): number | null => {
-        const [hours, minutes] = time.split(":").map(Number);
-        return !isNaN(hours) && !isNaN(minutes) ? hours * 60 + minutes : null;
-      };
-
-      const startMinutes = getMinutes(slot.startTime);
-      const endMinutes = getMinutes(slot.endTime);
-
-      if (startMinutes === null || endMinutes === null) {
-        return { ...slot, isValid: false, errorMessage: "Invalid time format" };
-      }
-
-      if (endMinutes <= startMinutes) {
-        return {
-          ...slot,
-          isValid: false,
-          errorMessage: "End time must be after start time",
-        };
-      }
-
-      if (startMinutes % 15 !== 0 || endMinutes % 15 !== 0) {
-        return {
-          ...slot,
-          isValid: false,
-          errorMessage: "Times must be in multiples of 15 minutes",
-        };
-      }
-
-      if (endMinutes - startMinutes < 30) {
-        return {
-          ...slot,
-          isValid: false,
-          errorMessage: "Session must be at least 30 minutes long",
-        };
-      }
-
-      if ((endMinutes - startMinutes) % 30 !== 0) {
-        return {
-          ...slot,
-          isValid: false,
-          errorMessage: "Session duration must be in multiples of 30 minutes",
-        };
-      }
-
-      for (const otherSlot of otherSlots) {
-        const otherStartMinutes = getMinutes(otherSlot.startTime);
-        const otherEndMinutes = getMinutes(otherSlot.endTime);
-        if (otherStartMinutes === null || otherEndMinutes === null) continue;
-
-        if (
-          (startMinutes >= otherStartMinutes &&
-            startMinutes < otherEndMinutes + 15) ||
-          (endMinutes > otherStartMinutes - 15 &&
-            endMinutes <= otherEndMinutes) ||
-          (startMinutes <= otherStartMinutes && endMinutes >= otherEndMinutes)
-        ) {
-          return {
-            ...slot,
-            isValid: false,
-            errorMessage:
-              "Must have at least a 15-minute break between sessions",
-          };
-        }
-      }
-
-      return { ...slot, isValid: true, errorMessage: undefined };
-    },
-    [],
-  );
 
   const handleAddSlot = useCallback(
     (
@@ -278,14 +253,17 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             i === index ? { ...slot, [field]: value } : slot,
           ),
         };
-        updatedSlots[day][index] = validateSlot(
+        updatedSlots[day][index] = validateTimeSlot(
           updatedSlots[day][index],
           updatedSlots[day].filter((_, i) => i !== index),
+          day,
+          setSlots,
+          scheduleType === "WEEKLY",
         );
         return updatedSlots;
       });
     },
-    [validateSlot],
+    [scheduleType],
   );
 
   const handleDeleteSlot = useCallback(
@@ -412,14 +390,6 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   );
 
   const [currentDate, setCurrentDate] = useState(new Date());
-
-  const getDaysInMonth = (date: Date) => {
-    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-  };
-
-  const getFirstDayOfMonth = (date: Date) => {
-    return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
-  };
 
   const handlePrevMonth = () => {
     setCurrentDate(
