@@ -12,13 +12,13 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import Image from "next/image";
 import { redirect } from "next/navigation";
-import { 
-  CalendarIcon, 
-  ClockIcon, 
-  UsersIcon, 
+import {
+  CalendarIcon,
+  ClockIcon,
+  UsersIcon,
   VideoIcon,
   GlobeIcon,
-  CertificateIcon 
+  CertificateIcon,
 } from "./icons";
 
 type WebinarWithRelations = Prisma.WebinarPlanGetPayload<{
@@ -55,13 +55,13 @@ async function getWebinarPlan(
       topics: true,
       webinars: {
         where: {
-          status: "SCHEDULED"
+          status: "SCHEDULED",
         },
         orderBy: {
-          scheduledAt: "asc"
+          scheduledAt: "asc",
         },
-        take: 1
-      }
+        take: 1,
+      },
     },
   });
 }
@@ -75,7 +75,9 @@ type FeatureItemProps = {
 const FeatureItem = ({ icon, label, value }: FeatureItemProps) => (
   <div className="flex items-center gap-2">
     {icon}
-    <span className="text-sm text-gray-600">{label}: {value}</span>
+    <span className="text-sm text-gray-600">
+      {label}: {value}
+    </span>
   </div>
 );
 
@@ -86,7 +88,12 @@ type WebinarRegistrationProps = {
   nextSession?: Date;
 };
 
-const WebinarRegistration = ({ webinarId, price, isLoggedIn, nextSession }: WebinarRegistrationProps) => {
+const WebinarRegistration = ({
+  webinarId,
+  price,
+  isLoggedIn,
+  nextSession,
+}: WebinarRegistrationProps) => {
   if (!isLoggedIn) {
     return (
       <Card>
@@ -94,11 +101,22 @@ const WebinarRegistration = ({ webinarId, price, isLoggedIn, nextSession }: Webi
           <CardTitle>Register for Webinar</CardTitle>
         </CardHeader>
         <CardContent>
-          <form action="/api/events/webinars/book" method="POST" className="space-y-4">
+          <form
+            action="/api/events/webinars/book"
+            method="POST"
+            className="space-y-4"
+          >
             <input type="hidden" name="webinarId" value={webinarId} />
-            <input type="hidden" name="timezone" value={Intl.DateTimeFormat().resolvedOptions().timeZone} />
+            <input
+              type="hidden"
+              name="timezone"
+              value={Intl.DateTimeFormat().resolvedOptions().timeZone}
+            />
             <div>
-              <label htmlFor="name" className="block text-sm font-medium text-gray-700">
+              <label
+                htmlFor="name"
+                className="block text-sm font-medium text-gray-700"
+              >
                 Full Name
               </label>
               <input
@@ -110,7 +128,10 @@ const WebinarRegistration = ({ webinarId, price, isLoggedIn, nextSession }: Webi
               />
             </div>
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+              <label
+                htmlFor="email"
+                className="block text-sm font-medium text-gray-700"
+              >
                 Email
               </label>
               <input
@@ -137,19 +158,30 @@ const WebinarRegistration = ({ webinarId, price, isLoggedIn, nextSession }: Webi
       </CardHeader>
       <CardContent>
         <p className="text-sm text-gray-600 mb-4">
-          {nextSession 
-            ? `Next session starts on ${new Date(nextSession).toLocaleString(undefined, {
-                dateStyle: 'long',
-                timeStyle: 'short',
-                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-              })}`
+          {nextSession
+            ? `Next session starts on ${new Date(nextSession).toLocaleString(
+                undefined,
+                {
+                  dateStyle: "long",
+                  timeStyle: "short",
+                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                },
+              )}`
             : "No upcoming sessions scheduled yet"}
         </p>
       </CardContent>
       <CardFooter>
-        <form action="/api/events/webinars/book" method="POST" className="w-full">
+        <form
+          action="/api/events/webinars/book"
+          method="POST"
+          className="w-full"
+        >
           <input type="hidden" name="webinarId" value={webinarId} />
-          <input type="hidden" name="timezone" value={Intl.DateTimeFormat().resolvedOptions().timeZone} />
+          <input
+            type="hidden"
+            name="timezone"
+            value={Intl.DateTimeFormat().resolvedOptions().timeZone}
+          />
           <Button type="submit" className="w-full bg-black hover:bg-gray-800">
             Pay ${price} USD & Register Now
           </Button>
@@ -164,16 +196,16 @@ interface PageProps {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-export default async function WebinarDetailsPage({ 
+export default async function WebinarDetailsPage({
   params,
-  searchParams 
+  searchParams,
 }: PageProps) {
   const { webinarId } = await params;
   const session = await getServerSession();
   const webinar = await getWebinarPlan(webinarId);
 
   if (!webinar) {
-    redirect('/explore/programs/webinars');
+    redirect("/explore/programs/webinars");
   }
 
   const nextSession = webinar.webinars[0]?.scheduledAt;
@@ -207,13 +239,16 @@ export default async function WebinarDetailsPage({
                   <FeatureItem
                     icon={<CalendarIcon />}
                     label="Next Session"
-                    value={nextSession 
-                      ? new Date(nextSession).toLocaleString(undefined, {
-                          dateStyle: 'long',
-                          timeStyle: 'short',
-                          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-                        })
-                      : "To be announced"}
+                    value={
+                      nextSession
+                        ? new Date(nextSession).toLocaleString(undefined, {
+                            dateStyle: "long",
+                            timeStyle: "short",
+                            timeZone:
+                              Intl.DateTimeFormat().resolvedOptions().timeZone,
+                          })
+                        : "To be announced"
+                    }
                   />
                   <FeatureItem
                     icon={<ClockIcon />}
@@ -244,23 +279,31 @@ export default async function WebinarDetailsPage({
 
                 <div className="space-y-6">
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">About this Webinar</h2>
+                    <h2 className="text-xl font-semibold mb-2">
+                      About this Webinar
+                    </h2>
                     <p className="text-gray-600 whitespace-pre-line">
                       {webinar.description}
                     </p>
                   </div>
 
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">What you'll learn</h2>
+                    <h2 className="text-xl font-semibold mb-2">
+                      What you'll learn
+                    </h2>
                     <ul className="list-disc list-inside text-gray-600 space-y-1">
-                      {webinar.learningOutcomes.map((outcome: string, index: number) => (
-                        <li key={index}>{outcome}</li>
-                      ))}
+                      {webinar.learningOutcomes.map(
+                        (outcome: string, index: number) => (
+                          <li key={index}>{outcome}</li>
+                        ),
+                      )}
                     </ul>
                   </div>
 
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">Topics Covered</h2>
+                    <h2 className="text-xl font-semibold mb-2">
+                      Topics Covered
+                    </h2>
                     <div className="flex flex-wrap gap-2">
                       {webinar.topics.map((topic) => (
                         <Badge key={topic.id} variant="secondary">
@@ -283,8 +326,13 @@ export default async function WebinarDetailsPage({
                 <div className="flex items-center gap-4 mb-4">
                   <div className="relative h-16 w-16 rounded-full overflow-hidden">
                     <Image
-                      src={webinar.consultantProfile?.user?.image || "/placeholder-user.jpg"}
-                      alt={webinar.consultantProfile?.user?.name || "Instructor"}
+                      src={
+                        webinar.consultantProfile?.user?.image ||
+                        "/placeholder-user.jpg"
+                      }
+                      alt={
+                        webinar.consultantProfile?.user?.name || "Instructor"
+                      }
                       fill
                       className="object-cover"
                     />
@@ -293,18 +341,17 @@ export default async function WebinarDetailsPage({
                     <h3 className="font-semibold">
                       {webinar.consultantProfile?.user?.name}
                     </h3>
-                    <p className="text-sm text-gray-600">
-                      Expert Instructor
-                    </p>
+                    <p className="text-sm text-gray-600">Expert Instructor</p>
                   </div>
                 </div>
                 <p className="text-sm text-gray-600">
-                  An experienced professional dedicated to sharing knowledge and expertise.
+                  An experienced professional dedicated to sharing knowledge and
+                  expertise.
                 </p>
               </CardContent>
             </Card>
 
-            <WebinarRegistration 
+            <WebinarRegistration
               webinarId={webinar.id}
               price={webinar.price}
               isLoggedIn={isLoggedIn}
