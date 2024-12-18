@@ -11,7 +11,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
 
 interface ConsultantProfile {
   id: string;
@@ -39,6 +42,7 @@ interface Program {
 }
 
 export default function Programs() {
+  const router = useRouter();
   const [programs, setPrograms] = useState<Program[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -47,6 +51,10 @@ export default function Programs() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sortBy, setSortBy] = useState("");
   const [viewMode, setViewMode] = useState("grid");
+  const [selectedTypes, setSelectedTypes] = useState({
+    class: true,
+    webinar: true,
+  });
   const observer = useRef<IntersectionObserver>();
   const ITEMS_PER_PAGE = 9;
 
@@ -70,32 +78,42 @@ export default function Programs() {
   ) => {
     try {
       setLoading(true);
-      const [classesRes, webinarsRes] = await Promise.all([
-        fetch(`/api/plans/classes?page=${pageNum}&limit=${ITEMS_PER_PAGE}`),
-        fetch(`/api/plans/webinars?page=${pageNum}&limit=${ITEMS_PER_PAGE}`),
-      ]);
+      const requests = [];
+      
+      if (selectedTypes.class) {
+        requests.push(fetch(`/api/plans/classes?page=${pageNum}&limit=${ITEMS_PER_PAGE}`));
+      }
+      if (selectedTypes.webinar) {
+        requests.push(fetch(`/api/plans/webinars?page=${pageNum}&limit=${ITEMS_PER_PAGE}`));
+      }
 
-      const classesData = await classesRes.json();
-      const webinarsData = await webinarsRes.json();
+      const responses = await Promise.all(requests);
+      const data = await Promise.all(responses.map(res => res.json()));
 
-      const formattedClasses = classesData.data.map((item: any) => ({
-        ...item,
-        type: "class",
-        imageUrl: `https://picsum.photos/seed/${item.id}/600/400`,
-      }));
+      let newPrograms: Program[] = [];
 
-      const formattedWebinars = webinarsData.data.map((item: any) => ({
-        ...item,
-        type: "webinar",
-        imageUrl: `https://picsum.photos/seed/${item.id}/600/400`,
-      }));
+      if (selectedTypes.class && data[0]) {
+        const formattedClasses = data[selectedTypes.webinar ? 0 : 0].data.map((item: any) => ({
+          ...item,
+          type: "class",
+          imageUrl: `https://picsum.photos/seed/${item.id}/600/400`,
+        }));
+        newPrograms = [...newPrograms, ...formattedClasses];
+      }
 
-      const newPrograms = [...formattedClasses, ...formattedWebinars];
+      if (selectedTypes.webinar && data[selectedTypes.class ? 1 : 0]) {
+        const formattedWebinars = data[selectedTypes.class ? 1 : 0].data.map((item: any) => ({
+          ...item,
+          type: "webinar",
+          imageUrl: `https://picsum.photos/seed/${item.id}/600/400`,
+        }));
+        newPrograms = [...newPrograms, ...formattedWebinars];
+      }
 
       setPrograms((prev) =>
         isNewSearch ? newPrograms : [...prev, ...newPrograms],
       );
-      setHasMore(newPrograms.length === ITEMS_PER_PAGE * 2); // Since we're fetching from two endpoints
+      setHasMore(newPrograms.length === ITEMS_PER_PAGE * (selectedTypes.class && selectedTypes.webinar ? 2 : 1));
     } catch (error) {
       console.error("Error fetching programs:", error);
     } finally {
@@ -121,7 +139,15 @@ export default function Programs() {
     setPage(1);
     setHasMore(true);
     fetchPrograms(1, true);
-  }, [searchTerm, selectedCategory]);
+  }, [searchTerm, selectedCategory, selectedTypes]);
+
+  const handleProgramClick = (item: Program) => {
+    if (item.type === "class") {
+      router.push(`/explore/programs/classes/${item.id}`);
+    } else {
+      router.push(`/explore/programs/webinars/${item.id}`);
+    }
+  };
 
   const filteredAndSortedPrograms = programs
     .filter((item) => {
@@ -228,18 +254,70 @@ export default function Programs() {
       </div>
 
       <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center space-x-6">
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="class"
+              checked={selectedTypes.class}
+              onCheckedChange={(checked) =>
+                setSelectedTypes(prev => ({ ...prev, class: checked === true }))
+              }
+              className={cn(
+                "transition-transform duration-200",
+                selectedTypes.class && "scale-110"
+              )}
+            />
+            <Label 
+              htmlFor="class" 
+              className={cn(
+                "text-sm font-medium transition-all duration-200",
+                selectedTypes.class && "text-primary font-semibold scale-105"
+              )}
+            >
+              Classes
+            </Label>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="webinar"
+              checked={selectedTypes.webinar}
+              onCheckedChange={(checked) =>
+                setSelectedTypes(prev => ({ ...prev, webinar: checked === true }))
+              }
+              className={cn(
+                "transition-transform duration-200",
+                selectedTypes.webinar && "scale-110"
+              )}
+            />
+            <Label 
+              htmlFor="webinar" 
+              className={cn(
+                "text-sm font-medium transition-all duration-200",
+                selectedTypes.webinar && "text-primary font-semibold scale-105"
+              )}
+            >
+              Webinars
+            </Label>
+          </div>
+        </div>
         <div className="space-x-3">
           <Button
             variant={viewMode === "grid" ? "night" : "default"}
             onClick={() => setViewMode("grid")}
-            className="shadow-sm hover:shadow-md transition-shadow"
+            className={cn(
+              "shadow-sm transition-all duration-300",
+              viewMode === "grid" && "transform scale-105 shadow-lg ring-2 ring-primary ring-opacity-50"
+            )}
           >
             Grid View
           </Button>
           <Button
             variant={viewMode === "list" ? "night" : "default"}
             onClick={() => setViewMode("list")}
-            className="shadow-sm hover:shadow-md transition-shadow"
+            className={cn(
+              "shadow-sm transition-all duration-300",
+              viewMode === "list" && "transform scale-105 shadow-lg ring-2 ring-primary ring-opacity-50"
+            )}
           >
             List View
           </Button>
@@ -256,7 +334,8 @@ export default function Programs() {
                   ? lastElementRef
                   : null
               }
-              className="bg-muted rounded-lg overflow-hidden"
+              className="bg-muted rounded-lg overflow-hidden cursor-pointer hover:shadow-lg transition-all duration-300 hover:scale-[1.02]"
+              onClick={() => handleProgramClick(item)}
             >
               <Image
                 src={item.imageUrl}
@@ -292,7 +371,8 @@ export default function Programs() {
                   ? lastElementRef
                   : null
               }
-              className="bg-muted rounded-lg overflow-hidden flex"
+              className="bg-muted rounded-lg overflow-hidden flex cursor-pointer hover:shadow-lg transition-all duration-300 hover:scale-[1.01]"
+              onClick={() => handleProgramClick(item)}
             >
               <Image
                 src={item.imageUrl}
