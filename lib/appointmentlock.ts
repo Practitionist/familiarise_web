@@ -1,64 +1,63 @@
-import prisma from "./prisma";
+import { Redis } from "@upstash/redis";
+import Redlock from "redlock";
+import redisClient from "./redis";
 
-///////////////////////////////////////////////////// CONSULTATION LOCK /////////////////////////////////////////////////////
+if (!redisClient) {
+  throw new Error("Redis client is not initialized");
+}
 
-async function createConsultationLock(appointmentId: string): Promise<boolean> {
+const redlock = new Redlock(
+  // You can have multiple clients here for redundancy
+  [redisClient as any],
+  {
+    // The maximum number of times Redlock will attempt to lock a resource
+    // before erroring.
+    driftFactor: 0.01, // time in ms
+    retryCount: 10,
+    retryDelay: 200, // time in ms
+    retryJitter: 200, // time in ms
+  },
+);
+
+export async function lockAppointment(
+  appointmentId: string,
+  ttl: number = 300000,
+) {
+  // default 5 minutes
   try {
-    await prisma.appointmentLock.create({
-      data: {
-        appointment: {
-          connect: { id: appointmentId },
-        },
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes expiration
-      },
-    });
-    return true;
-  } catch (error: unknown) {
-    if ((error as any).code === "P2002") {
-      // Unique constraint violation
-      return false; // Lock already exists
-    }
-    throw error;
+    const lock = await redlock.acquire(
+      [`appointment-lock:${appointmentId}`],
+      ttl,
+    );
+    return lock;
+  } catch (error) {
+    console.error("Failed to acquire lock:", error);
+    throw new Error("Failed to lock appointment");
   }
 }
 
-async function releaseConsultationLock(appointmentId: string): Promise<void> {
-  await prisma.appointmentLock.delete({
-    where: { appointmentId },
-  });
-}
-
-///////////////////////////////////////////////////// SUBSCRIPTION LOCK /////////////////////////////////////////////////////
-
-async function createSubscriptionLock(appointmentId: string): Promise<boolean> {
+export async function unlockAppointment(lock: any) {
   try {
-    await prisma.appointmentLock.create({
-      data: {
-        appointment: {
-          connect: { id: appointmentId },
-        },
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes expiration
-      },
-    });
-    return true;
-  } catch (error: unknown) {
-    if ((error as any).code === "P2002") {
-      // Unique constraint violation
-      return false; // Lock already exists
-    }
-    throw error;
+    await lock.release();
+  } catch (error) {
+    console.error("Failed to release lock:", error);
+    throw new Error("Failed to unlock appointment");
   }
 }
 
-async function releaseSubscriptionLock(appointmentId: string): Promise<void> {
-  await prisma.appointmentLock.delete({
-    where: { appointmentId },
-  });
+export async function isAppointmentLocked(
+  appointmentId: string,
+): Promise<boolean> {
+  try {
+    if (!redisClient) {
+      throw new Error("Redis client is not initialized");
+    }
+    const exists = await redisClient.exists(
+      `appointment-lock:${appointmentId}`,
+    );
+    return exists === 1;
+  } catch (error) {
+    console.error("Failed to check lock status:", error);
+    throw new Error("Failed to check appointment lock status");
+  }
 }
-
-export {
-  createConsultationLock,
-  releaseConsultationLock,
-  createSubscriptionLock,
-  releaseSubscriptionLock,
-};

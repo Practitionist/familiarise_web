@@ -7,7 +7,11 @@ type CompletedAppointment = Prisma.AppointmentGetPayload<{
   include: {
     slotOfAppointment: {
       include: {
-        consulteeProfile: true;
+        user: {
+          include: {
+            consulteeProfile: true;
+          };
+        };
       };
     };
   };
@@ -68,16 +72,27 @@ export async function createConsultantReviews(
         include: {
           slotOfAppointment: {
             include: {
-              consulteeProfile: true,
+              user: {
+                include: {
+                  consulteeProfile: true,
+                },
+              },
             },
           },
         },
       });
 
+      if (completedAppointments.length === 0) {
+        console.log(
+          `No completed appointments found for consultant ${consultant.id}`,
+        );
+        continue;
+      }
+
       // Create reviews for a random subset of completed appointments
       const numReviews = faker.number.int({
         min: 1,
-        max: Math.min(5, completedAppointments.length),
+        max: Math.max(1, Math.min(5, completedAppointments.length)),
       });
       const appointmentsToReview =
         faker.helpers.arrayElements<CompletedAppointment>(
@@ -87,7 +102,7 @@ export async function createConsultantReviews(
 
       for (const appointment of appointmentsToReview) {
         const consulteeProfile =
-          appointment.slotOfAppointment[0]?.consulteeProfile;
+          appointment.slotOfAppointment[0]?.user?.consulteeProfile;
         if (!consulteeProfile) {
           console.warn(
             `Skipping review - no consultee profile found for appointment ${appointment.id}`,
