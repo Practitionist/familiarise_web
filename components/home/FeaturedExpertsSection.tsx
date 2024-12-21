@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
@@ -16,15 +16,15 @@ export default function FeaturedExpertsSection() {
   useEffect(() => {
     async function fetchExperts() {
       try {
-        const response = await fetch('/api/user/consultants?limit=10');
-        if (!response.ok) throw new Error('Failed to fetch');
-        
+        const response = await fetch("/api/user/consultants?limit=10");
+        if (!response.ok) throw new Error("Failed to fetch");
+
         const data = await response.json();
         if (data?.data && data.data.length > 0) {
           setExperts(data.data);
         }
       } catch (error) {
-        console.error('Error fetching experts:', error);
+        console.error("Error fetching experts:", error);
       } finally {
         setLoading(false);
       }
@@ -36,32 +36,45 @@ export default function FeaturedExpertsSection() {
   const renderRating = (rating: number) => {
     const fullStars = Math.floor(rating);
     const hasHalfStar = rating % 1 >= 0.5;
-    
+
     return (
       <div className="flex items-center gap-0.5 justify-center">
         {[...Array(fullStars)].map((_, i) => (
           <Star key={i} className="w-4 h-4 fill-yellow-400 text-yellow-400" />
         ))}
-        {hasHalfStar && <StarHalf className="w-4 h-4 fill-yellow-400 text-yellow-400" />}
+        {hasHalfStar && (
+          <StarHalf className="w-4 h-4 fill-yellow-400 text-yellow-400" />
+        )}
         <span className="text-sm text-gray-600 ml-1">{rating.toFixed(1)}</span>
       </div>
     );
   };
 
-  const ExpertCard = ({ expert, className = "" }: { expert: TConsultantProfile; className?: string }) => (
-    <Link 
+  const ExpertCard = ({
+    expert,
+    className = "",
+  }: {
+    expert: TConsultantProfile;
+    className?: string;
+  }) => (
+    <Link
       href={`/explore/experts/${expert.id}`}
       className={`block hover:no-underline flex-shrink-0 w-[280px] ${className}`}
     >
       <Card className="hover:shadow-lg transition-shadow duration-300 hover:-translate-y-0.5 h-full mx-3">
         <CardHeader className="space-y-3">
           <Avatar className="mx-auto h-16 w-16">
-            <AvatarImage src={expert.user.image || '/placeholder-user.jpg'} alt={expert.user.name || 'Expert'} />
+            <AvatarImage
+              src={expert.user.image || "/placeholder-user.jpg"}
+              alt={expert.user.name || "Expert"}
+            />
             <AvatarFallback>
               <User className="h-8 w-8" />
             </AvatarFallback>
           </Avatar>
-          <h3 className="text-lg font-semibold text-center line-clamp-1">{expert.user.name}</h3>
+          <h3 className="text-lg font-semibold text-center line-clamp-1">
+            {expert.user.name}
+          </h3>
           {renderRating(expert.rating)}
         </CardHeader>
         <CardContent className="space-y-4">
@@ -75,9 +88,9 @@ export default function FeaturedExpertsSection() {
           </div>
           <div className="flex flex-wrap gap-2 justify-center">
             {expert.tags?.slice(0, 3).map((tag) => (
-              <Badge 
-                key={tag.id} 
-                variant="secondary" 
+              <Badge
+                key={tag.id}
+                variant="secondary"
                 className="text-xs px-2 py-0.5"
               >
                 {tag.name}
@@ -115,29 +128,41 @@ export default function FeaturedExpertsSection() {
           <div className="marquee-track">
             {loading ? (
               // Show loading skeletons
-              Array(10).fill(0).map((_, index) => (
-                <div key={index} className="flex-shrink-0 w-[280px]">
-                  <Card className="mx-3">
-                    <CardHeader>
-                      <div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mx-auto mb-3" />
-                      <div className="h-5 bg-gray-200 rounded animate-pulse w-3/4 mx-auto" />
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        <div className="h-4 bg-gray-200 rounded animate-pulse w-1/2 mx-auto" />
-                        <div className="h-3 bg-gray-200 rounded animate-pulse w-1/3 mx-auto" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              ))
+              Array(10)
+                .fill(0)
+                .map((_, index) => (
+                  <div key={index} className="flex-shrink-0 w-[280px]">
+                    <Card className="mx-3">
+                      <CardHeader>
+                        <div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mx-auto mb-3" />
+                        <div className="h-5 bg-gray-200 rounded animate-pulse w-3/4 mx-auto" />
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-2">
+                          <div className="h-4 bg-gray-200 rounded animate-pulse w-1/2 mx-auto" />
+                          <div className="h-3 bg-gray-200 rounded animate-pulse w-1/3 mx-auto" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                ))
             ) : (
               <>
+                {/* First set */}
                 {experts.map((expert) => (
                   <ExpertCard key={expert.id} expert={expert} />
                 ))}
+                {/* Second set */}
                 {experts.map((expert) => (
-                  <ExpertCard key={`${expert.id}-duplicate`} expert={expert} />
+                  <ExpertCard key={`${expert.id}-2`} expert={expert} />
+                ))}
+                {/* Third set */}
+                {experts.map((expert) => (
+                  <ExpertCard key={`${expert.id}-3`} expert={expert} />
+                ))}
+                {/* Fourth set */}
+                {experts.map((expert) => (
+                  <ExpertCard key={`${expert.id}-4`} expert={expert} />
                 ))}
               </>
             )}
@@ -149,19 +174,33 @@ export default function FeaturedExpertsSection() {
           width: 100%;
           overflow: hidden;
           position: relative;
+          mask-image: linear-gradient(
+            to right,
+            transparent,
+            black 5%,
+            black 95%,
+            transparent
+          );
+          -webkit-mask-image: linear-gradient(
+            to right,
+            transparent,
+            black 5%,
+            black 95%,
+            transparent
+          );
         }
         .marquee-track {
           display: flex;
           width: fit-content;
-          animation: marquee 30s linear infinite;
-          transform: translateX(calc(-50% + 50vw));
+          animation: marquee 60s linear infinite;
+          transform: translateX(0);
         }
         @keyframes marquee {
           0% {
-            transform: translateX(calc(-50% + 50vw));
+            transform: translateX(0);
           }
           100% {
-            transform: translateX(calc(-100% + 50vw));
+            transform: translateX(calc(-100% / 2));
           }
         }
         .marquee-track:hover {
