@@ -22,16 +22,14 @@ export async function GET(
       include: {
         slotOfAppointment: {
           include: {
-            consulteeProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
+            user: {
+              // Changed from consulteeProfile
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+                consulteeProfile: true, // Include consulteeProfile if needed
               },
             },
           },
@@ -211,16 +209,14 @@ export async function PUT(
       include: {
         slotOfAppointment: {
           include: {
-            consulteeProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
+            user: {
+              // Changed from consulteeProfile
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+                consulteeProfile: true, // Include consulteeProfile if needed
               },
             },
           },
@@ -399,16 +395,14 @@ export async function DELETE(
       include: {
         slotOfAppointment: {
           include: {
-            consulteeProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
+            user: {
+              // Changed from consulteeProfile
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+                consulteeProfile: true, // Include consulteeProfile if needed
               },
             },
           },

@@ -1,129 +1,208 @@
-import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { getServerSession } from "next-auth/next";
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
+import prisma from "@/lib/prisma";
+import { AppointmentsType } from "@prisma/client";
+import { checkOverlappingAppointments } from "@/lib/appointmentUtils";
+import { acquireLock, releaseLock, checkRateLimit } from "@/lib/redis";
 
-interface BookSubscriptionRequest {
-  subscriptionPlanId: string;
-  tentativeStartDate: string;
-  tentativeSchedule?: string;
-  requestNotes?: string;
-}
+export async function POST(req: NextRequest) {
+  const lockKey = "subscription-booking-lock";
+  let hasLock = false;
 
-export async function POST(request: Request) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session || !session.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const {
-      subscriptionPlanId,
-      tentativeStartDate,
-      tentativeSchedule,
-      requestNotes,
-    }: BookSubscriptionRequest = await request.json();
-
-    const consultee = await prisma.consulteeProfile.findUnique({
-      where: { userId: session.user.id },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-          },
-        },
-      },
-    });
-
-    if (!consultee) {
+    if (!session?.user?.email) {
       return NextResponse.json(
-        { error: "Consultee profile not found" },
-        { status: 404 },
+        { error: "Unauthorized" },
+        {
+          status: 401,
+        },
       );
     }
 
+    // Check rate limit
+    const identifier = `booking:${session.user.email}`;
+    const isAllowed = await checkRateLimit(identifier);
+    if (!isAllowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again later." },
+        {
+          status: 429,
+        },
+      );
+    }
+
+    const data = await req.json();
+    const {
+      subscriptionPlanId,
+      startDate,
+      endDate,
+      slotStartTimeInUTC,
+      slotEndTimeInUTC,
+      notes,
+      schedule,
+    } = data;
+
+    if (
+      !subscriptionPlanId ||
+      !startDate ||
+      !endDate ||
+      !slotStartTimeInUTC ||
+      !slotEndTimeInUTC ||
+      !schedule
+    ) {
+      return NextResponse.json(
+        { error: "Missing required fields" },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    // Acquire distributed lock
+    hasLock = await acquireLock(lockKey);
+    if (!hasLock) {
+      return NextResponse.json(
+        { error: "Service is busy. Please try again." },
+        {
+          status: 409,
+        },
+      );
+    }
+
+    const user = await prisma.user.findUnique({
+      where: {
+        email: session.user.email,
+      },
+      include: {
+        consulteeProfile: true,
+      },
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { error: "User not found" },
+        {
+          status: 404,
+        },
+      );
+    }
+
+    // Get subscription plan details to check consultant
     const subscriptionPlan = await prisma.subscriptionPlan.findUnique({
       where: { id: subscriptionPlanId },
       include: {
-        consultantProfile: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
-          },
-        },
+        consultantProfile: true,
       },
     });
 
-    if (!subscriptionPlan) {
+    if (!subscriptionPlan?.consultantProfile?.id) {
       return NextResponse.json(
-        { error: "Subscription plan not found" },
-        { status: 404 },
+        { error: "Invalid subscription plan" },
+        {
+          status: 400,
+        },
       );
     }
 
-    const endDate = new Date(tentativeStartDate);
-    endDate.setMonth(endDate.getMonth() + subscriptionPlan.durationInMonths);
+    // Check for overlapping appointments
+    const hasOverlap = await checkOverlappingAppointments(
+      new Date(slotStartTimeInUTC),
+      new Date(slotEndTimeInUTC),
+      subscriptionPlan.consultantProfile.id,
+    );
 
-    const subscription = await prisma.subscription.create({
-      data: {
-        subscriptionPlan: { connect: { id: subscriptionPlanId } },
-        requestedBy: { connect: { id: consultee.id } },
-        startDate: new Date(tentativeStartDate),
-        endDate: endDate,
-        tentativeStartDate: new Date(tentativeStartDate),
-        tentativeSchedule,
-        requestNotes,
-        requestStatus: "PENDING",
-      },
-      include: {
-        subscriptionPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
+    if (hasOverlap) {
+      return NextResponse.json(
+        { error: "Time slot overlaps with existing appointment" },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    // Create subscription and appointment in a transaction
+    const appointment = await prisma.$transaction(async (tx) => {
+      // Create subscription request
+      const subscription = await tx.subscription.create({
+        data: {
+          subscriptionPlan: {
+            connect: {
+              id: subscriptionPlanId,
+            },
+          },
+          requestedBy: {
+            connect: {
+              id: user.consulteeProfile?.id,
+            },
+          },
+          startDate: new Date(startDate),
+          endDate: new Date(endDate),
+          tentativeStartDate: new Date(startDate),
+          tentativeSchedule: schedule,
+          requestNotes: notes,
+        },
+      });
+
+      // Create initial appointment
+      return await tx.appointment.create({
+        data: {
+          appointmentType: AppointmentsType.SUBSCRIPTION,
+          subscription: {
+            connect: {
+              id: subscription.id,
+            },
+          },
+          slotOfAppointment: {
+            create: {
+              userId: user.id,
+              slotStartTimeInUTC: new Date(slotStartTimeInUTC),
+              slotEndTimeInUTC: new Date(slotEndTimeInUTC),
+            },
+          },
+        },
+        include: {
+          slotOfAppointment: {
+            include: {
+              user: true,
+            },
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: true,
+                    },
                   },
+                },
+              },
+              requestedBy: {
+                include: {
+                  user: true,
                 },
               },
             },
           },
         },
-        requestedBy: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
-          },
-        },
-      },
+      });
     });
 
-    // We don't create appointments here as they will be created by the consultant upon approval
-
-    return NextResponse.json({ subscription }, { status: 201 });
-  } catch (error) {
+    return NextResponse.json(appointment);
+  } catch (error: any) {
     console.error("Error booking subscription:", error);
     return NextResponse.json(
-      { error: "An error occurred while booking the subscription" },
-      { status: 500 },
+      { error: error.message || "Internal server error" },
+      {
+        status: 500,
+      },
     );
+  } finally {
+    // Release the lock if we acquired it
+    if (hasLock) {
+      await releaseLock(lockKey);
+    }
   }
 }

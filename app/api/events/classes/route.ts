@@ -4,21 +4,20 @@ import { NextResponse } from "next/server";
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const consulteeId = searchParams.get("consulteeId");
+    const userId = searchParams.get("userId"); // Changed from consulteeId
     const consultantId = searchParams.get("consultantId");
 
     let classes;
 
-    if (consulteeId) {
+    if (userId) {
+      // Changed from consulteeId
       classes = await prisma.class.findMany({
         where: {
           appointment: {
             some: {
               slotOfAppointment: {
                 some: {
-                  consulteeProfile: {
-                    id: consulteeId,
-                  },
+                  userId, // Changed from consulteeProfile.id
                 },
               },
             },
@@ -30,7 +29,7 @@ export async function GET(request: Request) {
             include: {
               slotOfAppointment: {
                 include: {
-                  consulteeProfile: true,
+                  user: true, // Changed from consulteeProfile
                 },
               },
             },

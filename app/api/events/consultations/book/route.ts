@@ -1,139 +1,191 @@
-import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { getServerSession } from "next-auth/next";
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
-import { DayOfWeek } from "@prisma/client";
+import prisma from "@/lib/prisma";
+import { AppointmentsType } from "@prisma/client";
+import { checkOverlappingAppointments } from "@/lib/appointmentUtils";
+import { acquireLock, releaseLock, checkRateLimit } from "@/lib/redis";
 
-export async function POST(request: Request) {
+export async function POST(req: NextRequest) {
+  const lockKey = "consultation-booking-lock";
+  let hasLock = false;
+
   try {
     const session = await getServerSession(authOptions);
-    if (!session || !session.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { consultationPlanId, preferredDateTime, requestNotes } =
-      await request.json();
-
-    const consultee = await prisma.consulteeProfile.findUnique({
-      where: { userId: session.user.id },
-    });
-
-    if (!consultee) {
+    if (!session?.user?.email) {
       return NextResponse.json(
-        { error: "Consultee profile not found" },
-        { status: 404 },
+        { error: "Unauthorized" },
+        {
+          status: 401,
+        },
       );
     }
 
+    // Check rate limit
+    const identifier = `booking:${session.user.email}`;
+    const isAllowed = await checkRateLimit(identifier);
+    if (!isAllowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again later." },
+        {
+          status: 429,
+        },
+      );
+    }
+
+    const data = await req.json();
+    const { consultationPlanId, slotStartTimeInUTC, slotEndTimeInUTC, notes } =
+      data;
+
+    if (!consultationPlanId || !slotStartTimeInUTC || !slotEndTimeInUTC) {
+      return NextResponse.json(
+        { error: "Missing required fields" },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    // Acquire distributed lock
+    hasLock = await acquireLock(lockKey);
+    if (!hasLock) {
+      return NextResponse.json(
+        { error: "Service is busy. Please try again." },
+        {
+          status: 409,
+        },
+      );
+    }
+
+    const user = await prisma.user.findUnique({
+      where: {
+        email: session.user.email,
+      },
+      include: {
+        consulteeProfile: true,
+      },
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { error: "User not found" },
+        {
+          status: 404,
+        },
+      );
+    }
+
+    // Get consultation plan details to check consultant
     const consultationPlan = await prisma.consultationPlan.findUnique({
       where: { id: consultationPlanId },
-      include: { consultantProfile: true },
-    });
-
-    if (!consultationPlan) {
-      return NextResponse.json(
-        { error: "Consultation plan not found" },
-        { status: 404 },
-      );
-    }
-
-    // Check for existing pending requests for the same slot
-    const existingRequests = await prisma.consultation.findMany({
-      where: {
-        consultationPlanId: consultationPlanId,
-        preferredDateTime: new Date(preferredDateTime),
-        requestStatus: "PENDING",
+      include: {
+        consultantProfile: true,
       },
     });
 
-    if (existingRequests.length > 0) {
+    if (!consultationPlan?.consultantProfile?.id) {
       return NextResponse.json(
-        { error: "Slot is currently pending approval for another request" },
-        { status: 409 },
+        { error: "Invalid consultation plan" },
+        {
+          status: 400,
+        },
       );
     }
 
-    const consultation = await prisma.consultation.create({
-      data: {
-        consultationPlan: { connect: { id: consultationPlanId } },
-        requestedBy: { connect: { id: consultee.id } },
-        preferredDateTime: new Date(preferredDateTime),
-        requestNotes,
-        requestStatus: "PENDING",
-        directlyBooked: false,
-      },
-    });
-
-    const appointmentEndTime = new Date(
-      new Date(preferredDateTime).getTime() +
-        consultationPlan.durationInHours * 60 * 60 * 1000,
+    // Check for overlapping appointments
+    const hasOverlap = await checkOverlappingAppointments(
+      new Date(slotStartTimeInUTC),
+      new Date(slotEndTimeInUTC),
+      consultationPlan.consultantProfile.id,
     );
 
-    if (consultationPlan.consultantProfile.scheduleType === "WEEKLY") {
-      // Find the corresponding weekly slot of availability
-      const dayOfWeek = getDayOfWeek(new Date(preferredDateTime).getUTCDay());
-      const slotOfAvailability =
-        await prisma.slotOfAvailabilityWeekly.findFirst({
-          where: {
-            consultantProfileId: consultationPlan.consultantProfile.id,
-            dayOfWeekforStartTimeInUTC: dayOfWeek,
-            slotStartTimeInUTC: {
-              equals: new Date(preferredDateTime).toISOString().split("T")[1],
-            },
-          },
-        });
+    if (hasOverlap) {
+      return NextResponse.json(
+        { error: "Time slot overlaps with existing appointment" },
+        {
+          status: 400,
+        },
+      );
+    }
 
-      if (slotOfAvailability) {
-        await prisma.appointment.create({
-          data: {
-            appointmentType: "CONSULTATION",
-            consultation: { connect: { id: consultation.id } },
-            slotOfAppointment: {
-              create: {
-                slotStartTimeInUTC: new Date(preferredDateTime),
-                slotEndTimeInUTC: appointmentEndTime,
-                consulteeProfile: { connect: { id: consultee.id } },
-              },
+    // Create consultation and appointment in a transaction
+    const appointment = await prisma.$transaction(async (tx) => {
+      // Create consultation request
+      const consultation = await tx.consultation.create({
+        data: {
+          consultationPlan: {
+            connect: {
+              id: consultationPlanId,
             },
           },
-        });
-      }
-    } else {
-      // For custom schedule, create an appointment without creating a new SlotOfAvailabilityCustom
-      await prisma.appointment.create({
+          requestedBy: {
+            connect: {
+              id: user.consulteeProfile?.id,
+            },
+          },
+          requestNotes: notes,
+          directlyBooked: true,
+        },
+      });
+
+      // Create appointment
+      return await tx.appointment.create({
         data: {
-          appointmentType: "CONSULTATION",
-          consultation: { connect: { id: consultation.id } },
+          appointmentType: AppointmentsType.CONSULTATION,
+          consultation: {
+            connect: {
+              id: consultation.id,
+            },
+          },
           slotOfAppointment: {
             create: {
-              slotStartTimeInUTC: new Date(preferredDateTime),
-              slotEndTimeInUTC: appointmentEndTime,
-              consulteeProfile: { connect: { id: consultee.id } },
+              userId: user.id,
+              slotStartTimeInUTC: new Date(slotStartTimeInUTC),
+              slotEndTimeInUTC: new Date(slotEndTimeInUTC),
+            },
+          },
+        },
+        include: {
+          slotOfAppointment: {
+            include: {
+              user: true,
+            },
+          },
+          consultation: {
+            include: {
+              consultationPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: true,
+                    },
+                  },
+                },
+              },
+              requestedBy: {
+                include: {
+                  user: true,
+                },
+              },
             },
           },
         },
       });
-    }
+    });
 
-    return NextResponse.json({ consultation }, { status: 201 });
-  } catch (error) {
+    return NextResponse.json(appointment);
+  } catch (error: any) {
     console.error("Error booking consultation:", error);
     return NextResponse.json(
-      { error: "An error occurred while booking the consultation" },
-      { status: 500 },
+      { error: error.message || "Internal server error" },
+      {
+        status: 500,
+      },
     );
+  } finally {
+    // Release the lock if we acquired it
+    if (hasLock) {
+      await releaseLock(lockKey);
+    }
   }
-}
-
-function getDayOfWeek(day: number): DayOfWeek {
-  const days: DayOfWeek[] = [
-    "SUNDAY",
-    "MONDAY",
-    "TUESDAY",
-    "WEDNESDAY",
-    "THURSDAY",
-    "FRIDAY",
-    "SATURDAY",
-  ];
-  return days[day] as DayOfWeek;
 }

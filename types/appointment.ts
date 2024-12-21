@@ -40,7 +40,6 @@ export type TSubscription = Prisma.SubscriptionGetPayload<{
   };
 }>;
 
-// Main appointment type with all relations
 export type TAppointment = Prisma.AppointmentGetPayload<{
   include: {
     consultation: {
@@ -97,15 +96,14 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
     };
     payment: {
       include: {
-        user: true;
         discountCode: true;
       };
     };
     slotOfAppointment: {
       include: {
-        consulteeProfile: {
+        user: {
           include: {
-            user: true;
+            consulteeProfile: true;
           };
         };
       };
@@ -115,3 +113,65 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
 
 // Utility type for creating appointments
 export type TAppointmentCreateInput = Prisma.AppointmentCreateInput;
+
+export type TAppointmentWithoutSlot = Prisma.AppointmentGetPayload<{
+  include: {
+    consultation: {
+      include: {
+        consultationPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: true;
+              };
+            };
+          };
+        };
+      };
+    };
+    subscription: {
+      include: {
+        subscriptionPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: true;
+              };
+            };
+          };
+        };
+      };
+    };
+    webinar: {
+      include: {
+        webinarPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: true;
+              };
+            };
+          };
+        };
+      };
+    };
+    class: {
+      include: {
+        classPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: true;
+              };
+            };
+          };
+        };
+      };
+    };
+    payment: {
+      include: {
+        discountCode: true;
+      };
+    };
+  };
+}>;

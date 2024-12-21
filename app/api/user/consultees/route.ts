@@ -5,7 +5,6 @@ export async function GET(req: NextRequest) {
   try {
     const consultees = await prisma.consulteeProfile.findMany({
       include: {
-        slotsOfAppointment: true,
         consultantReviews: true,
         user: {
           select: {

@@ -45,9 +45,7 @@ export async function fetchAppointments(
     // Transform the API response to match our Appointment type
     return data.data.map((appointment) => ({
       id: appointment.id,
-      name:
-        appointment.slotOfAppointment?.[0]?.consulteeProfile?.user?.name ??
-        "Unknown",
+      name: appointment.slotOfAppointment?.[0]?.user?.name ?? "Unknown", // Changed from consulteeProfile.user
       description: getAppointmentDescription(appointment),
       time: formatAppointmentTime(
         appointment.slotOfAppointment?.[0]?.slotStartTimeInUTC,

@@ -179,9 +179,10 @@ const CourseInfoCard = ({ classPlan }: CourseInfoCardProps) => (
 export default async function ClassDetailsPage({
   params,
 }: {
-  params: { classId: string };
+  params: Promise<{ classId: string }>;
 }) {
-  const classPlan = await getClassPlan(params.classId);
+  const resolvedParams = await params;
+  const classPlan = await getClassPlan(resolvedParams.classId);
 
   if (!classPlan) {
     return <ClassNotFound />;
