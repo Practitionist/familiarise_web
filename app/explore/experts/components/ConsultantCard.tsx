@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import { Domain, SubDomain, Tag } from "@prisma/client";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -36,187 +37,212 @@ function StarIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+const ConsultantInfo = ({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | null;
+}) => (
+  <div className="flex flex-wrap gap-2 items-center">
+    <span className="text-gray-600 font-medium">{label}:</span>
+    <span className="text-gray-800">{value || "Not specified"}</span>
+  </div>
+);
+
+const TagBadge = ({ children }: { children: React.ReactNode }) => (
+  <Badge
+    variant="outline"
+    className="px-3 py-1 text-sm bg-white hover:bg-gray-50 transition-colors"
+  >
+    {children}
+  </Badge>
+);
+
+const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
+  const formatDuration = (months: number) => {
+    switch (months) {
+      case 1:
+        return "1 month";
+      case 3:
+        return "3 months";
+      case 6:
+        return "6 months";
+      case 12:
+        return "1 year";
+      default:
+        return `${months} months`;
+    }
+  };
+
+  return (
+    <Card className="rounded-lg border-0 shadow-md hover:shadow-lg transition-shadow">
+      <CardContent className="grid gap-4 p-6">
+        <div className="flex items-center justify-between">
+          <div className="text-3xl font-bold">${plan.price / 100}</div>
+          <div className="text-gray-500 font-medium">
+            {formatDuration(plan.durationInMonths)}
+          </div>
+        </div>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-600">Calls per week</span>
+            <span className="font-semibold">{plan.callsPerWeek}</span>
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-600">Email support</span>
+            <span className="font-semibold capitalize">
+              {plan.emailSupport.toLowerCase()}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-600">Video meetings</span>
+            <span className="font-semibold">
+              {plan.videoMeetings} per month
+            </span>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
 export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
   const router = useRouter();
 
+  const sortedPlans =
+    consultant.subscriptionPlans
+      ?.slice()
+      .sort((a, b) => a.durationInMonths - b.durationInMonths) || [];
+
   return (
-    <div className="border border-gray-200 rounded-lg p-4 flex items-start justify-between space-x-4 dark:border-gray-800">
-      <div
-        className="flex items-start space-x-4 cursor-pointer"
-        onClick={() => router.push(`/explore/experts/${consultant.id}`)}
-      >
-        <Image
-          alt={`Portrait of ${consultant.user.name}`}
-          className="rounded-full overflow-hidden"
-          height="80"
-          src={consultant.user.image || "/placeholder.svg"}
-          style={{ aspectRatio: "80/80", objectFit: "cover" }}
-          width="80"
-        />
-        <div className="space-y-2">
-          <div className="flex items-center space-x-2">
-            <h3 className="font-semibold text-lg">{consultant.user.name}</h3>
-            {consultant.user.email && (
-              <span className="text-sm text-gray-500 dark:text-gray-400">
-                @{consultant.user.email.split("@")[0]}
-              </span>
-            )}
+    <div className="bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow duration-300 overflow-hidden border-2 border-black">
+      <div className="p-6 flex flex-col lg:flex-row gap-6">
+        {/* Left Section: Consultant Info */}
+        <div
+          className="flex-grow cursor-pointer space-y-4"
+          onClick={() => router.push(`/explore/experts/${consultant.id}`)}
+        >
+          <div className="flex items-center gap-4">
+            <div className="relative h-20 w-20 flex-shrink-0">
+              <Image
+                alt={`Portrait of ${consultant.user.name}`}
+                className="rounded-full"
+                src={consultant.user.image || "/placeholder-user.jpg"}
+                fill
+                style={{ objectFit: "cover" }}
+              />
+            </div>
+            <div>
+              <h3 className="text-xl font-semibold">{consultant.user.name}</h3>
+              {consultant.user.email && (
+                <span className="text-gray-500">
+                  @{consultant.user.email.split("@")[0]}
+                </span>
+              )}
+              <div className="flex items-center gap-2 mt-1 text-sm">
+                <StarIcon className="w-4 h-4 text-yellow-400 fill-yellow-400" />
+                <span className="font-medium">
+                  {consultant.rating.toFixed(1)}
+                </span>
+                <span className="text-gray-500">
+                  ({consultant.reviews?.length || 0} reviews)
+                </span>
+              </div>
+            </div>
           </div>
-          <div className="text-sm space-y-2">
-            <p className="text-black dark:text-black">
-              {consultant.description}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <span className="text-black dark:text-black">
-                Experience: {consultant.experience}
-              </span>
+
+          <p className="text-gray-700 leading-relaxed">
+            {consultant.description}
+          </p>
+
+          <div className="space-y-2">
+            <ConsultantInfo label="Experience" value={consultant.experience} />
+            <ConsultantInfo
+              label="Specialization"
+              value={consultant.specialization}
+            />
+            <ConsultantInfo
+              label="Qualifications"
+              value={consultant.qualifications}
+            />
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className="text-gray-600 font-medium">Domain:</span>
+              <TagBadge>{consultant.domain.name}</TagBadge>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <span className="text-black dark:text-black">
-                Specialization: {consultant.specialization}
-              </span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <span className="text-black dark:text-black">
-                Qualifications: {consultant.qualifications}
-              </span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <span className="text-black dark:text-black">Domain:</span>
-              <span className="bg-gray-200 text-black dark:bg-gray-700 dark:text-white px-2 py-1 rounded-full">
-                {consultant.domain.name}
-              </span>
-              <span className="text-black dark:text-black">Subdomains:</span>
+
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className="text-gray-600 font-medium">Subdomains:</span>
               {consultant.subDomains.map((sd) => (
-                <span
-                  key={sd.id}
-                  className="bg-gray-200 text-black dark:bg-gray-700 dark:text-white px-2 py-1 rounded-full"
-                >
-                  {sd.name}
-                </span>
+                <TagBadge key={sd.id}>{sd.name}</TagBadge>
               ))}
             </div>
-            <div className="flex flex-wrap gap-2">
-              <span className="text-black dark:text-black">Tags:</span>
+
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className="text-gray-600 font-medium">Tags:</span>
               {consultant.tags.map((t) => (
-                <span
-                  key={t.id}
-                  className="bg-white text-black border border-black px-2 py-1 rounded-full"
-                >
-                  {t.name}
-                </span>
+                <TagBadge key={t.id}>{t.name}</TagBadge>
               ))}
-            </div>
-            <div className="flex items-center space-x-2 text-black dark:text-black">
-              <StarIcon className="w-4 h-4" />
-              <span>
-                {consultant.rating.toFixed(1)} (
-                {consultant.reviews?.length || 0} reviews)
-              </span>
             </div>
           </div>
         </div>
-      </div>
-      <div className="flex">
-        <div className="bg-card rounded-lg shadow-lg w-[320px] mr-4">
-          {consultant.subscriptionPlans &&
-          consultant.subscriptionPlans.length > 0 ? (
-            <Tabs defaultValue="1" className="w-full">
-              <TabsList className="flex border-b">
-                {consultant.subscriptionPlans
-                  .slice()
-                  .sort((a, b) => a.durationInMonths - b.durationInMonths)
-                  .map((plan) => (
+
+        {/* Right Section: Subscription Plans & Actions */}
+        <div className="flex-shrink-0 lg:w-[400px] space-y-4">
+          <div className="bg-gray-50 rounded-lg p-4">
+            {sortedPlans.length > 0 ? (
+              <Tabs
+                defaultValue={sortedPlans[0].durationInMonths.toString()}
+                className="w-full"
+              >
+                <TabsList className="w-full mb-4 bg-white p-1 rounded-lg">
+                  {sortedPlans.map((plan) => (
                     <TabsTrigger
-                      key={plan.id}
+                      key={`tab-${plan.id}`}
                       value={plan.durationInMonths.toString()}
-                      className="flex-1 data-[state=active]:bg-black data-[state=active]:text-white rounded-md transition-all duration-200 ease-in-out"
+                      className="flex-1 data-[state=active]:bg-black data-[state=active]:text-white rounded-md transition-all duration-200"
                     >
-                      {(() => {
-                        switch (plan.durationInMonths) {
-                          case 1:
-                            return "1 Month";
-                          case 3:
-                            return "3 Months";
-                          case 6:
-                            return "6 Months";
-                          case 12:
-                            return "12 Months";
-                          default:
-                            return `${plan.durationInMonths} Months`;
-                        }
-                      })()}
+                      {plan.durationInMonths}{" "}
+                      {plan.durationInMonths === 1 ? "Month" : "Months"}
                     </TabsTrigger>
                   ))}
-              </TabsList>
-              {consultant.subscriptionPlans
-                .slice()
-                .sort((a, b) => a.durationInMonths - b.durationInMonths)
-                .map((plan) => (
+                </TabsList>
+                {sortedPlans.map((plan) => (
                   <TabsContent
-                    key={plan.id}
+                    key={`content-${plan.id}`}
                     value={plan.durationInMonths.toString()}
                   >
-                    <Card className="rounded-b-lg">
-                      <CardContent className="grid gap-4 p-6">
-                        <div className="flex items-center justify-between">
-                          <div className="text-4xl font-bold">
-                            ${plan.price / 100}
-                          </div>
-                          <div className="text-muted-foreground">
-                            {(() => {
-                              switch (plan.durationInMonths) {
-                                case 1:
-                                  return "1 month";
-                                case 3:
-                                  return "3 months";
-                                case 6:
-                                  return "6 months";
-                                case 12:
-                                  return "12 months";
-                                default:
-                                  return `${plan.durationInMonths} months`;
-                              }
-                            })()}
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div>Calls per week</div>
-                          <div className="font-medium">{plan.callsPerWeek}</div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div>Email support</div>
-                          <div className="font-medium">{plan.emailSupport}</div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div>Video meetings</div>
-                          <div className="font-medium">
-                            {plan.videoMeetings} per month
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
+                    <SubscriptionPlanCard plan={plan} />
                   </TabsContent>
                 ))}
-            </Tabs>
-          ) : (
-            <div className="flex items-center justify-center h-full p-6 text-muted-foreground">
-              <p className="text-center">
+              </Tabs>
+            ) : (
+              <div className="text-center text-gray-500 py-6">
                 No subscription plans available at the moment.
-              </p>
-            </div>
-          )}
-        </div>
-        <div className="flex flex-col items-center space-y-2 pt-5 justify-start">
-          <Button className="w-[140px]" variant="outline">
-            Book a Free Trial
-          </Button>
-          <Button className="w-[140px]" variant="outline">
-            Book a Session
-          </Button>
-          <Button className="w-[140px]" variant="outline">
-            Book Mentorship
-          </Button>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Button
+              variant="outline"
+              className="w-full bg-white hover:bg-gray-50 transition-colors border-gray-400"
+            >
+              Book a Free Trial
+            </Button>
+            <Button className="w-full bg-black hover:bg-gray-800 text-white transition-colors">
+              Book a Session
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full bg-white hover:bg-gray-50 transition-colors border-gray-400"
+            >
+              Book Mentorship
+            </Button>
+          </div>
         </div>
       </div>
     </div>
