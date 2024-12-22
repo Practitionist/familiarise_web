@@ -345,9 +345,7 @@ export default function Programs() {
                   ? lastElementRef
                   : null
               }
-              role="button"
-              tabIndex={0}
-              className="bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-all duration-300"
+              className="w-full text-left bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-all duration-300"
               onClick={() => handleProgramClick(item)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -355,6 +353,9 @@ export default function Programs() {
                   handleProgramClick(item);
                 }
               }}
+              tabIndex={0}
+              role="button"
+              aria-label={`View details for ${item.title}`}
             >
               <Image
                 src={item.imageUrl}
@@ -369,13 +370,12 @@ export default function Programs() {
                   <h3 className="text-lg font-semibold text-gray-900">
                     {item.title}
                   </h3>
-                  <span
-                    className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium"
-                    role="status"
+                  <output
+                    className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
                     aria-label={`Program type: ${item.type}`}
                   >
                     {item.type}
-                  </span>
+                  </output>
                 </div>
                 <p className="text-gray-600 text-sm mb-4 line-clamp-2">
                   {item.description}
@@ -410,9 +410,7 @@ export default function Programs() {
                   ? lastElementRef
                   : null
               }
-              role="button"
-              tabIndex={0}
-              className="bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 flex cursor-pointer hover:shadow-md transition-all duration-300"
+              className="w-full text-left bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 flex cursor-pointer hover:shadow-md transition-all duration-300"
               onClick={() => handleProgramClick(item)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -420,6 +418,9 @@ export default function Programs() {
                   handleProgramClick(item);
                 }
               }}
+              tabIndex={0}
+              role="button"
+              aria-label={`View details for ${item.title}`}
             >
               <Image
                 src={item.imageUrl}
@@ -434,9 +435,12 @@ export default function Programs() {
                   <h3 className="text-lg font-semibold text-gray-900">
                     {item.title}
                   </h3>
-                  <span className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium">
+                  <output
+                    className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
+                    aria-label={`Program type: ${item.type}`}
+                  >
                     {item.type}
-                  </span>
+                  </output>
                 </div>
                 <p className="text-gray-600 text-sm mb-4 line-clamp-2">
                   {item.description}
