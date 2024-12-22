@@ -177,14 +177,18 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
             <div className="flex flex-wrap gap-2 items-center">
               <span className="text-gray-600 font-medium">Subdomains:</span>
               {consultant.subDomains.map((sd) => (
-                <TagBadge key={sd.id}>{sd.name}</TagBadge>
+                <TagBadge key={`${consultant.id}-subdomain-${sd.id}`}>
+                  {sd.name}
+                </TagBadge>
               ))}
             </div>
 
             <div className="flex flex-wrap gap-2 items-center">
               <span className="text-gray-600 font-medium">Tags:</span>
               {consultant.tags.map((t) => (
-                <TagBadge key={t.id}>{t.name}</TagBadge>
+                <TagBadge key={`${consultant.id}-tag-${t.id}`}>
+                  {t.name}
+                </TagBadge>
               ))}
             </div>
           </div>
@@ -201,7 +205,7 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
                 <TabsList className="w-full mb-4 bg-white p-1 rounded-lg">
                   {sortedPlans.map((plan) => (
                     <TabsTrigger
-                      key={`tab-${plan.id}`}
+                      key={`${consultant.id}-tab-trigger-${plan.id}`}
                       value={plan.durationInMonths.toString()}
                       className="flex-1 data-[state=active]:bg-black data-[state=active]:text-white rounded-md transition-all duration-200"
                     >
@@ -212,7 +216,7 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
                 </TabsList>
                 {sortedPlans.map((plan) => (
                   <TabsContent
-                    key={`content-${plan.id}`}
+                    key={`${consultant.id}-tab-content-${plan.id}`}
                     value={plan.durationInMonths.toString()}
                   >
                     <SubscriptionPlanCard plan={plan} />
