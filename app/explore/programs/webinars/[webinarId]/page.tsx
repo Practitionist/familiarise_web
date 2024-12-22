@@ -87,6 +87,7 @@ type WebinarRegistrationProps = {
   price: number;
   isLoggedIn: boolean;
   nextSession?: Date;
+  language?: string | null;
 };
 
 const WebinarRegistration = ({
@@ -94,6 +95,7 @@ const WebinarRegistration = ({
   price,
   isLoggedIn,
   nextSession,
+  language,
 }: WebinarRegistrationProps) => {
   if (!isLoggedIn) {
     return (
@@ -108,40 +110,68 @@ const WebinarRegistration = ({
             className="space-y-4"
           >
             <input type="hidden" name="webinarId" value={webinarId} />
-            <input
-              type="hidden"
-              name="timezone"
-              value={Intl.DateTimeFormat().resolvedOptions().timeZone}
-            />
-            <div>
-              <label
-                htmlFor="name"
-                className="block text-sm font-medium text-gray-700"
-              >
-                Full Name
-              </label>
-              <input
-                type="text"
-                id="name"
-                name="name"
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
-                required
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="email"
-                className="block text-sm font-medium text-gray-700"
-              >
-                Email
-              </label>
-              <input
-                type="email"
-                id="email"
-                name="email"
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
-                required
-              />
+            <div className="space-y-4">
+              <div>
+                <label
+                  htmlFor="name"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Full Name
+                </label>
+                <input
+                  type="text"
+                  id="name"
+                  name="name"
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
+                  required
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="email"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Email
+                </label>
+                <input
+                  type="email"
+                  id="email"
+                  name="email"
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
+                  required
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="phone"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Phone Number
+                </label>
+                <input
+                  type="tel"
+                  id="phone"
+                  name="phone"
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
+                  placeholder="+1234567890"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="preferredLanguage"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Preferred Language
+                </label>
+                <input
+                  type="text"
+                  id="preferredLanguage"
+                  name="preferredLanguage"
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
+                  placeholder="e.g., English, Spanish, etc."
+                  defaultValue={language || ""}
+                />
+              </div>
             </div>
             <Button type="submit" className="w-full bg-black hover:bg-gray-800">
               Pay ${price} USD & Register
@@ -355,6 +385,7 @@ export default async function WebinarDetailsPage({
               price={webinar.price}
               isLoggedIn={isLoggedIn}
               nextSession={nextSession}
+              language={webinar.language}
             />
           </div>
         </div>
