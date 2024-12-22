@@ -8,55 +8,36 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { User, Star, StarHalf } from "lucide-react";
 import { TConsultantProfile } from "@/types/consultant";
+import styles from "./FeaturedExpertsSection.module.css";
 
-export default function FeaturedExpertsSection() {
-  const [experts, setExperts] = useState<TConsultantProfile[]>([]);
-  const [loading, setLoading] = useState(true);
+function RatingStars({ rating }: { rating: number }) {
+  const fullStars = Math.floor(rating);
+  const hasHalfStar = rating % 1 >= 0.5;
 
-  useEffect(() => {
-    async function fetchExperts() {
-      try {
-        const response = await fetch("/api/user/consultants?limit=10");
-        if (!response.ok) throw new Error("Failed to fetch");
+  return (
+    <div className="flex items-center gap-0.5 justify-center">
+      {Array.from({ length: fullStars }, (_, i) => (
+        <Star
+          key={`star-${i}`}
+          className="w-4 h-4 fill-yellow-400 text-yellow-400"
+        />
+      ))}
+      {hasHalfStar && (
+        <StarHalf className="w-4 h-4 fill-yellow-400 text-yellow-400" />
+      )}
+      <span className="text-sm text-gray-600 ml-1">{rating.toFixed(1)}</span>
+    </div>
+  );
+}
 
-        const data = await response.json();
-        if (data?.data && data.data.length > 0) {
-          setExperts(data.data);
-        }
-      } catch (error) {
-        console.error("Error fetching experts:", error);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchExperts();
-  }, []);
-
-  const renderRating = (rating: number) => {
-    const fullStars = Math.floor(rating);
-    const hasHalfStar = rating % 1 >= 0.5;
-
-    return (
-      <div className="flex items-center gap-0.5 justify-center">
-        {[...Array(fullStars)].map((_, i) => (
-          <Star key={i} className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-        ))}
-        {hasHalfStar && (
-          <StarHalf className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-        )}
-        <span className="text-sm text-gray-600 ml-1">{rating.toFixed(1)}</span>
-      </div>
-    );
-  };
-
-  const ExpertCard = ({
-    expert,
-    className = "",
-  }: {
-    expert: TConsultantProfile;
-    className?: string;
-  }) => (
+function ExpertCard({
+  expert,
+  className = "",
+}: {
+  expert: TConsultantProfile;
+  className?: string;
+}) {
+  return (
     <Link
       href={`/explore/experts/${expert.id}`}
       className={`block hover:no-underline flex-shrink-0 w-[280px] ${className}`}
@@ -75,7 +56,7 @@ export default function FeaturedExpertsSection() {
           <h3 className="text-lg font-semibold text-center line-clamp-1">
             {expert.user.name}
           </h3>
-          {renderRating(expert.rating)}
+          <RatingStars rating={expert.rating} />
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="text-center">
@@ -101,6 +82,50 @@ export default function FeaturedExpertsSection() {
       </Card>
     </Link>
   );
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="flex-shrink-0 w-[280px]">
+      <Card className="mx-3">
+        <CardHeader>
+          <div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mx-auto mb-3" />
+          <div className="h-5 bg-gray-200 rounded animate-pulse w-3/4 mx-auto" />
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            <div className="h-4 bg-gray-200 rounded animate-pulse w-1/2 mx-auto" />
+            <div className="h-3 bg-gray-200 rounded animate-pulse w-1/3 mx-auto" />
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+export default function FeaturedExpertsSection() {
+  const [experts, setExperts] = useState<TConsultantProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchExperts() {
+      try {
+        const response = await fetch("/api/user/consultants?limit=10");
+        if (!response.ok) throw new Error("Failed to fetch");
+
+        const data = await response.json();
+        if (data?.data && data.data.length > 0) {
+          setExperts(data.data);
+        }
+      } catch (error) {
+        console.error("Error fetching experts:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchExperts();
+  }, []);
 
   return (
     <section className="w-full py-12 md:py-24 lg:py-32 bg-gray-100">
@@ -124,28 +149,13 @@ export default function FeaturedExpertsSection() {
 
       {/* Full-width marquee */}
       <div className="w-full overflow-hidden">
-        <div className="marquee-container">
-          <div className="marquee-track">
+        <div className={styles["marquee-container"]}>
+          <div className={styles["marquee-track"]}>
             {loading ? (
               // Show loading skeletons
-              Array(10)
-                .fill(0)
-                .map((_, index) => (
-                  <div key={index} className="flex-shrink-0 w-[280px]">
-                    <Card className="mx-3">
-                      <CardHeader>
-                        <div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mx-auto mb-3" />
-                        <div className="h-5 bg-gray-200 rounded animate-pulse w-3/4 mx-auto" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-2">
-                          <div className="h-4 bg-gray-200 rounded animate-pulse w-1/2 mx-auto" />
-                          <div className="h-3 bg-gray-200 rounded animate-pulse w-1/3 mx-auto" />
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-                ))
+              Array.from({ length: 10 }, (_, index) => (
+                <LoadingSkeleton key={`skeleton-${index}`} />
+              ))
             ) : (
               <>
                 {/* First set */}
@@ -169,44 +179,6 @@ export default function FeaturedExpertsSection() {
           </div>
         </div>
       </div>
-      <style jsx>{`
-        .marquee-container {
-          width: 100%;
-          overflow: hidden;
-          position: relative;
-          mask-image: linear-gradient(
-            to right,
-            transparent,
-            black 5%,
-            black 95%,
-            transparent
-          );
-          -webkit-mask-image: linear-gradient(
-            to right,
-            transparent,
-            black 5%,
-            black 95%,
-            transparent
-          );
-        }
-        .marquee-track {
-          display: flex;
-          width: fit-content;
-          animation: marquee 60s linear infinite;
-          transform: translateX(0);
-        }
-        @keyframes marquee {
-          0% {
-            transform: translateX(0);
-          }
-          100% {
-            transform: translateX(calc(-100% / 2));
-          }
-        }
-        .marquee-track:hover {
-          animation-play-state: paused;
-        }
-      `}</style>
     </section>
   );
 }

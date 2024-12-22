@@ -5,58 +5,69 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Star, User } from "lucide-react";
 import type { ReviewWithProfiles } from "@/types/review";
+import styles from "./Testimonials.module.css";
 
-const ReviewCard = ({ review }: { review: ReviewWithProfiles }) => (
-  <Card className="w-[300px] flex-shrink-0 mx-3 bg-white hover:shadow-lg transition-all duration-300 hover:-translate-y-1 hover:scale-[1.02] border border-gray-100">
-    <CardContent className="p-5">
-      <div className="flex items-start gap-3">
-        <Avatar className="h-10 w-10 border border-gray-100">
-          {review.consulteeProfile?.user?.image ? (
-            <AvatarImage
-              src={review.consulteeProfile.user.image}
-              alt={review.consulteeProfile.user.name || "Reviewer"}
-            />
-          ) : (
-            <AvatarFallback>
-              <User className="h-5 w-5" />
-            </AvatarFallback>
-          )}
-        </Avatar>
-        <div className="flex-1 min-w-0">
-          <div className="flex justify-between items-start gap-2">
-            <div className="min-w-0">
-              <h4 className="font-semibold truncate">
-                {review.consulteeProfile?.user?.name || "Anonymous"}
-              </h4>
-              <p className="text-sm text-gray-500 truncate">
-                Review for {review.consultantProfile?.user?.name}
-              </p>
+const ReviewCard = ({ review }: { review: ReviewWithProfiles }) => {
+  const stars = Array.from({ length: 5 }, (_, position) => ({
+    id: `star-${position}-${review.id}`,
+    filled: position < review.rating,
+  }));
+
+  return (
+    <Card className="w-[300px] flex-shrink-0 mx-3 bg-white hover:shadow-lg transition-all duration-300 hover:-translate-y-1 hover:scale-[1.02] border border-gray-100">
+      <CardContent className="p-5">
+        <div className="flex items-start gap-3">
+          <Avatar className="h-10 w-10 border border-gray-100">
+            {review.consulteeProfile?.user?.image ? (
+              <AvatarImage
+                src={review.consulteeProfile.user.image}
+                alt={review.consulteeProfile.user.name || "Reviewer"}
+              />
+            ) : (
+              <AvatarFallback>
+                <User className="h-5 w-5" />
+              </AvatarFallback>
+            )}
+          </Avatar>
+          <div className="flex-1 min-w-0">
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0">
+                <h4 className="font-semibold truncate">
+                  {review.consulteeProfile?.user?.name || "Anonymous"}
+                </h4>
+                <p className="text-sm text-gray-500 truncate">
+                  Review for {review.consultantProfile?.user?.name}
+                </p>
+              </div>
+              <div className="flex items-center flex-shrink-0">
+                {stars.map((star) => (
+                  <Star
+                    key={star.id}
+                    className={`w-3 h-3 ${
+                      star.filled
+                        ? "text-yellow-400 fill-yellow-400"
+                        : "text-gray-300"
+                    }`}
+                  />
+                ))}
+              </div>
             </div>
-            <div className="flex items-center flex-shrink-0">
-              {[...Array(5)].map((_, i) => (
-                <Star
-                  key={`star-${review.id}-${i}`}
-                  className={`w-3 h-3 ${
-                    i < review.rating
-                      ? "text-yellow-400 fill-yellow-400"
-                      : "text-gray-300"
-                  }`}
-                />
-              ))}
-            </div>
+            <p className="mt-3 text-gray-700 text-sm line-clamp-3">
+              {review.reviewDescription || "No review description provided"}
+            </p>
           </div>
-          <p className="mt-3 text-gray-700 text-sm line-clamp-3">
-            {review.reviewDescription || "No review description provided"}
-          </p>
         </div>
-      </div>
-    </CardContent>
-  </Card>
-);
+      </CardContent>
+    </Card>
+  );
+};
 
 export default function Testimonials() {
   const [reviews, setReviews] = useState<ReviewWithProfiles[]>([]);
   const [loading, setLoading] = useState(true);
+  const [skeletonIds] = useState(() =>
+    Array.from({ length: 3 }, (_, i) => `skeleton-${i}-${Math.random()}`),
+  );
 
   useEffect(() => {
     async function fetchReviews() {
@@ -87,9 +98,9 @@ export default function Testimonials() {
           </h2>
           <div className="flex justify-center">
             <div className="animate-pulse space-y-4">
-              {[...Array(3)].map((_, index) => (
+              {skeletonIds.map((id) => (
                 <div
-                  key={`skeleton-${index}-${Date.now()}`}
+                  key={id}
                   className="w-[300px] h-[160px] bg-gray-200 rounded-lg"
                 />
               ))}
@@ -103,6 +114,11 @@ export default function Testimonials() {
   // Ensure we have enough reviews for smooth scrolling
   const displayReviews =
     reviews.length >= 4 ? reviews : [...reviews, ...reviews];
+
+  const marqueeGroups = Array.from({ length: 3 }, (_, i) => ({
+    ltrId: `ltr-group-${i}-${Math.random()}`,
+    rtlId: `rtl-group-${i}-${Math.random()}`,
+  }));
 
   return (
     <section className="py-16 bg-gray-50 overflow-hidden relative">
@@ -122,13 +138,13 @@ export default function Testimonials() {
       <div className="space-y-12">
         {/* First Row: Left to Right */}
         <div className="relative py-4">
-          <div className="marquee-container">
-            <div className="marquee-track-ltr">
-              {[...Array(3)].map((_, groupIndex) => (
-                <div key={`ltr-group-${groupIndex}`} className="flex">
+          <div className={styles["marquee-container"]}>
+            <div className={styles["marquee-track-ltr"]}>
+              {marqueeGroups.map((group) => (
+                <div key={group.ltrId} className="flex">
                   {displayReviews.map((review) => (
                     <ReviewCard
-                      key={`${review.id}-ltr-${groupIndex}`}
+                      key={`${review.id}-${group.ltrId}`}
                       review={review}
                     />
                   ))}
@@ -140,13 +156,13 @@ export default function Testimonials() {
 
         {/* Second Row: Right to Left */}
         <div className="relative py-4">
-          <div className="marquee-container">
-            <div className="marquee-track-rtl">
-              {[...Array(3)].map((_, groupIndex) => (
-                <div key={`rtl-group-${groupIndex}`} className="flex">
+          <div className={styles["marquee-container"]}>
+            <div className={styles["marquee-track-rtl"]}>
+              {marqueeGroups.map((group) => (
+                <div key={group.rtlId} className="flex">
                   {displayReviews.map((review) => (
                     <ReviewCard
-                      key={`${review.id}-rtl-${groupIndex}`}
+                      key={`${review.id}-${group.rtlId}`}
                       review={review}
                     />
                   ))}
@@ -156,67 +172,6 @@ export default function Testimonials() {
           </div>
         </div>
       </div>
-
-      <style jsx>{`
-        .marquee-container {
-          width: 100%;
-          overflow: hidden;
-          position: relative;
-          mask-image: linear-gradient(
-            to right,
-            transparent,
-            black 10%,
-            black 90%,
-            transparent
-          );
-          -webkit-mask-image: linear-gradient(
-            to right,
-            transparent,
-            black 10%,
-            black 90%,
-            transparent
-          );
-        }
-        .marquee-track-ltr,
-        .marquee-track-rtl {
-          display: flex;
-          width: fit-content;
-          animation-timing-function: linear;
-          animation-iteration-count: infinite;
-          will-change: transform;
-          transition: transform 0.5s ease;
-        }
-        .marquee-track-ltr {
-          animation-name: marquee-ltr;
-          animation-duration: 180s;
-          transform: translateX(calc(-100% / 3));
-        }
-        .marquee-track-rtl {
-          animation-name: marquee-rtl;
-          animation-duration: 180s;
-          transform: translateX(calc(-100% / 3));
-        }
-        @keyframes marquee-ltr {
-          0% {
-            transform: translateX(calc(-100% / 3));
-          }
-          100% {
-            transform: translateX(calc(-200% / 3));
-          }
-        }
-        @keyframes marquee-rtl {
-          0% {
-            transform: translateX(calc(-100% / 3));
-          }
-          100% {
-            transform: translateX(0);
-          }
-        }
-        .marquee-track-ltr:hover,
-        .marquee-track-rtl:hover {
-          animation-play-state: paused;
-        }
-      `}</style>
     </section>
   );
 }
