@@ -1,4 +1,5 @@
 import { getServerSession } from "next-auth";
+import { generateProgramImageUrl } from "../../utils";
 import {
   Card,
   CardContent,
@@ -210,13 +211,11 @@ export default async function WebinarDetailsPage({
 
   const nextSession = webinar.webinars[0]?.scheduledAt;
   const isLoggedIn = !!session?.user;
-  const randomImageId = Math.floor(Math.random() * 1000);
-
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="relative h-[300px] w-full">
         <Image
-          src={`https://source.unsplash.com/random/${randomImageId}?webinar,business,technology`}
+          src={generateProgramImageUrl(webinar.id, 1200, 300)}
           alt="Webinar cover"
           fill
           className="object-cover"

@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/card";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
+import Image from "next/image";
+import { generateProgramImageUrl } from "../../utils";
 import { ClassNotFound } from "./ClassNotFound";
 import {
   BookIcon,
@@ -187,24 +189,44 @@ export default async function ClassDetailsPage({
   if (!classPlan) {
     return <ClassNotFound />;
   }
+
   return (
-    <div className="container mx-auto pt-32 py-8 px-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        <div className="md:col-span-2">
-          <h1 className="text-3xl font-bold mb-2">{classPlan.title}</h1>
-          <p className="text-xl font-semibold mb-4">${classPlan.price} USD</p>
+    <div className="min-h-screen bg-gray-50">
+      <div className="relative h-[300px] w-full">
+        <Image
+          src={generateProgramImageUrl(classPlan.id, 1200, 300)}
+          alt={classPlan.title}
+          fill
+          className="object-cover"
+          priority
+        />
+        <div className="absolute inset-0 bg-black/50" />
+      </div>
 
-          <CourseFeatureCard classPlan={classPlan} />
+      <div className="container mx-auto px-4 -mt-20 relative">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="md:col-span-2">
+            <Card className="mb-8">
+              <CardContent className="p-6">
+                <h1 className="text-3xl font-bold mb-2">{classPlan.title}</h1>
+                <p className="text-xl font-semibold mb-4 text-blue-600">
+                  ${classPlan.price} USD
+                </p>
+              </CardContent>
+            </Card>
 
-          <h2 className="text-2xl font-semibold mb-4">Course Description</h2>
-          <p className="mb-8 whitespace-pre-line">{classPlan.description}</p>
+            <CourseFeatureCard classPlan={classPlan} />
 
-          <h2 className="text-2xl font-semibold mb-4">Course Content</h2>
-          <CourseContent contents={classPlan.classContents} />
-        </div>
+            <h2 className="text-2xl font-semibold mb-4">Course Description</h2>
+            <p className="mb-8 whitespace-pre-line">{classPlan.description}</p>
 
-        <div>
-          <CourseInfoCard classPlan={classPlan} />
+            <h2 className="text-2xl font-semibold mb-4">Course Content</h2>
+            <CourseContent contents={classPlan.classContents} />
+          </div>
+
+          <div>
+            <CourseInfoCard classPlan={classPlan} />
+          </div>
         </div>
       </div>
     </div>

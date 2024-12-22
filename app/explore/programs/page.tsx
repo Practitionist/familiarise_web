@@ -13,34 +13,17 @@ import {
 import { LayoutGrid, List } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { generateProgramImageUrl } from "./utils";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-interface ConsultantProfile {
-  id: string;
-  description: string;
-  qualifications: string;
-  specialization: string;
-  experience: string;
-  rating: number;
-}
-
-interface Program {
-  id: string;
-  title: string;
-  description: string;
-  price: number;
-  type: "class" | "webinar";
-  language: string;
-  level: string;
-  maxParticipants: number;
-  imageUrl: string;
-  consultantProfile: ConsultantProfile;
-  prerequisites: string;
-  materialProvided: string;
-  learningOutcomes: string[];
-}
+import type { ClassPlan, WebinarPlan } from "@prisma/client";
 
 type ProgramType = "all" | "class" | "webinar";
+
+type Program = (ClassPlan | WebinarPlan) & {
+  type: "class" | "webinar";
+  imageUrl: string;
+};
 
 export default function Programs() {
   const router = useRouter();
@@ -95,13 +78,11 @@ export default function Programs() {
       let newPrograms: Program[] = [];
 
       if ((programType === "all" || programType === "class") && data[0]) {
-        const formattedClasses = data[programType === "all" ? 0 : 0].data.map(
-          (item: any) => ({
-            ...item,
-            type: "class",
-            imageUrl: `https://picsum.photos/seed/${item.id}/600/400`,
-          }),
-        );
+        const formattedClasses = data[0].data.map((item: ClassPlan) => ({
+          ...item,
+          type: "class",
+          imageUrl: generateProgramImageUrl(item.id),
+        }));
         newPrograms = [...newPrograms, ...formattedClasses];
       }
 
@@ -110,10 +91,10 @@ export default function Programs() {
         data[programType === "all" ? 1 : 0]
       ) {
         const formattedWebinars = data[programType === "all" ? 1 : 0].data.map(
-          (item: any) => ({
+          (item: WebinarPlan) => ({
             ...item,
             type: "webinar",
-            imageUrl: `https://picsum.photos/seed/${item.id}/600/400`,
+            imageUrl: generateProgramImageUrl(item.id),
           }),
         );
         newPrograms = [...newPrograms, ...formattedWebinars];
@@ -161,7 +142,9 @@ export default function Programs() {
     .filter((item) => {
       const searchMatch =
         item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.description.toLowerCase().includes(searchTerm.toLowerCase());
+        (item.description?.toLowerCase() || "").includes(
+          searchTerm.toLowerCase(),
+        );
       const categoryMatch =
         selectedCategory === "all" ? true : item.level === selectedCategory;
       return searchMatch && categoryMatch;
@@ -242,8 +225,8 @@ export default function Programs() {
               <SelectContent>
                 <SelectItem value="all">All Levels</SelectItem>
                 {uniqueLevels.map((level) => (
-                  <SelectItem key={level} value={level}>
-                    {level}
+                  <SelectItem key={level} value={level?.toString() ?? ""}>
+                    {level ?? "Unknown Level"}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -321,12 +304,17 @@ export default function Programs() {
         </div>
 
         <div className="relative">
+          <Label htmlFor="search" className="sr-only">
+            Search classes and webinars
+          </Label>
           <Input
+            id="search"
             type="text"
             placeholder="Search classes and webinars"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full rounded-lg border-gray-200 bg-white pl-4 pr-12 py-3 text-sm focus:border-gray-300 focus:ring-gray-300"
+            aria-label="Search classes and webinars"
           />
           <div className="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none">
             <svg
@@ -334,6 +322,7 @@ export default function Programs() {
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
+              aria-hidden="true"
             >
               <path
                 strokeLinecap="round"
@@ -356,8 +345,16 @@ export default function Programs() {
                   ? lastElementRef
                   : null
               }
+              role="button"
+              tabIndex={0}
               className="bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-all duration-300"
               onClick={() => handleProgramClick(item)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleProgramClick(item);
+                }
+              }}
             >
               <Image
                 src={item.imageUrl}
@@ -372,7 +369,11 @@ export default function Programs() {
                   <h3 className="text-lg font-semibold text-gray-900">
                     {item.title}
                   </h3>
-                  <span className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium">
+                  <span
+                    className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium"
+                    role="status"
+                    aria-label={`Program type: ${item.type}`}
+                  >
                     {item.type}
                   </span>
                 </div>
@@ -386,6 +387,11 @@ export default function Programs() {
                   <Button
                     variant="outline"
                     className="text-sm border-gray-200 hover:bg-gray-50"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleProgramClick(item);
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
                   >
                     Learn More
                   </Button>
@@ -404,8 +410,16 @@ export default function Programs() {
                   ? lastElementRef
                   : null
               }
+              role="button"
+              tabIndex={0}
               className="bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 flex cursor-pointer hover:shadow-md transition-all duration-300"
               onClick={() => handleProgramClick(item)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleProgramClick(item);
+                }
+              }}
             >
               <Image
                 src={item.imageUrl}
@@ -434,6 +448,11 @@ export default function Programs() {
                   <Button
                     variant="outline"
                     className="text-sm border-gray-200 hover:bg-gray-50"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleProgramClick(item);
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
                   >
                     Learn More
                   </Button>
