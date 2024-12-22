@@ -35,7 +35,7 @@ const ReviewCard = ({ review }: { review: ReviewWithProfiles }) => (
             <div className="flex items-center flex-shrink-0">
               {[...Array(5)].map((_, i) => (
                 <Star
-                  key={i}
+                  key={`star-${review.id}-${i}`}
                   className={`w-3 h-3 ${
                     i < review.rating
                       ? "text-yellow-400 fill-yellow-400"
@@ -87,9 +87,9 @@ export default function Testimonials() {
           </h2>
           <div className="flex justify-center">
             <div className="animate-pulse space-y-4">
-              {[...Array(3)].map((_, i) => (
+              {[...Array(3)].map((_, index) => (
                 <div
-                  key={i}
+                  key={`skeleton-${index}-${Date.now()}`}
                   className="w-[300px] h-[160px] bg-gray-200 rounded-lg"
                 />
               ))}
@@ -124,10 +124,13 @@ export default function Testimonials() {
         <div className="relative py-4">
           <div className="marquee-container">
             <div className="marquee-track-ltr">
-              {[...Array(3)].map((_, i) => (
-                <div key={i} className="flex">
+              {[...Array(3)].map((_, groupIndex) => (
+                <div key={`ltr-group-${groupIndex}`} className="flex">
                   {displayReviews.map((review) => (
-                    <ReviewCard key={`${review.id}-${i}`} review={review} />
+                    <ReviewCard
+                      key={`${review.id}-ltr-${groupIndex}`}
+                      review={review}
+                    />
                   ))}
                 </div>
               ))}
@@ -139,11 +142,11 @@ export default function Testimonials() {
         <div className="relative py-4">
           <div className="marquee-container">
             <div className="marquee-track-rtl">
-              {[...Array(3)].map((_, i) => (
-                <div key={i} className="flex">
+              {[...Array(3)].map((_, groupIndex) => (
+                <div key={`rtl-group-${groupIndex}`} className="flex">
                   {displayReviews.map((review) => (
                     <ReviewCard
-                      key={`${review.id}-reverse-${i}`}
+                      key={`${review.id}-rtl-${groupIndex}`}
                       review={review}
                     />
                   ))}

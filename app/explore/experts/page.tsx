@@ -6,7 +6,7 @@ import { TConsultantProfile } from "@/types/consultant";
 import { FiltersSection } from "./components/FiltersSection";
 import { ConsultantCard } from "./components/ConsultantCard";
 import { FeaturedExperts } from "./components/FeaturedExperts";
-import { Testimonials } from "./components/Testimonials";
+import { SatisfiedTestimonial } from "./components/SatisfiedTestimonial";
 import { SearchBar, SortOption } from "./components/SearchBar";
 
 interface MetaData {
@@ -257,7 +257,7 @@ export default function ExploreExperts() {
     <>
       <FeaturedExperts />
       <FindExperts />
-      <Testimonials />
+      <SatisfiedTestimonial />
     </>
   );
 }
