@@ -222,6 +222,7 @@ export default async function ClassDetailsPage({
 
             <h2 className="text-2xl font-semibold mb-4">Course Content</h2>
             <CourseContent contents={classPlan.classContents} />
+            <div className="mb-16"></div>
           </div>
 
           <div>
