@@ -12,7 +12,9 @@ export async function GET(req: NextRequest) {
     let whereClause: any = {};
 
     if (rating) {
-      whereClause.rating = parseInt(rating);
+      whereClause.rating = {
+        gte: parseInt(rating), // Greater than or equal to the specified rating
+      };
     }
 
     if (consultantId) {
@@ -33,8 +35,28 @@ export async function GET(req: NextRequest) {
     const reviews = await prisma.consultantReview.findMany({
       where: whereClause,
       include: {
-        consultantProfile: true,
-        consulteeProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        consulteeProfile: {
+          include: {
+            user: {
+              select: {
+                name: true,
+                image: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        rating: "desc",
       },
     });
 
@@ -47,6 +69,7 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -58,8 +81,25 @@ export async function POST(req: NextRequest) {
         consulteeProfileId: body.consulteeProfileId,
       },
       include: {
-        consultantProfile: true,
-        consulteeProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        consulteeProfile: {
+          include: {
+            user: {
+              select: {
+                name: true,
+                image: true,
+              },
+            },
+          },
+        },
       },
     });
 

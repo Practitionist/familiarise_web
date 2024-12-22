@@ -1,81 +1,219 @@
-import React from "react";
-import Image from "next/image";
+"use client";
 
-interface Testimonial {
-  name: string;
-  image: string;
-  quote: string;
-}
+import { useEffect, useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { Star, User } from "lucide-react";
+import type { ReviewWithProfiles } from "@/types/review";
 
-const testimonialData: Testimonial[] = [
-  {
-    name: "John Doe",
-    image: "/images/avatar1.jpg",
-    quote:
-      "The team at ConsultX provided us with valuable insights that helped our business grow. Their expertise in the field is unparalleled.",
-  },
-  {
-    name: "Jane Smith",
-    image: "/images/avatar2.jpg",
-    quote:
-      "Working with ConsultX was a game-changer for us. Their strategic advice helped us navigate complex business challenges.",
-  },
-  {
-    name: "Mike Johnson",
-    image: "/images/avatar3.jpg",
-    quote:
-      "The consultants at ConsultX are top-notch. They helped us optimize our processes and improve efficiency.",
-  },
-];
-
-interface TestimonialCardProps {
-  name: string;
-  image: string;
-  quote: string;
-}
-
-const TestimonialCard: React.FC<TestimonialCardProps> = ({
-  name,
-  image,
-  quote,
-}) => (
-  <div className="bg-white p-8 border border-gray-200 rounded-lg shadow-sm hover:shadow-lg transition-shadow duration-300 ease-in-out transform hover:-translate-y-1">
-    <div className="flex items-center justify-center">
-      <Image
-        src={image}
-        alt={`${name}'s face`}
-        width={48}
-        height={48}
-        className="rounded-full"
-      />
-    </div>
-    <h3 className="mt-6 text-center text-xl font-medium text-gray-900">
-      {name}
-    </h3>
-    <p className="mt-2 text-center text-gray-500">&quot;{quote}&quot;</p>
-  </div>
-);
-
-const TestimonialSection: React.FC = () => (
-  <div className="bg-gray-100">
-    <div className="max-w-7xl mx-auto py-16 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-3xl mx-auto text-center">
-        <h2 className="text-3xl font-extrabold text-gray-900">
-          Hear what our customers have to say about us
-        </h2>
-        <p className="mt-4 text-lg text-gray-500">
-          Check out what our customers are saying about us!
-        </p>
-      </div>
-      <div className="mt-16">
-        <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
-          {testimonialData.map((testimonial, index) => (
-            <TestimonialCard key={index} {...testimonial} />
-          ))}
+const ReviewCard = ({ review }: { review: ReviewWithProfiles }) => (
+  <Card className="w-[300px] flex-shrink-0 mx-3 bg-white hover:shadow-lg transition-all duration-300 hover:-translate-y-1 hover:scale-[1.02] border border-gray-100">
+    <CardContent className="p-5">
+      <div className="flex items-start gap-3">
+        <Avatar className="h-10 w-10 border border-gray-100">
+          {review.consulteeProfile?.user?.image ? (
+            <AvatarImage
+              src={review.consulteeProfile.user.image}
+              alt={review.consulteeProfile.user.name || "Reviewer"}
+            />
+          ) : (
+            <AvatarFallback>
+              <User className="h-5 w-5" />
+            </AvatarFallback>
+          )}
+        </Avatar>
+        <div className="flex-1 min-w-0">
+          <div className="flex justify-between items-start gap-2">
+            <div className="min-w-0">
+              <h4 className="font-semibold truncate">
+                {review.consulteeProfile?.user?.name || "Anonymous"}
+              </h4>
+              <p className="text-sm text-gray-500 truncate">
+                Review for {review.consultantProfile?.user?.name}
+              </p>
+            </div>
+            <div className="flex items-center flex-shrink-0">
+              {[...Array(5)].map((_, i) => (
+                <Star
+                  key={i}
+                  className={`w-3 h-3 ${
+                    i < review.rating
+                      ? "text-yellow-400 fill-yellow-400"
+                      : "text-gray-300"
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+          <p className="mt-3 text-gray-700 text-sm line-clamp-3">
+            {review.reviewDescription || "No review description provided"}
+          </p>
         </div>
       </div>
-    </div>
-  </div>
+    </CardContent>
+  </Card>
 );
 
-export default TestimonialSection;
+export default function Testimonials() {
+  const [reviews, setReviews] = useState<ReviewWithProfiles[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchReviews() {
+      try {
+        const response = await fetch("/api/user/reviews");
+        if (!response.ok) throw new Error("Failed to fetch");
+
+        const data = await response.json();
+        if (data?.data) {
+          setReviews(data.data);
+        }
+      } catch (error) {
+        console.error("Error fetching reviews:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchReviews();
+  }, []);
+
+  if (loading) {
+    return (
+      <section className="py-16 bg-gray-50">
+        <div className="container mx-auto px-4">
+          <h2 className="text-3xl font-bold text-center mb-12">
+            What Our Users Say
+          </h2>
+          <div className="flex justify-center">
+            <div className="animate-pulse space-y-4">
+              {[...Array(3)].map((_, i) => (
+                <div
+                  key={i}
+                  className="w-[300px] h-[160px] bg-gray-200 rounded-lg"
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // Ensure we have enough reviews for smooth scrolling
+  const displayReviews =
+    reviews.length >= 4 ? reviews : [...reviews, ...reviews];
+
+  return (
+    <section className="py-16 bg-gray-50 overflow-hidden relative">
+      <div
+        className="absolute inset-0 opacity-30"
+        style={{
+          backgroundImage: `radial-gradient(circle at 1px 1px, rgb(0 0 0 / 0.05) 1px, transparent 0)`,
+          backgroundSize: "40px 40px",
+        }}
+      />
+      <div className="container mx-auto px-4 relative">
+        <h2 className="text-3xl font-bold text-center mb-16">
+          What Our Users Say
+        </h2>
+      </div>
+
+      <div className="space-y-12">
+        {/* First Row: Left to Right */}
+        <div className="relative py-4">
+          <div className="marquee-container">
+            <div className="marquee-track-ltr">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="flex">
+                  {displayReviews.map((review) => (
+                    <ReviewCard key={`${review.id}-${i}`} review={review} />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Second Row: Right to Left */}
+        <div className="relative py-4">
+          <div className="marquee-container">
+            <div className="marquee-track-rtl">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="flex">
+                  {displayReviews.map((review) => (
+                    <ReviewCard
+                      key={`${review.id}-reverse-${i}`}
+                      review={review}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <style jsx>{`
+        .marquee-container {
+          width: 100%;
+          overflow: hidden;
+          position: relative;
+          mask-image: linear-gradient(
+            to right,
+            transparent,
+            black 10%,
+            black 90%,
+            transparent
+          );
+          -webkit-mask-image: linear-gradient(
+            to right,
+            transparent,
+            black 10%,
+            black 90%,
+            transparent
+          );
+        }
+        .marquee-track-ltr,
+        .marquee-track-rtl {
+          display: flex;
+          width: fit-content;
+          animation-timing-function: linear;
+          animation-iteration-count: infinite;
+          will-change: transform;
+          transition: transform 0.5s ease;
+        }
+        .marquee-track-ltr {
+          animation-name: marquee-ltr;
+          animation-duration: 180s;
+          transform: translateX(calc(-100% / 3));
+        }
+        .marquee-track-rtl {
+          animation-name: marquee-rtl;
+          animation-duration: 180s;
+          transform: translateX(calc(-100% / 3));
+        }
+        @keyframes marquee-ltr {
+          0% {
+            transform: translateX(calc(-100% / 3));
+          }
+          100% {
+            transform: translateX(calc(-200% / 3));
+          }
+        }
+        @keyframes marquee-rtl {
+          0% {
+            transform: translateX(calc(-100% / 3));
+          }
+          100% {
+            transform: translateX(0);
+          }
+        }
+        .marquee-track-ltr:hover,
+        .marquee-track-rtl:hover {
+          animation-play-state: paused;
+        }
+      `}</style>
+    </section>
+  );
+}
