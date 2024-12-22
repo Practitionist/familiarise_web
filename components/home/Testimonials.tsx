@@ -61,7 +61,7 @@ export default function Testimonials() {
   useEffect(() => {
     async function fetchReviews() {
       try {
-        const response = await fetch("/api/user/reviews");
+        const response = await fetch("/api/user/reviews?rating=4");
         if (!response.ok) throw new Error("Failed to fetch");
 
         const data = await response.json();
