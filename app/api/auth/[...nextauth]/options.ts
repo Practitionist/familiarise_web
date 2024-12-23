@@ -3,13 +3,12 @@
  * It sets up the authentication providers, session handling, and callback functions.
  */
 
+import prisma from "@/lib/prisma";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
-import { NextAuthOptions, User } from "next-auth";
+import { Account, NextAuthOptions, Session, User } from "next-auth";
 import { JWT } from "next-auth/jwt";
 import GitHubProvider from "next-auth/providers/github";
 import GoogleProvider from "next-auth/providers/google";
-import { Account, Session } from "next-auth";
-import prisma from "@/lib/prisma";
 
 /**
  * NextAuth options configuration
@@ -66,7 +65,7 @@ const authOptions: NextAuthOptions = {
       session,
     }: {
       token: JWT;
-      user: User | undefined;
+      user?: User;
       account: Account | null;
       trigger?: "update" | "signIn" | "signUp";
       session?: any;
@@ -99,9 +98,9 @@ const authOptions: NextAuthOptions = {
           // Update token with user data
           token.onboardingCompleted = dbUser.onboardingCompleted ?? false;
           token.role = dbUser.role ?? "";
-          token.consultantProfileId = dbUser.consultantProfile?.id ?? undefined;
-          token.consulteeProfileId = dbUser.consulteeProfile?.id ?? undefined;
-          token.staffProfileId = dbUser.staffProfile?.id ?? undefined;
+          token.consultantProfileId = dbUser.consultantProfile?.id;
+          token.consulteeProfileId = dbUser.consulteeProfile?.id;
+          token.staffProfileId = dbUser.staffProfile?.id;
         }
       } else if (account?.providerAccountId) {
         // Set account ID in token
@@ -124,42 +123,29 @@ const authOptions: NextAuthOptions = {
     }): Promise<Session> {
       if (session?.user && token) {
         // Update session with token data
-        session.user.id = token.sub as string;
-        session.user.onboardingCompleted = token.onboardingCompleted as boolean;
-        session.user.role = token.role as string;
-        session.user.consultantProfileId = token.consultantProfileId as
-          | string
-          | undefined;
-        session.user.consulteeProfileId = token.consulteeProfileId as
-          | string
-          | undefined;
-        session.user.staffProfileId = token.staffProfileId as
-          | string
-          | undefined;
+        session.user.id = token.sub ?? "";
+        session.user.onboardingCompleted = token.onboardingCompleted;
+        session.user.role = token.role;
+        session.user.consultantProfileId = token.consultantProfileId;
+        session.user.consulteeProfileId = token.consulteeProfileId;
+        session.user.staffProfileId = token.staffProfileId;
 
         // Fetch additional user data from database
         const user = await prisma.user.findUnique({
           where: { email: session.user.email ?? "" },
-          select: {
-            email: true,
-            name: true,
-            image: true,
-            phone: true,
-            address: true,
-            currentTimezone: true,
-          },
         });
 
         if (user) {
           // Merge fetched user data with session
-          Object.assign(session.user, {
-            ...user,
-            phone: user.phone ?? "",
-            address: user.address ?? "",
-            currentTimezone:
-              user.currentTimezone ??
-              Intl.DateTimeFormat().resolvedOptions().timeZone,
-          });
+          session.user.emailVerified =
+            user.emailVerified !== null
+              ? user.emailVerified < new Date()
+              : null;
+          session.user.phone = user.phone ?? "";
+          session.user.address = user.address ?? "";
+          session.user.currentTimezone =
+            user.currentTimezone ??
+            Intl.DateTimeFormat().resolvedOptions().timeZone;
         }
       }
       return session;
