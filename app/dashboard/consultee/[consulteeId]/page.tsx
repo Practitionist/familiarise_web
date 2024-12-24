@@ -20,12 +20,12 @@ import {
   WebinarWithPlan,
   ClassWithPlan,
 } from "@/hooks/useEvents";
-import AppointmentsTab from "./components/AppointmentsTab";
-import BookingHistoryTab from "./components/BookingHistoryTab";
-import FeedbackSupportTab from "./components/FeedbackSupportTab";
-import HomeTab from "./components/HomeTab";
-import MessagesTab from "./components/MessagesTab";
-import PolicyTab from "./components/PolicyTab";
+import AppointmentsTab from "./tabs/AppointmentsTab";
+import BookingHistoryTab from "./tabs/BookingHistoryTab";
+import FeedbackSupportTab from "./tabs/FeedbackSupportTab";
+import HomeTab from "./tabs/HomeTab";
+import MessagesTab from "./tabs/MessagesTab";
+import PolicyTab from "./tabs/PolicyTab";
 
 const tabs = [
   "Home",
