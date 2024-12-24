@@ -111,8 +111,35 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
   };
 }>;
 
-// Utility type for creating appointments
-export type TAppointmentCreateInput = Prisma.AppointmentCreateInput;
+// Custom type for Webinar with specific nesting depth
+export type TWebinar = Prisma.WebinarGetPayload<{
+  include: {
+    webinarPlan: {
+      include: {
+        consultantProfile: {
+          include: {
+            user: true;
+          };
+        };
+      };
+    };
+  };
+}>;
+
+// Custom type for Class with specific nesting depth
+export type TClass = Prisma.ClassGetPayload<{
+  include: {
+    classPlan: {
+      include: {
+        consultantProfile: {
+          include: {
+            user: true;
+          };
+        };
+      };
+    };
+  };
+}>;
 
 export type TAppointmentWithoutSlot = Prisma.AppointmentGetPayload<{
   include: {
@@ -175,3 +202,6 @@ export type TAppointmentWithoutSlot = Prisma.AppointmentGetPayload<{
     };
   };
 }>;
+
+// Utility type for creating appointments
+export type TAppointmentCreateInput = Prisma.AppointmentCreateInput;

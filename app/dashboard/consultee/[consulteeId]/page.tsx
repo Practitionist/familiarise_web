@@ -7,12 +7,19 @@ import { useState, use, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import {
   Prisma,
-  Class,
   Consultation,
   Subscription,
   Webinar,
+  Class,
 } from "@prisma/client";
 import { fetchUserDetails, fetchConsulteeDetails } from "@/hooks/useUserData";
+import {
+  useEvents,
+  ConsultationWithPlan,
+  SubscriptionWithPlan,
+  WebinarWithPlan,
+  ClassWithPlan,
+} from "@/hooks/useEvents";
 import AppointmentsTab from "./components/AppointmentsTab";
 import BookingHistoryTab from "./components/BookingHistoryTab";
 import FeedbackSupportTab from "./components/FeedbackSupportTab";
@@ -33,10 +40,10 @@ type Params = Promise<{ consulteeId: string }>;
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
 type EventWithType =
-  | (Consultation & { type: "Consultation" })
-  | (Subscription & { type: "Subscription" })
-  | (Webinar & { type: "Webinar" })
-  | (Class & { type: "Class" });
+  | (ConsultationWithPlan & { type: "Consultation" })
+  | (SubscriptionWithPlan & { type: "Subscription" })
+  | (WebinarWithPlan & { type: "Webinar" })
+  | (ClassWithPlan & { type: "Class" });
 
 export default function ConsulteeDashboard(
   props: Readonly<{
@@ -53,9 +60,18 @@ export default function ConsulteeDashboard(
     useState<Prisma.UserGetPayload<{}> | null>(null);
   const [profileDetails, setProfileDetails] =
     useState<Prisma.ConsulteeProfileGetPayload<{}> | null>(null);
-  const [appointments, setAppointments] = useState<EventWithType[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Use the useEvents hook to fetch all events
+  const {
+    consultations,
+    subscriptions,
+    webinars,
+    classes,
+    isLoading: eventsLoading,
+    error: eventsError,
+  } = useEvents(profileDetails?.id || "");
 
   useEffect(() => {
     async function fetchData() {
@@ -74,49 +90,6 @@ export default function ConsulteeDashboard(
 
         setUserDetails(userData);
         setProfileDetails(consulteeData);
-
-        // Fetch all types of appointments
-        const [consultations, subscriptions, webinars, classes] =
-          await Promise.all([
-            fetch(
-              `/api/events/consultations?consulteeProfileId=${consulteeId}`,
-            ).then((res) => res.json()),
-            fetch(
-              `/api/events/subscriptions?consulteeProfileId=${consulteeId}`,
-            ).then((res) => res.json()),
-            fetch(
-              `/api/events/webinars?consulteeProfileId=${consulteeId}`,
-            ).then((res) => res.json()),
-            fetch(`/api/events/classes?consulteeProfileId=${consulteeId}`).then(
-              (res) => res.json(),
-            ),
-          ]);
-
-        // Combine all appointments
-        const allAppointments = [
-          ...consultations.data.map((c: Consultation) => ({
-            ...c,
-            type: "Consultation" as const,
-          })),
-          ...subscriptions.data.map((s: Subscription) => ({
-            ...s,
-            type: "Subscription" as const,
-          })),
-          ...webinars.data.map((w: Webinar) => ({
-            ...w,
-            type: "Webinar" as const,
-          })),
-          ...classes.data.map((c: Class) => ({
-            ...c,
-            type: "Class" as const,
-          })),
-        ].sort(
-          (a, b) =>
-            new Date(b.requestedAt || b.createdAt).getTime() -
-            new Date(a.requestedAt || a.createdAt).getTime(),
-        );
-
-        setAppointments(allAppointments);
       } catch (err) {
         console.error("Error fetching data:", err);
         setError(err instanceof Error ? err.message : "An error occurred");
@@ -143,20 +116,20 @@ export default function ConsulteeDashboard(
     );
   }
 
-  if (error) {
+  if (error || eventsError) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-100">
         <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
           <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
             Error
           </h2>
-          <p className="text-gray-700">{error}</p>
+          <p className="text-gray-700">{error || eventsError?.message}</p>
         </div>
       </div>
     );
   }
 
-  if (isLoading || !userDetails || !profileDetails) {
+  if (isLoading || eventsLoading || !userDetails || !profileDetails) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-100">
         <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
@@ -166,6 +139,40 @@ export default function ConsulteeDashboard(
       </div>
     );
   }
+
+  // Combine and sort all events
+  const allEvents: EventWithType[] = [
+    ...consultations.map((c: ConsultationWithPlan) => ({
+      ...c,
+      type: "Consultation" as const,
+    })),
+    ...subscriptions.map((s: SubscriptionWithPlan) => ({
+      ...s,
+      type: "Subscription" as const,
+    })),
+    ...webinars.map((w: WebinarWithPlan) => ({
+      ...w,
+      type: "Webinar" as const,
+    })),
+    ...classes.map((c: ClassWithPlan) => ({ ...c, type: "Class" as const })),
+  ].sort((a, b) => {
+    const getEventTime = (event: EventWithType) => {
+      switch (event.type) {
+        case "Consultation":
+        case "Subscription":
+          return event.requestedAt;
+        case "Webinar":
+          return event.scheduledAt;
+        case "Class":
+          return event.startDate || event.createdAt;
+      }
+    };
+
+    const timeA = getEventTime(a);
+    const timeB = getEventTime(b);
+
+    return new Date(timeB).getTime() - new Date(timeA).getTime();
+  });
 
   return (
     <div className="bg-gray-100 min-h-screen flex flex-col">
@@ -198,16 +205,10 @@ export default function ConsulteeDashboard(
       </div>
       <div className="flex-grow overflow-y-auto p-8">
         {activeTab === "Home" && (
-          <HomeTab
-            userDetails={userDetails}
-            consulteeId={profileDetails?.id || ""}
-          />
+          <HomeTab userDetails={userDetails} consulteeId={consulteeId} />
         )}
         {activeTab === "Appointments" && (
-          <AppointmentsTab
-            consulteeId={consulteeId}
-            appointments={appointments}
-          />
+          <AppointmentsTab consulteeId={consulteeId} />
         )}
         {activeTab === "Booking History" && (
           <BookingHistoryTab consulteeId={consulteeId} />

@@ -40,14 +40,10 @@ export async function GET(request: NextRequest) {
             include: {
               consultantProfile: {
                 include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      email: true,
-                      image: true,
-                    },
-                  },
+                  user: true,
+                  domain: true,
+                  subDomains: true,
+                  tags: true,
                 },
               },
             },

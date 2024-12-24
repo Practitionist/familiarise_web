@@ -1,24 +1,16 @@
 import { useState, useEffect } from "react";
 import { useToast } from "@/components/ui/use-toast";
 import {
-  Consultation,
-  Webinar,
-  Class,
-  Subscription,
-  ConsultationPlan,
-  SubscriptionPlan,
-  WebinarPlan,
-  ClassPlan,
-} from "@prisma/client";
+  TConsultation,
+  TSubscription,
+  TWebinar,
+  TClass,
+} from "@/types/appointment";
 
-export type ConsultationWithPlan = Consultation & {
-  consultationPlan: ConsultationPlan;
-};
-export type SubscriptionWithPlan = Subscription & {
-  subscriptionPlan: SubscriptionPlan;
-};
-export type WebinarWithPlan = Webinar & { webinarPlan: WebinarPlan };
-export type ClassWithPlan = Class & { classPlan: ClassPlan };
+export type ConsultationWithPlan = TConsultation;
+export type SubscriptionWithPlan = TSubscription;
+export type WebinarWithPlan = TWebinar;
+export type ClassWithPlan = TClass;
 
 export const useEvents = (consulteeProfileId: string) => {
   const [consultations, setConsultations] = useState<ConsultationWithPlan[]>(

@@ -1,45 +1,60 @@
 "use client";
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Class, Consultation, Subscription, Webinar } from "@prisma/client";
+import {
+  useEvents,
+  ConsultationWithPlan,
+  SubscriptionWithPlan,
+  WebinarWithPlan,
+  ClassWithPlan,
+} from "@/hooks/useEvents";
 import { motion } from "framer-motion";
 import React from "react";
 
 type EventWithType =
-  | (Consultation & { type: "Consultation" })
-  | (Subscription & { type: "Subscription" })
-  | (Webinar & { type: "Webinar" })
-  | (Class & { type: "Class" });
+  | (ConsultationWithPlan & { type: "Consultation" })
+  | (SubscriptionWithPlan & { type: "Subscription" })
+  | (WebinarWithPlan & { type: "Webinar" })
+  | (ClassWithPlan & { type: "Class" });
 
 export default function AppointmentsTab({
   consulteeId,
-  appointments: externalAppointments,
 }: {
   consulteeId: string;
-  appointments: EventWithType[];
 }) {
-  if (!externalAppointments.length) {
-    return <div>No appointments found</div>;
+  const { consultations, subscriptions, webinars, classes, isLoading, error } =
+    useEvents(consulteeId);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="animate-pulse text-gray-500">
+          Loading appointments...
+        </div>
+      </div>
+    );
   }
 
-  const consultations = externalAppointments.filter(
-    (a): a is Consultation & { type: "Consultation" } =>
-      a.type === "Consultation",
-  );
-  const subscriptions = externalAppointments.filter(
-    (a): a is Subscription & { type: "Subscription" } =>
-      a.type === "Subscription",
-  );
-  const webinars = externalAppointments.filter(
-    (a): a is Webinar & { type: "Webinar" } => a.type === "Webinar",
-  );
-  const classes = externalAppointments.filter(
-    (a): a is Class & { type: "Class" } => a.type === "Class",
-  );
+  if (error) {
+    return (
+      <div className="p-4 bg-red-50 text-red-600 rounded-lg">
+        Error loading appointments: {error.message}
+      </div>
+    );
+  }
+
+  if (
+    !consultations.length &&
+    !subscriptions.length &&
+    !webinars.length &&
+    !classes.length
+  ) {
+    return <div>No appointments found</div>;
+  }
 
   return (
     <div className="space-y-8 min-h-[calc(100vh-200px)]">
@@ -95,64 +110,67 @@ function Overview({
   webinars,
   classes,
 }: {
-  consultations: Consultation[];
-  subscriptions: Subscription[];
-  webinars: Webinar[];
-  classes: Class[];
+  consultations: ConsultationWithPlan[];
+  subscriptions: SubscriptionWithPlan[];
+  webinars: WebinarWithPlan[];
+  classes: ClassWithPlan[];
 }) {
-  const allAppointments: EventWithType[] = [
-    ...consultations.map((c) => ({ ...c, type: "Consultation" as const })),
-    ...subscriptions.map((s) => ({ ...s, type: "Subscription" as const })),
-    ...webinars.map((w) => ({ ...w, type: "Webinar" as const })),
-    ...classes.map((c) => ({ ...c, type: "Class" as const })),
-  ].sort((a, b) => {
-    const dateA = getAppointmentDate(a);
-    const dateB = getAppointmentDate(b);
-    return new Date(dateA).getTime() - new Date(dateB).getTime();
-  });
-
-  const upcomingAppointments = allAppointments.slice(0, 5);
-
   return (
     <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-4">
       <DashboardCard
         title="Consultations"
         items={consultations.map((consultation) => ({
-          title: "Consultation",
-          consultant: "Unknown Consultant",
+          title: consultation.consultationPlan.title,
+          consultant:
+            consultation.consultationPlan.consultantProfile?.user?.name ||
+            "Unknown Consultant",
           date: consultation.preferredDateTime
             ? new Date(consultation.preferredDateTime).toLocaleString()
             : "Unknown Date",
+          image: consultation.consultationPlan.consultantProfile?.user?.image,
+          status: consultation.requestStatus,
         }))}
       />
       <DashboardCard
         title="Subscriptions"
         items={subscriptions.map((subscription) => ({
-          title: "Subscription",
-          consultant: "Unknown Consultant",
+          title: subscription.subscriptionPlan.title,
+          consultant:
+            subscription.subscriptionPlan.consultantProfile?.user?.name ||
+            "Unknown Consultant",
           date: subscription.startDate
             ? new Date(subscription.startDate).toLocaleString()
             : "Unknown Date",
+          image: subscription.subscriptionPlan.consultantProfile?.user?.image,
+          status: subscription.requestStatus,
         }))}
       />
       <DashboardCard
         title="Classes"
         items={classes.map((classItem) => ({
-          title: "Class",
-          consultant: "Unknown Consultant",
+          title: classItem.classPlan.title,
+          consultant:
+            classItem.classPlan.consultantProfile?.user?.name ||
+            "Unknown Consultant",
           date: classItem.startDate
             ? new Date(classItem.startDate).toLocaleString()
             : "Unknown Date",
+          image: classItem.classPlan.consultantProfile?.user?.image,
+          status: classItem.status,
         }))}
       />
       <DashboardCard
         title="Webinars"
         items={webinars.map((webinar) => ({
-          title: "Webinar",
-          consultant: "Unknown Consultant",
+          title: webinar.webinarPlan.title,
+          consultant:
+            webinar.webinarPlan.consultantProfile?.user?.name ||
+            "Unknown Consultant",
           date: webinar.scheduledAt
             ? new Date(webinar.scheduledAt).toLocaleString()
             : "Unknown Date",
+          image: webinar.webinarPlan.consultantProfile?.user?.image,
+          status: webinar.status,
         }))}
       />
     </div>
@@ -165,10 +183,10 @@ function Upcoming({
   webinars,
   classes,
 }: {
-  consultations: Consultation[];
-  subscriptions: Subscription[];
-  webinars: Webinar[];
-  classes: Class[];
+  consultations: ConsultationWithPlan[];
+  subscriptions: SubscriptionWithPlan[];
+  webinars: WebinarWithPlan[];
+  classes: ClassWithPlan[];
 }) {
   return (
     <div className="space-y-8">
@@ -176,13 +194,17 @@ function Upcoming({
         {consultations.map((consultation) => (
           <ConsultationCard
             key={consultation.id}
-            title="Consultation"
-            consultant="Unknown Consultant"
+            title={consultation.consultationPlan.title}
+            consultant={
+              consultation.consultationPlan.consultantProfile?.user?.name ||
+              "Unknown Consultant"
+            }
             date={
               consultation.preferredDateTime
                 ? new Date(consultation.preferredDateTime).toLocaleString()
                 : "Unknown Date"
             }
+            image={consultation.consultationPlan.consultantProfile?.user?.image}
             buttonText="Join"
           />
         ))}
@@ -191,13 +213,17 @@ function Upcoming({
         {subscriptions.map((subscription) => (
           <ConsultationCard
             key={subscription.id}
-            title="Subscription"
-            consultant="Unknown Consultant"
+            title={subscription.subscriptionPlan.title}
+            consultant={
+              subscription.subscriptionPlan.consultantProfile?.user?.name ||
+              "Unknown Consultant"
+            }
             date={
               subscription.startDate
                 ? new Date(subscription.startDate).toLocaleString()
                 : "Unknown Date"
             }
+            image={subscription.subscriptionPlan.consultantProfile?.user?.image}
             buttonText="View"
           />
         ))}
@@ -206,13 +232,17 @@ function Upcoming({
         {classes.map((classItem) => (
           <ConsultationCard
             key={classItem.id}
-            title="Class"
-            consultant="Unknown Consultant"
+            title={classItem.classPlan.title}
+            consultant={
+              classItem.classPlan.consultantProfile?.user?.name ||
+              "Unknown Consultant"
+            }
             date={
               classItem.startDate
                 ? new Date(classItem.startDate).toLocaleString()
                 : "Unknown Date"
             }
+            image={classItem.classPlan.consultantProfile?.user?.image}
             buttonText="Join"
           />
         ))}
@@ -221,13 +251,17 @@ function Upcoming({
         {webinars.map((webinar) => (
           <ConsultationCard
             key={webinar.id}
-            title="Webinar"
-            consultant="Unknown Consultant"
+            title={webinar.webinarPlan.title}
+            consultant={
+              webinar.webinarPlan.consultantProfile?.user?.name ||
+              "Unknown Consultant"
+            }
             date={
               webinar.scheduledAt
                 ? new Date(webinar.scheduledAt).toLocaleString()
                 : "Unknown Date"
             }
+            image={webinar.webinarPlan.consultantProfile?.user?.image}
             buttonText="Join"
           />
         ))}
@@ -267,7 +301,13 @@ function DashboardCard({
   items,
 }: {
   title: string;
-  items: { title: string; date: string; consultant: string; status?: string }[];
+  items: {
+    title: string;
+    date: string;
+    consultant: string;
+    status?: string;
+    image?: string | null;
+  }[];
 }) {
   return (
     <Card className="bg-white">
@@ -286,19 +326,36 @@ function DashboardCard({
               transition={{ delay: index * 0.1 }}
               className="flex items-center justify-between bg-white"
             >
-              <div>
-                <div className="font-medium bg-white">{item.title}</div>
-                <div className="text-sm text-muted-foreground bg-white">
-                  {item.date}
-                </div>
-                <div className="text-sm text-muted-foreground bg-white">
-                  {item.consultant}
+              <div className="flex items-center space-x-4 bg-white">
+                <Avatar className="bg-white">
+                  <AvatarImage
+                    src={item.image || "/placeholder.svg"}
+                    alt={item.consultant}
+                  />
+                  <AvatarFallback className="bg-white">
+                    {item.consultant.charAt(0)}
+                  </AvatarFallback>
+                </Avatar>
+                <div>
+                  <div className="font-medium bg-white">{item.title}</div>
+                  <div className="text-sm text-muted-foreground bg-white">
+                    {item.date}
+                  </div>
+                  <div className="text-sm text-muted-foreground bg-white">
+                    {item.consultant}
+                  </div>
                 </div>
               </div>
               {item.status && (
                 <Badge
                   variant={
-                    item.status.includes("Not") ? "secondary" : "default"
+                    item.status.toLowerCase() === "completed"
+                      ? "default"
+                      : item.status.toLowerCase() === "rejected"
+                        ? "destructive"
+                        : item.status.toLowerCase() === "pending"
+                          ? "secondary"
+                          : "default"
                   }
                   className="bg-white"
                 >
@@ -318,22 +375,22 @@ function ConsultationCard({
   consultant,
   date,
   buttonText,
+  image,
 }: {
   title: string;
   consultant: string;
   date: string;
   buttonText: string;
+  image?: string | null;
 }) {
   return (
     <Card className="bg-white">
       <CardContent className="p-6 bg-white">
         <div className="flex items-center space-x-4 mb-4 bg-white">
           <Avatar className="bg-white">
+            <AvatarImage src={image || "/placeholder.svg"} alt={consultant} />
             <AvatarFallback className="bg-white">
-              {consultant
-                .split(" ")
-                .map((n) => n[0])
-                .join("")}
+              {consultant.charAt(0)}
             </AvatarFallback>
           </Avatar>
           <div className="bg-white">
@@ -352,25 +409,4 @@ function ConsultationCard({
       </CardContent>
     </Card>
   );
-}
-
-function getAppointmentDate(appointment: EventWithType): string {
-  switch (appointment.type) {
-    case "Consultation":
-      return appointment.preferredDateTime
-        ? new Date(appointment.preferredDateTime).toLocaleString()
-        : "Unknown Date";
-    case "Subscription":
-      return appointment.startDate
-        ? new Date(appointment.startDate).toLocaleString()
-        : "Unknown Date";
-    case "Webinar":
-      return appointment.scheduledAt
-        ? new Date(appointment.scheduledAt).toLocaleString()
-        : "Unknown Date";
-    case "Class":
-      return appointment.startDate
-        ? new Date(appointment.startDate).toLocaleString()
-        : "Unknown Date";
-  }
 }
