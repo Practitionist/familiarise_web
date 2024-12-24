@@ -12,22 +12,46 @@ export async function GET(request: Request) {
     if (consulteeProfileId) {
       webinars = await prisma.webinar.findMany({
         where: {
-          appointment: {
-            some: {
-              slotOfAppointment: {
+          OR: [
+            // Get webinars where consultee is registered through appointments
+            {
+              appointment: {
                 some: {
-                  user: {
-                    consulteeProfileId,
+                  slotOfAppointment: {
+                    some: {
+                      user: {
+                        consulteeProfileId,
+                      },
+                    },
                   },
                 },
               },
             },
-          },
+            // Get webinars where consultee is in waitlist
+            {
+              waitlist: {
+                some: {
+                  userId: consulteeProfileId,
+                },
+              },
+            },
+          ],
         },
         include: {
           webinarPlan: {
             include: {
-              consultantProfile: true,
+              consultantProfile: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
               topics: true,
             },
           },
@@ -35,12 +59,36 @@ export async function GET(request: Request) {
             include: {
               slotOfAppointment: {
                 include: {
-                  user: true, // Changed from consulteeProfile
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      image: true,
+                      consulteeProfileId: true,
+                    },
+                  },
+                },
+              },
+              payment: {
+                select: {
+                  paymentStatus: true,
                 },
               },
             },
           },
-          waitlist: true,
+          waitlist: {
+            where: {
+              userId: consulteeProfileId,
+            },
+            select: {
+              userId: true,
+              joinedAt: true,
+            },
+          },
+        },
+        orderBy: {
+          scheduledAt: "desc",
         },
       });
     } else if (consultantId) {

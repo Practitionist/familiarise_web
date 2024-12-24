@@ -198,7 +198,10 @@ export default function ConsulteeDashboard(
       </div>
       <div className="flex-grow overflow-y-auto p-8">
         {activeTab === "Home" && (
-          <HomeTab userDetails={userDetails} consulteeId={consulteeId} />
+          <HomeTab
+            userDetails={userDetails}
+            consulteeId={profileDetails?.id || ""}
+          />
         )}
         {activeTab === "Appointments" && (
           <AppointmentsTab

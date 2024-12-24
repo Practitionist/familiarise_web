@@ -12,30 +12,93 @@ export async function GET(request: Request) {
     if (consulteeProfileId) {
       classes = await prisma.class.findMany({
         where: {
-          appointment: {
-            some: {
-              slotOfAppointment: {
+          OR: [
+            // Get classes where consultee is registered through appointments
+            {
+              appointment: {
                 some: {
-                  user: {
-                    consulteeProfileId,
+                  slotOfAppointment: {
+                    some: {
+                      user: {
+                        consulteeProfileId,
+                      },
+                    },
                   },
                 },
               },
             },
-          },
+            // Get classes where consultee is in waitlist
+            {
+              waitlist: {
+                some: {
+                  userId: consulteeProfileId,
+                },
+              },
+            },
+          ],
         },
         include: {
-          classPlan: true,
-          appointment: {
+          classPlan: {
             include: {
-              slotOfAppointment: {
+              consultantProfile: {
                 include: {
-                  user: true, // Changed from consulteeProfile
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
+              classContents: {
+                orderBy: {
+                  order: "asc",
                 },
               },
             },
           },
+          appointment: {
+            include: {
+              slotOfAppointment: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      image: true,
+                      consulteeProfileId: true,
+                    },
+                  },
+                },
+              },
+              payment: {
+                select: {
+                  paymentStatus: true,
+                },
+              },
+            },
+          },
+          waitlist: {
+            where: {
+              userId: consulteeProfileId,
+            },
+            select: {
+              userId: true,
+              joinedAt: true,
+            },
+          },
         },
+        orderBy: [
+          {
+            startDate: "desc",
+          },
+          {
+            status: "asc",
+          },
+        ],
       });
     } else if (consultantId) {
       classes = await prisma.class.findMany({

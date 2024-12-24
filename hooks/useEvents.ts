@@ -20,7 +20,7 @@ export type SubscriptionWithPlan = Subscription & {
 export type WebinarWithPlan = Webinar & { webinarPlan: WebinarPlan };
 export type ClassWithPlan = Class & { classPlan: ClassPlan };
 
-export const useEvents = (consulteeId: string) => {
+export const useEvents = (consulteeProfileId: string) => {
   const [consultations, setConsultations] = useState<ConsultationWithPlan[]>(
     [],
   );
@@ -40,10 +40,18 @@ export const useEvents = (consulteeId: string) => {
       try {
         const [consultationsRes, subscriptionsRes, webinarsRes, classesRes] =
           await Promise.all([
-            fetch(`/api/events/consultations?consulteeId=${consulteeId}`),
-            fetch(`/api/events/subscriptions?consulteeId=${consulteeId}`),
-            fetch(`/api/events/webinars?consulteeId=${consulteeId}`),
-            fetch(`/api/events/classes?consulteeId=${consulteeId}`),
+            fetch(
+              `/api/events/consultations?consulteeProfileId=${consulteeProfileId}`,
+            ),
+            fetch(
+              `/api/events/subscriptions?consulteeProfileId=${consulteeProfileId}`,
+            ),
+            fetch(
+              `/api/events/webinars?consulteeProfileId=${consulteeProfileId}`,
+            ),
+            fetch(
+              `/api/events/classes?consulteeProfileId=${consulteeProfileId}`,
+            ),
           ]);
 
         if (
@@ -77,10 +85,10 @@ export const useEvents = (consulteeId: string) => {
       }
     };
 
-    if (consulteeId) {
+    if (consulteeProfileId) {
       fetchEvents();
     }
-  }, [consulteeId, toast]);
+  }, [consulteeProfileId, toast]);
 
   return { consultations, subscriptions, webinars, classes, isLoading, error };
 };
