@@ -67,7 +67,29 @@ export function AppointmentsTab({
           </li>
         ))}
         {appointments.length === 0 && (
-          <li className="text-center text-gray-500">No appointments found</li>
+          <div className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-gray-50 rounded-lg">
+            <div className="w-16 h-16 mb-4 text-gray-400">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
+              </svg>
+            </div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">
+              No Appointments Found
+            </h3>
+            <p className="text-gray-500 text-center">
+              You don't have any appointments scheduled at the moment.
+            </p>
+          </div>
         )}
       </ul>
     </div>

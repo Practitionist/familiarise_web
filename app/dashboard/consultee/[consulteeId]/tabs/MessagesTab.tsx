@@ -17,11 +17,11 @@ export default function MessagesTab() {
   return (
     <div className="min-h-[calc(100vh-200px)]">
       <h2 className="text-3xl font-bold mb-6">Messages</h2>
-      <div className="flex h-[calc(100vh-280px)] w-full bg-white rounded-lg shadow-lg overflow-hidden">
-        <div className="w-1/3 border-r">
+      <div className="flex flex-col md:flex-row h-[calc(100vh-280px)] w-full bg-white rounded-lg shadow-lg overflow-hidden">
+        <div className="w-full md:w-[320px] lg:w-[380px] border-b md:border-b-0 md:border-r">
           <header className="flex items-center justify-between px-4 py-3 bg-gray-100 border-b">
             <div className="font-bold text-lg">Chats</div>
-            <div className="relative">
+            <div className="relative flex-1 max-w-[200px] ml-2">
               <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <Input
                 type="search"
@@ -30,7 +30,7 @@ export default function MessagesTab() {
               />
             </div>
           </header>
-          <div className="h-[calc(100%-4rem)] overflow-y-auto">
+          <div className="h-[250px] md:h-[calc(100%-4rem)] overflow-y-auto">
             {[
               "John Doe (Consultant)",
               "Jane Doe (Consultant)",
@@ -64,8 +64,8 @@ export default function MessagesTab() {
           </div>
         </div>
         <div className="flex-1 flex flex-col">
-          <header className="flex items-center justify-between px-4 py-3 bg-gray-100 border-b">
-            <div className="flex items-center gap-4">
+          <header className="flex items-center justify-between px-2 sm:px-4 py-3 bg-gray-100 border-b">
+            <div className="flex items-center gap-2 sm:gap-4">
               <Avatar className="w-10 h-10">
                 <AvatarImage src="/placeholder-user.jpg" alt="John Doe" />
                 <AvatarFallback>JD</AvatarFallback>
@@ -77,12 +77,20 @@ export default function MessagesTab() {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon">
+            <div className="flex items-center">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="hidden sm:inline-flex"
+              >
                 <PhoneIcon className="w-5 h-5" />
                 <span className="sr-only">Call</span>
               </Button>
-              <Button variant="ghost" size="icon">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="hidden sm:inline-flex"
+              >
                 <VideoIcon className="w-5 h-5" />
                 <span className="sr-only">Video call</span>
               </Button>
@@ -120,7 +128,7 @@ export default function MessagesTab() {
                 className={`flex ${message.sender === "me" ? "justify-end" : "justify-start"}`}
               >
                 <div
-                  className={`max-w-[70%] rounded-lg px-4 py-2 ${message.sender === "me" ? "bg-blue-500 text-white" : "bg-gray-200"}`}
+                  className={`max-w-[85%] sm:max-w-[70%] rounded-lg px-3 sm:px-4 py-2 ${message.sender === "me" ? "bg-blue-500 text-white" : "bg-gray-200"}`}
                 >
                   <p>{message.text}</p>
                   <div
@@ -132,8 +140,8 @@ export default function MessagesTab() {
               </div>
             ))}
           </div>
-          <div className="border-t p-4">
-            <form className="flex items-center gap-2">
+          <div className="border-t p-2 sm:p-4">
+            <form className="flex items-center gap-1 sm:gap-2">
               <Input placeholder="Type your message..." className="flex-1" />
               <Button type="submit" size="icon">
                 <SendIcon className="w-5 h-5" />
