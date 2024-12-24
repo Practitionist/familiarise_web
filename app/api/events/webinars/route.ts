@@ -4,20 +4,21 @@ import { NextResponse } from "next/server";
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId"); // Changed from consulteeId
+    const consulteeProfileId = searchParams.get("consulteeProfileId");
     const consultantId = searchParams.get("consultantId");
 
     let webinars;
 
-    if (userId) {
-      // Changed from consulteeId
+    if (consulteeProfileId) {
       webinars = await prisma.webinar.findMany({
         where: {
           appointment: {
             some: {
               slotOfAppointment: {
                 some: {
-                  userId, // Changed from consulteeProfile.id
+                  user: {
+                    consulteeProfileId,
+                  },
                 },
               },
             },

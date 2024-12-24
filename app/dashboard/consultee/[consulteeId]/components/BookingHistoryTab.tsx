@@ -127,7 +127,7 @@ function getEventDetails(event: EventWithType): string {
     case "Consultation":
       return `${event.consultationPlan.title} (${event.consultationPlan.durationInHours} hours)`;
     case "Subscription":
-      return `${event.plan.title}`;
+      return `${event.subscriptionPlan.title}`;
     case "Webinar":
       return `${event.webinarPlan.title} (${event.webinarPlan.durationInHours} hours)`;
     case "Class":

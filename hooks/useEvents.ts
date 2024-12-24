@@ -14,7 +14,9 @@ import {
 export type ConsultationWithPlan = Consultation & {
   consultationPlan: ConsultationPlan;
 };
-export type SubscriptionWithPlan = Subscription & { plan: SubscriptionPlan };
+export type SubscriptionWithPlan = Subscription & {
+  subscriptionPlan: SubscriptionPlan;
+};
 export type WebinarWithPlan = Webinar & { webinarPlan: WebinarPlan };
 export type ClassWithPlan = Class & { classPlan: ClassPlan };
 

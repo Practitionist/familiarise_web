@@ -5,23 +5,23 @@ import { NextRequest, NextResponse } from "next/server";
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const consultantProfileId = searchParams.get("consultantProfileId");
+  const consulteeProfileId = searchParams.get("consulteeProfileId");
   const status = searchParams.get("status") as RequestStatus | null;
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "10");
 
-  if (!consultantProfileId) {
-    return NextResponse.json(
-      { error: "Consultant profile ID is required" },
-      { status: 400 },
-    );
-  }
-
   try {
-    const whereClause: any = {
-      consultationPlan: {
+    const whereClause: any = {};
+
+    if (consultantProfileId) {
+      whereClause.consultationPlan = {
         consultantProfileId,
-      },
-    };
+      };
+    }
+
+    if (consulteeProfileId) {
+      whereClause.requestedById = consulteeProfileId;
+    }
 
     if (status) {
       whereClause.requestStatus = status;

@@ -3,9 +3,16 @@
 import { BellIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useState, use } from "react";
+import { useState, use, useEffect } from "react";
 import { useSession } from "next-auth/react";
-import { useUserData } from "@/hooks/useUserData";
+import {
+  Prisma,
+  Class,
+  Consultation,
+  Subscription,
+  Webinar,
+} from "@prisma/client";
+import { fetchUserDetails, fetchConsulteeDetails } from "@/hooks/useUserData";
 import AppointmentsTab from "./components/AppointmentsTab";
 import BookingHistoryTab from "./components/BookingHistoryTab";
 import FeedbackSupportTab from "./components/FeedbackSupportTab";
@@ -25,37 +32,144 @@ const tabs = [
 type Params = Promise<{ consulteeId: string }>;
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
+type EventWithType =
+  | (Consultation & { type: "Consultation" })
+  | (Subscription & { type: "Subscription" })
+  | (Webinar & { type: "Webinar" })
+  | (Class & { type: "Class" });
+
 export default function ConsulteeDashboard(
   props: Readonly<{
     params: Params;
     searchParams: SearchParams;
   }>,
 ) {
-  const params = use(props.params);
-  const searchParams = use(props.searchParams);
+  const resolvedParams = use(props.params);
+  const consulteeId = resolvedParams.consulteeId;
 
   const [activeTab, setActiveTab] = useState("Home");
   const { data: session } = useSession();
-  const userId = session?.user?.id;
-  const { userDetails, profileDetails, isLoading, error } = useUserData(
-    userId || "",
-  );
+  const [userDetails, setUserDetails] =
+    useState<Prisma.UserGetPayload<{}> | null>(null);
+  const [profileDetails, setProfileDetails] =
+    useState<Prisma.ConsulteeProfileGetPayload<{}> | null>(null);
+  const [appointments, setAppointments] = useState<EventWithType[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  console.log("params", params);
-  console.log(`session`, session);
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        setIsLoading(true);
+        setError(null);
 
-  // TODO: Replace with actual consulteeId
-  // const mockConsulteeId = '31db0449-ed31-4966-9733-1daca947cb27';
-  const mockConsulteeId = params.consulteeId;
+        if (!session?.user?.id) {
+          throw new Error("User not authenticated");
+        }
 
-  if (!userId) return <div>User not authenticated</div>;
-  if (isLoading) return <div>Loading...</div>;
-  if (error) return <div>Error: {error.message}</div>;
-  if (!userDetails || !profileDetails) return <div>User data not found</div>;
+        const [userData, consulteeData] = await Promise.all([
+          fetchUserDetails(session.user.id),
+          fetchConsulteeDetails(consulteeId),
+        ]);
+
+        setUserDetails(userData);
+        setProfileDetails(consulteeData);
+
+        // Fetch all types of appointments
+        const [consultations, subscriptions, webinars, classes] =
+          await Promise.all([
+            fetch(
+              `/api/events/consultations?consulteeProfileId=${consulteeId}`,
+            ).then((res) => res.json()),
+            fetch(
+              `/api/events/subscriptions?consulteeProfileId=${consulteeId}`,
+            ).then((res) => res.json()),
+            fetch(
+              `/api/events/webinars?consulteeProfileId=${consulteeId}`,
+            ).then((res) => res.json()),
+            fetch(`/api/events/classes?consulteeProfileId=${consulteeId}`).then(
+              (res) => res.json(),
+            ),
+          ]);
+
+        // Combine all appointments
+        const allAppointments = [
+          ...consultations.data.map((c: Consultation) => ({
+            ...c,
+            type: "Consultation" as const,
+          })),
+          ...subscriptions.data.map((s: Subscription) => ({
+            ...s,
+            type: "Subscription" as const,
+          })),
+          ...webinars.data.map((w: Webinar) => ({
+            ...w,
+            type: "Webinar" as const,
+          })),
+          ...classes.data.map((c: Class) => ({
+            ...c,
+            type: "Class" as const,
+          })),
+        ].sort(
+          (a, b) =>
+            new Date(b.requestedAt || b.createdAt).getTime() -
+            new Date(a.requestedAt || a.createdAt).getTime(),
+        );
+
+        setAppointments(allAppointments);
+      } catch (err) {
+        console.error("Error fetching data:", err);
+        setError(err instanceof Error ? err.message : "An error occurred");
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    fetchData();
+  }, [session, consulteeId]);
+
+  if (!session?.user?.id) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
+          <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
+            Authentication Required
+          </h2>
+          <p className="text-gray-700">
+            Please sign in to access your dashboard.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
+          <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
+            Error
+          </h2>
+          <p className="text-gray-700">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading || !userDetails || !profileDetails) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
+          <h2 className="text-xl sm:text-2xl font-bold mb-4">Loading...</h2>
+          <p className="text-gray-700">Please wait while we fetch your data.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-gray-100 min-h-screen flex flex-col">
-      <div className="p-8 pt-32">
+      <div className="p-8 pt-32 bg-white shadow-sm">
         <div className="flex justify-between items-center mb-6">
           <div className="flex items-center space-x-4 overflow-x-auto">
             {tabs.map((tab) => (
@@ -84,13 +198,16 @@ export default function ConsulteeDashboard(
       </div>
       <div className="flex-grow overflow-y-auto p-8">
         {activeTab === "Home" && (
-          <HomeTab userDetails={userDetails} consulteeId={mockConsulteeId} />
+          <HomeTab userDetails={userDetails} consulteeId={consulteeId} />
         )}
         {activeTab === "Appointments" && (
-          <AppointmentsTab consulteeId={mockConsulteeId} />
+          <AppointmentsTab
+            consulteeId={consulteeId}
+            appointments={appointments}
+          />
         )}
         {activeTab === "Booking History" && (
-          <BookingHistoryTab consulteeId={mockConsulteeId} />
+          <BookingHistoryTab consulteeId={consulteeId} />
         )}
         {activeTab === "Messages" && <MessagesTab />}
         {activeTab === "Feedback & Support" && <FeedbackSupportTab />}

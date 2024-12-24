@@ -243,7 +243,7 @@ function getEventTitle(event: EventWithType): string {
     case "Consultation":
       return event.consultationPlan.title;
     case "Subscription":
-      return event.plan.title;
+      return event.subscriptionPlan.title;
     case "Webinar":
       return event.webinarPlan.title;
     case "Class":

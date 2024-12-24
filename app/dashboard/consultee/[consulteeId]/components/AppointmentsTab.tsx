@@ -5,7 +5,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useEvents } from "@/hooks/useEvents";
 import { Class, Consultation, Subscription, Webinar } from "@prisma/client";
 import { motion } from "framer-motion";
 import React from "react";
@@ -18,19 +17,29 @@ type EventWithType =
 
 export default function AppointmentsTab({
   consulteeId,
+  appointments: externalAppointments,
 }: {
   consulteeId: string;
+  appointments: EventWithType[];
 }) {
-  const { consultations, subscriptions, webinars, classes, isLoading, error } =
-    useEvents(consulteeId);
-
-  if (isLoading) {
-    return <div>Loading appointments...</div>;
+  if (!externalAppointments.length) {
+    return <div>No appointments found</div>;
   }
 
-  if (error) {
-    return <div>Error loading appointments: {error.message}</div>;
-  }
+  const consultations = externalAppointments.filter(
+    (a): a is Consultation & { type: "Consultation" } =>
+      a.type === "Consultation",
+  );
+  const subscriptions = externalAppointments.filter(
+    (a): a is Subscription & { type: "Subscription" } =>
+      a.type === "Subscription",
+  );
+  const webinars = externalAppointments.filter(
+    (a): a is Webinar & { type: "Webinar" } => a.type === "Webinar",
+  );
+  const classes = externalAppointments.filter(
+    (a): a is Class & { type: "Class" } => a.type === "Class",
+  );
 
   return (
     <div className="space-y-8 min-h-[calc(100vh-200px)]">
