@@ -20,13 +20,18 @@ export default function SignIn() {
         </Link>
         <div className="my-8 md:my-0">
           <blockquote className="text-sm md:text-base">
-            "This library has saved me countless hours of work and helped me
-            deliver stunning designs to my clients faster than ever before."
+            "The mentors on this platform have been incredible. Their deep
+            industry expertise and personalized guidance helped me navigate
+            complex career decisions and accelerate my professional growth. The
+            insights I gained were truly transformative."
           </blockquote>
-          <p className="mt-4 text-sm md:text-base">Sofia Davis</p>
+          <p className="mt-4 text-sm md:text-base">
+            Shubham, Software Engineer
+          </p>
         </div>
         <div className="text-xs md:text-sm">
-          Built by shadcn. The source code is available on GitHub.
+          Connect with experienced mentors who can guide you towards your
+          professional goals.
         </div>
       </div>
       <div className="flex-1 md:w-1/2 bg-gray-900 text-white p-6 md:p-12 flex flex-col justify-center mt-auto md:mt-0">
