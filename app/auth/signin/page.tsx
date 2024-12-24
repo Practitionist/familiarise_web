@@ -10,29 +10,33 @@ import Link from "next/link";
 
 export default function SignIn() {
   return (
-    <div className="min-h-screen flex">
-      <div className="w-1/2 bg-gray-100 text-black p-12 flex flex-col justify-between">
+    <div className="min-h-screen flex flex-col md:flex-row h-full">
+      <div className="flex-1 md:w-1/2 bg-white text-black p-6 md:p-12 flex flex-col justify-between">
         <Link href="/">
           <div className="flex items-center justify-start space-x-2">
-            <GlobeIcon className="text-black w-6 h-6" />
-            <h1 className="text-4xl font-semibold">ConsultX</h1>
+            <GlobeIcon className="text-black w-5 md:w-6 h-5 md:h-6" />
+            <h1 className="text-2xl md:text-4xl font-semibold">ConsultX</h1>
           </div>
         </Link>
-        <div>
-          <blockquote>
-            “This library has saved me countless hours of work and helped me
-            deliver stunning designs to my clients faster than ever before.”
+        <div className="my-8 md:my-0">
+          <blockquote className="text-sm md:text-base">
+            "This library has saved me countless hours of work and helped me
+            deliver stunning designs to my clients faster than ever before."
           </blockquote>
-          <p className="mt-4">Sofia Davis</p>
+          <p className="mt-4 text-sm md:text-base">Sofia Davis</p>
         </div>
-        <div className="text-sm">
+        <div className="text-xs md:text-sm">
           Built by shadcn. The source code is available on GitHub.
         </div>
       </div>
-      <div className="w-1/2 bg-gray-900 text-white p-12 flex flex-col justify-center">
-        <div className="flex flex-col p-20">
-          <h2 className="text-3xl font-semibold mb-6">Create an account</h2>
-          <p className="mb-6">Enter your email below to create your account</p>
+      <div className="flex-1 md:w-1/2 bg-gray-900 text-white p-6 md:p-12 flex flex-col justify-center mt-auto md:mt-0">
+        <div className="flex flex-col p-4 md:p-20">
+          <h2 className="text-2xl md:text-3xl font-semibold mb-4 md:mb-6">
+            Create an account
+          </h2>
+          <p className="text-sm md:text-base mb-4 md:mb-6">
+            Enter your email below to create your account
+          </p>
           <Input placeholder="name@example.com" />
           <Button
             className="w-full mt-4 bg-gray-800 hover:bg-gray-700
@@ -40,7 +44,7 @@ export default function SignIn() {
           >
             Sign In with Email
           </Button>
-          <div className="relative my-6">
+          <div className="relative my-4 md:my-6">
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-gray-600" />
             </div>
@@ -71,7 +75,7 @@ export default function SignIn() {
             <FacebookIcon className="w-6 h-6 text-white mr-2" />
             Facebook
           </Button>
-          <p className="text-xs text-gray-400 mt-6">
+          <p className="text-xs text-gray-400 mt-4 md:mt-6">
             By clicking continue, you agree to our Terms of Service and Privacy
             Policy.
           </p>
