@@ -57,7 +57,6 @@ export async function POST(
         user: { connect: { id: id } },
       },
       include: {
-        slotsOfAppointment: true,
         consultantReviews: true,
         user: true,
       },
@@ -105,7 +104,6 @@ export async function PUT(
         interests: body.interests,
       },
       include: {
-        slotsOfAppointment: true,
         consultantReviews: true,
         user: true,
       },
@@ -142,7 +140,6 @@ export async function DELETE(
     const deletedConsultee = await prisma.consulteeProfile.delete({
       where: { id: id },
       include: {
-        slotsOfAppointment: true,
         consultantReviews: true,
         user: true,
       },

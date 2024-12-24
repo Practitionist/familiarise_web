@@ -1,7 +1,18 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { ClassPlan, WebinarPlan } from "@prisma/client";
-import { CalendarIcon, ClockIcon } from "lucide-react";
+import {
+  CalendarIcon,
+  ClockIcon,
+  Users2Icon,
+  BookOpenIcon,
+  GlobeIcon,
+  DollarSignIcon,
+  GraduationCapIcon,
+  PackageIcon,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
 import React from "react";
 
 interface ClassesAndWebinarsProps {
@@ -13,6 +24,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
   classPlans,
   webinarPlans,
 }) => {
+  const router = useRouter();
   const renderClassPlanCard = (classPlan: ClassPlan) => (
     <Card
       key={classPlan.id}
@@ -20,6 +32,20 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
     >
       <CardContent className="p-6 flex flex-col h-full">
         <h3 className="text-xl font-semibold mb-3">{classPlan.title}</h3>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <Badge variant="secondary" className="flex items-center gap-1">
+            <GlobeIcon className="w-3 h-3" />
+            {classPlan.language}
+          </Badge>
+          <Badge variant="secondary" className="flex items-center gap-1">
+            <GraduationCapIcon className="w-3 h-3" />
+            {classPlan.level}
+          </Badge>
+          <Badge variant="secondary" className="flex items-center gap-1">
+            <Users2Icon className="w-3 h-3" />
+            {classPlan.maxParticipants} participants
+          </Badge>
+        </div>
         <div className="flex items-center gap-3 text-sm text-gray-600 mb-4">
           <div className="flex items-center">
             <CalendarIcon className="w-4 h-4 mr-1" />
@@ -27,16 +53,48 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
           </div>
           <div className="flex items-center">
             <ClockIcon className="w-4 h-4 mr-1" />
-            Duration: {classPlan.durationInMonths} month
+            {classPlan.durationInMonths} month
             {classPlan.durationInMonths > 1 ? "s" : ""}
           </div>
         </div>
-        <p className="text-gray-700 mb-4 line-clamp-3 flex-grow">
+        <p className="text-gray-700 mb-4 line-clamp-3">
           {classPlan.description}
         </p>
+        <div className="space-y-3 mb-4 flex-grow">
+          <div className="flex items-start gap-2">
+            <BookOpenIcon className="w-4 h-4 mt-1 text-gray-500" />
+            <div>
+              <p className="text-sm font-medium">Prerequisites</p>
+              <p className="text-sm text-gray-600">{classPlan.prerequisites}</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-2">
+            <PackageIcon className="w-4 h-4 mt-1 text-gray-500" />
+            <div>
+              <p className="text-sm font-medium">Materials</p>
+              <p className="text-sm text-gray-600">
+                {classPlan.materialProvided}
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-1">
+            <DollarSignIcon className="w-4 h-4 text-gray-700" />
+            <span className="text-lg font-semibold">${classPlan.price}</span>
+          </div>
+          {classPlan.certificateProvided && (
+            <Badge variant="outline" className="text-xs">
+              Certificate Provided
+            </Badge>
+          )}
+        </div>
         <Button
           variant="outline"
           className="w-full mt-auto cursor-pointer transition-colors duration-300 hover:bg-black hover:text-white"
+          onClick={() =>
+            router.push(`/explore/programs/classes/${classPlan.id}`)
+          }
         >
           Register Now
         </Button>
@@ -51,6 +109,20 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
     >
       <CardContent className="p-6 flex flex-col h-full">
         <h3 className="text-xl font-semibold mb-3">{webinarPlan.title}</h3>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <Badge variant="secondary" className="flex items-center gap-1">
+            <GlobeIcon className="w-3 h-3" />
+            {webinarPlan.language}
+          </Badge>
+          <Badge variant="secondary" className="flex items-center gap-1">
+            <GraduationCapIcon className="w-3 h-3" />
+            {webinarPlan.level}
+          </Badge>
+          <Badge variant="secondary" className="flex items-center gap-1">
+            <Users2Icon className="w-3 h-3" />
+            {webinarPlan.maxParticipants} participants
+          </Badge>
+        </div>
         <div className="flex items-center gap-3 text-sm text-gray-600 mb-4">
           <div className="flex items-center">
             <CalendarIcon className="w-4 h-4 mr-1" />
@@ -58,16 +130,45 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
           </div>
           <div className="flex items-center">
             <ClockIcon className="w-4 h-4 mr-1" />
-            Duration: {webinarPlan.durationInHours} hour
+            {webinarPlan.durationInHours} hour
             {webinarPlan.durationInHours > 1 ? "s" : ""}
           </div>
         </div>
-        <p className="text-gray-700 mb-4 line-clamp-3 flex-grow">
+        <p className="text-gray-700 mb-4 line-clamp-3">
           {webinarPlan.description}
         </p>
+        <div className="space-y-3 mb-4 flex-grow">
+          <div className="flex items-start gap-2">
+            <BookOpenIcon className="w-4 h-4 mt-1 text-gray-500" />
+            <div>
+              <p className="text-sm font-medium">Prerequisites</p>
+              <p className="text-sm text-gray-600">
+                {webinarPlan.prerequisites}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-start gap-2">
+            <PackageIcon className="w-4 h-4 mt-1 text-gray-500" />
+            <div>
+              <p className="text-sm font-medium">Materials</p>
+              <p className="text-sm text-gray-600">
+                {webinarPlan.materialProvided}
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center mb-4">
+          <div className="flex items-center gap-1">
+            <DollarSignIcon className="w-4 h-4 text-gray-700" />
+            <span className="text-lg font-semibold">${webinarPlan.price}</span>
+          </div>
+        </div>
         <Button
           variant="outline"
           className="w-full mt-auto cursor-pointer transition-colors duration-300 hover:bg-black hover:text-white"
+          onClick={() =>
+            router.push(`/explore/programs/webinars/${webinarPlan.id}`)
+          }
         >
           Register Now
         </Button>

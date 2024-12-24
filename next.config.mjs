@@ -20,6 +20,9 @@ const config = {
       {
         hostname: "picsum.photos",
       },
+      {
+        hostname: "source.unsplash.com",
+      },
     ],
   },
 };

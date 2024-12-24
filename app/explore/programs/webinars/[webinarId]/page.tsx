@@ -1,20 +1,28 @@
-"use client";
-
-import { Button } from "@/components/ui/button";
+import { getServerSession } from "next-auth";
+import { generateProgramImageUrl } from "../../utils";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
-import { use } from "react";
-import { WebinarNotFound } from "./WebinarNotFound";
+import Image from "next/image";
+import { redirect } from "next/navigation";
+import {
+  CalendarIcon,
+  ClockIcon,
+  UsersIcon,
+  VideoIcon,
+  GlobeIcon,
+  CertificateIcon,
+} from "./icons";
 
-type WebinarPlanWithRelations = Prisma.WebinarPlanGetPayload<{
+type WebinarWithRelations = Prisma.WebinarPlanGetPayload<{
   include: {
     consultantProfile: {
       include: {
@@ -22,13 +30,22 @@ type WebinarPlanWithRelations = Prisma.WebinarPlanGetPayload<{
       };
     };
     topics: true;
+    webinars: {
+      where: {
+        status: "SCHEDULED";
+      };
+      orderBy: {
+        scheduledAt: "asc";
+      };
+      take: 1;
+    };
   };
 }>;
 
 async function getWebinarPlan(
   webinarId: string,
-): Promise<WebinarPlanWithRelations | null> {
-  const webinarPlan = await prisma.webinarPlan.findUnique({
+): Promise<WebinarWithRelations | null> {
+  return prisma.webinarPlan.findUnique({
     where: { id: webinarId },
     include: {
       consultantProfile: {
@@ -37,114 +54,341 @@ async function getWebinarPlan(
         },
       },
       topics: true,
+      webinars: {
+        where: {
+          status: "SCHEDULED",
+        },
+        orderBy: {
+          scheduledAt: "asc",
+        },
+        take: 1,
+      },
     },
   });
-  return webinarPlan;
 }
 
-type Params = Promise<{ webinarId: string }>;
+type FeatureItemProps = {
+  icon: React.ReactNode;
+  label: string;
+  value: string | number | React.ReactNode;
+};
 
-export default function WebinarPage(props: Readonly<{ params: Params }>) {
-  const params = use(props.params);
-  const webinarPlan = use(getWebinarPlan(params.webinarId));
+const FeatureItem = ({ icon, label, value }: FeatureItemProps) => (
+  <div className="flex items-center gap-2">
+    {icon}
+    <span className="text-sm text-gray-600">
+      {label}: {value}
+    </span>
+  </div>
+);
 
-  if (!webinarPlan) {
-    return <WebinarNotFound />;
+type WebinarRegistrationProps = {
+  webinarId: string;
+  price: number;
+  isLoggedIn: boolean;
+  nextSession?: Date;
+  language?: string | null;
+};
+
+const WebinarRegistration = ({
+  webinarId,
+  price,
+  isLoggedIn,
+  nextSession,
+  language,
+}: WebinarRegistrationProps) => {
+  if (!isLoggedIn) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Register for Webinar</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form
+            action="/api/events/webinars/book"
+            method="POST"
+            className="space-y-4"
+          >
+            <input type="hidden" name="webinarId" value={webinarId} />
+            <div className="space-y-4">
+              <div>
+                <label
+                  htmlFor="name"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Full Name
+                </label>
+                <input
+                  type="text"
+                  id="name"
+                  name="name"
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
+                  required
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="email"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Email
+                </label>
+                <input
+                  type="email"
+                  id="email"
+                  name="email"
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
+                  required
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="phone"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Phone Number
+                </label>
+                <input
+                  type="tel"
+                  id="phone"
+                  name="phone"
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
+                  placeholder="+1234567890"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="preferredLanguage"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Preferred Language
+                </label>
+                <input
+                  type="text"
+                  id="preferredLanguage"
+                  name="preferredLanguage"
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2"
+                  placeholder="e.g., English, Spanish, etc."
+                  defaultValue={language || ""}
+                />
+              </div>
+            </div>
+            <Button type="submit" className="w-full bg-black hover:bg-gray-800">
+              Pay ${price} USD & Register
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    );
   }
 
   return (
-    <div className="container mx-auto pt-24 py-8 px-4">
-      <div className="max-w-3xl mx-auto">
-        <Card className="bg-white shadow-xl">
-          <CardHeader>
-            <CardTitle className="text-3xl font-bold">
-              {webinarPlan.title}
-            </CardTitle>
-            <CardDescription className="text-xl">
-              Duration: {webinarPlan.durationInHours} hours
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="mt-4">
-              <h3 className="text-lg font-medium">Speaker</h3>
-              <p className="mt-1 text-muted-foreground">
-                {webinarPlan.consultantProfile?.user?.name || "Unknown Speaker"}
-              </p>
-            </div>
-            <div className="mt-6">
-              <h3 className="text-lg font-medium">About This Webinar</h3>
-              <p className="mt-1 text-muted-foreground whitespace-pre-line">
-                {webinarPlan.description}
-              </p>
-            </div>
-            <div className="mt-6">
-              <h3 className="text-lg font-medium">Topics</h3>
-              <div className="mt-1 flex flex-wrap gap-2">
-                {webinarPlan.topics.map((topic) => (
-                  <span
-                    key={topic.id}
-                    className="inline-flex items-center rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10"
-                  >
-                    {topic.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="mt-6">
-              <h3 className="text-lg font-medium">Additional Information</h3>
-              <div className="mt-4 grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Language</p>
-                  <p className="font-medium">
-                    {webinarPlan.language || "Not specified"}
-                  </p>
+    <Card>
+      <CardHeader>
+        <CardTitle>Join Webinar</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-gray-600 mb-4">
+          {nextSession
+            ? `Next session starts on ${new Date(nextSession).toLocaleString(
+                undefined,
+                {
+                  dateStyle: "long",
+                  timeStyle: "short",
+                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                },
+              )}`
+            : "No upcoming sessions scheduled yet"}
+        </p>
+      </CardContent>
+      <CardFooter>
+        <form
+          action="/api/events/webinars/book"
+          method="POST"
+          className="w-full"
+        >
+          <input type="hidden" name="webinarId" value={webinarId} />
+          <input
+            type="hidden"
+            name="timezone"
+            value={Intl.DateTimeFormat().resolvedOptions().timeZone}
+          />
+          <Button type="submit" className="w-full bg-black hover:bg-gray-800">
+            Pay ${price} USD & Register Now
+          </Button>
+        </form>
+      </CardFooter>
+    </Card>
+  );
+};
+
+interface PageProps {
+  params: Promise<{ webinarId: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}
+
+export default async function WebinarDetailsPage({
+  params,
+  searchParams,
+}: PageProps) {
+  const { webinarId } = await params;
+  const session = await getServerSession();
+  const webinar = await getWebinarPlan(webinarId);
+
+  if (!webinar) {
+    redirect("/explore/programs/webinars");
+  }
+
+  const nextSession = webinar.webinars[0]?.scheduledAt;
+  const isLoggedIn = !!session?.user;
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="relative h-[300px] w-full">
+        <Image
+          src={generateProgramImageUrl(webinar.id, 1200, 300)}
+          alt="Webinar cover"
+          fill
+          className="object-cover"
+          priority
+        />
+        <div className="absolute inset-0 bg-black/50" />
+      </div>
+
+      <div className="container mx-auto px-4 -mt-20 relative">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="md:col-span-2">
+            <Card className="mb-8">
+              <CardContent className="p-6">
+                <h1 className="text-3xl font-bold mb-2">{webinar.title}</h1>
+                <p className="text-xl font-semibold mb-4 text-blue-600">
+                  ${webinar.price} USD
+                </p>
+
+                <div className="grid grid-cols-2 gap-4 mb-6">
+                  <FeatureItem
+                    icon={<CalendarIcon />}
+                    label="Next Session"
+                    value={
+                      nextSession
+                        ? new Date(nextSession).toLocaleString(undefined, {
+                            dateStyle: "long",
+                            timeStyle: "short",
+                            timeZone:
+                              Intl.DateTimeFormat().resolvedOptions().timeZone,
+                          })
+                        : "To be announced"
+                    }
+                  />
+                  <FeatureItem
+                    icon={<ClockIcon />}
+                    label="Duration"
+                    value={`${webinar.durationInHours} hours`}
+                  />
+                  <FeatureItem
+                    icon={<UsersIcon />}
+                    label="Participants"
+                    value={`${webinar.maxParticipants} max`}
+                  />
+                  <FeatureItem
+                    icon={<VideoIcon />}
+                    label="Platform"
+                    value={webinar.materialProvided || "Zoom"}
+                  />
+                  <FeatureItem
+                    icon={<GlobeIcon />}
+                    label="Language"
+                    value={webinar.language || "English"}
+                  />
+                  <FeatureItem
+                    icon={<CertificateIcon />}
+                    label="Level"
+                    value={webinar.level || "All Levels"}
+                  />
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Level</p>
-                  <p className="font-medium">
-                    {webinarPlan.level || "Not specified"}
-                  </p>
+
+                <div className="space-y-6">
+                  <div>
+                    <h2 className="text-xl font-semibold mb-2">
+                      About this Webinar
+                    </h2>
+                    <p className="text-gray-600 whitespace-pre-line">
+                      {webinar.description}
+                    </p>
+                  </div>
+
+                  <div>
+                    <h2 className="text-xl font-semibold mb-2">
+                      What you'll learn
+                    </h2>
+                    <ul className="list-disc list-inside text-gray-600 space-y-1">
+                      {webinar.learningOutcomes.map(
+                        (outcome: string, index: number) => (
+                          <li key={index}>{outcome}</li>
+                        ),
+                      )}
+                    </ul>
+                  </div>
+
+                  <div>
+                    <h2 className="text-xl font-semibold mb-2">
+                      Topics Covered
+                    </h2>
+                    <div className="flex flex-wrap gap-2">
+                      {webinar.topics.map((topic) => (
+                        <Badge key={topic.id} variant="secondary">
+                          {topic.name}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Prerequisites</p>
-                  <p className="font-medium">
-                    {webinarPlan.prerequisites || "None"}
-                  </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div>
+            <Card className="sticky top-24 mb-6">
+              <CardHeader>
+                <CardTitle>Instructor</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="relative h-16 w-16 rounded-full overflow-hidden">
+                    <Image
+                      src={
+                        webinar.consultantProfile?.user?.image ||
+                        "/placeholder-user.jpg"
+                      }
+                      alt={
+                        webinar.consultantProfile?.user?.name || "Instructor"
+                      }
+                      fill
+                      className="object-cover"
+                    />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold">
+                      {webinar.consultantProfile?.user?.name}
+                    </h3>
+                    <p className="text-sm text-gray-600">Expert Instructor</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Materials</p>
-                  <p className="font-medium">
-                    {webinarPlan.materialProvided || "None"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    Max Participants
-                  </p>
-                  <p className="font-medium">{webinarPlan.maxParticipants}</p>
-                </div>
-              </div>
-            </div>
-            <div className="mt-6">
-              <h3 className="text-lg font-medium">Price</h3>
-              <p className="mt-1 text-2xl font-semibold">
-                ${webinarPlan.price.toFixed(2)}
-              </p>
-            </div>
-          </CardContent>
-          <CardFooter>
-            <form
-              action="/api/checkout/webinar"
-              method="POST"
-              className="w-full"
-            >
-              <input type="hidden" name="webinarId" value={webinarPlan.id} />
-              <Button type="submit" className="w-full">
-                Register Now
-              </Button>
-            </form>
-          </CardFooter>
-        </Card>
+                <p className="text-sm text-gray-600">
+                  An experienced professional dedicated to sharing knowledge and
+                  expertise.
+                </p>
+              </CardContent>
+            </Card>
+
+            <WebinarRegistration
+              webinarId={webinar.id}
+              price={webinar.price}
+              isLoggedIn={isLoggedIn}
+              nextSession={nextSession}
+              language={webinar.language}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );

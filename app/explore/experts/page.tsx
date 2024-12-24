@@ -6,7 +6,7 @@ import { TConsultantProfile } from "@/types/consultant";
 import { FiltersSection } from "./components/FiltersSection";
 import { ConsultantCard } from "./components/ConsultantCard";
 import { FeaturedExperts } from "./components/FeaturedExperts";
-import { Testimonials } from "./components/Testimonials";
+import { SatisfiedTestimonial } from "./components/SatisfiedTestimonial";
 import { SearchBar, SortOption } from "./components/SearchBar";
 
 interface MetaData {
@@ -171,11 +171,11 @@ function FindExperts() {
     <div key="1" className="w-full px-4 py-6 space-y-6 md:px-6 md:py-12">
       <div className="flex flex-col space-y-2">
         <h1 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl">
-          Find an Expert
+          Meet Your Perfect Mentor
         </h1>
         <p className="text-gray-500 grid-rows-2 dark:text-gray-400">
-          Search for experts in various fields. Enter keywords to find experts
-          in specific areas.
+          Ready to level up? Our amazing mentors are here to guide you! Use
+          keywords to find someone who matches your goals.
         </p>
       </div>
 
@@ -234,8 +234,8 @@ function FindExperts() {
             {consultants.length === 0 && (
               <div className="text-center py-8">
                 <p className="text-gray-500 text-lg">
-                  No consultants found matching your criteria. Try adjusting
-                  your filters.
+                  Oops! We couldn't find any mentors matching your search. Try
+                  tweaking your filters to discover more awesome mentors!
                 </p>
               </div>
             )}
@@ -257,7 +257,7 @@ export default function ExploreExperts() {
     <>
       <FeaturedExperts />
       <FindExperts />
-      <Testimonials />
+      <SatisfiedTestimonial />
     </>
   );
 }

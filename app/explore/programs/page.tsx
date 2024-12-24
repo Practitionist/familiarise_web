@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -10,35 +10,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
+import { LayoutGrid, List } from "lucide-react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { generateProgramImageUrl } from "./utils";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-interface ConsultantProfile {
-  id: string;
-  description: string;
-  qualifications: string;
-  specialization: string;
-  experience: string;
-  rating: number;
-}
+import type { ClassPlan, WebinarPlan } from "@prisma/client";
 
-interface Program {
-  id: string;
-  title: string;
-  description: string;
-  price: number;
+type ProgramType = "all" | "class" | "webinar";
+
+type Program = (ClassPlan | WebinarPlan) & {
   type: "class" | "webinar";
-  language: string;
-  level: string;
-  maxParticipants: number;
   imageUrl: string;
-  consultantProfile: ConsultantProfile;
-  prerequisites: string;
-  materialProvided: string;
-  learningOutcomes: string[];
-}
+};
 
 export default function Programs() {
+  const router = useRouter();
   const [programs, setPrograms] = useState<Program[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -46,7 +34,8 @@ export default function Programs() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sortBy, setSortBy] = useState("");
-  const [viewMode, setViewMode] = useState("grid");
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  const [programType, setProgramType] = useState<ProgramType>("all");
   const observer = useRef<IntersectionObserver>();
   const ITEMS_PER_PAGE = 9;
 
@@ -70,32 +59,53 @@ export default function Programs() {
   ) => {
     try {
       setLoading(true);
-      const [classesRes, webinarsRes] = await Promise.all([
-        fetch(`/api/plans/classes?page=${pageNum}&limit=${ITEMS_PER_PAGE}`),
-        fetch(`/api/plans/webinars?page=${pageNum}&limit=${ITEMS_PER_PAGE}`),
-      ]);
+      const requests = [];
 
-      const classesData = await classesRes.json();
-      const webinarsData = await webinarsRes.json();
+      if (programType === "all" || programType === "class") {
+        requests.push(
+          fetch(`/api/plans/classes?page=${pageNum}&limit=${ITEMS_PER_PAGE}`),
+        );
+      }
+      if (programType === "all" || programType === "webinar") {
+        requests.push(
+          fetch(`/api/plans/webinars?page=${pageNum}&limit=${ITEMS_PER_PAGE}`),
+        );
+      }
 
-      const formattedClasses = classesData.data.map((item: any) => ({
-        ...item,
-        type: "class",
-        imageUrl: `https://picsum.photos/seed/${item.id}/600/400`,
-      }));
+      const responses = await Promise.all(requests);
+      const data = await Promise.all(responses.map((res) => res.json()));
 
-      const formattedWebinars = webinarsData.data.map((item: any) => ({
-        ...item,
-        type: "webinar",
-        imageUrl: `https://picsum.photos/seed/${item.id}/600/400`,
-      }));
+      let newPrograms: Program[] = [];
 
-      const newPrograms = [...formattedClasses, ...formattedWebinars];
+      if ((programType === "all" || programType === "class") && data[0]) {
+        const formattedClasses = data[0].data.map((item: ClassPlan) => ({
+          ...item,
+          type: "class",
+          imageUrl: generateProgramImageUrl(item.id),
+        }));
+        newPrograms = [...newPrograms, ...formattedClasses];
+      }
+
+      if (
+        (programType === "all" || programType === "webinar") &&
+        data[programType === "all" ? 1 : 0]
+      ) {
+        const formattedWebinars = data[programType === "all" ? 1 : 0].data.map(
+          (item: WebinarPlan) => ({
+            ...item,
+            type: "webinar",
+            imageUrl: generateProgramImageUrl(item.id),
+          }),
+        );
+        newPrograms = [...newPrograms, ...formattedWebinars];
+      }
 
       setPrograms((prev) =>
         isNewSearch ? newPrograms : [...prev, ...newPrograms],
       );
-      setHasMore(newPrograms.length === ITEMS_PER_PAGE * 2); // Since we're fetching from two endpoints
+      setHasMore(
+        newPrograms.length === ITEMS_PER_PAGE * (programType === "all" ? 2 : 1),
+      );
     } catch (error) {
       console.error("Error fetching programs:", error);
     } finally {
@@ -103,31 +113,38 @@ export default function Programs() {
     }
   };
 
-  // Initial load
   useEffect(() => {
     fetchPrograms(1, true);
   }, []);
 
-  // Handle page changes for infinite scroll
   useEffect(() => {
     if (page > 1) {
       fetchPrograms(page, false);
     }
   }, [page]);
 
-  // Handle search and filter changes
   useEffect(() => {
     setPrograms([]);
     setPage(1);
     setHasMore(true);
     fetchPrograms(1, true);
-  }, [searchTerm, selectedCategory]);
+  }, [searchTerm, selectedCategory, programType]);
+
+  const handleProgramClick = (item: Program) => {
+    if (item.type === "class") {
+      router.push(`/explore/programs/classes/${item.id}`);
+    } else {
+      router.push(`/explore/programs/webinars/${item.id}`);
+    }
+  };
 
   const filteredAndSortedPrograms = programs
     .filter((item) => {
       const searchMatch =
         item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.description.toLowerCase().includes(searchTerm.toLowerCase());
+        (item.description?.toLowerCase() || "").includes(
+          searchTerm.toLowerCase(),
+        );
       const categoryMatch =
         selectedCategory === "all" ? true : item.level === selectedCategory;
       return searchMatch && categoryMatch;
@@ -154,95 +171,167 @@ export default function Programs() {
   return (
     <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-40 pb-32">
       <div className="mb-12 text-center">
-        <h1 className="text-4xl font-bold mb-3 text-black">
+        <h1 className="text-4xl font-bold mb-4 text-gray-900">
           Search Classes and Webinars
         </h1>
-        <p className="text-gray-600 text-lg">
+        <p className="text-lg text-gray-600">
           Find the perfect class or webinar to suit your needs.
         </p>
       </div>
 
-      <div className="bg-white shadow-lg rounded-xl p-6 mb-12">
-        <form className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 mb-12">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <div>
-            <Label htmlFor="search" className="text-black font-medium">
-              Search
+            <Label
+              htmlFor="type"
+              className="text-sm font-medium text-gray-700 mb-2"
+            >
+              Type
             </Label>
-            <Input
-              id="search"
-              type="text"
-              placeholder="Search classes and webinars"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="mt-1"
-            />
+            <Select
+              value={programType}
+              onValueChange={(value: ProgramType) => setProgramType(value)}
+            >
+              <SelectTrigger
+                id="type"
+                className="w-full rounded-lg border-gray-200 bg-white"
+              >
+                <SelectValue placeholder="Select type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Programs</SelectItem>
+                <SelectItem value="class">Classes Only</SelectItem>
+                <SelectItem value="webinar">Webinars Only</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div>
-            <Label htmlFor="category" className="text-black font-medium">
+            <Label
+              htmlFor="category"
+              className="text-sm font-medium text-gray-700 mb-2"
+            >
               Level
             </Label>
             <Select
               value={selectedCategory}
               onValueChange={setSelectedCategory}
             >
-              <SelectTrigger id="category" className="mt-1">
-                <SelectValue placeholder="Select a level" />
+              <SelectTrigger
+                id="category"
+                className="w-full rounded-lg border-gray-200 bg-white"
+              >
+                <SelectValue placeholder="All Levels" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all" className="bg-white">
-                  All Levels
-                </SelectItem>
+                <SelectItem value="all">All Levels</SelectItem>
                 {uniqueLevels.map((level) => (
-                  <SelectItem key={level} value={level} className="bg-white">
-                    {level}
+                  <SelectItem key={level} value={level?.toString() ?? ""}>
+                    {level ?? "Unknown Level"}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <div>
-            <Label htmlFor="sort" className="text-black font-medium">
+            <Label
+              htmlFor="sort"
+              className="text-sm font-medium text-gray-700 mb-2"
+            >
               Sort By
             </Label>
             <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger id="sort" className="mt-1">
+              <SelectTrigger
+                id="sort"
+                className="w-full rounded-lg border-gray-200 bg-white"
+              >
                 <SelectValue placeholder="Select sorting option" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="price-asc" className="bg-white">
-                  Price: Low to High
+                <SelectItem value="price-asc">Price: Low to High</SelectItem>
+                <SelectItem value="price-desc">Price: High to Low</SelectItem>
+                <SelectItem value="title-asc">Title: A to Z</SelectItem>
+                <SelectItem value="title-desc">Title: Z to A</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label
+              htmlFor="view"
+              className="text-sm font-medium text-gray-700 mb-2"
+            >
+              View Mode
+            </Label>
+            <Select
+              value={viewMode}
+              onValueChange={(value: "list" | "grid") => setViewMode(value)}
+            >
+              <SelectTrigger
+                id="view"
+                className="w-full rounded-lg border-gray-200 bg-white"
+              >
+                <SelectValue>
+                  <div className="flex items-center gap-2">
+                    {viewMode === "list" ? (
+                      <>
+                        <List className="h-4 w-4" />
+                        <span>List</span>
+                      </>
+                    ) : (
+                      <>
+                        <LayoutGrid className="h-4 w-4" />
+                        <span>Grid</span>
+                      </>
+                    )}
+                  </div>
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="list">
+                  <div className="flex items-center gap-2">
+                    <List className="h-4 w-4" />
+                    <span>List</span>
+                  </div>
                 </SelectItem>
-                <SelectItem value="price-desc" className="bg-white">
-                  Price: High to Low
-                </SelectItem>
-                <SelectItem value="title-asc" className="bg-white">
-                  Title: A to Z
-                </SelectItem>
-                <SelectItem value="title-desc" className="bg-white">
-                  Title: Z to A
+                <SelectItem value="grid">
+                  <div className="flex items-center gap-2">
+                    <LayoutGrid className="h-4 w-4" />
+                    <span>Grid</span>
+                  </div>
                 </SelectItem>
               </SelectContent>
             </Select>
           </div>
-        </form>
-      </div>
+        </div>
 
-      <div className="flex items-center justify-between mb-8">
-        <div className="space-x-3">
-          <Button
-            variant={viewMode === "grid" ? "night" : "default"}
-            onClick={() => setViewMode("grid")}
-            className="shadow-sm hover:shadow-md transition-shadow"
-          >
-            Grid View
-          </Button>
-          <Button
-            variant={viewMode === "list" ? "night" : "default"}
-            onClick={() => setViewMode("list")}
-            className="shadow-sm hover:shadow-md transition-shadow"
-          >
-            List View
-          </Button>
+        <div className="relative">
+          <Label htmlFor="search" className="sr-only">
+            Search classes and webinars
+          </Label>
+          <Input
+            id="search"
+            type="text"
+            placeholder="Search classes and webinars"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full rounded-lg border-gray-200 bg-white pl-4 pr-12 py-3 text-sm focus:border-gray-300 focus:ring-gray-300"
+            aria-label="Search classes and webinars"
+          />
+          <div className="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none">
+            <svg
+              className="h-5 w-5 text-gray-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+          </div>
         </div>
       </div>
 
@@ -256,7 +345,17 @@ export default function Programs() {
                   ? lastElementRef
                   : null
               }
-              className="bg-muted rounded-lg overflow-hidden"
+              className="w-full text-left bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-all duration-300"
+              onClick={() => handleProgramClick(item)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleProgramClick(item);
+                }
+              }}
+              tabIndex={0}
+              role="button"
+              aria-label={`View details for ${item.title}`}
             >
               <Image
                 src={item.imageUrl}
@@ -266,17 +365,36 @@ export default function Programs() {
                 className="w-full h-48 object-cover"
                 style={{ aspectRatio: "600/400", objectFit: "cover" }}
               />
-              <div className="p-4">
-                <div className="flex justify-between items-start mb-2">
-                  <h3 className="text-lg font-bold">{item.title}</h3>
-                  <span className="bg-primary/10 text-primary text-sm px-2 py-1 rounded">
+              <div className="p-6">
+                <div className="flex justify-between items-start mb-3">
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    {item.title}
+                  </h3>
+                  <output
+                    className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
+                    aria-label={`Program type: ${item.type}`}
+                  >
                     {item.type}
-                  </span>
+                  </output>
                 </div>
-                <p className="text-muted-foreground mb-4">{item.description}</p>
+                <p className="text-gray-600 text-sm mb-4 line-clamp-2">
+                  {item.description}
+                </p>
                 <div className="flex items-center justify-between">
-                  <div className="text-primary font-medium">${item.price}</div>
-                  <Button variant="outline">Learn More</Button>
+                  <div className="text-gray-900 font-semibold">
+                    ${item.price}
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="text-sm border-gray-200 hover:bg-gray-50"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleProgramClick(item);
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    Learn More
+                  </Button>
                 </div>
               </div>
             </div>
@@ -292,27 +410,56 @@ export default function Programs() {
                   ? lastElementRef
                   : null
               }
-              className="bg-muted rounded-lg overflow-hidden flex"
+              className="w-full text-left bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 flex cursor-pointer hover:shadow-md transition-all duration-300"
+              onClick={() => handleProgramClick(item)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleProgramClick(item);
+                }
+              }}
+              tabIndex={0}
+              role="button"
+              aria-label={`View details for ${item.title}`}
             >
               <Image
                 src={item.imageUrl}
                 alt={item.title}
                 width={200}
                 height={150}
-                className="w-40 h-30 object-cover"
+                className="w-48 object-cover"
                 style={{ aspectRatio: "200/150", objectFit: "cover" }}
               />
-              <div className="p-4 flex-1">
-                <div className="flex justify-between items-start mb-2">
-                  <h3 className="text-lg font-bold">{item.title}</h3>
-                  <span className="bg-primary/10 text-primary text-sm px-2 py-1 rounded">
+              <div className="p-6 flex-1">
+                <div className="flex justify-between items-start mb-3">
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    {item.title}
+                  </h3>
+                  <output
+                    className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
+                    aria-label={`Program type: ${item.type}`}
+                  >
                     {item.type}
-                  </span>
+                  </output>
                 </div>
-                <p className="text-muted-foreground mb-4">{item.description}</p>
+                <p className="text-gray-600 text-sm mb-4 line-clamp-2">
+                  {item.description}
+                </p>
                 <div className="flex items-center justify-between">
-                  <div className="text-primary font-medium">${item.price}</div>
-                  <Button variant="outline">Learn More</Button>
+                  <div className="text-gray-900 font-semibold">
+                    ${item.price}
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="text-sm border-gray-200 hover:bg-gray-50"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleProgramClick(item);
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    Learn More
+                  </Button>
                 </div>
               </div>
             </div>
@@ -320,7 +467,9 @@ export default function Programs() {
         </div>
       )}
 
-      {loading && <div className="text-center py-4">Loading more...</div>}
+      {loading && (
+        <div className="text-center py-8 text-gray-500">Loading more...</div>
+      )}
     </div>
   );
 }

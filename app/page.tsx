@@ -1,22 +1,22 @@
 "use client";
 
-import { Provider as ReduxProvider } from "react-redux";
 import { AnimatePresence } from "framer-motion";
+import { Provider as ReduxProvider } from "react-redux";
 
+import BestExpertsSection from "@/components/home/BestExpertsSection";
 import { Faq } from "@/components/home/Faq";
-import { Newsletter } from "@/components/home/Newsletter";
-import TestimonialsSection from "@/components/home/Testimonials";
-import MeetTheTeam from "@/components/home/MeetTheTeam";
+import FeaturedExpertsSection from "@/components/home/FeaturedExpertsSection";
 import HeroSection from "@/components/home/HeroSection";
+import JoinCommunitySection from "@/components/home/JoinCommunitySection";
+import { Newsletter } from "@/components/home/Newsletter";
+import OfferingsSection from "@/components/home/OfferingsSection";
+import TestimonialsSection from "@/components/home/Testimonials";
 import TransformCareerSection from "@/components/home/TransformCareerSection";
 import UnlockPotentialSection from "@/components/home/UnlockPotentialSection";
-import BestExpertsSection from "@/components/home/BestExpertsSection";
-import FeaturedExpertsSection from "@/components/home/FeaturedExpertsSection";
-import OfferingsSection from "@/components/home/OfferingsSection";
-import JoinCommunitySection from "@/components/home/JoinCommunitySection";
 
-import store from "@/redux/store";
+import HowProcessWorksSection from "@/components/home/HowProcessWorksSection";
 import { useImages } from "@/hooks/useImages";
+import store from "@/redux/store";
 
 export default function Home() {
   const images = useImages("consultx_bucket", "assets/images");
@@ -32,9 +32,9 @@ export default function Home() {
           <FeaturedExpertsSection />
           <OfferingsSection />
           <TestimonialsSection />
-          <Faq />
+          <HowProcessWorksSection />
           <JoinCommunitySection />
-          <MeetTheTeam />
+          <Faq />
           <Newsletter />
         </main>
       </AnimatePresence>

@@ -21,7 +21,7 @@ export async function GET(
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
+                user: true, // Changed from consulteeProfile to user
               },
             },
           },
@@ -88,7 +88,7 @@ export async function PUT(
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
+                user: true, // Changed from consulteeProfile to user
               },
             },
           },
@@ -132,7 +132,7 @@ export async function DELETE(
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
+                user: true, // Changed from consulteeProfile to user
               },
             },
           },

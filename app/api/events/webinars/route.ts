@@ -4,21 +4,20 @@ import { NextResponse } from "next/server";
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const consulteeId = searchParams.get("consulteeId");
+    const userId = searchParams.get("userId"); // Changed from consulteeId
     const consultantId = searchParams.get("consultantId");
 
     let webinars;
 
-    if (consulteeId) {
+    if (userId) {
+      // Changed from consulteeId
       webinars = await prisma.webinar.findMany({
         where: {
           appointment: {
             some: {
               slotOfAppointment: {
                 some: {
-                  consulteeProfile: {
-                    id: consulteeId,
-                  },
+                  userId, // Changed from consulteeProfile.id
                 },
               },
             },
@@ -35,7 +34,7 @@ export async function GET(request: Request) {
             include: {
               slotOfAppointment: {
                 include: {
-                  consulteeProfile: true,
+                  user: true, // Changed from consulteeProfile
                 },
               },
             },
@@ -63,7 +62,7 @@ export async function GET(request: Request) {
             include: {
               slotOfAppointment: {
                 include: {
-                  consulteeProfile: true,
+                  user: true, // Changed from consulteeProfile
                 },
               },
             },
@@ -84,7 +83,7 @@ export async function GET(request: Request) {
             include: {
               slotOfAppointment: {
                 include: {
-                  consulteeProfile: true,
+                  user: true, // Changed from consulteeProfile
                 },
               },
             },
@@ -128,7 +127,7 @@ export async function POST(request: Request) {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
+                user: true, // Changed from consulteeProfile
               },
             },
           },
