@@ -3,23 +3,12 @@
 import { BellIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useState, use, useEffect } from "react";
-import { useSession } from "next-auth/react";
+import { fetchConsulteeDetails, fetchUserDetails } from "@/hooks/useUserData";
 import {
-  Prisma,
-  Consultation,
-  Subscription,
-  Webinar,
-  Class,
+  Prisma
 } from "@prisma/client";
-import { fetchUserDetails, fetchConsulteeDetails } from "@/hooks/useUserData";
-import {
-  useEvents,
-  ConsultationWithPlan,
-  SubscriptionWithPlan,
-  WebinarWithPlan,
-  ClassWithPlan,
-} from "@/hooks/useEvents";
+import { useSession } from "next-auth/react";
+import { use, useEffect, useState } from "react";
 import AppointmentsTab from "./tabs/AppointmentsTab";
 import BookingHistoryTab from "./tabs/BookingHistoryTab";
 import FeedbackSupportTab from "./tabs/FeedbackSupportTab";
@@ -39,12 +28,6 @@ const tabs = [
 type Params = Promise<{ consulteeId: string }>;
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
-type EventWithType =
-  | (ConsultationWithPlan & { type: "Consultation" })
-  | (SubscriptionWithPlan & { type: "Subscription" })
-  | (WebinarWithPlan & { type: "Webinar" })
-  | (ClassWithPlan & { type: "Class" });
-
 export default function ConsulteeDashboard(
   props: Readonly<{
     params: Params;
@@ -63,15 +46,6 @@ export default function ConsulteeDashboard(
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Use the useEvents hook to fetch all events
-  const {
-    consultations,
-    subscriptions,
-    webinars,
-    classes,
-    isLoading: eventsLoading,
-    error: eventsError,
-  } = useEvents(profileDetails?.id || "");
 
   useEffect(() => {
     async function fetchData() {
@@ -116,20 +90,20 @@ export default function ConsulteeDashboard(
     );
   }
 
-  if (error || eventsError) {
+  if (error) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-100">
         <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
           <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
             Error
           </h2>
-          <p className="text-gray-700">{error || eventsError?.message}</p>
+          <p className="text-gray-700">{error}</p>
         </div>
       </div>
     );
   }
 
-  if (isLoading || eventsLoading || !userDetails || !profileDetails) {
+  if (isLoading || !userDetails || !profileDetails) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-100">
         <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
@@ -139,40 +113,6 @@ export default function ConsulteeDashboard(
       </div>
     );
   }
-
-  // Combine and sort all events
-  const allEvents: EventWithType[] = [
-    ...consultations.map((c: ConsultationWithPlan) => ({
-      ...c,
-      type: "Consultation" as const,
-    })),
-    ...subscriptions.map((s: SubscriptionWithPlan) => ({
-      ...s,
-      type: "Subscription" as const,
-    })),
-    ...webinars.map((w: WebinarWithPlan) => ({
-      ...w,
-      type: "Webinar" as const,
-    })),
-    ...classes.map((c: ClassWithPlan) => ({ ...c, type: "Class" as const })),
-  ].sort((a, b) => {
-    const getEventTime = (event: EventWithType) => {
-      switch (event.type) {
-        case "Consultation":
-        case "Subscription":
-          return event.requestedAt;
-        case "Webinar":
-          return event.scheduledAt;
-        case "Class":
-          return event.startDate || event.createdAt;
-      }
-    };
-
-    const timeA = getEventTime(a);
-    const timeB = getEventTime(b);
-
-    return new Date(timeB).getTime() - new Date(timeA).getTime();
-  });
 
   return (
     <div className="bg-gray-100 min-h-screen flex flex-col">

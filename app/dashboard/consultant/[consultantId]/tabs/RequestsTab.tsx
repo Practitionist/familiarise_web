@@ -27,7 +27,7 @@ type ConfirmDialogState = {
   action: "APPROVED" | "REJECTED";
 };
 
-export function RequestsTab({ approvals }: RequestsTabProps) {
+export function RequestsTab({ approvals }: Readonly<RequestsTabProps>) {
   const [loadingStates, setLoadingStates] = useState<{
     [key: string]: boolean;
   }>({});

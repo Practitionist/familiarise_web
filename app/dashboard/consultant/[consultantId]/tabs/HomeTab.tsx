@@ -13,7 +13,7 @@ export function HomeTab({
   activities,
   approvals,
   getBadgeStyle,
-}: HomeTabProps) {
+}: Readonly<HomeTabProps>) {
   if (!getBadgeStyle) {
     throw new Error("getBadgeStyle is required for HomeTab");
   }
