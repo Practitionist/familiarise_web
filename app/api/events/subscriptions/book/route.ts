@@ -154,16 +154,20 @@ export async function POST(req: NextRequest) {
               id: subscription.id,
             },
           },
-          slotOfAppointment: {
+          slotsOfAppointment: {
             create: {
-              userId: user.id,
+              user: {
+                connect: {
+                  id: user.id,
+                },
+              },
               slotStartTimeInUTC: new Date(slotStartTimeInUTC),
               slotEndTimeInUTC: new Date(slotEndTimeInUTC),
             },
           },
         },
         include: {
-          slotOfAppointment: {
+          slotsOfAppointment: {
             include: {
               user: true,
             },

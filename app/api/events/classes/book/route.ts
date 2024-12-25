@@ -71,13 +71,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Get class details to check consultant
+    // Get class details to check consultant and capacity
     const classDetails = await prisma.class.findUnique({
       where: { id: classId },
       include: {
         classPlan: {
           include: {
             consultantProfile: true,
+          },
+        },
+        appointment: {
+          include: {
+            slotsOfAppointment: {
+              include: {
+                user: true,
+              },
+            },
           },
         },
       },
@@ -108,10 +117,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check class capacity
-    if (
-      classDetails.currentParticipants >= classDetails.classPlan.maxParticipants
-    ) {
+    // Check class capacity by counting participants from appointments
+    const currentParticipants =
+      classDetails.appointment?.reduce(
+        (count, appointment) => count + appointment.slotsOfAppointment.length,
+        0,
+      ) ?? 0;
+
+    if (currentParticipants >= (classDetails.classPlan.maxParticipants ?? 1)) {
       return NextResponse.json(
         { error: "Class is at maximum capacity" },
         {
@@ -121,55 +134,46 @@ export async function POST(req: NextRequest) {
     }
 
     // Create appointment with slot
-    const appointment = await prisma.$transaction(async (tx) => {
-      // Increment participants count
-      await tx.class.update({
-        where: { id: classId },
-        data: {
-          currentParticipants: {
-            increment: 1,
+    const appointment = await prisma.appointment.create({
+      data: {
+        appointmentType: AppointmentsType.CLASS,
+        class: {
+          connect: {
+            id: classId,
           },
         },
-      });
-
-      // Create appointment
-      return await tx.appointment.create({
-        data: {
-          appointmentType: AppointmentsType.CLASS,
-          class: {
-            connect: {
-              id: classId,
+        slotsOfAppointment: {
+          create: {
+            user: {
+              connect: {
+                id: user.id,
+              },
             },
-          },
-          slotOfAppointment: {
-            create: {
-              userId: user.id,
-              slotStartTimeInUTC: new Date(slotStartTimeInUTC),
-              slotEndTimeInUTC: new Date(slotEndTimeInUTC),
-            },
+            slotStartTimeInUTC: new Date(slotStartTimeInUTC),
+            slotEndTimeInUTC: new Date(slotEndTimeInUTC),
           },
         },
-        include: {
-          slotOfAppointment: {
-            include: {
-              user: true,
-            },
+      },
+      include: {
+        slotsOfAppointment: {
+          include: {
+            user: true,
           },
-          class: {
-            include: {
-              classPlan: {
-                include: {
-                  consultantProfile: {
-                    include: {
-                      user: true,
-                    },
+        },
+        class: {
+          include: {
+            classPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: true,
                   },
                 },
               },
             },
           },
         },
-      });
+      },
     });
 
     return NextResponse.json(appointment);

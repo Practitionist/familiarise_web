@@ -14,7 +14,7 @@ export async function GET(
         classPlan: true,
         appointment: {
           include: {
-            slotOfAppointment: {
+            slotsOfAppointment: {
               include: {
                 user: true, // Changed from consulteeProfile to user
               },
@@ -56,7 +56,6 @@ export async function PUT(
         status: body.status,
         tentativeStartDate: body.tentativeStartDate,
         tentativeSchedule: body.tentativeSchedule,
-        currentParticipants: body.currentParticipants,
         recordingUrls: body.recordingUrls,
         feedbackSummary: body.feedbackSummary,
       },
@@ -64,7 +63,7 @@ export async function PUT(
         classPlan: true,
         appointment: {
           include: {
-            slotOfAppointment: {
+            slotsOfAppointment: {
               include: {
                 user: true, // Changed from consulteeProfile to user
               },
@@ -97,7 +96,7 @@ export async function DELETE(
         classPlan: true,
         appointment: {
           include: {
-            slotOfAppointment: {
+            slotsOfAppointment: {
               include: {
                 user: true, // Changed from consulteeProfile to user
               },

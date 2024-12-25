@@ -1,6 +1,6 @@
 import { TConsultantProfile } from "@/types/consultant";
 
-export interface Appointment {
+export interface IAppointment {
   id: string;
   name: string;
   description: string;
@@ -8,7 +8,7 @@ export interface Appointment {
   badge: string;
 }
 
-export interface Document {
+export interface IDocument {
   id: string;
   title: string;
   invoiceNo: string;
@@ -16,14 +16,14 @@ export interface Document {
   tag: string;
 }
 
-export interface Activity {
+export interface IActivity {
   id: string;
   name: string;
   action: string;
   time: string;
 }
 
-export interface Approval {
+export interface IApproval {
   id: string;
   name: string;
   type: string;
@@ -38,29 +38,29 @@ export interface WithBadgeStyle {
 
 // Props for each tab component
 export interface HomeTabProps extends WithBadgeStyle {
-  todayAppointments: Appointment[];
-  upcomingAppointments: Appointment[];
-  activities: Activity[];
-  approvals: Approval[];
+  todayAppointments: IAppointment[];
+  upcomingAppointments: IAppointment[];
+  activities: IActivity[];
+  approvals: IApproval[];
 }
 
 export interface AppointmentsTabProps extends WithBadgeStyle {
-  appointments: Appointment[];
+  appointments: IAppointment[];
 }
 
 export interface RequestsTabProps {
-  approvals: Approval[];
+  approvals: IApproval[];
 }
 
 export interface DocumentsTabProps {
-  documents: Document[];
+  documents: IDocument[];
 }
 
 // Props for reusable components
-export interface AppointmentCardProps extends Appointment, WithBadgeStyle {}
+export interface AppointmentCardProps extends IAppointment, WithBadgeStyle {}
 
 export interface ClientActivityProps {
-  activities: Activity[];
+  activities: IActivity[];
 }
 
 // Utility type for badge styles

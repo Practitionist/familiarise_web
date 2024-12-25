@@ -10,9 +10,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Appointment, BADGE_STYLES } from "../types";
+import { IAppointment, BADGE_STYLES } from "../types";
 
-interface AppointmentCardProps extends Appointment {
+interface AppointmentCardProps extends IAppointment {
   getBadgeStyle: (badge: string) => string;
 }
 

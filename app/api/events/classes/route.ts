@@ -17,10 +17,14 @@ export async function GET(request: Request) {
             {
               appointment: {
                 some: {
-                  slotOfAppointment: {
+                  slotsOfAppointment: {
                     some: {
                       user: {
-                        consulteeProfileId,
+                        some: {
+                          consulteeProfile: {
+                            id: consulteeProfileId,
+                          },
+                        },
                       },
                     },
                   },
@@ -61,7 +65,7 @@ export async function GET(request: Request) {
           },
           appointment: {
             include: {
-              slotOfAppointment: {
+              slotsOfAppointment: {
                 include: {
                   user: {
                     select: {

@@ -41,7 +41,7 @@ export async function GET(
         },
         appointments: {
           include: {
-            slotOfAppointment: {
+            slotsOfAppointment: {
               include: {
                 user: {
                   // Changed from consulteeProfile to user
@@ -135,7 +135,7 @@ export async function PUT(
         },
         appointments: {
           include: {
-            slotOfAppointment: {
+            slotsOfAppointment: {
               include: {
                 user: {
                   // Changed from consulteeProfile to user
@@ -203,7 +203,7 @@ export async function DELETE(
         },
         appointments: {
           include: {
-            slotOfAppointment: {
+            slotsOfAppointment: {
               include: {
                 user: {
                   // Changed from consulteeProfile to user

@@ -10,7 +10,7 @@ import {
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./createUsers";
-import { TAppointmentCreateInput } from "../../types/appointment";
+import { TAppointmentCreateInput } from "@/types/appointment";
 
 const NUM_APPOINTMENTS = 200;
 
@@ -89,22 +89,19 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
       );
 
       await prisma.$transaction(async (prisma) => {
-        const slotStartTime =
-          slotData.type === "weekly"
-            ? slotData.slot.slotStartTimeInUTC
-            : slotData.slot.slotStartTimeInUTC;
-        const slotEndTime =
-          slotData.type === "weekly"
-            ? slotData.slot.slotEndTimeInUTC
-            : slotData.slot.slotEndTimeInUTC;
+        const { slotStartTimeInUTC, slotEndTimeInUTC } = slotData.slot;
 
         const appointmentData: TAppointmentCreateInput = {
           appointmentType: appointmentType,
-          slotOfAppointment: {
+          slotsOfAppointment: {
             create: {
-              userId: consultee.id,
-              slotStartTimeInUTC: slotStartTime,
-              slotEndTimeInUTC: slotEndTime,
+              user: {
+                connect: {
+                  id: consultee.id,
+                },
+              },
+              slotStartTimeInUTC,
+              slotEndTimeInUTC,
             },
           },
         };
@@ -148,7 +145,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
               },
               requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
               requestStatus: defaultStatus,
-              preferredDateTime: slotStartTime,
+              preferredDateTime: slotStartTimeInUTC,
               requestedAt: new Date(),
               requestNotes: faker.lorem.sentence(),
               directlyBooked: faker.datatype.boolean(),
@@ -253,7 +250,6 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
               status: isPastAppointment
                 ? ClassStatus.COMPLETED
                 : faker.helpers.arrayElement(Object.values(ClassStatus)),
-              currentParticipants: faker.number.int({ min: 0, max: 30 }),
               recordingUrls: Array.from(
                 { length: faker.number.int({ min: 0, max: 5 }) },
                 () => faker.internet.url(),

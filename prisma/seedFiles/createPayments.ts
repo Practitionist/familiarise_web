@@ -40,7 +40,9 @@ export async function createPayments(users: UserWithProfiles[]) {
   const discountCodes = await prisma.discountCode.findMany();
   const appointments = await prisma.appointment.findMany({
     where: {
-      payment: null, // Only get appointments without payments
+      payment: {
+        none: {},
+      },
       OR: [
         { consultation: { requestStatus: "APPROVED" } },
         { subscription: { requestStatus: "APPROVED" } },

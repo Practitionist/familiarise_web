@@ -1,8 +1,8 @@
 import {
-  Appointment,
-  Document,
-  Activity,
-  Approval,
+  IAppointment,
+  IDocument,
+  IActivity,
+  IApproval,
   ApiResponse,
 } from "./types";
 import { TConsultantProfile } from "@/types/consultant";
@@ -32,7 +32,7 @@ export async function fetchConsultantData(
 
 export async function fetchAppointments(
   consultantId: string,
-): Promise<Appointment[]> {
+): Promise<IAppointment[]> {
   try {
     const response = await fetch(
       `/api/slots/appointments?consultantProfileId=${consultantId}`,
@@ -42,16 +42,16 @@ export async function fetchAppointments(
     }
     const data: ApiResponse<TAppointment[]> = await response.json();
 
-    // Transform the API response to match our Appointment type
+    // Transform the API response to match our IAppointment type
     return data.data.map((appointment) => ({
       id: appointment.id,
-      name: appointment.slotOfAppointment?.[0]?.user?.name ?? "Unknown", // Changed from consulteeProfile.user
+      name: appointment.slotsOfAppointment[0]?.user[0]?.name ?? "Unknown",
       description: getAppointmentDescription(appointment),
       time: formatAppointmentTime(
-        appointment.slotOfAppointment?.[0]?.slotStartTimeInUTC,
+        appointment.slotsOfAppointment[0]?.slotStartTimeInUTC,
       ),
       badge: getAppointmentBadge(
-        appointment.slotOfAppointment?.[0]?.slotStartTimeInUTC,
+        appointment.slotsOfAppointment[0]?.slotStartTimeInUTC,
       ),
     }));
   } catch (error) {
@@ -62,7 +62,7 @@ export async function fetchAppointments(
 
 export async function fetchApprovals(
   consultantId: string,
-): Promise<Approval[]> {
+): Promise<IApproval[]> {
   try {
     // Fetch both consultations and subscriptions
     const [consultationsRes, subscriptionsRes] = await Promise.all([
@@ -126,14 +126,14 @@ export async function fetchApprovals(
 
 export async function fetchActivities(
   _consultantId: string,
-): Promise<Activity[]> {
+): Promise<IActivity[]> {
   // TODO: Implement activity tracking
   return [];
 }
 
 export async function fetchDocuments(
   _consultantId: string,
-): Promise<Document[]> {
+): Promise<IDocument[]> {
   // TODO: Implement document management
   return [];
 }

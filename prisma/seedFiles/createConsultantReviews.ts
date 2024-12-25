@@ -5,7 +5,7 @@ import { UserWithProfiles } from "./createUsers";
 
 type CompletedAppointment = Prisma.AppointmentGetPayload<{
   include: {
-    slotOfAppointment: {
+    slotsOfAppointment: {
       include: {
         user: {
           include: {
@@ -70,7 +70,7 @@ export async function createConsultantReviews(
           ],
         },
         include: {
-          slotOfAppointment: {
+          slotsOfAppointment: {
             include: {
               user: {
                 include: {
@@ -102,7 +102,7 @@ export async function createConsultantReviews(
 
       for (const appointment of appointmentsToReview) {
         const consulteeProfile =
-          appointment.slotOfAppointment[0]?.user?.consulteeProfile;
+          appointment.slotsOfAppointment[0]?.user[0]?.consulteeProfile;
         if (!consulteeProfile) {
           console.warn(
             `Skipping review - no consultee profile found for appointment ${appointment.id}`,

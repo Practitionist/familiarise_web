@@ -156,7 +156,7 @@ function filterSlots(
 async function removeBookedSlots(slots: TSlotTiming[]): Promise<TSlotTiming[]> {
   const appointments = await prisma.appointment.findMany({
     where: {
-      slotOfAppointment: {
+      slotsOfAppointment: {
         some: {
           slotStartTimeInUTC: {
             in: slots.map((s) => parseISO(s.slotStartTimeInUTC)),
@@ -165,7 +165,7 @@ async function removeBookedSlots(slots: TSlotTiming[]): Promise<TSlotTiming[]> {
       },
     },
     include: {
-      slotOfAppointment: {
+      slotsOfAppointment: {
         select: {
           slotStartTimeInUTC: true,
         },
@@ -174,7 +174,7 @@ async function removeBookedSlots(slots: TSlotTiming[]): Promise<TSlotTiming[]> {
   });
 
   const bookedSlotTimes = appointments.flatMap((a) =>
-    a.slotOfAppointment.map((slot) =>
+    a.slotsOfAppointment.map((slot) =>
       formatInTimeZone(
         slot.slotStartTimeInUTC,
         "UTC",
@@ -224,6 +224,7 @@ function setToUserDate(date: Date, userDate: Date): Date {
   );
   return result;
 }
+
 function mapWeeklySlotToTiming(
   slot: {
     id: string;

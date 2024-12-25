@@ -4,7 +4,7 @@ import { Prisma, AppointmentsType } from "@prisma/client";
 
 interface UpdateAppointmentRequest {
   appointmentType?: AppointmentsType;
-  slotOfAppointmentId?: string;
+  slotsOfAppointmentId?: string;
   consultationId?: string;
   subscriptionId?: string;
   webinarId?: string;
@@ -20,7 +20,7 @@ export async function GET(
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
       include: {
-        slotOfAppointment: {
+        slotsOfAppointment: {
           include: {
             user: {
               // Changed from consulteeProfile
@@ -192,8 +192,8 @@ export async function PUT(
       where: { id: appointmentId },
       data: {
         appointmentType: body.appointmentType,
-        slotOfAppointment: body.slotOfAppointmentId
-          ? { connect: { id: body.slotOfAppointmentId } }
+        slotsOfAppointment: body.slotsOfAppointmentId
+          ? { connect: { id: body.slotsOfAppointmentId } }
           : undefined,
         consultation: body.consultationId
           ? { connect: { id: body.consultationId } }
@@ -207,7 +207,7 @@ export async function PUT(
         class: body.classId ? { connect: { id: body.classId } } : undefined,
       },
       include: {
-        slotOfAppointment: {
+        slotsOfAppointment: {
           include: {
             user: {
               // Changed from consulteeProfile
@@ -393,7 +393,7 @@ export async function DELETE(
     const deletedAppointment = await prisma.appointment.delete({
       where: { id: appointmentId },
       include: {
-        slotOfAppointment: {
+        slotsOfAppointment: {
           include: {
             user: {
               // Changed from consulteeProfile

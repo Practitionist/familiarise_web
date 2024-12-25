@@ -8,8 +8,8 @@ export async function GET(request: NextRequest) {
   const type = searchParams.get("type")?.toUpperCase();
   const consultantProfileId = searchParams.get("consultantProfileId");
   const userId = searchParams.get("userId"); // Changed from consulteeProfileId
-  const page = parseInt(searchParams.get("page") || "1");
-  const limit = parseInt(searchParams.get("limit") || "10");
+  const page = parseInt(searchParams.get("page") ?? "1");
+  const limit = parseInt(searchParams.get("limit") ?? "10");
 
   if (
     type &&
@@ -37,22 +37,22 @@ export async function GET(request: NextRequest) {
         appointments.map((a) => ({
           id: a.id,
           type: a.appointmentType,
-          slot: a.slotOfAppointment?.[0]
+          slot: a.slotsOfAppointment?.[0]
             ? {
-                startUTC: a.slotOfAppointment[0].slotStartTimeInUTC,
-                endUTC: a.slotOfAppointment[0].slotEndTimeInUTC,
+                startUTC: a.slotsOfAppointment[0].slotStartTimeInUTC,
+                endUTC: a.slotsOfAppointment[0].slotEndTimeInUTC,
                 currentUTC: new Date().toISOString(),
               }
             : null,
           users: {
-            consultee: a.slotOfAppointment?.[0]?.user?.name, // Changed from consulteeProfile.user
+            consultee: a.slotsOfAppointment?.[0]?.user?.[0]?.name ?? "Unknown",
             requestedBy:
-              a.consultation?.requestedBy?.user?.name ||
+              a.consultation?.requestedBy?.user?.name ??
               a.subscription?.requestedBy?.user?.name,
             consultant:
-              a.consultation?.consultationPlan?.consultantProfile?.user?.name ||
-              a.subscription?.subscriptionPlan?.consultantProfile?.user?.name ||
-              a.webinar?.webinarPlan?.consultantProfile?.user?.name ||
+              a.consultation?.consultationPlan?.consultantProfile?.user?.name ??
+              a.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
+              a.webinar?.webinarPlan?.consultantProfile?.user?.name ??
               a.class?.classPlan?.consultantProfile?.user?.name,
           },
         })),
@@ -94,7 +94,7 @@ async function getAppointments(
   const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
 
   const whereClause: Prisma.AppointmentWhereInput = {
-    slotOfAppointment: {
+    slotsOfAppointment: {
       some: {
         slotStartTimeInUTC: {
           gte: thirtyMinutesAgo,
@@ -142,10 +142,13 @@ async function getAppointments(
 
   if (userId) {
     // Changed from consulteeProfileId
-    whereClause.slotOfAppointment = {
+    whereClause.slotsOfAppointment = {
       some: {
-        ...whereClause.slotOfAppointment?.some,
-        userId, // Changed from consulteeProfileId
+        user: {
+          some: {
+            id: userId,
+          },
+        },
       },
     };
   }
@@ -154,9 +157,9 @@ async function getAppointments(
     prisma.appointment.findMany({
       where: whereClause,
       include: {
-        slotOfAppointment: {
+        slotsOfAppointment: {
           include: {
-            user: true, // Changed from consulteeProfile
+            user: true,
           },
         },
         consultation: {
@@ -165,28 +168,14 @@ async function getAppointments(
               include: {
                 consultantProfile: {
                   include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
+                    user: true,
                   },
                 },
               },
             },
             requestedBy: {
               include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
+                user: true,
               },
             },
           },
@@ -197,28 +186,14 @@ async function getAppointments(
               include: {
                 consultantProfile: {
                   include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
+                    user: true,
                   },
                 },
               },
             },
             requestedBy: {
               include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
+                user: true,
               },
             },
           },
@@ -229,14 +204,7 @@ async function getAppointments(
               include: {
                 consultantProfile: {
                   include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
+                    user: true,
                   },
                 },
               },
@@ -249,14 +217,7 @@ async function getAppointments(
               include: {
                 consultantProfile: {
                   include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
+                    user: true,
                   },
                 },
               },
@@ -277,10 +238,10 @@ async function getAppointments(
 
   // Sort appointments by slot start time
   const sortedAppointments = appointments
-    .filter((appointment) => appointment.slotOfAppointment?.length > 0)
+    .filter((appointment) => appointment.slotsOfAppointment?.length > 0)
     .sort((a, b) => {
-      const aTime = a.slotOfAppointment[0]?.slotStartTimeInUTC;
-      const bTime = b.slotOfAppointment[0]?.slotStartTimeInUTC;
+      const aTime = a.slotsOfAppointment[0]?.slotStartTimeInUTC;
+      const bTime = b.slotsOfAppointment[0]?.slotStartTimeInUTC;
       if (!aTime || !bTime) return 0;
       return new Date(aTime).getTime() - new Date(bTime).getTime();
     });
@@ -292,17 +253,17 @@ async function getAppointments(
       sortedAppointments.map((a) => ({
         id: a.id,
         type: a.appointmentType,
-        startTimeUTC: a.slotOfAppointment[0]?.slotStartTimeInUTC,
-        endTimeUTC: a.slotOfAppointment[0]?.slotEndTimeInUTC,
+        startTimeUTC: a.slotsOfAppointment[0]?.slotStartTimeInUTC,
+        endTimeUTC: a.slotsOfAppointment[0]?.slotEndTimeInUTC,
         currentUTC: new Date().toISOString(),
-        consultee: a.slotOfAppointment[0]?.user?.name, // Changed from consulteeProfile.user
+        consultee: a.slotsOfAppointment[0]?.user?.[0]?.name ?? "Unknown",
         requestedBy:
-          a.consultation?.requestedBy?.user?.name ||
+          a.consultation?.requestedBy?.user?.name ??
           a.subscription?.requestedBy?.user?.name,
         consultant:
-          a.consultation?.consultationPlan?.consultantProfile?.user?.name ||
-          a.subscription?.subscriptionPlan?.consultantProfile?.user?.name ||
-          a.webinar?.webinarPlan?.consultantProfile?.user?.name ||
+          a.consultation?.consultationPlan?.consultantProfile?.user?.name ??
+          a.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
+          a.webinar?.webinarPlan?.consultantProfile?.user?.name ??
           a.class?.classPlan?.consultantProfile?.user?.name,
       })),
       null,
@@ -340,18 +301,18 @@ export async function POST(request: NextRequest) {
       data: {
         appointmentType,
         ...appointmentData,
-        slotOfAppointment: {
+        slotsOfAppointment: {
           create: {
-            userId, // Changed from consulteeProfile connect
+            user: { connect: [{ id: userId }] }, // Changed from consulteeProfile connect
             slotStartTimeInUTC: new Date(slotStartTimeInUTC),
             slotEndTimeInUTC: new Date(slotEndTimeInUTC),
           },
         },
       },
       include: {
-        slotOfAppointment: {
+        slotsOfAppointment: {
           include: {
-            user: true, // Changed from consulteeProfile
+            user: true,
           },
         },
         consultation: {

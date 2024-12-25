@@ -280,8 +280,7 @@ model SlotOfAvailabilityCustom {
 model SlotOfAppointment {
   id String @id @default(uuid())
 
-  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  userId String
+  user   User[]
 
   slotStartTimeInUTC DateTime @db.Timestamptz()
   slotEndTimeInUTC   DateTime @db.Timestamptz()
@@ -480,7 +479,6 @@ model Class {
   tentativeStartDate  DateTime?
   tentativeSchedule   String?
   waitlist            Waitlist[]
-  currentParticipants Int         @default(0)
   recordingUrls       String[]
   feedbackSummary     String?     @db.Text
 
@@ -521,7 +519,7 @@ enum ClassStatus {
 model Appointment {
   id                String              @id @default(uuid())
   appointmentType   AppointmentsType
-  slotOfAppointment SlotOfAppointment[]
+  slotsOfAppointment SlotOfAppointment[]
 
   consultation   Consultation? @relation(fields: [consultationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationId String?       @unique
@@ -535,7 +533,7 @@ model Appointment {
   class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classId String?
 
-  payment Payment?
+  payment Payment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

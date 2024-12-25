@@ -99,13 +99,9 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
         discountCode: true;
       };
     };
-    slotOfAppointment: {
+    slotsOfAppointment: {
       include: {
-        user: {
-          include: {
-            consulteeProfile: true;
-          };
-        };
+        user: true;
       };
     };
   };
@@ -136,68 +132,6 @@ export type TClass = Prisma.ClassGetPayload<{
             user: true;
           };
         };
-      };
-    };
-  };
-}>;
-
-export type TAppointmentWithoutSlot = Prisma.AppointmentGetPayload<{
-  include: {
-    consultation: {
-      include: {
-        consultationPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: true;
-              };
-            };
-          };
-        };
-      };
-    };
-    subscription: {
-      include: {
-        subscriptionPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: true;
-              };
-            };
-          };
-        };
-      };
-    };
-    webinar: {
-      include: {
-        webinarPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: true;
-              };
-            };
-          };
-        };
-      };
-    };
-    class: {
-      include: {
-        classPlan: {
-          include: {
-            consultantProfile: {
-              include: {
-                user: true;
-              };
-            };
-          };
-        };
-      };
-    };
-    payment: {
-      include: {
-        discountCode: true;
       };
     };
   };

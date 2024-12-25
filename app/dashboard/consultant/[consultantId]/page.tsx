@@ -18,10 +18,10 @@ import {
   fetchApprovals,
 } from "./utils";
 import {
-  type Appointment,
-  type Document,
-  type Activity,
-  type Approval,
+  type IAppointment,
+  type IDocument,
+  type IActivity,
+  type IApproval,
   DashboardSection,
   BADGE_STYLES,
   TIME_CONSTANTS,
@@ -44,10 +44,10 @@ export default function ConsultantDashboard({
     DashboardSection.Home,
   );
   const [consultant, setConsultant] = useState<TConsultantProfile | null>(null);
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [activities, setActivities] = useState<Activity[]>([]);
-  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [appointments, setAppointments] = useState<IAppointment[]>([]);
+  const [documents, setDocuments] = useState<IDocument[]>([]);
+  const [activities, setActivities] = useState<IActivity[]>([]);
+  const [approvals, setApprovals] = useState<IApproval[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
