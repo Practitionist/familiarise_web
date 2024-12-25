@@ -1,8 +1,6 @@
 "use client";
 
-import { BellIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { fetchConsulteeDetails, fetchUserDetails } from "@/hooks/useUserData";
 import { ConsulteeProfile, User } from "@prisma/client";
 import { useSession } from "next-auth/react";
@@ -113,9 +111,9 @@ export default function ConsulteeDashboard(
 
   return (
     <div className="bg-gray-100 min-h-screen flex flex-col">
-      <div className="p-8 pt-32 bg-white shadow-sm">
-        <div className="flex justify-between items-center mb-6">
-          <div className="flex items-center space-x-4 overflow-x-auto">
+      <div className="p-4 sm:p-8 pt-32 md:pt-36 bg-white shadow-sm">
+        <div className="flex flex-col sm:flex-row justify-start items-start gap-4">
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 w-full">
             {tabs.map((tab) => (
               <Button
                 key={tab}
@@ -130,13 +128,6 @@ export default function ConsulteeDashboard(
                 {tab}
               </Button>
             ))}
-          </div>
-          <div className="flex items-center space-x-4">
-            <Input
-              placeholder="Search here..."
-              className="rounded-md px-4 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-[#f87171] focus:border-transparent"
-            />
-            <BellIcon className="h-6 w-6 text-gray-500 hover:text-gray-700 cursor-pointer" />
           </div>
         </div>
       </div>
