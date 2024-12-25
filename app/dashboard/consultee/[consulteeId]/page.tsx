@@ -4,9 +4,7 @@ import { BellIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { fetchConsulteeDetails, fetchUserDetails } from "@/hooks/useUserData";
-import {
-  Prisma
-} from "@prisma/client";
+import { ConsulteeProfile, User } from "@prisma/client";
 import { useSession } from "next-auth/react";
 import { use, useEffect, useState } from "react";
 import AppointmentsTab from "./tabs/AppointmentsTab";
@@ -39,13 +37,12 @@ export default function ConsulteeDashboard(
 
   const [activeTab, setActiveTab] = useState("Home");
   const { data: session } = useSession();
-  const [userDetails, setUserDetails] =
-    useState<Prisma.UserGetPayload<{}> | null>(null);
-  const [profileDetails, setProfileDetails] =
-    useState<Prisma.ConsulteeProfileGetPayload<{}> | null>(null);
+  const [userDetails, setUserDetails] = useState<User | null>(null);
+  const [profileDetails, setProfileDetails] = useState<ConsulteeProfile | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-
 
   useEffect(() => {
     async function fetchData() {

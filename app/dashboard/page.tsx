@@ -21,11 +21,12 @@ export default function Dashboard() {
   const { toast } = useToast();
 
   const userId = session?.user?.id;
+
   const {
     userDetails,
     isLoading: isUserDataLoading,
     error,
-  } = useUserData(userId || "");
+  } = useUserData(userId ?? "");
 
   // Handle progress animation
   useEffect(() => {
