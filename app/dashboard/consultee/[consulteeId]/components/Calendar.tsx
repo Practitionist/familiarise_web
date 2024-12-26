@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
+import { convertUTCToZoneTime } from "@/lib/datetimetz";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ArrowLeftIcon, ArrowRightIcon } from "@/assets/icons";
@@ -10,6 +11,7 @@ import {
   WebinarWithPlan,
   ClassWithPlan,
 } from "@/hooks/useEvents";
+import { TAppointment } from "@/types/appointment";
 
 interface CalendarProps {
   consultations: ConsultationWithPlan[];
@@ -19,12 +21,15 @@ interface CalendarProps {
 }
 
 type Event = {
+  id?: string;
   title: string;
   start: Date;
   end: Date;
   type: "Consultation" | "Subscription" | "Webinar" | "Class";
   status: string;
   consultant: string;
+  subscriptionId?: string | null;
+  time?: string;
 };
 
 export function Calendar({
@@ -35,43 +40,93 @@ export function Calendar({
 }: CalendarProps) {
   const [currentDate, setCurrentDate] = useState(new Date());
 
-  // Convert all events to a common format
-  const events: Event[] = [
-    ...consultations.map((c) => ({
-      title: c.consultationPlan.title,
-      start: new Date(c.preferredDateTime || ""),
-      end: new Date(
-        new Date(c.preferredDateTime || "").getTime() + 60 * 60 * 1000,
-      ), // 1 hour duration
-      type: "Consultation" as const,
-      status: c.requestStatus,
-      consultant: c.consultationPlan.consultantProfile?.user?.name || "Unknown",
-    })),
-    ...subscriptions.map((s) => ({
-      title: s.subscriptionPlan.title,
-      start: new Date(s.startDate || ""),
-      end: new Date(s.endDate || ""),
-      type: "Subscription" as const,
-      status: s.requestStatus,
-      consultant: s.subscriptionPlan.consultantProfile?.user?.name || "Unknown",
-    })),
-    ...webinars.map((w) => ({
-      title: w.webinarPlan.title,
-      start: new Date(w.scheduledAt || ""),
-      end: new Date(w.endAt || ""),
-      type: "Webinar" as const,
-      status: w.status,
-      consultant: w.webinarPlan.consultantProfile?.user?.name || "Unknown",
-    })),
-    ...classes.map((c) => ({
-      title: c.classPlan.title,
-      start: new Date(c.startDate || ""),
-      end: new Date(c.endDate || ""),
-      type: "Class" as const,
-      status: c.status,
-      consultant: c.classPlan.consultantProfile?.user?.name || "Unknown",
-    })),
-  ].filter((event) => !isNaN(event.start.getTime()));
+  // Generate unique colors for each subscription
+  const subscriptionColors = useMemo(() => {
+    const colors: { [key: string]: string } = {};
+    const baseColors = [
+      'bg-blue-100 text-blue-800',
+      'bg-purple-100 text-purple-800',
+      'bg-pink-100 text-pink-800',
+      'bg-indigo-100 text-indigo-800',
+      'bg-cyan-100 text-cyan-800',
+      'bg-teal-100 text-teal-800',
+    ];
+    
+    subscriptions.forEach((s, index) => {
+      colors[s.id] = baseColors[index % baseColors.length];
+    });
+    return colors;
+  }, [subscriptions]);
+
+  const events: Event[] = useMemo(() => [
+    ...consultations.map((c) => {
+      const dateStr = typeof c.preferredDateTime === 'string' ? c.preferredDateTime : c.preferredDateTime?.toString() || "";
+      const localTime = convertUTCToZoneTime(dateStr, Intl.DateTimeFormat().resolvedOptions().timeZone);
+      return {
+        id: c.id,
+        title: c.consultationPlan.title,
+        start: c.preferredDateTime ? new Date(c.preferredDateTime) : new Date(),
+        end: c.preferredDateTime ? new Date(new Date(c.preferredDateTime).getTime() + 60 * 60 * 1000) : new Date(),
+        type: "Consultation" as const,
+        status: c.requestStatus,
+        consultant: c.consultationPlan.consultantProfile?.user?.name || "Unknown",
+        subscriptionId: null,
+        time: localTime?.split(' ')[1] || '',
+      };
+    }),
+    ...subscriptions.flatMap((s) => {
+      const appointments = (s as any).appointments as TAppointment[] || [];
+      return appointments.map((appointment) => {
+        const startTimeStr = typeof appointment.slotsOfAppointment[0]?.slotStartTimeInUTC === 'string' 
+          ? appointment.slotsOfAppointment[0].slotStartTimeInUTC 
+          : appointment.slotsOfAppointment[0]?.slotStartTimeInUTC?.toString() || "";
+        const localTime = convertUTCToZoneTime(startTimeStr, Intl.DateTimeFormat().resolvedOptions().timeZone);
+        return {
+          id: appointment.id,
+          title: s.subscriptionPlan.title,
+          start: new Date(startTimeStr || new Date()),
+          end: new Date(appointment.slotsOfAppointment[0]?.slotEndTimeInUTC || new Date()),
+          type: "Subscription" as const,
+          status: s.requestStatus,
+          consultant: s.subscriptionPlan.consultantProfile?.user?.name || "Unknown",
+          subscriptionId: s.id,
+          time: localTime?.split(' ')[1] || '',
+        };
+      });
+    }),
+    ...webinars.map((w) => {
+      const localTime = convertUTCToZoneTime(
+        typeof w.scheduledAt === 'string' ? w.scheduledAt : w.scheduledAt?.toString() || "", 
+        Intl.DateTimeFormat().resolvedOptions().timeZone
+      );
+      return {
+        id: w.id,
+        title: w.webinarPlan.title,
+        start: w.scheduledAt ? new Date(w.scheduledAt) : new Date(),
+        end: w.endAt ? new Date(w.endAt) : new Date(),
+        type: "Webinar" as const,
+        status: w.status,
+        consultant: w.webinarPlan.consultantProfile?.user?.name || "Unknown",
+        time: localTime?.split(' ')[1] || '',
+      };
+    }),
+    ...classes.map((c) => {
+      const localTime = convertUTCToZoneTime(
+        typeof c.startDate === 'string' ? c.startDate : c.startDate?.toString() || "", 
+        Intl.DateTimeFormat().resolvedOptions().timeZone
+      );
+      return {
+        id: c.id,
+        title: c.classPlan.title,
+        start: c.startDate ? new Date(c.startDate) : new Date(),
+        end: c.endDate ? new Date(c.endDate) : new Date(),
+        type: "Class" as const,
+        status: c.status,
+        consultant: c.classPlan.consultantProfile?.user?.name || "Unknown",
+        time: localTime?.split(' ')[1] || '',
+      };
+    }),
+  ].filter((event) => !isNaN(event.start.getTime())), [consultations, subscriptions, webinars, classes]);
 
   const daysInMonth = new Date(
     currentDate.getFullYear(),
@@ -108,8 +163,12 @@ export function Calendar({
     });
   };
 
-  const getStatusColor = (status: string) => {
-    const statusLower = status.toLowerCase();
+  const getEventColor = (event: Event) => {
+    if (event.type === "Subscription" && event.subscriptionId) {
+      return subscriptionColors[event.subscriptionId];
+    }
+    
+    const statusLower = event.status.toLowerCase();
     if (statusLower === "completed") return "bg-green-100 text-green-800";
     if (statusLower === "rejected") return "bg-red-100 text-red-800";
     if (statusLower === "pending") return "bg-yellow-100 text-yellow-800";
@@ -171,10 +230,10 @@ export function Calendar({
                   {dayEvents.map((event, index) => (
                     <div
                       key={index}
-                      className={`text-xs p-1 rounded truncate ${getStatusColor(event.status)}`}
-                      title={`${event.title} - ${event.consultant}`}
+                      className={`text-xs p-1 rounded truncate ${getEventColor(event)}`}
+                      title={`${event.title} - ${event.consultant} - ${event.time}`}
                     >
-                      {event.title}
+                      {event.title} - {event.time}
                     </div>
                   ))}
                 </div>

@@ -30,7 +30,7 @@ interface HomeTabProps {
   consulteeId: string;
 }
 
-export default function HomeTab({ userDetails, consulteeId }: HomeTabProps) {
+export default function HomeTab({ userDetails, consulteeId }: Readonly<HomeTabProps>) {
   const { consultations, subscriptions, webinars, classes, isLoading, error } =
     useEvents(consulteeId);
   const carouselRef = useRef<HTMLDivElement>(null);
