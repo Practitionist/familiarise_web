@@ -20,6 +20,8 @@ import {
   isEventJoinable,
   getMonthlyEvents,
   getUpcomingSlots,
+  getEventStatus,
+  getStatusColor,
 } from "../utils";
 
 interface HomeTabProps {
@@ -125,9 +127,9 @@ export default function HomeTab({
           className="flex overflow-x-auto gap-4 pb-4 scrollbar-hide scroll-smooth"
           style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
         >
-          {upcomingSlots.map((slot, index) => (
+          {upcomingSlots.map((slot) => (
             <div
-              key={`${slot.event.id}-${index}`}
+              key={`${slot.event.id}-${slot.slotTime.getTime()}`}
               className="flex-none w-[300px]"
             >
               <SlotCard event={slot.event} slotTime={slot.slotTime} />
@@ -170,8 +172,12 @@ export default function HomeTab({
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {monthlyEvents.map(({ event, slots }, index) => (
-            <MonthlyEventCard key={index} event={event} slots={slots} />
+          {monthlyEvents.map(({ event, slots }) => (
+            <MonthlyEventCard
+              key={`${event.id}-${slots[0]?.getTime()}`}
+              event={event}
+              slots={slots}
+            />
           ))}
           {monthlyEvents.length === 0 && (
             <div className="col-span-2 text-center py-8 bg-white rounded-lg border border-dashed border-gray-200">
@@ -187,15 +193,27 @@ export default function HomeTab({
 function SlotCard({
   event,
   slotTime,
-}: {
+}: Readonly<{
   event: EventWithType;
   slotTime: Date;
-}) {
+}>) {
   const now = new Date();
   const diffInMinutes = Math.floor(
     (slotTime.getTime() - now.getTime()) / 60000,
   );
   const isJoinable = diffInMinutes <= 10 && diffInMinutes > -30;
+  const status = getEventStatus(event);
+
+  const handleClick = () => {
+    console.log("SlotCard clicked:", {
+      id: event.id,
+      title: getEventTitle(event),
+      type: event.type,
+      status,
+      consultant: getConsultantName(event),
+      time: slotTime,
+    });
+  };
 
   return (
     <motion.div
@@ -204,9 +222,98 @@ function SlotCard({
       transition={{ delay: 0.1 }}
       className="group h-full"
     >
-      <Card className="hover:shadow-md transition-shadow duration-200 border border-gray-100 h-full">
-        <CardHeader className="pb-2">
-          <div className="flex items-start justify-between">
+      <button onClick={handleClick} className="w-full text-left">
+        <Card className="hover:shadow-md transition-shadow duration-200 border border-gray-100 h-full">
+          <CardHeader className="pb-2">
+            <div className="flex items-start justify-between">
+              <div>
+                <CardTitle className="text-lg font-semibold">
+                  {getEventTitle(event)}
+                </CardTitle>
+                <div className="flex items-center mt-2">
+                  <Avatar className="h-6 w-6 mr-2">
+                    <AvatarImage
+                      src={getConsultantImage(event) ?? "/placeholder.svg"}
+                      alt="Consultant"
+                    />
+                    <AvatarFallback>
+                      {getConsultantInitial(event)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="text-sm text-gray-600">
+                    {getConsultantName(event)}
+                  </span>
+                </div>
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                <Badge
+                  className={`${
+                    isJoinable
+                      ? "bg-green-100 text-green-800"
+                      : "bg-blue-100 text-blue-800"
+                  }`}
+                >
+                  {isJoinable ? "Join Now" : formatTimeUntil(diffInMinutes)}
+                </Badge>
+                <Badge className={getStatusColor(status)}>{status}</Badge>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-600">
+                  {slotTime.toLocaleString(undefined, {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+                <span className="text-sm font-medium text-gray-500 bg-gray-50 px-2 py-1 rounded">
+                  {event.type}
+                </span>
+              </div>
+              {isJoinable && (
+                <Button className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white">
+                  Join Meeting
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </button>
+    </motion.div>
+  );
+}
+
+function MonthlyEventCard({
+  event,
+  slots,
+}: Readonly<{
+  event: EventWithType;
+  slots: Date[];
+}>) {
+  const status = getEventStatus(event);
+
+  const handleClick = () => {
+    console.log("MonthlyEventCard clicked:", {
+      id: event.id,
+      title: getEventTitle(event),
+      type: event.type,
+      status,
+      consultant: getConsultantName(event),
+      slots,
+    });
+  };
+
+  return (
+    <button onClick={handleClick} className="w-full text-left">
+      <Card className="hover:shadow-md transition-shadow duration-200">
+        <CardHeader>
+          <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-lg font-semibold">
                 {getEventTitle(event)}
@@ -214,7 +321,7 @@ function SlotCard({
               <div className="flex items-center mt-2">
                 <Avatar className="h-6 w-6 mr-2">
                   <AvatarImage
-                    src={getConsultantImage(event) || "/placeholder.svg"}
+                    src={getConsultantImage(event) ?? "/placeholder.svg"}
                     alt="Consultant"
                   />
                   <AvatarFallback>{getConsultantInitial(event)}</AvatarFallback>
@@ -224,107 +331,43 @@ function SlotCard({
                 </span>
               </div>
             </div>
-            <Badge
-              className={`ml-2 ${
-                isJoinable
-                  ? "bg-green-100 text-green-800"
-                  : "bg-blue-100 text-blue-800"
-              }`}
-            >
-              {isJoinable ? "Join Now" : formatTimeUntil(diffInMinutes)}
-            </Badge>
+            <div className="flex flex-col items-end gap-1">
+              <Badge
+                className={`${
+                  event.type === "Subscription"
+                    ? "bg-purple-100 text-purple-800"
+                    : "bg-indigo-100 text-indigo-800"
+                }`}
+              >
+                {event.type}
+              </Badge>
+              <Badge className={getStatusColor(status)}>{status}</Badge>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-col space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-600">
-                {slotTime.toLocaleString(undefined, {
-                  weekday: "short",
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </span>
-              <span className="text-sm font-medium text-gray-500 bg-gray-50 px-2 py-1 rounded">
-                {event.type}
-              </span>
-            </div>
-            {isJoinable && (
-              <Button className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white">
-                Join Meeting
-              </Button>
-            )}
+          <div className="space-y-2">
+            {slots.map((slot) => (
+              <div
+                key={slot.getTime()}
+                className="text-sm text-gray-600 flex justify-between items-center"
+              >
+                <span>
+                  {slot.toLocaleString(undefined, {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </span>
+                <span className="font-medium">
+                  {slot.toLocaleString(undefined, { timeStyle: "short" })}
+                </span>
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>
-    </motion.div>
-  );
-}
-
-function MonthlyEventCard({
-  event,
-  slots,
-}: {
-  event: EventWithType;
-  slots: Date[];
-}) {
-  return (
-    <Card className="hover:shadow-md transition-shadow duration-200">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="text-lg font-semibold">
-              {getEventTitle(event)}
-            </CardTitle>
-            <div className="flex items-center mt-2">
-              <Avatar className="h-6 w-6 mr-2">
-                <AvatarImage
-                  src={getConsultantImage(event) || "/placeholder.svg"}
-                  alt="Consultant"
-                />
-                <AvatarFallback>{getConsultantInitial(event)}</AvatarFallback>
-              </Avatar>
-              <span className="text-sm text-gray-600">
-                {getConsultantName(event)}
-              </span>
-            </div>
-          </div>
-          <Badge
-            className={`${
-              event.type === "Subscription"
-                ? "bg-purple-100 text-purple-800"
-                : "bg-indigo-100 text-indigo-800"
-            }`}
-          >
-            {event.type}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-2">
-          {slots.map((slot, index) => (
-            <div
-              key={index}
-              className="text-sm text-gray-600 flex justify-between items-center"
-            >
-              <span>
-                {slot.toLocaleString(undefined, {
-                  weekday: "short",
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </span>
-              <span className="font-medium">
-                {slot.toLocaleString(undefined, { timeStyle: "short" })}
-              </span>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
+    </button>
   );
 }

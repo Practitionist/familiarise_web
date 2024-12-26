@@ -192,6 +192,27 @@ export function getRecurringEvents(events: EventWithType[]): EventWithType[] {
   return events.filter(isRecurringEvent);
 }
 
+export function getEventStatus(event: EventWithType): string {
+  switch (event.type) {
+    case "Consultation":
+      return event.requestStatus;
+    case "Subscription":
+      return event.requestStatus;
+    case "Webinar":
+      return event.status;
+    case "Class":
+      return event.status;
+  }
+}
+
+export function getStatusColor(status: string): string {
+  const statusLower = status.toLowerCase();
+  if (statusLower === "completed") return "bg-green-50 text-green-700";
+  if (statusLower === "rejected") return "bg-red-50 text-red-700";
+  if (statusLower === "pending") return "bg-yellow-50 text-yellow-700";
+  return "bg-gray-50 text-gray-700";
+}
+
 export function sortEventsByNextSlot(events: EventWithType[]): EventWithType[] {
   return [...events].sort((a, b) => {
     const timeA = getNextSlotTime(a);

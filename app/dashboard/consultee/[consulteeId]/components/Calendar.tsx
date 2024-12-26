@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
-import { convertUTCToZoneTime } from "@/lib/datetimetz";
+import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ArrowLeftIcon, ArrowRightIcon } from "@/assets/icons";
@@ -11,7 +10,7 @@ import {
   WebinarWithPlan,
   ClassWithPlan,
 } from "@/hooks/useEvents";
-import { TAppointment } from "@/types/appointment";
+import { getStatusColor } from "../utils";
 
 interface CalendarProps {
   consultations: ConsultationWithPlan[];
@@ -21,7 +20,7 @@ interface CalendarProps {
 }
 
 type Event = {
-  id?: string;
+  id: string;
   title: string;
   start: Date;
   end: Date;
@@ -43,12 +42,12 @@ export function Calendar({
   subscriptions,
   webinars,
   classes,
-}: CalendarProps) {
+}: Readonly<CalendarProps>) {
   const [currentDate, setCurrentDate] = useState(new Date());
 
   // Generate unique colors for each subscription
-  const { subscriptionColors, typeColors } = useMemo(() => {
-    const subColors: { [key: string]: string } = {};
+  const subscriptionColors = React.useMemo(() => {
+    const colors: { [key: string]: string } = {};
     const baseColors = [
       "bg-blue-200 text-blue-900",
       "bg-purple-200 text-purple-900",
@@ -59,88 +58,54 @@ export function Calendar({
     ];
 
     subscriptions.forEach((s, index) => {
-      subColors[s.id] = baseColors[index % baseColors.length];
+      colors[s.id] = baseColors[index % baseColors.length];
     });
-
-    return {
-      subscriptionColors: subColors,
-      typeColors: {
-        Consultation: "bg-orange-200 text-orange-900",
-        Subscription: "bg-gray-200 text-gray-900", // Fallback color for subscriptions without ID
-        Webinar: "bg-emerald-200 text-emerald-900",
-        Class: "bg-violet-200 text-violet-900",
-      } as Record<Event["type"], string>,
-    };
+    return colors;
   }, [subscriptions]);
 
-  const events: Event[] = useMemo(
+  const events: Event[] = React.useMemo(
     () =>
       [
-        ...consultations.map((c) => {
-          const dateStr =
-            typeof c.preferredDateTime === "string"
-              ? c.preferredDateTime
-              : (c.preferredDateTime?.toString() ?? "");
-          const localTime = convertUTCToZoneTime(
-            dateStr,
-            Intl.DateTimeFormat().resolvedOptions().timeZone,
-          );
-          const timeStr = localTime?.split(" ")[1];
-          const [hours, minutes] = (timeStr ?? "").split(":");
-          const ampm = hours && parseInt(hours) >= 12 ? "PM" : "AM";
-          const formattedHours = hours ? parseInt(hours) % 12 || 12 : "";
-          const formattedTime = timeStr
-            ? `${formattedHours}:${minutes} ${ampm}`
-            : "";
-          return {
-            id: c.id,
-            title: c.consultationPlan.title,
-            start: c.preferredDateTime
-              ? new Date(c.preferredDateTime)
-              : new Date(),
-            end: c.preferredDateTime
-              ? new Date(
-                  new Date(c.preferredDateTime).getTime() + 60 * 60 * 1000,
-                )
-              : new Date(),
-            type: "Consultation" as const,
-            status: c.requestStatus,
-            consultant:
-              c.consultationPlan.consultantProfile?.user?.name ?? "Unknown",
-            subscriptionId: null,
-            time: formattedTime,
-          };
-        }),
+        ...consultations.map((c) => ({
+          id: c.id,
+          title: c.consultationPlan.title,
+          start: new Date(c.preferredDateTime || ""),
+          end: new Date(
+            new Date(c.preferredDateTime || "").getTime() + 60 * 60 * 1000,
+          ),
+          type: "Consultation" as const,
+          status: c.requestStatus,
+          consultant:
+            c.consultationPlan.consultantProfile?.user?.name || "Unknown",
+          subscriptionId: null,
+          time: new Date(c.preferredDateTime || "").toLocaleTimeString(
+            undefined,
+            {
+              hour: "2-digit",
+              minute: "2-digit",
+            },
+          ),
+        })),
         ...subscriptions.flatMap((s) => {
           try {
             const schedule: ScheduleSlot[] = s.tentativeSchedule
               ? JSON.parse(s.tentativeSchedule)
               : [];
-            return schedule.map((slot) => {
-              const localTime = convertUTCToZoneTime(
-                slot.startTime,
-                Intl.DateTimeFormat().resolvedOptions().timeZone,
-              );
-              const timeStr = localTime?.split(" ")[1];
-              const [hours, minutes] = (timeStr ?? "").split(":");
-              const ampm = hours && parseInt(hours) >= 12 ? "PM" : "AM";
-              const formattedHours = hours ? parseInt(hours) % 12 || 12 : "";
-              const formattedTime = timeStr
-                ? `${formattedHours}:${minutes} ${ampm}`
-                : "";
-              return {
-                id: `${s.id}-${slot.startTime}`,
-                title: s.subscriptionPlan.title,
-                start: new Date(slot.startTime),
-                end: new Date(slot.endTime),
-                type: "Subscription" as const,
-                status: s.requestStatus,
-                consultant:
-                  s.subscriptionPlan.consultantProfile?.user?.name ?? "Unknown",
-                subscriptionId: s.id,
-                time: formattedTime,
-              };
-            });
+            return schedule.map((slot) => ({
+              id: `${s.id}-${slot.startTime}`,
+              title: s.subscriptionPlan.title,
+              start: new Date(slot.startTime),
+              end: new Date(slot.endTime),
+              type: "Subscription" as const,
+              status: s.requestStatus,
+              consultant:
+                s.subscriptionPlan.consultantProfile?.user?.name || "Unknown",
+              subscriptionId: s.id,
+              time: new Date(slot.startTime).toLocaleTimeString(undefined, {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            }));
           } catch (e) {
             console.error("Error parsing subscription schedule:", e);
             return [];
@@ -151,88 +116,53 @@ export function Calendar({
             const schedule: ScheduleSlot[] = c.tentativeSchedule
               ? JSON.parse(c.tentativeSchedule)
               : [];
-            return schedule.map((slot) => {
-              const localTime = convertUTCToZoneTime(
-                slot.startTime,
-                Intl.DateTimeFormat().resolvedOptions().timeZone,
-              );
-              const timeStr = localTime?.split(" ")[1];
-              const [hours, minutes] = (timeStr ?? "").split(":");
-              const ampm = hours && parseInt(hours) >= 12 ? "PM" : "AM";
-              const formattedHours = hours ? parseInt(hours) % 12 || 12 : "";
-              const formattedTime = timeStr
-                ? `${formattedHours}:${minutes} ${ampm}`
-                : "";
-              return {
-                id: `${c.id}-${slot.startTime}`,
-                title: c.classPlan.title,
-                start: new Date(slot.startTime),
-                end: new Date(slot.endTime),
-                type: "Class" as const,
-                status: c.status,
-                consultant:
-                  c.classPlan.consultantProfile?.user?.name ?? "Unknown",
-                time: formattedTime,
-              };
-            });
+            return schedule.map((slot) => ({
+              id: `${c.id}-${slot.startTime}`,
+              title: c.classPlan.title,
+              start: new Date(slot.startTime),
+              end: new Date(slot.endTime),
+              type: "Class" as const,
+              status: c.status,
+              consultant:
+                c.classPlan.consultantProfile?.user?.name || "Unknown",
+              time: new Date(slot.startTime).toLocaleTimeString(undefined, {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            }));
           } catch (e) {
             console.error("Error parsing class schedule:", e);
             return [];
           }
         }),
-        ...webinars.map((w) => {
-          const localTime = convertUTCToZoneTime(
-            typeof w.scheduledAt === "string"
-              ? w.scheduledAt
-              : w.scheduledAt?.toString() || "",
-            Intl.DateTimeFormat().resolvedOptions().timeZone,
-          );
-          const timeStr = localTime?.split(" ")[1];
-          const [hours, minutes] = (timeStr ?? "").split(":");
-          const ampm = hours && parseInt(hours) >= 12 ? "PM" : "AM";
-          const formattedHours = hours ? parseInt(hours) % 12 || 12 : "";
-          const formattedTime = timeStr
-            ? `${formattedHours}:${minutes} ${ampm}`
-            : "";
-          return {
-            id: w.id,
-            title: w.webinarPlan.title,
-            start: w.scheduledAt ? new Date(w.scheduledAt) : new Date(),
-            end: w.endAt ? new Date(w.endAt) : new Date(),
-            type: "Webinar" as const,
-            status: w.status,
-            consultant:
-              w.webinarPlan.consultantProfile?.user?.name ?? "Unknown",
-            time: formattedTime,
-          };
-        }),
-      ].filter((event) => !isNaN(event.start.getTime())),
+        ...webinars.map((w) => ({
+          id: w.id,
+          title: w.webinarPlan.title,
+          start: new Date(w.scheduledAt || ""),
+          end: new Date(w.endAt || ""),
+          type: "Webinar" as const,
+          status: w.status,
+          consultant: w.webinarPlan.consultantProfile?.user?.name || "Unknown",
+          time: new Date(w.scheduledAt || "").toLocaleTimeString(undefined, {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        })),
+      ].filter((event) => {
+        const startTime = event.start.getTime();
+        if (isNaN(startTime)) {
+          console.log("Invalid date for event:", event.title);
+          return false;
+        }
+        // Skip dates from 1970 (Unix epoch)
+        if (event.start.getFullYear() === 1970) {
+          console.log("Skipping 1970 date for event:", event.title);
+          return false;
+        }
+        return true;
+      }),
     [consultations, subscriptions, webinars, classes],
   );
-
-  const daysInMonth = new Date(
-    currentDate.getFullYear(),
-    currentDate.getMonth() + 1,
-    0,
-  ).getDate();
-
-  const firstDayOfMonth = new Date(
-    currentDate.getFullYear(),
-    currentDate.getMonth(),
-    1,
-  ).getDay();
-
-  const goToPreviousMonth = () => {
-    setCurrentDate(
-      new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1),
-    );
-  };
-
-  const goToNextMonth = () => {
-    setCurrentDate(
-      new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1),
-    );
-  };
 
   const getEventsForDay = (day: number) => {
     return events.filter((event) => {
@@ -249,8 +179,19 @@ export function Calendar({
     if (event.type === "Subscription" && event.subscriptionId) {
       return subscriptionColors[event.subscriptionId];
     }
+    return getStatusColor(event.status);
+  };
 
-    return typeColors[event.type] || "bg-gray-200 text-gray-900";
+  const handleEventClick = (event: Event) => {
+    console.log("Calendar event clicked:", {
+      id: event.id,
+      title: event.title,
+      type: event.type,
+      status: event.status,
+      consultant: event.consultant,
+      start: event.start,
+      end: event.end,
+    });
   };
 
   return (
@@ -266,7 +207,15 @@ export function Calendar({
           <Button
             variant="outline"
             size="icon"
-            onClick={goToPreviousMonth}
+            onClick={() =>
+              setCurrentDate(
+                new Date(
+                  currentDate.getFullYear(),
+                  currentDate.getMonth() - 1,
+                  1,
+                ),
+              )
+            }
             className="rounded-full"
           >
             <ArrowLeftIcon className="h-4 w-4" />
@@ -274,7 +223,15 @@ export function Calendar({
           <Button
             variant="outline"
             size="icon"
-            onClick={goToNextMonth}
+            onClick={() =>
+              setCurrentDate(
+                new Date(
+                  currentDate.getFullYear(),
+                  currentDate.getMonth() + 1,
+                  1,
+                ),
+              )
+            }
             className="rounded-full"
           >
             <ArrowRightIcon className="h-4 w-4" />
@@ -290,13 +247,27 @@ export function Calendar({
             </div>
           ))}
           {Array.from({ length: 42 }, (_, i) => {
-            const dayNumber = i - firstDayOfMonth + 1;
-            const isCurrentMonth = dayNumber > 0 && dayNumber <= daysInMonth;
+            const dayNumber =
+              i -
+              new Date(
+                currentDate.getFullYear(),
+                currentDate.getMonth(),
+                1,
+              ).getDay() +
+              1;
+            const isCurrentMonth =
+              dayNumber > 0 &&
+              dayNumber <=
+                new Date(
+                  currentDate.getFullYear(),
+                  currentDate.getMonth() + 1,
+                  0,
+                ).getDate();
             const dayEvents = isCurrentMonth ? getEventsForDay(dayNumber) : [];
 
             return (
               <div
-                key={i}
+                key={`day-${i}`}
                 className={`min-h-[100px] p-2 bg-white ${
                   isCurrentMonth ? "" : "text-gray-400"
                 }`}
@@ -305,17 +276,23 @@ export function Calendar({
                   {isCurrentMonth ? dayNumber : ""}
                 </div>
                 <div className="space-y-1">
-                  {dayEvents.map((event, index) => (
-                    <div
-                      key={index}
-                      className={`text-xs p-1.5 rounded truncate font-medium ${getEventColor(event)}`}
-                      title={`${event.title} - ${event.consultant} - ${event.time}`}
+                  {dayEvents.map((event) => (
+                    <button
+                      key={event.id}
+                      onClick={() => handleEventClick(event)}
+                      className={`w-full text-left text-xs p-1.5 rounded truncate font-medium hover:opacity-80 focus:ring-2 focus:ring-offset-1 focus:outline-none ${getEventColor(event)}`}
+                      title={`${event.title} - ${event.consultant} - ${event.time} - ${event.status}`}
                     >
                       <div className="flex justify-between items-center">
-                        <span>{event.title}</span>
+                        <div className="flex flex-col">
+                          <span>{event.title}</span>
+                          <span className="text-xs opacity-75">
+                            {event.status}
+                          </span>
+                        </div>
                         <span className="font-bold">{event.time}</span>
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
