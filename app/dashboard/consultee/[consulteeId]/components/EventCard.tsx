@@ -12,6 +12,11 @@ interface EventCardProps {
   date: string;
   status?: string;
   image?: string | null;
+  slots?: Array<{
+    startTime: string;
+    endTime?: string;
+  }>;
+  type?: "Subscription" | "Class" | "Consultation" | "Webinar";
 }
 
 export function EventCard({
@@ -20,7 +25,9 @@ export function EventCard({
   date,
   status,
   image,
-}: EventCardProps) {
+  slots,
+  type,
+}: Readonly<EventCardProps>) {
   const getStatusColor = (status: string) => {
     const statusLower = status.toLowerCase();
     if (statusLower === "completed")
@@ -64,11 +71,35 @@ export function EventCard({
         </CardHeader>
         <CardContent>
           <div className="flex flex-col space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
+            {slots ? (
+              <div className="space-y-2">
+                <div className="text-sm font-medium text-gray-700">
+                  {type === "Subscription" ? "Scheduled Sessions" : "Session Times"}:
+                </div>
+                {slots.map((slot, index) => (
+                  <div key={index} className="flex items-center justify-between bg-gray-50 p-2 rounded">
+                    <span className="text-sm text-gray-600">
+                      {new Date(slot.startTime).toLocaleDateString(undefined, {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric'
+                      })}
+                    </span>
+                    <span className="text-sm font-medium text-gray-700">
+                      {new Date(slot.startTime).toLocaleTimeString(undefined, {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: true
+                      })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">{date}</span>
               </div>
-            </div>
+            )}
           </div>
         </CardContent>
       </Card>

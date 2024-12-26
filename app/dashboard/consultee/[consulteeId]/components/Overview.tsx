@@ -8,12 +8,35 @@ import {
   ClassWithPlan,
 } from "@/hooks/useEvents";
 import { EventCard } from "./EventCard";
+import { convertUTCToZoneTime } from "@/lib/datetimetz";
 
 interface OverviewProps {
   consultations: ConsultationWithPlan[];
   subscriptions: SubscriptionWithPlan[];
   webinars: WebinarWithPlan[];
   classes: ClassWithPlan[];
+}
+
+interface SlotInfo {
+  startTime: string;
+  endTime: string;
+  timezone: string;
+}
+
+function parseSchedule(schedule: string | null): SlotInfo[] {
+  if (!schedule) return [];
+  try {
+    return JSON.parse(schedule);
+  } catch (e) {
+    console.error('Error parsing schedule:', e);
+    return [];
+  }
+}
+
+function formatDate(date: Date | string | null | undefined): string {
+  if (!date) return '';
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  return dateObj.toISOString();
 }
 
 export function Overview({
@@ -35,7 +58,12 @@ export function Overview({
             ? new Date(consultation.preferredDateTime).toLocaleString()
             : "Unknown Date",
           image: consultation.consultationPlan.consultantProfile?.user?.image,
-          status: consultation.requestStatus,
+          status: consultation.requestStatus.toString(),
+          type: "Consultation" as const,
+          slots: consultation.preferredDateTime ? [{
+            startTime: formatDate(consultation.preferredDateTime),
+            endTime: formatDate(new Date(new Date(consultation.preferredDateTime).getTime() + 60 * 60 * 1000))
+          }] : undefined
         }))}
       />
       <DashboardCard
@@ -49,7 +77,9 @@ export function Overview({
             ? new Date(subscription.startDate).toLocaleString()
             : "Unknown Date",
           image: subscription.subscriptionPlan.consultantProfile?.user?.image,
-          status: subscription.requestStatus,
+          status: subscription.requestStatus.toString(),
+          type: "Subscription" as const,
+          slots: parseSchedule(subscription.tentativeSchedule)
         }))}
       />
       <DashboardCard
@@ -63,7 +93,9 @@ export function Overview({
             ? new Date(classItem.startDate).toLocaleString()
             : "Unknown Date",
           image: classItem.classPlan.consultantProfile?.user?.image,
-          status: classItem.status,
+          status: classItem.status.toString(),
+          type: "Class" as const,
+          slots: parseSchedule(classItem.tentativeSchedule)
         }))}
       />
       <DashboardCard
@@ -77,7 +109,12 @@ export function Overview({
             ? new Date(webinar.scheduledAt).toLocaleString()
             : "Unknown Date",
           image: webinar.webinarPlan.consultantProfile?.user?.image,
-          status: webinar.status,
+          status: webinar.status.toString(),
+          type: "Webinar" as const,
+          slots: webinar.scheduledAt ? [{
+            startTime: formatDate(webinar.scheduledAt),
+            endTime: formatDate(webinar.endAt)
+          }] : undefined
         }))}
       />
     </div>
@@ -92,6 +129,11 @@ interface DashboardCardProps {
     consultant: string;
     status?: string;
     image?: string | null;
+    type: "Subscription" | "Class" | "Consultation" | "Webinar";
+    slots?: Array<{
+      startTime: string;
+      endTime?: string;
+    }>;
   }[];
 }
 
