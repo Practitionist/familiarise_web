@@ -80,13 +80,13 @@ export function Calendar({
           const dateStr =
             typeof c.preferredDateTime === "string"
               ? c.preferredDateTime
-              : c.preferredDateTime?.toString() || "";
+              : (c.preferredDateTime?.toString() ?? "");
           const localTime = convertUTCToZoneTime(
             dateStr,
             Intl.DateTimeFormat().resolvedOptions().timeZone,
           );
           const timeStr = localTime?.split(" ")[1];
-          const [hours, minutes] = (timeStr || "").split(":");
+          const [hours, minutes] = (timeStr ?? "").split(":");
           const ampm = hours && parseInt(hours) >= 12 ? "PM" : "AM";
           const formattedHours = hours ? parseInt(hours) % 12 || 12 : "";
           const formattedTime = timeStr
@@ -106,7 +106,7 @@ export function Calendar({
             type: "Consultation" as const,
             status: c.requestStatus,
             consultant:
-              c.consultationPlan.consultantProfile?.user?.name || "Unknown",
+              c.consultationPlan.consultantProfile?.user?.name ?? "Unknown",
             subscriptionId: null,
             time: formattedTime,
           };
@@ -122,7 +122,7 @@ export function Calendar({
                 Intl.DateTimeFormat().resolvedOptions().timeZone,
               );
               const timeStr = localTime?.split(" ")[1];
-              const [hours, minutes] = (timeStr || "").split(":");
+              const [hours, minutes] = (timeStr ?? "").split(":");
               const ampm = hours && parseInt(hours) >= 12 ? "PM" : "AM";
               const formattedHours = hours ? parseInt(hours) % 12 || 12 : "";
               const formattedTime = timeStr
@@ -136,7 +136,7 @@ export function Calendar({
                 type: "Subscription" as const,
                 status: s.requestStatus,
                 consultant:
-                  s.subscriptionPlan.consultantProfile?.user?.name || "Unknown",
+                  s.subscriptionPlan.consultantProfile?.user?.name ?? "Unknown",
                 subscriptionId: s.id,
                 time: formattedTime,
               };
@@ -157,7 +157,7 @@ export function Calendar({
                 Intl.DateTimeFormat().resolvedOptions().timeZone,
               );
               const timeStr = localTime?.split(" ")[1];
-              const [hours, minutes] = (timeStr || "").split(":");
+              const [hours, minutes] = (timeStr ?? "").split(":");
               const ampm = hours && parseInt(hours) >= 12 ? "PM" : "AM";
               const formattedHours = hours ? parseInt(hours) % 12 || 12 : "";
               const formattedTime = timeStr
@@ -171,7 +171,7 @@ export function Calendar({
                 type: "Class" as const,
                 status: c.status,
                 consultant:
-                  c.classPlan.consultantProfile?.user?.name || "Unknown",
+                  c.classPlan.consultantProfile?.user?.name ?? "Unknown",
                 time: formattedTime,
               };
             });
@@ -188,7 +188,7 @@ export function Calendar({
             Intl.DateTimeFormat().resolvedOptions().timeZone,
           );
           const timeStr = localTime?.split(" ")[1];
-          const [hours, minutes] = (timeStr || "").split(":");
+          const [hours, minutes] = (timeStr ?? "").split(":");
           const ampm = hours && parseInt(hours) >= 12 ? "PM" : "AM";
           const formattedHours = hours ? parseInt(hours) % 12 || 12 : "";
           const formattedTime = timeStr
@@ -202,7 +202,7 @@ export function Calendar({
             type: "Webinar" as const,
             status: w.status,
             consultant:
-              w.webinarPlan.consultantProfile?.user?.name || "Unknown",
+              w.webinarPlan.consultantProfile?.user?.name ?? "Unknown",
             time: formattedTime,
           };
         }),

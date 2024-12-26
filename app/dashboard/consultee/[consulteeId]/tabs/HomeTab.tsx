@@ -62,7 +62,7 @@ export default function HomeTab({
 
   // Get chronological slots for top row
   const upcomingSlots = getUpcomingSlots(allEvents);
-  
+
   // Get monthly grouped events for bottom row
   const monthlyEvents = getMonthlyEvents(allEvents, currentMonth);
 
@@ -80,11 +80,15 @@ export default function HomeTab({
   };
 
   const goToPreviousMonth = () => {
-    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
+    setCurrentMonth(
+      new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1),
+    );
   };
 
   const goToNextMonth = () => {
-    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+    setCurrentMonth(
+      new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1),
+    );
   };
 
   return (
@@ -122,7 +126,10 @@ export default function HomeTab({
           style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
         >
           {upcomingSlots.map((slot, index) => (
-            <div key={`${slot.event.id}-${index}`} className="flex-none w-[300px]">
+            <div
+              key={`${slot.event.id}-${index}`}
+              className="flex-none w-[300px]"
+            >
               <SlotCard event={slot.event} slotTime={slot.slotTime} />
             </div>
           ))}
@@ -138,7 +145,10 @@ export default function HomeTab({
       <div>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-2xl font-semibold">
-            {currentMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}
+            {currentMonth.toLocaleString("default", {
+              month: "long",
+              year: "numeric",
+            })}
           </h2>
           <div className="flex gap-2">
             <Button
@@ -174,7 +184,13 @@ export default function HomeTab({
   );
 }
 
-function SlotCard({ event, slotTime }: { event: EventWithType; slotTime: Date }) {
+function SlotCard({
+  event,
+  slotTime,
+}: {
+  event: EventWithType;
+  slotTime: Date;
+}) {
   const now = new Date();
   const diffInMinutes = Math.floor(
     (slotTime.getTime() - now.getTime()) / 60000,
@@ -224,8 +240,12 @@ function SlotCard({ event, slotTime }: { event: EventWithType; slotTime: Date })
             <div className="flex items-center justify-between">
               <span className="text-sm text-gray-600">
                 {slotTime.toLocaleString(undefined, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
                 })}
               </span>
               <span className="text-sm font-medium text-gray-500 bg-gray-50 px-2 py-1 rounded">
@@ -244,7 +264,13 @@ function SlotCard({ event, slotTime }: { event: EventWithType; slotTime: Date })
   );
 }
 
-function MonthlyEventCard({ event, slots }: { event: EventWithType; slots: Date[] }) {
+function MonthlyEventCard({
+  event,
+  slots,
+}: {
+  event: EventWithType;
+  slots: Date[];
+}) {
   return (
     <Card className="hover:shadow-md transition-shadow duration-200">
       <CardHeader>
@@ -280,8 +306,18 @@ function MonthlyEventCard({ event, slots }: { event: EventWithType; slots: Date[
       <CardContent>
         <div className="space-y-2">
           {slots.map((slot, index) => (
-            <div key={index} className="text-sm text-gray-600 flex justify-between items-center">
-              <span>{slot.toLocaleString(undefined, { dateStyle: "medium" })}</span>
+            <div
+              key={index}
+              className="text-sm text-gray-600 flex justify-between items-center"
+            >
+              <span>
+                {slot.toLocaleString(undefined, {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </span>
               <span className="font-medium">
                 {slot.toLocaleString(undefined, { timeStyle: "short" })}
               </span>

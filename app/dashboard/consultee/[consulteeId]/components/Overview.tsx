@@ -2,13 +2,12 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  ClassWithPlan,
   ConsultationWithPlan,
   SubscriptionWithPlan,
   WebinarWithPlan,
-  ClassWithPlan,
 } from "@/hooks/useEvents";
 import { EventCard } from "./EventCard";
-import { convertUTCToZoneTime } from "@/lib/datetimetz";
 
 interface OverviewProps {
   consultations: ConsultationWithPlan[];
@@ -28,14 +27,14 @@ function parseSchedule(schedule: string | null): SlotInfo[] {
   try {
     return JSON.parse(schedule);
   } catch (e) {
-    console.error('Error parsing schedule:', e);
+    console.error("Error parsing schedule:", e);
     return [];
   }
 }
 
 function formatDate(date: Date | string | null | undefined): string {
-  if (!date) return '';
-  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  if (!date) return "";
+  const dateObj = typeof date === "string" ? new Date(date) : date;
   return dateObj.toISOString();
 }
 
@@ -44,7 +43,7 @@ export function Overview({
   subscriptions,
   webinars,
   classes,
-}: OverviewProps) {
+}: Readonly<OverviewProps>) {
   return (
     <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-4">
       <DashboardCard
@@ -52,18 +51,37 @@ export function Overview({
         items={consultations.map((consultation) => ({
           title: consultation.consultationPlan.title,
           consultant:
-            consultation.consultationPlan.consultantProfile?.user?.name ||
+            consultation.consultationPlan.consultantProfile?.user?.name ??
             "Unknown Consultant",
           date: consultation.preferredDateTime
-            ? new Date(consultation.preferredDateTime).toLocaleString()
+            ? new Date(consultation.preferredDateTime).toLocaleString(
+                undefined,
+                {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                },
+              )
             : "Unknown Date",
           image: consultation.consultationPlan.consultantProfile?.user?.image,
           status: consultation.requestStatus.toString(),
           type: "Consultation" as const,
-          slots: consultation.preferredDateTime ? [{
-            startTime: formatDate(consultation.preferredDateTime),
-            endTime: formatDate(new Date(new Date(consultation.preferredDateTime).getTime() + 60 * 60 * 1000))
-          }] : undefined
+          slots: consultation.preferredDateTime
+            ? [
+                {
+                  startTime: formatDate(consultation.preferredDateTime),
+                  endTime: formatDate(
+                    new Date(
+                      new Date(consultation.preferredDateTime).getTime() +
+                        60 * 60 * 1000,
+                    ),
+                  ),
+                },
+              ]
+            : undefined,
         }))}
       />
       <DashboardCard
@@ -71,15 +89,22 @@ export function Overview({
         items={subscriptions.map((subscription) => ({
           title: subscription.subscriptionPlan.title,
           consultant:
-            subscription.subscriptionPlan.consultantProfile?.user?.name ||
+            subscription.subscriptionPlan.consultantProfile?.user?.name ??
             "Unknown Consultant",
           date: subscription.startDate
-            ? new Date(subscription.startDate).toLocaleString()
+            ? new Date(subscription.startDate).toLocaleString(undefined, {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })
             : "Unknown Date",
           image: subscription.subscriptionPlan.consultantProfile?.user?.image,
           status: subscription.requestStatus.toString(),
           type: "Subscription" as const,
-          slots: parseSchedule(subscription.tentativeSchedule)
+          slots: parseSchedule(subscription.tentativeSchedule),
         }))}
       />
       <DashboardCard
@@ -87,15 +112,22 @@ export function Overview({
         items={classes.map((classItem) => ({
           title: classItem.classPlan.title,
           consultant:
-            classItem.classPlan.consultantProfile?.user?.name ||
+            classItem.classPlan.consultantProfile?.user?.name ??
             "Unknown Consultant",
           date: classItem.startDate
-            ? new Date(classItem.startDate).toLocaleString()
+            ? new Date(classItem.startDate).toLocaleString(undefined, {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })
             : "Unknown Date",
           image: classItem.classPlan.consultantProfile?.user?.image,
           status: classItem.status.toString(),
           type: "Class" as const,
-          slots: parseSchedule(classItem.tentativeSchedule)
+          slots: parseSchedule(classItem.tentativeSchedule),
         }))}
       />
       <DashboardCard
@@ -103,18 +135,29 @@ export function Overview({
         items={webinars.map((webinar) => ({
           title: webinar.webinarPlan.title,
           consultant:
-            webinar.webinarPlan.consultantProfile?.user?.name ||
+            webinar.webinarPlan.consultantProfile?.user?.name ??
             "Unknown Consultant",
           date: webinar.scheduledAt
-            ? new Date(webinar.scheduledAt).toLocaleString()
+            ? new Date(webinar.scheduledAt).toLocaleString(undefined, {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })
             : "Unknown Date",
           image: webinar.webinarPlan.consultantProfile?.user?.image,
           status: webinar.status.toString(),
           type: "Webinar" as const,
-          slots: webinar.scheduledAt ? [{
-            startTime: formatDate(webinar.scheduledAt),
-            endTime: formatDate(webinar.endAt)
-          }] : undefined
+          slots: webinar.scheduledAt
+            ? [
+                {
+                  startTime: formatDate(webinar.scheduledAt),
+                  endTime: formatDate(webinar.endAt),
+                },
+              ]
+            : undefined,
         }))}
       />
     </div>
@@ -137,7 +180,7 @@ interface DashboardCardProps {
   }[];
 }
 
-function DashboardCard({ title, items }: DashboardCardProps) {
+function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
   return (
     <Card className="bg-white">
       <CardHeader className="bg-white">

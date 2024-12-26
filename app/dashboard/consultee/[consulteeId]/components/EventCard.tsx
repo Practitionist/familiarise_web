@@ -54,7 +54,7 @@ export function EventCard({
               <div className="flex items-center mt-2">
                 <Avatar className="h-6 w-6 mr-2">
                   <AvatarImage
-                    src={image || "/placeholder.svg"}
+                    src={image ?? "/placeholder.svg"}
                     alt={consultant}
                   />
                   <AvatarFallback>{consultant.charAt(0)}</AvatarFallback>
@@ -74,22 +74,29 @@ export function EventCard({
             {slots ? (
               <div className="space-y-2">
                 <div className="text-sm font-medium text-gray-700">
-                  {type === "Subscription" ? "Scheduled Sessions" : "Session Times"}:
+                  {type === "Subscription"
+                    ? "Scheduled Sessions"
+                    : "Session Times"}
+                  :
                 </div>
                 {slots.map((slot, index) => (
-                  <div key={index} className="flex items-center justify-between bg-gray-50 p-2 rounded">
+                  <div
+                    key={index}
+                    className="flex items-center justify-between bg-gray-50 p-2 rounded"
+                  >
                     <span className="text-sm text-gray-600">
                       {new Date(slot.startTime).toLocaleDateString(undefined, {
-                        weekday: 'short',
-                        month: 'short',
-                        day: 'numeric'
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
                       })}
                     </span>
                     <span className="text-sm font-medium text-gray-700">
                       {new Date(slot.startTime).toLocaleTimeString(undefined, {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: true
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        hour12: true,
                       })}
                     </span>
                   </div>

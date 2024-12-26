@@ -5,13 +5,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useEvents } from "@/hooks/useEvents";
 import { Overview } from "../components/Overview";
 import { Calendar } from "../components/Calendar";
-import { Upcoming } from "../components/Upcoming";
 
 export default function AppointmentsTab({
   consulteeId,
-}: {
+}: Readonly<{
   consulteeId: string;
-}) {
+}>) {
   const { consultations, subscriptions, webinars, classes, isLoading, error } =
     useEvents(consulteeId);
 
@@ -70,18 +69,12 @@ export default function AppointmentsTab({
     <div className="space-y-8 min-h-[calc(100vh-200px)]">
       <h2 className="text-3xl font-bold">Consultee Appointments</h2>
       <Tabs defaultValue="overview" className="space-y-8">
-        <TabsList className="grid w-full grid-cols-3 lg:w-[400px] rounded-lg overflow-hidden">
+        <TabsList className="grid w-full grid-cols-2 lg:w-[400px] rounded-lg overflow-hidden">
           <TabsTrigger
             value="overview"
             className="data-[state=active]:bg-black data-[state=active]:text-white border-t border-l border-b rounded-tl-lg rounded-bl-lg"
           >
             Overview
-          </TabsTrigger>
-          <TabsTrigger
-            value="upcoming"
-            className="data-[state=active]:bg-black data-[state=active]:text-white border-t border-b"
-          >
-            Upcoming
           </TabsTrigger>
           <TabsTrigger
             value="calendar"
@@ -92,14 +85,6 @@ export default function AppointmentsTab({
         </TabsList>
         <TabsContent value="overview" className="space-y-8 rounded-lg">
           <Overview
-            consultations={consultations}
-            subscriptions={subscriptions}
-            webinars={webinars}
-            classes={classes}
-          />
-        </TabsContent>
-        <TabsContent value="upcoming" className="space-y-8 rounded-lg">
-          <Upcoming
             consultations={consultations}
             subscriptions={subscriptions}
             webinars={webinars}

@@ -23,18 +23,22 @@ export function getAllSlots(event: EventWithType): Date[] {
       return event.preferredDateTime ? [new Date(event.preferredDateTime)] : [];
     case "Subscription":
       try {
-        const schedule: SlotInfo[] = event.tentativeSchedule ? JSON.parse(event.tentativeSchedule) : [];
-        return schedule.map(slot => new Date(slot.startTime));
+        const schedule: SlotInfo[] = event.tentativeSchedule
+          ? JSON.parse(event.tentativeSchedule)
+          : [];
+        return schedule.map((slot) => new Date(slot.startTime));
       } catch (e) {
-        console.error('Error parsing subscription schedule:', e);
+        console.error("Error parsing subscription schedule:", e);
         return [];
       }
     case "Class":
       try {
-        const schedule: SlotInfo[] = event.tentativeSchedule ? JSON.parse(event.tentativeSchedule) : [];
-        return schedule.map(slot => new Date(slot.startTime));
+        const schedule: SlotInfo[] = event.tentativeSchedule
+          ? JSON.parse(event.tentativeSchedule)
+          : [];
+        return schedule.map((slot) => new Date(slot.startTime));
       } catch (e) {
-        console.error('Error parsing class schedule:', e);
+        console.error("Error parsing class schedule:", e);
         return [];
       }
     case "Webinar":
@@ -47,7 +51,7 @@ export function getAllSlots(event: EventWithType): Date[] {
 export function getNextSlotTime(event: EventWithType): Date {
   const now = Date.now();
   const slots = getAllSlots(event);
-  const futureSlots = slots.filter(slot => slot.getTime() > now);
+  const futureSlots = slots.filter((slot) => slot.getTime() > now);
   return futureSlots.length > 0 ? futureSlots[0] : new Date(now);
 }
 
@@ -151,30 +155,37 @@ export function isRecurringEvent(event: EventWithType): boolean {
   return event.type === "Subscription" || event.type === "Class";
 }
 
-export function getUpcomingSlots(events: EventWithType[]): Array<{ event: EventWithType; slotTime: Date }> {
+export function getUpcomingSlots(
+  events: EventWithType[],
+): Array<{ event: EventWithType; slotTime: Date }> {
   const now = new Date();
-  const allSlots = events.flatMap(event => 
-    getAllSlots(event).map(slotTime => ({
+  const allSlots = events.flatMap((event) =>
+    getAllSlots(event).map((slotTime) => ({
       event,
-      slotTime
-    }))
+      slotTime,
+    })),
   );
-  
+
   return allSlots
     .filter(({ slotTime }) => slotTime > now)
     .sort((a, b) => a.slotTime.getTime() - b.slotTime.getTime());
 }
 
-export function getMonthlyEvents(events: EventWithType[], month: Date): Array<{ event: EventWithType; slots: Date[] }> {
+export function getMonthlyEvents(
+  events: EventWithType[],
+  month: Date,
+): Array<{ event: EventWithType; slots: Date[] }> {
   const startOfMonth = new Date(month.getFullYear(), month.getMonth(), 1);
   const endOfMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0);
-  
-  return events.map(event => ({
-    event,
-    slots: getAllSlots(event).filter(slot => 
-      slot >= startOfMonth && slot <= endOfMonth
-    )
-  })).filter(({ slots }) => slots.length > 0);
+
+  return events
+    .map((event) => ({
+      event,
+      slots: getAllSlots(event).filter(
+        (slot) => slot >= startOfMonth && slot <= endOfMonth,
+      ),
+    }))
+    .filter(({ slots }) => slots.length > 0);
 }
 
 export function getRecurringEvents(events: EventWithType[]): EventWithType[] {
