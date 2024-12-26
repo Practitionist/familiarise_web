@@ -56,14 +56,22 @@ export function getNextSlotTime(event: EventWithType): Date {
 }
 
 export function formatTimeUntil(minutes: number): string {
+  if (minutes <= 0) {
+    return "Now";
+  }
   if (minutes < 60) {
-    return `In ${minutes} min`;
+    return `${minutes} min${minutes !== 1 ? 's' : ''} away`;
   }
   const hours = Math.floor(minutes / 60);
+  const remainingMins = minutes % 60;
   if (hours < 24) {
-    return `In ${hours} hr${hours > 1 ? "s" : ""}`;
+    if (remainingMins === 0) {
+      return `${hours} hr${hours > 1 ? 's' : ''} away`;
+    }
+    return `${hours} hr${hours > 1 ? 's' : ''} ${remainingMins} min${remainingMins !== 1 ? 's' : ''} away`;
   }
-  return "Upcoming";
+  const days = Math.floor(hours / 24);
+  return `${days} day${days > 1 ? 's' : ''} away`;
 }
 
 export function getEventTitle(event: EventWithType): string {

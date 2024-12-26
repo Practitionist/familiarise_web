@@ -216,18 +216,29 @@ function SlotCard({
   const diffInMinutes = Math.floor(
     (slotTime.getTime() - now.getTime()) / 60000,
   );
-  const isJoinable = diffInMinutes <= 10 && diffInMinutes > -30;
+  const isJoinable = diffInMinutes <= 10 && diffInMinutes >= 0;
   const status = getEventStatus(event);
 
-  const handleClick = () => {
-    console.log('SlotCard clicked:', {
+  const handleJoinMeeting = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    console.log('Joining meeting:', {
       id: event.id,
       title: getEventTitle(event),
-      type: event.type,
-      status,
-      consultant: getConsultantName(event),
-      time: slotTime
+      type: event.type
     });
+  };
+
+  const handleClick = () => {
+    if (!isJoinable) {
+      console.log('SlotCard clicked:', {
+        id: event.id,
+        title: getEventTitle(event),
+        type: event.type,
+        status,
+        consultant: getConsultantName(event),
+        time: slotTime
+      });
+    }
   };
 
   return (
@@ -237,9 +248,9 @@ function SlotCard({
       transition={{ delay: 0.1 }}
       className="group h-full"
     >
-      <button
+      <div 
         onClick={handleClick}
-        className="w-full text-left"
+        className="w-full text-left cursor-pointer"
       >
         <Card className="hover:shadow-md transition-shadow duration-200 border border-gray-100 h-full">
           <CardHeader className="p-6">
@@ -262,17 +273,17 @@ function SlotCard({
                 </div>
               </div>
               <div className="flex flex-col items-end gap-2">
+                <Badge className={getStatusColor(status)}>
+                  {status}
+                </Badge>
                 <Badge
                   className={`${
                     isJoinable
-                      ? "bg-green-100 text-green-800"
+                      ? "bg-green-100 text-green-800 animate-pulse"
                       : "bg-blue-100 text-blue-800"
-                  }`}
+                  } text-sm font-medium`}
                 >
-                  {isJoinable ? "Join Now" : formatTimeUntil(diffInMinutes)}
-                </Badge>
-                <Badge className={getStatusColor(status)}>
-                  {status}
+                  {isJoinable ? "Starting Soon!" : formatTimeUntil(diffInMinutes)}
                 </Badge>
               </div>
             </div>
@@ -295,14 +306,17 @@ function SlotCard({
                 </span>
               </div>
               {isJoinable && (
-                <Button className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white">
-                  Join Meeting
+                <Button 
+                  onClick={handleJoinMeeting}
+                  className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white font-semibold animate-pulse"
+                >
+                  Join Meeting Now
                 </Button>
               )}
             </div>
           </CardContent>
         </Card>
-      </button>
+      </div>
     </motion.div>
   );
 }
@@ -328,9 +342,9 @@ function MonthlyEventCard({
   };
 
   return (
-    <button
+    <div
       onClick={handleClick}
-      className="w-full text-left"
+      className="w-full text-left cursor-pointer"
     >
       <Card className="hover:shadow-md transition-shadow duration-200">
         <CardHeader className="p-6">
@@ -391,6 +405,6 @@ function MonthlyEventCard({
           </div>
         </CardContent>
       </Card>
-    </button>
+    </div>
   );
 }
