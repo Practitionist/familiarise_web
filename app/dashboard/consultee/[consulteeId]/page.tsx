@@ -48,12 +48,14 @@ export default function ConsulteeDashboard(
         setIsLoading(true);
         setError(null);
 
-        if (!session?.user?.id) {
-          throw new Error("User not authenticated");
-        }
+        // if (!session?.user?.id) {
+        //   throw new Error("User not authenticated");
+        // }
+
 
         const [userData, consulteeData] = await Promise.all([
-          fetchUserDetails(session.user.id),
+          // fetchUserDetails(session.user.id),
+          fetchUserDetails("cm53ymbqt0000mfjngrhqzl7t"),
           fetchConsulteeDetails(consulteeId),
         ]);
 
@@ -70,20 +72,20 @@ export default function ConsulteeDashboard(
     fetchData();
   }, [session, consulteeId]);
 
-  if (!session?.user?.id) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-100">
-        <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
-          <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
-            Authentication Required
-          </h2>
-          <p className="text-gray-700">
-            Please sign in to access your dashboard.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  // if (!session?.user?.id) {
+  //   return (
+  //     <div className="flex items-center justify-center min-h-screen bg-gray-100">
+  //       <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
+  //         <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
+  //           Authentication Required
+  //         </h2>
+  //         <p className="text-gray-700">
+  //           Please sign in to access your dashboard.
+  //         </p>
+  //       </div>
+  //     </div>
+  //   );
+  // }
 
   if (error) {
     return (

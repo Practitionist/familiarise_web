@@ -32,6 +32,12 @@ type Event = {
   time?: string;
 };
 
+interface ScheduleSlot {
+  startTime: string;
+  endTime: string;
+  timezone: string;
+}
+
 export function Calendar({
   consultations,
   subscriptions,
@@ -75,24 +81,47 @@ export function Calendar({
       };
     }),
     ...subscriptions.flatMap((s) => {
-      const appointments = (s as any).appointments as TAppointment[] || [];
-      return appointments.map((appointment) => {
-        const startTimeStr = typeof appointment.slotsOfAppointment[0]?.slotStartTimeInUTC === 'string' 
-          ? appointment.slotsOfAppointment[0].slotStartTimeInUTC 
-          : appointment.slotsOfAppointment[0]?.slotStartTimeInUTC?.toString() || "";
-        const localTime = convertUTCToZoneTime(startTimeStr, Intl.DateTimeFormat().resolvedOptions().timeZone);
-        return {
-          id: appointment.id,
-          title: s.subscriptionPlan.title,
-          start: new Date(startTimeStr || new Date()),
-          end: new Date(appointment.slotsOfAppointment[0]?.slotEndTimeInUTC || new Date()),
-          type: "Subscription" as const,
-          status: s.requestStatus,
-          consultant: s.subscriptionPlan.consultantProfile?.user?.name || "Unknown",
-          subscriptionId: s.id,
-          time: localTime?.split(' ')[1] || '',
-        };
-      });
+      try {
+        const schedule: ScheduleSlot[] = s.tentativeSchedule ? JSON.parse(s.tentativeSchedule) : [];
+        return schedule.map((slot) => {
+          const localTime = convertUTCToZoneTime(slot.startTime, Intl.DateTimeFormat().resolvedOptions().timeZone);
+          return {
+            id: `${s.id}-${slot.startTime}`,
+            title: s.subscriptionPlan.title,
+            start: new Date(slot.startTime),
+            end: new Date(slot.endTime),
+            type: "Subscription" as const,
+            status: s.requestStatus,
+            consultant: s.subscriptionPlan.consultantProfile?.user?.name || "Unknown",
+            subscriptionId: s.id,
+            time: localTime?.split(' ')[1] || '',
+          };
+        });
+      } catch (e) {
+        console.error('Error parsing subscription schedule:', e);
+        return [];
+      }
+    }),
+    ...classes.flatMap((c) => {
+      try {
+        const schedule: ScheduleSlot[] = c.tentativeSchedule ? JSON.parse(c.tentativeSchedule) : [];
+        return schedule.map((slot) => {
+          const localTime = convertUTCToZoneTime(slot.startTime, Intl.DateTimeFormat().resolvedOptions().timeZone);
+          return {
+            id: `${c.id}-${slot.startTime}`,
+            title: c.classPlan.title,
+            start: new Date(slot.startTime),
+            end: new Date(slot.endTime),
+            type: "Class" as const,
+            status: c.status,
+            consultant: c.classPlan.consultantProfile?.user?.name || "Unknown",
+            time: localTime?.split(' ')[1] || '',
+          };
+        });
+      } catch (e) {
+        console.error('Error parsing class schedule:', e);
+        return [];
+      }
     }),
     ...webinars.map((w) => {
       const localTime = convertUTCToZoneTime(
@@ -107,22 +136,6 @@ export function Calendar({
         type: "Webinar" as const,
         status: w.status,
         consultant: w.webinarPlan.consultantProfile?.user?.name || "Unknown",
-        time: localTime?.split(' ')[1] || '',
-      };
-    }),
-    ...classes.map((c) => {
-      const localTime = convertUTCToZoneTime(
-        typeof c.startDate === 'string' ? c.startDate : c.startDate?.toString() || "", 
-        Intl.DateTimeFormat().resolvedOptions().timeZone
-      );
-      return {
-        id: c.id,
-        title: c.classPlan.title,
-        start: c.startDate ? new Date(c.startDate) : new Date(),
-        end: c.endDate ? new Date(c.endDate) : new Date(),
-        type: "Class" as const,
-        status: c.status,
-        consultant: c.classPlan.consultantProfile?.user?.name || "Unknown",
         time: localTime?.split(' ')[1] || '',
       };
     }),
