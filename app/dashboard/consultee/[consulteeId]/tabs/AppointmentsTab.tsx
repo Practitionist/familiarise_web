@@ -5,12 +5,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useEvents } from "@/hooks/useEvents";
 import { Overview } from "../components/Overview";
 import { Calendar } from "../components/Calendar";
+import { motion } from "framer-motion";
 
 export default function AppointmentsTab({
   consulteeId,
-}: Readonly<{
+}: {
   consulteeId: string;
-}>) {
+}) {
   const { consultations, subscriptions, webinars, classes, isLoading, error } =
     useEvents(consulteeId);
 
@@ -39,7 +40,11 @@ export default function AppointmentsTab({
     !classes.length
   ) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-gray-50 rounded-lg">
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-white rounded-xl shadow-sm"
+      >
         <div className="w-16 h-16 mb-4 text-gray-400">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -58,48 +63,62 @@ export default function AppointmentsTab({
         <h3 className="text-xl font-semibold text-gray-900 mb-2">
           No Appointments Found
         </h3>
-        <p className="text-gray-500 text-center">
-          You don't have any appointments scheduled at the moment.
+        <p className="text-gray-500 text-center max-w-md">
+          You don't have any appointments scheduled at the moment. Book a session to get started on your learning journey.
         </p>
-      </div>
+      </motion.div>
     );
   }
 
   return (
     <div className="space-y-8 min-h-[calc(100vh-200px)]">
-      <h2 className="text-3xl font-bold">Consultee Appointments</h2>
-      <Tabs defaultValue="overview" className="space-y-8">
-        <TabsList className="grid w-full grid-cols-2 lg:w-[400px] rounded-lg overflow-hidden">
-          <TabsTrigger
-            value="overview"
-            className="data-[state=active]:bg-black data-[state=active]:text-white border-t border-l border-b rounded-tl-lg rounded-bl-lg"
-          >
-            Overview
-          </TabsTrigger>
-          <TabsTrigger
-            value="calendar"
-            className="data-[state=active]:bg-black data-[state=active]:text-white border-t border-r border-b rounded-tr-lg rounded-br-lg"
-          >
-            Calendar
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="overview" className="space-y-8 rounded-lg">
-          <Overview
-            consultations={consultations}
-            subscriptions={subscriptions}
-            webinars={webinars}
-            classes={classes}
-          />
-        </TabsContent>
-        <TabsContent value="calendar" className="space-y-8 rounded-lg">
-          <Calendar
-            consultations={consultations}
-            subscriptions={subscriptions}
-            webinars={webinars}
-            classes={classes}
-          />
-        </TabsContent>
-      </Tabs>
+      <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100">
+        <h2 className="text-3xl font-bold text-gray-900 mb-2">
+          Consultee Appointments
+        </h2>
+        <p className="text-gray-600">
+          Manage and track all your scheduled sessions
+        </p>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+        <Tabs defaultValue="overview" className="w-full">
+          <div className="px-8 pt-6 border-b border-gray-100">
+            <TabsList className="inline-flex h-10 items-center justify-center rounded-lg bg-gray-100 p-1 text-gray-500">
+              <TabsTrigger
+                value="overview"
+                className="inline-flex items-center justify-center whitespace-nowrap rounded-md px-6 py-2 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-white data-[state=active]:text-gray-950 data-[state=active]:shadow-sm"
+              >
+                Overview
+              </TabsTrigger>
+              <TabsTrigger
+                value="calendar"
+                className="inline-flex items-center justify-center whitespace-nowrap rounded-md px-6 py-2 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-white data-[state=active]:text-gray-950 data-[state=active]:shadow-sm"
+              >
+                Calendar
+              </TabsTrigger>
+            </TabsList>
+          </div>
+          <div className="p-8">
+            <TabsContent value="overview" className="mt-0 space-y-8">
+              <Overview
+                consultations={consultations}
+                subscriptions={subscriptions}
+                webinars={webinars}
+                classes={classes}
+              />
+            </TabsContent>
+            <TabsContent value="calendar" className="mt-0">
+              <Calendar
+                consultations={consultations}
+                subscriptions={subscriptions}
+                webinars={webinars}
+                classes={classes}
+              />
+            </TabsContent>
+          </div>
+        </Tabs>
+      </div>
     </div>
   );
 }

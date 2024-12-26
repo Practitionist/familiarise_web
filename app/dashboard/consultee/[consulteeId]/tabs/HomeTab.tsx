@@ -21,8 +21,9 @@ import {
   getMonthlyEvents,
   getUpcomingSlots,
   getEventStatus,
-  getStatusColor,
+  getStatusColor
 } from "../utils";
+import { Advertisement } from "../components/Advertisement";
 
 interface HomeTabProps {
   userDetails: User | null;
@@ -95,14 +96,20 @@ export default function HomeTab({
 
   return (
     <div className="space-y-8 min-h-[calc(100vh-200px)] p-6 bg-gray-50">
-      <h2 className="text-4xl font-bold text-gray-900">
-        Welcome, {userDetails.name}
-      </h2>
+      {/* Welcome Section */}
+      <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100">
+        <h2 className="text-3xl font-bold text-gray-900">
+          Welcome back, {userDetails.name}
+        </h2>
+        <p className="mt-2 text-gray-600">
+          Here's what's coming up in your learning journey
+        </p>
+      </div>
 
       {/* Top Row - Chronological Slots */}
-      <div className="relative">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-semibold">Upcoming Sessions</h2>
+      <div className="relative bg-white rounded-xl p-8 shadow-sm border border-gray-100">
+        <div className="flex justify-between items-center mb-8">
+          <h2 className="text-xl font-semibold text-gray-900">Upcoming Sessions</h2>
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -124,66 +131,74 @@ export default function HomeTab({
         </div>
         <div
           ref={carouselRef}
-          className="flex overflow-x-auto gap-4 pb-4 scrollbar-hide scroll-smooth"
+          className="flex overflow-x-auto gap-6 pb-4 scrollbar-hide scroll-smooth"
           style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
         >
           {upcomingSlots.map((slot) => (
             <div
               key={`${slot.event.id}-${slot.slotTime.getTime()}`}
-              className="flex-none w-[300px]"
+              className="flex-none w-[320px]"
             >
               <SlotCard event={slot.event} slotTime={slot.slotTime} />
             </div>
           ))}
           {upcomingSlots.length === 0 && (
-            <div className="w-full text-center py-8">
+            <div className="w-full text-center py-12">
               <p className="text-gray-500">No upcoming sessions</p>
             </div>
           )}
         </div>
       </div>
 
-      {/* Bottom Row - Monthly Events */}
-      <div>
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-semibold">
-            {currentMonth.toLocaleString("default", {
-              month: "long",
-              year: "numeric",
-            })}
-          </h2>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={goToPreviousMonth}
-              className="rounded-full"
-            >
-              <ArrowLeftIcon className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={goToNextMonth}
-              className="rounded-full"
-            >
-              <ArrowRightIcon className="h-4 w-4" />
-            </Button>
+      {/* Bottom Section - Monthly Events and Advertisement */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Monthly Events */}
+        <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100">
+          <div className="flex justify-between items-center mb-8">
+            <h2 className="text-xl font-semibold text-gray-900">
+              {currentMonth.toLocaleString("default", {
+                month: "long",
+                year: "numeric",
+              })}
+            </h2>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={goToPreviousMonth}
+                className="rounded-full"
+              >
+                <ArrowLeftIcon className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={goToNextMonth}
+                className="rounded-full"
+              >
+                <ArrowRightIcon className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+          <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2">
+            {monthlyEvents.map(({ event, slots }) => (
+              <MonthlyEventCard 
+                key={`${event.id}-${slots[0]?.getTime()}`} 
+                event={event} 
+                slots={slots} 
+              />
+            ))}
+            {monthlyEvents.length === 0 && (
+              <div className="text-center py-12 bg-gray-50 rounded-lg border border-dashed border-gray-200">
+                <p className="text-gray-500">No sessions this month</p>
+              </div>
+            )}
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {monthlyEvents.map(({ event, slots }) => (
-            <MonthlyEventCard
-              key={`${event.id}-${slots[0]?.getTime()}`}
-              event={event}
-              slots={slots}
-            />
-          ))}
-          {monthlyEvents.length === 0 && (
-            <div className="col-span-2 text-center py-8 bg-white rounded-lg border border-dashed border-gray-200">
-              <p className="text-gray-500">No sessions this month</p>
-            </div>
-          )}
+
+        {/* Advertisement */}
+        <div className="lg:h-full">
+          <Advertisement />
         </div>
       </div>
     </div>
@@ -205,13 +220,13 @@ function SlotCard({
   const status = getEventStatus(event);
 
   const handleClick = () => {
-    console.log("SlotCard clicked:", {
+    console.log('SlotCard clicked:', {
       id: event.id,
       title: getEventTitle(event),
       type: event.type,
       status,
       consultant: getConsultantName(event),
-      time: slotTime,
+      time: slotTime
     });
   };
 
@@ -222,30 +237,31 @@ function SlotCard({
       transition={{ delay: 0.1 }}
       className="group h-full"
     >
-      <button onClick={handleClick} className="w-full text-left">
+      <button
+        onClick={handleClick}
+        className="w-full text-left"
+      >
         <Card className="hover:shadow-md transition-shadow duration-200 border border-gray-100 h-full">
-          <CardHeader className="pb-2">
+          <CardHeader className="p-6">
             <div className="flex items-start justify-between">
               <div>
                 <CardTitle className="text-lg font-semibold">
                   {getEventTitle(event)}
                 </CardTitle>
-                <div className="flex items-center mt-2">
+                <div className="flex items-center mt-3">
                   <Avatar className="h-6 w-6 mr-2">
                     <AvatarImage
                       src={getConsultantImage(event) ?? "/placeholder.svg"}
                       alt="Consultant"
                     />
-                    <AvatarFallback>
-                      {getConsultantInitial(event)}
-                    </AvatarFallback>
+                    <AvatarFallback>{getConsultantInitial(event)}</AvatarFallback>
                   </Avatar>
                   <span className="text-sm text-gray-600">
                     {getConsultantName(event)}
                   </span>
                 </div>
               </div>
-              <div className="flex flex-col items-end gap-1">
+              <div className="flex flex-col items-end gap-2">
                 <Badge
                   className={`${
                     isJoinable
@@ -255,12 +271,14 @@ function SlotCard({
                 >
                   {isJoinable ? "Join Now" : formatTimeUntil(diffInMinutes)}
                 </Badge>
-                <Badge className={getStatusColor(status)}>{status}</Badge>
+                <Badge className={getStatusColor(status)}>
+                  {status}
+                </Badge>
               </div>
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="flex flex-col space-y-2">
+          <CardContent className="p-6 pt-0">
+            <div className="flex flex-col space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">
                   {slotTime.toLocaleString(undefined, {
@@ -299,26 +317,29 @@ function MonthlyEventCard({
   const status = getEventStatus(event);
 
   const handleClick = () => {
-    console.log("MonthlyEventCard clicked:", {
+    console.log('MonthlyEventCard clicked:', {
       id: event.id,
       title: getEventTitle(event),
       type: event.type,
       status,
       consultant: getConsultantName(event),
-      slots,
+      slots
     });
   };
 
   return (
-    <button onClick={handleClick} className="w-full text-left">
+    <button
+      onClick={handleClick}
+      className="w-full text-left"
+    >
       <Card className="hover:shadow-md transition-shadow duration-200">
-        <CardHeader>
+        <CardHeader className="p-6">
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-lg font-semibold">
                 {getEventTitle(event)}
               </CardTitle>
-              <div className="flex items-center mt-2">
+              <div className="flex items-center mt-3">
                 <Avatar className="h-6 w-6 mr-2">
                   <AvatarImage
                     src={getConsultantImage(event) ?? "/placeholder.svg"}
@@ -331,7 +352,7 @@ function MonthlyEventCard({
                 </span>
               </div>
             </div>
-            <div className="flex flex-col items-end gap-1">
+            <div className="flex flex-col items-end gap-2">
               <Badge
                 className={`${
                   event.type === "Subscription"
@@ -341,16 +362,18 @@ function MonthlyEventCard({
               >
                 {event.type}
               </Badge>
-              <Badge className={getStatusColor(status)}>{status}</Badge>
+              <Badge className={getStatusColor(status)}>
+                {status}
+              </Badge>
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
+        <CardContent className="p-6 pt-0">
+          <div className="space-y-3">
             {slots.map((slot) => (
               <div
                 key={slot.getTime()}
-                className="text-sm text-gray-600 flex justify-between items-center"
+                className="text-sm text-gray-600 flex justify-between items-center bg-gray-50 p-3 rounded"
               >
                 <span>
                   {slot.toLocaleString(undefined, {
