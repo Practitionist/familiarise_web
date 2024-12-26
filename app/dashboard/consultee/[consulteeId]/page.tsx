@@ -52,7 +52,6 @@ export default function ConsulteeDashboard(
         //   throw new Error("User not authenticated");
         // }
 
-
         const [userData, consulteeData] = await Promise.all([
           // fetchUserDetails(session.user.id),
           fetchUserDetails("cm53ymbqt0000mfjngrhqzl7t"),
