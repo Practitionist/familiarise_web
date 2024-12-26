@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
 import { ArrowLeftIcon, ArrowRightIcon } from "@/assets/icons";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,6 @@ import { User } from "@prisma/client";
 import { motion } from "framer-motion";
 import {
   EventWithType,
-  getNextSlotTime,
   formatTimeUntil,
   getEventTitle,
   getConsultantName,
@@ -19,10 +18,8 @@ import {
   getConsultantInitial,
   formatDate,
   isEventJoinable,
-  getEventEndDate,
+  getMonthlyEvents,
   getUpcomingSlots,
-  getRecurringEvents,
-  sortEventsByNextSlot,
 } from "../utils";
 
 interface HomeTabProps {
@@ -36,6 +33,7 @@ export default function HomeTab({
 }: Readonly<HomeTabProps>) {
   const { consultations, subscriptions, webinars, classes, isLoading, error } =
     useEvents(consulteeId);
+  const [currentMonth, setCurrentMonth] = useState(new Date());
   const carouselRef = useRef<HTMLDivElement>(null);
 
   if (!userDetails || isLoading) {
@@ -54,16 +52,19 @@ export default function HomeTab({
     );
   }
 
-  // Combine and sort all events
-  const allEvents: EventWithType[] = sortEventsByNextSlot([
+  // Combine all events
+  const allEvents: EventWithType[] = [
     ...consultations.map((c) => ({ ...c, type: "Consultation" as const })),
     ...webinars.map((w) => ({ ...w, type: "Webinar" as const })),
     ...subscriptions.map((s) => ({ ...s, type: "Subscription" as const })),
     ...classes.map((c) => ({ ...c, type: "Class" as const })),
-  ]);
+  ];
 
+  // Get chronological slots for top row
   const upcomingSlots = getUpcomingSlots(allEvents);
-  const recurringEvents = getRecurringEvents(allEvents);
+  
+  // Get monthly grouped events for bottom row
+  const monthlyEvents = getMonthlyEvents(allEvents, currentMonth);
 
   const scrollCarousel = (direction: "left" | "right") => {
     if (carouselRef.current) {
@@ -78,13 +79,21 @@ export default function HomeTab({
     }
   };
 
+  const goToPreviousMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
+  };
+
+  const goToNextMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+  };
+
   return (
     <div className="space-y-8 min-h-[calc(100vh-200px)] p-6 bg-gray-50">
       <h2 className="text-4xl font-bold text-gray-900">
         Welcome, {userDetails.name}
       </h2>
 
-      {/* Top Row - Upcoming Slots Carousel */}
+      {/* Top Row - Chronological Slots */}
       <div className="relative">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-2xl font-semibold">Upcoming Sessions</h2>
@@ -112,9 +121,9 @@ export default function HomeTab({
           className="flex overflow-x-auto gap-4 pb-4 scrollbar-hide scroll-smooth"
           style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
         >
-          {upcomingSlots.map((event, index) => (
-            <div key={index} className="flex-none w-[300px]">
-              <SlotCard event={event} />
+          {upcomingSlots.map((slot, index) => (
+            <div key={`${slot.event.id}-${index}`} className="flex-none w-[300px]">
+              <SlotCard event={slot.event} slotTime={slot.slotTime} />
             </div>
           ))}
           {upcomingSlots.length === 0 && (
@@ -125,16 +134,38 @@ export default function HomeTab({
         </div>
       </div>
 
-      {/* Bottom Row - Recurring Events */}
+      {/* Bottom Row - Monthly Events */}
       <div>
-        <h2 className="text-2xl font-semibold mb-4">Recurring Sessions</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-2xl font-semibold">
+            {currentMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}
+          </h2>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={goToPreviousMonth}
+              className="rounded-full"
+            >
+              <ArrowLeftIcon className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={goToNextMonth}
+              className="rounded-full"
+            >
+              <ArrowRightIcon className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {recurringEvents.map((event, index) => (
-            <RecurringEventCard key={index} event={event} />
+          {monthlyEvents.map(({ event, slots }, index) => (
+            <MonthlyEventCard key={index} event={event} slots={slots} />
           ))}
-          {recurringEvents.length === 0 && (
+          {monthlyEvents.length === 0 && (
             <div className="col-span-2 text-center py-8 bg-white rounded-lg border border-dashed border-gray-200">
-              <p className="text-gray-500">No recurring sessions</p>
+              <p className="text-gray-500">No sessions this month</p>
             </div>
           )}
         </div>
@@ -143,13 +174,12 @@ export default function HomeTab({
   );
 }
 
-function SlotCard({ event }: { event: EventWithType }) {
-  const slotTime = getNextSlotTime(event);
+function SlotCard({ event, slotTime }: { event: EventWithType; slotTime: Date }) {
   const now = new Date();
   const diffInMinutes = Math.floor(
     (slotTime.getTime() - now.getTime()) / 60000,
   );
-  const isJoinable = isEventJoinable(event);
+  const isJoinable = diffInMinutes <= 10 && diffInMinutes > -30;
 
   return (
     <motion.div
@@ -214,9 +244,7 @@ function SlotCard({ event }: { event: EventWithType }) {
   );
 }
 
-function RecurringEventCard({ event }: { event: EventWithType }) {
-  const endDate = getEventEndDate(event);
-
+function MonthlyEventCard({ event, slots }: { event: EventWithType; slots: Date[] }) {
   return (
     <Card className="hover:shadow-md transition-shadow duration-200">
       <CardHeader>
@@ -250,10 +278,15 @@ function RecurringEventCard({ event }: { event: EventWithType }) {
         </div>
       </CardHeader>
       <CardContent>
-        <div className="text-sm text-gray-600">
-          {event.type === "Subscription"
-            ? `Valid until ${formatDate(endDate)}`
-            : `Ends ${formatDate(endDate)}`}
+        <div className="space-y-2">
+          {slots.map((slot, index) => (
+            <div key={index} className="text-sm text-gray-600 flex justify-between items-center">
+              <span>{slot.toLocaleString(undefined, { dateStyle: "medium" })}</span>
+              <span className="font-medium">
+                {slot.toLocaleString(undefined, { timeStyle: "short" })}
+              </span>
+            </div>
+          ))}
         </div>
       </CardContent>
     </Card>
