@@ -36,6 +36,7 @@ model User {
   staffProfileId      String?            @unique
 
   slotsOfAppointment SlotOfAppointment[]
+  Waitlist           Waitlist[]
 
   accounts Account[] // NextAuth Accounts
   sessions Session[] // NextAuth Sessions
@@ -280,7 +281,7 @@ model SlotOfAvailabilityCustom {
 model SlotOfAppointment {
   id String @id @default(uuid())
 
-  user   User[]
+  user User[]
 
   slotStartTimeInUTC DateTime @db.Timestamptz()
   slotEndTimeInUTC   DateTime @db.Timestamptz()
@@ -429,7 +430,7 @@ model Webinar {
   webinarPlan   WebinarPlan @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   webinarPlanId String
 
-  appointment Appointment[]
+  appointment Appointment?
   meetingRoom MeetingRoom?
 
   createdAt DateTime @default(now())
@@ -472,15 +473,15 @@ model ClassPlan {
 }
 
 model Class {
-  id                  String      @id @default(cuid())
-  startDate           DateTime?
-  endDate             DateTime?
-  status              ClassStatus @default(SCHEDULED)
-  tentativeStartDate  DateTime?
-  tentativeSchedule   String?
-  waitlist            Waitlist[]
-  recordingUrls       String[]
-  feedbackSummary     String?     @db.Text
+  id                 String      @id @default(cuid())
+  startDate          DateTime?
+  endDate            DateTime?
+  status             ClassStatus @default(SCHEDULED)
+  tentativeStartDate DateTime?
+  tentativeSchedule  String?
+  waitlist           Waitlist[]
+  recordingUrls      String[]
+  feedbackSummary    String?     @db.Text
 
   classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
@@ -517,8 +518,8 @@ enum ClassStatus {
 
 // Generic Appointment Model
 model Appointment {
-  id                String              @id @default(uuid())
-  appointmentType   AppointmentsType
+  id                 String              @id @default(uuid())
+  appointmentType    AppointmentsType
   slotsOfAppointment SlotOfAppointment[]
 
   consultation   Consultation? @relation(fields: [consultationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -528,7 +529,7 @@ model Appointment {
   subscriptionId String?
 
   webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  webinarId String?
+  webinarId String?  @unique
 
   class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classId String?
@@ -567,8 +568,10 @@ model Newsletter {
 
 model Waitlist {
   id       String   @id @default(uuid())
-  userId   String
   joinedAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
 
   webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   webinarId String?

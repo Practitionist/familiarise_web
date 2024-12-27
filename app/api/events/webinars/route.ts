@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
+import { WebinarStatus } from "@prisma/client";
 
 export async function GET(request: Request) {
   try {
@@ -16,15 +17,11 @@ export async function GET(request: Request) {
             // Get webinars where consultee is registered through appointments
             {
               appointment: {
-                some: {
-                  slotsOfAppointment: {
-                    some: {
-                      user: {
-                        some: {
-                          consulteeProfile: {
-                            id: consulteeProfileId,
-                          },
-                        },
+                slotsOfAppointment: {
+                  some: {
+                    user: {
+                      some: {
+                        consulteeProfileId: consulteeProfileId,
                       },
                     },
                   },
@@ -81,6 +78,7 @@ export async function GET(request: Request) {
               },
             },
           },
+          meetingRoom: true,
           waitlist: {
             where: {
               userId: consulteeProfileId,
@@ -115,11 +113,12 @@ export async function GET(request: Request) {
             include: {
               slotsOfAppointment: {
                 include: {
-                  user: true, // Changed from consulteeProfile
+                  user: true,
                 },
               },
             },
           },
+          meetingRoom: true,
           waitlist: true,
         },
       });
@@ -136,11 +135,12 @@ export async function GET(request: Request) {
             include: {
               slotsOfAppointment: {
                 include: {
-                  user: true, // Changed from consulteeProfile
+                  user: true,
                 },
               },
             },
           },
+          meetingRoom: true,
           waitlist: true,
         },
       });
@@ -160,11 +160,19 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
 
+    // Validate required fields
+    if (!body.scheduledAt || !body.endAt || !body.webinarPlanId) {
+      return NextResponse.json(
+        { error: "Missing required fields: scheduledAt, endAt, and webinarPlanId are required" },
+        { status: 400 }
+      );
+    }
+
     const webinar = await prisma.webinar.create({
       data: {
         scheduledAt: new Date(body.scheduledAt),
         endAt: new Date(body.endAt),
-        status: body.status,
+        status: body.status || WebinarStatus.SCHEDULED,
         webinarPlan: {
           connect: { id: body.webinarPlanId },
         },
@@ -180,11 +188,12 @@ export async function POST(request: Request) {
           include: {
             slotsOfAppointment: {
               include: {
-                user: true, // Changed from consulteeProfile
+                user: true,
               },
             },
           },
         },
+        meetingRoom: true,
         waitlist: true,
       },
     });

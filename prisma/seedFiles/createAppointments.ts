@@ -96,9 +96,9 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
           slotsOfAppointment: {
             create: {
               user: {
-                connect: {
+                connect: [{
                   id: consultee.id,
-                },
+                }],
               },
               slotStartTimeInUTC,
               slotEndTimeInUTC,
@@ -206,6 +206,20 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
               feedbackSummary: isPastAppointment
                 ? faker.lorem.paragraph()
                 : null,
+              waitlist: isPastAppointment
+                ? undefined
+                : {
+                    create: Array.from(
+                      { length: faker.number.int({ min: 0, max: 5 }) },
+                      () => ({
+                        user: {
+                          connect: {
+                            id: faker.helpers.arrayElement(consultees).id,
+                          },
+                        },
+                      }),
+                    ),
+                  },
               meetingRoom: {
                 create: {
                   platform: faker.helpers.arrayElement(Object.values(Platform)),
@@ -257,6 +271,20 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
               feedbackSummary: isPastAppointment
                 ? faker.lorem.paragraph()
                 : null,
+              waitlist: isPastAppointment
+                ? undefined
+                : {
+                    create: Array.from(
+                      { length: faker.number.int({ min: 0, max: 5 }) },
+                      () => ({
+                        user: {
+                          connect: {
+                            id: faker.helpers.arrayElement(consultees).id,
+                          },
+                        },
+                      }),
+                    ),
+                  },
               meetingRoom: {
                 create: {
                   platform: faker.helpers.arrayElement(Object.values(Platform)),
