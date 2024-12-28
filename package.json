@@ -17,7 +17,15 @@
     "seed": "npx ts-node --project tsconfig.seed.json ./prisma/seed.ts",
     "start": "next start",
     "start-watch": "WATCHPACK_POLLING=true next start",
-    "studio": "prisma studio"
+    "studio": "prisma studio",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "cypress:open": "cypress open",
+    "cypress:run": "cypress run",
+    "e2e": "start-server-and-test dev http://localhost:3000 \"cypress open --e2e\"",
+    "e2e:headless": "start-server-and-test dev http://localhost:3000 \"cypress run --e2e\"",
+    "component": "cypress open --component",
+    "component:headless": "cypress run --component"
   },
   "dependencies": {
     "@faker-js/faker": "^9.3.0",
@@ -55,9 +63,12 @@
     "date-fns-tz": "^3.2.0",
     "dotenv": "^16.4.7",
     "enquirer": "^2.4.1",
+    "eslint-plugin-cypress": "^4.1.0",
     "framer-motion": "^11.13.5",
+    "glob": "^11.0.0",
     "install": "^0.13.0",
     "ioredis": "^5.4.1",
+    "lru-cache": "^11.0.2",
     "lucide-react": "^0.468.0",
     "micromatch": "^4.0.8",
     "next": "15.1.0",
@@ -84,8 +95,10 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.16.0",
-    "@testing-library/jest-dom": "^6.6.2",
-    "@testing-library/react": "^16.0.1", 
+    "@testing-library/cypress": "^10.0.2",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
     "@types/chance": "^1.1.6",
     "@types/jest": "^29.5.14",
     "@types/node": "^22.10.2",
@@ -93,9 +106,8 @@
     "@types/react-dom": "^18.3.1",
     "@types/react-slick": "^0.23.13",
     "@types/uuid": "^10.0.0",
-    "@typescript-eslint/eslint-plugin": "^7.18.0",
-    "@typescript-eslint/parser": "^7.18.0",
     "autoprefixer": "^10.4.20",
+    "cypress": "^13.17.0",
     "eslint": "^9.16.0",
     "eslint-config-next": "^15.1.0",
     "eslint-plugin-react": "^7.37.2",
@@ -104,11 +116,10 @@
     "jest-environment-jsdom": "^29.7.0",
     "postcss": "^8.4.49",
     "prisma": "^6.0.1",
-    "shadcn-ui": "^0.8.0",
+    "start-server-and-test": "^2.0.3",
     "tailwindcss": "^3.4.16",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.2",
-    "typescript-eslint": "^8.18.0",
-    "v0": "^1.0.1"
+    "typescript-eslint": "^8.18.0"
   }
 }
