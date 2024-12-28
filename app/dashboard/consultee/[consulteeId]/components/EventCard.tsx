@@ -7,6 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PencilIcon, XIcon } from "lucide-react";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 
 interface EventCardProps {
   title: string;
@@ -14,7 +20,11 @@ interface EventCardProps {
   date: string;
   status?: string;
   image?: string | null;
-  slots?: Array<{
+  actualSlots?: Array<{
+    startTime: Date;
+    endTime: Date;
+  }>;
+  tentativeSlots?: Array<{
     startTime: string;
     endTime?: string;
   }>;
@@ -28,7 +38,8 @@ export function EventCard({
   date,
   status,
   image,
-  slots,
+  actualSlots,
+  tentativeSlots,
   type,
   isTentative,
 }: Readonly<EventCardProps>) {
@@ -70,7 +81,8 @@ export function EventCard({
       date,
       status,
       type,
-      slots,
+      actualSlots,
+      tentativeSlots,
       isTentative,
     });
   };
@@ -80,6 +92,27 @@ export function EventCard({
     date.includes("Please select") ||
     date === "No slot assigned";
 
+  const showSessionDetails =
+    (type === "Subscription" || type === "Class") &&
+    (actualSlots?.length || tentativeSlots?.length);
+
+  const formatSessionDate = (date: Date | string) => {
+    const d = date instanceof Date ? date : new Date(date);
+    return {
+      date: d.toLocaleDateString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }),
+      time: d.toLocaleTimeString(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      }),
+    };
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -87,113 +120,127 @@ export function EventCard({
       transition={{ delay: 0.1 }}
       className="group h-full"
     >
-      <Card 
-        onClick={handleClick} 
+      <Card
+        onClick={handleClick}
         className="hover:shadow-md transition-shadow duration-200 border border-gray-100 h-full cursor-pointer"
       >
-          <CardHeader className="pb-2">
-            <div className="flex items-start justify-between">
-              <div>
-                <CardTitle className="text-lg font-semibold">{title}</CardTitle>
-                <div className="flex items-center mt-2">
-                  <Avatar className="h-6 w-6 mr-2">
-                    <AvatarImage
-                      src={image ?? "/placeholder.svg"}
-                      alt={consultant}
-                    />
-                    <AvatarFallback>{consultant.charAt(0)}</AvatarFallback>
-                  </Avatar>
-                  <span className="text-sm text-gray-600">{consultant}</span>
-                </div>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                {status && (
-                  <Badge className={`${getStatusColor(status)}`}>
-                    {status}
-                  </Badge>
-                )}
-                {isTentative && (
-                  <Badge className="bg-red-50 text-red-700 border-red-200">
-                    Tentative
-                  </Badge>
-                )}
+        <CardHeader className="pb-2">
+          <div className="flex items-start justify-between">
+            <div>
+              <CardTitle className="text-lg font-semibold">{title}</CardTitle>
+              <div className="flex items-center mt-2">
+                <Avatar className="h-6 w-6 mr-2">
+                  <AvatarImage
+                    src={image ?? "/placeholder.svg"}
+                    alt={consultant}
+                  />
+                  <AvatarFallback>{consultant.charAt(0)}</AvatarFallback>
+                </Avatar>
+                <span className="text-sm text-gray-600">{consultant}</span>
               </div>
             </div>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col space-y-2">
-              {slots ? (
-                <div className="space-y-2">
-                  <div className="text-sm font-medium text-gray-700">
-                    {type === "Subscription"
-                      ? "Scheduled Sessions"
-                      : "Session Times"}
-                    :
-                  </div>
-                  {slots.map((slot) => (
-                    <div
-                      key={`${slot.startTime}-${slot.endTime}`}
-                      className="flex items-center justify-between bg-gray-50 p-2 rounded"
-                    >
-                      <span className="text-sm text-gray-600">
-                        {new Date(slot.startTime).toLocaleDateString(
-                          undefined,
-                          {
-                            weekday: "short",
-                            month: "short",
-                            day: "numeric",
-                            year: "numeric",
-                          },
-                        )}
-                      </span>
-                      <span className="text-sm font-medium text-gray-700">
-                        {new Date(slot.startTime).toLocaleTimeString(
-                          undefined,
-                          {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            hour12: true,
-                          },
-                        )}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">{date}</span>
-                  {isTentative && (
-                    <span className="text-xs text-red-500">
-                      Subject to change
-                    </span>
-                  )}
-                </div>
+            <div className="flex flex-col items-end gap-1">
+              {status && (
+                <Badge className={`${getStatusColor(status)}`}>{status}</Badge>
               )}
-              <div className="flex justify-end gap-2 mt-4">
-                {showEditButton && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleEdit}
-                    className="flex items-center gap-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                  >
-                    <PencilIcon className="h-4 w-4" />
-                    Edit
-                  </Button>
+              {isTentative && (
+                <Badge className="bg-red-50 text-red-700 border-red-200">
+                  Tentative
+                </Badge>
+              )}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col space-y-2">
+            {showSessionDetails ? (
+              <Accordion type="single" collapsible>
+                <AccordionItem value="sessions" className="border-none">
+                  <AccordionTrigger className="py-2 hover:no-underline">
+                    <span className="text-sm font-medium text-gray-700">
+                      {type === "Subscription"
+                        ? "Scheduled Sessions"
+                        : "Class Schedule"}
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <div className="space-y-2">
+                      {actualSlots?.map((slot, index) => {
+                        const { date, time } = formatSessionDate(
+                          slot.startTime,
+                        );
+                        return (
+                          <div
+                            key={index}
+                            className="flex items-center justify-between bg-gray-50 p-2 rounded"
+                          >
+                            <span className="text-sm text-gray-600">
+                              {date}
+                            </span>
+                            <span className="text-sm font-medium text-gray-700">
+                              {time}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {!actualSlots?.length &&
+                        tentativeSlots?.map((slot, index) => {
+                          const { date, time } = formatSessionDate(
+                            slot.startTime,
+                          );
+                          return (
+                            <div
+                              key={index}
+                              className="flex items-center justify-between bg-gray-50 p-2 rounded"
+                            >
+                              <span className="text-sm text-gray-600">
+                                {date}
+                              </span>
+                              <span className="text-sm font-medium text-gray-700">
+                                {time}
+                              </span>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            ) : (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-600">{date}</span>
+                {isTentative && (
+                  <span className="text-xs text-red-500">
+                    Subject to change
+                  </span>
                 )}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 mt-4">
+              {showEditButton && (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleCancel}
-                  className="flex items-center gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
+                  onClick={handleEdit}
+                  className="flex items-center gap-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                 >
-                  <XIcon className="h-4 w-4" />
-                  Cancel
+                  <PencilIcon className="h-4 w-4" />
+                  Edit
                 </Button>
-              </div>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCancel}
+                className="flex items-center gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
+              >
+                <XIcon className="h-4 w-4" />
+                Cancel
+              </Button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </CardContent>
+      </Card>
     </motion.div>
   );
 }

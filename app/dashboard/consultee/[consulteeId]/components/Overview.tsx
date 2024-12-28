@@ -17,6 +17,16 @@ interface OverviewProps {
   classes: ClassWithPlan[];
 }
 
+interface Slot {
+  startTime: string;
+  endTime?: string;
+}
+
+interface AppointmentSlot {
+  startTime: Date;
+  endTime: Date;
+}
+
 function getNoSlotMessage(type: string, hasPreferredTime: boolean): string {
   switch (type) {
     case "Consultation":
@@ -52,9 +62,7 @@ function hasValidTentativeSchedule(
   if (!schedule) return false;
   try {
     const parsed = JSON.parse(schedule);
-    return parsed.some((slot: { startTime: string }) =>
-      isValidDate(slot.startTime),
-    );
+    return parsed.some((slot: Slot) => isValidDate(slot.startTime));
   } catch {
     return false;
   }
@@ -62,21 +70,86 @@ function hasValidTentativeSchedule(
 
 function formatDate(date: Date | null): string {
   if (!date) return "Please select a valid date and time";
-  return date.toLocaleString(undefined, {
+  const formattedDate = date.toLocaleString(undefined, {
     weekday: "short",
-    month: "short",
     day: "numeric",
+    month: "short",
     year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
   });
+  const formattedTime = date
+    .toLocaleString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    })
+    .toUpperCase(); // Convert to uppercase for consistent AM/PM
+  return `${formattedDate}, ${formattedTime}`;
+}
+
+function formatSlotTime(date: Date | string): string {
+  const d = typeof date === "string" ? new Date(date) : date;
+  const formattedDate = d.toLocaleString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  const formattedTime = d
+    .toLocaleString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    })
+    .toUpperCase(); // Convert to uppercase for consistent AM/PM
+  return `${formattedDate}, ${formattedTime}`;
+}
+
+function parseTentativeSchedule(schedule: string | null | undefined): Slot[] {
+  if (!schedule) return [];
+  try {
+    const slots = JSON.parse(schedule);
+    return slots
+      .filter((slot: Slot) => isValidDate(slot.startTime))
+      .map((slot: Slot) => ({
+        startTime: slot.startTime,
+        endTime:
+          slot.endTime ||
+          new Date(
+            new Date(slot.startTime).getTime() + 60 * 60 * 1000,
+          ).toISOString(),
+      }))
+      .sort(
+        (a: Slot, b: Slot) =>
+          new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+      );
+  } catch {
+    return [];
+  }
+}
+
+function getValidAppointmentSlots(
+  appointments: any[] | null | undefined,
+): AppointmentSlot[] {
+  if (!appointments?.length) return [];
+  return appointments
+    .flatMap((appointment) =>
+      appointment.slotsOfAppointment.map((slot: any) => ({
+        startTime: new Date(slot.slotStartTimeInUTC),
+        endTime: new Date(slot.slotEndTimeInUTC),
+      })),
+    )
+    .filter((slot) => isValidDate(slot.startTime))
+    .sort(
+      (a: AppointmentSlot, b: AppointmentSlot) =>
+        a.startTime.getTime() - b.startTime.getTime(),
+    );
 }
 
 export function Overview({
   consultations,
   subscriptions,
-  webinars,
   classes,
+  webinars,
 }: Readonly<OverviewProps>) {
   return (
     <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-4">
@@ -101,6 +174,7 @@ export function Overview({
             status: consultation.requestStatus.toString(),
             type: "Consultation" as const,
             isTentative: slotInfo.isTentative,
+            actualSlots: getValidAppointmentSlots([consultation.appointment]),
           };
         })}
       />
@@ -127,6 +201,10 @@ export function Overview({
             status: subscription.requestStatus.toString(),
             type: "Subscription" as const,
             isTentative: slotInfo.isTentative,
+            actualSlots: getValidAppointmentSlots(subscription.appointments),
+            tentativeSlots: parseTentativeSchedule(
+              subscription.tentativeSchedule,
+            ),
           };
         })}
       />
@@ -153,6 +231,8 @@ export function Overview({
             status: classItem.status.toString(),
             type: "Class" as const,
             isTentative: slotInfo.isTentative,
+            actualSlots: getValidAppointmentSlots(classItem.appointment),
+            tentativeSlots: parseTentativeSchedule(classItem.tentativeSchedule),
           };
         })}
       />
@@ -177,6 +257,7 @@ export function Overview({
             status: webinar.status.toString(),
             type: "Webinar" as const,
             isTentative: slotInfo.isTentative,
+            actualSlots: getValidAppointmentSlots([webinar.appointment]),
           };
         })}
       />
@@ -195,19 +276,19 @@ interface DashboardCardProps {
     image?: string | null;
     type: "Subscription" | "Class" | "Consultation" | "Webinar";
     isTentative: boolean;
+    actualSlots?: AppointmentSlot[];
+    tentativeSlots?: Slot[];
   }[];
 }
 
 function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
   return (
-    <Card className="bg-white">
-      <CardHeader className="bg-white">
-        <CardTitle className="text-lg font-semibold bg-white">
-          {title}
-        </CardTitle>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg font-semibold">{title}</CardTitle>
       </CardHeader>
-      <CardContent className="bg-white">
-        <div className="space-y-4 bg-white">
+      <CardContent>
+        <div className="space-y-4">
           {items.map((item) => (
             <EventCard key={item.id} {...item} />
           ))}
