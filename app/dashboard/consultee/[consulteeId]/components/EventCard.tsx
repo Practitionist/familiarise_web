@@ -6,7 +6,12 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { PencilIcon, XIcon } from "lucide-react";
 
 interface EventCardProps {
@@ -29,7 +34,7 @@ interface EventCardProps {
 }
 
 function formatSlotDate(date: Date | string): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
+  const d = typeof date === "string" ? new Date(date) : date;
   return d.toLocaleString(undefined, {
     weekday: "short",
     day: "numeric",
@@ -39,12 +44,14 @@ function formatSlotDate(date: Date | string): string {
 }
 
 function formatSlotTime(date: Date | string): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  return d.toLocaleString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).toLowerCase(); // Convert to lowercase for consistent am/pm
+  const d = typeof date === "string" ? new Date(date) : date;
+  return d
+    .toLocaleString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    })
+    .toLowerCase(); // Convert to lowercase for consistent am/pm
 }
 
 export function EventCard({
@@ -109,7 +116,8 @@ export function EventCard({
     date.includes("Please select") ||
     date === "No slot assigned";
 
-  const showSessionDetails = (type === "Subscription" || type === "Class") && 
+  const showSessionDetails =
+    (type === "Subscription" || type === "Class") &&
     (actualSlots?.length || tentativeSlots?.length);
 
   const slots = actualSlots?.length ? actualSlots : tentativeSlots;
@@ -121,8 +129,8 @@ export function EventCard({
       transition={{ delay: 0.1 }}
       className="group h-full"
     >
-      <Card 
-        onClick={handleClick} 
+      <Card
+        onClick={handleClick}
         className="hover:shadow-md transition-shadow duration-200 border border-gray-100 h-full cursor-pointer"
       >
         <CardHeader className="pb-2">
@@ -142,9 +150,7 @@ export function EventCard({
             </div>
             <div className="flex flex-col items-end gap-1">
               {status && (
-                <Badge className={`${getStatusColor(status)}`}>
-                  {status}
-                </Badge>
+                <Badge className={`${getStatusColor(status)}`}>{status}</Badge>
               )}
               {isTentative && (
                 <div className="flex flex-col items-end gap-1">
@@ -166,7 +172,9 @@ export function EventCard({
                 <AccordionItem value="sessions" className="border-none">
                   <AccordionTrigger className="py-2 hover:no-underline">
                     <span className="text-sm font-medium text-gray-700">
-                      {type === "Subscription" ? "Scheduled Sessions" : "Class Schedule"}
+                      {type === "Subscription"
+                        ? "Scheduled Sessions"
+                        : "Class Schedule"}
                     </span>
                   </AccordionTrigger>
                   <AccordionContent>
@@ -180,7 +188,14 @@ export function EventCard({
                             {formatSlotDate(slot.startTime)}
                           </span>
                           <span className="text-sm text-gray-600">
-                            {formatSlotTime(slot.startTime)} - {formatSlotTime(slot.endTime || new Date(new Date(slot.startTime).getTime() + 60 * 60 * 1000))}
+                            {formatSlotTime(slot.startTime)} -{" "}
+                            {formatSlotTime(
+                              slot.endTime ||
+                                new Date(
+                                  new Date(slot.startTime).getTime() +
+                                    60 * 60 * 1000,
+                                ),
+                            )}
                           </span>
                         </div>
                       ))}

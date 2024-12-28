@@ -3,13 +3,12 @@
  * It sets up the authentication providers, session handling, and callback functions.
  */
 
+import prisma from "@/lib/prisma";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
-import { NextAuthOptions, User } from "next-auth";
+import { Account, NextAuthOptions, Session, User } from "next-auth";
 import { JWT } from "next-auth/jwt";
 import GitHubProvider from "next-auth/providers/github";
 import GoogleProvider from "next-auth/providers/google";
-import { Account, Session } from "next-auth";
-import prisma from "@/lib/prisma";
 
 /**
  * NextAuth options configuration

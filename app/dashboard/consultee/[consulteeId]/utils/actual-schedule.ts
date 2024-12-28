@@ -62,11 +62,13 @@ export function getActualSlots(event: EventWithType): SlotWithStatus[] {
     case "Class":
       if (event.tentativeSchedule) {
         try {
-          const schedule = JSON.parse(event.tentativeSchedule) as TentativeSlot[];
+          const schedule = JSON.parse(
+            event.tentativeSchedule,
+          ) as TentativeSlot[];
           return schedule
             .map((slot) => {
               const startTime = new Date(slot.startTime);
-              const endTime = slot.endTime 
+              const endTime = slot.endTime
                 ? new Date(slot.endTime)
                 : new Date(startTime.getTime() + 60 * 60 * 1000); // Default 1 hour
               return {
@@ -78,7 +80,10 @@ export function getActualSlots(event: EventWithType): SlotWithStatus[] {
             .filter((slot) => slot.date.getFullYear() > 2000)
             .sort((a, b) => a.date.getTime() - b.date.getTime());
         } catch (e) {
-          console.error(`Error parsing ${event.type.toLowerCase()} tentative schedule:`, e);
+          console.error(
+            `Error parsing ${event.type.toLowerCase()} tentative schedule:`,
+            e,
+          );
         }
       }
       break;
@@ -107,17 +112,22 @@ export function getActualNextSlotTime(event: EventWithType): {
   const slots = getActualSlots(event);
   const futureSlots = slots.filter((slot) => slot.date.getTime() > now);
   return futureSlots.length > 0
-    ? { 
-        date: futureSlots[0].date, 
+    ? {
+        date: futureSlots[0].date,
         endTime: futureSlots[0].endTime,
-        isTentative: futureSlots[0].isTentative 
+        isTentative: futureSlots[0].isTentative,
       }
     : { date: null, isTentative: false };
 }
 
 export function getActualUpcomingSlots(
   events: EventWithType[],
-): Array<{ event: EventWithType; slotTime: Date; endTime?: Date; isTentative: boolean }> {
+): Array<{
+  event: EventWithType;
+  slotTime: Date;
+  endTime?: Date;
+  isTentative: boolean;
+}> {
   const now = new Date();
   const allSlots = events.flatMap((event) =>
     getActualSlots(event).map((slot) => ({
@@ -138,7 +148,14 @@ export function getActualMonthlyEvents(
   month: Date,
 ): Array<{ event: EventWithType; slots: SlotWithStatus[] }> {
   const startOfMonth = new Date(month.getFullYear(), month.getMonth(), 1);
-  const endOfMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0, 23, 59, 59);
+  const endOfMonth = new Date(
+    month.getFullYear(),
+    month.getMonth() + 1,
+    0,
+    23,
+    59,
+    59,
+  );
 
   return events
     .map((event) => ({

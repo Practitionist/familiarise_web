@@ -63,9 +63,7 @@ function hasValidTentativeSchedule(
   if (!schedule) return false;
   try {
     const parsed = JSON.parse(schedule);
-    return parsed.some((slot: Slot) =>
-      isValidDate(slot.startTime),
-    );
+    return parsed.some((slot: Slot) => isValidDate(slot.startTime));
   } catch {
     return false;
   }
@@ -85,7 +83,7 @@ function formatDate(date: Date | null): string {
 }
 
 function formatSlotTime(date: Date | string): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
+  const d = typeof date === "string" ? new Date(date) : date;
   return d.toLocaleString(undefined, {
     weekday: "short",
     day: "numeric",
@@ -105,26 +103,38 @@ function parseTentativeSchedule(schedule: string | null | undefined): Slot[] {
       .filter((slot: Slot) => isValidDate(slot.startTime))
       .map((slot: Slot) => ({
         startTime: slot.startTime,
-        endTime: slot.endTime || new Date(new Date(slot.startTime).getTime() + 60 * 60 * 1000).toISOString(),
-        timezone: slot.timezone || "UTC"
+        endTime:
+          slot.endTime ||
+          new Date(
+            new Date(slot.startTime).getTime() + 60 * 60 * 1000,
+          ).toISOString(),
+        timezone: slot.timezone || "UTC",
       }))
-      .sort((a: Slot, b: Slot) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+      .sort(
+        (a: Slot, b: Slot) =>
+          new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+      );
   } catch {
     return [];
   }
 }
 
-function getValidAppointmentSlots(appointments: any[] | null | undefined): AppointmentSlot[] {
+function getValidAppointmentSlots(
+  appointments: any[] | null | undefined,
+): AppointmentSlot[] {
   if (!appointments?.length) return [];
   return appointments
-    .flatMap(appointment => 
+    .flatMap((appointment) =>
       appointment.slotsOfAppointment.map((slot: any) => ({
         startTime: new Date(slot.slotStartTimeInUTC),
-        endTime: new Date(slot.slotEndTimeInUTC)
-      }))
+        endTime: new Date(slot.slotEndTimeInUTC),
+      })),
     )
-    .filter(slot => isValidDate(slot.startTime))
-    .sort((a: AppointmentSlot, b: AppointmentSlot) => a.startTime.getTime() - b.startTime.getTime());
+    .filter((slot) => isValidDate(slot.startTime))
+    .sort(
+      (a: AppointmentSlot, b: AppointmentSlot) =>
+        a.startTime.getTime() - b.startTime.getTime(),
+    );
 }
 
 export function Overview({
@@ -156,7 +166,7 @@ export function Overview({
             status: consultation.requestStatus.toString(),
             type: "Consultation" as const,
             isTentative: slotInfo.isTentative,
-            actualSlots: getValidAppointmentSlots([consultation.appointment])
+            actualSlots: getValidAppointmentSlots([consultation.appointment]),
           };
         })}
       />
@@ -170,9 +180,13 @@ export function Overview({
           const hasPreferredTime = hasValidTentativeSchedule(
             subscription.tentativeSchedule,
           );
-          const actualSlots = getValidAppointmentSlots(subscription.appointments);
-          const tentativeSlots = parseTentativeSchedule(subscription.tentativeSchedule);
-          
+          const actualSlots = getValidAppointmentSlots(
+            subscription.appointments,
+          );
+          const tentativeSlots = parseTentativeSchedule(
+            subscription.tentativeSchedule,
+          );
+
           return {
             id: subscription.id,
             title: subscription.subscriptionPlan.title,
@@ -187,7 +201,7 @@ export function Overview({
             type: "Subscription" as const,
             isTentative: slotInfo.isTentative || !actualSlots.length,
             actualSlots,
-            tentativeSlots: actualSlots.length ? [] : tentativeSlots // Only show tentative if no actual slots
+            tentativeSlots: actualSlots.length ? [] : tentativeSlots, // Only show tentative if no actual slots
           };
         })}
       />
@@ -202,7 +216,9 @@ export function Overview({
             classItem.tentativeSchedule,
           );
           const actualSlots = getValidAppointmentSlots(classItem.appointment);
-          const tentativeSlots = parseTentativeSchedule(classItem.tentativeSchedule);
+          const tentativeSlots = parseTentativeSchedule(
+            classItem.tentativeSchedule,
+          );
 
           return {
             id: classItem.id,
@@ -218,7 +234,7 @@ export function Overview({
             type: "Class" as const,
             isTentative: slotInfo.isTentative || !actualSlots.length,
             actualSlots,
-            tentativeSlots: actualSlots.length ? [] : tentativeSlots // Only show tentative if no actual slots
+            tentativeSlots: actualSlots.length ? [] : tentativeSlots, // Only show tentative if no actual slots
           };
         })}
       />
@@ -243,7 +259,7 @@ export function Overview({
             status: webinar.status.toString(),
             type: "Webinar" as const,
             isTentative: slotInfo.isTentative,
-            actualSlots: getValidAppointmentSlots([webinar.appointment])
+            actualSlots: getValidAppointmentSlots([webinar.appointment]),
           };
         })}
       />
@@ -271,9 +287,7 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg font-semibold">
-          {title}
-        </CardTitle>
+        <CardTitle className="text-lg font-semibold">{title}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
