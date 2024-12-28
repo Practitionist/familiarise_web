@@ -31,6 +31,33 @@ interface HomeTabProps {
   consulteeId: string;
 }
 
+function formatDateTime(date: Date, endTime?: Date): string {
+  const dateStr = date.toLocaleString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
+  const timeStr = endTime 
+    ? `${date.toLocaleString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      }).toLowerCase()} - ${endTime.toLocaleString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      }).toLowerCase()}`
+    : date.toLocaleString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      }).toLowerCase();
+
+  return `${dateStr}, ${timeStr}`;
+}
+
 export default function HomeTab({
   userDetails,
   consulteeId,
@@ -145,6 +172,7 @@ export default function HomeTab({
               <SlotCard
                 event={slot.event}
                 slotTime={slot.slotTime}
+                endTime={slot.endTime}
                 isTentative={slot.isTentative}
               />
             </div>
@@ -215,10 +243,12 @@ export default function HomeTab({
 function SlotCard({
   event,
   slotTime,
+  endTime,
   isTentative,
 }: Readonly<{
   event: EventWithType;
   slotTime: Date;
+  endTime?: Date;
   isTentative: boolean;
 }>) {
   const now = new Date();
@@ -306,14 +336,7 @@ function SlotCard({
             <div className="flex flex-col space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">
-                  {slotTime.toLocaleString(undefined, {
-                    weekday: "short",
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
+                  {formatDateTime(slotTime, endTime)}
                 </span>
                 <span className="text-sm font-medium text-gray-500 bg-gray-50 px-2 py-1 rounded">
                   {event.type}
@@ -401,16 +424,29 @@ function MonthlyEventCard({
                 <span>
                   {slot.date.toLocaleString(undefined, {
                     weekday: "short",
-                    month: "short",
                     day: "numeric",
+                    month: "short",
                     year: "numeric",
                   })}
                 </span>
                 <div className="flex items-center">
                   <span className="font-medium">
-                    {slot.date.toLocaleString(undefined, {
-                      timeStyle: "short",
-                    })}
+                    {slot.endTime 
+                      ? `${slot.date.toLocaleString(undefined, {
+                          hour: "numeric",
+                          minute: "2-digit",
+                          hour12: true,
+                        }).toLowerCase()} - ${slot.endTime.toLocaleString(undefined, {
+                          hour: "numeric",
+                          minute: "2-digit",
+                          hour12: true,
+                        }).toLowerCase()}`
+                      : slot.date.toLocaleString(undefined, {
+                          hour: "numeric",
+                          minute: "2-digit",
+                          hour12: true,
+                        }).toLowerCase()
+                    }
                   </span>
                   {slot.isTentative && (
                     <span className="ml-1 text-red-500">*</span>
