@@ -24,6 +24,7 @@ export type TConsultation = Prisma.ConsultationGetPayload<{
             user: true;
           };
         };
+        payment: true;
       };
     };
   };
@@ -46,6 +47,31 @@ export type TSubscription = Prisma.SubscriptionGetPayload<{
         user: true;
       };
     };
+    appointments: {
+      include: {
+        slotsOfAppointment: {
+          include: {
+            user: true;
+          };
+        };
+        payment: true;
+      };
+    };
+  };
+}>;
+
+// Custom type for Webinar with specific nesting depth
+export type TWebinar = Prisma.WebinarGetPayload<{
+  include: {
+    webinarPlan: {
+      include: {
+        consultantProfile: {
+          include: {
+            user: true;
+          };
+        };
+      };
+    };
     appointment: {
       include: {
         slotsOfAppointment: {
@@ -53,6 +79,32 @@ export type TSubscription = Prisma.SubscriptionGetPayload<{
             user: true;
           };
         };
+        payment: true;
+      };
+    };
+  };
+}>;
+
+// Custom type for Class with specific nesting depth
+export type TClass = Prisma.ClassGetPayload<{
+  include: {
+    classPlan: {
+      include: {
+        consultantProfile: {
+          include: {
+            user: true;
+          };
+        };
+      };
+    };
+    appointment: {
+      include: {
+        slotsOfAppointment: {
+          include: {
+            user: true;
+          };
+        };
+        payment: true;
       };
     };
   };
@@ -112,62 +164,10 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
         };
       };
     };
-    payment: {
-      include: {
-        discountCode: true;
-      };
-    };
+    payment: true;
     slotsOfAppointment: {
       include: {
         user: true;
-      };
-    };
-  };
-}>;
-
-// Custom type for Webinar with specific nesting depth
-export type TWebinar = Prisma.WebinarGetPayload<{
-  include: {
-    webinarPlan: {
-      include: {
-        consultantProfile: {
-          include: {
-            user: true;
-          };
-        };
-      };
-    };
-    appointment: {
-      include: {
-        slotsOfAppointment: {
-          include: {
-            user: true;
-          };
-        };
-      };
-    };
-  };
-}>;
-
-// Custom type for Class with specific nesting depth
-export type TClass = Prisma.ClassGetPayload<{
-  include: {
-    classPlan: {
-      include: {
-        consultantProfile: {
-          include: {
-            user: true;
-          };
-        };
-      };
-    };
-    appointment: {
-      include: {
-        slotsOfAppointment: {
-          include: {
-            user: true;
-          };
-        };
       };
     };
   };

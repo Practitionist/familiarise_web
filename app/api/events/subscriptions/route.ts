@@ -60,6 +60,16 @@ export async function GET(request: NextRequest) {
               },
             },
           },
+          appointments: {
+            include: {
+              slotsOfAppointment: {
+                include: {
+                  user: true,
+                },
+              },
+              payment: true,
+            },
+          },
         },
         orderBy: {
           requestedAt: "desc",
@@ -134,6 +144,16 @@ export async function PATCH(request: NextRequest) {
                 image: true,
               },
             },
+          },
+        },
+        appointments: {
+          include: {
+            slotsOfAppointment: {
+              include: {
+                user: true,
+              },
+            },
+            payment: true,
           },
         },
       },

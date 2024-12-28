@@ -78,11 +78,7 @@ export async function GET(request: Request) {
                   },
                 },
               },
-              payment: {
-                select: {
-                  paymentStatus: true,
-                },
-              },
+              payment: true,
             },
           },
           waitlist: {
