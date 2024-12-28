@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { fetchImagesFromSupabaseStorage } from '@/lib/supabase';
+import { useState, useEffect } from "react";
+import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
 
 export type ImageType = {
   url: string;

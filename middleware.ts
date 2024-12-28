@@ -10,12 +10,33 @@ const URLS = {
 };
 
 const ROUTES = {
-  API: ["/api/**"],
-  AUTH_API: ["/api/auth/**"],
-  INNGEST_API: ["/api/inngest/**"],
-  PROTECTED: ["/form/**", "/admin/**", "/dashboard/**", "/settings/**", "/profile/**"],
-  PUBLIC_AUTH: ["/auth/**"],
+  PROTECTED_ROUTES: [
+    "/form/**",
+    "/dashboard/**",
+    "/settings/**",
+    "/profile/**",
+  ],
+  PUBLIC_AUTH_ROUTES: ["/auth/**"],
+  PRIVATE_API: ["/api/inngest/**"],
+  PROTECTED_API: ["/api/form/onboarding/**"], // Added onboarding API route
+  PUBLIC_API: ["/api/user/**", "/api/auth/*"],
 };
+
+// Define the structure of the token
+interface Token {
+  name: string;
+  email: string;
+  role: "CONSULTANT" | "CONSULTEE" | "STAFF";
+  onboardingCompleted: boolean;
+  consultantProfileId?: string;
+  consulteeProfileId?: string;
+  staffProfileId?: string;
+  picture: string;
+  exp: number;
+  iat: number;
+  jti: string;
+  sub: string;
+}
 
 /**
  * Check if a pathname matches any of the given patterns
@@ -24,21 +45,63 @@ const isMatchingRoute = (pathname: string, patterns: string[]): boolean =>
   micromatch.isMatch(pathname, patterns);
 
 /**
- * Redirect to a specific URL based on user role and profile
+ * Get the correct dashboard URL based on user role and profile
  */
-const redirectToDashboard = (req: NextRequest, token: any): NextResponse | null => {
-  const { role, consultantProfileId, consulteeProfileId, staffProfileId } = token;
-  let redirectUrl = null;
+const getCorrectDashboardUrl = (token: Token): string | null => {
+  const { role, consultantProfileId, consulteeProfileId, staffProfileId } =
+    token;
 
-  if (role === 'CONSULTANT' && consultantProfileId) {
-    redirectUrl = `/dashboard/consultant/${consultantProfileId}`;
-  } else if (role === 'CONSULTEE' && consulteeProfileId) {
-    redirectUrl = `/dashboard/consultee/${consulteeProfileId}`;
-  } else if (role === 'STAFF' && staffProfileId) {
-    redirectUrl = `/dashboard/staff/${staffProfileId}`;
+  if (role === "CONSULTANT" && consultantProfileId) {
+    return `/dashboard/consultant/${consultantProfileId}`;
+  } else if (role === "CONSULTEE" && consulteeProfileId) {
+    return `/dashboard/consultee/${consulteeProfileId}`;
+  } else if (role === "STAFF" && staffProfileId) {
+    return `/dashboard/staff/${staffProfileId}`;
   }
 
-  return redirectUrl ? NextResponse.redirect(new URL(redirectUrl, req.url)) : null;
+  return null;
+};
+
+/**
+ * Handle authentication check and redirection
+ */
+const handleAuthCheck = (
+  isAuthenticated: boolean,
+  req: NextRequest,
+): NextResponse | null => {
+  if (!isAuthenticated) {
+    return NextResponse.redirect(new URL(URLS.SIGNIN, req.url));
+  }
+  return null;
+};
+
+/**
+ * Handle onboarding check and redirection
+ */
+const handleOnboardingCheck = (
+  isOnboarded: boolean,
+  pathname: string,
+  req: NextRequest,
+): NextResponse | null => {
+  if (!isOnboarded && pathname !== URLS.ONBOARDING) {
+    return NextResponse.redirect(new URL(URLS.ONBOARDING, req.url));
+  }
+  return null;
+};
+
+/**
+ * Handle dashboard redirection
+ */
+const handleDashboardRedirect = (
+  token: Token,
+  pathname: string,
+  req: NextRequest,
+): NextResponse | null => {
+  const correctDashboardUrl = getCorrectDashboardUrl(token);
+  if (correctDashboardUrl && pathname !== correctDashboardUrl) {
+    return NextResponse.redirect(new URL(correctDashboardUrl, req.url));
+  }
+  return null;
 };
 
 /**
@@ -46,55 +109,71 @@ const redirectToDashboard = (req: NextRequest, token: any): NextResponse | null 
  */
 export async function middleware(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
-  const token = await getToken({ req });
+  const token = (await getToken({ req })) as Token | null;
   const isAuthenticated = !!token;
-  const isOnboarded = token?.onboardingCompleted;
 
-  // Handle API routes
-  if (isMatchingRoute(pathname, ROUTES.API)) {
-    if (isMatchingRoute(pathname, ROUTES.INNGEST_API)) {
-      return NextResponse.next();
-    }
-    if (!isMatchingRoute(pathname, ROUTES.AUTH_API) && !isAuthenticated) {
-      return NextResponse.redirect(new URL(URLS.SIGNIN, req.url));
+  const isOnboarded = token?.onboardingCompleted ?? false;
+
+  // Handle private API routes (including Inngest and Auth)
+  if (isMatchingRoute(pathname, ROUTES.PRIVATE_API)) {
+    return isAuthenticated
+      ? NextResponse.next()
+      : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Handle protected API routes
+  if (isMatchingRoute(pathname, ROUTES.PROTECTED_API)) {
+    return isAuthenticated
+      ? NextResponse.next()
+      : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Handle public API routes
+  if (isMatchingRoute(pathname, ROUTES.PUBLIC_API)) {
+    return NextResponse.next();
+  }
+
+  // Handle public auth routes
+  if (isMatchingRoute(pathname, ROUTES.PUBLIC_AUTH_ROUTES)) {
+    if (isAuthenticated) {
+      const onboardingCheck = handleOnboardingCheck(isOnboarded, pathname, req);
+      if (onboardingCheck) return onboardingCheck;
+
+      if (token) {
+        const correctDashboardUrl = getCorrectDashboardUrl(token);
+        return NextResponse.redirect(
+          new URL(correctDashboardUrl || URLS.DASHBOARD, req.url),
+        );
+      }
     }
     return NextResponse.next();
   }
 
   // Handle protected routes
-  if (isMatchingRoute(pathname, ROUTES.PROTECTED)) {
-    if (!isAuthenticated) {
-      return NextResponse.redirect(new URL(URLS.SIGNIN, req.url));
+  if (isMatchingRoute(pathname, ROUTES.PROTECTED_ROUTES)) {
+    const authCheck = handleAuthCheck(isAuthenticated, req);
+    if (authCheck) return authCheck;
+
+    const onboardingCheck = handleOnboardingCheck(isOnboarded, pathname, req);
+    if (onboardingCheck) return onboardingCheck;
+
+    if (pathname === URLS.ONBOARDING && isOnboarded && token) {
+      const dashboardRedirect = handleDashboardRedirect(token, pathname, req);
+      if (dashboardRedirect) return dashboardRedirect;
     }
 
-    // Redirect to onboarding if authenticated but not onboarded
-    if (!isOnboarded && pathname !== URLS.ONBOARDING) {
-      return NextResponse.redirect(new URL(URLS.ONBOARDING, req.url));
-    }
-
-    // Check onboarding status for /form/onboarding route
-    if (pathname === URLS.ONBOARDING && isOnboarded) {
-      const dashboardRedirect = redirectToDashboard(req, token);
+    if (pathname.startsWith("/dashboard/") && token) {
+      const dashboardRedirect = handleDashboardRedirect(token, pathname, req);
       if (dashboardRedirect) return dashboardRedirect;
     }
 
     return NextResponse.next();
   }
 
-  // Handle public auth routes
-  if (isMatchingRoute(pathname, ROUTES.PUBLIC_AUTH)) {
-    if (isAuthenticated) {
-      if (!isOnboarded) {
-        return NextResponse.redirect(new URL(URLS.ONBOARDING, req.url));
-      }
-      const dashboardRedirect = redirectToDashboard(req, token);
-      return dashboardRedirect || NextResponse.redirect(new URL(URLS.DASHBOARD, req.url));
-    }
-    return NextResponse.next();
-  }
-
-  if (isAuthenticated && !isOnboarded) {
-    return NextResponse.redirect(new URL(URLS.ONBOARDING, req.url));
+  // Handle other authenticated routes
+  if (isAuthenticated) {
+    const onboardingCheck = handleOnboardingCheck(isOnboarded, pathname, req);
+    if (onboardingCheck) return onboardingCheck;
   }
 
   // Allow access to all other routes

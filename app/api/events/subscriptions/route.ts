@@ -1,143 +1,154 @@
 import prisma from "@/lib/prisma";
-import { NextResponse } from "next/server";
-import { checkOverlappingAppointments } from "@/lib/appointmentUtils";
+import { Prisma, RequestStatus } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const consulteeId = searchParams.get('consulteeId');
-    const consultantId = searchParams.get('consultantId');
+interface UpdateSubscriptionRequest {
+  id: string;
+  status: RequestStatus;
+}
 
-    let subscriptions;
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const consultantProfileId = searchParams.get("consultantProfileId");
+  const status = searchParams.get("status") as RequestStatus | null;
+  const page = parseInt(searchParams.get("page") || "1");
+  const limit = parseInt(searchParams.get("limit") || "10");
 
-    if (consulteeId) {
-      subscriptions = await prisma.subscription.findMany({
-        where: {
-          requestedById: consulteeId
-        }
-      });
-    } else if (consultantId) {
-      subscriptions = await prisma.subscription.findMany({
-        where: {
-          plan: {
-            consultantProfileId: consultantId
-          }
-        }
-      });
-    } else {
-      subscriptions = await prisma.subscription.findMany({});
-    }
-
-    return NextResponse.json({ data: subscriptions }, { status: 200 });
-  } catch (error) {
-    console.error(error);
+  if (!consultantProfileId) {
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "Consultant profile ID is required" },
+      { status: 400 },
     );
   }
-}
 
-interface AppointmentSchedule {
-  startTime: string;
-  endTime: string;
-}
-
-interface SubscriptionRequestBody {
-  subscriptionPlanId: string;
-  startDate: string;
-  endDate: string;
-  consultantProfileId: string;
-  consulteeProfileId: string;
-  appointmentSchedule: AppointmentSchedule[];
-}
-
-export async function POST(request: Request) {
   try {
-    const body: SubscriptionRequestBody = await request.json();
+    const whereClause: Prisma.SubscriptionWhereInput = {
+      subscriptionPlan: {
+        consultantProfileId,
+      },
+    };
 
-    // Check for overlapping appointments for each scheduled appointment
-    for (const appointment of body.appointmentSchedule) {
-      const isOverlapping = await checkOverlappingAppointments(
-        new Date(appointment.startTime),
-        new Date(appointment.endTime),
-        body.consultantProfileId
-      );
-
-      if (isOverlapping) {
-        return NextResponse.json(
-          { error: `Time slot ${appointment.startTime} to ${appointment.endTime} is already booked` },
-          { status: 409 }
-        );
-      }
+    if (status) {
+      whereClause.requestStatus = status;
     }
 
-    // Create the subscription and associated appointments in a transaction
-    const result = await prisma.$transaction(async (prisma) => {
-      const subscription = await prisma.subscription.create({
-        data: {
-          startDate: new Date(body.startDate),
-          endDate: new Date(body.endDate),
-          plan: {
-            connect: {
-              id: body.subscriptionPlanId,
-            },
-          },
-          requestedBy: {
-            connect: {
-              id: body.consulteeProfileId,
-            },
-          },
-          appointmentRequestStatus: "PENDING",
-        },
-      });
-
-      const appointments = await Promise.all(
-        body.appointmentSchedule.map(async (appointment: AppointmentSchedule) => {
-          return prisma.appointment.create({
-            data: {
-              appointmentType: "SUBSCRIPTION",
-              subscriptionId: subscription.id,
-              slotOfAppointment: {
-                create: {
-                  appointmentStartTimeInUTC: new Date(appointment.startTime),
-                  appointmentEndTimeInUTC: new Date(appointment.endTime),
-                  appointmentsType: "SUBSCRIPTION",
-                  consulteeProfile: {
-                    connect: {
-                      id: body.consulteeProfileId,
-                    },
-                  },
-                  slotOfAvailabilityCustom: {
-                    create: {
-                      slotStartTimeInUTC: new Date(appointment.startTime),
-                      slotEndTimeInUTC: new Date(appointment.endTime),
-                      consultantProfile: {
-                        connect: {
-                          id: body.consultantProfileId,
-                        },
-                      },
+    const [subscriptions, total] = await Promise.all([
+      prisma.subscription.findMany({
+        where: whereClause,
+        include: {
+          subscriptionPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      image: true,
                     },
                   },
                 },
               },
             },
+          },
+          requestedBy: {
             include: {
-              slotOfAppointment: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
+              },
             },
-          });
-        })
-      );
+          },
+        },
+        orderBy: {
+          requestedAt: "desc",
+        },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.subscription.count({ where: whereClause }),
+    ]);
 
-      return { subscription, appointments };
+    return NextResponse.json({
+      data: subscriptions,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching subscriptions:", error);
+    return NextResponse.json(
+      { error: "An error occurred while fetching subscriptions" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const body: UpdateSubscriptionRequest = await request.json();
+    const { id, status } = body;
+
+    if (!id || !status) {
+      return NextResponse.json(
+        { error: "ID and status are required" },
+        { status: 400 },
+      );
+    }
+
+    if (!Object.values(RequestStatus).includes(status)) {
+      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+    }
+
+    const subscription = await prisma.subscription.update({
+      where: { id },
+      data: { requestStatus: status },
+      include: {
+        subscriptionPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        requestedBy: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+      },
     });
 
-    return NextResponse.json({ data: result }, { status: 201 });
+    return NextResponse.json({ data: subscription });
   } catch (error) {
-    console.error(error);
+    console.error("Error updating subscription:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "An error occurred while updating subscription" },
+      { status: 500 },
     );
   }
 }

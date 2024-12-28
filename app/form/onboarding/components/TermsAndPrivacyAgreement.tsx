@@ -10,7 +10,13 @@ interface AgreementProps {
   link: string;
 }
 
-const Agreement: React.FC<AgreementProps> = ({ id, checked, onCheckedChange, label, link }) => (
+const Agreement: React.FC<AgreementProps> = ({
+  id,
+  checked,
+  onCheckedChange,
+  label,
+  link,
+}) => (
   <div className="flex items-center space-x-2">
     <Checkbox
       id={id}
@@ -19,7 +25,15 @@ const Agreement: React.FC<AgreementProps> = ({ id, checked, onCheckedChange, lab
       className="h-4 w-4 border-2 border-gray-300 rounded text-blue-600 focus:ring-blue-500"
     />
     <Label htmlFor={id} className="text-sm text-gray-700">
-      I agree to the <a href={link} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{label}</a>
+      I agree to the{" "}
+      <a
+        href={link}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-blue-600 hover:underline"
+      >
+        {label}
+      </a>
     </Label>
   </div>
 );

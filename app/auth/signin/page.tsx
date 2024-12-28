@@ -9,7 +9,6 @@ import { signIn } from "next-auth/react";
 import Link from "next/link";
 
 export default function SignIn() {
-
   return (
     <div className="min-h-screen flex">
       <div className="w-1/2 bg-gray-100 text-black p-12 flex flex-col justify-between">

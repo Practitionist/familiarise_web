@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -6,31 +6,26 @@ export async function checkOverlappingAppointments(
   startTime: Date,
   endTime: Date,
   consultantProfileId: string,
-  excludeAppointmentId?: string
+  excludeAppointmentId?: string,
 ): Promise<boolean> {
   const overlappingAppointments = await prisma.slotOfAppointment.findFirst({
     where: {
       AND: [
         {
-          OR: [
-            {
-              slotOfAvailabilityWeekly: {
+          appointment: {
+            class: {
+              classPlan: {
                 consultantProfileId: consultantProfileId,
               },
             },
-            {
-              slotOfAvailabilityCustom: {
-                consultantProfileId: consultantProfileId,
-              },
-            },
-          ],
+          },
         },
         {
           OR: [
             // Partial overlaps
-            // Start within the range of an existing appointment 
-            { 
-              appointmentStartTimeInUTC: {
+            // Start within the range of an existing appointment
+            {
+              slotStartTimeInUTC: {
                 gte: startTime,
                 lt: endTime,
               },
@@ -38,7 +33,7 @@ export async function checkOverlappingAppointments(
 
             // End within the range of an existing appointment
             {
-              appointmentEndTimeInUTC: {
+              slotEndTimeInUTC: {
                 gt: startTime,
                 lte: endTime,
               },
@@ -47,8 +42,8 @@ export async function checkOverlappingAppointments(
             // Completely encompasses the new appointment
             {
               AND: [
-                { appointmentStartTimeInUTC: { lte: startTime } },
-                { appointmentEndTimeInUTC: { gte: endTime } },
+                { slotStartTimeInUTC: { lte: startTime } },
+                { slotEndTimeInUTC: { gte: endTime } },
               ],
             },
           ],

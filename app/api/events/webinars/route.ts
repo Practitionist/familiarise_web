@@ -4,45 +4,144 @@ import { NextResponse } from "next/server";
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const consulteeId = searchParams.get('consulteeId');
-    const consultantId = searchParams.get('consultantId');
+    const userId = searchParams.get("userId"); // Changed from consulteeId
+    const consultantId = searchParams.get("consultantId");
 
     let webinars;
 
-    if (consulteeId) {
+    if (userId) {
+      // Changed from consulteeId
       webinars = await prisma.webinar.findMany({
         where: {
           appointment: {
             some: {
               slotOfAppointment: {
-                consulteeProfile: {
-                  id: consulteeId
-                }
-              }
-            }
-          }
-        }
+                some: {
+                  userId, // Changed from consulteeProfile.id
+                },
+              },
+            },
+          },
+        },
+        include: {
+          webinarPlan: {
+            include: {
+              consultantProfile: true,
+              topics: true,
+            },
+          },
+          appointment: {
+            include: {
+              slotOfAppointment: {
+                include: {
+                  user: true, // Changed from consulteeProfile
+                },
+              },
+            },
+          },
+          waitlist: true,
+        },
       });
     } else if (consultantId) {
       webinars = await prisma.webinar.findMany({
         where: {
           webinarPlan: {
-            consultantProfileId: consultantId
-          }
-        }
+            consultantProfile: {
+              id: consultantId,
+            },
+          },
+        },
+        include: {
+          webinarPlan: {
+            include: {
+              consultantProfile: true,
+              topics: true,
+            },
+          },
+          appointment: {
+            include: {
+              slotOfAppointment: {
+                include: {
+                  user: true, // Changed from consulteeProfile
+                },
+              },
+            },
+          },
+          waitlist: true,
+        },
       });
     } else {
-      webinars = await prisma.webinar.findMany({});
+      webinars = await prisma.webinar.findMany({
+        include: {
+          webinarPlan: {
+            include: {
+              consultantProfile: true,
+              topics: true,
+            },
+          },
+          appointment: {
+            include: {
+              slotOfAppointment: {
+                include: {
+                  user: true, // Changed from consulteeProfile
+                },
+              },
+            },
+          },
+          waitlist: true,
+        },
+      });
     }
 
     return NextResponse.json({ data: webinars }, { status: 200 });
   } catch (error) {
-    console.error(error);
+    console.error("Error fetching webinars:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "An error occurred while fetching webinars" },
+      { status: 500 },
     );
   }
 }
 
-// ... existing POST function ...
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+
+    const webinar = await prisma.webinar.create({
+      data: {
+        scheduledAt: new Date(body.scheduledAt),
+        endAt: new Date(body.endAt),
+        status: body.status,
+        webinarPlan: {
+          connect: { id: body.webinarPlanId },
+        },
+      },
+      include: {
+        webinarPlan: {
+          include: {
+            consultantProfile: true,
+            topics: true,
+          },
+        },
+        appointment: {
+          include: {
+            slotOfAppointment: {
+              include: {
+                user: true, // Changed from consulteeProfile
+              },
+            },
+          },
+        },
+        waitlist: true,
+      },
+    });
+
+    return NextResponse.json({ data: webinar }, { status: 201 });
+  } catch (error) {
+    console.error("Error creating webinar:", error);
+    return NextResponse.json(
+      { error: "An error occurred while creating the webinar" },
+      { status: 500 },
+    );
+  }
+}

@@ -1,25 +1,22 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
-  request: Request,
-  { params }: { params: { classId: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ classId: string }> },
 ) {
   try {
-    const { classId } = params;
+    const { classId } = await params;
     const classData = await prisma.class.findUniqueOrThrow({
       where: { id: classId },
       include: {
-        classPlans: true,
-        topics: true,
+        classPlan: true,
         appointment: {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
+                user: true, // Changed from consulteeProfile to user
               },
             },
           },
@@ -33,51 +30,43 @@ export async function GET(
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
     ) {
-      return NextResponse.json(
-        { error: "Class not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
     }
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
-  request: Request,
-  { params }: { params: { classId: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ classId: string }> },
 ) {
   try {
-    const { classId } = params;
+    const { classId } = await params;
     const body = await request.json();
 
     const classData = await prisma.class.update({
       where: { id: classId },
       data: {
-        title: body.title,
-        description: body.description,
         startDate: body.startDate,
         endDate: body.endDate,
-        classPlans: {
-          connect: { id: body.classPlanId },
-        },
-        topics: {
-          set: body.topicIds ? body.topicIds.map((id: string) => ({ id })) : [],
-        },
+        status: body.status,
+        tentativeStartDate: body.tentativeStartDate,
+        tentativeSchedule: body.tentativeSchedule,
+        currentParticipants: body.currentParticipants,
+        recordingUrls: body.recordingUrls,
+        feedbackSummary: body.feedbackSummary,
       },
       include: {
-        classPlans: true,
-        topics: true,
+        classPlan: true,
         appointment: {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
+                user: true, // Changed from consulteeProfile to user
               },
             },
           },
@@ -90,30 +79,27 @@ export async function PUT(
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
-  request: Request,
-  { params }: { params: { classId: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ classId: string }> },
 ) {
   try {
-    const { classId } = params;
+    const { classId } = await params;
 
     const classData = await prisma.class.delete({
       where: { id: classId },
       include: {
-        classPlans: true,
-        topics: true,
+        classPlan: true,
         appointment: {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
+                user: true, // Changed from consulteeProfile to user
               },
             },
           },
@@ -126,7 +112,7 @@ export async function DELETE(
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

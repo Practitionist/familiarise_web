@@ -4,21 +4,54 @@ import { NextResponse } from "next/server";
 
 export async function GET(
   request: Request,
-  { params }: { params: { subscriptionId: string } }
+  { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
   try {
-    const { subscriptionId } = params;
+    const { subscriptionId } = await params;
     const subscriptionData = await prisma.subscription.findUniqueOrThrow({
       where: { id: subscriptionId },
       include: {
-        plan: true,
-        appointment: {
+        subscriptionPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        requestedBy: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+        appointments: {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
+                user: {
+                  // Changed from consulteeProfile to user
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
               },
             },
           },
@@ -34,23 +67,23 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Subscription not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
-    console.error(error);
+    console.error("Error fetching subscription:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "An error occurred while fetching the subscription" },
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
   request: Request,
-  { params }: { params: { subscriptionId: string } }
+  { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
   try {
-    const { subscriptionId } = params;
+    const { subscriptionId } = await params;
     const body = await request.json();
 
     const subscriptionData = await prisma.subscription.update({
@@ -58,22 +91,61 @@ export async function PUT(
       data: {
         startDate: body.startDate,
         endDate: body.endDate,
-        plan: {
-          connect: { id: body.planId },
-        },
-        appointment: body.appointmentId ? {
-          connect: { id: body.appointmentId },
-        } : undefined,
+        requestStatus: body.requestStatus,
+        tentativeStartDate: body.tentativeStartDate,
+        tentativeSchedule: body.tentativeSchedule,
+        requestNotes: body.requestNotes,
+        feedbackFromConsultee: body.feedbackFromConsultee,
+        feedbackFromConsultant: body.feedbackFromConsultant,
+        rating: body.rating,
+        subscriptionPlan: body.planId
+          ? {
+              connect: { id: body.planId },
+            }
+          : undefined,
       },
       include: {
-        plan: true,
-        appointment: {
+        subscriptionPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        requestedBy: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+        appointments: {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
+                user: {
+                  // Changed from consulteeProfile to user
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
               },
             },
           },
@@ -83,32 +155,65 @@ export async function PUT(
 
     return NextResponse.json({ data: subscriptionData }, { status: 200 });
   } catch (error) {
-    console.error(error);
+    console.error("Error updating subscription:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "An error occurred while updating the subscription" },
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { subscriptionId: string } }
+  { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
   try {
-    const { subscriptionId } = params;
+    const { subscriptionId } = await params;
 
     const subscriptionData = await prisma.subscription.delete({
       where: { id: subscriptionId },
       include: {
-        plan: true,
-        appointment: {
+        subscriptionPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        requestedBy: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+        appointments: {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
+                user: {
+                  // Changed from consulteeProfile to user
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
               },
             },
           },
@@ -118,10 +223,10 @@ export async function DELETE(
 
     return NextResponse.json({ data: subscriptionData }, { status: 200 });
   } catch (error) {
-    console.error(error);
+    console.error("Error deleting subscription:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "An error occurred while deleting the subscription" },
+      { status: 500 },
     );
   }
 }

@@ -3,9 +3,6 @@
 # Prisma
 migrations/
 
-# Firebase
-*firebase*.json
-
 # Zipped Files
 *.zip
 *.gz
@@ -32,10 +29,6 @@ migrations/
 *.deb
 *.rpm
 *.zst
-
-# Lock Files
-package-lock.json
-yarn.lock
 
 # dependencies
 /node_modules

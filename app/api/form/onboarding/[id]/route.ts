@@ -1,169 +1,28 @@
 import prisma from "@/lib/prisma";
-import { DayOfWeek, ScheduleType, UserRole } from "@prisma/client";
+import { ConsultationMode, ScheduleType, UserRole } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { isValidTimeRange } from "@/lib/timeSlotValidation";
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { id } = params;
+    console.log(
+      "Received request to update onboarding information",
+      JSON.stringify(params, null, 2),
+    );
+    const { id } = await params;
     const body = await req.json();
+    console.log("Request Body:", JSON.stringify(body, null, 2));
 
-    // Validate required fields
-    const requiredFields = ['personalInfo', 'role'];
-    for (const field of requiredFields) {
-      if (!body[field]) {
-        return NextResponse.json({ error: `Missing required field: ${field}` }, { status: 400 });
-      }
-    }
+    validateRequiredFields(body);
+    const existingUser = await getExistingUser(id);
+    validateRole(body.role);
 
-    // Check if the user exists
-    const existingUser = await prisma.user.findUnique({
-      where: { id },
-      include: {
-        consultantProfile: {
-          include: {
-            slotsOfAvailabilityWeekly: true,
-            slotsOfAvailabilityCustom: true,
-          },
-        },
-        consulteeProfile: true,
-        staffProfile: true,
-      },
-    });
+    const updatedUser = await updateUser(id, body);
+    const userProfileData = await updateUserProfile(id, body, existingUser);
 
-    if (!existingUser) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
-
-    // Validate role
-    if (!Object.values(UserRole).includes(body.role)) {
-      return NextResponse.json({ error: "Invalid role" }, { status: 400 });
-    }
-
-    const updatedUser = await prisma.user.update({
-      where: { id },
-      data: {
-        name: body.personalInfo.name,
-        email: body.personalInfo.email,
-        phone: body.personalInfo.phone,
-        address: body.personalInfo.address,
-        role: body.role,
-        onboardingCompleted: true,
-        currentTimezone: body.personalInfo.currentTimezone,
-      },
-    });
-
-    let userProfileData: any = {};
-    if (body.role === UserRole.CONSULTANT) {
-      const {
-        specialization,
-        experience,
-        location,
-        domain,
-        subDomains,
-        scheduleType,
-        weeklySlots,
-        customSlots,
-        description,
-        tags,
-      } = body.consultantProfile;
-
-      const subDomainsArray =
-        typeof subDomains === "string"
-          ? subDomains.split(",").map((item) => item.trim())
-          : subDomains;
-
-      const scheduleTypeEnum = scheduleType.toUpperCase() as ScheduleType;
-
-      const consultantProfile = await prisma.consultantProfile.upsert({
-        where: { userId: id },
-        update: {
-          specialization,
-          experience,
-          location,
-          domain,
-          subDomains: subDomainsArray,
-          scheduleType: scheduleTypeEnum,
-          description,
-          tags: typeof tags === "string" ? tags.split(",").map(tag => tag.trim()) : tags,
-        },
-        create: {
-          userId: id,
-          specialization,
-          experience,
-          location,
-          domain,
-          subDomains: subDomainsArray,
-          scheduleType: scheduleTypeEnum,
-          rating: 0,
-          description,
-          tags: typeof tags === "string" ? tags.split(",").map(tag => tag.trim()) : tags,
-        },
-      });
-
-      userProfileData.consultantProfileId = consultantProfile.id;
-
-      if (scheduleTypeEnum === ScheduleType.WEEKLY && weeklySlots) {
-        const existingWeeklySlots = existingUser.consultantProfile?.slotsOfAvailabilityWeekly || [];
-        const updatedWeeklySlots = createWeeklySlots(weeklySlots, existingWeeklySlots);
-        await prisma.slotOfAvailabilityWeekly.deleteMany({ where: { consultantProfileId: consultantProfile.id } });
-        await prisma.slotOfAvailabilityWeekly.createMany({
-          data: updatedWeeklySlots.map(slot => ({ ...slot, consultantProfileId: consultantProfile.id })),
-        });
-      } else if (scheduleTypeEnum === ScheduleType.CUSTOM && customSlots) {
-        const existingCustomSlots = existingUser.consultantProfile?.slotsOfAvailabilityCustom || [];
-        const updatedCustomSlots = createCustomSlots(customSlots, existingCustomSlots);
-        await prisma.slotOfAvailabilityCustom.deleteMany({ where: { consultantProfileId: consultantProfile.id } });
-        await prisma.slotOfAvailabilityCustom.createMany({
-          data: updatedCustomSlots.map(slot => ({ ...slot, consultantProfileId: consultantProfile.id })),
-        });
-      }
-
-    } else if (body.role === UserRole.CONSULTEE) {
-      const consulteeProfileData = {
-        education: body.consulteeProfile.education,
-        occupation: body.consulteeProfile.occupation,
-        aboutMe: body.consulteeProfile.aboutMe,
-        preferredCommunicationMethod: body.consulteeProfile.preferredCommunicationMethod,
-        preferredLanguage: body.consulteeProfile.preferredLanguage,
-        specialRequirements: body.consulteeProfile.specialRequirements,
-        interests: JSON.stringify(body.consulteeProfile.interests),
-      };
-    
-      const consulteeProfile = await prisma.consulteeProfile.upsert({
-        where: { userId: id },
-        update: consulteeProfileData,
-        create: {
-          userId: id,
-          ...consulteeProfileData,
-        },
-      });
-
-      userProfileData.consulteeProfileId = consulteeProfile.id;
-
-    } else if (body.role === UserRole.STAFF) {
-      const staffProfileData = {
-        department: body.staffProfile.department,
-        position: body.staffProfile.position,
-        permissions: body.staffProfile.permissions,
-        responsibilities: body.staffProfile.responsibilities,
-      };
-
-      const staffProfile = await prisma.staffProfile.upsert({
-        where: { userId: id },
-        update: staffProfileData,
-        create: {
-          userId: id,
-          ...staffProfileData,
-        },
-      });
-
-      userProfileData.staffProfileId = staffProfile.id;
-    }
-
-    // Update the user with the correct profile ID
     const finalUpdatedUser = await prisma.user.update({
       where: { id },
       data: userProfileData,
@@ -175,116 +34,282 @@ export async function PATCH(
     });
   } catch (error: unknown) {
     console.error("Error updating onboarding information:", error);
+    if (error instanceof Error) {
+      console.error("Error message:", error.message);
+      console.error("Error stack:", error.stack);
+    }
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "An error occurred while updating onboarding information" },
-      { status: 500 }
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "An error occurred while updating onboarding information",
+      },
+      { status: 500 },
     );
   }
 }
 
-function createWeeklySlots(weeklySlots: any, existingSlots: any[]) {
-  const updatedSlots = [];
+function validateRequiredFields(body: any) {
+  const requiredFields = ["name", "email", "role"];
+  for (const field of requiredFields) {
+    if (!body[field]) {
+      throw new Error(`Missing required field: ${field}`);
+    }
+  }
+}
 
-  for (const [day, daySlots] of Object.entries(weeklySlots)) {
-    for (const slot of daySlots as any) {
-      const newSlot = {
-        dayOfWeekforStartTimeInUTC: day.toUpperCase() as DayOfWeek,
-        slotStartTimeInUTC: new Date(`1970-01-01T${slot.startTime}:00Z`).toISOString(),
-        dayOfWeekforEndTimeInUTC: day.toUpperCase() as DayOfWeek,
-        slotEndTimeInUTC: new Date(`1970-01-01T${slot.endTime}:00Z`).toISOString(),
-      };
+async function getExistingUser(id: string) {
+  const existingUser = await prisma.user.findUnique({
+    where: { id },
+    include: {
+      consultantProfile: {
+        include: {
+          slotsOfAvailabilityWeekly: true,
+          slotsOfAvailabilityCustom: true,
+          domain: true,
+          subDomains: true,
+          tags: true,
+        },
+      },
+      consulteeProfile: true,
+      staffProfile: true,
+    },
+  });
 
-      const overlappingSlot = findOverlappingWeeklySlot(existingSlots, newSlot);
-      if (overlappingSlot) {
-        // Update the existing slot
-        Object.assign(overlappingSlot, newSlot);
-        updatedSlots.push(overlappingSlot);
-      } else {
-        // Create a new slot
-        updatedSlots.push(newSlot);
-      }
+  if (!existingUser) {
+    throw new Error("User not found");
+  }
+
+  return existingUser;
+}
+
+function validateRole(role: string) {
+  if (!Object.values(UserRole).includes(role as UserRole)) {
+    throw new Error("Invalid role");
+  }
+}
+
+async function updateUser(id: string, body: any) {
+  return prisma.user.update({
+    where: { id },
+    data: {
+      name: body.name,
+      email: body.email,
+      phone: body.phone,
+      address: body.address,
+      role: body.role as UserRole,
+      onboardingCompleted: true,
+      currentTimezone: body.currentTimezone,
+    },
+  });
+}
+
+async function updateUserProfile(id: string, body: any, existingUser: any) {
+  switch (body.role) {
+    case UserRole.CONSULTANT:
+      return updateConsultantProfile(id, body, existingUser);
+    case UserRole.CONSULTEE:
+      return updateConsulteeProfile(id, body);
+    case UserRole.STAFF:
+      return updateStaffProfile(id, body);
+    default:
+      throw new Error("Invalid role");
+  }
+}
+async function updateConsultantProfile(
+  id: string,
+  body: any,
+  existingUser: any,
+) {
+  const profileData = body.consultantProfile?.create;
+  if (!profileData) {
+    throw new Error("Missing consultant profile data");
+  }
+
+  const scheduleTypeEnum = (
+    profileData.scheduleType || "WEEKLY"
+  ).toUpperCase() as ScheduleType;
+  const domainId = profileData.domain?.connect?.id;
+  if (!domainId) {
+    throw new Error("Domain ID is required");
+  }
+
+  // First create/update the consultant profile
+  const consultantProfile = await prisma.consultantProfile.upsert({
+    where: { userId: id },
+    create: {
+      userId: id,
+      description: profileData.description || "",
+      qualifications: profileData.qualifications || "",
+      specialization: profileData.specialization || "",
+      experience: profileData.experience || "",
+      scheduleType: scheduleTypeEnum,
+      rating: 0,
+      domainId: domainId,
+    },
+    update: {
+      description: profileData.description || "",
+      qualifications: profileData.qualifications || "",
+      specialization: profileData.specialization || "",
+      experience: profileData.experience || "",
+      scheduleType: scheduleTypeEnum,
+      domainId: domainId,
+    },
+  });
+
+  // Then update the relationships
+  if (profileData.subDomains?.connect?.length) {
+    await prisma.consultantProfile.update({
+      where: { id: consultantProfile.id },
+      data: {
+        subDomains: {
+          set: profileData.subDomains.connect,
+        },
+      },
+    });
+  }
+
+  if (profileData.tags?.connect?.length) {
+    await prisma.consultantProfile.update({
+      where: { id: consultantProfile.id },
+      data: {
+        tags: {
+          set: profileData.tags.connect,
+        },
+      },
+    });
+  }
+
+  // Update slots based on schedule type
+  if (
+    scheduleTypeEnum === ScheduleType.WEEKLY &&
+    profileData.slotsOfAvailabilityWeekly?.create?.length
+  ) {
+    await prisma.slotOfAvailabilityWeekly.deleteMany({
+      where: { consultantProfileId: consultantProfile.id },
+    });
+
+    // Filter out invalid slots before creating
+    const validWeeklySlots =
+      profileData.slotsOfAvailabilityWeekly.create.filter((slot: any) =>
+        isValidTimeRange(
+          slot.slotStartTimeInUTC.split("T")[1].slice(0, 5),
+          slot.slotEndTimeInUTC.split("T")[1].slice(0, 5),
+        ),
+      );
+
+    if (validWeeklySlots.length > 0) {
+      await prisma.slotOfAvailabilityWeekly.createMany({
+        data: validWeeklySlots.map((slot: any) => ({
+          dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
+          slotStartTimeInUTC: slot.slotStartTimeInUTC,
+          dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
+          slotEndTimeInUTC: slot.slotEndTimeInUTC,
+          consultantProfileId: consultantProfile.id,
+        })),
+      });
     }
   }
 
-  return addBreaksToSlots(updatedSlots);
-}
+  if (
+    scheduleTypeEnum === ScheduleType.CUSTOM &&
+    profileData.slotsOfAvailabilityCustom?.create?.length
+  ) {
+    await prisma.slotOfAvailabilityCustom.deleteMany({
+      where: { consultantProfileId: consultantProfile.id },
+    });
 
-function createCustomSlots(customSlots: any, existingSlots: any[]) {
-  const updatedSlots = [];
+    // Filter out invalid slots before creating
+    const validCustomSlots =
+      profileData.slotsOfAvailabilityCustom.create.filter((slot: any) =>
+        isValidTimeRange(
+          slot.slotStartTimeInUTC.split("T")[1].slice(0, 5),
+          slot.slotEndTimeInUTC.split("T")[1].slice(0, 5),
+        ),
+      );
 
-  for (const [date, dateSlots] of Object.entries(customSlots)) {
-    for (const slot of dateSlots as any) {
-      const newSlot = {
-        slotStartTimeInUTC: new Date(`${date}T${slot.startTime}:00Z`).toISOString(),
-        slotEndTimeInUTC: new Date(`${date}T${slot.endTime}:00Z`).toISOString(),
-      };
-
-      const overlappingSlot = findOverlappingCustomSlot(existingSlots, newSlot);
-      if (overlappingSlot) {
-        // Update the existing slot
-        Object.assign(overlappingSlot, newSlot);
-        updatedSlots.push(overlappingSlot);
-      } else {
-        // Create a new slot
-        updatedSlots.push(newSlot);
-      }
+    if (validCustomSlots.length > 0) {
+      await prisma.slotOfAvailabilityCustom.createMany({
+        data: validCustomSlots.map((slot: any) => ({
+          slotStartTimeInUTC: slot.slotStartTimeInUTC,
+          slotEndTimeInUTC: slot.slotEndTimeInUTC,
+          consultantProfileId: consultantProfile.id,
+        })),
+      });
     }
   }
 
-  return addBreaksToSlots(updatedSlots);
+  return { consultantProfileId: consultantProfile.id };
 }
 
-function findOverlappingWeeklySlot(existingSlots: any[], newSlot: any) {
-  return existingSlots.find(slot =>
-    slot.dayOfWeekforStartTimeInUTC === newSlot.dayOfWeekforStartTimeInUTC &&
-    isOverlapping(slot, newSlot)
-  );
-}
-
-function findOverlappingCustomSlot(existingSlots: any[], newSlot: any) {
-  return existingSlots.find(slot =>
-    isSameDay(new Date(slot.slotStartTimeInUTC), new Date(newSlot.slotStartTimeInUTC)) &&
-    isOverlapping(slot, newSlot)
-  );
-}
-
-function isOverlapping(slot1: any, slot2: any) {
-  const start1 = new Date(slot1.slotStartTimeInUTC);
-  const end1 = new Date(slot1.slotEndTimeInUTC);
-  const start2 = new Date(slot2.slotStartTimeInUTC);
-  const end2 = new Date(slot2.slotEndTimeInUTC);
-
-  return (start1 < end2 && start2 < end1);
-}
-
-function isSameDay(date1: Date, date2: Date) {
-  return date1.getUTCFullYear() === date2.getUTCFullYear() &&
-    date1.getUTCMonth() === date2.getUTCMonth() &&
-    date1.getUTCDate() === date2.getUTCDate();
-}
-
-function addBreaksToSlots(slots: any[]) {
-  const slotsWithBreaks = [];
-
-  for (const slot of slots) {
-    const breakBefore = {
-      ...slot,
-      slotStartTimeInUTC: new Date(new Date(slot.slotStartTimeInUTC).getTime() - 15 * 60 * 1000).toISOString(),
-      slotEndTimeInUTC: slot.slotStartTimeInUTC,
-    };
-
-    const breakAfter = {
-      ...slot,
-      slotStartTimeInUTC: slot.slotEndTimeInUTC,
-      slotEndTimeInUTC: new Date(new Date(slot.slotEndTimeInUTC).getTime() + 15 * 60 * 1000).toISOString(),
-    };
-
-    slotsWithBreaks.push(breakBefore, slot, breakAfter);
+async function updateConsulteeProfile(id: string, body: any) {
+  const profileData = body.consulteeProfile?.create;
+  if (!profileData) {
+    throw new Error("Missing consultee profile data");
   }
 
-  return slotsWithBreaks.filter(slot => !isBreakSlot(slot));
+  // Convert arrays to comma-separated strings
+  const interests = Array.isArray(profileData.interests)
+    ? profileData.interests.join(", ")
+    : profileData.interests || "";
+
+  const goals = Array.isArray(profileData.goals)
+    ? profileData.goals.join(", ")
+    : profileData.goals || "";
+
+  const consulteeProfile = await prisma.consulteeProfile.upsert({
+    where: { userId: id },
+    create: {
+      userId: id,
+      education: profileData.education || "",
+      occupation: profileData.occupation || "",
+      aboutMe: profileData.aboutMe || "",
+      preferredCommunicationMethod: (profileData.preferredCommunicationMethod ||
+        "VIDEO") as ConsultationMode,
+      preferredLanguage: profileData.preferredLanguage || "",
+      specialRequirements: profileData.specialRequirements || "",
+      interests: interests,
+      goals: goals,
+    },
+    update: {
+      education: profileData.education || "",
+      occupation: profileData.occupation || "",
+      aboutMe: profileData.aboutMe || "",
+      preferredCommunicationMethod: (profileData.preferredCommunicationMethod ||
+        "VIDEO") as ConsultationMode,
+      preferredLanguage: profileData.preferredLanguage || "",
+      specialRequirements: profileData.specialRequirements || "",
+      interests: interests,
+      goals: goals,
+    },
+  });
+
+  return { consulteeProfileId: consulteeProfile.id };
 }
 
-function isBreakSlot(slot: any) {
-  return new Date(slot.slotEndTimeInUTC).getTime() - new Date(slot.slotStartTimeInUTC).getTime() === 15 * 60 * 1000;
+async function updateStaffProfile(id: string, body: any) {
+  const profileData = body.staffProfile?.create;
+  if (!profileData) {
+    throw new Error("Missing staff profile data");
+  }
+
+  const staffProfile = await prisma.staffProfile.upsert({
+    where: { userId: id },
+    create: {
+      userId: id,
+      department: profileData.department || "",
+      position: profileData.position || "",
+      permissions: profileData.permissions || {},
+      responsibilities: profileData.responsibilities || {},
+    },
+    update: {
+      department: profileData.department || "",
+      position: profileData.position || "",
+      permissions: profileData.permissions || {},
+      responsibilities: profileData.responsibilities || {},
+    },
+  });
+
+  return { staffProfileId: staffProfile.id };
 }

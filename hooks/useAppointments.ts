@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect } from "react";
 import { useToast } from "@/components/ui/use-toast";
-import { TAppointment } from '@/types/appointment';
+import { TAppointment } from "@/types/appointment";
 
 export const useAppointments = (consulteeId: string) => {
   const [appointments, setAppointments] = useState<TAppointment[]>([]);
@@ -13,9 +13,13 @@ export const useAppointments = (consulteeId: string) => {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch(`/api/slots/appointments?consulteeId=${consulteeId}`);
+        const response = await fetch(
+          `/api/slots/appointments?consulteeId=${consulteeId}`,
+        );
         if (!response.ok) {
-          throw new Error(`Failed to fetch appointments: ${response.statusText}`);
+          throw new Error(
+            `Failed to fetch appointments: ${response.statusText}`,
+          );
         }
         const data = await response.json();
         setAppointments(data);

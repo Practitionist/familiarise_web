@@ -4,24 +4,32 @@ import { NextResponse } from "next/server";
 
 export async function GET(
   request: Request,
-  { params }: { params: { webinarId: string } }
+  { params }: { params: Promise<{ webinarId: string }> },
 ) {
   try {
-    const { webinarId } = params;
+    const { webinarId } = await params;
     const webinarData = await prisma.webinar.findUniqueOrThrow({
       where: { id: webinarId },
       include: {
-        webinarPlan: true,
-        topics: true,
+        webinarPlan: {
+          include: {
+            topics: true,
+            consultantProfile: true,
+          },
+        },
         appointment: {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
+                user: true, // Changed from consulteeProfile to user
               },
             },
+          },
+        },
+        waitlist: true,
+        meetingRoom: {
+          include: {
+            recordings: true,
           },
         },
       },
@@ -33,57 +41,62 @@ export async function GET(
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
     ) {
-      return NextResponse.json(
-        { error: "Webinar not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
     }
-    console.error(error);
+    console.error("Error fetching webinar:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "An error occurred while fetching the webinar" },
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
   request: Request,
-  { params }: { params: { webinarId: string } }
+  { params }: { params: Promise<{ webinarId: string }> },
 ) {
   try {
-    const { webinarId } = params;
+    const { webinarId } = await params;
     const body = await request.json();
 
     const webinarData = await prisma.webinar.update({
       where: { id: webinarId },
       data: {
-        title: body.title,
-        description: body.description,
-        price: body.price,
         scheduledAt: body.scheduledAt,
-        durationInHours: body.durationInHours,
-        webinarPlan: {
-          connect: { id: body.webinarPlanId },
-        },
-        topics: {
-          set: body.topicIds ? body.topicIds.map((id: string) => ({ id })) : [],
-        },
-        appointment: body.appointmentId ? {
-          connect: { id: body.appointmentId },
-        } : undefined,
+        endAt: body.endAt,
+        status: body.status,
+        feedbackSummary: body.feedbackSummary,
+        webinarPlan: body.webinarPlanId
+          ? {
+              connect: { id: body.webinarPlanId },
+            }
+          : undefined,
+        appointment: body.appointmentId
+          ? {
+              connect: { id: body.appointmentId },
+            }
+          : undefined,
       },
       include: {
-        webinarPlan: true,
-        topics: true,
+        webinarPlan: {
+          include: {
+            topics: true,
+            consultantProfile: true,
+          },
+        },
         appointment: {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
+                user: true, // Changed from consulteeProfile to user
               },
             },
+          },
+        },
+        waitlist: true,
+        meetingRoom: {
+          include: {
+            recordings: true,
           },
         },
       },
@@ -91,35 +104,43 @@ export async function PUT(
 
     return NextResponse.json({ data: webinarData }, { status: 200 });
   } catch (error) {
-    console.error(error);
+    console.error("Error updating webinar:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "An error occurred while updating the webinar" },
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { webinarId: string } }
+  { params }: { params: Promise<{ webinarId: string }> },
 ) {
   try {
-    const { webinarId } = params;
+    const { webinarId } = await params;
 
     const webinarData = await prisma.webinar.delete({
       where: { id: webinarId },
       include: {
-        webinarPlan: true,
-        topics: true,
+        webinarPlan: {
+          include: {
+            topics: true,
+            consultantProfile: true,
+          },
+        },
         appointment: {
           include: {
             slotOfAppointment: {
               include: {
-                consulteeProfile: true,
-                slotOfAvailabilityWeekly: true,
-                slotOfAvailabilityCustom: true,
+                user: true, // Changed from consulteeProfile to user
               },
             },
+          },
+        },
+        waitlist: true,
+        meetingRoom: {
+          include: {
+            recordings: true,
           },
         },
       },
@@ -127,10 +148,10 @@ export async function DELETE(
 
     return NextResponse.json({ data: webinarData }, { status: 200 });
   } catch (error) {
-    console.error(error);
+    console.error("Error deleting webinar:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "An error occurred while deleting the webinar" },
+      { status: 500 },
     );
   }
 }

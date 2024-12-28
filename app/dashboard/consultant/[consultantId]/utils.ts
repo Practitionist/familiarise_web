@@ -1,83 +1,227 @@
-export interface Consultant {
-  name: string;
-  role: string;
+import {
+  Appointment,
+  Document,
+  Activity,
+  Approval,
+  ApiResponse,
+} from "./types";
+import { TConsultantProfile } from "@/types/consultant";
+import {
+  TAppointment,
+  TConsultation,
+  TSubscription,
+} from "@/types/appointment";
+
+export async function fetchConsultantData(
+  consultantId: string,
+): Promise<TConsultantProfile> {
+  try {
+    const response = await fetch(`/api/user/consultants/${consultantId}`);
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch consultant data: ${response.statusText}`,
+      );
+    }
+    const data: ApiResponse<TConsultantProfile> = await response.json();
+    return data.data;
+  } catch (error) {
+    console.error("Error fetching consultant data:", error);
+    throw error;
+  }
 }
 
-export interface Appointment {
-  id: string;
-  name: string;
-  description: string;
-  time: string;
-  badge: string;
+export async function fetchAppointments(
+  consultantId: string,
+): Promise<Appointment[]> {
+  try {
+    const response = await fetch(
+      `/api/slots/appointments?consultantProfileId=${consultantId}`,
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to fetch appointments: ${response.statusText}`);
+    }
+    const data: ApiResponse<TAppointment[]> = await response.json();
+
+    // Transform the API response to match our Appointment type
+    return data.data.map((appointment) => ({
+      id: appointment.id,
+      name: appointment.slotOfAppointment?.[0]?.user?.name ?? "Unknown", // Changed from consulteeProfile.user
+      description: getAppointmentDescription(appointment),
+      time: formatAppointmentTime(
+        appointment.slotOfAppointment?.[0]?.slotStartTimeInUTC,
+      ),
+      badge: getAppointmentBadge(
+        appointment.slotOfAppointment?.[0]?.slotStartTimeInUTC,
+      ),
+    }));
+  } catch (error) {
+    console.error("Error fetching appointments:", error);
+    throw error;
+  }
 }
 
-export interface Document {
-  invoiceNo: string;
-  clientName: string;
-  title: string;
-  tag: string;
+export async function fetchApprovals(
+  consultantId: string,
+): Promise<Approval[]> {
+  try {
+    // Fetch both consultations and subscriptions
+    const [consultationsRes, subscriptionsRes] = await Promise.all([
+      fetch(
+        `/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
+      ),
+      fetch(
+        `/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
+      ),
+    ]);
+
+    if (!consultationsRes.ok) {
+      throw new Error(
+        `Failed to fetch consultations: ${consultationsRes.statusText}`,
+      );
+    }
+    if (!subscriptionsRes.ok) {
+      throw new Error(
+        `Failed to fetch subscriptions: ${subscriptionsRes.statusText}`,
+      );
+    }
+
+    const consultationsData: ApiResponse<TConsultation[]> =
+      await consultationsRes.json();
+    const subscriptionsData: ApiResponse<TSubscription[]> =
+      await subscriptionsRes.json();
+
+    // Transform consultations into approvals
+    const consultationApprovals = consultationsData.data.map(
+      (consultation: TConsultation) => ({
+        id: consultation.id,
+        type: "Consultation",
+        name: consultation.requestedBy?.user?.name ?? "Unknown",
+        date: formatDate(consultation.requestedAt),
+        time: formatTime(consultation.requestedAt),
+      }),
+    );
+
+    // Transform subscriptions into approvals
+    const subscriptionApprovals = subscriptionsData.data.map(
+      (subscription: TSubscription) => ({
+        id: subscription.id,
+        type: "Subscription",
+        name: subscription.requestedBy?.user?.name ?? "Unknown",
+        date: formatDate(subscription.requestedAt),
+        time: formatTime(subscription.requestedAt),
+      }),
+    );
+
+    // Combine and sort by requestedAt
+    return [...consultationApprovals, ...subscriptionApprovals].sort(
+      (a, b) =>
+        new Date(`${b.date} ${b.time}`).getTime() -
+        new Date(`${a.date} ${a.time}`).getTime(),
+    );
+  } catch (error) {
+    console.error("Error fetching approvals:", error);
+    throw error;
+  }
 }
 
-export interface Activity {
-  id: string;
-  name: string;
-  action: string;
-  time: string;
+export async function fetchActivities(
+  _consultantId: string,
+): Promise<Activity[]> {
+  // TODO: Implement activity tracking
+  return [];
 }
 
-export interface Approval {
-  id: string;
-  name: string;
-  type: string;
-  date: string;
-  time: string;
+export async function fetchDocuments(
+  _consultantId: string,
+): Promise<Document[]> {
+  // TODO: Implement document management
+  return [];
 }
 
-export async function fetchConsultantData(id: string): Promise<Consultant> {
-  // Implement API call to fetch consultant data
-  // Return mock data for now
-  return { name: 'Mike Steele', role: 'Manager' };
+// Helper functions
+function getAppointmentDescription(appointment: TAppointment): string {
+  const type = appointment.appointmentType?.toLowerCase();
+  switch (type) {
+    case "consultation":
+      return `Consultation - ${appointment.consultation?.consultationPlan?.title ?? "No title"}`;
+    case "subscription":
+      return `Subscription - ${appointment.subscription?.subscriptionPlan?.title ?? "No title"}`;
+    case "webinar":
+      return `Webinar - ${appointment.webinar?.webinarPlan?.title ?? "No title"}`;
+    case "class":
+      return `Class - ${appointment.class?.classPlan?.title ?? "No title"}`;
+    default:
+      return "Appointment";
+  }
 }
 
-export async function fetchAppointments(id: string): Promise<Appointment[]> {
-  // Implement API call to fetch appointments
-  // Return mock data for now
-  return [
-    { id: '1', name: 'Olga Nunez', description: 'Invoice Negotiation', time: '3:00 PM - 3:30 PM', badge: 'Meeting in 5 min' },
-    { id: '2', name: 'John Doe', description: 'Project Review', time: '4:00 PM - 4:30 PM', badge: 'Meeting in 2 hours' },
-    { id: '3', name: 'Jane Smith', description: 'Consultation', time: '10:00 AM - 11:00 AM', badge: 'Tomorrow' },
-    { id: '4', name: 'Bob Johnson', description: 'Follow-up', time: '2:00 PM - 2:30 PM', badge: 'Next Week' },
-  ];
+function formatAppointmentTime(dateString?: string | Date | null): string {
+  if (!dateString) return "Time not set";
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "Invalid date";
+
+  return date.toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
 }
 
-export async function fetchDocuments(id: string): Promise<Document[]> {
-  // Implement API call to fetch documents
-  // Return mock data for now
-  return [
-    { invoiceNo: '2150', clientName: 'Andrea Jennings', title: '2020 - Tax Statement', tag: '2023' },
-    { invoiceNo: '2151', clientName: 'Stacey Larson', title: '2021 - Tax Statement', tag: '2023' },
-    { invoiceNo: '2152', clientName: 'Yvonne Breiner', title: '2022 - Tax Statement', tag: '2023' },
-    { invoiceNo: '2153', clientName: 'Steven Glover', title: '2023 - Tax Statement', tag: '2023' },
-  ];
+function getAppointmentBadge(dateString?: string | Date | null): string {
+  if (!dateString) return "Schedule unavailable";
+
+  const appointmentTime = new Date(dateString);
+  if (isNaN(appointmentTime.getTime())) return "Invalid date";
+
+  const now = new Date();
+  const diffInMinutes = Math.floor(
+    (appointmentTime.getTime() - now.getTime()) / (1000 * 60),
+  );
+
+  if (diffInMinutes < -30) return "Completed";
+  if (diffInMinutes <= 5) return "Meeting in 5 min";
+  if (diffInMinutes <= 120) return "Meeting in 2 hours";
+
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+  const dayAfterTomorrow = new Date(tomorrow);
+  dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
+
+  if (appointmentTime >= tomorrow && appointmentTime < dayAfterTomorrow) {
+    return "Tomorrow";
+  }
+
+  const diffInDays = Math.floor(diffInMinutes / (24 * 60));
+  if (diffInDays < 7) return `In ${diffInDays} days`;
+  if (diffInDays < 30) return `In ${Math.floor(diffInDays / 7)} weeks`;
+  if (diffInDays < 365) return `In ${Math.floor(diffInDays / 30)} months`;
+  return `In ${Math.floor(diffInDays / 365)} years`;
 }
 
-export async function fetchActivities(id: string): Promise<Activity[]> {
-  // Implement API call to fetch activities
-  // Return mock data for now
-  return [
-    { id: '1', name: 'Stephen', action: 'Stephen joined to 🎨 channel.', time: '20m ago' },
-    { id: '2', name: 'Alice', action: 'Alice uploaded a new document.', time: '1h ago' },
-    { id: '3', name: 'Bob', action: 'Bob scheduled a meeting.', time: '2h ago' },
-  ];
+function formatDate(dateString?: string | Date | null): string {
+  if (!dateString) return "Date not set";
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "Invalid date";
+
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
-export async function fetchApprovals(id: string): Promise<Approval[]> {
-  // Implement API call to fetch approvals
-  // Return mock data for now
-  return [
-    { id: '1', name: 'John Smith', type: 'Consultation', date: '2023-07-01', time: '10:00 AM' },
-    { id: '2', name: 'Jane Doe', type: 'Subscription', date: '2023-07-02', time: '2:00 PM' },
-    { id: '3', name: 'Bob Johnson', type: 'Consultation', date: '2023-07-03', time: '11:30 AM' },
-    { id: '4', name: 'Alice Brown', type: 'Subscription', date: '2023-07-04', time: '3:30 PM' },
-  ];
+function formatTime(dateString?: string | Date | null): string {
+  if (!dateString) return "Time not set";
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return "Invalid time";
+
+  return date.toLocaleString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
 }

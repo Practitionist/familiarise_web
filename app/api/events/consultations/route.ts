@@ -1,127 +1,121 @@
 import prisma from "@/lib/prisma";
-import { NextResponse } from "next/server";
-import { checkOverlappingAppointments } from "@/lib/appointmentUtils";
+import { RequestStatus } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const consultantProfileId = searchParams.get("consultantProfileId");
+  const status = searchParams.get("status") as RequestStatus | null;
+  const page = parseInt(searchParams.get("page") || "1");
+  const limit = parseInt(searchParams.get("limit") || "10");
+
+  if (!consultantProfileId) {
+    return NextResponse.json(
+      { error: "Consultant profile ID is required" },
+      { status: 400 },
+    );
+  }
+
   try {
-    const { searchParams } = new URL(request.url);
-    const consulteeId = searchParams.get('consulteeId');
-    const consultantId = searchParams.get('consultantId');
+    const whereClause: any = {
+      consultationPlan: {
+        consultantProfileId,
+      },
+    };
 
-    let consultations;
-
-    if (consulteeId) {
-      consultations = await prisma.consultation.findMany({
-        where: {
-          requestedById: consulteeId
-        }
-      });
-    } else if (consultantId) {
-      consultations = await prisma.consultation.findMany({
-        where: {
-          consultationPlan: {
-            consultantProfileId: consultantId
-          }
-        }
-      });
-    } else {
-      consultations = await prisma.consultation.findMany({});
+    if (status) {
+      whereClause.requestStatus = status;
     }
 
-    return NextResponse.json({ data: consultations }, { status: 200 });
+    const [consultations, total] = await Promise.all([
+      prisma.consultation.findMany({
+        where: whereClause,
+        include: {
+          consultationPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+          requestedBy: {
+            include: {
+              user: true,
+            },
+          },
+        },
+        orderBy: {
+          requestedAt: "desc",
+        },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.consultation.count({ where: whereClause }),
+    ]);
+
+    return NextResponse.json({
+      data: consultations,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
   } catch (error) {
-    console.error(error);
+    console.error("Error fetching consultations:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "An error occurred while fetching consultations" },
+      { status: 500 },
     );
   }
 }
 
-
-export async function POST(request: Request) {
+export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
+    const { id, status } = body;
 
-    // Check for overlapping appointments
-    const isOverlapping = await checkOverlappingAppointments(
-      new Date(body.startTime),
-      new Date(body.endTime),
-      body.consultantProfileId
-    );
-
-    if (isOverlapping) {
+    if (!id || !status) {
       return NextResponse.json(
-        { error: "This time slot is already booked" },
-        { status: 409 }
+        { error: "ID and status are required" },
+        { status: 400 },
       );
     }
 
-    // Create the consultation and associated appointment in a transaction
-    const result = await prisma.$transaction(async (prisma) => {
-      const consultation = await prisma.consultation.create({
-        data: {
-          consultationPlan: {
-            connect: {
-              id: body.consultationPlanId,
-            },
-          },
-          requestedBy: {
-            connect: {
-              id: body.consulteeProfileId,
-            },
-          },
-          appointmentRequestStatus: "PENDING",
-          directlyBooked: true,
-        },
-      });
+    if (!Object.values(RequestStatus).includes(status as RequestStatus)) {
+      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+    }
 
-      const appointment = await prisma.appointment.create({
-        data: {
-          appointmentType: "CONSULTATION",
-          consultation: {
-            connect: {
-              id: consultation.id,
-            },
-          },
-          slotOfAppointment: {
-            create: {
-              appointmentStartTimeInUTC: new Date(body.startTime),
-              appointmentEndTimeInUTC: new Date(body.endTime),
-              appointmentsType: "CONSULTATION",
-              consulteeProfile: {
-                connect: {
-                  id: body.consulteeProfileId,
-                },
-              },
-              slotOfAvailabilityCustom: {
-                create: {
-                  slotStartTimeInUTC: new Date(body.startTime),
-                  slotEndTimeInUTC: new Date(body.endTime),
-                  consultantProfile: {
-                    connect: {
-                      id: body.consultantProfileId,
-                    },
-                  },
-                },
+    const consultation = await prisma.consultation.update({
+      where: { id },
+      data: { requestStatus: status },
+      include: {
+        consultationPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: true,
               },
             },
           },
         },
-        include: {
-          slotOfAppointment: true,
+        requestedBy: {
+          include: {
+            user: true,
+          },
         },
-      });
-
-      return { consultation, appointment };
+      },
     });
 
-    return NextResponse.json({ data: result }, { status: 201 });
+    return NextResponse.json({ data: consultation });
   } catch (error) {
-    console.error(error);
+    console.error("Error updating consultation:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "An error occurred while updating consultation" },
+      { status: 500 },
     );
   }
 }

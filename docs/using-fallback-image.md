@@ -7,7 +7,7 @@ To address issues with loading images from remote sources, particularly the Clou
 1. Import the FallbackImage component in your file:
 
 ```typescript
-import FallbackImage from '@/components/ui/fallback-image';
+import FallbackImage from "@/components/ui/fallback-image";
 ```
 
 2. Replace existing `Image` components from 'next/image' with `FallbackImage`:

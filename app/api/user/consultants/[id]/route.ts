@@ -1,145 +1,373 @@
-import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { ScheduleType } from "@prisma/client";
+import { getServerSession } from "next-auth";
+import authOptions from "../../../auth/[...nextauth]/options";
+import prisma from "@/lib/prisma";
+import { ScheduleType, Prisma } from "@prisma/client";
+import { z } from "zod";
+
+// Zod schema for UUID validation
+const uuidSchema = z.string().uuid();
+
+// Zod schema for date-time string validation
+const dateTimeSchema = z.string().datetime({ offset: true });
+
+// Zod schema for weekly slot
+const weeklySlotSchema = z.object({
+  dayOfWeekforStartTimeInUTC: z.enum([
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+    "SUNDAY",
+  ]),
+  dayOfWeekforEndTimeInUTC: z.enum([
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+    "SUNDAY",
+  ]),
+  slotStartTimeInUTC: dateTimeSchema,
+  slotEndTimeInUTC: dateTimeSchema,
+});
+
+// Zod schema for custom slot
+const customSlotSchema = z.object({
+  slotStartTimeInUTC: dateTimeSchema,
+  slotEndTimeInUTC: dateTimeSchema,
+});
+
+// Main request body schema
+const updateConsultantSchema = z
+  .object({
+    description: z.string().optional(),
+    qualifications: z.string().optional(),
+    specialization: z.string().optional(),
+    experience: z.string().optional(),
+    scheduleType: z.enum(["WEEKLY", "CUSTOM"]),
+    language: z.string().optional(),
+    level: z.string().optional(),
+    prerequisites: z.string().optional(),
+    domainId: uuidSchema,
+    subDomainIds: z.array(uuidSchema),
+    tagIds: z.array(uuidSchema),
+    slotsOfAvailabilityWeekly: z.array(weeklySlotSchema).optional(),
+    slotsOfAvailabilityCustom: z.array(customSlotSchema).optional(),
+  })
+  .refine(
+    (data) => {
+      if (data.scheduleType === "WEEKLY") {
+        return (
+          data.slotsOfAvailabilityWeekly &&
+          data.slotsOfAvailabilityWeekly.length > 0
+        );
+      }
+      if (data.scheduleType === "CUSTOM") {
+        return (
+          data.slotsOfAvailabilityCustom &&
+          data.slotsOfAvailabilityCustom.length > 0
+        );
+      }
+      return false;
+    },
+    {
+      message: "Must provide corresponding slots array based on scheduleType",
+      path: ["scheduleType"],
+    },
+  );
 
 export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const consultant = await prisma.consultantProfile.findFirst({
-      where: { id: params.id },
+    // const session = await getServerSession(authOptions);
+    // if (!session) {
+    //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // }
+
+    const { id } = await params;
+    if (!id) {
+      return NextResponse.json(
+        { error: "Consultant ID is required" },
+        { status: 400 },
+      );
+    }
+
+    const consultant = await prisma.consultantProfile.findUnique({
+      where: { id },
       include: {
-        reviews: true,
+        user: true,
+        domain: true,
+        subDomains: true,
+        tags: true,
         slotsOfAvailabilityWeekly: true,
         slotsOfAvailabilityCustom: true,
         consultationPlans: true,
         subscriptionPlans: true,
         webinarPlans: true,
         classPlans: true,
-        user: true,
       },
     });
 
     if (!consultant) {
-      return NextResponse.json({ error: "Consultant not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Consultant not found" },
+        { status: 404 },
+      );
     }
 
-    return NextResponse.json(consultant, { status: 200 });
+    return NextResponse.json({ data: consultant });
   } catch (error) {
-    console.error(error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
-  }
-}
-
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const body = await req.json();
-
-    if (!body.domain || !Array.isArray(body.subDomains) || body.subDomains.length === 0) {
-      return NextResponse.json({ error: "Domain and subDomains are required" }, { status: 400 });
-    }
-
-    const consultant = await prisma.consultantProfile.create({
-      data: {
-        scheduleType: body.scheduleType as ScheduleType,
-        rating: body.rating ? parseFloat(body.rating) : 0,
-        specialization: body.specialization,
-        experience: body.experience,
-        location: body.location,
-        description: body.description,
-        tags: body.tags,
-        domain: body.domain,
-        subDomains: body.subDomains,
-        user: { connect: { id: params.id } },
-      },
-      include: {
-        reviews: true,
-        slotsOfAvailabilityWeekly: true,
-        slotsOfAvailabilityCustom: true,
-        consultationPlans: true,
-        subscriptionPlans: true,
-        webinarPlans: true,
-        classPlans: true,
-        user: true,
-      },
-    });
-
-    return NextResponse.json(consultant, { status: 201 });
-  } catch (error) {
-    console.error(error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    console.error("Error fetching consultant:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }
 
 export async function PUT(
-  req: NextRequest,
-  { params }: { params: { id: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const body = await req.json();
-
-    if (body.domain !== undefined && (!body.subDomains || !Array.isArray(body.subDomains) || body.subDomains.length === 0)) {
-      return NextResponse.json({ error: "When updating domain, subDomains must also be provided" }, { status: 400 });
+    const session = await getServerSession(authOptions);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const consultant = await prisma.consultantProfile.update({
-      where: { id: params.id },
+    const { id } = await params;
+    const requestData = await request.json();
+
+    // Validate request body using zod schema
+    const validationResult = updateConsultantSchema.safeParse(requestData);
+    if (!validationResult.success) {
+      return NextResponse.json(
+        {
+          error: "Validation failed",
+          details: validationResult.error.format(),
+        },
+        { status: 400 },
+      );
+    }
+
+    const data = validationResult.data;
+    const {
+      description,
+      qualifications,
+      specialization,
+      experience,
+      scheduleType,
+      domainId,
+      subDomainIds,
+      tagIds,
+      slotsOfAvailabilityWeekly,
+      slotsOfAvailabilityCustom,
+      language,
+      level,
+      prerequisites,
+    } = data;
+
+    // Update consultant profile
+    await prisma.consultantProfile.update({
+      where: { id },
       data: {
-        scheduleType: body.scheduleType as ScheduleType,
-        rating: body.rating ? parseFloat(body.rating) : undefined,
-        specialization: body.specialization,
-        experience: body.experience,
-        location: body.location,
-        description: body.description,
-        tags: body.tags,
-        domain: body.domain,
-        subDomains: body.subDomains,
+        description,
+        qualifications,
+        specialization,
+        experience,
+        scheduleType,
+        domain: {
+          connect: { id: domainId },
+        },
+        subDomains: {
+          set: subDomainIds.map((id: string) => ({ id })),
+        },
+        tags: {
+          set: tagIds.map((id: string) => ({ id })),
+        },
       },
+    });
+
+    // Update weekly slots if schedule type is WEEKLY
+    if (scheduleType === ScheduleType.WEEKLY) {
+      // Delete existing weekly slots
+      await prisma.slotOfAvailabilityWeekly.deleteMany({
+        where: { consultantProfileId: id },
+      });
+
+      // Create new weekly slots
+      if (slotsOfAvailabilityWeekly?.length) {
+        const weeklySlotData: Prisma.SlotOfAvailabilityWeeklyCreateManyInput[] =
+          slotsOfAvailabilityWeekly.map((slot) => ({
+            consultantProfileId: id,
+            dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
+            dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
+            slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
+            slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+          }));
+
+        await prisma.slotOfAvailabilityWeekly.createMany({
+          data: weeklySlotData,
+        });
+      }
+    }
+
+    // Update custom slots if schedule type is CUSTOM
+    if (scheduleType === ScheduleType.CUSTOM) {
+      // Delete existing custom slots
+      await prisma.slotOfAvailabilityCustom.deleteMany({
+        where: { consultantProfileId: id },
+      });
+
+      // Create new custom slots
+      if (slotsOfAvailabilityCustom?.length) {
+        const customSlotData: Prisma.SlotOfAvailabilityCustomCreateManyInput[] =
+          slotsOfAvailabilityCustom.map((slot) => ({
+            consultantProfileId: id,
+            slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
+            slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+          }));
+
+        await prisma.slotOfAvailabilityCustom.createMany({
+          data: customSlotData,
+        });
+      }
+    }
+
+    // Update service settings in all plans if provided
+    if (language || level || prerequisites) {
+      await Promise.all([
+        // Update consultation plans
+        prisma.consultationPlan.updateMany({
+          where: { consultantProfileId: id },
+          data: {
+            ...(language && { language }),
+            ...(level && { level }),
+            ...(prerequisites && { prerequisites }),
+          },
+        }),
+        // Update subscription plans
+        prisma.subscriptionPlan.updateMany({
+          where: { consultantProfileId: id },
+          data: {
+            ...(language && { language }),
+            ...(level && { level }),
+            ...(prerequisites && { prerequisites }),
+          },
+        }),
+        // Update webinar plans
+        prisma.webinarPlan.updateMany({
+          where: { consultantProfileId: id },
+          data: {
+            ...(language && { language }),
+            ...(level && { level }),
+            ...(prerequisites && { prerequisites }),
+          },
+        }),
+        // Update class plans
+        prisma.classPlan.updateMany({
+          where: { consultantProfileId: id },
+          data: {
+            ...(language && { language }),
+            ...(level && { level }),
+            ...(prerequisites && { prerequisites }),
+          },
+        }),
+      ]);
+    }
+
+    // Fetch and return the updated consultant with all relations
+    const updatedConsultant = await prisma.consultantProfile.findUnique({
+      where: { id },
       include: {
-        reviews: true,
+        user: true,
+        domain: true,
+        subDomains: true,
+        tags: true,
         slotsOfAvailabilityWeekly: true,
         slotsOfAvailabilityCustom: true,
         consultationPlans: true,
         subscriptionPlans: true,
         webinarPlans: true,
         classPlans: true,
-        user: true,
       },
     });
 
-    return NextResponse.json(consultant, { status: 200 });
+    return NextResponse.json({ data: updatedConsultant });
   } catch (error) {
-    console.error(error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    console.error("Error updating consultant:", error);
+    if (error instanceof Error) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }
 
 export async function DELETE(
-  req: NextRequest,
-  { params }: { params: { id: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const consultant = await prisma.consultantProfile.delete({
-      where: { id: params.id },
-      include: {
-        reviews: true,
-        slotsOfAvailabilityWeekly: true,
-        slotsOfAvailabilityCustom: true,
-        consultationPlans: true,
-        subscriptionPlans: true,
-        webinarPlans: true,
-        classPlans: true,
-        user: true,
-      },
-    });
+    const session = await getServerSession(authOptions);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    return NextResponse.json(consultant, { status: 200 });
+    const { id } = await params;
+
+    // Delete all related records first
+    await prisma.$transaction([
+      // Delete slots
+      prisma.slotOfAvailabilityWeekly.deleteMany({
+        where: { consultantProfileId: id },
+      }),
+      prisma.slotOfAvailabilityCustom.deleteMany({
+        where: { consultantProfileId: id },
+      }),
+
+      // Delete plans
+      prisma.consultationPlan.deleteMany({
+        where: { consultantProfileId: id },
+      }),
+      prisma.subscriptionPlan.deleteMany({
+        where: { consultantProfileId: id },
+      }),
+      prisma.webinarPlan.deleteMany({
+        where: { consultantProfileId: id },
+      }),
+      prisma.classPlan.deleteMany({
+        where: { consultantProfileId: id },
+      }),
+
+      // Delete reviews
+      prisma.consultantReview.deleteMany({
+        where: { consultantProfileId: id },
+      }),
+
+      // Delete the consultant profile
+      prisma.consultantProfile.delete({
+        where: { id },
+      }),
+    ]);
+
+    return NextResponse.json({ message: "Consultant deleted successfully" });
   } catch (error) {
-    console.error(error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    console.error("Error deleting consultant:", error);
+    if (error instanceof Error) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }

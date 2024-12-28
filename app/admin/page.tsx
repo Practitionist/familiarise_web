@@ -127,10 +127,7 @@ export default function AdminPanel() {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Avatar className="h-9 w-9">
-                <AvatarImage
-                  alt="Avatar"
-                  src="/placeholder.svg"
-                />
+                <AvatarImage alt="Avatar" src="/placeholder.svg" />
                 <AvatarFallback>AD</AvatarFallback>
               </Avatar>
             </DropdownMenuTrigger>

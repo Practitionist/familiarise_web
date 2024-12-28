@@ -1,9 +1,9 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from "@prisma/client";
 
 /**
  * Represents a ConsulteeProfile with specific included relations.
  * This type uses Prisma's generated types to ensure type safety and consistency with the database schema.
- * 
+ *
  * @typedef {Object} TConsulteeProfile
  * @property {Object} user - The user associated with this consultee profile.
  * @property {Object[]} consultationRequests - Consultation requests made by the consultee.
@@ -13,12 +13,12 @@ import { Prisma } from '@prisma/client';
  */
 export type TConsulteeProfile = Prisma.ConsulteeProfileGetPayload<{
   include: {
-    user: true,
-    consultationRequests: true,
-    subscriptionRequests: true,
-    slotsOfAppointment: true,
-    consultantReviews: true,
-  }
+    user: true;
+    consultationRequests: true;
+    subscriptionRequests: true;
+    slotsOfAppointment: true;
+    consultantReviews: true;
+  };
 }>;
 
 // By using Prisma.ConsulteeProfileGetPayload, we ensure that the type

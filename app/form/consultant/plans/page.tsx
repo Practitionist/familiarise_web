@@ -1,15 +1,22 @@
 "use client";
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useSession } from 'next-auth/react';
-import React, { useState } from 'react';
-import { FormProvider, useForm } from 'react-hook-form';
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useSession } from "next-auth/react";
+import React, { useState } from "react";
+import { FormProvider, useForm } from "react-hook-form";
 
-import { ClassPlan, ConsultantPlans, consultantPlansSchema, ConsultationPlan, SubscriptionPlan, WebinarPlan } from '@/schemas/PlanSchema';
-import ClassPlanForm from './components/ClassPlanForm';
-import ConsultationPlanForm from './components/ConsultationPlanForm';
-import SubscriptionPlanForm from './components/SubscriptionPlanForm';
-import ProgressIndicator from './components/ui/ProgressIndicator';
-import WebinarPlanForm from './components/WebinarPlanForm';
+import {
+  ClassPlan,
+  ConsultantPlans,
+  ConsultantPlansSchema,
+  ConsultationPlan,
+  SubscriptionPlan,
+  WebinarPlan,
+} from "@/schemas/PlanSchema";
+import ClassPlanForm from "./components/ClassPlanForm";
+import ConsultationPlanForm from "./components/ConsultationPlanForm";
+import SubscriptionPlanForm from "./components/SubscriptionPlanForm";
+import ProgressIndicator from "./components/ui/ProgressIndicator";
+import WebinarPlanForm from "./components/WebinarPlanForm";
 
 const ConsultantPlansForm: React.FC = () => {
   const { data: session } = useSession();
@@ -17,45 +24,48 @@ const ConsultantPlansForm: React.FC = () => {
   const [formData, setFormData] = useState<Partial<ConsultantPlans>>({});
 
   const methods = useForm<ConsultantPlans>({
-    resolver: zodResolver(consultantPlansSchema),
+    resolver: zodResolver(ConsultantPlansSchema),
     defaultValues: formData,
   });
 
   const handleNext = async (stepData: Partial<ConsultantPlans>) => {
-    console.log('handleNext called with data:', stepData);
-    setFormData(prevData => ({ ...prevData, ...stepData }));
-    setStep(prevStep => prevStep + 1);
+    console.log("handleNext called with data:", stepData);
+    setFormData((prevData: Partial<ConsultantPlans>) => ({
+      ...prevData,
+      ...stepData,
+    }));
+    setStep((prevStep) => prevStep + 1);
   };
 
-  const handleBack = () => setStep(prevStep => prevStep - 1);
+  const handleBack = () => setStep((prevStep) => prevStep - 1);
 
   const handleSubmit = async (data: ConsultantPlans) => {
     const finalData = { ...formData, ...data };
-    console.log('Final Submitted Data:', finalData);
+    console.log("Final Submitted Data:", finalData);
 
     try {
       const id = session?.user?.id;
       if (!id) {
-        throw new Error('User ID not found');
+        throw new Error("User ID not found");
       }
 
       const response = await fetch(`/api/form/consultant/plans/${id}`, {
-        method: 'PATCH',
+        method: "PATCH",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify(finalData),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to update consultant plans');
+        throw new Error("Failed to update consultant plans");
       }
 
       const result = await response.json();
-      console.log('Consultant plans update successful:', result);
+      console.log("Consultant plans update successful:", result);
       // Handle successful update (e.g., show success message, redirect)
     } catch (error) {
-      console.error('Error updating consultant plans:', error);
+      console.error("Error updating consultant plans:", error);
       // Handle error (e.g., show error message)
     }
   };
@@ -65,33 +75,42 @@ const ConsultantPlansForm: React.FC = () => {
       case 0:
         return (
           <ConsultationPlanForm
-            onNext={async (plans) => await handleNext({ consultationPlans: plans as ConsultationPlan[] })}
+            onNext={async (plans) =>
+              await handleNext({ consultationPlans: plans })
+            }
             onBack={handleBack}
-            initialData={formData.consultationPlans as ConsultationPlan[] || []}
+            initialData={formData.consultationPlans || []}
           />
         );
       case 1:
         return (
           <SubscriptionPlanForm
-            onNext={async (plans) => await handleNext({ subscriptionPlans: plans as SubscriptionPlan[] })}
+            onNext={async (plans) =>
+              await handleNext({ subscriptionPlans: plans })
+            }
             onBack={handleBack}
-            initialData={formData.subscriptionPlans as SubscriptionPlan[] || []}
+            initialData={formData.subscriptionPlans || []}
           />
         );
       case 2:
         return (
           <WebinarPlanForm
-            onNext={async (plans) => await handleNext({ webinarPlans: plans as WebinarPlan[] })}
+            onNext={async (plans) => await handleNext({ webinarPlans: plans })}
             onBack={handleBack}
-            initialData={formData.webinarPlans as WebinarPlan[] || []}
+            initialData={formData.webinarPlans || []}
           />
         );
       case 3:
         return (
           <ClassPlanForm
-            onSubmit={async (plans) => await handleSubmit({ ...formData, classPlans: plans as ClassPlan[] } as ConsultantPlans)}
+            onSubmit={async (plans) =>
+              await handleSubmit({
+                ...formData,
+                classPlans: plans,
+              } as ConsultantPlans)
+            }
             onBack={handleBack}
-            initialData={formData.classPlans as ClassPlan[] || []}
+            initialData={formData.classPlans || []}
           />
         );
       default:

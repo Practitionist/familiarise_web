@@ -1,18 +1,19 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
-  request: Request,
-  { params }: { params: { webinarId: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ webinarId: string }> },
 ) {
   try {
-    const { webinarId } = params;
+    const { webinarId } = await params;
     const webinarPlan = await prisma.webinarPlan.findUniqueOrThrow({
       where: { id: webinarId },
       include: {
         consultantProfile: true,
         webinars: true,
+        topics: true,
       },
     });
 
@@ -24,47 +25,75 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Webinar plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
-    console.error(error);
+    console.error("Error fetching webinar plan:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "An error occurred while fetching the webinar plan" },
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
-  request: Request,
-  { params }: { params: { webinarId: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ webinarId: string }> },
 ) {
   try {
-    const { webinarId } = params;
+    const { webinarId } = await params;
     const body = await request.json();
 
+    // Input validation
     if (body.durationInHours && body.durationInHours <= 0) {
       return NextResponse.json(
         { error: "Duration must be a positive number" },
-        { status: 400 }
+        { status: 400 },
+      );
+    }
+
+    if (body.price && body.price <= 0) {
+      return NextResponse.json(
+        { error: "Price must be a positive number" },
+        { status: 400 },
+      );
+    }
+
+    if (body.maxParticipants && body.maxParticipants <= 0) {
+      return NextResponse.json(
+        { error: "Maximum participants must be a positive number" },
+        { status: 400 },
       );
     }
 
     const webinarPlan = await prisma.webinarPlan.update({
       where: { id: webinarId },
       data: {
+        title: body.title,
+        description: body.description,
         durationInHours: body.durationInHours,
         price: body.price ? Math.round(body.price) : undefined, // Ensure price is an integer
-        consultantProfile: body.consultantProfileId ? {
-          connect: { id: body.consultantProfileId },
-        } : undefined,
-        webinars: body.webinarIds ? {
-          set: body.webinarIds.map((id: string) => ({ id })),
-        } : undefined,
+        maxParticipants: body.maxParticipants,
+        language: body.language,
+        level: body.level,
+        prerequisites: body.prerequisites,
+        materialProvided: body.materialProvided,
+        learningOutcomes: body.learningOutcomes,
+        consultantProfile: body.consultantProfileId
+          ? {
+              connect: { id: body.consultantProfileId },
+            }
+          : undefined,
+        topics: body.topicIds
+          ? {
+              set: body.topicIds.map((id: string) => ({ id })),
+            }
+          : undefined,
       },
       include: {
         consultantProfile: true,
         webinars: true,
+        topics: true,
       },
     });
 
@@ -76,29 +105,41 @@ export async function PUT(
     ) {
       return NextResponse.json(
         { error: "Webinar plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
-    console.error(error);
+    console.error("Error updating webinar plan:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "An error occurred while updating the webinar plan" },
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
-  request: Request,
-  { params }: { params: { webinarId: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ webinarId: string }> },
 ) {
   try {
-    const { webinarId } = params;
+    const { webinarId } = await params;
+
+    // Check if there are any associated webinars
+    const associatedWebinars = await prisma.webinar.findMany({
+      where: { webinarPlanId: webinarId },
+    });
+
+    if (associatedWebinars.length > 0) {
+      return NextResponse.json(
+        { error: "Cannot delete webinar plan with associated webinars" },
+        { status: 400 },
+      );
+    }
 
     const webinarPlan = await prisma.webinarPlan.delete({
       where: { id: webinarId },
       include: {
         consultantProfile: true,
-        webinars: true,
+        topics: true,
       },
     });
 
@@ -110,13 +151,13 @@ export async function DELETE(
     ) {
       return NextResponse.json(
         { error: "Webinar plan not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
-    console.error(error);
+    console.error("Error deleting webinar plan:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+      { error: "An error occurred while deleting the webinar plan" },
+      { status: 500 },
     );
   }
 }

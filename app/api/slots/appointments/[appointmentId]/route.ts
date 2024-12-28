@@ -2,169 +2,532 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, AppointmentsType } from "@prisma/client";
 
-export async function GET(
-    req: NextRequest,
-    { params }: { params: { appointmentId: string } }
-) {
-    try {
-        const appointment = await prisma.appointment.findUnique({
-            where: { id: params.appointmentId },
-            include: {
-                slotOfAppointment: {
-                    include: {
-                        consulteeProfile: true,
-                        slotOfAvailabilityWeekly: true,
-                        slotOfAvailabilityCustom: true,
-                    },
-                },
-                consultation: true,
-                subscription: true,
-                webinar: true,
-                class: true,
-            },
-        });
-
-        if (!appointment) {
-            return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
-        }
-
-        return NextResponse.json(appointment, { status: 200 });
-    } catch (error) {
-        console.error("Error fetching appointment:", error);
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
-    }
+interface UpdateAppointmentRequest {
+  appointmentType?: AppointmentsType;
+  slotOfAppointmentId?: string;
+  consultationId?: string;
+  subscriptionId?: string;
+  webinarId?: string;
+  classId?: string;
 }
 
-export async function POST(
-    req: NextRequest,
-    { params }: { params: { appointmentId: string } }
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
-    try {
-        const body = await req.json();
-
-        if (!Object.values(AppointmentsType).includes(body.appointmentType)) {
-            return NextResponse.json({ error: "Invalid appointment type" }, { status: 400 });
-        }
-
-        const eventTypeCount = [body.consultationId, body.subscriptionId, body.webinarId, body.classId].filter(Boolean).length;
-        if (eventTypeCount !== 1) {
-            return NextResponse.json({ error: "Exactly one event type must be specified" }, { status: 400 });
-        }
-
-        const newAppointment = await prisma.appointment.create({
-            data: {
-                appointmentType: body.appointmentType,
-                slotOfAppointment: { connect: { id: body.slotOfAppointmentId } },
-                consultation: body.consultationId ? { connect: { id: body.consultationId } } : undefined,
-                subscription: body.subscriptionId ? { connect: { id: body.subscriptionId } } : undefined,
-                webinar: body.webinarId ? { connect: { id: body.webinarId } } : undefined,
-                class: body.classId ? { connect: { id: body.classId } } : undefined,
+  try {
+    const { appointmentId } = await params;
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        slotOfAppointment: {
+          include: {
+            user: {
+              // Changed from consulteeProfile
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+                consulteeProfile: true, // Include consulteeProfile if needed
+              },
             },
-            include: {
-                slotOfAppointment: {
-                    include: {
-                        consulteeProfile: true,
-                        slotOfAvailabilityWeekly: true,
-                        slotOfAvailabilityCustom: true,
+          },
+        },
+        consultation: {
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
                     },
+                  },
                 },
-                consultation: true,
-                subscription: true,
-                webinar: true,
-                class: true,
+              },
             },
-        });
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        subscription: {
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        webinar: {
+          include: {
+            webinarPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        class: {
+          include: {
+            classPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        payment: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+      },
+    });
 
-        return NextResponse.json(newAppointment, { status: 201 });
-    } catch (error) {
-        console.error("Error creating appointment:", error);
-        if (error instanceof Prisma.PrismaClientKnownRequestError) {
-            if (error.code === 'P2002') {
-                return NextResponse.json({ error: "A unique constraint would be violated on Appointment" }, { status: 400 });
-            }
-        }
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    if (!appointment) {
+      return NextResponse.json(
+        { error: "Appointment not found" },
+        { status: 404 },
+      );
     }
+
+    return NextResponse.json({ data: appointment }, { status: 200 });
+  } catch (error) {
+    console.error("Error fetching appointment:", error);
+    return NextResponse.json(
+      { error: "An error occurred while fetching the appointment" },
+      { status: 500 },
+    );
+  }
 }
 
 export async function PUT(
-    req: NextRequest,
-    { params }: { params: { appointmentId: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
-    try {
-        const body = await req.json();
+  try {
+    const { appointmentId } = await params;
+    const body: UpdateAppointmentRequest = await request.json();
 
-        if (body.appointmentType && !Object.values(AppointmentsType).includes(body.appointmentType)) {
-            return NextResponse.json({ error: "Invalid appointment type" }, { status: 400 });
-        }
-
-        const updatedAppointment = await prisma.appointment.update({
-            where: { id: params.appointmentId },
-            data: {
-                appointmentType: body.appointmentType,
-                slotOfAppointment: body.slotOfAppointmentId ? { connect: { id: body.slotOfAppointmentId } } : undefined,
-                consultation: body.consultationId ? { connect: { id: body.consultationId } } : undefined,
-                subscription: body.subscriptionId ? { connect: { id: body.subscriptionId } } : undefined,
-                webinar: body.webinarId ? { connect: { id: body.webinarId } } : undefined,
-                class: body.classId ? { connect: { id: body.classId } } : undefined,
-            },
-            include: {
-                slotOfAppointment: {
-                    include: {
-                        consulteeProfile: true,
-                        slotOfAvailabilityWeekly: true,
-                        slotOfAvailabilityCustom: true,
-                    },
-                },
-                consultation: true,
-                subscription: true,
-                webinar: true,
-                class: true,
-            },
-        });
-
-        return NextResponse.json(updatedAppointment, { status: 200 });
-    } catch (error) {
-        console.error("Error updating appointment:", error);
-        if (error instanceof Prisma.PrismaClientKnownRequestError) {
-            if (error.code === 'P2025') {
-                return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
-            }
-        }
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    if (
+      body.appointmentType &&
+      !Object.values(AppointmentsType).includes(body.appointmentType)
+    ) {
+      return NextResponse.json(
+        { error: "Invalid appointment type" },
+        { status: 400 },
+      );
     }
+
+    const updatedAppointment = await prisma.appointment.update({
+      where: { id: appointmentId },
+      data: {
+        appointmentType: body.appointmentType,
+        slotOfAppointment: body.slotOfAppointmentId
+          ? { connect: { id: body.slotOfAppointmentId } }
+          : undefined,
+        consultation: body.consultationId
+          ? { connect: { id: body.consultationId } }
+          : undefined,
+        subscription: body.subscriptionId
+          ? { connect: { id: body.subscriptionId } }
+          : undefined,
+        webinar: body.webinarId
+          ? { connect: { id: body.webinarId } }
+          : undefined,
+        class: body.classId ? { connect: { id: body.classId } } : undefined,
+      },
+      include: {
+        slotOfAppointment: {
+          include: {
+            user: {
+              // Changed from consulteeProfile
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+                consulteeProfile: true, // Include consulteeProfile if needed
+              },
+            },
+          },
+        },
+        consultation: {
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        subscription: {
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        webinar: {
+          include: {
+            webinarPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        class: {
+          include: {
+            classPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        payment: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return NextResponse.json({ data: updatedAppointment }, { status: 200 });
+  } catch (error) {
+    console.error("Error updating appointment:", error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2025") {
+        return NextResponse.json(
+          { error: "Appointment not found" },
+          { status: 404 },
+        );
+      }
+    }
+    return NextResponse.json(
+      { error: "An error occurred while updating the appointment" },
+      { status: 500 },
+    );
+  }
 }
 
 export async function DELETE(
-    req: NextRequest,
-    { params }: { params: { appointmentId: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
-    try {
-        const deletedAppointment = await prisma.appointment.delete({
-            where: { id: params.appointmentId },
-            include: {
-                slotOfAppointment: {
-                    include: {
-                        consulteeProfile: true,
-                        slotOfAvailabilityWeekly: true,
-                        slotOfAvailabilityCustom: true,
-                    },
-                },
-                consultation: true,
-                subscription: true,
-                webinar: true,
-                class: true,
+  try {
+    const { appointmentId } = await params;
+    // Check if there's an associated payment
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        payment: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
             },
-        });
+          },
+        },
+      },
+    });
 
-        return NextResponse.json(deletedAppointment, { status: 200 });
-    } catch (error) {
-        console.error("Error deleting appointment:", error);
-        if (error instanceof Prisma.PrismaClientKnownRequestError) {
-            if (error.code === 'P2025') {
-                return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
-            }
-        }
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    if (appointment?.payment) {
+      return NextResponse.json(
+        { error: "Cannot delete appointment with associated payment" },
+        { status: 400 },
+      );
     }
+
+    const deletedAppointment = await prisma.appointment.delete({
+      where: { id: appointmentId },
+      include: {
+        slotOfAppointment: {
+          include: {
+            user: {
+              // Changed from consulteeProfile
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+                consulteeProfile: true, // Include consulteeProfile if needed
+              },
+            },
+          },
+        },
+        consultation: {
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        subscription: {
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        webinar: {
+          include: {
+            webinarPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        class: {
+          include: {
+            classPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return NextResponse.json({ data: deletedAppointment }, { status: 200 });
+  } catch (error) {
+    console.error("Error deleting appointment:", error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2025") {
+        return NextResponse.json(
+          { error: "Appointment not found" },
+          { status: 404 },
+        );
+      }
+    }
+    return NextResponse.json(
+      { error: "An error occurred while deleting the appointment" },
+      { status: 500 },
+    );
+  }
 }

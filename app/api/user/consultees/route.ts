@@ -5,7 +5,6 @@ export async function GET(req: NextRequest) {
   try {
     const consultees = await prisma.consulteeProfile.findMany({
       include: {
-        slotsOfAppointment: true,
         consultantReviews: true,
         user: {
           select: {
@@ -21,6 +20,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(consultees, { status: 200 });
   } catch (error) {
     console.error("Error getting consultees:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal Server Error" },
+      { status: 500 },
+    );
   }
 }

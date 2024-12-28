@@ -1,9 +1,9 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from "@prisma/client";
 
 /**
  * Represents a StaffProfile with specific included relations.
  * This type uses Prisma's generated types to ensure type safety and consistency with the database schema.
- * 
+ *
  * @typedef {Object} TStaffProfile
  * @property {Object} user - The user associated with this staff profile.
  * @property {string} department - The department the staff member belongs to.
@@ -13,8 +13,8 @@ import { Prisma } from '@prisma/client';
  */
 export type TStaffProfile = Prisma.StaffProfileGetPayload<{
   include: {
-    user: true,
-  }
+    user: true;
+  };
 }>;
 
 // By using Prisma.StaffProfileGetPayload, we ensure that the type

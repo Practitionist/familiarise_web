@@ -9,8 +9,13 @@ export default function OfferingsSection() {
       </h2>
       <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-4">
         {OFFERINGS.map((offering) => (
-          <Card key={offering.title} className="rounded-lg shadow-md transition-transform duration-300 hover:-translate-y-2">
-            <CardHeader className="text-xl font-semibold">{offering.title}</CardHeader>
+          <Card
+            key={offering.title}
+            className="rounded-lg shadow-md transition-transform duration-300 hover:-translate-y-2"
+          >
+            <CardHeader className="text-xl font-semibold">
+              {offering.title}
+            </CardHeader>
             <CardContent>
               <p className="text-gray-600">{offering.description}</p>
             </CardContent>

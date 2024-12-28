@@ -1,18 +1,117 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { Prisma, ScheduleType } from "@prisma/client";
 
-export async function GET(req: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
+    const searchParams = request.nextUrl.searchParams;
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "10");
+    const domain = searchParams.get("domain");
+    const subdomain = searchParams.get("subdomain");
+    const tags = searchParams.get("tags")?.split(",");
+    const experience = parseInt(searchParams.get("experience") || "0");
+    const search = searchParams.get("search");
+    const sort = searchParams.get("sort") || "nameAsc";
+
+    // Calculate offset
+    const skip = (page - 1) * limit;
+
+    // Build where clause
+    const where: any = {
+      AND: [],
+    };
+
+    // Domain filter
+    if (domain) {
+      where.AND.push({ domainId: domain });
+    }
+
+    // Subdomain filter
+    if (subdomain) {
+      where.AND.push({
+        subDomains: {
+          some: {
+            id: subdomain,
+          },
+        },
+      });
+    }
+
+    // Tags filter
+    if (tags && tags.length > 0) {
+      where.AND.push({
+        tags: {
+          some: {
+            name: {
+              in: tags,
+            },
+          },
+        },
+      });
+    }
+
+    // Experience filter
+    if (experience > 0) {
+      where.AND.push({
+        experience: {
+          contains: experience.toString(),
+        },
+      });
+    }
+
+    // Search filter
+    if (search) {
+      where.AND.push({
+        OR: [
+          { user: { name: { contains: search, mode: "insensitive" } } },
+          { user: { email: { contains: search, mode: "insensitive" } } },
+          { description: { contains: search, mode: "insensitive" } },
+          { specialization: { contains: search, mode: "insensitive" } },
+          { qualifications: { contains: search, mode: "insensitive" } },
+          { domain: { name: { contains: search, mode: "insensitive" } } },
+          {
+            subDomains: {
+              some: { name: { contains: search, mode: "insensitive" } },
+            },
+          },
+          {
+            tags: { some: { name: { contains: search, mode: "insensitive" } } },
+          },
+        ],
+      });
+    }
+
+    // If no filters are applied, remove the AND array
+    if (where.AND.length === 0) {
+      delete where.AND;
+    }
+
+    // Build orderBy clause
+    let orderBy: any = {};
+    switch (sort) {
+      case "nameAsc":
+        orderBy = { user: { name: "asc" } };
+        break;
+      case "nameDesc":
+        orderBy = { user: { name: "desc" } };
+        break;
+      case "reviewCount":
+        orderBy = { reviews: { _count: "desc" } };
+        break;
+      case "rating":
+        orderBy = { rating: "desc" };
+        break;
+      default:
+        orderBy = { user: { name: "asc" } };
+    }
+
+    // Fetch consultants with pagination
     const consultants = await prisma.consultantProfile.findMany({
+      where,
+      orderBy,
+      skip,
+      take: limit,
       include: {
-        reviews: true,
-        slotsOfAvailabilityWeekly: true,
-        slotsOfAvailabilityCustom: true,
-        consultationPlans: true,
-        subscriptionPlans: true,
-        webinarPlans: true,
-        classPlans: true,
         user: {
           select: {
             id: true,
@@ -21,73 +120,31 @@ export async function GET(req: NextRequest) {
             image: true,
           },
         },
-      },
-    });
-
-    return NextResponse.json(consultants, { status: 200 });
-  } catch (error) {
-    console.error("Error getting consultants:", error);
-    return NextResponse.json({ error: "An error occurred while fetching consultants" }, { status: 500 });
-  }
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-
-    // Validate required fields
-    const requiredFields = ['userId', 'domain', 'subDomains', 'scheduleType'];
-    for (const field of requiredFields) {
-      if (!body[field]) {
-        return NextResponse.json({ error: `Missing required field: ${field}` }, { status: 400 });
-      }
-    }
-
-    // Validate scheduleType
-    if (!Object.values(ScheduleType).includes(body.scheduleType)) {
-      return NextResponse.json({ error: "Invalid scheduleType" }, { status: 400 });
-    }
-
-    const newConsultant = await prisma.consultantProfile.create({
-      data: {
-        rating: body.rating || 0,
-        specialization: body.specialization,
-        experience: body.experience,
-        location: body.location,
-        description: body.description,
-        tags: body.tags,
-        domain: body.domain,
-        subDomains: body.subDomains,
-        scheduleType: body.scheduleType,
-        user: { connect: { id: body.userId } },
-      },
-      include: {
+        domain: true,
+        subDomains: true,
+        tags: true,
         reviews: true,
-        slotsOfAvailabilityWeekly: true,
-        slotsOfAvailabilityCustom: true,
-        consultationPlans: true,
         subscriptionPlans: true,
-        webinarPlans: true,
-        classPlans: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-          },
-        },
       },
     });
 
-    return NextResponse.json(newConsultant, { status: 201 });
+    // Get total count for pagination
+    const total = await prisma.consultantProfile.count({ where });
+
+    return NextResponse.json({
+      data: consultants,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
   } catch (error) {
-    console.error("Error creating consultant:", error);
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === 'P2002') {
-        return NextResponse.json({ error: "A consultant profile already exists for this user" }, { status: 400 });
-      }
-    }
-    return NextResponse.json({ error: "An error occurred while creating the consultant profile" }, { status: 500 });
+    console.error("Error fetching consultants:", error);
+    return NextResponse.json(
+      { error: "Internal Server Error" },
+      { status: 500 },
+    );
   }
 }

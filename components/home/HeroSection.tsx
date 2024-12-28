@@ -20,14 +20,14 @@ export default function HeroSection({ images }: { images: ImageType[] }) {
           </h1>
           <p className="max-w-[700px] text-xl md:text-2xl text-gray-800 italic">
             <q>
-              A platform where experts share their advice through 1-1
-              sessions, classes, webinars, and conferences.
+              A platform where experts share their advice through 1-1 sessions,
+              classes, webinars, and conferences.
             </q>
           </p>
           <div className="flex space-x-4">
             <Link
               className="inline-flex h-12 items-center justify-center rounded-md bg-gray-900 px-6 py-3 text-sm font-medium text-white shadow transition-colors hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-950"
-              href="#"
+              href="/explore/experts"
             >
               Book an Expert Session
             </Link>
