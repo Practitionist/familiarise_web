@@ -64,9 +64,11 @@ export default function BookingHistoryTab({
     ...webinars.map((w) => ({ ...w, type: "Webinar" as const })),
     ...classes.map((c) => ({ ...c, type: "Class" as const })),
   ].sort((a, b) => {
-    const dateA = getEventDate(a);
-    const dateB = getEventDate(b);
-    return new Date(dateB).getTime() - new Date(dateA).getTime(); // Sort in descending order
+    const dateA = getBookingDate(a);
+    const dateB = getBookingDate(b);
+    return dateB && dateA
+      ? new Date(dateB).getTime() - new Date(dateA).getTime()
+      : 0; // Sort in descending order
   });
 
   return (
@@ -89,7 +91,8 @@ export default function BookingHistoryTab({
             <Table>
               <TableHeader>
                 <TableRow className="bg-gray-50">
-                  <TableHead className="font-semibold">Date & Time</TableHead>
+                  <TableHead className="font-semibold">Booking Date</TableHead>
+                  <TableHead className="font-semibold">Payment Date</TableHead>
                   <TableHead className="font-semibold">Session</TableHead>
                   <TableHead className="font-semibold">Expert</TableHead>
                   <TableHead className="font-semibold">Status</TableHead>
@@ -103,14 +106,10 @@ export default function BookingHistoryTab({
                     className="hover:bg-gray-50 transition-colors cursor-pointer"
                   >
                     <TableCell className="font-medium">
-                      {new Date(getEventDate(event)).toLocaleString(undefined, {
-                        weekday: "short",
-                        year: "numeric",
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                      {formatDate(getBookingDate(event))}
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      {formatDate(getPaymentDate(event))}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -173,7 +172,7 @@ export default function BookingHistoryTab({
                 {allEvents.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={5}
+                      colSpan={6}
                       className="text-center py-8 text-gray-500"
                     >
                       No bookings found
@@ -189,27 +188,6 @@ export default function BookingHistoryTab({
   );
 }
 
-function getEventDate(event: EventWithType): string {
-  switch (event.type) {
-    case "Consultation":
-      return event.preferredDateTime
-        ? new Date(event.preferredDateTime).toISOString()
-        : "Unknown";
-    case "Subscription":
-      return event.startDate
-        ? new Date(event.startDate).toISOString()
-        : "Unknown";
-    case "Webinar":
-      return event.scheduledAt
-        ? new Date(event.scheduledAt).toISOString()
-        : "Unknown";
-    case "Class":
-      return event.startDate
-        ? new Date(event.startDate).toISOString()
-        : "Unknown";
-  }
-}
-
 function getEventStatus(event: EventWithType): string {
   switch (event.type) {
     case "Consultation":
@@ -220,6 +198,60 @@ function getEventStatus(event: EventWithType): string {
       return event.status;
     case "Class":
       return event.status;
+  }
+}
+
+function formatDate(date: string | null | undefined): string {
+  if (!date) return "Not available";
+  return new Date(date).toLocaleString(undefined, {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getBookingDate(event: EventWithType): string | null {
+  switch (event.type) {
+    case "Consultation":
+      return event.appointment?.createdAt
+        ? new Date(event.appointment.createdAt).toISOString()
+        : null;
+    case "Subscription":
+      return event.appointments?.[0]?.createdAt
+        ? new Date(event.appointments[0].createdAt).toISOString()
+        : null;
+    case "Webinar":
+      return event.appointment?.createdAt
+        ? new Date(event.appointment.createdAt).toISOString()
+        : null;
+    case "Class":
+      return event.appointment?.createdAt
+        ? new Date(event.appointment.createdAt).toISOString()
+        : null;
+  }
+}
+
+function getPaymentDate(event: EventWithType): string | null {
+  switch (event.type) {
+    case "Consultation":
+      return event.appointment?.payment?.[0]?.createdAt
+        ? new Date(event.appointment.payment[0].createdAt).toISOString()
+        : null;
+    case "Subscription":
+      return event.appointments?.[0]?.payment?.[0]?.createdAt
+        ? new Date(event.appointments[0].payment[0].createdAt).toISOString()
+        : null;
+    case "Webinar":
+      return event.appointment?.payment?.[0]?.createdAt
+        ? new Date(event.appointment.payment[0].createdAt).toISOString()
+        : null;
+    case "Class":
+      return event.appointment?.payment?.[0]?.createdAt
+        ? new Date(event.appointment.payment[0].createdAt).toISOString()
+        : null;
   }
 }
 
