@@ -16,8 +16,7 @@ export function getPreferredSlots(event: EventWithType): Date[] {
           ? JSON.parse(event.tentativeSchedule)
           : [];
         return schedule.map((slot) => new Date(slot.startTime));
-      } catch (e) {
-        console.error("Error parsing subscription schedule:", e);
+      } catch {
         return [];
       }
     case "Class":
@@ -26,8 +25,7 @@ export function getPreferredSlots(event: EventWithType): Date[] {
           ? JSON.parse(event.tentativeSchedule)
           : [];
         return schedule.map((slot) => new Date(slot.startTime));
-      } catch (e) {
-        console.error("Error parsing class schedule:", e);
+      } catch {
         return [];
       }
     case "Webinar":
