@@ -2,6 +2,8 @@ import globals from "globals";
 import pluginJs from "@eslint/js";
 import tseslint from "typescript-eslint";
 import pluginReact from "eslint-plugin-react";
+import pluginCypress from "eslint-plugin-cypress";
+import pluginJest from "eslint-plugin-jest";
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
@@ -16,6 +18,42 @@ export default [
       "coverage/**",
       "public/static/**",
     ],
+  },
+
+  // Jest test files configuration
+  {
+    files: ["**/*.{test,spec}.{js,ts,jsx,tsx}", "jest.setup.ts"],
+    languageOptions: {
+      globals: {
+        ...globals.jest,
+      },
+    },
+    plugins: {
+      jest: pluginJest,
+    },
+    rules: {
+      ...pluginJest.configs.recommended.rules,
+    },
+  },
+
+  // Cypress test files configuration
+  {
+    files: ["cypress/**/*.{js,ts,jsx,tsx}"],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        cy: true,
+        Cypress: true,
+        describe: true,
+        it: true,
+        expect: true,
+        beforeEach: true,
+        afterEach: true,
+      },
+    },
+    plugins: {
+      cypress: pluginCypress,
+    },
   },
 
   // Base config for all JavaScript/TypeScript files
