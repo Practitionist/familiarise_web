@@ -87,8 +87,10 @@ export function EventCard({
       transition={{ delay: 0.1 }}
       className="group h-full"
     >
-      <button onClick={handleClick} className="w-full text-left">
-        <Card className="hover:shadow-md transition-shadow duration-200 border border-gray-100 h-full">
+      <Card 
+        onClick={handleClick} 
+        className="hover:shadow-md transition-shadow duration-200 border border-gray-100 h-full cursor-pointer"
+      >
           <CardHeader className="pb-2">
             <div className="flex items-start justify-between">
               <div>
@@ -192,7 +194,6 @@ export function EventCard({
             </div>
           </CardContent>
         </Card>
-      </button>
     </motion.div>
   );
 }

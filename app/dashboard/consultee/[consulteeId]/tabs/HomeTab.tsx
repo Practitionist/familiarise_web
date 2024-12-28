@@ -281,22 +281,22 @@ function SlotCard({
                   </span>
                 </div>
               </div>
-              <div className="flex flex-col items-end gap-2">
-                <Badge className={getStatusColor(status)}>
-                  {status}
-                  {isTentative && <span className="ml-1 text-red-500">*</span>}
-                </Badge>
+              <div className="flex flex-col items-end gap-1.5">
                 <Badge
                   className={`${
                     isJoinable
                       ? "bg-green-100 text-green-800 animate-pulse"
                       : "bg-blue-100 text-blue-800"
-                  } text-sm font-medium`}
+                  } text-xs font-medium px-2.5 py-1`}
                 >
                   {isJoinable
                     ? "Starting Soon!"
                     : formatTimeUntil(diffInMinutes)}
                 </Badge>
+                <Badge className={getStatusColor(status)}>
+                  {status}
+                </Badge>
+                {isTentative && <span className="text-red-500 text-xs mt-0.5">*Subject to change</span>}
               </div>
             </div>
           </CardHeader>
@@ -324,11 +324,6 @@ function SlotCard({
                 >
                   Join Meeting Now
                 </Button>
-              )}
-              {isTentative && (
-                <div className="text-xs text-red-500 mt-2">
-                  * Subject to change
-                </div>
               )}
             </div>
           </CardContent>
