@@ -293,10 +293,12 @@ function SlotCard({
                     ? "Starting Soon!"
                     : formatTimeUntil(diffInMinutes)}
                 </Badge>
-                <Badge className={getStatusColor(status)}>
-                  {status}
-                </Badge>
-                {isTentative && <span className="text-red-500 text-xs mt-0.5">*Subject to change</span>}
+                <Badge className={getStatusColor(status)}>{status}</Badge>
+                {isTentative && (
+                  <span className="text-red-500 text-xs mt-0.5">
+                    *Subject to change
+                  </span>
+                )}
               </div>
             </div>
           </CardHeader>

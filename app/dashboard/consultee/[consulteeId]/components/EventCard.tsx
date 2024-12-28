@@ -6,13 +6,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { PencilIcon, XIcon } from "lucide-react";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
 
 interface EventCardProps {
   title: string;
@@ -27,9 +22,29 @@ interface EventCardProps {
   tentativeSlots?: Array<{
     startTime: string;
     endTime?: string;
+    timezone?: string;
   }>;
   type?: "Subscription" | "Class" | "Consultation" | "Webinar";
   isTentative?: boolean;
+}
+
+function formatSlotDate(date: Date | string): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return d.toLocaleString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatSlotTime(date: Date | string): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return d.toLocaleString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).toLowerCase(); // Convert to lowercase for consistent am/pm
 }
 
 export function EventCard({
@@ -47,10 +62,12 @@ export function EventCard({
     const statusLower = status.toLowerCase();
     if (statusLower === "completed")
       return "bg-green-50 text-green-700 border-green-200";
-    if (statusLower === "rejected")
+    if (statusLower === "rejected" || statusLower === "expired")
       return "bg-red-50 text-red-700 border-red-200";
     if (statusLower === "pending")
       return "bg-yellow-50 text-yellow-700 border-yellow-200";
+    if (statusLower === "approved")
+      return "bg-blue-50 text-blue-700 border-blue-200";
     return "bg-gray-50 text-gray-700 border-gray-200";
   };
 
@@ -92,26 +109,10 @@ export function EventCard({
     date.includes("Please select") ||
     date === "No slot assigned";
 
-  const showSessionDetails =
-    (type === "Subscription" || type === "Class") &&
+  const showSessionDetails = (type === "Subscription" || type === "Class") && 
     (actualSlots?.length || tentativeSlots?.length);
 
-  const formatSessionDate = (date: Date | string) => {
-    const d = date instanceof Date ? date : new Date(date);
-    return {
-      date: d.toLocaleDateString(undefined, {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      }),
-      time: d.toLocaleTimeString(undefined, {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: true,
-      }),
-    };
-  };
+  const slots = actualSlots?.length ? actualSlots : tentativeSlots;
 
   return (
     <motion.div
@@ -120,8 +121,8 @@ export function EventCard({
       transition={{ delay: 0.1 }}
       className="group h-full"
     >
-      <Card
-        onClick={handleClick}
+      <Card 
+        onClick={handleClick} 
         className="hover:shadow-md transition-shadow duration-200 border border-gray-100 h-full cursor-pointer"
       >
         <CardHeader className="pb-2">
@@ -141,12 +142,19 @@ export function EventCard({
             </div>
             <div className="flex flex-col items-end gap-1">
               {status && (
-                <Badge className={`${getStatusColor(status)}`}>{status}</Badge>
+                <Badge className={`${getStatusColor(status)}`}>
+                  {status}
+                </Badge>
               )}
               {isTentative && (
-                <Badge className="bg-red-50 text-red-700 border-red-200">
-                  Tentative
-                </Badge>
+                <div className="flex flex-col items-end gap-1">
+                  <Badge className="bg-red-50 text-red-700 border-red-200">
+                    Tentative
+                  </Badge>
+                  <span className="text-xs text-red-500">
+                    Subject to change
+                  </span>
+                </div>
               )}
             </div>
           </div>
@@ -158,50 +166,24 @@ export function EventCard({
                 <AccordionItem value="sessions" className="border-none">
                   <AccordionTrigger className="py-2 hover:no-underline">
                     <span className="text-sm font-medium text-gray-700">
-                      {type === "Subscription"
-                        ? "Scheduled Sessions"
-                        : "Class Schedule"}
+                      {type === "Subscription" ? "Scheduled Sessions" : "Class Schedule"}
                     </span>
                   </AccordionTrigger>
                   <AccordionContent>
                     <div className="space-y-2">
-                      {actualSlots?.map((slot, index) => {
-                        const { date, time } = formatSessionDate(
-                          slot.startTime,
-                        );
-                        return (
-                          <div
-                            key={index}
-                            className="flex items-center justify-between bg-gray-50 p-2 rounded"
-                          >
-                            <span className="text-sm text-gray-600">
-                              {date}
-                            </span>
-                            <span className="text-sm font-medium text-gray-700">
-                              {time}
-                            </span>
-                          </div>
-                        );
-                      })}
-                      {!actualSlots?.length &&
-                        tentativeSlots?.map((slot, index) => {
-                          const { date, time } = formatSessionDate(
-                            slot.startTime,
-                          );
-                          return (
-                            <div
-                              key={index}
-                              className="flex items-center justify-between bg-gray-50 p-2 rounded"
-                            >
-                              <span className="text-sm text-gray-600">
-                                {date}
-                              </span>
-                              <span className="text-sm font-medium text-gray-700">
-                                {time}
-                              </span>
-                            </div>
-                          );
-                        })}
+                      {slots?.map((slot, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center justify-between bg-gray-50 p-2 rounded"
+                        >
+                          <span className="text-sm text-gray-600">
+                            {formatSlotDate(slot.startTime)}
+                          </span>
+                          <span className="text-sm text-gray-600">
+                            {formatSlotTime(slot.startTime)} - {formatSlotTime(slot.endTime || new Date(new Date(slot.startTime).getTime() + 60 * 60 * 1000))}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   </AccordionContent>
                 </AccordionItem>
@@ -209,11 +191,6 @@ export function EventCard({
             ) : (
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">{date}</span>
-                {isTentative && (
-                  <span className="text-xs text-red-500">
-                    Subject to change
-                  </span>
-                )}
               </div>
             )}
             <div className="flex justify-end gap-2 mt-4">
