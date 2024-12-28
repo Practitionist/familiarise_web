@@ -169,11 +169,13 @@ export default function HomeTab({
           ref={carouselRef}
           className="flex overflow-x-auto gap-6 pb-4 scrollbar-hide scroll-smooth"
           style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+          data-testid="slot-list"
         >
           {upcomingSlots.map((slot) => (
             <div
               key={`${slot.event.id}-${slot.slotTime.getTime()}`}
               className="flex-none w-[320px]"
+              data-testid={`${slot.event.type.toLowerCase()}-${slot.event.id}`}
             >
               <SlotCard
                 event={slot.event}
@@ -195,7 +197,10 @@ export default function HomeTab({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Monthly Events */}
         <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100">
-          <div className="flex justify-between items-center mb-8">
+          <div
+            className="flex justify-between items-center mb-8"
+            data-testid="month-nav"
+          >
             <h2 className="text-xl font-semibold text-gray-900">
               {currentMonth.toLocaleString("default", {
                 month: "long",
@@ -208,6 +213,7 @@ export default function HomeTab({
                 size="icon"
                 onClick={goToPreviousMonth}
                 className="rounded-full"
+                data-testid="prev-month"
               >
                 <ArrowLeftIcon className="h-4 w-4" />
               </Button>
@@ -216,18 +222,23 @@ export default function HomeTab({
                 size="icon"
                 onClick={goToNextMonth}
                 className="rounded-full"
+                data-testid="next-month"
               >
                 <ArrowRightIcon className="h-4 w-4" />
               </Button>
             </div>
           </div>
-          <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2">
+          <div
+            className="space-y-6 max-h-[600px] overflow-y-auto pr-2"
+            data-testid="slot-list"
+          >
             {monthlyEvents.map(({ event, slots }) => (
-              <MonthlyEventCard
+              <div
                 key={`${event.id}-${slots[0]?.date.getTime()}`}
-                event={event}
-                slots={slots}
-              />
+                data-testid={`${event.type.toLowerCase()}-${event.id}`}
+              >
+                <MonthlyEventCard event={event} slots={slots} />
+              </div>
             ))}
             {monthlyEvents.length === 0 && (
               <div className="text-center py-12 bg-gray-50 rounded-lg border border-dashed border-gray-200">
@@ -312,7 +323,10 @@ function SlotCard({
                       {getConsultantInitial(event)}
                     </AvatarFallback>
                   </Avatar>
-                  <span className="text-sm text-gray-600">
+                  <span
+                    className="text-sm text-gray-600"
+                    data-testid="consultant-name"
+                  >
                     {getConsultantName(event)}
                   </span>
                 </div>
@@ -329,9 +343,17 @@ function SlotCard({
                     ? "Starting Soon!"
                     : formatTimeUntil(diffInMinutes)}
                 </Badge>
-                <Badge className={getStatusColor(status)}>{status}</Badge>
+                <Badge
+                  className={getStatusColor(status)}
+                  data-testid="event-status"
+                >
+                  {status}
+                </Badge>
                 {isTentative && (
-                  <span className="text-red-500 text-xs mt-0.5">
+                  <span
+                    className="text-red-500 text-xs mt-0.5"
+                    data-testid="tentative-notice"
+                  >
                     *Subject to change
                   </span>
                 )}
@@ -341,7 +363,10 @@ function SlotCard({
           <CardContent className="p-6 pt-0">
             <div className="flex flex-col space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">
+                <span
+                  className="text-sm text-gray-600"
+                  data-testid="slot-datetime"
+                >
                   {formatDateTime(slotTime, endTime)}
                 </span>
                 <span className="text-sm font-medium text-gray-500 bg-gray-50 px-2 py-1 rounded">
@@ -401,7 +426,10 @@ function MonthlyEventCard({
                   />
                   <AvatarFallback>{getConsultantInitial(event)}</AvatarFallback>
                 </Avatar>
-                <span className="text-sm text-gray-600">
+                <span
+                  className="text-sm text-gray-600"
+                  data-testid="consultant-name"
+                >
                   {getConsultantName(event)}
                 </span>
               </div>
@@ -416,7 +444,12 @@ function MonthlyEventCard({
               >
                 {event.type}
               </Badge>
-              <Badge className={getStatusColor(status)}>{status}</Badge>
+              <Badge
+                className={getStatusColor(status)}
+                data-testid="event-status"
+              >
+                {status}
+              </Badge>
             </div>
           </div>
         </CardHeader>
@@ -426,6 +459,7 @@ function MonthlyEventCard({
               <div
                 key={slot.date.getTime()}
                 className="text-sm text-gray-600 flex justify-between items-center bg-gray-50 p-3 rounded"
+                data-testid="monthly-slot"
               >
                 <span>
                   {slot.date.toLocaleString(undefined, {
@@ -466,7 +500,10 @@ function MonthlyEventCard({
               </div>
             ))}
             {slots.some((slot) => slot.isTentative) && (
-              <div className="text-xs text-red-500 mt-2">
+              <div
+                className="text-xs text-red-500 mt-2"
+                data-testid="tentative-notice"
+              >
                 * Subject to change
               </div>
             )}

@@ -145,16 +145,29 @@ export function EventCard({
                   />
                   <AvatarFallback>{consultant.charAt(0)}</AvatarFallback>
                 </Avatar>
-                <span className="text-sm text-gray-600">{consultant}</span>
+                <span
+                  data-testid="consultant-name"
+                  className="text-sm text-gray-600"
+                >
+                  {consultant}
+                </span>
               </div>
             </div>
             <div className="flex flex-col items-end gap-1">
               {status && (
-                <Badge className={`${getStatusColor(status)}`}>{status}</Badge>
+                <Badge
+                  data-testid="event-status"
+                  className={`${getStatusColor(status)}`}
+                >
+                  {status}
+                </Badge>
               )}
               {isTentative && (
                 <div className="flex flex-col items-end gap-1">
-                  <Badge className="bg-red-50 text-red-700 border-red-200">
+                  <Badge
+                    data-testid="tentative-notice"
+                    className="bg-red-50 text-red-700 border-red-200"
+                  >
                     Tentative
                   </Badge>
                   <span className="text-xs text-red-500">
@@ -178,7 +191,7 @@ export function EventCard({
                     </span>
                   </AccordionTrigger>
                   <AccordionContent>
-                    <div className="space-y-2">
+                    <div data-testid="slot-list" className="space-y-2">
                       {slots?.map((slot, index) => (
                         <div
                           key={index}
@@ -205,7 +218,9 @@ export function EventCard({
               </Accordion>
             ) : (
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">{date}</span>
+                <span data-testid="slot-time" className="text-sm text-gray-600">
+                  {date}
+                </span>
               </div>
             )}
             <div className="flex justify-end gap-2 mt-4">

@@ -1,0 +1,19 @@
+{
+  "webinars": [
+    {
+      "id": "123",
+      "webinarPlan": {
+        "title": "Introduction to TypeScript",
+        "consultantProfile": {
+          "user": {
+            "name": "John Smith",
+            "image": null
+          }
+        }
+      },
+      "status": "PENDING",
+      "scheduledAt": null,
+      "appointment": null
+    }
+  ]
+}

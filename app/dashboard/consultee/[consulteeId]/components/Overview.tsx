@@ -144,7 +144,10 @@ export function Overview({
   webinars,
 }: Readonly<OverviewProps>) {
   return (
-    <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-4">
+    <div
+      className="grid gap-8 md:grid-cols-2 lg:grid-cols-4"
+      data-testid="overview-grid"
+    >
       <DashboardCard
         title="Consultations"
         items={consultations.map((consultation) => {
@@ -285,14 +288,18 @@ interface DashboardCardProps {
 
 function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
   return (
-    <Card>
+    <Card data-testid={`${title.toLowerCase()}-card`}>
       <CardHeader>
         <CardTitle className="text-lg font-semibold">{title}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
           {items.map((item) => (
-            <EventCard key={item.id} {...item} />
+            <EventCard
+              key={item.id}
+              {...item}
+              data-testid={`${item.type.toLowerCase()}-${item.id}`}
+            />
           ))}
         </div>
       </CardContent>

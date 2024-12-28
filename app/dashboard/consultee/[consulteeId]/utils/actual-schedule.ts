@@ -120,9 +120,7 @@ export function getActualNextSlotTime(event: EventWithType): {
     : { date: null, isTentative: false };
 }
 
-export function getActualUpcomingSlots(
-  events: EventWithType[],
-): Array<{
+export function getActualUpcomingSlots(events: EventWithType[]): Array<{
   event: EventWithType;
   slotTime: Date;
   endTime?: Date;

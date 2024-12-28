@@ -48,13 +48,16 @@ export default function ConsulteeDashboard(
         setIsLoading(true);
         setError(null);
 
-        if (!session?.user?.id) {
+        if (!process.env.NEXT_PUBLIC_TEST_MODE && !session?.user?.id) {
           throw new Error("User not authenticated");
         }
 
         const [userData, consulteeData] = await Promise.all([
-          // fetchUserDetails(session.user.id),
-          fetchUserDetails("cm567dwzl0000mfitrb964sva"),
+          fetchUserDetails(
+            process.env.NEXT_PUBLIC_TEST_MODE === "true"
+              ? "cm567dwzl0000mfitrb964sva"
+              : session?.user?.id || "",
+          ),
           fetchConsulteeDetails(consulteeId),
         ]);
 
@@ -71,33 +74,33 @@ export default function ConsulteeDashboard(
     fetchData();
   }, [session, consulteeId]);
 
-  // if (!session?.user?.id) {
-  //   return (
-  //     <div className="flex items-center justify-center min-h-screen bg-gray-100">
-  //       <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
-  //         <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
-  //           Authentication Required
-  //         </h2>
-  //         <p className="text-gray-700">
-  //           Please sign in to access your dashboard.
-  //         </p>
-  //       </div>
-  //     </div>
-  //   );
-  // }
+  if (!process.env.NEXT_PUBLIC_TEST_MODE && !session?.user?.id) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
+          <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
+            Authentication Required
+          </h2>
+          <p className="text-gray-700">
+            Please sign in to access your dashboard.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
-  // if (error) {
-  //   return (
-  //     <div className="flex items-center justify-center min-h-screen bg-gray-100">
-  //       <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
-  //         <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
-  //           Error
-  //         </h2>
-  //         <p className="text-gray-700">{error}</p>
-  //       </div>
-  //     </div>
-  //   );
-  // }
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
+          <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
+            Error
+          </h2>
+          <p className="text-gray-700">{error}</p>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading || !userDetails || !profileDetails) {
     return (
