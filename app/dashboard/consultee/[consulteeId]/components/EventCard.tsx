@@ -4,7 +4,9 @@ import React from "react";
 import { motion } from "framer-motion";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PencilIcon, XIcon } from "lucide-react";
 
 interface EventCardProps {
   title: string;
@@ -17,6 +19,7 @@ interface EventCardProps {
     endTime?: string;
   }>;
   type?: "Subscription" | "Class" | "Consultation" | "Webinar";
+  isTentative?: boolean;
 }
 
 export function EventCard({
@@ -27,6 +30,7 @@ export function EventCard({
   image,
   slots,
   type,
+  isTentative,
 }: Readonly<EventCardProps>) {
   const getStatusColor = (status: string) => {
     const statusLower = status.toLowerCase();
@@ -39,6 +43,26 @@ export function EventCard({
     return "bg-gray-50 text-gray-700 border-gray-200";
   };
 
+  const handleEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    console.log("Edit clicked:", {
+      title,
+      type,
+      status,
+      isTentative,
+    });
+  };
+
+  const handleCancel = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    console.log("Cancel clicked:", {
+      title,
+      type,
+      status,
+      isTentative,
+    });
+  };
+
   const handleClick = () => {
     console.log("EventCard clicked:", {
       title,
@@ -47,8 +71,14 @@ export function EventCard({
       status,
       type,
       slots,
+      isTentative,
     });
   };
+
+  const showEditButton =
+    isTentative ||
+    date.includes("Please select") ||
+    date === "No slot assigned";
 
   return (
     <motion.div
@@ -74,11 +104,18 @@ export function EventCard({
                   <span className="text-sm text-gray-600">{consultant}</span>
                 </div>
               </div>
-              {status && (
-                <Badge className={`ml-2 ${getStatusColor(status)}`}>
-                  {status}
-                </Badge>
-              )}
+              <div className="flex flex-col items-end gap-1">
+                {status && (
+                  <Badge className={`${getStatusColor(status)}`}>
+                    {status}
+                  </Badge>
+                )}
+                {isTentative && (
+                  <Badge className="bg-red-50 text-red-700 border-red-200">
+                    Tentative
+                  </Badge>
+                )}
+              </div>
             </div>
           </CardHeader>
           <CardContent>
@@ -123,8 +160,35 @@ export function EventCard({
               ) : (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">{date}</span>
+                  {isTentative && (
+                    <span className="text-xs text-red-500">
+                      Subject to change
+                    </span>
+                  )}
                 </div>
               )}
+              <div className="flex justify-end gap-2 mt-4">
+                {showEditButton && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleEdit}
+                    className="flex items-center gap-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                  >
+                    <PencilIcon className="h-4 w-4" />
+                    Edit
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCancel}
+                  className="flex items-center gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
+                >
+                  <XIcon className="h-4 w-4" />
+                  Cancel
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>

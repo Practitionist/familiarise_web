@@ -5,12 +5,24 @@ import {
   TSubscription,
   TWebinar,
   TClass,
+  TAppointment,
 } from "@/types/appointment";
 
-export type ConsultationWithPlan = TConsultation;
-export type SubscriptionWithPlan = TSubscription;
-export type WebinarWithPlan = TWebinar;
-export type ClassWithPlan = TClass;
+export type ConsultationWithPlan = TConsultation & {
+  appointment: TAppointment | null;
+};
+
+export type SubscriptionWithPlan = TSubscription & {
+  appointment: TAppointment | null;
+};
+
+export type WebinarWithPlan = TWebinar & {
+  appointment: TAppointment | null;
+};
+
+export type ClassWithPlan = TClass & {
+  appointment: TAppointment | null;
+};
 
 export const useEvents = (consulteeProfileId: string) => {
   const [consultations, setConsultations] = useState<ConsultationWithPlan[]>(

@@ -11,6 +11,7 @@ import {
   ClassWithPlan,
 } from "@/hooks/useEvents";
 import { getStatusColor } from "../utils";
+import { getActualSlots } from "../utils/actual-schedule";
 
 interface CalendarProps {
   consultations: ConsultationWithPlan[];
@@ -29,13 +30,8 @@ type Event = {
   consultant: string;
   subscriptionId?: string | null;
   time?: string;
+  isTentative?: boolean;
 };
-
-interface ScheduleSlot {
-  startTime: string;
-  endTime: string;
-  timezone: string;
-}
 
 export function Calendar({
   consultations,
@@ -66,88 +62,79 @@ export function Calendar({
   const events: Event[] = React.useMemo(
     () =>
       [
-        ...consultations.map((c) => ({
-          id: c.id,
-          title: c.consultationPlan.title,
-          start: new Date(c.preferredDateTime || ""),
-          end: new Date(
-            new Date(c.preferredDateTime || "").getTime() + 60 * 60 * 1000,
-          ),
-          type: "Consultation" as const,
-          status: c.requestStatus,
-          consultant:
-            c.consultationPlan.consultantProfile?.user?.name || "Unknown",
-          subscriptionId: null,
-          time: new Date(c.preferredDateTime || "").toLocaleTimeString(
-            undefined,
-            {
+        ...consultations.flatMap((c) => {
+          const slots = getActualSlots({ ...c, type: "Consultation" });
+          return slots.map((slot) => ({
+            id: `${c.id}-${slot.date.getTime()}`,
+            title: c.consultationPlan.title,
+            start: slot.date,
+            end: new Date(slot.date.getTime() + 60 * 60 * 1000), // 1 hour duration
+            type: "Consultation" as const,
+            status: c.requestStatus,
+            consultant:
+              c.consultationPlan.consultantProfile?.user?.name || "Unknown",
+            subscriptionId: null,
+            time: slot.date.toLocaleTimeString(undefined, {
               hour: "2-digit",
               minute: "2-digit",
-            },
-          ),
-        })),
+            }),
+            isTentative: slot.isTentative,
+          }));
+        }),
         ...subscriptions.flatMap((s) => {
-          try {
-            const schedule: ScheduleSlot[] = s.tentativeSchedule
-              ? JSON.parse(s.tentativeSchedule)
-              : [];
-            return schedule.map((slot) => ({
-              id: `${s.id}-${slot.startTime}`,
-              title: s.subscriptionPlan.title,
-              start: new Date(slot.startTime),
-              end: new Date(slot.endTime),
-              type: "Subscription" as const,
-              status: s.requestStatus,
-              consultant:
-                s.subscriptionPlan.consultantProfile?.user?.name || "Unknown",
-              subscriptionId: s.id,
-              time: new Date(slot.startTime).toLocaleTimeString(undefined, {
-                hour: "2-digit",
-                minute: "2-digit",
-              }),
-            }));
-          } catch (e) {
-            console.error("Error parsing subscription schedule:", e);
-            return [];
-          }
+          const slots = getActualSlots({ ...s, type: "Subscription" });
+          return slots.map((slot) => ({
+            id: `${s.id}-${slot.date.getTime()}`,
+            title: s.subscriptionPlan.title,
+            start: slot.date,
+            end: new Date(slot.date.getTime() + 60 * 60 * 1000), // 1 hour duration
+            type: "Subscription" as const,
+            status: s.requestStatus,
+            consultant:
+              s.subscriptionPlan.consultantProfile?.user?.name || "Unknown",
+            subscriptionId: s.id,
+            time: slot.date.toLocaleTimeString(undefined, {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            isTentative: slot.isTentative,
+          }));
         }),
         ...classes.flatMap((c) => {
-          try {
-            const schedule: ScheduleSlot[] = c.tentativeSchedule
-              ? JSON.parse(c.tentativeSchedule)
-              : [];
-            return schedule.map((slot) => ({
-              id: `${c.id}-${slot.startTime}`,
-              title: c.classPlan.title,
-              start: new Date(slot.startTime),
-              end: new Date(slot.endTime),
-              type: "Class" as const,
-              status: c.status,
-              consultant:
-                c.classPlan.consultantProfile?.user?.name || "Unknown",
-              time: new Date(slot.startTime).toLocaleTimeString(undefined, {
-                hour: "2-digit",
-                minute: "2-digit",
-              }),
-            }));
-          } catch (e) {
-            console.error("Error parsing class schedule:", e);
-            return [];
-          }
+          const slots = getActualSlots({ ...c, type: "Class" });
+          return slots.map((slot) => ({
+            id: `${c.id}-${slot.date.getTime()}`,
+            title: c.classPlan.title,
+            start: slot.date,
+            end: new Date(slot.date.getTime() + 60 * 60 * 1000), // 1 hour duration
+            type: "Class" as const,
+            status: c.status,
+            consultant: c.classPlan.consultantProfile?.user?.name || "Unknown",
+            time: slot.date.toLocaleTimeString(undefined, {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            isTentative: slot.isTentative,
+          }));
         }),
-        ...webinars.map((w) => ({
-          id: w.id,
-          title: w.webinarPlan.title,
-          start: new Date(w.scheduledAt || ""),
-          end: new Date(w.endAt || ""),
-          type: "Webinar" as const,
-          status: w.status,
-          consultant: w.webinarPlan.consultantProfile?.user?.name || "Unknown",
-          time: new Date(w.scheduledAt || "").toLocaleTimeString(undefined, {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-        })),
+        ...webinars.flatMap((w) => {
+          const slots = getActualSlots({ ...w, type: "Webinar" });
+          return slots.map((slot) => ({
+            id: `${w.id}-${slot.date.getTime()}`,
+            title: w.webinarPlan.title,
+            start: slot.date,
+            end: new Date(slot.date.getTime() + 60 * 60 * 1000), // 1 hour duration
+            type: "Webinar" as const,
+            status: w.status,
+            consultant:
+              w.webinarPlan.consultantProfile?.user?.name || "Unknown",
+            time: slot.date.toLocaleTimeString(undefined, {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            isTentative: slot.isTentative,
+          }));
+        }),
       ].filter((event) => {
         const startTime = event.start.getTime();
         if (isNaN(startTime)) {
@@ -191,6 +178,7 @@ export function Calendar({
       consultant: event.consultant,
       start: event.start,
       end: event.end,
+      isTentative: event.isTentative,
     });
   };
 
@@ -281,13 +269,16 @@ export function Calendar({
                       key={event.id}
                       onClick={() => handleEventClick(event)}
                       className={`w-full text-left text-xs p-1.5 rounded truncate font-medium hover:opacity-80 focus:ring-2 focus:ring-offset-1 focus:outline-none ${getEventColor(event)}`}
-                      title={`${event.title} - ${event.consultant} - ${event.time} - ${event.status}`}
+                      title={`${event.title} - ${event.consultant} - ${event.time} - ${event.status}${event.isTentative ? " (Subject to change)" : ""}`}
                     >
                       <div className="flex justify-between items-center">
                         <div className="flex flex-col">
                           <span>{event.title}</span>
                           <span className="text-xs opacity-75">
                             {event.status}
+                            {event.isTentative && (
+                              <span className="ml-1 text-red-500">*</span>
+                            )}
                           </span>
                         </div>
                         <span className="font-bold">{event.time}</span>

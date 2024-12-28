@@ -1,6 +1,5 @@
 "use client";
 
-import React, { useRef, useState } from "react";
 import { ArrowLeftIcon, ArrowRightIcon } from "@/assets/icons";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -9,21 +8,23 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useEvents } from "@/hooks/useEvents";
 import { User } from "@prisma/client";
 import { motion } from "framer-motion";
+import React, { useRef, useState } from "react";
+import { Advertisement } from "../components/Advertisement";
 import {
   EventWithType,
-  formatTimeUntil,
-  getEventTitle,
-  getConsultantName,
   getConsultantImage,
   getConsultantInitial,
-  formatDate,
-  isEventJoinable,
-  getMonthlyEvents,
-  getUpcomingSlots,
+  getConsultantName,
   getEventStatus,
-  getStatusColor
+  getEventTitle,
+  getStatusColor,
 } from "../utils";
-import { Advertisement } from "../components/Advertisement";
+import {
+  formatTimeUntil,
+  getActualMonthlyEvents,
+  getActualUpcomingSlots,
+  SlotWithStatus,
+} from "../utils/actual-schedule";
 
 interface HomeTabProps {
   userDetails: User | null;
@@ -36,7 +37,7 @@ export default function HomeTab({
 }: Readonly<HomeTabProps>) {
   const { consultations, subscriptions, webinars, classes, isLoading, error } =
     useEvents(consulteeId);
-  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [currentMonth, setCurrentDate] = useState(new Date());
   const carouselRef = useRef<HTMLDivElement>(null);
 
   if (!userDetails || isLoading) {
@@ -64,10 +65,10 @@ export default function HomeTab({
   ];
 
   // Get chronological slots for top row
-  const upcomingSlots = getUpcomingSlots(allEvents);
+  const upcomingSlots = getActualUpcomingSlots(allEvents);
 
   // Get monthly grouped events for bottom row
-  const monthlyEvents = getMonthlyEvents(allEvents, currentMonth);
+  const monthlyEvents = getActualMonthlyEvents(allEvents, currentMonth);
 
   const scrollCarousel = (direction: "left" | "right") => {
     if (carouselRef.current) {
@@ -83,13 +84,13 @@ export default function HomeTab({
   };
 
   const goToPreviousMonth = () => {
-    setCurrentMonth(
+    setCurrentDate(
       new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1),
     );
   };
 
   const goToNextMonth = () => {
-    setCurrentMonth(
+    setCurrentDate(
       new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1),
     );
   };
@@ -109,7 +110,9 @@ export default function HomeTab({
       {/* Top Row - Chronological Slots */}
       <div className="relative bg-white rounded-xl p-8 shadow-sm border border-gray-100">
         <div className="flex justify-between items-center mb-8">
-          <h2 className="text-xl font-semibold text-gray-900">Upcoming Sessions</h2>
+          <h2 className="text-xl font-semibold text-gray-900">
+            Upcoming Sessions
+          </h2>
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -139,7 +142,11 @@ export default function HomeTab({
               key={`${slot.event.id}-${slot.slotTime.getTime()}`}
               className="flex-none w-[320px]"
             >
-              <SlotCard event={slot.event} slotTime={slot.slotTime} />
+              <SlotCard
+                event={slot.event}
+                slotTime={slot.slotTime}
+                isTentative={slot.isTentative}
+              />
             </div>
           ))}
           {upcomingSlots.length === 0 && (
@@ -182,10 +189,10 @@ export default function HomeTab({
           </div>
           <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2">
             {monthlyEvents.map(({ event, slots }) => (
-              <MonthlyEventCard 
-                key={`${event.id}-${slots[0]?.getTime()}`} 
-                event={event} 
-                slots={slots} 
+              <MonthlyEventCard
+                key={`${event.id}-${slots[0]?.date.getTime()}`}
+                event={event}
+                slots={slots}
               />
             ))}
             {monthlyEvents.length === 0 && (
@@ -208,35 +215,38 @@ export default function HomeTab({
 function SlotCard({
   event,
   slotTime,
+  isTentative,
 }: Readonly<{
   event: EventWithType;
   slotTime: Date;
+  isTentative: boolean;
 }>) {
   const now = new Date();
   const diffInMinutes = Math.floor(
     (slotTime.getTime() - now.getTime()) / 60000,
   );
-  const isJoinable = diffInMinutes <= 10 && diffInMinutes >= 0;
+  const isJoinable = !isTentative && diffInMinutes <= 10 && diffInMinutes >= 0;
   const status = getEventStatus(event);
 
   const handleJoinMeeting = (e: React.MouseEvent) => {
     e.stopPropagation();
-    console.log('Joining meeting:', {
+    console.log("Joining meeting:", {
       id: event.id,
       title: getEventTitle(event),
-      type: event.type
+      type: event.type,
     });
   };
 
   const handleClick = () => {
     if (!isJoinable) {
-      console.log('SlotCard clicked:', {
+      console.log("SlotCard clicked:", {
         id: event.id,
         title: getEventTitle(event),
         type: event.type,
         status,
         consultant: getConsultantName(event),
-        time: slotTime
+        time: slotTime,
+        isTentative,
       });
     }
   };
@@ -248,10 +258,7 @@ function SlotCard({
       transition={{ delay: 0.1 }}
       className="group h-full"
     >
-      <div 
-        onClick={handleClick}
-        className="w-full text-left cursor-pointer"
-      >
+      <div onClick={handleClick} className="w-full text-left cursor-pointer">
         <Card className="hover:shadow-md transition-shadow duration-200 border border-gray-100 h-full">
           <CardHeader className="p-6">
             <div className="flex items-start justify-between">
@@ -265,7 +272,9 @@ function SlotCard({
                       src={getConsultantImage(event) ?? "/placeholder.svg"}
                       alt="Consultant"
                     />
-                    <AvatarFallback>{getConsultantInitial(event)}</AvatarFallback>
+                    <AvatarFallback>
+                      {getConsultantInitial(event)}
+                    </AvatarFallback>
                   </Avatar>
                   <span className="text-sm text-gray-600">
                     {getConsultantName(event)}
@@ -275,6 +284,7 @@ function SlotCard({
               <div className="flex flex-col items-end gap-2">
                 <Badge className={getStatusColor(status)}>
                   {status}
+                  {isTentative && <span className="ml-1 text-red-500">*</span>}
                 </Badge>
                 <Badge
                   className={`${
@@ -283,7 +293,9 @@ function SlotCard({
                       : "bg-blue-100 text-blue-800"
                   } text-sm font-medium`}
                 >
-                  {isJoinable ? "Starting Soon!" : formatTimeUntil(diffInMinutes)}
+                  {isJoinable
+                    ? "Starting Soon!"
+                    : formatTimeUntil(diffInMinutes)}
                 </Badge>
               </div>
             </div>
@@ -306,12 +318,17 @@ function SlotCard({
                 </span>
               </div>
               {isJoinable && (
-                <Button 
+                <Button
                   onClick={handleJoinMeeting}
                   className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white font-semibold animate-pulse"
                 >
                   Join Meeting Now
                 </Button>
+              )}
+              {isTentative && (
+                <div className="text-xs text-red-500 mt-2">
+                  * Subject to change
+                </div>
               )}
             </div>
           </CardContent>
@@ -326,26 +343,23 @@ function MonthlyEventCard({
   slots,
 }: Readonly<{
   event: EventWithType;
-  slots: Date[];
+  slots: SlotWithStatus[];
 }>) {
   const status = getEventStatus(event);
 
   const handleClick = () => {
-    console.log('MonthlyEventCard clicked:', {
+    console.log("MonthlyEventCard clicked:", {
       id: event.id,
       title: getEventTitle(event),
       type: event.type,
       status,
       consultant: getConsultantName(event),
-      slots
+      slots,
     });
   };
 
   return (
-    <div
-      onClick={handleClick}
-      className="w-full text-left cursor-pointer"
-    >
+    <div onClick={handleClick} className="w-full text-left cursor-pointer">
       <Card className="hover:shadow-md transition-shadow duration-200">
         <CardHeader className="p-6">
           <div className="flex items-center justify-between">
@@ -376,9 +390,7 @@ function MonthlyEventCard({
               >
                 {event.type}
               </Badge>
-              <Badge className={getStatusColor(status)}>
-                {status}
-              </Badge>
+              <Badge className={getStatusColor(status)}>{status}</Badge>
             </div>
           </div>
         </CardHeader>
@@ -386,22 +398,34 @@ function MonthlyEventCard({
           <div className="space-y-3">
             {slots.map((slot) => (
               <div
-                key={slot.getTime()}
+                key={slot.date.getTime()}
                 className="text-sm text-gray-600 flex justify-between items-center bg-gray-50 p-3 rounded"
               >
                 <span>
-                  {slot.toLocaleString(undefined, {
+                  {slot.date.toLocaleString(undefined, {
                     weekday: "short",
                     month: "short",
                     day: "numeric",
                     year: "numeric",
                   })}
                 </span>
-                <span className="font-medium">
-                  {slot.toLocaleString(undefined, { timeStyle: "short" })}
-                </span>
+                <div className="flex items-center">
+                  <span className="font-medium">
+                    {slot.date.toLocaleString(undefined, {
+                      timeStyle: "short",
+                    })}
+                  </span>
+                  {slot.isTentative && (
+                    <span className="ml-1 text-red-500">*</span>
+                  )}
+                </div>
               </div>
             ))}
+            {slots.some((slot) => slot.isTentative) && (
+              <div className="text-xs text-red-500 mt-2">
+                * Subject to change
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

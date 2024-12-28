@@ -9,9 +9,9 @@ import { motion } from "framer-motion";
 
 export default function AppointmentsTab({
   consulteeId,
-}: {
+}: Readonly<{
   consulteeId: string;
-}) {
+}>) {
   const { consultations, subscriptions, webinars, classes, isLoading, error } =
     useEvents(consulteeId);
 
@@ -40,7 +40,7 @@ export default function AppointmentsTab({
     !classes.length
   ) {
     return (
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-white rounded-xl shadow-sm"
@@ -64,7 +64,8 @@ export default function AppointmentsTab({
           No Appointments Found
         </h3>
         <p className="text-gray-500 text-center max-w-md">
-          You don't have any appointments scheduled at the moment. Book a session to get started on your learning journey.
+          You don't have any appointments scheduled at the moment. Book a
+          session to get started on your learning journey.
         </p>
       </motion.div>
     );

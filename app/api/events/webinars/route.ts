@@ -163,8 +163,11 @@ export async function POST(request: Request) {
     // Validate required fields
     if (!body.scheduledAt || !body.endAt || !body.webinarPlanId) {
       return NextResponse.json(
-        { error: "Missing required fields: scheduledAt, endAt, and webinarPlanId are required" },
-        { status: 400 }
+        {
+          error:
+            "Missing required fields: scheduledAt, endAt, and webinarPlanId are required",
+        },
+        { status: 400 },
       );
     }
 

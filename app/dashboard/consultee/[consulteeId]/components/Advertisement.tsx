@@ -30,7 +30,9 @@ export function Advertisement() {
                     d="M5 13l4 4L19 7"
                   />
                 </svg>
-                <span className="text-sm">Unlimited Access to Expert Sessions</span>
+                <span className="text-sm">
+                  Unlimited Access to Expert Sessions
+                </span>
               </li>
               <li className="flex items-center text-indigo-700">
                 <svg
@@ -66,7 +68,7 @@ export function Advertisement() {
               </li>
             </ul>
           </div>
-          
+
           <div className="pt-4 border-t border-indigo-100">
             <div className="flex items-baseline mb-1">
               <span className="text-3xl font-bold text-indigo-900">$99</span>
@@ -75,9 +77,9 @@ export function Advertisement() {
             <p className="text-xs text-indigo-600 mb-4">
               Save 20% with annual billing
             </p>
-            <Button 
+            <Button
               className="w-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
-              onClick={() => console.log('Upgrade clicked')}
+              onClick={() => console.log("Upgrade clicked")}
             >
               Upgrade Now
             </Button>

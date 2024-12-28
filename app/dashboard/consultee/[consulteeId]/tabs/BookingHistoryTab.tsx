@@ -43,7 +43,9 @@ export default function BookingHistoryTab({
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-pulse text-gray-500">Loading booking history...</div>
+        <div className="animate-pulse text-gray-500">
+          Loading booking history...
+        </div>
       </div>
     );
   }
@@ -71,12 +73,16 @@ export default function BookingHistoryTab({
     <div className="min-h-[calc(100vh-200px)] p-6 bg-gray-50">
       <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100 mb-6">
         <h2 className="text-3xl font-bold text-gray-900">Booking History</h2>
-        <p className="mt-2 text-gray-600">View all your past and upcoming sessions</p>
+        <p className="mt-2 text-gray-600">
+          View all your past and upcoming sessions
+        </p>
       </div>
 
       <Card className="bg-white shadow-sm border border-gray-100">
         <CardHeader className="p-6">
-          <CardTitle className="text-xl font-semibold">Your Learning Journey</CardTitle>
+          <CardTitle className="text-xl font-semibold">
+            Your Learning Journey
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-6 pt-0">
           <div className="rounded-lg border">
@@ -92,54 +98,68 @@ export default function BookingHistoryTab({
               </TableHeader>
               <TableBody>
                 {allEvents.map((event) => (
-                  <TableRow 
-                    key={event.id} 
+                  <TableRow
+                    key={event.id}
                     className="hover:bg-gray-50 transition-colors cursor-pointer"
                   >
                     <TableCell className="font-medium">
                       {new Date(getEventDate(event)).toLocaleString(undefined, {
-                        weekday: 'short',
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
+                        weekday: "short",
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
                       })}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <Badge 
+                        <Badge
                           className={`${
-                            event.type === "Consultation" ? "bg-blue-100 text-blue-800" :
-                            event.type === "Class" ? "bg-purple-100 text-purple-800" :
-                            event.type === "Webinar" ? "bg-green-100 text-green-800" :
-                            "bg-gray-100 text-gray-800"
+                            event.type === "Consultation"
+                              ? "bg-blue-100 text-blue-800"
+                              : event.type === "Class"
+                                ? "bg-purple-100 text-purple-800"
+                                : event.type === "Webinar"
+                                  ? "bg-green-100 text-green-800"
+                                  : "bg-gray-100 text-gray-800"
                           }`}
                         >
                           {event.type}
                         </Badge>
-                        <span className="font-medium">{getEventTitle(event)}</span>
+                        <span className="font-medium">
+                          {getEventTitle(event)}
+                        </span>
                       </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <Avatar className="h-6 w-6">
                           <AvatarImage
-                            src={getConsultantImage(event) ?? "/placeholder.svg"}
+                            src={
+                              getConsultantImage(event) ?? "/placeholder.svg"
+                            }
                             alt="Consultant"
                           />
-                          <AvatarFallback>{getConsultantInitial(event)}</AvatarFallback>
+                          <AvatarFallback>
+                            {getConsultantInitial(event)}
+                          </AvatarFallback>
                         </Avatar>
                         <span>{getConsultantName(event)}</span>
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge 
+                      <Badge
                         className={`${
-                          getEventStatus(event).toLowerCase() === "completed" ? "bg-green-100 text-green-800" :
-                          getEventStatus(event).toLowerCase() === "cancelled" ? "bg-red-100 text-red-800" :
-                          getEventStatus(event).toLowerCase() === "pending" ? "bg-yellow-100 text-yellow-800" :
-                          "bg-gray-100 text-gray-800"
+                          getEventStatus(event).toLowerCase() === "completed"
+                            ? "bg-green-100 text-green-800"
+                            : getEventStatus(event).toLowerCase() ===
+                                "cancelled"
+                              ? "bg-red-100 text-red-800"
+                              : getEventStatus(event).toLowerCase() ===
+                                  "pending"
+                                ? "bg-yellow-100 text-yellow-800"
+                                : "bg-gray-100 text-gray-800"
                         }`}
                       >
                         {getEventStatus(event)}
@@ -152,7 +172,10 @@ export default function BookingHistoryTab({
                 ))}
                 {allEvents.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8 text-gray-500">
+                    <TableCell
+                      colSpan={5}
+                      className="text-center py-8 text-gray-500"
+                    >
                       No bookings found
                     </TableCell>
                   </TableRow>

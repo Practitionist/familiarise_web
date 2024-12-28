@@ -96,9 +96,11 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
           slotsOfAppointment: {
             create: {
               user: {
-                connect: [{
-                  id: consultee.id,
-                }],
+                connect: [
+                  {
+                    id: consultee.id,
+                  },
+                ],
               },
               slotStartTimeInUTC,
               slotEndTimeInUTC,

@@ -11,69 +11,6 @@ export type EventWithType =
   | (WebinarWithPlan & { type: "Webinar" })
   | (ClassWithPlan & { type: "Class" });
 
-interface SlotInfo {
-  startTime: string;
-  endTime: string;
-  timezone: string;
-}
-
-export function getAllSlots(event: EventWithType): Date[] {
-  switch (event.type) {
-    case "Consultation":
-      return event.preferredDateTime ? [new Date(event.preferredDateTime)] : [];
-    case "Subscription":
-      try {
-        const schedule: SlotInfo[] = event.tentativeSchedule
-          ? JSON.parse(event.tentativeSchedule)
-          : [];
-        return schedule.map((slot) => new Date(slot.startTime));
-      } catch (e) {
-        console.error("Error parsing subscription schedule:", e);
-        return [];
-      }
-    case "Class":
-      try {
-        const schedule: SlotInfo[] = event.tentativeSchedule
-          ? JSON.parse(event.tentativeSchedule)
-          : [];
-        return schedule.map((slot) => new Date(slot.startTime));
-      } catch (e) {
-        console.error("Error parsing class schedule:", e);
-        return [];
-      }
-    case "Webinar":
-      return event.scheduledAt ? [new Date(event.scheduledAt)] : [];
-    default:
-      return [];
-  }
-}
-
-export function getNextSlotTime(event: EventWithType): Date {
-  const now = Date.now();
-  const slots = getAllSlots(event);
-  const futureSlots = slots.filter((slot) => slot.getTime() > now);
-  return futureSlots.length > 0 ? futureSlots[0] : new Date(now);
-}
-
-export function formatTimeUntil(minutes: number): string {
-  if (minutes <= 0) {
-    return "Now";
-  }
-  if (minutes < 60) {
-    return `${minutes} min${minutes !== 1 ? 's' : ''} away`;
-  }
-  const hours = Math.floor(minutes / 60);
-  const remainingMins = minutes % 60;
-  if (hours < 24) {
-    if (remainingMins === 0) {
-      return `${hours} hr${hours > 1 ? 's' : ''} away`;
-    }
-    return `${hours} hr${hours > 1 ? 's' : ''} ${remainingMins} min${remainingMins !== 1 ? 's' : ''} away`;
-  }
-  const days = Math.floor(hours / 24);
-  return `${days} day${days > 1 ? 's' : ''} away`;
-}
-
 export function getEventTitle(event: EventWithType): string {
   switch (event.type) {
     case "Consultation":
@@ -139,15 +76,6 @@ export function formatDate(date: Date | null | undefined): string {
   return new Date(date).toLocaleDateString();
 }
 
-export function isEventJoinable(event: EventWithType): boolean {
-  const slotTime = getNextSlotTime(event);
-  const now = new Date();
-  const diffInMinutes = Math.floor(
-    (slotTime.getTime() - now.getTime()) / 60000,
-  );
-  return diffInMinutes <= 10 && diffInMinutes > -30;
-}
-
 export function getEventEndDate(event: EventWithType): Date | null {
   switch (event.type) {
     case "Subscription":
@@ -161,39 +89,6 @@ export function getEventEndDate(event: EventWithType): Date | null {
 
 export function isRecurringEvent(event: EventWithType): boolean {
   return event.type === "Subscription" || event.type === "Class";
-}
-
-export function getUpcomingSlots(
-  events: EventWithType[],
-): Array<{ event: EventWithType; slotTime: Date }> {
-  const now = new Date();
-  const allSlots = events.flatMap((event) =>
-    getAllSlots(event).map((slotTime) => ({
-      event,
-      slotTime,
-    })),
-  );
-
-  return allSlots
-    .filter(({ slotTime }) => slotTime > now)
-    .sort((a, b) => a.slotTime.getTime() - b.slotTime.getTime());
-}
-
-export function getMonthlyEvents(
-  events: EventWithType[],
-  month: Date,
-): Array<{ event: EventWithType; slots: Date[] }> {
-  const startOfMonth = new Date(month.getFullYear(), month.getMonth(), 1);
-  const endOfMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0);
-
-  return events
-    .map((event) => ({
-      event,
-      slots: getAllSlots(event).filter(
-        (slot) => slot >= startOfMonth && slot <= endOfMonth,
-      ),
-    }))
-    .filter(({ slots }) => slots.length > 0);
 }
 
 export function getRecurringEvents(events: EventWithType[]): EventWithType[] {
@@ -219,12 +114,4 @@ export function getStatusColor(status: string): string {
   if (statusLower === "rejected") return "bg-red-50 text-red-700";
   if (statusLower === "pending") return "bg-yellow-50 text-yellow-700";
   return "bg-gray-50 text-gray-700";
-}
-
-export function sortEventsByNextSlot(events: EventWithType[]): EventWithType[] {
-  return [...events].sort((a, b) => {
-    const timeA = getNextSlotTime(a);
-    const timeB = getNextSlotTime(b);
-    return timeA.getTime() - timeB.getTime();
-  });
 }
