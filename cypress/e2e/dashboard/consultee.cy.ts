@@ -260,12 +260,12 @@ describe('Consultee Dashboard', () => {
   });
 
   describe('Data Consistency', () => {
-    it('verifies all API events are displayed somewhere in UI', { defaultCommandTimeout: 30000 }, () => {
+    it('verifies exact data consistency between API and UI', { defaultCommandTimeout: 30000 }, () => {
       cy.readFile('cypress/logs/info.json').then((logs) => {
         logs.push({
           timestamp: new Date().toISOString(),
           type: 'test_start',
-          test: 'verifies all API events are displayed somewhere in UI'
+          test: 'verifies exact data consistency between API and UI'
         });
         cy.writeFile('cypress/logs/info.json', logs);
       });
@@ -277,48 +277,172 @@ describe('Consultee Dashboard', () => {
           const subscriptions = subscriptionsResp.response?.body.data || [];
           const classes = classesResp.response?.body.data || [];
 
-          // Verify each event exists in either upcoming or monthly sections
-          [...consultations, ...subscriptions, ...classes].forEach((event: any) => {
+          // Helper function to get slots for an event
+          function getEventSlots(event: any) {
+            // First try actual slots
+            const appointments = Array.isArray(event.appointment)
+              ? event.appointment
+              : event.appointment
+                ? [event.appointment]
+                : [];
+            
+            const actualSlots = appointments
+              .flatMap((apt: any) => apt?.slotsOfAppointment || [])
+              .filter((slot: any) => {
+                const year = new Date(slot.slotStartTimeInUTC).getFullYear();
+                return year > 2000;
+              })
+              .map((slot: any) => ({
+                startTime: slot.slotStartTimeInUTC,
+                endTime: slot.slotEndTimeInUTC,
+                isTentative: false
+              }));
+
+            // If we have actual slots, return those
+            if (actualSlots.length > 0) {
+              return actualSlots;
+            }
+
+            // Otherwise try tentative slots
+            if (event.tentativeSchedule) {
+              try {
+                return JSON.parse(event.tentativeSchedule)
+                  .map((slot: any) => ({
+                    startTime: slot.startTime,
+                    endTime: slot.endTime,
+                    isTentative: true
+                  }));
+              } catch (e) {
+                console.error('Error parsing tentative schedule:', e);
+              }
+            }
+
+            return [];
+          }
+
+          // Get all slots from all events
+          const allSlots = [
+            ...consultations.flatMap(getEventSlots),
+            ...subscriptions.flatMap(getEventSlots),
+            ...classes.flatMap(getEventSlots)
+          ].sort((a: any, b: any) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+
+          // Log slots for debugging
+          cy.readFile('cypress/logs/info.json').then((logs) => {
+            logs.push({
+              timestamp: new Date().toISOString(),
+              type: 'debug',
+              message: 'All slots',
+              data: allSlots.map((slot: any) => ({
+                start: slot.startTime,
+                end: slot.endTime,
+                isTentative: slot.isTentative
+              }))
+            });
+            cy.writeFile('cypress/logs/info.json', logs);
+          });
+
+          // Filter to only future slots (like the UI does)
+          const now = new Date();
+          const futureSlots = allSlots.filter((slot: any) => new Date(slot.startTime) > now);
+
+          // Verify all future slots are displayed
+          cy.get('[data-testid="slot-datetime"]').should('have.length', futureSlots.length);
+
+          // Verify each slot's time matches
+          cy.get('[data-testid="slot-datetime"]').each(($slot, index) => {
+            const slot = futureSlots[index];
+            const start = new Date(slot.startTime);
+            const end = slot.endTime ? new Date(slot.endTime) : undefined;
+            
+            const expectedText = formatDateTime(start, end);
+            cy.wrap($slot).should('contain', expectedText);
+          });
+
+          // Verify all events are displayed in correct order
+          const allEvents = [...consultations, ...subscriptions, ...classes];
+          allEvents.forEach((event: any) => {
             const type = event.type || 
                         (event.consultationPlan ? 'consultation' : 
                          event.subscriptionPlan ? 'subscription' : 'class');
             
+            // Verify event exists
             cy.get(`[data-testid="${type}-${event.id}"]`).should('exist');
+
+            // Get slots for this event
+            const eventSlots = getEventSlots(event);
+            
+            // Verify each slot appears somewhere in the UI
+            eventSlots.forEach((slot: any) => {
+              const start = new Date(slot.startTime);
+              const end = slot.endTime ? new Date(slot.endTime) : undefined;
+              const expectedText = formatDateTime(start, end);
+              
+              // Log the slot we're looking for
+              cy.readFile('cypress/logs/info.json').then((logs) => {
+                logs.push({
+                  timestamp: new Date().toISOString(),
+                  type: 'debug',
+                  message: 'Looking for slot',
+                  data: {
+                    start: slot.startTime,
+                    end: slot.endTime,
+                    isTentative: slot.isTentative,
+                    expectedText
+                  }
+                });
+                cy.writeFile('cypress/logs/info.json', logs);
+              });
+
+              // Check if slot exists in either section
+              cy.get('body').then($body => {
+                const upcomingSlots = Array.from($body.find('[data-testid="slot-datetime"]'));
+                const monthlySlots = Array.from($body.find('[data-testid="monthly-slot"]'));
+                
+                const found = upcomingSlots.some(el => el.textContent?.includes(expectedText)) ||
+                             monthlySlots.some(el => el.textContent?.includes(expectedText));
+
+                // Assert with custom error message
+                expect(found, `Expected to find slot "${expectedText}" but it was not found in either section`).to.equal(true);
+              });
+            });
           });
         }
       );
     });
 
-    it('verifies no extra events are displayed', { defaultCommandTimeout: 30000 }, () => {
-      cy.readFile('cypress/logs/info.json').then((logs) => {
-        logs.push({
-          timestamp: new Date().toISOString(),
-          type: 'test_start',
-          test: 'verifies no extra events are displayed'
-        });
-        cy.writeFile('cypress/logs/info.json', logs);
+    function formatDateTime(start: Date, end?: Date): string {
+      const dateStr = start.toLocaleString(undefined, {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        year: "numeric"
       });
 
-      // Get all event IDs from API responses
-      cy.wait(['@getConsultations', '@getSubscriptions', '@getClasses']).then(
-        ([consultationsResp, subscriptionsResp, classesResp]) => {
-          const apiEventIds = [
-            ...(consultationsResp.response?.body.data || []).map((e: any) => e.id),
-            ...(subscriptionsResp.response?.body.data || []).map((e: any) => e.id),
-            ...(classesResp.response?.body.data || []).map((e: any) => e.id)
-          ];
+      const timeStr = end
+        ? `${start
+            .toLocaleString(undefined, {
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: true,
+            })
+            .toLowerCase()} - ${end
+            .toLocaleString(undefined, {
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: true,
+            })
+            .toLowerCase()}`
+        : start
+            .toLocaleString(undefined, {
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: true,
+            })
+            .toLowerCase();
 
-          // Check that each displayed event corresponds to an API event
-          cy.get('[data-testid^="consultation-"], [data-testid^="subscription-"], [data-testid^="class-"]')
-            .each(($el) => {
-              const testId = $el.attr('data-testid') || '';
-              const id = testId.split('-')[1];
-              const found = apiEventIds.some(apiId => apiId.startsWith(id));
-              expect(found).to.equal(true);
-            });
-        }
-      );
-    });
+      return `${dateStr}, ${timeStr}`;
+    }
   });
 
   it('handles API errors gracefully', { defaultCommandTimeout: 30000 }, () => {
