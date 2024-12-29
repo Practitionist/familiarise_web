@@ -39,27 +39,21 @@ function formatDateTime(date: Date, endTime?: Date): string {
     year: "numeric",
   });
 
+  function formatTimeString(d: Date): string {
+    let hours = d.getHours();
+    const minutes = d.getMinutes();
+    const ampm = hours >= 12 ? 'pm' : 'am';
+    
+    // Convert hours to 12-hour format
+    if (hours === 0) hours = 12;  // Convert 0:00 to 12:00 AM
+    else if (hours > 12) hours -= 12;
+    
+    return `${hours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+  }
+
   const timeStr = endTime
-    ? `${date
-        .toLocaleString(undefined, {
-          hour: "numeric",
-          minute: "2-digit",
-          hour12: true,
-        })
-        .toLowerCase()} - ${endTime
-        .toLocaleString(undefined, {
-          hour: "numeric",
-          minute: "2-digit",
-          hour12: true,
-        })
-        .toLowerCase()}`
-    : date
-        .toLocaleString(undefined, {
-          hour: "numeric",
-          minute: "2-digit",
-          hour12: true,
-        })
-        .toLowerCase();
+    ? `${formatTimeString(date)} - ${formatTimeString(endTime)}`
+    : formatTimeString(date);
 
   return `${dateStr}, ${timeStr}`;
 }
@@ -409,6 +403,18 @@ function MonthlyEventCard({
     });
   };
 
+  function formatTimeString(d: Date): string {
+    let hours = d.getHours();
+    const minutes = d.getMinutes();
+    const ampm = hours >= 12 ? 'pm' : 'am';
+    
+    // Convert hours to 12-hour format
+    if (hours === 0) hours = 12;  // Convert 0:00 to 12:00 AM
+    else if (hours > 12) hours -= 12;
+    
+    return `${hours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+  }
+
   return (
     <div onClick={handleClick} className="w-full text-left cursor-pointer">
       <Card className="hover:shadow-md transition-shadow duration-200">
@@ -472,26 +478,8 @@ function MonthlyEventCard({
                 <div className="flex items-center">
                   <span className="font-medium">
                     {slot.endTime
-                      ? `${slot.date
-                          .toLocaleString(undefined, {
-                            hour: "numeric",
-                            minute: "2-digit",
-                            hour12: true,
-                          })
-                          .toLowerCase()} - ${slot.endTime
-                          .toLocaleString(undefined, {
-                            hour: "numeric",
-                            minute: "2-digit",
-                            hour12: true,
-                          })
-                          .toLowerCase()}`
-                      : slot.date
-                          .toLocaleString(undefined, {
-                            hour: "numeric",
-                            minute: "2-digit",
-                            hour12: true,
-                          })
-                          .toLowerCase()}
+                      ? `${formatTimeString(slot.date)} - ${formatTimeString(slot.endTime)}`
+                      : formatTimeString(slot.date)}
                   </span>
                   {slot.isTentative && (
                     <span className="ml-1 text-red-500">*</span>
