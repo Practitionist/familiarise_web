@@ -1,8 +1,13 @@
 /// <reference types="cypress" />
 
-import { consulteeIds, setupConsulteeDashboard } from "./consultee-setup.cy";
+import { setupConsulteeDashboard } from "./consultee-setup.cy";
+import consulteeIdsFixture from "../../fixtures/consultee-ids.json";
 
-consulteeIds.forEach((consulteeId) => {
+interface ConsulteeIdsFixture {
+  consulteeIds: string[];
+}
+
+(consulteeIdsFixture as unknown as ConsulteeIdsFixture).consulteeIds.forEach((consulteeId) => {
   describe(`Consultee Dashboard - Home Tab Upcoming Sessions (ID: ${consulteeId})`, () => {
     beforeEach(() => {
       setupConsulteeDashboard(consulteeId);
@@ -38,7 +43,7 @@ consulteeIds.forEach((consulteeId) => {
     });
 
     it(
-      "displays correct status badges",
+      "displays correct status badges and allows carousel navigation",
       { defaultCommandTimeout: 30000 },
       () => {
         cy.readFile("cypress/logs/info.json").then((logs) => {
@@ -50,51 +55,91 @@ consulteeIds.forEach((consulteeId) => {
           cy.writeFile("cypress/logs/info.json", logs);
         });
 
-        // Verify consultation status
-        cy.wait("@getConsultations").then((interception) => {
-          const consultations = interception.response?.body.data;
-          consultations.forEach((consultation: any) => {
-            cy.get(`[data-testid="consultation-${consultation.id}"]`)
+        // Wait for all API responses
+        cy.wait([
+          "@getConsultations",
+          "@getSubscriptions",
+          "@getWebinars",
+          "@getClasses",
+        ]).then(([consultationsResp, subscriptionsResp, webinarsResp, classesResp]) => {
+          const consultations = consultationsResp.response?.body.data || [];
+          const subscriptions = subscriptionsResp.response?.body.data || [];
+          const webinars = webinarsResp.response?.body.data || [];
+          const classes = classesResp.response?.body.data || [];
+
+          // Verify carousel navigation if there are events
+          if (consultations.length + subscriptions.length + webinars.length + classes.length > 0) {
+            // Get initial first event ID
+            cy.get('[data-testid^="consultation-"], [data-testid^="subscription-"], [data-testid^="webinar-"], [data-testid^="class-"]')
+              .first()
+              .invoke('attr', 'data-testid')
+              .then((firstEventId) => {
+                // Click right arrow until we see a different event
+                cy.get('[data-testid="upcoming-slot-list"]').then(($list) => {
+                  if ($list[0].scrollWidth > $list[0].clientWidth) {
+                    cy.get('button').contains('arrow_right').click();
+                    // Verify scroll position changed
+                    cy.get('[data-testid="upcoming-slot-list"]').should(($newList) => {
+                      expect($newList[0].scrollLeft).to.be.greaterThan(0);
+                    });
+                    // Click left arrow to go back
+                    cy.get('button').contains('arrow_left').click();
+                    // Verify we're back at the start
+                    cy.get('[data-testid^="consultation-"], [data-testid^="subscription-"], [data-testid^="webinar-"], [data-testid^="class-"]')
+                      .first()
+                      .should('have.attr', 'data-testid', firstEventId);
+                  }
+                });
+              });
+          }
+
+          // Verify status badges and chronological order
+          const allEvents = [
+            ...consultations.map(c => ({ ...c, type: 'consultation', status: c.requestStatus })),
+            ...subscriptions.map(s => ({ ...s, type: 'subscription', status: s.requestStatus })),
+            ...webinars.map(w => ({ ...w, type: 'webinar', status: w.status })),
+            ...classes.map(c => ({ ...c, type: 'class', status: c.status }))
+          ];
+
+          allEvents.forEach((event: any) => {
+            cy.get(`[data-testid="${event.type}-${event.id}"]`)
               .first()
               .should("exist")
               .within(() => {
+                // Verify status badge
                 cy.get('[data-testid="event-status"]').should(
                   "contain",
-                  consultation.requestStatus,
+                  event.status
                 );
+
+                // Verify "Starting Soon!" badge for events within 10 minutes
+                if (event.scheduledAt || event.preferredDateTime || event.tentativeSchedule) {
+                  const eventTime = new Date(event.scheduledAt || event.preferredDateTime || JSON.parse(event.tentativeSchedule)[0].startTime);
+                  const now = new Date();
+                  const diffInMinutes = Math.floor((eventTime.getTime() - now.getTime()) / 60000);
+                  
+                  if (diffInMinutes <= 10 && diffInMinutes >= 0) {
+                    cy.get('.bg-green-100.text-green-800').should('contain', 'Starting Soon!');
+                  }
+                }
               });
           });
-        });
 
-        // Verify subscription status
-        cy.wait("@getSubscriptions").then((interception) => {
-          const subscriptions = interception.response?.body.data;
-          subscriptions.forEach((subscription: any) => {
-            cy.get(`[data-testid="subscription-${subscription.id}"]`)
-              .first()
-              .should("exist")
-              .within(() => {
-                cy.get('[data-testid="event-status"]').should(
-                  "contain",
-                  subscription.requestStatus,
-                );
-              });
-          });
-        });
+          // Verify chronological order
+          cy.get('[data-testid="slot-datetime"]').then($slots => {
+            const dates = $slots.map((_, el) => {
+              const text = Cypress.$(el).text();
+              const match = text.match(/[A-Za-z]{3}, \d{1,2} [A-Za-z]{3} \d{4}/);
+              if (!match) {
+                throw new Error(`Invalid date format in text: ${text}`);
+              }
+              return new Date(match[0]);
+            }).get();
 
-        // Verify class status
-        cy.wait("@getClasses").then((interception) => {
-          const classes = interception.response?.body.data;
-          classes.forEach((classItem: any) => {
-            cy.get(`[data-testid="class-${classItem.id}"]`)
-              .first()
-              .should("exist")
-              .within(() => {
-                cy.get('[data-testid="event-status"]').should(
-                  "contain",
-                  classItem.status,
-                );
-              });
+            // Check if dates are in ascending order
+            for (let i = 1; i < dates.length; i++) {
+              expect(dates[i].getTime()).to.be.at.least(dates[i-1].getTime());
+            }
           });
         });
       },

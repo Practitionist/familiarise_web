@@ -1,7 +1,12 @@
 /// <reference types="cypress" />
-import { consulteeIds, setupConsulteeDashboard } from "./consultee-setup.cy";
+import { setupConsulteeDashboard } from "./consultee-setup.cy";
+import consulteeIdsFixture from "../../fixtures/consultee-ids.json";
 
-consulteeIds.forEach((consulteeId) => {
+interface ConsulteeIdsFixture {
+  consulteeIds: string[];
+}
+
+(consulteeIdsFixture as unknown as ConsulteeIdsFixture).consulteeIds.forEach((consulteeId) => {
   describe(`Consultee Dashboard - Home Tab Monthly View (ID: ${consulteeId})`, () => {
     beforeEach(() => {
       setupConsulteeDashboard(consulteeId);
@@ -49,31 +54,45 @@ consulteeIds.forEach((consulteeId) => {
           cy.writeFile("cypress/logs/info.json", logs);
         });
 
-        // Wait for API responses
-        cy.wait(["@getSubscriptions", "@getClasses"]).then(
-          ([subscriptionsResp, classesResp]) => {
-            const subscriptions = subscriptionsResp.response?.body.data || [];
-            const classes = classesResp.response?.body.data || [];
+        // Wait for all API responses
+        cy.wait([
+          "@getConsultations",
+          "@getSubscriptions",
+          "@getWebinars",
+          "@getClasses",
+        ]).then(([consultationsResp, subscriptionsResp, webinarsResp, classesResp]) => {
+          const consultations = consultationsResp.response?.body.data || [];
+          const subscriptions = subscriptionsResp.response?.body.data || [];
+          const webinars = webinarsResp.response?.body.data || [];
+          const classes = classesResp.response?.body.data || [];
 
-            // Log the events for debugging
-            cy.readFile("cypress/logs/info.json").then((logs) => {
-              logs.push({
-                timestamp: new Date().toISOString(),
-                type: "debug",
-                message: "Checking tentative schedules",
-                data: {
-                  subscriptions: subscriptions.map((s: any) => ({
-                    id: s.id,
-                    hasTentative: !!s.tentativeSchedule,
-                  })),
-                  classes: classes.map((c: any) => ({
-                    id: c.id,
-                    hasTentative: !!c.tentativeSchedule,
-                  })),
-                },
-              });
-              cy.writeFile("cypress/logs/info.json", logs);
+          // Log the events for debugging
+          cy.readFile("cypress/logs/info.json").then((logs) => {
+            logs.push({
+              timestamp: new Date().toISOString(),
+              type: "debug",
+              message: "Checking tentative schedules",
+              data: {
+                consultations: consultations.map((c: any) => ({
+                  id: c.id,
+                  hasTentative: !!c.preferredDateTime,
+                })),
+                subscriptions: subscriptions.map((s: any) => ({
+                  id: s.id,
+                  hasTentative: !!s.tentativeSchedule,
+                })),
+                webinars: webinars.map((w: any) => ({
+                  id: w.id,
+                  hasTentative: !!w.scheduledAt,
+                })),
+                classes: classes.map((c: any) => ({
+                  id: c.id,
+                  hasTentative: !!c.tentativeSchedule,
+                })),
+              },
             });
+            cy.writeFile("cypress/logs/info.json", logs);
+          });
 
             // Verify monthly slots format
             cy.get('[data-testid="monthly-slot"]').each(($slot) => {
@@ -91,10 +110,12 @@ consulteeIds.forEach((consulteeId) => {
                 });
             });
 
-            // Check for tentative events
-            const hasTentativeEvents =
-              subscriptions.some((s: any) => s.tentativeSchedule) ||
-              classes.some((c: any) => c.tentativeSchedule);
+          // Check for tentative events
+          const hasTentativeEvents =
+            consultations.some((c: any) => c.preferredDateTime) ||
+            subscriptions.some((s: any) => s.tentativeSchedule) ||
+            webinars.some((w: any) => w.scheduledAt) ||
+            classes.some((c: any) => c.tentativeSchedule);
 
             if (hasTentativeEvents) {
               // Log that we found tentative events
@@ -119,7 +140,7 @@ consulteeIds.forEach((consulteeId) => {
     );
 
     it(
-      "allows navigation between months",
+      "allows navigation between months and years",
       { defaultCommandTimeout: 30000 },
       () => {
         cy.readFile("cypress/logs/info.json").then((logs) => {
@@ -131,24 +152,49 @@ consulteeIds.forEach((consulteeId) => {
           cy.writeFile("cypress/logs/info.json", logs);
         });
 
-        // Get current month text
+        // Get current month/year text
         cy.get('[data-testid="month-nav"]')
           .find("h2")
           .invoke("text")
-          .then((currentMonth) => {
-            // Click next month
-            cy.get('[data-testid="next-month"]').click();
-            // Verify month changed
-            cy.get('[data-testid="month-nav"]')
-              .find("h2")
-              .should("not.contain", currentMonth);
+          .then((currentMonthYear) => {
+            const [currentMonth, currentYear] = currentMonthYear.split(" ");
 
-            // Click previous month
-            cy.get('[data-testid="prev-month"]').click();
-            // Verify back to original month
+            // Navigate to next year
+            for (let i = 0; i < 12; i++) {
+              cy.get('[data-testid="next-month"]').click();
+            }
+            // Verify year changed
             cy.get('[data-testid="month-nav"]')
               .find("h2")
-              .should("contain", currentMonth);
+              .should("contain", `${currentMonth} ${parseInt(currentYear) + 1}`);
+
+            // Navigate back to current month/year
+            for (let i = 0; i < 12; i++) {
+              cy.get('[data-testid="prev-month"]').click();
+            }
+            // Verify back to original month/year
+            cy.get('[data-testid="month-nav"]')
+              .find("h2")
+              .should("contain", `${currentMonth} ${currentYear}`);
+
+            // Verify events are sorted by date within the month
+            cy.get('[data-testid="monthly-slot"]').then(($slots) => {
+              const dates = $slots
+                .map((_, el) => {
+                  const text = Cypress.$(el).text();
+                  const match = text.match(/[A-Za-z]{3}, \d{1,2} [A-Za-z]{3} \d{4}/);
+                  if (!match) {
+                    throw new Error(`Invalid date format in text: ${text}`);
+                  }
+                  return new Date(match[0]);
+                })
+                .get();
+              
+              // Check if dates are in ascending order
+              for (let i = 1; i < dates.length; i++) {
+                expect(dates[i].getTime()).to.be.at.least(dates[i-1].getTime());
+              }
+            });
           });
       },
     );
