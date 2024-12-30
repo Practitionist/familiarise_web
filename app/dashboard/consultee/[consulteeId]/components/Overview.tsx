@@ -9,6 +9,7 @@ import {
 } from "@/hooks/useEvents";
 import { EventCard } from "./EventCard";
 import { getActualNextSlotTime } from "../utils/actual-schedule";
+import { PREVIOUS_YEAR } from "@/constants/datetime";
 
 interface OverviewProps {
   consultations: ConsultationWithPlan[];
@@ -54,7 +55,7 @@ function getNoSlotMessage(type: string, hasPreferredTime: boolean): string {
 function isValidDate(date: string | Date | null | undefined): boolean {
   if (!date) return false;
   const parsedDate = typeof date === "string" ? new Date(date) : date;
-  return parsedDate.getFullYear() > 2000;
+  return parsedDate.getFullYear() > PREVIOUS_YEAR;
 }
 
 function hasValidTentativeSchedule(

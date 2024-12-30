@@ -42,13 +42,14 @@ function formatDateTime(date: Date, endTime?: Date): string {
   function formatTimeString(d: Date): string {
     let hours = d.getHours();
     const minutes = d.getMinutes();
-    const ampm = hours >= 12 ? 'pm' : 'am';
-    
+    const ampm = hours >= 12 ? "pm" : "am";
+
     // Convert hours to 12-hour format
-    if (hours === 0) hours = 12;  // Convert 0:00 to 12:00 AM
+    if (hours === 0)
+      hours = 12; // Convert 0:00 to 12:00 AM
     else if (hours > 12) hours -= 12;
-    
-    return `${hours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+
+    return `${hours}:${minutes.toString().padStart(2, "0")} ${ampm}`;
   }
 
   const timeStr = endTime
@@ -163,7 +164,7 @@ export default function HomeTab({
           ref={carouselRef}
           className="flex overflow-x-auto gap-6 pb-4 scrollbar-hide scroll-smooth"
           style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
-          data-testid="slot-list"
+          data-testid="upcoming-slot-list"
         >
           {upcomingSlots.map((slot) => (
             <div
@@ -224,7 +225,7 @@ export default function HomeTab({
           </div>
           <div
             className="space-y-6 max-h-[600px] overflow-y-auto pr-2"
-            data-testid="slot-list"
+            data-testid="monthly-slot-list"
           >
             {monthlyEvents.map(({ event, slots }) => (
               <div
@@ -406,13 +407,14 @@ function MonthlyEventCard({
   function formatTimeString(d: Date): string {
     let hours = d.getHours();
     const minutes = d.getMinutes();
-    const ampm = hours >= 12 ? 'pm' : 'am';
-    
+    const ampm = hours >= 12 ? "pm" : "am";
+
     // Convert hours to 12-hour format
-    if (hours === 0) hours = 12;  // Convert 0:00 to 12:00 AM
+    if (hours === 0)
+      hours = 12; // Convert 0:00 to 12:00 AM
     else if (hours > 12) hours -= 12;
-    
-    return `${hours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+
+    return `${hours}:${minutes.toString().padStart(2, "0")} ${ampm}`;
   }
 
   return (
