@@ -1,7 +1,10 @@
-import NextAuth, { DefaultSession, DefaultUser } from "next-auth";
-import { JWT } from "next-auth/jwt";
+import { DefaultSession, DefaultUser } from "next-auth";
+import "next-auth/jwt";
 
-declare module "next-auth" {
+// This file has to be included in your tsconfig.json "include" array
+// Dont keep it in the root of your project, keep it in a separate folder
+// https://github.com/nextauthjs/next-auth/issues/7377#issuecomment-1670760533
+export declare module "next-auth" {
   /**
    * Extends the default session interface with custom fields
    */
