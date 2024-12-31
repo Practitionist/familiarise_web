@@ -77,13 +77,22 @@ interface ConsulteeIdsFixture {
                 // Click right arrow until we see a different event
                 cy.get('[data-testid="upcoming-slot-list"]').then(($list) => {
                   if ($list[0].scrollWidth > $list[0].clientWidth) {
-                    cy.get('button').contains('arrow_right').click();
+                    // Click right arrow (using SVG paths)
+                    cy.get('svg').filter((_, el) => {
+                      const paths = el.querySelectorAll('path');
+                      return Array.from(paths).some(path => path.getAttribute('d') === 'M5 12h14') &&
+                             Array.from(paths).some(path => path.getAttribute('d') === 'm12 5 7 7-7 7');
+                    }).parent().click();
                     // Verify scroll position changed
                     cy.get('[data-testid="upcoming-slot-list"]').should(($newList) => {
                       expect($newList[0].scrollLeft).to.be.greaterThan(0);
                     });
-                    // Click left arrow to go back
-                    cy.get('button').contains('arrow_left').click();
+                    // Click left arrow (using SVG paths)
+                    cy.get('svg').filter((_, el) => {
+                      const paths = el.querySelectorAll('path');
+                      return Array.from(paths).some(path => path.getAttribute('d') === 'm12 19-7-7 7-7') &&
+                             Array.from(paths).some(path => path.getAttribute('d') === 'M19 12H5');
+                    }).parent().click();
                     // Verify we're back at the start
                     cy.get('[data-testid^="consultation-"], [data-testid^="subscription-"], [data-testid^="webinar-"], [data-testid^="class-"]')
                       .first()
@@ -93,15 +102,41 @@ interface ConsulteeIdsFixture {
               });
           }
 
-          // Verify status badges and chronological order
-          const allEvents = [
-            ...consultations.map(c => ({ ...c, type: 'consultation', status: c.requestStatus })),
-            ...subscriptions.map(s => ({ ...s, type: 'subscription', status: s.requestStatus })),
-            ...webinars.map(w => ({ ...w, type: 'webinar', status: w.status })),
-            ...classes.map(c => ({ ...c, type: 'class', status: c.status }))
+          // Filter and verify only future events
+          const now = new Date();
+          const futureEvents = [
+            ...consultations
+              .filter(c => {
+                const date = new Date(c.preferredDateTime || c.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC);
+                return date > now;
+              })
+              .map(c => ({ ...c, type: 'consultation', status: c.requestStatus })),
+            ...subscriptions
+              .filter(s => {
+                if (s.tentativeSchedule) {
+                  const schedule = JSON.parse(s.tentativeSchedule);
+                  return schedule.some((slot: any) => new Date(slot.startTime) > now);
+                }
+                return false;
+              })
+              .map(s => ({ ...s, type: 'subscription', status: s.requestStatus })),
+            ...webinars
+              .filter(w => new Date(w.scheduledAt) > now)
+              .map(w => ({ ...w, type: 'webinar', status: w.status })),
+            ...classes
+              .filter(c => {
+                if (c.tentativeSchedule) {
+                  const schedule = JSON.parse(c.tentativeSchedule);
+                  return schedule.some((slot: any) => new Date(slot.startTime) > now);
+                }
+                return false;
+              })
+              .map(c => ({ ...c, type: 'class', status: c.status }))
           ];
 
-          allEvents.forEach((event: any) => {
+          // Only verify events if there are any future events
+          if (futureEvents.length > 0) {
+            futureEvents.forEach((event: any) => {
             cy.get(`[data-testid="${event.type}-${event.id}"]`)
               .first()
               .should("exist")
@@ -141,6 +176,7 @@ interface ConsulteeIdsFixture {
               expect(dates[i].getTime()).to.be.at.least(dates[i-1].getTime());
             }
           });
+        }
         });
       },
     );

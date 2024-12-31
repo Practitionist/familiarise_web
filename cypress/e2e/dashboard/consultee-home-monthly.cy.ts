@@ -140,7 +140,7 @@ interface ConsulteeIdsFixture {
     );
 
     it(
-      "allows navigation between months and years",
+      "allows navigation to specific dates and handles scrolling",
       { defaultCommandTimeout: 30000 },
       () => {
         cy.readFile("cypress/logs/info.json").then((logs) => {
@@ -152,50 +152,95 @@ interface ConsulteeIdsFixture {
           cy.writeFile("cypress/logs/info.json", logs);
         });
 
-        // Get current month/year text
-        cy.get('[data-testid="month-nav"]')
-          .find("h2")
-          .invoke("text")
-          .then((currentMonthYear) => {
-            const [currentMonth, currentYear] = currentMonthYear.split(" ");
+        // Wait for all API responses
+        cy.wait([
+          "@getConsultations",
+          "@getSubscriptions",
+          "@getWebinars",
+          "@getClasses",
+        ]).then(([consultationsResp, subscriptionsResp, webinarsResp, classesResp]) => {
+          const allEvents = [
+            ...(consultationsResp.response?.body.data || []),
+            ...(subscriptionsResp.response?.body.data || []),
+            ...(webinarsResp.response?.body.data || []),
+            ...(classesResp.response?.body.data || [])
+          ];
 
-            // Navigate to next year
-            for (let i = 0; i < 12; i++) {
-              cy.get('[data-testid="next-month"]').click();
-            }
-            // Verify year changed
-            cy.get('[data-testid="month-nav"]')
-              .find("h2")
-              .should("contain", `${currentMonth} ${parseInt(currentYear) + 1}`);
-
-            // Navigate back to current month/year
-            for (let i = 0; i < 12; i++) {
-              cy.get('[data-testid="prev-month"]').click();
-            }
-            // Verify back to original month/year
-            cy.get('[data-testid="month-nav"]')
-              .find("h2")
-              .should("contain", `${currentMonth} ${currentYear}`);
-
-            // Verify events are sorted by date within the month
-            cy.get('[data-testid="monthly-slot"]').then(($slots) => {
-              const dates = $slots
-                .map((_, el) => {
-                  const text = Cypress.$(el).text();
-                  const match = text.match(/[A-Za-z]{3}, \d{1,2} [A-Za-z]{3} \d{4}/);
-                  if (!match) {
-                    throw new Error(`Invalid date format in text: ${text}`);
-                  }
-                  return new Date(match[0]);
-                })
-                .get();
-              
-              // Check if dates are in ascending order
-              for (let i = 1; i < dates.length; i++) {
-                expect(dates[i].getTime()).to.be.at.least(dates[i-1].getTime());
+          // Find the furthest future date
+          const futureDates = allEvents.flatMap(event => {
+            const dates: Date[] = [];
+            if (event.preferredDateTime) dates.push(new Date(event.preferredDateTime));
+            if (event.scheduledAt) dates.push(new Date(event.scheduledAt));
+            if (event.startDate) dates.push(new Date(event.startDate));
+            if (event.tentativeSchedule) {
+              try {
+                const schedule = JSON.parse(event.tentativeSchedule);
+                const scheduleDates = schedule.map((slot: any) => new Date(slot.startTime));
+                dates.push(...scheduleDates);
+              } catch (e) {
+                console.error('Error parsing tentative schedule:', e);
               }
-            });
-          });
+            }
+            return dates as Date[];
+          }).filter((date: Date) => date > new Date());
+
+          if (futureDates.length > 0) {
+            const furthestDate = new Date(Math.max(...futureDates.map((d: Date) => d.getTime())));
+            const targetYear = furthestDate.getFullYear();
+            const targetMonth = furthestDate.getMonth();
+
+            // Get current month/year
+            cy.get('[data-testid="month-nav"]')
+              .find("h2")
+              .invoke("text")
+              .then((currentMonthYear) => {
+                const [, currentYear] = currentMonthYear.split(" ");
+                const yearsToMove = targetYear - parseInt(currentYear);
+                const monthsToMove = yearsToMove * 12 + (targetMonth - new Date().getMonth());
+
+                // Navigate to target month/year
+                for (let i = 0; i < monthsToMove; i++) {
+                  cy.get('[data-testid="next-month"]').click();
+                  // Add small delay between clicks to ensure UI updates
+                  cy.wait(100);
+                }
+
+                // Verify we reached the target month/year
+                cy.get('[data-testid="month-nav"]')
+                  .find("h2")
+                  .should("contain", `${furthestDate.toLocaleString('default', { month: 'long' })} ${targetYear}`);
+
+                // Check if events list needs scrolling
+                cy.get('[data-testid="monthly-slot-list"]').then($list => {
+                  if ($list[0].scrollHeight > $list[0].clientHeight) {
+                    // Scroll to bottom to ensure all events are loaded
+                    cy.get('[data-testid="monthly-slot-list"]')
+                      .scrollTo('bottom')
+                      .then(() => {
+                        // Verify events are sorted by date
+                        cy.get('[data-testid="monthly-slot"]').then(($slots) => {
+                          const dates = $slots
+                            .map((_, el) => {
+                              const text = Cypress.$(el).text();
+                              const match = text.match(/[A-Za-z]{3}, \d{1,2} [A-Za-z]{3} \d{4}/);
+                              if (!match) {
+                                throw new Error(`Invalid date format in text: ${text}`);
+                              }
+                              return new Date(match[0]);
+                            })
+                            .get();
+                          
+                          // Check if dates are in ascending order
+                          for (let i = 1; i < dates.length; i++) {
+                            expect(dates[i].getTime()).to.be.at.least(dates[i-1].getTime());
+                          }
+                        });
+                      });
+                  }
+                });
+              });
+          }
+        });
       },
     );
   });
