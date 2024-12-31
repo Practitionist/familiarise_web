@@ -77,22 +77,24 @@ interface ConsulteeIdsFixture {
                 // Click right arrow until we see a different event
                 cy.get('[data-testid="upcoming-slot-list"]').then(($list) => {
                   if ($list[0].scrollWidth > $list[0].clientWidth) {
-                    // Click right arrow (using SVG paths)
-                    cy.get('svg').filter((_, el) => {
-                      const paths = el.querySelectorAll('path');
-                      return Array.from(paths).some(path => path.getAttribute('d') === 'M5 12h14') &&
-                             Array.from(paths).some(path => path.getAttribute('d') === 'm12 5 7 7-7 7');
-                    }).parent().click();
+                    // Click right arrow (using first matching button)
+                    cy.get('button').filter((_, el) => {
+                      const svg = el.querySelector('svg');
+                      if (!svg) return false;
+                      const paths = svg.querySelectorAll('path');
+                      return Array.from(paths).some(path => path.getAttribute('d') === 'M5 12h14');
+                    }).first().click();
                     // Verify scroll position changed
                     cy.get('[data-testid="upcoming-slot-list"]').should(($newList) => {
                       expect($newList[0].scrollLeft).to.be.greaterThan(0);
                     });
-                    // Click left arrow (using SVG paths)
-                    cy.get('svg').filter((_, el) => {
-                      const paths = el.querySelectorAll('path');
-                      return Array.from(paths).some(path => path.getAttribute('d') === 'm12 19-7-7 7-7') &&
-                             Array.from(paths).some(path => path.getAttribute('d') === 'M19 12H5');
-                    }).parent().click();
+                    // Click left arrow (using first matching button)
+                    cy.get('button').filter((_, el) => {
+                      const svg = el.querySelector('svg');
+                      if (!svg) return false;
+                      const paths = svg.querySelectorAll('path');
+                      return Array.from(paths).some(path => path.getAttribute('d') === 'M19 12H5');
+                    }).first().click();
                     // Verify we're back at the start
                     cy.get('[data-testid^="consultation-"], [data-testid^="subscription-"], [data-testid^="webinar-"], [data-testid^="class-"]')
                       .first()
@@ -102,41 +104,50 @@ interface ConsulteeIdsFixture {
               });
           }
 
-          // Filter and verify only future events
-          const now = new Date();
-          const futureEvents = [
+          // Process events with valid dates
+          const allEvents = [
             ...consultations
-              .filter(c => {
-                const date = new Date(c.preferredDateTime || c.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC);
-                return date > now;
-              })
+              .filter(c => c.preferredDateTime || (c.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC))
               .map(c => ({ ...c, type: 'consultation', status: c.requestStatus })),
             ...subscriptions
-              .filter(s => {
-                if (s.tentativeSchedule) {
-                  const schedule = JSON.parse(s.tentativeSchedule);
-                  return schedule.some((slot: any) => new Date(slot.startTime) > now);
-                }
-                return false;
-              })
+              .filter(s => s.tentativeSchedule)
               .map(s => ({ ...s, type: 'subscription', status: s.requestStatus })),
             ...webinars
-              .filter(w => new Date(w.scheduledAt) > now)
+              .filter(w => w.scheduledAt)
               .map(w => ({ ...w, type: 'webinar', status: w.status })),
             ...classes
-              .filter(c => {
-                if (c.tentativeSchedule) {
-                  const schedule = JSON.parse(c.tentativeSchedule);
-                  return schedule.some((slot: any) => new Date(slot.startTime) > now);
-                }
-                return false;
-              })
+              .filter(c => c.tentativeSchedule)
               .map(c => ({ ...c, type: 'class', status: c.status }))
           ];
 
-          // Only verify events if there are any future events
-          if (futureEvents.length > 0) {
-            futureEvents.forEach((event: any) => {
+          // Only verify events that have valid dates
+          if (allEvents.length > 0) {
+            // First verify the carousel navigation
+            cy.get('[data-testid="upcoming-slot-list"]').then(($list) => {
+              if ($list[0].scrollWidth > $list[0].clientWidth) {
+                // Click right arrow (using first matching button)
+                cy.get('button').filter((_, el) => {
+                  const svg = el.querySelector('svg');
+                  if (!svg) return false;
+                  const paths = svg.querySelectorAll('path');
+                  return Array.from(paths).some(path => path.getAttribute('d') === 'M5 12h14');
+                }).first().click();
+                // Verify scroll position changed
+                cy.get('[data-testid="upcoming-slot-list"]').should(($newList) => {
+                  expect($newList[0].scrollLeft).to.be.greaterThan(0);
+                });
+                // Click left arrow (using first matching button)
+                cy.get('button').filter((_, el) => {
+                  const svg = el.querySelector('svg');
+                  if (!svg) return false;
+                  const paths = svg.querySelectorAll('path');
+                  return Array.from(paths).some(path => path.getAttribute('d') === 'M19 12H5');
+                }).first().click();
+              }
+            });
+
+            // Then verify each event
+            allEvents.forEach((event: any) => {
             cy.get(`[data-testid="${event.type}-${event.id}"]`)
               .first()
               .should("exist")
