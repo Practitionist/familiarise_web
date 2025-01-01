@@ -21,8 +21,10 @@ export async function GET(request: Request) {
                   some: {
                     user: {
                       some: {
-                        consulteeProfileId: consulteeProfileId,
-                      },
+                        consulteeProfile: {
+                          id: consulteeProfileId
+                        }
+                      }
                     },
                   },
                 },
@@ -32,7 +34,11 @@ export async function GET(request: Request) {
             {
               waitlist: {
                 some: {
-                  userId: consulteeProfileId,
+                  user: {
+                    consulteeProfile: {
+                      id: consulteeProfileId
+                    }
+                  }
                 },
               },
             },
@@ -77,12 +83,23 @@ export async function GET(request: Request) {
           meetingRoom: true,
           waitlist: {
             where: {
-              userId: consulteeProfileId,
+              user: {
+                consulteeProfile: {
+                  id: consulteeProfileId
+                }
+              }
             },
-            select: {
-              userId: true,
-              joinedAt: true,
-            },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                  consulteeProfile: true
+                }
+              }
+            }
           },
         },
       });
