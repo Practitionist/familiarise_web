@@ -54,8 +54,6 @@ export async function PUT(
         startDate: body.startDate,
         endDate: body.endDate,
         status: body.status,
-        tentativeStartDate: body.tentativeStartDate,
-        tentativeSchedule: body.tentativeSchedule,
         recordingUrls: body.recordingUrls,
         feedbackSummary: body.feedbackSummary,
       },

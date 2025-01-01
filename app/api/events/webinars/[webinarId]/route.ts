@@ -62,8 +62,6 @@ export async function PUT(
     const webinarData = await prisma.webinar.update({
       where: { id: webinarId },
       data: {
-        scheduledAt: body.scheduledAt,
-        endAt: body.endAt,
         status: body.status,
         feedbackSummary: body.feedbackSummary,
         webinarPlan: body.webinarPlanId

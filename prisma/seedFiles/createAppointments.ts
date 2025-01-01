@@ -7,12 +7,74 @@ import {
   ClassStatus,
   SlotOfAvailabilityWeekly,
   SlotOfAvailabilityCustom,
+  Prisma,
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./createUsers";
-import { TAppointmentCreateInput } from "@/types/appointment";
 
-const NUM_APPOINTMENTS = 200;
+const NUM_APPOINTMENTS = 500;
+
+// Distribution helpers
+const getAppointmentType = (index: number): AppointmentsType => {
+  // More even distribution
+  if (index < 125) return AppointmentsType.CONSULTATION;
+  if (index < 250) return AppointmentsType.SUBSCRIPTION;
+  if (index < 375) return AppointmentsType.WEBINAR;
+  return AppointmentsType.CLASS;
+};
+
+const getAppointmentStatus = (index: number, isPastAppointment: boolean): RequestStatus => {
+  const rand = Math.random();
+  
+  if (isPastAppointment) {
+    return rand < 0.8 ? RequestStatus.APPROVED : RequestStatus.CANCELLED;
+  }
+
+  if (rand < 0.3) return RequestStatus.PENDING;
+  if (rand < 0.7) return RequestStatus.APPROVED;
+  if (rand < 0.9) return RequestStatus.EXPIRED;
+  return RequestStatus.CANCELLED;
+};
+
+const getAppointmentDate = (now: Date): { startDate: Date; endDate: Date; isPastAppointment: boolean } => {
+  const rand = Math.random();
+  let startOffset: number;
+  let endOffset: number;
+  let isPastAppointment = false;
+
+  if (rand < 0.2) {
+    // Past appointments (20%)
+    startOffset = faker.number.int({ min: -90, max: -1 });
+    endOffset = faker.number.int({ min: startOffset + 1, max: 0 });
+    isPastAppointment = true;
+  } else if (rand < 0.8) {
+    // Near future (60%)
+    startOffset = faker.number.int({ min: 1, max: 30 });
+    endOffset = faker.number.int({ min: startOffset + 7, max: startOffset + 30 });
+  } else {
+    // Far future (20%)
+    startOffset = faker.number.int({ min: 31, max: 90 });
+    endOffset = faker.number.int({ min: startOffset + 7, max: startOffset + 60 });
+  }
+
+  const startDate = new Date(now.getTime() + startOffset * 24 * 60 * 60 * 1000);
+  const endDate = new Date(now.getTime() + endOffset * 24 * 60 * 60 * 1000);
+
+  return { startDate, endDate, isPastAppointment };
+};
+
+const getNumSlots = (appointmentType: AppointmentsType): number => {
+  switch (appointmentType) {
+    case AppointmentsType.CONSULTATION:
+      return 1;
+    case AppointmentsType.SUBSCRIPTION:
+      return faker.number.int({ min: 4, max: 12 });
+    case AppointmentsType.WEBINAR:
+      return 1;
+    case AppointmentsType.CLASS:
+      return faker.number.int({ min: 4, max: 8 });
+  }
+};
 
 type SlotData =
   | {
@@ -24,30 +86,248 @@ type SlotData =
       slot: SlotOfAvailabilityCustom;
     };
 
-// Helper function remains the same
-function generateTentativeSchedule(
+const createConsultationAppointment = (
+  consultee: UserWithProfiles,
+  consultationPlans: any[],
+  defaultStatus: RequestStatus,
+  isPastAppointment: boolean,
+  slotStartTimeInUTC: Date,
+  slotEndTimeInUTC: Date,
+): Prisma.AppointmentCreateInput => {
+  return {
+    appointmentType: AppointmentsType.CONSULTATION,
+    slotsOfAppointment: {
+      create: {
+        user: {
+          connect: [{ id: consultee.id }],
+        },
+        slotStartTimeInUTC,
+        slotEndTimeInUTC,
+        isTentative: defaultStatus === RequestStatus.PENDING,
+      },
+    },
+    consultation: {
+      create: {
+        consultationPlan: {
+          connect: {
+            id: faker.helpers.arrayElement(consultationPlans).id,
+          },
+        },
+        requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
+        requestStatus: defaultStatus,
+        requestedAt: new Date(),
+        requestNotes: faker.lorem.sentence(),
+        directlyBooked: faker.datatype.boolean(),
+        feedbackFromConsultee: isPastAppointment ? faker.lorem.paragraph() : null,
+        feedbackFromConsultant: isPastAppointment ? faker.lorem.paragraph() : null,
+        rating: isPastAppointment ? faker.number.float({ min: 1, max: 5, multipleOf: 0.5 }) : null,
+      },
+    },
+  };
+};
+
+const createSubscriptionAppointment = (
+  consultee: UserWithProfiles,
+  subscriptionPlans: any[],
+  defaultStatus: RequestStatus,
+  isPastAppointment: boolean,
   startDate: Date,
-  numSessions: number,
-): string {
-  return JSON.stringify(
-    Array.from({ length: numSessions }, (_, index) => {
-      const appointmentDate = new Date(startDate);
-      appointmentDate.setDate(appointmentDate.getDate() + index * 7);
-      const startTime = new Date(appointmentDate);
-      startTime.setHours(faker.number.int({ min: 9, max: 17 }), 0, 0, 0);
-      const endTime = new Date(startTime);
-      endTime.setHours(
-        startTime.getHours() + faker.number.int({ min: 1, max: 3 }),
-      );
-      const timezone = "UTC";
-      return {
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
-        timezone: timezone,
-      };
-    }),
-  );
-}
+  endDate: Date,
+  numSlots: number,
+): Prisma.AppointmentCreateInput => {
+  return {
+    appointmentType: AppointmentsType.SUBSCRIPTION,
+    slotsOfAppointment: {
+      create: Array.from({ length: numSlots }, (_, index) => {
+        const slotStart = new Date(startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000);
+        return {
+          user: {
+            connect: [{ id: consultee.id }],
+          },
+          slotStartTimeInUTC: slotStart,
+          slotEndTimeInUTC: new Date(slotStart.getTime() + 60 * 60 * 1000),
+          isTentative: defaultStatus === RequestStatus.PENDING,
+        };
+      }),
+    },
+    subscription: {
+      create: {
+        subscriptionPlan: {
+          connect: {
+            id: faker.helpers.arrayElement(subscriptionPlans).id,
+          },
+        },
+        startDate: startDate,
+        endDate: endDate,
+        requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
+        requestStatus: defaultStatus,
+        requestedAt: new Date(),
+        requestNotes: faker.lorem.sentence(),
+        feedbackFromConsultee: isPastAppointment ? faker.lorem.paragraph() : null,
+        feedbackFromConsultant: isPastAppointment ? faker.lorem.paragraph() : null,
+        rating: isPastAppointment ? faker.number.float({ min: 1, max: 5, multipleOf: 0.5 }) : null,
+      },
+    },
+  };
+};
+
+const createWebinarAppointment = async (
+  prisma: Prisma.TransactionClient,
+  consultee: UserWithProfiles,
+  webinarPlans: any[],
+  consultees: UserWithProfiles[],
+  isPastAppointment: boolean,
+  slotStartTimeInUTC: Date,
+  slotEndTimeInUTC: Date,
+): Promise<Prisma.AppointmentCreateInput> => {
+  return {
+    appointmentType: AppointmentsType.WEBINAR,
+    slotsOfAppointment: {
+      create: {
+        user: {
+          connect: [{ id: consultee.id }],
+        },
+        slotStartTimeInUTC,
+        slotEndTimeInUTC,
+        isTentative: false,
+      },
+    },
+    webinar: {
+      create: {
+        webinarPlan: {
+          connect: { id: faker.helpers.arrayElement(webinarPlans).id },
+        },
+        status: isPastAppointment ? WebinarStatus.COMPLETED : faker.helpers.arrayElement(Object.values(WebinarStatus)),
+        feedbackSummary: isPastAppointment ? faker.lorem.paragraph() : null,
+        waitlist: isPastAppointment
+          ? undefined
+          : {
+              create: Array.from(
+                new Set(
+                  Array.from(
+                    { length: faker.number.int({ min: 0, max: 5 }) },
+                    () => faker.helpers.arrayElement(consultees).id
+                  )
+                )
+              ).map(userId => ({
+                user: {
+                  connect: { id: userId }
+                }
+              })),
+            },
+        meetingRoom: {
+          create: {
+            platform: faker.helpers.arrayElement(Object.values(Platform)),
+            meetingUrl: faker.internet.url(),
+            meetingId: faker.string.alphanumeric(10),
+            passcode: faker.string.alphanumeric(6),
+            hostKeys: [
+              faker.string.alphanumeric(8),
+              faker.string.alphanumeric(8),
+            ],
+            recordings: isPastAppointment
+              ? {
+                  create: Array.from(
+                    { length: faker.number.int({ min: 1, max: 3 }) },
+                    () => ({
+                      title: faker.lorem.words(3),
+                      recordingUrl: faker.internet.url(),
+                      duration: faker.number.int({ min: 30, max: 180 }),
+                      recordedAt: faker.date.past(),
+                    }),
+                  ),
+                }
+              : undefined,
+          },
+        },
+      },
+    },
+  };
+};
+
+const createClassAppointment = async (
+  prisma: Prisma.TransactionClient,
+  consultee: UserWithProfiles,
+  classPlans: any[],
+  consultees: UserWithProfiles[],
+  isPastAppointment: boolean,
+  startDate: Date,
+  endDate: Date,
+  numSlots: number,
+): Promise<Prisma.AppointmentCreateInput> => {
+  return {
+    appointmentType: AppointmentsType.CLASS,
+    slotsOfAppointment: {
+      create: Array.from({ length: numSlots }, (_, index) => {
+        const slotStart = new Date(startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000);
+        return {
+          user: {
+            connect: [{ id: consultee.id }],
+          },
+          slotStartTimeInUTC: slotStart,
+          slotEndTimeInUTC: new Date(slotStart.getTime() + 60 * 60 * 1000),
+          isTentative: false,
+        };
+      }),
+    },
+    class: {
+      create: {
+        classPlan: {
+          connect: { id: faker.helpers.arrayElement(classPlans).id },
+        },
+        startDate: startDate,
+        endDate: endDate,
+        status: isPastAppointment ? ClassStatus.COMPLETED : faker.helpers.arrayElement(Object.values(ClassStatus)),
+        recordingUrls: Array.from(
+          { length: faker.number.int({ min: 0, max: 5 }) },
+          () => faker.internet.url(),
+        ),
+        feedbackSummary: isPastAppointment ? faker.lorem.paragraph() : null,
+        waitlist: isPastAppointment
+          ? undefined
+          : {
+              create: Array.from(
+                new Set(
+                  Array.from(
+                    { length: faker.number.int({ min: 0, max: 5 }) },
+                    () => faker.helpers.arrayElement(consultees).id
+                  )
+                )
+              ).map(userId => ({
+                user: {
+                  connect: { id: userId }
+                }
+              })),
+            },
+        meetingRoom: {
+          create: {
+            platform: faker.helpers.arrayElement(Object.values(Platform)),
+            meetingUrl: faker.internet.url(),
+            meetingId: faker.string.alphanumeric(10),
+            passcode: faker.string.alphanumeric(6),
+            hostKeys: [
+              faker.string.alphanumeric(8),
+              faker.string.alphanumeric(8),
+            ],
+            recordings: isPastAppointment
+              ? {
+                  create: Array.from(
+                    { length: faker.number.int({ min: 1, max: 3 }) },
+                    () => ({
+                      title: faker.lorem.words(3),
+                      recordingUrl: faker.internet.url(),
+                      duration: faker.number.int({ min: 30, max: 180 }),
+                      recordedAt: faker.date.past(),
+                    }),
+                  ),
+                }
+              : undefined,
+          },
+        },
+      },
+    },
+  };
+};
 
 export async function createAppointments(consultees: UserWithProfiles[]) {
   console.log(`Creating ${NUM_APPOINTMENTS} appointments...`);
@@ -84,242 +364,93 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
     }
 
     try {
-      const appointmentType = faker.helpers.arrayElement<AppointmentsType>(
-        Object.values(AppointmentsType),
-      );
+      const appointmentType = getAppointmentType(i);
+      const now = new Date();
+      const { startDate, endDate, isPastAppointment } = getAppointmentDate(now);
+      const defaultStatus = getAppointmentStatus(i, isPastAppointment);
+      const numSlots = getNumSlots(appointmentType);
+      // Extract just the time pattern (hours and minutes) from the slot
+      // Weekly slots use next occurrence of each day, but we only care about the time pattern
+      // Custom slots use specific dates, but again we just want the time pattern
+      // This way we can apply these times to any date for the appointment
+      const slotTime = slotData.slot;
+      const startHours = slotTime.slotStartTimeInUTC.getUTCHours();
+      const startMinutes = slotTime.slotStartTimeInUTC.getUTCMinutes();
+      const endHours = slotTime.slotEndTimeInUTC.getUTCHours();
+      const endMinutes = slotTime.slotEndTimeInUTC.getUTCMinutes();
 
-      await prisma.$transaction(async (prisma) => {
-        const { slotStartTimeInUTC, slotEndTimeInUTC } = slotData.slot;
+      // Create new dates using the appointment's actual date
+      const actualStartTime = new Date(startDate);
+      actualStartTime.setUTCHours(startHours, startMinutes, 0, 0);
 
-        const appointmentData: TAppointmentCreateInput = {
-          appointmentType: appointmentType,
-          slotsOfAppointment: {
-            create: {
-              user: {
-                connect: [
-                  {
-                    id: consultee.id,
-                  },
-                ],
-              },
-              slotStartTimeInUTC,
-              slotEndTimeInUTC,
-            },
-          },
-        };
+      const actualEndTime = new Date(startDate);
+      actualEndTime.setUTCHours(endHours, endMinutes, 0, 0);
+      
+      // If end time is before start time, it means the slot crosses midnight
+      if (actualEndTime <= actualStartTime) {
+        actualEndTime.setDate(actualEndTime.getDate() + 1);
+      }
 
-        const now = new Date();
-        // Create more past appointments for reviews
-        const startDate = new Date(
-          now.getTime() +
-            faker.number.int({ min: -30, max: 7 }) * 24 * 60 * 60 * 1000,
-        );
-        const endDate = new Date(
-          startDate.getTime() +
-            faker.number.int({ min: 30, max: 365 }) * 24 * 60 * 60 * 1000,
-        );
-        const tentativeStartDate = new Date(
-          startDate.getTime() +
-            faker.number.int({ min: 1, max: 14 }) * 24 * 60 * 60 * 1000,
-        );
+      // Prepare appointment data outside transaction
+      let appointmentData: Prisma.AppointmentCreateInput;
 
-        // Increase probability of completed/approved appointments
-        const isPastAppointment = startDate < now;
-        const defaultStatus = isPastAppointment
-          ? faker.helpers.arrayElement([
-              RequestStatus.APPROVED,
-              RequestStatus.APPROVED,
-              RequestStatus.APPROVED,
-              RequestStatus.REJECTED,
-              RequestStatus.CANCELLED,
-            ])
-          : faker.helpers.arrayElement(Object.values(RequestStatus));
+      switch (appointmentType) {
+        case AppointmentsType.CONSULTATION:
+          appointmentData = createConsultationAppointment(
+            consultee,
+            consultationPlans,
+            defaultStatus,
+            isPastAppointment,
+            actualStartTime,
+            actualEndTime,
+          );
+          break;
 
-        let appointmentTypeData;
+        case AppointmentsType.SUBSCRIPTION:
+          appointmentData = createSubscriptionAppointment(
+            consultee,
+            subscriptionPlans,
+            defaultStatus,
+            isPastAppointment,
+            startDate,
+            endDate,
+            numSlots,
+          );
+          break;
 
-        switch (appointmentType) {
-          case AppointmentsType.CONSULTATION:
-            appointmentTypeData = {
-              consultationPlan: {
-                connect: {
-                  id: faker.helpers.arrayElement(consultationPlans).id,
-                },
-              },
-              requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
-              requestStatus: defaultStatus,
-              preferredDateTime: slotStartTimeInUTC,
-              requestedAt: new Date(),
-              requestNotes: faker.lorem.sentence(),
-              directlyBooked: faker.datatype.boolean(),
-              feedbackFromConsultee: isPastAppointment
-                ? faker.lorem.paragraph()
-                : null,
-              feedbackFromConsultant: isPastAppointment
-                ? faker.lorem.paragraph()
-                : null,
-              rating: isPastAppointment
-                ? faker.number.float({ min: 1, max: 5, multipleOf: 0.5 })
-                : null,
-            };
-            appointmentData.consultation = { create: appointmentTypeData };
-            break;
+        case AppointmentsType.WEBINAR:
+          appointmentData = await createWebinarAppointment(
+            prisma,
+            consultee,
+            webinarPlans,
+            consultees,
+            isPastAppointment,
+            actualStartTime,
+            actualEndTime,
+          );
+          break;
 
-          case AppointmentsType.SUBSCRIPTION:
-            appointmentTypeData = {
-              subscriptionPlan: {
-                connect: {
-                  id: faker.helpers.arrayElement(subscriptionPlans).id,
-                },
-              },
-              startDate: startDate,
-              endDate: endDate,
-              requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
-              requestStatus: defaultStatus,
-              requestedAt: new Date(),
-              tentativeStartDate: tentativeStartDate,
-              tentativeSchedule: generateTentativeSchedule(
-                tentativeStartDate,
-                4,
-              ),
-              requestNotes: faker.lorem.sentence(),
-              feedbackFromConsultee: isPastAppointment
-                ? faker.lorem.paragraph()
-                : null,
-              feedbackFromConsultant: isPastAppointment
-                ? faker.lorem.paragraph()
-                : null,
-              rating: isPastAppointment
-                ? faker.number.float({ min: 1, max: 5, multipleOf: 0.5 })
-                : null,
-            };
-            appointmentData.subscription = { create: appointmentTypeData };
-            break;
+        case AppointmentsType.CLASS:
+          appointmentData = await createClassAppointment(
+            prisma,
+            consultee,
+            classPlans,
+            consultees,
+            isPastAppointment,
+            startDate,
+            endDate,
+            numSlots,
+          );
+          break;
+      }
 
-          case AppointmentsType.WEBINAR:
-            appointmentTypeData = {
-              webinarPlan: {
-                connect: { id: faker.helpers.arrayElement(webinarPlans).id },
-              },
-              scheduledAt: startDate,
-              endAt: endDate,
-              status: isPastAppointment
-                ? WebinarStatus.COMPLETED
-                : faker.helpers.arrayElement(Object.values(WebinarStatus)),
-              feedbackSummary: isPastAppointment
-                ? faker.lorem.paragraph()
-                : null,
-              waitlist: isPastAppointment
-                ? undefined
-                : {
-                    create: Array.from(
-                      { length: faker.number.int({ min: 0, max: 5 }) },
-                      () => ({
-                        user: {
-                          connect: {
-                            id: faker.helpers.arrayElement(consultees).id,
-                          },
-                        },
-                      }),
-                    ),
-                  },
-              meetingRoom: {
-                create: {
-                  platform: faker.helpers.arrayElement(Object.values(Platform)),
-                  meetingUrl: faker.internet.url(),
-                  meetingId: faker.string.alphanumeric(10),
-                  passcode: faker.string.alphanumeric(6),
-                  hostKeys: [
-                    faker.string.alphanumeric(8),
-                    faker.string.alphanumeric(8),
-                  ],
-                  recordings: isPastAppointment
-                    ? {
-                        create: Array.from(
-                          { length: faker.number.int({ min: 1, max: 3 }) },
-                          () => ({
-                            title: faker.lorem.words(3),
-                            recordingUrl: faker.internet.url(),
-                            duration: faker.number.int({ min: 30, max: 180 }),
-                            recordedAt: faker.date.past(),
-                          }),
-                        ),
-                      }
-                    : undefined,
-                },
-              },
-            };
-            appointmentData.webinar = { create: appointmentTypeData };
-            break;
-
-          case AppointmentsType.CLASS:
-            appointmentTypeData = {
-              classPlan: {
-                connect: { id: faker.helpers.arrayElement(classPlans).id },
-              },
-              startDate: startDate,
-              endDate: endDate,
-              tentativeStartDate: tentativeStartDate,
-              tentativeSchedule: generateTentativeSchedule(
-                tentativeStartDate,
-                4,
-              ),
-              status: isPastAppointment
-                ? ClassStatus.COMPLETED
-                : faker.helpers.arrayElement(Object.values(ClassStatus)),
-              recordingUrls: Array.from(
-                { length: faker.number.int({ min: 0, max: 5 }) },
-                () => faker.internet.url(),
-              ),
-              feedbackSummary: isPastAppointment
-                ? faker.lorem.paragraph()
-                : null,
-              waitlist: isPastAppointment
-                ? undefined
-                : {
-                    create: Array.from(
-                      { length: faker.number.int({ min: 0, max: 5 }) },
-                      () => ({
-                        user: {
-                          connect: {
-                            id: faker.helpers.arrayElement(consultees).id,
-                          },
-                        },
-                      }),
-                    ),
-                  },
-              meetingRoom: {
-                create: {
-                  platform: faker.helpers.arrayElement(Object.values(Platform)),
-                  meetingUrl: faker.internet.url(),
-                  meetingId: faker.string.alphanumeric(10),
-                  passcode: faker.string.alphanumeric(6),
-                  hostKeys: [
-                    faker.string.alphanumeric(8),
-                    faker.string.alphanumeric(8),
-                  ],
-                  recordings: isPastAppointment
-                    ? {
-                        create: Array.from(
-                          { length: faker.number.int({ min: 1, max: 3 }) },
-                          () => ({
-                            title: faker.lorem.words(3),
-                            recordingUrl: faker.internet.url(),
-                            duration: faker.number.int({ min: 30, max: 180 }),
-                            recordedAt: faker.date.past(),
-                          }),
-                        ),
-                      }
-                    : undefined,
-                },
-              },
-            };
-            appointmentData.class = { create: appointmentTypeData };
-            break;
-        }
-
-        await prisma.appointment.create({
+      // Execute transaction with increased timeout
+      await prisma.$transaction(async (tx) => {
+        await tx.appointment.create({
           data: appointmentData,
         });
+      }, {
+        timeout: 10000, // Increase timeout to 10 seconds
       });
     } catch (error) {
       console.error(

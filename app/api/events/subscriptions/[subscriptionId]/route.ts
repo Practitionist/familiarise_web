@@ -92,8 +92,6 @@ export async function PUT(
         startDate: body.startDate,
         endDate: body.endDate,
         requestStatus: body.requestStatus,
-        tentativeStartDate: body.tentativeStartDate,
-        tentativeSchedule: body.tentativeSchedule,
         requestNotes: body.requestNotes,
         feedbackFromConsultee: body.feedbackFromConsultee,
         feedbackFromConsultant: body.feedbackFromConsultant,

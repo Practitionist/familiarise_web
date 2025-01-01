@@ -34,10 +34,14 @@ type WebinarWithRelations = Prisma.WebinarPlanGetPayload<{
       where: {
         status: "SCHEDULED";
       };
-      orderBy: {
-        scheduledAt: "asc";
-      };
       take: 1;
+      include: {
+        appointment: {
+          include: {
+            slotsOfAppointment: true;
+          };
+        };
+      };
     };
   };
 }>;
@@ -58,10 +62,14 @@ async function getWebinarPlan(
         where: {
           status: "SCHEDULED",
         },
-        orderBy: {
-          scheduledAt: "asc",
-        },
         take: 1,
+        include: {
+          appointment: {
+            include: {
+              slotsOfAppointment: true,
+            },
+          },
+        },
       },
     },
   });
@@ -239,7 +247,7 @@ export default async function WebinarDetailsPage({
     redirect("/explore/programs/webinars");
   }
 
-  const nextSession = webinar.webinars[0]?.scheduledAt;
+  const nextSession = webinar.webinars[0]?.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
   const isLoggedIn = !!session?.user;
   return (
     <div className="min-h-screen bg-gray-50">

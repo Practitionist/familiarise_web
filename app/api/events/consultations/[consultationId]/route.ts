@@ -57,7 +57,6 @@ export async function PUT(
       data: {
         requestStatus: body.requestStatus,
         directlyBooked: body.directlyBooked,
-        preferredDateTime: body.preferredDateTime,
         requestNotes: body.requestNotes,
         feedbackFromConsultee: body.feedbackFromConsultee,
         feedbackFromConsultant: body.feedbackFromConsultant,

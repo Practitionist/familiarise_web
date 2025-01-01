@@ -1,7 +1,5 @@
-import { Prisma } from "@prisma/client";
-import { TAppointment } from "@/types/appointment";
-import { EventWithType } from "../utils";
 import { PREVIOUS_YEAR } from "@/constants/datetime";
+import { EventWithType } from "../utils";
 
 export interface SlotWithStatus {
   date: Date;
@@ -9,115 +7,33 @@ export interface SlotWithStatus {
   endTime?: Date;
 }
 
-interface TentativeSlot {
-  startTime: string;
-  endTime?: string;
-  timezone?: string;
-}
-
 export function getActualSlots(event: EventWithType): SlotWithStatus[] {
-  // First try to get actual appointment slots
-  const appointments = Array.isArray(event.appointment)
-    ? event.appointment
-    : event.appointment
-      ? [event.appointment]
-      : [];
+  // Handle appointments based on event type
+  const appointments = (() => {
+    switch (event.type) {
+      case "Subscription":
+        return event.appointments || [];
+      case "Class":
+        return event.appointment || [];
+      case "Consultation":
+      case "Webinar":
+        return event.appointment ? [event.appointment] : [];
+      default:
+        return [];
+    }
+  })();
 
-  const slots = appointments.flatMap((apt) => apt?.slotsOfAppointment || []);
+  const slots = appointments.flatMap((apt) => 
+    (apt?.slotsOfAppointment || []).map(slot => ({
+      date: new Date(slot.slotStartTimeInUTC),
+      endTime: new Date(slot.slotEndTimeInUTC),
+      isTentative: slot.isTentative
+    }))
+  );
 
-  const validSlots = slots
-    .map(
-      (
-        slot: Prisma.SlotOfAppointmentGetPayload<{
-          include: { user: true };
-        }>,
-      ) => {
-        const startTime = new Date(slot.slotStartTimeInUTC);
-        const endTime = new Date(slot.slotEndTimeInUTC);
-        return { date: startTime, endTime, isTentative: false };
-      },
-    )
-    .filter((slot: SlotWithStatus) => {
-      return slot.date.getFullYear() > PREVIOUS_YEAR;
-    });
-
-  // If we have valid appointment slots, return those
-  if (validSlots.length > 0) {
-    return validSlots.sort((a, b) => a.date.getTime() - b.date.getTime());
-  }
-
-  // Otherwise, try to get tentative slots based on event type
-  switch (event.type) {
-    case "Consultation":
-      // Only include consultations with preferredDateTime
-      if (event.preferredDateTime) {
-        const date = new Date(event.preferredDateTime);
-        const endTime = new Date(date);
-        endTime.setHours(endTime.getHours() + 1); // Default 1 hour duration
-        return [{ date, endTime, isTentative: true }];
-      }
-      return [];
-
-    case "Subscription":
-    case "Class":
-      // Always show subscriptions/classes
-      const slots: SlotWithStatus[] = [];
-      
-      // Add tentative slots if available
-      if (event.tentativeSchedule) {
-        try {
-          const schedule = JSON.parse(event.tentativeSchedule) as TentativeSlot[];
-          slots.push(
-            ...schedule
-              .map((slot) => {
-                const startTime = new Date(slot.startTime);
-                const endTime = slot.endTime
-                  ? new Date(slot.endTime)
-                  : new Date(startTime.getTime() + 60 * 60 * 1000);
-                return {
-                  date: startTime,
-                  endTime,
-                  isTentative: true,
-                };
-              })
-              .filter((slot) => slot.date.getFullYear() > PREVIOUS_YEAR)
-          );
-        } catch (e) {
-          console.error(
-            `Error parsing ${event.type.toLowerCase()} tentative schedule:`,
-            e,
-          );
-        }
-      }
-
-      // Add start/end dates if available
-      if (event.startDate) {
-        const startDate = new Date(event.startDate);
-        const endDate = event.endDate ? new Date(event.endDate) : undefined;
-        if (startDate.getFullYear() > PREVIOUS_YEAR) {
-          slots.push({
-            date: startDate,
-            endTime: endDate,
-            isTentative: false,
-          });
-        }
-      }
-
-      return slots.sort((a, b) => a.date.getTime() - b.date.getTime());
-
-    case "Webinar":
-      if (event.scheduledAt) {
-        const scheduledDate = new Date(event.scheduledAt);
-        if (scheduledDate.getFullYear() > PREVIOUS_YEAR) {
-          const endTime = new Date(scheduledDate);
-          endTime.setHours(endTime.getHours() + 1); // Default 1 hour duration
-          return [{ date: scheduledDate, endTime, isTentative: true }];
-        }
-      }
-      break;
-  }
-
-  return [];
+  return slots
+    .filter(slot => slot.date.getFullYear() > PREVIOUS_YEAR)
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
 }
 
 export function getActualNextSlotTime(event: EventWithType): {

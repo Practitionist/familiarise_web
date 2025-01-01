@@ -139,8 +139,6 @@ export async function POST(req: NextRequest) {
           },
           startDate: new Date(startDate),
           endDate: new Date(endDate),
-          tentativeStartDate: new Date(startDate),
-          tentativeSchedule: schedule,
           requestNotes: notes,
         },
       });

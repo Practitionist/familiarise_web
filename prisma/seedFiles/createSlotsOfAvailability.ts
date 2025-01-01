@@ -93,10 +93,30 @@ export async function createSlotsOfAvailability(
             const endHour = Math.floor(slot.end);
             const endMinute = (slot.end % 1) * 60;
 
-            const startTime = new Date();
+            // For weekly slots, since they represent recurring time patterns, we have a few options:
+            // 
+            // Use a fixed date in the future (like 2025) - Not ideal because:
+            // - The slots might appear too far in the future
+            // - We'd need to handle date rollovers manually
+            //
+            // Use 1970 (Unix epoch) - Not ideal because:
+            // - Some databases/systems might have issues with dates too far in the past
+            // - Could cause confusion with timezone conversions
+            //
+            // Better approach: Use the next occurrence of each day of the week from today. This is more natural because:
+            // - It represents the actual next available slot
+            // - Makes it easier to handle timezone conversions
+            // - Aligns with how recurring events typically work in calendaring systems
+            const today = new Date();
+            const daysUntilNext = (Object.values(DayOfWeek).indexOf(dayOfWeek) + 7 - today.getUTCDay()) % 7;
+            const nextOccurrence = new Date(today);
+            nextOccurrence.setDate(nextOccurrence.getDate() + daysUntilNext);
+            
+            // Create the slot times
+            const startTime = new Date(nextOccurrence);
             startTime.setUTCHours(startHour, startMinute, 0, 0);
 
-            const endTime = new Date();
+            const endTime = new Date(nextOccurrence);
             endTime.setUTCHours(endHour, endMinute, 0, 0);
 
             // If end time is before start time, it means the slot crosses midnight
@@ -135,10 +155,11 @@ export async function createSlotsOfAvailability(
             const endHour = Math.floor(slot.end);
             const endMinute = (slot.end % 1) * 60;
 
+            // Create a date for this specific day
             const startTime = new Date(date);
             startTime.setUTCHours(startHour, startMinute, 0, 0);
 
-            const endTime = new Date(date);
+            const endTime = new Date(startTime);
             endTime.setUTCHours(endHour, endMinute, 0, 0);
 
             // If end time is before start time, it means the slot crosses midnight

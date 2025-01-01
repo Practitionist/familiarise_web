@@ -13,7 +13,7 @@ export type ConsultationWithPlan = TConsultation & {
 };
 
 export type SubscriptionWithPlan = TSubscription & {
-  appointment: TAppointment | null;
+  appointments: TAppointment[];
 };
 
 export type WebinarWithPlan = TWebinar & {
@@ -21,16 +21,12 @@ export type WebinarWithPlan = TWebinar & {
 };
 
 export type ClassWithPlan = TClass & {
-  appointment: TAppointment | null;
+  appointment: TAppointment[];
 };
 
 export const useEvents = (consulteeProfileId: string) => {
-  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>(
-    [],
-  );
-  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>(
-    [],
-  );
+  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>([]);
+  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>([]);
   const [webinars, setWebinars] = useState<WebinarWithPlan[]>([]);
   const [classes, setClasses] = useState<ClassWithPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);

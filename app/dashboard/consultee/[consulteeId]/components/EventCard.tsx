@@ -24,11 +24,6 @@ interface EventCardProps {
     startTime: Date;
     endTime: Date;
   }>;
-  tentativeSlots?: Array<{
-    startTime: string;
-    endTime?: string;
-    timezone?: string;
-  }>;
   type?: "Subscription" | "Class" | "Consultation" | "Webinar";
   isTentative?: boolean;
 }
@@ -61,7 +56,6 @@ export function EventCard({
   status,
   image,
   actualSlots,
-  tentativeSlots,
   type,
   isTentative,
 }: Readonly<EventCardProps>) {
@@ -106,7 +100,6 @@ export function EventCard({
       status,
       type,
       actualSlots,
-      tentativeSlots,
       isTentative,
     });
   };
@@ -116,11 +109,9 @@ export function EventCard({
     date.includes("Please select") ||
     date === "No slot assigned";
 
+  const hasSlots = actualSlots && actualSlots.length > 0;
   const showSessionDetails =
-    (type === "Subscription" || type === "Class") &&
-    (actualSlots?.length || tentativeSlots?.length);
-
-  const slots = actualSlots?.length ? actualSlots : tentativeSlots;
+    (type === "Subscription" || type === "Class") && hasSlots;
 
   return (
     <motion.div
@@ -192,7 +183,7 @@ export function EventCard({
                   </AccordionTrigger>
                   <AccordionContent>
                     <div data-testid="slot-list" className="space-y-2">
-                      {slots?.map((slot, index) => (
+                      {actualSlots.map((slot, index) => (
                         <div
                           key={index}
                           className="flex items-center justify-between bg-gray-50 p-2 rounded"
@@ -202,13 +193,7 @@ export function EventCard({
                           </span>
                           <span className="text-sm text-gray-600">
                             {formatSlotTime(slot.startTime)} -{" "}
-                            {formatSlotTime(
-                              slot.endTime ||
-                                new Date(
-                                  new Date(slot.startTime).getTime() +
-                                    60 * 60 * 1000,
-                                ),
-                            )}
+                            {formatSlotTime(slot.endTime)}
                           </span>
                         </div>
                       ))}

@@ -285,6 +285,7 @@ model SlotOfAppointment {
 
   slotStartTimeInUTC DateTime @db.Timestamptz()
   slotEndTimeInUTC   DateTime @db.Timestamptz()
+  isTentative       Boolean  @default(false)
 
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
@@ -326,7 +327,6 @@ model Consultation {
   requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById          String
   requestedAt            DateTime         @default(now())
-  preferredDateTime      DateTime?
   requestNotes           String?
   directlyBooked         Boolean          @default(false)
   feedbackFromConsultee  String?
@@ -372,8 +372,6 @@ model Subscription {
   requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById          String
   requestedAt            DateTime         @default(now())
-  tentativeStartDate     DateTime?
-  tentativeSchedule      String?
   requestNotes           String?
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
@@ -421,8 +419,6 @@ model WebinarPlan {
 
 model Webinar {
   id              String        @id @default(cuid())
-  scheduledAt     DateTime
-  endAt           DateTime
   status          WebinarStatus @default(SCHEDULED)
   feedbackSummary String?
   waitlist        Waitlist[]
@@ -477,8 +473,6 @@ model Class {
   startDate          DateTime?
   endDate            DateTime?
   status             ClassStatus @default(SCHEDULED)
-  tentativeStartDate DateTime?
-  tentativeSchedule  String?
   waitlist           Waitlist[]
   recordingUrls      String[]
   feedbackSummary    String?     @db.Text

@@ -51,6 +51,9 @@ export async function GET(request: NextRequest) {
                 include: {
                   user: true,
                 },
+                orderBy: {
+                  slotStartTimeInUTC: 'asc'
+                }
               },
               payment: true,
             },

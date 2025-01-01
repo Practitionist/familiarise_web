@@ -85,9 +85,6 @@ export async function GET(request: Request) {
             },
           },
         },
-        orderBy: {
-          scheduledAt: "desc",
-        },
       });
     } else if (consultantId) {
       webinars = await prisma.webinar.findMany({
@@ -141,7 +138,7 @@ export async function GET(request: Request) {
         },
       });
     }
-
+    
     return NextResponse.json({ data: webinars }, { status: 200 });
   } catch (error) {
     console.error("Error fetching webinars:", error);
@@ -169,8 +166,6 @@ export async function POST(request: Request) {
 
     const webinar = await prisma.webinar.create({
       data: {
-        scheduledAt: new Date(body.scheduledAt),
-        endAt: new Date(body.endAt),
         status: body.status || WebinarStatus.SCHEDULED,
         webinarPlan: {
           connect: { id: body.webinarPlanId },
