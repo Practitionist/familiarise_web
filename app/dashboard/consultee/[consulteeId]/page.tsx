@@ -1,9 +1,12 @@
 import { redirect } from "next/navigation";
 
-export default function ConsulteePage({
-  params,
-}: {
-  params: { consulteeId: string };
-}) {
-  redirect(`/dashboard/consultee/${params.consulteeId}/home`);
+import { use } from "react";
+
+type PageProps = {
+  params: Promise<{ consulteeId: string }>;
+};
+
+export default function ConsulteePage({ params }: PageProps) {
+  const resolvedParams = use(params);
+  redirect(`/dashboard/consultee/${resolvedParams.consulteeId}/home`);
 }

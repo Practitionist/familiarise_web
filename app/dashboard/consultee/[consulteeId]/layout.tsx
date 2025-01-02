@@ -21,13 +21,11 @@ const navItems = [
 type PageProps = {
   children: React.ReactNode;
   params: Promise<{ consulteeId: string }>;
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
 export default function ConsulteeLayout({
   children,
   params,
-  searchParams,
 }: Readonly<PageProps>) {
   const resolvedParams = use(params);
   const consulteeId = resolvedParams.consulteeId;
