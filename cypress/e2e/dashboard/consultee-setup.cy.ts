@@ -34,43 +34,18 @@ export function setupConsulteeDashboard(consulteeId: string, route?: string) {
   const baseUrl = `/dashboard/consultee/${consulteeId}`;
   cy.visit(route ? `${baseUrl}/${route}` : `${baseUrl}/home`);
 
-  // Wait for API calls to complete and content to load
-  cy.wait(
-    ["@getConsultations", "@getSubscriptions", "@getClasses", "@getWebinars"],
-    { timeout: 30000 },
-  ).then((interceptions) => {
-    // Log all API responses for debugging
-    interceptions.forEach((interception: any) => {
-      cy.log(
-        `${interception.request.url} Response:`,
-        JSON.stringify(interception.response?.body, null, 2),
-      );
-
-      // Log API response info
-      cy.readFile("cypress/logs/info.json").then((logs) => {
-        logs.push({
-          timestamp: new Date().toISOString(),
-          type: "api_response",
-          endpoint: interception.request.url,
-          status: interception.response?.statusCode,
-          data: interception.response?.body,
-        });
-        cy.writeFile("cypress/logs/info.json", logs);
-      });
-
-      if (interception.response?.statusCode >= 400) {
-        cy.writeFile(
-          "cypress/logs/api-errors.json",
-          {
-            timestamp: new Date().toISOString(),
-            endpoint: interception.request.url,
-            status: interception.response.statusCode,
-            error: interception.response.body,
-          },
-          { flag: "a+" },
-        );
-      }
-    });
+  // Wait for each API call individually
+  cy.wait("@getConsultations", { timeout: 30000 }).then((interception: any) => {
+    logApiResponse(interception);
+  });
+  cy.wait("@getSubscriptions", { timeout: 30000 }).then((interception: any) => {
+    logApiResponse(interception);
+  });
+  cy.wait("@getClasses", { timeout: 30000 }).then((interception: any) => {
+    logApiResponse(interception);
+  });
+  cy.wait("@getWebinars", { timeout: 30000 }).then((interception: any) => {
+    logApiResponse(interception);
   });
 
   // Handle different routes
@@ -107,6 +82,38 @@ export function setupConsulteeDashboard(consulteeId: string, route?: string) {
         cy.writeFile("cypress/logs/info.json", logs);
       });
     });
+}
+
+function logApiResponse(interception: any) {
+  cy.log(
+    `${interception.request.url} Response:`,
+    JSON.stringify(interception.response?.body, null, 2)
+  );
+
+  // Log API response info
+  cy.readFile("cypress/logs/info.json").then((logs) => {
+    logs.push({
+      timestamp: new Date().toISOString(),
+      type: "api_response",
+      endpoint: interception.request.url,
+      status: interception.response?.statusCode,
+      data: interception.response?.body,
+    });
+    cy.writeFile("cypress/logs/info.json", logs);
+  });
+
+  if (interception.response?.statusCode >= 400) {
+    cy.writeFile(
+      "cypress/logs/api-errors.json",
+      {
+        timestamp: new Date().toISOString(),
+        endpoint: interception.request.url,
+        status: interception.response.statusCode,
+        error: interception.response.body,
+      },
+      { flag: "a+" }
+    );
+  }
 }
 
 // Helper function to format date time

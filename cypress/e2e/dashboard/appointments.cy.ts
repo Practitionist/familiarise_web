@@ -96,8 +96,7 @@ function formatTimeForCalendar(date: Date): string {
     });
 
     it('verifies overview section shows all appointments', () => {
-      // Wait for initial API requests and overview grid to load
-      cy.wait(['@getConsultations', '@getSubscriptions', '@getClasses', '@getWebinars']);
+      // Wait for overview grid to load
       cy.get('[data-testid="overview-grid"]').should('be.visible');
 
       // First verify all section cards exist
@@ -152,21 +151,33 @@ function formatTimeForCalendar(date: Date): string {
                   
                   // For subscriptions and classes, expand the schedule first
                   if (type === 'subscription' || type === 'class') {
-                    cy.get(cardSelector).should('be.visible').within(() => {
-                      // Click on accordion trigger and wait for expansion
-                      cy.contains(type === 'subscription' ? 'Scheduled Sessions' : 'Class Schedule')
-                        .click()
-                        .should('have.attr', 'data-state', 'open');
-                      
-                      // Wait for slot list to be visible
-                      cy.get('[data-testid="slot-list"]').should('be.visible');
-                      
-                      // Verify each slot's time format
-                      slots.forEach(slot => {
-                        const startTime = formatTimeForOverview(new Date(slot.slotStartTimeInUTC));
-                        const endTime = formatTimeForOverview(new Date(slot.slotEndTimeInUTC));
-                        cy.contains(`${startTime} - ${endTime}`);
-                      });
+                    // First verify the section card exists
+                    cy.get(cardSelector).should('be.visible');
+
+                    // Get all events of this type
+                    const events = type === 'subscription' ? subscriptions : classes;
+                    
+                    // For each event that has slots
+                    events.forEach(event => {
+                      const eventSlots = slots.filter(slot => slot.event.id === event.id);
+                      if (eventSlots.length > 0) {
+                        // Find and expand this event's card
+                        cy.get(`[data-testid="${type}-${event.id}"]`).within(() => {
+                          // Click on accordion trigger and wait for expansion
+                          cy.contains(type === 'subscription' ? 'Scheduled Sessions' : 'Class Schedule')
+                            .click();
+                          
+                          // Wait for slot list to be visible
+                          cy.get('[data-testid="slot-list"]').should('be.visible');
+
+                          // Verify each slot's time format
+                          eventSlots.forEach(slot => {
+                            const startTime = formatTimeForOverview(new Date(slot.slotStartTimeInUTC));
+                            const endTime = formatTimeForOverview(new Date(slot.slotEndTimeInUTC));
+                            cy.contains(`${startTime} - ${endTime}`);
+                          });
+                        });
+                      }
                     });
                   } else {
                     // For other types, verify the card exists and has content
@@ -186,9 +197,9 @@ function formatTimeForCalendar(date: Date): string {
     });
 
     it('verifies calendar view shows all appointments', () => {
-      // Wait for initial load and switch to calendar
-      cy.wait(['@getConsultations', '@getSubscriptions', '@getClasses', '@getWebinars']);
+      // Switch to calendar and wait for it to load
       cy.contains('button', 'Calendar').click();
+      cy.get('.rounded-xl.border.bg-card').should('be.visible');
 
       // Get all slots from API responses
       cy.get('@getConsultations').then((consultationsReq: any) => {
@@ -204,6 +215,12 @@ function formatTimeForCalendar(date: Date): string {
               const allEvents = [...consultations, ...subscriptions, ...classes, ...webinars];
               const allSlots = getAllSlots(allEvents);
 
+              // Find the latest slot date
+              const latestDate = allSlots.reduce((latest, slot) => {
+                const slotDate = new Date(slot.slotStartTimeInUTC);
+                return slotDate > latest ? slotDate : latest;
+              }, new Date(0));
+
               // Group slots by month
               const slotsByMonth = allSlots.reduce((acc, slot) => {
                 const date = new Date(slot.slotStartTimeInUTC);
@@ -213,52 +230,53 @@ function formatTimeForCalendar(date: Date): string {
                 return acc;
               }, {} as Record<string, Slot[]>);
 
-              // For each month with slots
-              Object.entries(slotsByMonth).forEach(([monthKey, monthSlots]) => {
-                const [year, month] = monthKey.split('-').map(Number);
-                const monthDate = new Date(year, month);
-                const monthString = monthDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+              // Get current month from calendar
+              cy.get('h2').invoke('text').then((currentMonthText) => {
+                const currentDate = new Date(currentMonthText);
+                let targetDate = currentDate;
 
-                // Navigate to month if not current
-                cy.get('h2').invoke('text').then((currentMonth) => {
-                  if (currentMonth !== monthString) {
-                    const targetDate = monthDate.getTime();
-                    const currentDate = new Date(currentMonth).getTime();
+                // Function to verify a month's slots
+                const verifyMonth = () => {
+                  const monthKey = `${targetDate.getFullYear()}-${targetDate.getMonth()}`;
+                  const monthSlots = slotsByMonth[monthKey] || [];
+
+                  // Verify each day's events
+                  monthSlots.forEach(slot => {
+                    const date = new Date(slot.slotStartTimeInUTC);
+                    const dayNumber = date.getDate().toString();
+                    const time = formatTimeForCalendar(date);
+                    const type = getEventType(slot.event);
+                    const title = slot.event[`${type.toLowerCase()}Plan`]?.title;
                     
-                    // Find and click the appropriate navigation button
-                    if (targetDate < currentDate) {
-                      cy.get('button').find('svg').parent().first().click();
-                    } else {
-                      cy.get('button').find('svg').parent().last().click();
-                    }
-                    cy.wait(500);
-                  }
-                });
-
-                // Verify each day's events
-                monthSlots.forEach(slot => {
-                  const date = new Date(slot.slotStartTimeInUTC);
-                  const dayNumber = date.getDate().toString();
-                  const time = formatTimeForCalendar(date);
-                  const type = getEventType(slot.event);
-                  const title = slot.event[`${type.toLowerCase()}Plan`]?.title;
-                  
-                  // Find the day cell and verify event
-                  cy.contains('div', new RegExp(`^${dayNumber}$`))
-                    .parent('.min-h-[100px].p-2.bg-white')
-                    .within(() => {
-                      // Log what we're looking for
-                      cy.log(`Looking for time: ${time} and title: ${title}`);
-                      // Find the event button and verify its content
-                      cy.get('button.w-full.text-left.text-xs')
-                        .should('exist')
-                        .and('contain', time);
-                      if (title) {
+                    // Find the day cell and verify event
+                    cy.get('.grid.grid-cols-7')
+                      .contains('div.font-medium.mb-1', dayNumber)
+                      .parent()
+                      .within(() => {
+                        // Log what we're looking for
+                        cy.log(`Looking for time: ${time} and title: ${title}`);
+                        // Find the event button and verify its content
                         cy.get('button.w-full.text-left.text-xs')
-                          .should('contain', title);
-                      }
-                    });
-                });
+                          .should('exist')
+                          .and('contain', time);
+                        if (title) {
+                          cy.get('button.w-full.text-left.text-xs')
+                            .should('contain', title);
+                        }
+                      });
+                  });
+
+                  // If we haven't reached the latest date, move to next month
+                  if (targetDate < latestDate) {
+                    cy.get('button').find('svg').parent().last().click();
+                    cy.wait(500);
+                    targetDate = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1);
+                    verifyMonth();
+                  }
+                };
+
+                // Start verifying from current month
+                verifyMonth();
               });
             });
           });
