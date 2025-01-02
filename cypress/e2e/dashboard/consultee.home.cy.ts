@@ -1,5 +1,3 @@
-/// <reference types="cypress" />
-
 import { setupConsulteeDashboard } from "./consultee-setup.cy";
 import consulteeIdsFixture from "../../fixtures/consultee-ids.json";
 
@@ -7,175 +5,273 @@ interface ConsulteeIdsFixture {
   consulteeIds: string[];
 }
 
-(consulteeIdsFixture as unknown as ConsulteeIdsFixture).consulteeIds.forEach(
-  (consulteeId) => {
-    describe(`Consultee Dashboard - Home Page (ID: ${consulteeId})`, () => {
-      beforeEach(() => {
-        setupConsulteeDashboard(consulteeId, 'home');
-      });
+interface Event {
+  id: string;
+  type: string;
+  startTime: Date;
+  endTime: Date;
+  status: string;
+  title: string;
+  consultant: string;
+  isTentative: boolean;
+}
 
-      describe("Upcoming Sessions Section", () => {
-        it("displays event details and status badges correctly", { defaultCommandTimeout: 30000 }, () => {
-          cy.wait([
-            "@getConsultations",
-            "@getSubscriptions",
-            "@getWebinars",
-            "@getClasses",
-          ]).then(([consultationsResp, subscriptionsResp, webinarsResp, classesResp]) => {
-            // Verify each event type
-            const eventTypes = [
-              { type: 'Webinar', response: webinarsResp },
-              { type: 'Consultation', response: consultationsResp },
-              { type: 'Class', response: classesResp },
-              { type: 'Subscription', response: subscriptionsResp }
-            ];
+interface EventsByType {
+  consultation: Event[];
+  subscription: Event[];
+  class: Event[];
+  webinar: Event[];
+}
 
-            eventTypes.forEach(({ type, response }) => {
-              const events = response.response?.body.data || [];
-              events.forEach((event: any) => {
-                const eventId = event.id;
-                const testId = `${type.toLowerCase()}-${eventId}`;
+function formatTimeString(d: Date): string {
+  let hours = d.getHours();
+  const minutes = d.getMinutes();
+  const ampm = hours >= 12 ? "pm" : "am";
 
-                cy.get(`[data-testid="${testId}"]`).within(() => {
-                  // Verify event type badge
-                  cy.get(`[data-testid="event-type"]`).should('contain', type);
+  if (hours === 0) hours = 12;
+  else if (hours > 12) hours -= 12;
 
-                  // Verify consultant name
-                  const consultantName = event[`${type.toLowerCase()}Plan`]?.consultantProfile?.user?.name;
-                  if (consultantName) {
-                    cy.get('[data-testid="consultant-name"]').should('contain', consultantName);
-                  }
+  return `${hours}:${minutes.toString().padStart(2, "0")} ${ampm}`;
+}
 
-                  // Verify status badge
-                  const status = event.status || event.requestStatus;
-                  cy.get('[data-testid="event-status"]').should('contain', status);
+function formatUpcomingDateTime(date: Date, endTime?: Date): string {
+  const weekday = date.toLocaleString(undefined, { weekday: "short" });
+  const day = date.getDate();
+  const month = date.toLocaleString(undefined, { month: "short" });
+  const year = date.getFullYear();
 
-                  // Verify date format
-                  cy.get('[data-testid="event-datetime"]').invoke('text').should('match', /\w+, \d{1,2} \w+ \d{4}/);
-                });
-              });
-            });
-          });
-        });
+  const timeStr = endTime
+    ? `${formatTimeString(date)} - ${formatTimeString(endTime)}`
+    : formatTimeString(date);
 
-        it("handles carousel navigation correctly", { defaultCommandTimeout: 30000 }, () => {
-          cy.wait([
-            "@getConsultations",
-            "@getSubscriptions",
-            "@getWebinars",
-            "@getClasses",
-          ]).then(() => {
-            cy.get('[data-testid="upcoming-slot-list"]').then(($list) => {
-              if ($list[0].scrollWidth > $list[0].clientWidth) {
-                // Get initial first event
-                cy.get('[data-testid^="event-card-"]').first().invoke('attr', 'data-testid').as('firstEventId');
+  return `${weekday}, ${day} ${month} ${year}, ${timeStr}`;
+}
 
-                // Click next button and verify scroll
-                cy.get('[data-testid="next-slot"]').click();
-                cy.get('[data-testid="upcoming-slot-list"]').should(($newList) => {
-                  expect($newList[0].scrollLeft).to.be.greaterThan(0);
-                });
+function formatMonthlyDateTime(date: Date, endTime?: Date): string {
+  const weekday = date.toLocaleString(undefined, { weekday: "short" });
+  const day = date.getDate();
+  const month = date.toLocaleString(undefined, { month: "short" });
 
-                // Click previous button and verify back to start
-                cy.get('[data-testid="prev-slot"]').click();
-                cy.get('@firstEventId').then((firstEventId) => {
-                  cy.get(`[data-testid="${firstEventId}"]`).should('be.visible');
-                });
-              }
-            });
-          });
-        });
-      });
+  const timeStr = endTime
+    ? `${formatTimeString(date)} - ${formatTimeString(endTime)}`
+    : formatTimeString(date);
 
-      describe("Monthly Events Section", () => {
-        it("navigates between months and displays events correctly", { defaultCommandTimeout: 30000 }, () => {
-          cy.wait([
-            "@getConsultations",
-            "@getSubscriptions",
-            "@getWebinars",
-            "@getClasses",
-          ]).then(() => {
-            // Get current month/year
-            cy.get('[data-testid="month-nav"]').find('h2')
-              .invoke('text')
-              .then((currentMonthYear) => {
-                // Click next month
-                cy.get('[data-testid="next-month"]').click();
-                
-                // Verify month changed
-                cy.get('[data-testid="month-nav"]').find('h2')
-                  .should('not.contain', currentMonthYear);
+  return `${weekday} ${day} ${month} ${timeStr}`;
+}
 
-                // Click previous month
-                cy.get('[data-testid="prev-month"]').click();
-                
-                // Verify back to original month
-                cy.get('[data-testid="month-nav"]').find('h2')
-                  .should('contain', currentMonthYear);
-              });
+function getEventType(url: string): keyof EventsByType {
+  if (url.includes('/consultations')) return 'consultation';
+  if (url.includes('/subscriptions')) return 'subscription';
+  if (url.includes('/classes')) return 'class';
+  if (url.includes('/webinars')) return 'webinar';
+  throw new Error(`Unknown event type in URL: ${url}`);
+}
 
-            // Verify event slots format
-            cy.get('[data-testid="monthly-slot"]').each(($slot) => {
-              cy.wrap($slot).within(() => {
-                // Verify date format
-                cy.get('[data-testid="slot-date"]')
-                  .invoke('text')
-                  .should('match', /(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{1,2} [A-Za-z]{3}/);
+(consulteeIdsFixture as unknown as ConsulteeIdsFixture).consulteeIds.forEach((consulteeId) => {
+  describe(`Consultee Home Page - ID: ${consulteeId}`, () => {
+    beforeEach(() => {
+      // Create logs directory and initialize info.json
+      cy.exec("mkdir -p cypress/logs");
+      cy.writeFile("cypress/logs/info.json", []);
+      setupConsulteeDashboard(consulteeId, 'home');
+    });
 
-                // Verify time format
-                cy.get('[data-testid="slot-time"]')
-                  .invoke('text')
-                  .should('match', /\d{1,2}:\d{2} [ap]m - \d{1,2}:\d{2} [ap]m/);
-              });
-            });
-          });
-        });
+    it('displays upcoming events in correct timezone and order', () => {
+      // Wait for API responses
+      cy.wait(['@getConsultations', '@getSubscriptions', '@getClasses', '@getWebinars']).then((interceptions: any[]) => {
+        // Process each event type separately
+        const eventsByType: EventsByType = {
+          consultation: [],
+          subscription: [],
+          class: [],
+          webinar: []
+        };
 
-        it("handles tentative slots and status badges", { defaultCommandTimeout: 30000 }, () => {
-          cy.wait([
-            "@getConsultations",
-            "@getSubscriptions",
-            "@getWebinars",
-            "@getClasses",
-          ]).then(([consultationsResp, subscriptionsResp, webinarsResp, classesResp]) => {
-            const allEvents = [
-              ...(consultationsResp.response?.body.data || []),
-              ...(subscriptionsResp.response?.body.data || []),
-              ...(webinarsResp.response?.body.data || []),
-              ...(classesResp.response?.body.data || []),
-            ];
+        try {
+          const logs: any[] = [];
 
-            // Check for tentative slots
-            const hasTentativeSlots = allEvents.some((event) => {
-              const slots = event.appointments
-                ? event.appointments.flatMap((a: any) => a.slotsOfAppointment || [])
-                : event.appointment?.slotsOfAppointment || [];
+          interceptions.forEach((interception) => {
+            const eventType = getEventType(interception.request.url);
+            const events = interception.response?.body?.data || [];
 
-              return slots.some((slot: any) => slot.isTentative);
+            // Add API data to logs
+            logs.push({
+              timestamp: new Date().toISOString(),
+              type: 'api_data',
+              eventType,
+              count: events.length,
+              consulteeId
             });
 
-            if (hasTentativeSlots) {
-              cy.get('[data-testid="tentative-notice"]')
-                .should("exist")
-                .should("contain", "*Subject to change");
-            }
-
-            // Verify status badges
-            const statusTypes = ['SCHEDULED', 'COMPLETED', 'CANCELLED', 'APPROVED', 'PENDING'];
-            statusTypes.forEach(status => {
-              const hasStatus = allEvents.some(event => 
-                (event.status || event.requestStatus) === status
-              );
+            events.forEach((event: any) => {
+              const slots = event.appointment?.slotsOfAppointment || 
+                          event.appointments?.flatMap((apt: any) => apt.slotsOfAppointment) || [];
               
-              if (hasStatus) {
-                cy.get('[data-testid="event-status"]')
-                  .contains(status)
-                  .should("exist");
-              }
+              slots.forEach((slot: any) => {
+                eventsByType[eventType].push({
+                  id: event.id,
+                  type: eventType,
+                  startTime: new Date(slot.slotStartTimeInUTC),
+                  endTime: new Date(slot.slotEndTimeInUTC),
+                  status: event.status || event.requestStatus,
+                  title: event.consultationPlan?.title || 
+                        event.subscriptionPlan?.title || 
+                        event.webinarPlan?.title || 
+                        event.classPlan?.title,
+                  consultant: event.consultationPlan?.consultantProfile?.user?.name || 
+                            event.subscriptionPlan?.consultantProfile?.user?.name || 
+                            event.webinarPlan?.consultantProfile?.user?.name || 
+                            event.classPlan?.consultantProfile?.user?.name,
+                  isTentative: slot.isTentative || false
+                });
+              });
             });
           });
-        });
+
+          // Add processed events to logs
+          logs.push({
+            timestamp: new Date().toISOString(),
+            type: 'processed_data',
+            eventCounts: {
+              consultation: eventsByType.consultation.length,
+              subscription: eventsByType.subscription.length,
+              class: eventsByType.class.length,
+              webinar: eventsByType.webinar.length
+            },
+            consulteeId
+          });
+
+          // Write all logs at once
+          cy.writeFile('cypress/logs/info.json', logs);
+
+          // Sort all events by start time
+          const allEvents = Object.values(eventsByType).flat()
+            .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+
+          // Wait for UI to load
+          cy.get('[data-testid="upcoming-slot-list"]').should('exist').then(() => {
+            // Verify UI elements match sorted events
+            cy.get('[data-testid="upcoming-slot-list"] [data-testid^="webinar-"], [data-testid^="class-"], [data-testid^="consultation-"], [data-testid^="subscription-"]')
+              .should('have.length', allEvents.length)
+              .each(($card, index) => {
+                const event = allEvents[index];
+                const expectedDateTime = formatUpcomingDateTime(event.startTime, event.endTime);
+                
+                cy.wrap($card).within(() => {
+                  cy.contains(event.title);
+                  cy.contains(event.consultant);
+                  cy.contains(expectedDateTime);
+                  cy.get('[data-testid="event-status"]').should('contain', event.status);
+                  
+                  if (event.status === 'PENDING' || event.isTentative) {
+                    cy.contains('*Subject to change');
+                  }
+                });
+              });
+          });
+        } catch (err) {
+          cy.writeFile('cypress/logs/info.json', [{
+            timestamp: new Date().toISOString(),
+            type: 'error',
+            message: 'Critical error in test',
+            error: err.message,
+            consulteeId
+          }]);
+          throw err;
+        }
       });
     });
-  },
-);
+
+    it('displays monthly events correctly', () => {
+      const currentMonth = new Date().getMonth();
+      const currentYear = new Date().getFullYear();
+
+      cy.wait(['@getConsultations', '@getSubscriptions', '@getClasses', '@getWebinars']).then((interceptions: any[]) => {
+        const monthlyEvents: Event[] = [];
+        const logs: any[] = [];
+
+        try {
+          interceptions.forEach((interception) => {
+            const eventType = getEventType(interception.request.url);
+            const events = interception.response?.body?.data || [];
+
+            events.forEach((event: any) => {
+              const slots = event.appointment?.slotsOfAppointment || 
+                          event.appointments?.flatMap((apt: any) => apt.slotsOfAppointment) || [];
+              
+              slots.forEach((slot: any) => {
+                const startTime = new Date(slot.slotStartTimeInUTC);
+                if (startTime.getMonth() === currentMonth && startTime.getFullYear() === currentYear) {
+                  monthlyEvents.push({
+                    id: event.id,
+                    type: eventType,
+                    startTime,
+                    endTime: new Date(slot.slotEndTimeInUTC),
+                    status: event.status || event.requestStatus,
+                    title: event.consultationPlan?.title || 
+                          event.subscriptionPlan?.title || 
+                          event.webinarPlan?.title || 
+                          event.classPlan?.title,
+                    consultant: event.consultationPlan?.consultantProfile?.user?.name || 
+                              event.subscriptionPlan?.consultantProfile?.user?.name || 
+                              event.webinarPlan?.consultantProfile?.user?.name || 
+                              event.classPlan?.consultantProfile?.user?.name,
+                    isTentative: slot.isTentative || false
+                  });
+                }
+              });
+            });
+          });
+
+          // Add monthly events to logs
+          logs.push({
+            timestamp: new Date().toISOString(),
+            type: 'monthly_events',
+            count: monthlyEvents.length,
+            consulteeId
+          });
+
+          // Write logs
+          cy.writeFile('cypress/logs/info.json', logs);
+
+          // Sort events by date
+          monthlyEvents.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+
+          // Wait for UI to load
+          cy.get('[data-testid="monthly-slot-list"]').should('exist').then(() => {
+            // Verify monthly view
+            monthlyEvents.forEach((event) => {
+              const expectedDateTime = formatMonthlyDateTime(event.startTime, event.endTime);
+              cy.contains(event.title)
+                .parent()
+                .within(() => {
+                  cy.contains(event.consultant);
+                  cy.get('[data-testid="monthly-slot"]').should('contain', expectedDateTime);
+                  cy.get('[data-testid="event-status"]').should('contain', event.status);
+                  
+                  if (event.status === 'PENDING' || event.isTentative) {
+                    cy.contains('*Subject to change');
+                  }
+                });
+            });
+          });
+
+          // Test month navigation
+          cy.get('[data-testid="next-month"]').click();
+          const nextMonth = new Date();
+          nextMonth.setMonth(nextMonth.getMonth() + 1);
+          cy.contains(nextMonth.toLocaleString('default', { month: 'long', year: 'numeric' }));
+        } catch (err) {
+          cy.writeFile('cypress/logs/info.json', [{
+            timestamp: new Date().toISOString(),
+            type: 'error',
+            message: 'Error in monthly events test',
+            error: err.message,
+            consulteeId
+          }]);
+          throw err;
+        }
+      });
+    });
+  });
+});
