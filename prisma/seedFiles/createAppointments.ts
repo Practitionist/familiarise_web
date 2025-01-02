@@ -23,9 +23,12 @@ const getAppointmentType = (index: number): AppointmentsType => {
   return AppointmentsType.CLASS;
 };
 
-const getAppointmentStatus = (index: number, isPastAppointment: boolean): RequestStatus => {
+const getAppointmentStatus = (
+  index: number,
+  isPastAppointment: boolean,
+): RequestStatus => {
   const rand = Math.random();
-  
+
   if (isPastAppointment) {
     return rand < 0.8 ? RequestStatus.APPROVED : RequestStatus.CANCELLED;
   }
@@ -36,7 +39,9 @@ const getAppointmentStatus = (index: number, isPastAppointment: boolean): Reques
   return RequestStatus.CANCELLED;
 };
 
-const getAppointmentDate = (now: Date): { startDate: Date; endDate: Date; isPastAppointment: boolean } => {
+const getAppointmentDate = (
+  now: Date,
+): { startDate: Date; endDate: Date; isPastAppointment: boolean } => {
   const rand = Math.random();
   let startOffset: number;
   let endOffset: number;
@@ -50,11 +55,17 @@ const getAppointmentDate = (now: Date): { startDate: Date; endDate: Date; isPast
   } else if (rand < 0.8) {
     // Near future (60%)
     startOffset = faker.number.int({ min: 1, max: 30 });
-    endOffset = faker.number.int({ min: startOffset + 7, max: startOffset + 30 });
+    endOffset = faker.number.int({
+      min: startOffset + 7,
+      max: startOffset + 30,
+    });
   } else {
     // Far future (20%)
     startOffset = faker.number.int({ min: 31, max: 90 });
-    endOffset = faker.number.int({ min: startOffset + 7, max: startOffset + 60 });
+    endOffset = faker.number.int({
+      min: startOffset + 7,
+      max: startOffset + 60,
+    });
   }
 
   const startDate = new Date(now.getTime() + startOffset * 24 * 60 * 60 * 1000);
@@ -118,9 +129,15 @@ const createConsultationAppointment = (
         requestedAt: new Date(),
         requestNotes: faker.lorem.sentence(),
         directlyBooked: faker.datatype.boolean(),
-        feedbackFromConsultee: isPastAppointment ? faker.lorem.paragraph() : null,
-        feedbackFromConsultant: isPastAppointment ? faker.lorem.paragraph() : null,
-        rating: isPastAppointment ? faker.number.float({ min: 1, max: 5, multipleOf: 0.5 }) : null,
+        feedbackFromConsultee: isPastAppointment
+          ? faker.lorem.paragraph()
+          : null,
+        feedbackFromConsultant: isPastAppointment
+          ? faker.lorem.paragraph()
+          : null,
+        rating: isPastAppointment
+          ? faker.number.float({ min: 1, max: 5, multipleOf: 0.5 })
+          : null,
       },
     },
   };
@@ -139,7 +156,9 @@ const createSubscriptionAppointment = (
     appointmentType: AppointmentsType.SUBSCRIPTION,
     slotsOfAppointment: {
       create: Array.from({ length: numSlots }, (_, index) => {
-        const slotStart = new Date(startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000);
+        const slotStart = new Date(
+          startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000,
+        );
         return {
           user: {
             connect: [{ id: consultee.id }],
@@ -163,9 +182,15 @@ const createSubscriptionAppointment = (
         requestStatus: defaultStatus,
         requestedAt: new Date(),
         requestNotes: faker.lorem.sentence(),
-        feedbackFromConsultee: isPastAppointment ? faker.lorem.paragraph() : null,
-        feedbackFromConsultant: isPastAppointment ? faker.lorem.paragraph() : null,
-        rating: isPastAppointment ? faker.number.float({ min: 1, max: 5, multipleOf: 0.5 }) : null,
+        feedbackFromConsultee: isPastAppointment
+          ? faker.lorem.paragraph()
+          : null,
+        feedbackFromConsultant: isPastAppointment
+          ? faker.lorem.paragraph()
+          : null,
+        rating: isPastAppointment
+          ? faker.number.float({ min: 1, max: 5, multipleOf: 0.5 })
+          : null,
       },
     },
   };
@@ -197,7 +222,9 @@ const createWebinarAppointment = async (
         webinarPlan: {
           connect: { id: faker.helpers.arrayElement(webinarPlans).id },
         },
-        status: isPastAppointment ? WebinarStatus.COMPLETED : faker.helpers.arrayElement(Object.values(WebinarStatus)),
+        status: isPastAppointment
+          ? WebinarStatus.COMPLETED
+          : faker.helpers.arrayElement(Object.values(WebinarStatus)),
         feedbackSummary: isPastAppointment ? faker.lorem.paragraph() : null,
         waitlist: isPastAppointment
           ? undefined
@@ -206,13 +233,13 @@ const createWebinarAppointment = async (
                 new Set(
                   Array.from(
                     { length: faker.number.int({ min: 0, max: 5 }) },
-                    () => faker.helpers.arrayElement(consultees).id
-                  )
-                )
-              ).map(userId => ({
+                    () => faker.helpers.arrayElement(consultees).id,
+                  ),
+                ),
+              ).map((userId) => ({
                 user: {
-                  connect: { id: userId }
-                }
+                  connect: { id: userId },
+                },
               })),
             },
         meetingRoom: {
@@ -259,7 +286,9 @@ const createClassAppointment = async (
     appointmentType: AppointmentsType.CLASS,
     slotsOfAppointment: {
       create: Array.from({ length: numSlots }, (_, index) => {
-        const slotStart = new Date(startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000);
+        const slotStart = new Date(
+          startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000,
+        );
         return {
           user: {
             connect: [{ id: consultee.id }],
@@ -277,7 +306,9 @@ const createClassAppointment = async (
         },
         startDate: startDate,
         endDate: endDate,
-        status: isPastAppointment ? ClassStatus.COMPLETED : faker.helpers.arrayElement(Object.values(ClassStatus)),
+        status: isPastAppointment
+          ? ClassStatus.COMPLETED
+          : faker.helpers.arrayElement(Object.values(ClassStatus)),
         recordingUrls: Array.from(
           { length: faker.number.int({ min: 0, max: 5 }) },
           () => faker.internet.url(),
@@ -290,13 +321,13 @@ const createClassAppointment = async (
                 new Set(
                   Array.from(
                     { length: faker.number.int({ min: 0, max: 5 }) },
-                    () => faker.helpers.arrayElement(consultees).id
-                  )
-                )
-              ).map(userId => ({
+                    () => faker.helpers.arrayElement(consultees).id,
+                  ),
+                ),
+              ).map((userId) => ({
                 user: {
-                  connect: { id: userId }
-                }
+                  connect: { id: userId },
+                },
               })),
             },
         meetingRoom: {
@@ -385,7 +416,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
 
       const actualEndTime = new Date(startDate);
       actualEndTime.setUTCHours(endHours, endMinutes, 0, 0);
-      
+
       // If end time is before start time, it means the slot crosses midnight
       if (actualEndTime <= actualStartTime) {
         actualEndTime.setDate(actualEndTime.getDate() + 1);
@@ -445,13 +476,16 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
       }
 
       // Execute transaction with increased timeout
-      await prisma.$transaction(async (tx) => {
-        await tx.appointment.create({
-          data: appointmentData,
-        });
-      }, {
-        timeout: 10000, // Increase timeout to 10 seconds
-      });
+      await prisma.$transaction(
+        async (tx) => {
+          await tx.appointment.create({
+            data: appointmentData,
+          });
+        },
+        {
+          timeout: 10000, // Increase timeout to 10 seconds
+        },
+      );
     } catch (error) {
       console.error(
         `Failed to create appointment for consultee ${consultee.id}. Error details:`,

@@ -4,7 +4,10 @@ import { User } from "@prisma/client";
 import React, { useState } from "react";
 import { useEvents } from "hooks/useEvents";
 import { EventWithType } from "../../utils";
-import { getActualMonthlyEvents, getActualUpcomingSlots } from "../../utils/actual-schedule";
+import {
+  getActualMonthlyEvents,
+  getActualUpcomingSlots,
+} from "../../utils/actual-schedule";
 import { MonthlySection, UpcomingSection } from "./Sections";
 
 interface HomeTabProps {

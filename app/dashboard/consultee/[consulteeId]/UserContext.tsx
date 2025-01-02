@@ -7,7 +7,9 @@ interface UserContextType {
   userDetails: User | null;
 }
 
-export const UserContext = createContext<UserContextType>({ userDetails: null });
+export const UserContext = createContext<UserContextType>({
+  userDetails: null,
+});
 
 export function useUser() {
   return useContext(UserContext);

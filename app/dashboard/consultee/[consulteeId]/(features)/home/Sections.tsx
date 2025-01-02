@@ -148,23 +148,49 @@ export function MonthlySection({
 
       <div className="lg:col-span-4">
         <div className="bg-white rounded-xl p-6">
-          <h3 className="text-lg font-semibold mb-4">Unlock Premium Features</h3>
+          <h3 className="text-lg font-semibold mb-4">
+            Unlock Premium Features
+          </h3>
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-sm text-gray-600">
-              <svg className="w-4 h-4 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              <svg
+                className="w-4 h-4 text-blue-600"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                  clipRule="evenodd"
+                />
               </svg>
               <span>Unlimited Access to Expert Sessions</span>
             </div>
             <div className="flex items-center gap-2 text-sm text-gray-600">
-              <svg className="w-4 h-4 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              <svg
+                className="w-4 h-4 text-blue-600"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                  clipRule="evenodd"
+                />
               </svg>
               <span>24/7 Priority Support</span>
             </div>
             <div className="flex items-center gap-2 text-sm text-gray-600">
-              <svg className="w-4 h-4 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              <svg
+                className="w-4 h-4 text-blue-600"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                  clipRule="evenodd"
+                />
               </svg>
               <span>Exclusive Webinars & Workshops</span>
             </div>
@@ -174,7 +200,9 @@ export function MonthlySection({
               <span className="text-2xl font-bold text-blue-600">$99</span>
               <span className="text-sm text-gray-600">/month</span>
             </div>
-            <p className="text-sm text-blue-600 mt-1">Save 20% with annual billing</p>
+            <p className="text-sm text-blue-600 mt-1">
+              Save 20% with annual billing
+            </p>
           </div>
           <Button className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white">
             Upgrade Now

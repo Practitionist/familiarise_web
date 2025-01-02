@@ -8,9 +8,7 @@ type PageProps = {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
-export default function PolicyPage({
-  params,
-}: Readonly<PageProps>) {
+export default function PolicyPage({ params }: Readonly<PageProps>) {
   const resolvedParams = use(params);
   return <PolicyTab consulteeId={resolvedParams.consulteeId} />;
 }

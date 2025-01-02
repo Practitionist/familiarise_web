@@ -31,15 +31,19 @@ export function Upcoming({
   const getNextSlotTime = (slots: SlotOfAppointment[]) => {
     const now = new Date();
     return slots
-      .map(slot => new Date(slot.slotStartTimeInUTC))
-      .filter(date => date >= now)
+      .map((slot) => new Date(slot.slotStartTimeInUTC))
+      .filter((date) => date >= now)
       .sort((a, b) => a.getTime() - b.getTime())[0];
   };
 
   // Filter and sort upcoming events
   const upcomingEvents = [
     ...consultations
-      .filter(c => c.appointment?.slotsOfAppointment && c.appointment.slotsOfAppointment.length > 0)
+      .filter(
+        (c) =>
+          c.appointment?.slotsOfAppointment &&
+          c.appointment.slotsOfAppointment.length > 0,
+      )
       .map((c) => {
         const slots = c.appointment?.slotsOfAppointment as SlotOfAppointment[];
         const nextSlot = getNextSlotTime(slots);
@@ -48,34 +52,50 @@ export function Upcoming({
           type: "Consultation" as const,
           title: c.consultationPlan.title,
           date: nextSlot,
-          consultant: c.consultationPlan.consultantProfile?.user?.name || "Unknown Consultant",
+          consultant:
+            c.consultationPlan.consultantProfile?.user?.name ||
+            "Unknown Consultant",
           image: c.consultationPlan.consultantProfile?.user?.image,
           status: c.requestStatus,
-          isTentative: slots.find(
-            s => new Date(s.slotStartTimeInUTC).getTime() === nextSlot.getTime()
-          )?.isTentative || false,
+          isTentative:
+            slots.find(
+              (s) =>
+                new Date(s.slotStartTimeInUTC).getTime() === nextSlot.getTime(),
+            )?.isTentative || false,
         };
       }),
     ...subscriptions
-      .filter(s => s.appointments?.some(a => a.slotsOfAppointment?.length > 0))
+      .filter((s) =>
+        s.appointments?.some((a) => a.slotsOfAppointment?.length > 0),
+      )
       .map((s) => {
-        const allSlots = s.appointments?.flatMap(a => a.slotsOfAppointment) || [];
+        const allSlots =
+          s.appointments?.flatMap((a) => a.slotsOfAppointment) || [];
         const nextSlot = getNextSlotTime(allSlots);
         if (!nextSlot) return null;
         return {
           type: "Subscription" as const,
           title: s.subscriptionPlan.title,
           date: nextSlot,
-          consultant: s.subscriptionPlan.consultantProfile?.user?.name || "Unknown Consultant",
+          consultant:
+            s.subscriptionPlan.consultantProfile?.user?.name ||
+            "Unknown Consultant",
           image: s.subscriptionPlan.consultantProfile?.user?.image,
           status: s.requestStatus,
-          isTentative: allSlots.find(
-            slot => new Date(slot.slotStartTimeInUTC).getTime() === nextSlot.getTime()
-          )?.isTentative || false,
+          isTentative:
+            allSlots.find(
+              (slot) =>
+                new Date(slot.slotStartTimeInUTC).getTime() ===
+                nextSlot.getTime(),
+            )?.isTentative || false,
         };
       }),
     ...webinars
-      .filter(w => w.appointment?.slotsOfAppointment && w.appointment.slotsOfAppointment.length > 0)
+      .filter(
+        (w) =>
+          w.appointment?.slotsOfAppointment &&
+          w.appointment.slotsOfAppointment.length > 0,
+      )
       .map((w) => {
         const slots = w.appointment?.slotsOfAppointment as SlotOfAppointment[];
         const nextSlot = getNextSlotTime(slots);
@@ -84,30 +104,40 @@ export function Upcoming({
           type: "Webinar" as const,
           title: w.webinarPlan.title,
           date: nextSlot,
-          consultant: w.webinarPlan.consultantProfile?.user?.name || "Unknown Consultant",
+          consultant:
+            w.webinarPlan.consultantProfile?.user?.name || "Unknown Consultant",
           image: w.webinarPlan.consultantProfile?.user?.image,
           status: w.status,
-          isTentative: slots.find(
-            s => new Date(s.slotStartTimeInUTC).getTime() === nextSlot.getTime()
-          )?.isTentative || false,
+          isTentative:
+            slots.find(
+              (s) =>
+                new Date(s.slotStartTimeInUTC).getTime() === nextSlot.getTime(),
+            )?.isTentative || false,
         };
       }),
     ...classes
-      .filter(c => c.appointment?.some(a => a.slotsOfAppointment?.length > 0))
+      .filter((c) =>
+        c.appointment?.some((a) => a.slotsOfAppointment?.length > 0),
+      )
       .map((c) => {
-        const allSlots = c.appointment?.flatMap(a => a.slotsOfAppointment) || [];
+        const allSlots =
+          c.appointment?.flatMap((a) => a.slotsOfAppointment) || [];
         const nextSlot = getNextSlotTime(allSlots);
         if (!nextSlot) return null;
         return {
           type: "Class" as const,
           title: c.classPlan.title,
           date: nextSlot,
-          consultant: c.classPlan.consultantProfile?.user?.name || "Unknown Consultant",
+          consultant:
+            c.classPlan.consultantProfile?.user?.name || "Unknown Consultant",
           image: c.classPlan.consultantProfile?.user?.image,
           status: c.status,
-          isTentative: allSlots.find(
-            slot => new Date(slot.slotStartTimeInUTC).getTime() === nextSlot.getTime()
-          )?.isTentative || false,
+          isTentative:
+            allSlots.find(
+              (slot) =>
+                new Date(slot.slotStartTimeInUTC).getTime() ===
+                nextSlot.getTime(),
+            )?.isTentative || false,
         };
       }),
   ]

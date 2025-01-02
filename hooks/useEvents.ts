@@ -25,8 +25,12 @@ export type ClassWithPlan = TClass & {
 };
 
 export const useEvents = (consulteeProfileId: string) => {
-  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>([]);
-  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>([]);
+  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>(
+    [],
+  );
+  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>(
+    [],
+  );
   const [webinars, setWebinars] = useState<WebinarWithPlan[]>([]);
   const [classes, setClasses] = useState<ClassWithPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);

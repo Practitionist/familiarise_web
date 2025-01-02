@@ -1,13 +1,13 @@
 "use client";
 
-import { fetchConsulteeDetails, fetchUserDetails } from "hooks/useUserData";
 import { ConsulteeProfile, User } from "@prisma/client";
+import { Button } from "components/ui/button";
+import { fetchConsulteeDetails, fetchUserDetails } from "hooks/useUserData";
 import { useSession } from "next-auth/react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { use, useEffect, useState } from "react";
 import { UserProvider } from "./UserContext";
-import Link from "next/link";
-import { Button } from "components/ui/button";
-import { usePathname } from "next/navigation";
 
 const navItems = [
   { name: "Home", path: "home" },
@@ -29,7 +29,6 @@ export default function ConsulteeLayout({
   params,
   searchParams,
 }: Readonly<PageProps>) {
-
   const resolvedParams = use(params);
   const consulteeId = resolvedParams.consulteeId;
 
@@ -50,15 +49,13 @@ export default function ConsulteeLayout({
         setIsLoading(true);
         setError(null);
 
-        if (!process.env.NEXT_PUBLIC_TEST_MODE && !session?.user?.id) {
+        if (!process.env.NEXT_PUBLIC_TEST_USERID && !session?.user?.id) {
           throw new Error("User not authenticated");
         }
 
         const [userData, consulteeData] = await Promise.all([
           fetchUserDetails(
-            process.env.NEXT_PUBLIC_TEST_MODE === "true"
-              ? "cm5emnv490000mfhtwjvrb17m"
-              : session?.user?.id ?? "",
+            process.env.NEXT_PUBLIC_TEST_USERID ?? session?.user?.id ?? "",
           ),
           fetchConsulteeDetails(consulteeId),
         ]);
@@ -76,7 +73,7 @@ export default function ConsulteeLayout({
     fetchData();
   }, [session, consulteeId]);
 
-  if (!process.env.NEXT_PUBLIC_TEST_MODE && !session?.user?.id) {
+  if (!process.env.NEXT_PUBLIC_TEST_USERID && !session?.user?.id) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-100">
         <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
@@ -119,31 +116,29 @@ export default function ConsulteeLayout({
     <UserProvider userDetails={userDetails}>
       <div className="bg-gray-100 min-h-screen flex flex-col">
         <div className="p-4 sm:p-8 pt-32 md:pt-36 bg-white shadow-sm">
-        <div className="flex flex-col sm:flex-row justify-start items-start gap-4">
-          <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 w-full">
-            {navItems.map((item) => (
-              <Link 
-                key={item.name} 
-                href={`/dashboard/consultee/${consulteeId}/${item.path}`}
-              >
-                <Button
-                  className={`${
-                    currentPath === item.path
-                      ? "bg-[#f87171] text-white"
-                      : "text-gray-500 hover:bg-gray-200"
-                  } rounded-md px-4 py-2 transition-colors whitespace-nowrap`}
-                  variant={currentPath === item.path ? "default" : "ghost"}
+          <div className="flex flex-col sm:flex-row justify-start items-start gap-4">
+            <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 w-full">
+              {navItems.map((item) => (
+                <Link
+                  key={item.name}
+                  href={`/dashboard/consultee/${consulteeId}/${item.path}`}
                 >
-                  {item.name}
-                </Button>
-              </Link>
-            ))}
+                  <Button
+                    className={`${
+                      currentPath === item.path
+                        ? "bg-[#f87171] text-white"
+                        : "text-gray-500 hover:bg-gray-200"
+                    } rounded-md px-4 py-2 transition-colors whitespace-nowrap`}
+                    variant={currentPath === item.path ? "default" : "ghost"}
+                  >
+                    {item.name}
+                  </Button>
+                </Link>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
-      <div className="flex-grow overflow-y-auto p-8">
-        {children}
-        </div>
+        <div className="flex-grow overflow-y-auto p-8">{children}</div>
       </div>
     </UserProvider>
   );

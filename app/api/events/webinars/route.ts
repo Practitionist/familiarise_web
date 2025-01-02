@@ -22,9 +22,9 @@ export async function GET(request: Request) {
                     user: {
                       some: {
                         consulteeProfile: {
-                          id: consulteeProfileId
-                        }
-                      }
+                          id: consulteeProfileId,
+                        },
+                      },
                     },
                   },
                 },
@@ -36,9 +36,9 @@ export async function GET(request: Request) {
                 some: {
                   user: {
                     consulteeProfile: {
-                      id: consulteeProfileId
-                    }
-                  }
+                      id: consulteeProfileId,
+                    },
+                  },
                 },
               },
             },
@@ -85,9 +85,9 @@ export async function GET(request: Request) {
             where: {
               user: {
                 consulteeProfile: {
-                  id: consulteeProfileId
-                }
-              }
+                  id: consulteeProfileId,
+                },
+              },
             },
             include: {
               user: {
@@ -96,10 +96,10 @@ export async function GET(request: Request) {
                   name: true,
                   email: true,
                   image: true,
-                  consulteeProfile: true
-                }
-              }
-            }
+                  consulteeProfile: true,
+                },
+              },
+            },
           },
         },
       });
@@ -155,7 +155,7 @@ export async function GET(request: Request) {
         },
       });
     }
-    
+
     return NextResponse.json({ data: webinars }, { status: 200 });
   } catch (error) {
     console.error("Error fetching webinars:", error);

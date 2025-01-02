@@ -17,17 +17,19 @@ interface FeedbackSupportTabProps {
   consulteeId: string;
 }
 
-export default function FeedbackSupportTab({ consulteeId }: Readonly<FeedbackSupportTabProps>) {
+export default function FeedbackSupportTab({
+  consulteeId,
+}: Readonly<FeedbackSupportTabProps>) {
   const handleFeedbackSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     // TODO: Implement feedback submission with consulteeId
-    console.log('Submitting feedback for consultee:', consulteeId);
+    console.log("Submitting feedback for consultee:", consulteeId);
   };
 
   const handleSupportSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     // TODO: Implement support ticket submission with consulteeId
-    console.log('Submitting support ticket for consultee:', consulteeId);
+    console.log("Submitting support ticket for consultee:", consulteeId);
   };
 
   return (
@@ -50,7 +52,9 @@ export default function FeedbackSupportTab({ consulteeId }: Readonly<FeedbackSup
             />
           </CardContent>
           <CardFooter>
-            <Button type="submit" className="bg-black text-white">Submit Feedback</Button>
+            <Button type="submit" className="bg-black text-white">
+              Submit Feedback
+            </Button>
           </CardFooter>
         </form>
       </Card>
@@ -74,7 +78,9 @@ export default function FeedbackSupportTab({ consulteeId }: Readonly<FeedbackSup
             </div>
           </CardContent>
           <CardFooter>
-            <Button type="submit" className="bg-black text-white">Submit Support Ticket</Button>
+            <Button type="submit" className="bg-black text-white">
+              Submit Support Ticket
+            </Button>
           </CardFooter>
         </form>
       </Card>

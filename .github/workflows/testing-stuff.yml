@@ -8,7 +8,7 @@ on:
 jobs:
   testing-stuff:
     runs-on: ubuntu-latest
-    
+
     env:
       NEXTAUTH_SECRET: testing_secret
       NEXTAUTH_URL: http://localhost:3000
@@ -54,7 +54,7 @@ jobs:
         with:
           build: npm run build
           start: npm start
-          wait-on: 'http://localhost:3000'
+          wait-on: "http://localhost:3000"
           record: false
           publish-summary: true
           component: false

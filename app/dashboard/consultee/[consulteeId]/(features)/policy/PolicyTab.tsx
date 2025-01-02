@@ -1,8 +1,13 @@
 "use client";
 
 import React from "react";
-import { Card, CardContent, CardHeader, CardTitle,CardDescription } from "@/components/ui/card";
-
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 
 interface PolicyTabProps {
   consulteeId: string;
@@ -24,7 +29,9 @@ export default function PolicyTab({ consulteeId }: Readonly<PolicyTabProps>) {
           <div>
             <h3 className="font-semibold mb-2">24-Hour Notice Required</h3>
             <p className="text-gray-600">
-              We require a minimum of 24 hours notice for all cancellations. This allows us to accommodate other consultees who may be waiting for appointments.
+              We require a minimum of 24 hours notice for all cancellations.
+              This allows us to accommodate other consultees who may be waiting
+              for appointments.
             </p>
           </div>
           <div>
@@ -32,7 +39,10 @@ export default function PolicyTab({ consulteeId }: Readonly<PolicyTabProps>) {
             <ul className="list-disc pl-6 space-y-2 text-gray-600">
               <li>Full refund for cancellations made 24+ hours in advance</li>
               <li>50% refund for cancellations made 12-24 hours in advance</li>
-              <li>No refund for cancellations made less than 12 hours before the session</li>
+              <li>
+                No refund for cancellations made less than 12 hours before the
+                session
+              </li>
             </ul>
           </div>
         </CardContent>
@@ -49,7 +59,9 @@ export default function PolicyTab({ consulteeId }: Readonly<PolicyTabProps>) {
           <div>
             <h3 className="font-semibold mb-2">Rescheduling Process</h3>
             <ul className="list-disc pl-6 space-y-2 text-gray-600">
-              <li>Free rescheduling available up to 24 hours before the session</li>
+              <li>
+                Free rescheduling available up to 24 hours before the session
+              </li>
               <li>One free reschedule per booking</li>
               <li>Additional rescheduling may incur a fee</li>
               <li>All rescheduling subject to consultant availability</li>
@@ -98,13 +110,17 @@ export default function PolicyTab({ consulteeId }: Readonly<PolicyTabProps>) {
           <div>
             <h3 className="font-semibold mb-2">Data Protection</h3>
             <p className="text-gray-600">
-              We take your privacy seriously and implement strict measures to protect your personal information. All session recordings and communications are encrypted and stored securely.
+              We take your privacy seriously and implement strict measures to
+              protect your personal information. All session recordings and
+              communications are encrypted and stored securely.
             </p>
           </div>
           <div>
             <h3 className="font-semibold mb-2">Information Usage</h3>
             <p className="text-gray-600">
-              Your information is used solely for improving your consultation experience and will never be shared with third parties without your explicit consent.
+              Your information is used solely for improving your consultation
+              experience and will never be shared with third parties without
+              your explicit consent.
             </p>
           </div>
         </CardContent>

@@ -49,11 +49,15 @@ export function setupConsulteeDashboard(consulteeId: string, route?: string) {
   });
 
   // Handle different routes
-  if (!route || route === 'home') {
+  if (!route || route === "home") {
     // Wait for home page specific elements
-    cy.get('[data-testid="upcoming-slot-list"]', { timeout: 30000 }).should("exist");
-    cy.get('[data-testid="monthly-slot-list"]', { timeout: 30000 }).should("exist");
-  } else if (route === 'appointments') {
+    cy.get('[data-testid="upcoming-slot-list"]', { timeout: 30000 }).should(
+      "exist",
+    );
+    cy.get('[data-testid="monthly-slot-list"]', { timeout: 30000 }).should(
+      "exist",
+    );
+  } else if (route === "appointments") {
     // Wait for appointments page specific elements
     cy.get('[data-testid="overview-grid"]', { timeout: 30000 }).should("exist");
   }
@@ -63,8 +67,8 @@ export function setupConsulteeDashboard(consulteeId: string, route?: string) {
     logs.push({
       timestamp: new Date().toISOString(),
       type: "ui_state",
-      message: `Page loaded: ${route || 'home'}`,
-      route: route || 'home'
+      message: `Page loaded: ${route || "home"}`,
+      route: route || "home",
     });
     cy.writeFile("cypress/logs/info.json", logs);
   });
@@ -87,7 +91,7 @@ export function setupConsulteeDashboard(consulteeId: string, route?: string) {
 function logApiResponse(interception: any) {
   cy.log(
     `${interception.request.url} Response:`,
-    JSON.stringify(interception.response?.body, null, 2)
+    JSON.stringify(interception.response?.body, null, 2),
   );
 
   // Log API response info
@@ -111,7 +115,7 @@ function logApiResponse(interception: any) {
         status: interception.response.statusCode,
         error: interception.response.body,
       },
-      { flag: "a+" }
+      { flag: "a+" },
     );
   }
 }

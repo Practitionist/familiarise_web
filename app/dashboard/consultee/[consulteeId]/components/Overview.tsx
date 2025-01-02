@@ -8,7 +8,10 @@ import {
   WebinarWithPlan,
 } from "@/hooks/useEvents";
 import { EventWithType } from "../utils";
-import { getActualNextSlotTime, getActualSlots } from "../utils/actual-schedule";
+import {
+  getActualNextSlotTime,
+  getActualSlots,
+} from "../utils/actual-schedule";
 import { EventCard } from "./EventCard";
 
 interface OverviewProps {
@@ -42,9 +45,9 @@ function formatDate(date: Date | null): string {
 
 function getValidAppointmentSlots(event: EventWithType): AppointmentSlot[] {
   const slots = getActualSlots(event);
-  return slots.map(slot => ({
+  return slots.map((slot) => ({
     startTime: slot.date,
-    endTime: slot.endTime || slot.date
+    endTime: slot.endTime || slot.date,
   }));
 }
 
@@ -79,7 +82,10 @@ export function Overview({
             status: consultation.requestStatus.toString(),
             type: "Consultation" as const,
             isTentative: slotInfo.isTentative,
-            actualSlots: getValidAppointmentSlots({...consultation, type: "Consultation"}),
+            actualSlots: getValidAppointmentSlots({
+              ...consultation,
+              type: "Consultation",
+            }),
           };
         })}
       />
@@ -104,7 +110,10 @@ export function Overview({
             status: subscription.requestStatus.toString(),
             type: "Subscription" as const,
             isTentative: slotInfo.isTentative,
-            actualSlots: getValidAppointmentSlots({...subscription, type: "Subscription"}),
+            actualSlots: getValidAppointmentSlots({
+              ...subscription,
+              type: "Subscription",
+            }),
           };
         })}
       />
@@ -129,7 +138,10 @@ export function Overview({
             status: classItem.status.toString(),
             type: "Class" as const,
             isTentative: slotInfo.isTentative,
-            actualSlots: getValidAppointmentSlots({...classItem, type: "Class"}),
+            actualSlots: getValidAppointmentSlots({
+              ...classItem,
+              type: "Class",
+            }),
           };
         })}
       />
@@ -153,7 +165,10 @@ export function Overview({
             status: webinar.status.toString(),
             type: "Webinar" as const,
             isTentative: slotInfo.isTentative,
-            actualSlots: getValidAppointmentSlots({...webinar, type: "Webinar"}),
+            actualSlots: getValidAppointmentSlots({
+              ...webinar,
+              type: "Webinar",
+            }),
           };
         })}
       />

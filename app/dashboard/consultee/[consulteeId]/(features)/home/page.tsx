@@ -9,9 +9,7 @@ type PageProps = {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
-export default function HomePage({
-  params,
-}: Readonly<PageProps>) {
+export default function HomePage({ params }: Readonly<PageProps>) {
   const resolvedParams = use(params);
   const { userDetails } = useUser();
   return <HomeTab params={params} userDetails={userDetails} />;

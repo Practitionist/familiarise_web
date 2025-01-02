@@ -8,9 +8,7 @@ type PageProps = {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
-export default function FeedbackPage({
-  params,
-}: Readonly<PageProps>) {
+export default function FeedbackPage({ params }: Readonly<PageProps>) {
   const resolvedParams = use(params);
   return <FeedbackSupportTab consulteeId={resolvedParams.consulteeId} />;
 }

@@ -247,7 +247,9 @@ export default async function WebinarDetailsPage({
     redirect("/explore/programs/webinars");
   }
 
-  const nextSession = webinar.webinars[0]?.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+  const nextSession =
+    webinar.webinars[0]?.appointment?.slotsOfAppointment?.[0]
+      ?.slotStartTimeInUTC;
   const isLoggedIn = !!session?.user;
   return (
     <div className="min-h-screen bg-gray-50">

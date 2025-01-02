@@ -4,7 +4,15 @@ import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Badge } from "components/ui/badge";
 import { Button } from "components/ui/button";
 import { Card } from "components/ui/card";
-import { EventWithType, getConsultantImage, getConsultantInitial, getConsultantName, getEventStatus, getEventTitle, getStatusColor } from "../../utils";
+import {
+  EventWithType,
+  getConsultantImage,
+  getConsultantInitial,
+  getConsultantName,
+  getEventStatus,
+  getEventTitle,
+  getStatusColor,
+} from "../../utils";
 import { formatTimeUntil } from "../../utils/actual-schedule";
 import { formatDateTime, formatTimeString } from "./utils";
 import type { SlotWithStatus } from "../../utils/actual-schedule";
@@ -55,9 +63,11 @@ export function SlotCard({
   };
 
   return (
-    <Card className={`h-full border ${
-      isFirst ? 'border-blue-100 bg-blue-50/50' : 'border-gray-200 bg-white'
-    } hover:border-gray-300 transition-colors`}>
+    <Card
+      className={`h-full border ${
+        isFirst ? "border-blue-100 bg-blue-50/50" : "border-gray-200 bg-white"
+      } hover:border-gray-300 transition-colors`}
+    >
       <div className="p-4">
         <div className="flex items-start gap-4">
           <Avatar className="h-10 w-10">
@@ -65,18 +75,14 @@ export function SlotCard({
               src={getConsultantImage(event) ?? "/placeholder.svg"}
               alt="Consultant"
             />
-            <AvatarFallback>
-              {getConsultantInitial(event)}
-            </AvatarFallback>
+            <AvatarFallback>{getConsultantInitial(event)}</AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
             <h3 className="font-medium text-gray-900 truncate">
               {getEventTitle(event)}
             </h3>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-              <span className="text-gray-600">
-                {getConsultantName(event)}
-              </span>
+              <span className="text-gray-600">{getConsultantName(event)}</span>
               <span className="text-gray-600">
                 {formatDateTime(slotTime, endTime)}
               </span>
@@ -85,15 +91,11 @@ export function SlotCard({
               <Badge variant="outline" className="text-xs">
                 {event.type}
               </Badge>
-              <Badge
-                className={`${getStatusColor(status)} text-xs`}
-              >
+              <Badge className={`${getStatusColor(status)} text-xs`}>
                 {status}
               </Badge>
               {isTentative && (
-                <span className="text-red-500 text-xs">
-                  *Subject to change
-                </span>
+                <span className="text-red-500 text-xs">*Subject to change</span>
               )}
               {isJoinable && (
                 <Button
@@ -161,7 +163,10 @@ export function MonthlyEventCard({ event, slots }: MonthlyEventCardProps) {
               <h3 className="font-medium text-sm text-gray-900 truncate">
                 {getEventTitle(event)}
               </h3>
-              <span className="text-sm text-gray-600" data-testid="consultant-name">
+              <span
+                className="text-sm text-gray-600"
+                data-testid="consultant-name"
+              >
                 {getConsultantName(event)}
               </span>
             </div>
@@ -200,7 +205,7 @@ export function MonthlyEventCard({ event, slots }: MonthlyEventCardProps) {
                 <span>
                   {slot.endTime
                     ? `${formatTimeString(slot.date)} - ${formatTimeString(
-                        slot.endTime
+                        slot.endTime,
                       )}`
                     : formatTimeString(slot.date)}
                   {slot.isTentative && (
@@ -210,7 +215,10 @@ export function MonthlyEventCard({ event, slots }: MonthlyEventCardProps) {
               </div>
             ))}
             {slots.some((slot) => slot.isTentative) && (
-              <div className="text-xs text-red-500" data-testid="tentative-notice">
+              <div
+                className="text-xs text-red-500"
+                data-testid="tentative-notice"
+              >
                 * Subject to change
               </div>
             )}

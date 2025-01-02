@@ -94,7 +94,7 @@ export async function createSlotsOfAvailability(
             const endMinute = (slot.end % 1) * 60;
 
             // For weekly slots, since they represent recurring time patterns, we have a few options:
-            // 
+            //
             // Use a fixed date in the future (like 2025) - Not ideal because:
             // - The slots might appear too far in the future
             // - We'd need to handle date rollovers manually
@@ -108,10 +108,14 @@ export async function createSlotsOfAvailability(
             // - Makes it easier to handle timezone conversions
             // - Aligns with how recurring events typically work in calendaring systems
             const today = new Date();
-            const daysUntilNext = (Object.values(DayOfWeek).indexOf(dayOfWeek) + 7 - today.getUTCDay()) % 7;
+            const daysUntilNext =
+              (Object.values(DayOfWeek).indexOf(dayOfWeek) +
+                7 -
+                today.getUTCDay()) %
+              7;
             const nextOccurrence = new Date(today);
             nextOccurrence.setDate(nextOccurrence.getDate() + daysUntilNext);
-            
+
             // Create the slot times
             const startTime = new Date(nextOccurrence);
             startTime.setUTCHours(startHour, startMinute, 0, 0);

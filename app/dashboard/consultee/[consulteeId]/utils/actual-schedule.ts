@@ -12,7 +12,7 @@ export function getActualSlots(event: EventWithType): SlotWithStatus[] {
   const appointments = (() => {
     switch (event.type) {
       case "Subscription":
-        case "Class":
+      case "Class":
         return event.appointments || [];
       case "Consultation":
       case "Webinar":
@@ -22,16 +22,16 @@ export function getActualSlots(event: EventWithType): SlotWithStatus[] {
     }
   })();
 
-  const slots = appointments.flatMap((apt) => 
-    (apt?.slotsOfAppointment || []).map(slot => ({
+  const slots = appointments.flatMap((apt) =>
+    (apt?.slotsOfAppointment || []).map((slot) => ({
       date: new Date(slot.slotStartTimeInUTC),
       endTime: new Date(slot.slotEndTimeInUTC),
-      isTentative: slot.isTentative
-    }))
+      isTentative: slot.isTentative,
+    })),
   );
 
   return slots
-    .filter(slot => slot.date.getFullYear() > PREVIOUS_YEAR)
+    .filter((slot) => slot.date.getFullYear() > PREVIOUS_YEAR)
     .sort((a, b) => a.date.getTime() - b.date.getTime());
 }
 

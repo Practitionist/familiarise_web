@@ -1,6 +1,11 @@
-
 import { EventWithType } from "@/app/dashboard/consultee/[consulteeId]/utils";
-import { formatTimeUntil, getActualMonthlyEvents, getActualNextSlotTime, getActualSlots, getActualUpcomingSlots } from "@/app/dashboard/consultee/[consulteeId]/utils/actual-schedule";
+import {
+  formatTimeUntil,
+  getActualMonthlyEvents,
+  getActualNextSlotTime,
+  getActualSlots,
+  getActualUpcomingSlots,
+} from "@/app/dashboard/consultee/[consulteeId]/utils/actual-schedule";
 import { SlotOfAppointment } from "@prisma/client";
 
 describe("Schedule Data Consistency Tests", () => {
@@ -11,8 +16,8 @@ describe("Schedule Data Consistency Tests", () => {
       id: "subscription-1",
       type: "Subscription",
       requestStatus: "REJECTED",
-      subscriptionPlan: { 
-        id: "plan-1", 
+      subscriptionPlan: {
+        id: "plan-1",
         title: "Basic Subscription",
         consultantProfile: {
           user: {
@@ -25,36 +30,40 @@ describe("Schedule Data Consistency Tests", () => {
             onlineStatus: false,
             currentTimezone: null,
             onboardingCompleted: false,
-            role: "CONSULTANT"
-          }
-        }
+            role: "CONSULTANT",
+          },
+        },
       },
-      appointments: [{
-        id: "appointment-1",
-        appointmentType: "SUBSCRIPTION",
-        slotsOfAppointment: [{
-          id: "slot-1",
-          slotStartTimeInUTC: new Date("2024-12-30T13:00:00Z"),
-          slotEndTimeInUTC: new Date("2024-12-30T15:00:00Z"),
-          isTentative: true,
-          appointmentId: "appointment-1",
+      appointments: [
+        {
+          id: "appointment-1",
+          appointmentType: "SUBSCRIPTION",
+          slotsOfAppointment: [
+            {
+              id: "slot-1",
+              slotStartTimeInUTC: new Date("2024-12-30T13:00:00Z"),
+              slotEndTimeInUTC: new Date("2024-12-30T15:00:00Z"),
+              isTentative: true,
+              appointmentId: "appointment-1",
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          ],
+          payment: [],
           createdAt: new Date(),
-          updatedAt: new Date()
-        }],
-        payment: [],
-        createdAt: new Date(),
-        updatedAt: new Date()
-      }],
+          updatedAt: new Date(),
+        },
+      ],
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
     },
     // Class with non-tentative slots
     {
       id: "class-1",
       type: "Class",
       status: "COMPLETED",
-      classPlan: { 
-        id: "plan-2", 
+      classPlan: {
+        id: "plan-2",
         title: "Intermediate Class",
         consultantProfile: {
           user: {
@@ -67,55 +76,57 @@ describe("Schedule Data Consistency Tests", () => {
             onlineStatus: false,
             currentTimezone: null,
             onboardingCompleted: false,
-            role: "CONSULTANT"
-          }
-        }
+            role: "CONSULTANT",
+          },
+        },
       },
-      appointments: [{
-        id: "appointment-2",
-        appointmentType: "CLASS",
-        slotsOfAppointment: [
-          {
-            id: "slot-2",
-            slotStartTimeInUTC: new Date("2024-12-18T15:00:00Z"),
-            slotEndTimeInUTC: new Date("2024-12-18T17:00:00Z"),
-            isTentative: false,
-            appointmentId: "appointment-2",
-            createdAt: new Date(),
-            updatedAt: new Date()
-          },
-          {
-            id: "slot-3",
-            slotStartTimeInUTC: new Date("2024-12-25T13:00:00Z"),
-            slotEndTimeInUTC: new Date("2024-12-25T16:00:00Z"),
-            isTentative: false,
-            appointmentId: "appointment-2"
-          },
-          {
-            id: "slot-4",
-            slotStartTimeInUTC: new Date("2025-01-01T12:00:00Z"),
-            slotEndTimeInUTC: new Date("2025-01-01T13:00:00Z"),
-            isTentative: false,
-            appointmentId: "appointment-2"
-          },
-          {
-            id: "slot-5",
-            slotStartTimeInUTC: new Date("2025-01-08T13:00:00Z"),
-            slotEndTimeInUTC: new Date("2025-01-08T14:00:00Z"),
-            isTentative: false,
-            appointmentId: "appointment-2"
-          }
-        ],
-        payment: []
-      }]
+      appointments: [
+        {
+          id: "appointment-2",
+          appointmentType: "CLASS",
+          slotsOfAppointment: [
+            {
+              id: "slot-2",
+              slotStartTimeInUTC: new Date("2024-12-18T15:00:00Z"),
+              slotEndTimeInUTC: new Date("2024-12-18T17:00:00Z"),
+              isTentative: false,
+              appointmentId: "appointment-2",
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+            {
+              id: "slot-3",
+              slotStartTimeInUTC: new Date("2024-12-25T13:00:00Z"),
+              slotEndTimeInUTC: new Date("2024-12-25T16:00:00Z"),
+              isTentative: false,
+              appointmentId: "appointment-2",
+            },
+            {
+              id: "slot-4",
+              slotStartTimeInUTC: new Date("2025-01-01T12:00:00Z"),
+              slotEndTimeInUTC: new Date("2025-01-01T13:00:00Z"),
+              isTentative: false,
+              appointmentId: "appointment-2",
+            },
+            {
+              id: "slot-5",
+              slotStartTimeInUTC: new Date("2025-01-08T13:00:00Z"),
+              slotEndTimeInUTC: new Date("2025-01-08T14:00:00Z"),
+              isTentative: false,
+              appointmentId: "appointment-2",
+            },
+          ],
+          payment: [],
+        },
+      ],
     },
     // Rejected consultation with no slots
     {
       id: "consultation-1",
       type: "Consultation",
       requestStatus: "REJECTED",
-      consultationPlan: { 
-        id: "plan-3", 
+      consultationPlan: {
+        id: "plan-3",
         title: "Extended Consultation",
         consultantProfile: {
           user: {
@@ -128,9 +139,9 @@ describe("Schedule Data Consistency Tests", () => {
             onlineStatus: false,
             currentTimezone: null,
             onboardingCompleted: false,
-            role: "CONSULTANT"
-          }
-        }
+            role: "CONSULTANT",
+          },
+        },
       },
       appointment: {
         id: "appointment-3",
@@ -138,11 +149,11 @@ describe("Schedule Data Consistency Tests", () => {
         slotsOfAppointment: [],
         payment: [],
         createdAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
       },
       createdAt: new Date(),
-      updatedAt: new Date()
-    }
+      updatedAt: new Date(),
+    },
   ] as unknown as EventWithType[];
 
   beforeAll(() => {
@@ -166,39 +177,52 @@ describe("Schedule Data Consistency Tests", () => {
       );
 
       const expectedDays = [2]; // Only one slot in the test data
-      subscriptionSlots.forEach(({ slotTime }: { slotTime: Date }, index: number) => {
-        const diffInDays = Math.floor(
-          (slotTime.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
-        );
-        expect(diffInDays).toBe(expectedDays[index]);
-      });
+      subscriptionSlots.forEach(
+        ({ slotTime }: { slotTime: Date }, index: number) => {
+          const diffInDays = Math.floor(
+            (slotTime.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+          );
+          expect(diffInDays).toBe(expectedDays[index]);
+        },
+      );
     });
 
     it('should mark tentative schedules as "Subject to change"', () => {
-      const slots = mockEvents.flatMap((event: EventWithType) => getActualSlots(event));
+      const slots = mockEvents.flatMap((event: EventWithType) =>
+        getActualSlots(event),
+      );
 
-      const checkSlotTentativeStatus = (eventType: string, expectedTentative: boolean) => {
+      const checkSlotTentativeStatus = (
+        eventType: string,
+        expectedTentative: boolean,
+      ) => {
         const eventSlots = slots.filter((slot) =>
           mockEvents.some((event: EventWithType) => {
             if (event.type !== eventType) return false;
-            
+
             if (event.type === "Subscription") {
-              return event.appointments?.some((appointment) => 
-                appointment.slotsOfAppointment?.some((slotOfAppointment: SlotOfAppointment) => 
-                  new Date(slotOfAppointment.slotStartTimeInUTC).getTime() === slot.date.getTime()
-                )
+              return event.appointments?.some((appointment) =>
+                appointment.slotsOfAppointment?.some(
+                  (slotOfAppointment: SlotOfAppointment) =>
+                    new Date(slotOfAppointment.slotStartTimeInUTC).getTime() ===
+                    slot.date.getTime(),
+                ),
               );
             }
             if (event.type === "Class") {
-              return event.appointments?.some((appointment) => 
-                appointment.slotsOfAppointment?.some((slotOfAppointment: SlotOfAppointment) => 
-                  new Date(slotOfAppointment.slotStartTimeInUTC).getTime() === slot.date.getTime()
-                )
+              return event.appointments?.some((appointment) =>
+                appointment.slotsOfAppointment?.some(
+                  (slotOfAppointment: SlotOfAppointment) =>
+                    new Date(slotOfAppointment.slotStartTimeInUTC).getTime() ===
+                    slot.date.getTime(),
+                ),
               );
             }
             if (event.type === "Consultation") {
-              return event.appointment?.slotsOfAppointment?.some((slotOfAppointment: SlotOfAppointment) => 
-                new Date(slotOfAppointment.slotStartTimeInUTC).getTime() === slot.date.getTime()
+              return event.appointment?.slotsOfAppointment?.some(
+                (slotOfAppointment: SlotOfAppointment) =>
+                  new Date(slotOfAppointment.slotStartTimeInUTC).getTime() ===
+                  slot.date.getTime(),
               );
             }
             return false;
@@ -229,26 +253,32 @@ describe("Schedule Data Consistency Tests", () => {
       );
 
       // Each upcoming slot should be in monthly view
-      upcomingSlots.forEach(({ event, slotTime }: { event: EventWithType; slotTime: Date }) => {
-        const foundInMonthly = monthlyEvents.some(
-          (monthly: { event: EventWithType; slots: Array<{ date: Date }> }) =>
-            monthly.event.id === event.id &&
-            monthly.slots.some(
-              (slot: { date: Date }) => slot.date.getTime() === slotTime.getTime(),
-            ),
-        );
-        expect(foundInMonthly).toBe(true);
-      });
+      upcomingSlots.forEach(
+        ({ event, slotTime }: { event: EventWithType; slotTime: Date }) => {
+          const foundInMonthly = monthlyEvents.some(
+            (monthly: { event: EventWithType; slots: Array<{ date: Date }> }) =>
+              monthly.event.id === event.id &&
+              monthly.slots.some(
+                (slot: { date: Date }) =>
+                  slot.date.getTime() === slotTime.getTime(),
+              ),
+          );
+          expect(foundInMonthly).toBe(true);
+        },
+      );
 
       // Each monthly slot should be in upcoming slots
-      monthlyEvents.forEach((monthly: { event: EventWithType; slots: Array<{ date: Date }> }) => {
-        monthly.slots.forEach((monthlySlot: { date: Date }) => {
-          const foundInUpcoming = upcomingSlots.some(
-            ({ slotTime }: { slotTime: Date }) => slotTime.getTime() === monthlySlot.date.getTime(),
-          );
-          expect(foundInUpcoming).toBe(true);
-        });
-      });
+      monthlyEvents.forEach(
+        (monthly: { event: EventWithType; slots: Array<{ date: Date }> }) => {
+          monthly.slots.forEach((monthlySlot: { date: Date }) => {
+            const foundInUpcoming = upcomingSlots.some(
+              ({ slotTime }: { slotTime: Date }) =>
+                slotTime.getTime() === monthlySlot.date.getTime(),
+            );
+            expect(foundInUpcoming).toBe(true);
+          });
+        },
+      );
     });
 
     it("should maintain COMPLETED status for class events", () => {
@@ -285,7 +315,9 @@ describe("Schedule Data Consistency Tests", () => {
 
     it("should show correct time slots for Intermediate Class", () => {
       const classEvent = mockEvents.find(
-        (event: EventWithType) => event.type === "Class" && event.classPlan.title === "Intermediate Class",
+        (event: EventWithType) =>
+          event.type === "Class" &&
+          event.classPlan.title === "Intermediate Class",
       );
       if (!classEvent || classEvent.type !== "Class") {
         throw new Error("Class event not found");
@@ -300,7 +332,9 @@ describe("Schedule Data Consistency Tests", () => {
     });
 
     it("should handle rejected consultations correctly", () => {
-      const consultation = mockEvents.find((event: EventWithType) => event.type === "Consultation");
+      const consultation = mockEvents.find(
+        (event: EventWithType) => event.type === "Consultation",
+      );
       if (!consultation || consultation.type !== "Consultation") {
         throw new Error("Consultation event not found");
       }
@@ -312,7 +346,7 @@ describe("Schedule Data Consistency Tests", () => {
         slotsOfAppointment: [],
         payment: [],
         createdAt: expect.any(Date),
-        updatedAt: expect.any(Date)
+        updatedAt: expect.any(Date),
       });
 
       const slots = getActualSlots(consultation);
@@ -365,13 +399,13 @@ describe("Schedule Data Consistency Tests", () => {
               consultantProfileId: null,
               emailVerified: null,
               consulteeProfileId: null,
-              staffProfileId: null
-            }
-          }
+              staffProfileId: null,
+            },
+          },
         },
         appointments: [],
         createdAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
       } as unknown as EventWithType;
 
       const slots = getActualSlots(event);
@@ -399,9 +433,9 @@ describe("Schedule Data Consistency Tests", () => {
               consultantProfileId: null,
               emailVerified: null,
               consulteeProfileId: null,
-              staffProfileId: null
-            }
-          }
+              staffProfileId: null,
+            },
+          },
         },
         requestedBy: {
           id: "test-user",
@@ -417,7 +451,7 @@ describe("Schedule Data Consistency Tests", () => {
           consultantProfileId: null,
           emailVerified: null,
           consulteeProfileId: null,
-          staffProfileId: null
+          staffProfileId: null,
         },
         appointment: {
           id: "test-appointment",
@@ -425,10 +459,10 @@ describe("Schedule Data Consistency Tests", () => {
           slotsOfAppointment: undefined,
           payment: [],
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: new Date(),
         },
         createdAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
       } as unknown as EventWithType;
 
       const slots = getActualSlots(event);
@@ -456,23 +490,27 @@ describe("Schedule Data Consistency Tests", () => {
               consultantProfileId: null,
               emailVerified: null,
               consulteeProfileId: null,
-              staffProfileId: null
-            }
-          }
+              staffProfileId: null,
+            },
+          },
         },
-        appointments: [{
-          id: "test-appointment",
-          appointmentType: "CLASS",
-          slotsOfAppointment: [{
-            slotStartTimeInUTC: "2023-01-01T10:00:00Z",
-            slotEndTimeInUTC: "2023-01-01T11:00:00Z",
-            isTentative: false,
-            user: []
-          }],
-          payment: []
-        }],
+        appointments: [
+          {
+            id: "test-appointment",
+            appointmentType: "CLASS",
+            slotsOfAppointment: [
+              {
+                slotStartTimeInUTC: "2023-01-01T10:00:00Z",
+                slotEndTimeInUTC: "2023-01-01T11:00:00Z",
+                isTentative: false,
+                user: [],
+              },
+            ],
+            payment: [],
+          },
+        ],
         createdAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
       } as unknown as EventWithType;
 
       const slots = getActualSlots(event);

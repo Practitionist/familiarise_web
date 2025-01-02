@@ -8,9 +8,7 @@ type PageProps = {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
-export default function AppointmentsPage({
-  params,
-}: Readonly<PageProps>) {
+export default function AppointmentsPage({ params }: Readonly<PageProps>) {
   const resolvedParams = use(params);
   return <AppointmentsTab consulteeId={resolvedParams.consulteeId} />;
 }
