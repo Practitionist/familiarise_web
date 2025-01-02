@@ -1,12 +1,7 @@
-import {
-  getActualNextSlotTime,
-  getActualUpcomingSlots,
-  getActualMonthlyEvents,
-  formatTimeUntil,
-  getActualSlots,
-} from "./actual-schedule";
+
+import { EventWithType } from "@/app/dashboard/consultee/[consulteeId]/utils";
+import { formatTimeUntil, getActualMonthlyEvents, getActualNextSlotTime, getActualSlots, getActualUpcomingSlots } from "@/app/dashboard/consultee/[consulteeId]/utils/actual-schedule";
 import { SlotOfAppointment } from "@prisma/client";
-import { EventWithType } from "../utils";
 
 describe("Schedule Data Consistency Tests", () => {
   const now = new Date("2024-12-28T00:00:00Z");
@@ -334,6 +329,154 @@ describe("Schedule Data Consistency Tests", () => {
 
       const formatted = formatTimeUntil(diffInMinutes);
       expect(formatted).toBe("Now");
+    });
+
+    it("should format days and hours correctly", () => {
+      const days = formatTimeUntil(1500); // 1 day 1 hour
+      expect(days).toBe("1 day away");
+
+      const hours = formatTimeUntil(125); // 2 hours 5 mins
+      expect(hours).toBe("2 hrs 5 mins away");
+
+      const minutes = formatTimeUntil(45); // 45 mins
+      expect(minutes).toBe("45 mins away");
+    });
+  });
+
+  describe("getActualSlots Edge Cases", () => {
+    it("should handle empty appointments", () => {
+      const event = {
+        type: "Class",
+        classPlan: {
+          id: "test-plan",
+          title: "Test Plan",
+          consultantProfile: {
+            user: {
+              id: "test-user",
+              name: "Test User",
+              email: "test@example.com",
+              image: null,
+              phone: null,
+              address: null,
+              onlineStatus: false,
+              currentTimezone: null,
+              onboardingCompleted: false,
+              role: "CONSULTANT",
+              consultantProfileId: null,
+              emailVerified: null,
+              consulteeProfileId: null,
+              staffProfileId: null
+            }
+          }
+        },
+        appointments: [],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      } as unknown as EventWithType;
+
+      const slots = getActualSlots(event);
+      expect(slots).toHaveLength(0);
+    });
+
+    it("should handle undefined slots", () => {
+      const event = {
+        type: "Consultation",
+        consultationPlan: {
+          id: "test-plan",
+          title: "Test Plan",
+          consultantProfile: {
+            user: {
+              id: "test-user",
+              name: "Test User",
+              email: "test@example.com",
+              image: null,
+              phone: null,
+              address: null,
+              onlineStatus: false,
+              currentTimezone: null,
+              onboardingCompleted: false,
+              role: "CONSULTANT",
+              consultantProfileId: null,
+              emailVerified: null,
+              consulteeProfileId: null,
+              staffProfileId: null
+            }
+          }
+        },
+        requestedBy: {
+          id: "test-user",
+          name: "Test User",
+          email: "test@example.com",
+          image: null,
+          phone: null,
+          address: null,
+          onlineStatus: false,
+          currentTimezone: null,
+          onboardingCompleted: false,
+          role: "CONSULTANT",
+          consultantProfileId: null,
+          emailVerified: null,
+          consulteeProfileId: null,
+          staffProfileId: null
+        },
+        appointment: {
+          id: "test-appointment",
+          appointmentType: "CONSULTATION",
+          slotsOfAppointment: undefined,
+          payment: [],
+          createdAt: new Date(),
+          updatedAt: new Date()
+        },
+        createdAt: new Date(),
+        updatedAt: new Date()
+      } as unknown as EventWithType;
+
+      const slots = getActualSlots(event);
+      expect(slots).toHaveLength(0);
+    });
+
+    it("should handle past slots correctly", () => {
+      const event = {
+        type: "Class",
+        classPlan: {
+          id: "test-plan",
+          title: "Test Plan",
+          consultantProfile: {
+            user: {
+              id: "test-user",
+              name: "Test User",
+              email: "test@example.com",
+              image: null,
+              phone: null,
+              address: null,
+              onlineStatus: false,
+              currentTimezone: null,
+              onboardingCompleted: false,
+              role: "CONSULTANT",
+              consultantProfileId: null,
+              emailVerified: null,
+              consulteeProfileId: null,
+              staffProfileId: null
+            }
+          }
+        },
+        appointments: [{
+          id: "test-appointment",
+          appointmentType: "CLASS",
+          slotsOfAppointment: [{
+            slotStartTimeInUTC: "2023-01-01T10:00:00Z",
+            slotEndTimeInUTC: "2023-01-01T11:00:00Z",
+            isTentative: false,
+            user: []
+          }],
+          payment: []
+        }],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      } as unknown as EventWithType;
+
+      const slots = getActualSlots(event);
+      expect(slots).toHaveLength(0);
     });
   });
 });

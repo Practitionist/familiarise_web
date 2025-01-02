@@ -1,0 +1,155 @@
+import { EventWithType } from "@/app/dashboard/consultee/[consulteeId]/utils";
+
+export const mockEvents: EventWithType[] = [
+  {
+    id: "subscription-1",
+    type: "Subscription",
+    requestStatus: "REJECTED",
+    subscriptionPlan: { 
+      id: "plan-1", 
+      title: "Basic Subscription",
+      consultantProfile: {
+        user: {
+          id: "user-1",
+          name: "Test Consultant",
+          email: "test@example.com",
+          image: null,
+          phone: null,
+          address: null,
+          onlineStatus: false,
+          currentTimezone: null,
+          onboardingCompleted: false,
+          role: "CONSULTANT",
+          consultantProfileId: null,
+          emailVerified: null,
+          consulteeProfileId: null,
+          staffProfileId: null
+        }
+      }
+    },
+    appointments: [{
+      id: "appointment-1",
+      appointmentType: "SUBSCRIPTION",
+      slotsOfAppointment: [{
+        id: "slot-1",
+        slotStartTimeInUTC: new Date("2024-12-30T13:00:00Z"),
+        slotEndTimeInUTC: new Date("2024-12-30T15:00:00Z"),
+        isTentative: true,
+        appointmentId: "appointment-1",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        user: []
+      }],
+      payment: [],
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }],
+    createdAt: new Date(),
+    updatedAt: new Date()
+  },
+  {
+    id: "class-1",
+    type: "Class",
+    status: "COMPLETED",
+    classPlan: { 
+      id: "plan-2", 
+      title: "Intermediate Class",
+      consultantProfile: {
+        user: {
+          id: "user-2",
+          name: "Mr. Santos Murray",
+          email: "santos@example.com",
+          image: null,
+          phone: null,
+          address: null,
+          onlineStatus: false,
+          currentTimezone: null,
+          onboardingCompleted: false,
+          role: "CONSULTANT",
+          consultantProfileId: null,
+          emailVerified: null,
+          consulteeProfileId: null,
+          staffProfileId: null
+        }
+      }
+    },
+    appointments: [{
+      id: "appointment-2",
+      appointmentType: "CLASS",
+      slotsOfAppointment: [
+        {
+          id: "slot-2",
+          slotStartTimeInUTC: new Date("2024-12-18T15:00:00Z"),
+          slotEndTimeInUTC: new Date("2024-12-18T17:00:00Z"),
+          isTentative: false,
+          appointmentId: "appointment-2",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          user: []
+        },
+        {
+          id: "slot-3",
+          slotStartTimeInUTC: new Date("2024-12-25T13:00:00Z"),
+          slotEndTimeInUTC: new Date("2024-12-25T16:00:00Z"),
+          isTentative: false,
+          appointmentId: "appointment-2",
+          user: []
+        },
+        {
+          id: "slot-4",
+          slotStartTimeInUTC: new Date("2025-01-01T12:00:00Z"),
+          slotEndTimeInUTC: new Date("2025-01-01T13:00:00Z"),
+          isTentative: false,
+          appointmentId: "appointment-2",
+          user: []
+        },
+        {
+          id: "slot-5",
+          slotStartTimeInUTC: new Date("2025-01-08T13:00:00Z"),
+          slotEndTimeInUTC: new Date("2025-01-08T14:00:00Z"),
+          isTentative: false,
+          appointmentId: "appointment-2",
+          user: []
+        }
+      ],
+      payment: []
+    }]
+  },
+  {
+    id: "consultation-1",
+    type: "Consultation",
+    requestStatus: "REJECTED",
+    consultationPlan: { 
+      id: "plan-3", 
+      title: "Extended Consultation",
+      consultantProfile: {
+        user: {
+          id: "user-3",
+          name: "Test Consultant",
+          email: "test@example.com",
+          image: null,
+          phone: null,
+          address: null,
+          onlineStatus: false,
+          currentTimezone: null,
+          onboardingCompleted: false,
+          role: "CONSULTANT",
+          consultantProfileId: null,
+          emailVerified: null,
+          consulteeProfileId: null,
+          staffProfileId: null
+        }
+      }
+    },
+    appointment: {
+      id: "appointment-3",
+      appointmentType: "CONSULTATION",
+      slotsOfAppointment: [],
+      payment: [],
+      createdAt: new Date(),
+      updatedAt: new Date()
+    },
+    createdAt: new Date(),
+    updatedAt: new Date()
+  }
+] as unknown as EventWithType[];
