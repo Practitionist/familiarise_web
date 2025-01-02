@@ -79,13 +79,20 @@ function getMonthYearString(date: Date): string {
           return getAllSlots(events);
         });
 
-        // Filter future slots for upcoming section
+        // First filter by previous year (matching getActualSlots)
         const now = new Date();
-        const futureSlots = allSlots.filter(slot => 
-          new Date(slot.slotStartTimeInUTC) > now
-        ).sort((a, b) => 
-          new Date(a.slotStartTimeInUTC).getTime() - new Date(b.slotStartTimeInUTC).getTime()
-        );
+        const previousYear = now.getFullYear() - 1;
+        const validSlots = allSlots.filter(slot => {
+          const slotDate = new Date(slot.slotStartTimeInUTC);
+          return slotDate.getFullYear() > previousYear;
+        });
+
+        // Then filter future slots (matching getActualUpcomingSlots)
+        const futureSlots = validSlots
+          .filter(slot => new Date(slot.slotStartTimeInUTC) > now)
+          .sort((a, b) => 
+            new Date(a.slotStartTimeInUTC).getTime() - new Date(b.slotStartTimeInUTC).getTime()
+          );
 
         // Log upcoming slots count
         cy.writeFile('cypress/logs/info.json', [{
@@ -97,7 +104,8 @@ function getMonthYearString(date: Date): string {
 
         // Verify upcoming section
         cy.log('Verifying upcoming section');
-        cy.get('[data-testid="upcoming-slot-list"] [data-testid^="webinar-"], [data-testid^="class-"], [data-testid^="consultation-"], [data-testid^="subscription-"]')
+        cy.get('[data-testid="upcoming-slot-list"]')
+          .find('[data-testid^="webinar-"], [data-testid^="class-"], [data-testid^="consultation-"], [data-testid^="subscription-"]')
           .should('have.length', futureSlots.length);
 
         // Test navigation if there are slots
@@ -125,13 +133,16 @@ function getMonthYearString(date: Date): string {
           return getAllSlots(events);
         });
 
-        // Filter future slots and group by month
+        // Filter slots by previous year (matching getActualSlots)
         const now = new Date();
-        const futureSlots = allSlots.filter(slot => 
-          new Date(slot.slotStartTimeInUTC) > now
-        );
+        const previousYear = now.getFullYear() - 1;
+        const validSlots = allSlots.filter(slot => {
+          const slotDate = new Date(slot.slotStartTimeInUTC);
+          return slotDate.getFullYear() > previousYear;
+        });
 
-        const slotsByMonth = futureSlots.reduce<Record<string, Slot[]>>((acc, slot) => {
+        // Group by month
+        const slotsByMonth = validSlots.reduce<Record<string, Slot[]>>((acc, slot) => {
           const date = new Date(slot.slotStartTimeInUTC);
           const key = `${date.getFullYear()}-${date.getMonth()}`;
           if (!acc[key]) {
