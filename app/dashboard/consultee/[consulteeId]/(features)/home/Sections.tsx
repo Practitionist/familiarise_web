@@ -42,6 +42,7 @@ export function UpcomingSection({ slots }: UpcomingSectionProps) {
             size="icon"
             onClick={() => scrollCarousel("left")}
             className="h-8 w-8 rounded-full"
+            data-testid="prev-upcoming"
           >
             <ArrowLeftIcon className="h-4 w-4" />
           </Button>
@@ -50,6 +51,7 @@ export function UpcomingSection({ slots }: UpcomingSectionProps) {
             size="icon"
             onClick={() => scrollCarousel("right")}
             className="h-8 w-8 rounded-full"
+            data-testid="next-upcoming"
           >
             <ArrowRightIcon className="h-4 w-4" />
           </Button>
