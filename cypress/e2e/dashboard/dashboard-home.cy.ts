@@ -1,4 +1,4 @@
-import { setupConsulteeDashboard } from "./consultee-setup.cy";
+import { setupConsulteeDashboard } from "./dashboard-setup.cy";
 import consulteeIdsFixture from "../../fixtures/consultee-ids.json";
 
 interface ConsulteeIdsFixture {
