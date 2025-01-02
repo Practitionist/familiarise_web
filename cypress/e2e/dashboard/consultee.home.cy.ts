@@ -71,7 +71,7 @@ function getMonthYearString(date: Date): string {
       setupConsulteeDashboard(consulteeId, 'home');
     });
 
-    it('verifies all slots from API appear in the UI', () => {
+    it('verifies upcoming slots section', () => {
       cy.wait(['@getConsultations', '@getSubscriptions', '@getClasses', '@getWebinars']).then((interceptions: any[]) => {
         // Get all slots from API
         const allSlots = interceptions.flatMap((interception) => {
@@ -79,32 +79,29 @@ function getMonthYearString(date: Date): string {
           return getAllSlots(events);
         });
 
-        // Log total slots for debugging
+        // Filter future slots for upcoming section
+        const now = new Date();
+        const futureSlots = allSlots.filter(slot => 
+          new Date(slot.slotStartTimeInUTC) > now
+        ).sort((a, b) => 
+          new Date(a.slotStartTimeInUTC).getTime() - new Date(b.slotStartTimeInUTC).getTime()
+        );
+
+        // Log upcoming slots count
         cy.writeFile('cypress/logs/info.json', [{
           timestamp: new Date().toISOString(),
-          type: 'total_slots',
-          count: allSlots.length,
+          type: 'upcoming_slots',
+          count: futureSlots.length,
           consulteeId
         }]);
-
-        // Group slots by month
-        const slotsByMonth = allSlots.reduce<Record<string, Slot[]>>((acc, slot) => {
-          const date = new Date(slot.slotStartTimeInUTC);
-          const key = `${date.getFullYear()}-${date.getMonth()}`;
-          if (!acc[key]) {
-            acc[key] = [];
-          }
-          acc[key].push(slot);
-          return acc;
-        }, {});
 
         // Verify upcoming section
         cy.log('Verifying upcoming section');
         cy.get('[data-testid="upcoming-slot-list"] [data-testid^="webinar-"], [data-testid^="class-"], [data-testid^="consultation-"], [data-testid^="subscription-"]')
-          .should('have.length', allSlots.length);
+          .should('have.length', futureSlots.length);
 
-        // Test upcoming section navigation if there are slots
-        if (allSlots.length > 0) {
+        // Test navigation if there are slots
+        if (futureSlots.length > 0) {
           cy.log('Testing upcoming section navigation');
           // Click next a few times
           for (let i = 0; i < 3; i++) {
@@ -117,9 +114,34 @@ function getMonthYearString(date: Date): string {
             cy.wait(200);
           }
         }
+      });
+    });
 
-        // Verify monthly section
-        cy.log('Verifying monthly section');
+    it('verifies monthly slots section', () => {
+      cy.wait(['@getConsultations', '@getSubscriptions', '@getClasses', '@getWebinars']).then((interceptions: any[]) => {
+        // Get all slots from API
+        const allSlots = interceptions.flatMap((interception) => {
+          const events = interception.response?.body?.data || [];
+          return getAllSlots(events);
+        });
+
+        // Filter future slots and group by month
+        const now = new Date();
+        const futureSlots = allSlots.filter(slot => 
+          new Date(slot.slotStartTimeInUTC) > now
+        );
+
+        const slotsByMonth = futureSlots.reduce<Record<string, Slot[]>>((acc, slot) => {
+          const date = new Date(slot.slotStartTimeInUTC);
+          const key = `${date.getFullYear()}-${date.getMonth()}`;
+          if (!acc[key]) {
+            acc[key] = [];
+          }
+          acc[key].push(slot);
+          return acc;
+        }, {});
+
+        // Get sorted months
         const months = Object.entries(slotsByMonth)
           .map(([key, slots]) => {
             const [year, month] = key.split('-').map(Number);
@@ -132,24 +154,23 @@ function getMonthYearString(date: Date): string {
 
         if (months.length > 0) {
           // Navigate to each month and verify slots
-          months.forEach(({ date, slots }) => {
+          months.forEach(({ date, slots }, index) => {
             const monthString = getMonthYearString(date);
             cy.log(`Checking month: ${monthString}`);
 
             // Navigate to month
-            cy.get('[data-testid="monthly-slot-list"]').parent().find('h2').invoke('text').then((currentMonth) => {
-              while (currentMonth !== monthString) {
-                if (new Date(currentMonth).getTime() > date.getTime()) {
-                  cy.get('[data-testid="prev-month"]').click();
-                } else {
-                  cy.get('[data-testid="next-month"]').click();
-                }
+            cy.get('[data-testid="monthly-slot-list"]').parent().find('h2').then(($header) => {
+              const currentMonth = $header.text();
+              
+              // If not on target month, navigate to it
+              if (currentMonth !== monthString) {
+                // Determine direction and click button
+                const targetDate = date.getTime();
+                const currentDate = new Date(currentMonth).getTime();
+                
+                const button = targetDate < currentDate ? 'prev-month' : 'next-month';
+                cy.get(`[data-testid="${button}"]`).click();
                 cy.wait(200);
-                cy.get('[data-testid="monthly-slot-list"]').parent().find('h2').invoke('text').then((newMonth) => {
-                  if (newMonth === monthString) {
-                    return false; // Break the loop
-                  }
-                });
               }
             });
 
