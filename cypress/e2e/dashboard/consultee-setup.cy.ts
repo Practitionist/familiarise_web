@@ -1,25 +1,13 @@
 /// <reference types="cypress" />
 
-// Function to get all consultee IDs from database
-// export function getConsulteeIds() {
-//   return cy.request('/api/user/consultees').then((response) => {
-//     expect(response.status).to.equal(200);
-//     const consultees = response.body;
-//     expect(consultees).to.be.an('array');
-//     expect(consultees.length).to.be.greaterThan(0);
-//     return consultees.map(c => c.id);
-//   });
-// }
-
-// Default consultee IDs for testing
-export const defaultConsulteeIds = [
+export const legacyConsulteeIds = [
   "73318747-3425-4bb6-bba7-c3d6a6798441",
   "15328195-84ef-47a2-b142-3ea4749c52f6",
   "1ab7e4e2-fe2a-4c71-904d-d39e63e38278",
 ];
 
 // Shared setup function
-export function setupConsulteeDashboard(consulteeId: string) {
+export function setupConsulteeDashboard(consulteeId: string, route?: string) {
   // Create logs directory and initialize info.json if needed
   cy.exec("mkdir -p cypress/logs");
   cy.writeFile("cypress/logs/info.json", [], { flag: "w" });
@@ -42,8 +30,9 @@ export function setupConsulteeDashboard(consulteeId: string) {
     `/api/events/webinars?consulteeProfileId=${consulteeId}`,
   ).as("getWebinars");
 
-  // Visit the consultee dashboard
-  cy.visit(`/dashboard/consultee/${consulteeId}`);
+  // Visit the appropriate route
+  const baseUrl = `/dashboard/consultee/${consulteeId}`;
+  cy.visit(route ? `${baseUrl}/${route}` : `${baseUrl}/home`);
 
   // Wait for API calls to complete and content to load
   cy.wait(
@@ -84,25 +73,29 @@ export function setupConsulteeDashboard(consulteeId: string) {
     });
   });
 
-  // Wait for both slot lists to be visible and log it
-  cy.get('[data-testid="upcoming-slot-list"]', { timeout: 30000 }).should(
-    "exist",
-  );
-  cy.get('[data-testid="monthly-slot-list"]', { timeout: 30000 })
-    .should("exist")
-    .then(() => {
-      cy.readFile("cypress/logs/info.json").then((logs) => {
-        logs.push({
-          timestamp: new Date().toISOString(),
-          type: "ui_state",
-          message: "Both slot list elements found",
-        });
-        cy.writeFile("cypress/logs/info.json", logs);
-      });
-    });
+  // Handle different routes
+  if (!route || route === 'home') {
+    // Wait for home page specific elements
+    cy.get('[data-testid="upcoming-slot-list"]', { timeout: 30000 }).should("exist");
+    cy.get('[data-testid="monthly-slot-list"]', { timeout: 30000 }).should("exist");
+  } else if (route === 'appointments') {
+    // Wait for appointments page specific elements
+    cy.get('[data-testid="overview-grid"]', { timeout: 30000 }).should("exist");
+  }
 
-  // Verify loading state is gone and log it
-  cy.contains("Loading user data...", { timeout: 30000 })
+  // Log UI state
+  cy.readFile("cypress/logs/info.json").then((logs) => {
+    logs.push({
+      timestamp: new Date().toISOString(),
+      type: "ui_state",
+      message: `Page loaded: ${route || 'home'}`,
+      route: route || 'home'
+    });
+    cy.writeFile("cypress/logs/info.json", logs);
+  });
+
+  // Verify loading state is gone
+  cy.contains("Loading", { timeout: 30000 })
     .should("not.exist")
     .then(() => {
       cy.readFile("cypress/logs/info.json").then((logs) => {
