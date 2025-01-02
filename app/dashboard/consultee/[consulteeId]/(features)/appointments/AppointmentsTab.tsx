@@ -3,8 +3,8 @@
 import React from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useEvents } from "@/hooks/useEvents";
-import { Overview } from "../components/Overview";
-import { Calendar } from "../components/Calendar";
+import { Overview } from "../../components/Overview";
+import { Calendar } from "../../components/Calendar";
 import { motion } from "framer-motion";
 
 export default function AppointmentsTab({

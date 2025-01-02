@@ -12,9 +12,8 @@ export function getActualSlots(event: EventWithType): SlotWithStatus[] {
   const appointments = (() => {
     switch (event.type) {
       case "Subscription":
+        case "Class":
         return event.appointments || [];
-      case "Class":
-        return event.appointment || [];
       case "Consultation":
       case "Webinar":
         return event.appointment ? [event.appointment] : [];

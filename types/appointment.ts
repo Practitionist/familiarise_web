@@ -97,7 +97,7 @@ export type TClass = Prisma.ClassGetPayload<{
         };
       };
     };
-    appointment: {
+    appointments: {
       include: {
         slotsOfAppointment: {
           include: {

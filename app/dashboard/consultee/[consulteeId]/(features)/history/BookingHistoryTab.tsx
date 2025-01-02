@@ -24,7 +24,7 @@ import {
   getConsultantName,
   getConsultantImage,
   getConsultantInitial,
-} from "../utils";
+} from "../../utils";
 
 type EventWithType =
   | (ConsultationWithPlan & { type: "Consultation" })
@@ -216,20 +216,14 @@ function formatDate(date: string | null | undefined): string {
 function getBookingDate(event: EventWithType): string | null {
   switch (event.type) {
     case "Consultation":
-      return event.appointment?.createdAt
-        ? new Date(event.appointment.createdAt).toISOString()
-        : null;
-    case "Subscription":
-      return event.appointments?.[0]?.createdAt
-        ? new Date(event.appointments[0].createdAt).toISOString()
-        : null;
     case "Webinar":
       return event.appointment?.createdAt
         ? new Date(event.appointment.createdAt).toISOString()
         : null;
+    case "Subscription":
     case "Class":
-      return event.appointment?.createdAt
-        ? new Date(event.appointment.createdAt).toISOString()
+      return event.appointments?.[0]?.createdAt
+        ? new Date(event.appointments[0].createdAt).toISOString()
         : null;
   }
 }
@@ -237,20 +231,14 @@ function getBookingDate(event: EventWithType): string | null {
 function getPaymentDate(event: EventWithType): string | null {
   switch (event.type) {
     case "Consultation":
-      return event.appointment?.payment?.[0]?.createdAt
-        ? new Date(event.appointment.payment[0].createdAt).toISOString()
-        : null;
-    case "Subscription":
-      return event.appointments?.[0]?.payment?.[0]?.createdAt
-        ? new Date(event.appointments[0].payment[0].createdAt).toISOString()
-        : null;
     case "Webinar":
       return event.appointment?.payment?.[0]?.createdAt
         ? new Date(event.appointment.payment[0].createdAt).toISOString()
         : null;
+    case "Subscription":
     case "Class":
-      return event.appointment?.payment?.[0]?.createdAt
-        ? new Date(event.appointment.payment[0].createdAt).toISOString()
+      return event.appointments?.[0]?.payment?.[0]?.createdAt
+        ? new Date(event.appointments[0].payment[0].createdAt).toISOString()
         : null;
   }
 }

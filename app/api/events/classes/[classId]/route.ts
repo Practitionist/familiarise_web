@@ -12,7 +12,7 @@ export async function GET(
       where: { id: classId },
       include: {
         classPlan: true,
-        appointment: {
+        appointments: {
           include: {
             slotsOfAppointment: {
               include: {
@@ -59,7 +59,7 @@ export async function PUT(
       },
       include: {
         classPlan: true,
-        appointment: {
+        appointments: {
           include: {
             slotsOfAppointment: {
               include: {
@@ -92,7 +92,7 @@ export async function DELETE(
       where: { id: classId },
       include: {
         classPlan: true,
-        appointment: {
+        appointments: {
           include: {
             slotsOfAppointment: {
               include: {

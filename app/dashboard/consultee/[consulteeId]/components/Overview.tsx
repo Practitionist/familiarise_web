@@ -7,11 +7,9 @@ import {
   SubscriptionWithPlan,
   WebinarWithPlan,
 } from "@/hooks/useEvents";
-import { EventCard } from "./EventCard";
-import { getActualNextSlotTime } from "../utils/actual-schedule";
-import { PREVIOUS_YEAR } from "@/constants/datetime";
 import { EventWithType } from "../utils";
-import { TAppointment } from "@/types/appointment";
+import { getActualNextSlotTime, getActualSlots } from "../utils/actual-schedule";
+import { EventCard } from "./EventCard";
 
 interface OverviewProps {
   consultations: ConsultationWithPlan[];
@@ -23,12 +21,6 @@ interface OverviewProps {
 interface AppointmentSlot {
   startTime: Date;
   endTime: Date;
-}
-
-function isValidDate(date: string | Date | null | undefined): boolean {
-  if (!date) return false;
-  const parsedDate = typeof date === "string" ? new Date(date) : date;
-  return parsedDate.getFullYear() > PREVIOUS_YEAR;
 }
 
 function getNoSlotMessage(type: string): string {
@@ -49,32 +41,11 @@ function formatDate(date: Date | null): string {
 }
 
 function getValidAppointmentSlots(event: EventWithType): AppointmentSlot[] {
-  const appointments = (() => {
-    switch (event.type) {
-      case "Subscription":
-        return event.appointments || [];
-      case "Class":
-        return event.appointment || [];
-      case "Consultation":
-      case "Webinar":
-        return event.appointment ? [event.appointment] : [];
-      default:
-        return [];
-    }
-  })();
-
-  return appointments
-    .flatMap((appointment: TAppointment) =>
-      appointment.slotsOfAppointment.map((slot) => ({
-        startTime: new Date(slot.slotStartTimeInUTC),
-        endTime: new Date(slot.slotEndTimeInUTC),
-      })),
-    )
-    .filter((slot: AppointmentSlot) => isValidDate(slot.startTime))
-    .sort(
-      (a: AppointmentSlot, b: AppointmentSlot) =>
-        a.startTime.getTime() - b.startTime.getTime(),
-    );
+  const slots = getActualSlots(event);
+  return slots.map(slot => ({
+    startTime: slot.date,
+    endTime: slot.endTime || slot.date
+  }));
 }
 
 export function Overview({

@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
             consultantProfile: true,
           },
         },
-        appointment: {
+        appointments: {
           include: {
             slotsOfAppointment: {
               include: {
@@ -119,7 +119,7 @@ export async function POST(req: NextRequest) {
 
     // Check class capacity by counting participants from appointments
     const currentParticipants =
-      classDetails.appointment?.reduce(
+      classDetails.appointments?.reduce(
         (count, appointment) => count + appointment.slotsOfAppointment.length,
         0,
       ) ?? 0;

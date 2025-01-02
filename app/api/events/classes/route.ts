@@ -15,7 +15,7 @@ export async function GET(request: Request) {
           OR: [
             // Get classes where consultee is registered through appointments
             {
-              appointment: {
+              appointments: {
                 some: {
                   slotsOfAppointment: {
                     some: {
@@ -63,7 +63,7 @@ export async function GET(request: Request) {
               },
             },
           },
-          appointment: {
+          appointments: {
             include: {
               slotsOfAppointment: {
                 include: {
@@ -115,7 +115,7 @@ export async function GET(request: Request) {
               consultantProfile: true,
             },
           },
-          appointment: true,
+          appointments: true,
         },
       });
       console.log("classes", classes);
@@ -123,7 +123,7 @@ export async function GET(request: Request) {
       classes = await prisma.class.findMany({
         include: {
           classPlan: true,
-          appointment: true,
+          appointments: true,
         },
       });
     }
