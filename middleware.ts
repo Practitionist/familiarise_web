@@ -113,6 +113,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     process.env.NODE_ENV === "test" ||
     process.env.NODE_ENV === "development"
   ) {
+    console.warn("Bypassing middleware in development or test mode");
     return NextResponse.next();
   }
 
