@@ -109,6 +109,8 @@ const handleDashboardRedirect = (
  */
 export async function middleware(req: NextRequest): Promise<NextResponse> {
   // Bypass middleware in test mode
+  console.log("NODE_ENV", process.env.NODE_ENV);
+  console.log("test user id", process.env.NEXT_PUBLIC_TEST_USERID);
   if (process.env.NODE_ENV === "test") {
     return NextResponse.next();
   }
