@@ -34,6 +34,10 @@ jobs:
           --health-retries 5
 
     steps:
+      # echo node-env
+      - name: Echo NODE_ENV
+        run: echo $NODE_ENV
+        
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
