@@ -47,14 +47,17 @@ export default function ConsulteeLayout({
         setIsLoading(true);
         setError(null);
 
-        if (!process.env.NEXT_PUBLIC_TEST_USERID && !session?.user?.id) {
+        const userId =
+          process.env.NODE_ENV === "test"
+            ? process.env.NEXT_PUBLIC_TEST_USERID
+            : session?.user?.id;
+
+        if (!userId) {
           throw new Error("User not authenticated");
         }
 
         const [userData, consulteeData] = await Promise.all([
-          fetchUserDetails(
-            process.env.NEXT_PUBLIC_TEST_USERID ?? session?.user?.id ?? "",
-          ),
+          fetchUserDetails(userId),
           fetchConsulteeDetails(consulteeId),
         ]);
 
@@ -71,7 +74,7 @@ export default function ConsulteeLayout({
     fetchData();
   }, [session, consulteeId]);
 
-  if (!process.env.NEXT_PUBLIC_TEST_USERID && !session?.user?.id) {
+  if (process.env.NEXT_PUBLIC_TEST_USERID !== "test" && !session?.user?.id) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-100">
         <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">

@@ -108,6 +108,11 @@ const handleDashboardRedirect = (
  * Middleware function to handle authentication and authorization for routes.
  */
 export async function middleware(req: NextRequest): Promise<NextResponse> {
+  // Bypass middleware in test mode
+  if (process.env.NODE_ENV === "test") {
+    return NextResponse.next();
+  }
+
   const { pathname } = req.nextUrl;
   const token = (await getToken({ req })) as Token | null;
   const isAuthenticated = !!token;
