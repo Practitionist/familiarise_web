@@ -9,46 +9,102 @@ import { usePathname } from "next/navigation";
 import { use, useEffect, useState } from "react";
 import { UserProvider } from "./UserContext";
 
-const navItems = [
+// Navigation configuration
+const NAV_ITEMS = [
   { name: "Home", path: "home" },
   { name: "Appointments", path: "appointments" },
   { name: "Booking History", path: "history" },
   { name: "Messages", path: "messages" },
   { name: "Feedback & Support", path: "feedback" },
   { name: "Policy", path: "policy" },
-];
+] as const;
 
-type PageProps = {
+// Types
+type NavItem = (typeof NAV_ITEMS)[number];
+
+interface PageProps {
   children: React.ReactNode;
   params: Promise<{ consulteeId: string }>;
-};
+}
 
-export default function ConsulteeLayout({
-  children,
-  params,
-}: Readonly<PageProps>) {
-  const resolvedParams = use(params);
-  const consulteeId = resolvedParams.consulteeId;
+interface MessageContainerProps {
+  title: string;
+  message: string;
+  titleColor?: string;
+}
 
-  const pathname = usePathname();
-  const currentPath = pathname.split("/").pop();
+interface ConsulteeNavProps {
+  consulteeId: string;
+  currentPath: string | undefined;
+}
 
-  const { data: session } = useSession();
-  const [userDetails, setUserDetails] = useState<User | null>(null);
-  const [profileDetails, setProfileDetails] = useState<ConsulteeProfile | null>(
-    null,
+// Reusable components
+function MessageContainer({
+  title,
+  message,
+  titleColor = "text-red-600",
+}: Readonly<MessageContainerProps>) {
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-gray-100">
+      <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
+        <h2 className={`text-xl sm:text-2xl font-bold ${titleColor} mb-4`}>
+          {title}
+        </h2>
+        <p className="text-gray-700">{message}</p>
+      </div>
+    </div>
   );
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+}
+
+function ConsulteeNav({
+  consulteeId,
+  currentPath,
+}: Readonly<ConsulteeNavProps>) {
+  return (
+    <nav className="p-4 sm:p-8 pt-32 md:pt-36 bg-white shadow-sm">
+      <div className="flex flex-col sm:flex-row justify-start items-start gap-4">
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 w-full">
+          {NAV_ITEMS.map((item) => (
+            <Link
+              key={item.name}
+              href={`/dashboard/consultee/${consulteeId}/${item.path}`}
+            >
+              <Button
+                className={`${
+                  currentPath === item.path
+                    ? "bg-[#f87171] text-white"
+                    : "text-gray-500 hover:bg-gray-200"
+                } rounded-md px-4 py-2 transition-colors whitespace-nowrap`}
+                variant={currentPath === item.path ? "default" : "ghost"}
+              >
+                {item.name}
+              </Button>
+            </Link>
+          ))}
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+// Custom hook for data fetching
+function useConsulteeData(consulteeId: string) {
+  const { data: session } = useSession();
+  const [state, setState] = useState({
+    userDetails: null as User | null,
+    profileDetails: null as ConsulteeProfile | null,
+    error: null as string | null,
+    isLoading: true,
+  });
 
   useEffect(() => {
     async function fetchData() {
       try {
-        setIsLoading(true);
-        setError(null);
+        setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
         const userId =
-          process.env.NODE_ENV === "test"
+          process.env.NODE_ENV === "test" ||
+          process.env.NODE_ENV === "development"
             ? process.env.NEXT_PUBLIC_TEST_USERID
             : session?.user?.id;
 
@@ -61,85 +117,78 @@ export default function ConsulteeLayout({
           fetchConsulteeDetails(consulteeId),
         ]);
 
-        setUserDetails(userData);
-        setProfileDetails(consulteeData);
+        setState({
+          userDetails: userData,
+          profileDetails: consulteeData,
+          error: null,
+          isLoading: false,
+        });
       } catch (err) {
         console.error("Error fetching data:", err);
-        setError(err instanceof Error ? err.message : "An error occurred");
-      } finally {
-        setIsLoading(false);
+        setState((prev) => ({
+          ...prev,
+          error: err instanceof Error ? err.message : "An error occurred",
+          isLoading: false,
+        }));
       }
     }
 
     fetchData();
   }, [session, consulteeId]);
 
-  if (process.env.NEXT_PUBLIC_TEST_USERID !== "test" && !session?.user?.id) {
+  return state;
+}
+
+// Main layout component
+export default function ConsulteeLayout({
+  children,
+  params,
+}: Readonly<PageProps>) {
+  const resolvedParams = use(params);
+  const consulteeId = resolvedParams.consulteeId;
+  const pathname = usePathname();
+  const currentPath = pathname.split("/").pop();
+  const { data: session } = useSession();
+
+  const { userDetails, profileDetails, error, isLoading } =
+    useConsulteeData(consulteeId);
+
+  // Authentication check
+  if (
+    process.env.NODE_ENV !== "development" &&
+    process.env.NODE_ENV !== "test" &&
+    !session?.user?.id
+  ) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-100">
-        <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
-          <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
-            Authentication Required
-          </h2>
-          <p className="text-gray-700">
-            Please sign in to access your dashboard.
-          </p>
-        </div>
-      </div>
+      <MessageContainer
+        title="Authentication Required"
+        message="Please sign in to access your dashboard."
+      />
     );
   }
 
+  // Error state
   if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-100">
-        <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
-          <h2 className="text-xl sm:text-2xl font-bold text-red-600 mb-4">
-            Error
-          </h2>
-          <p className="text-gray-700">{error}</p>
-        </div>
-      </div>
-    );
+    return <MessageContainer title="Error" message={error} />;
   }
 
+  // Loading state
   if (isLoading || !userDetails || !profileDetails) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-100">
-        <div className="bg-white p-4 sm:p-8 rounded-lg shadow-md w-full max-w-md mx-4">
-          <h2 className="text-xl sm:text-2xl font-bold mb-4">Loading...</h2>
-          <p className="text-gray-700">Please wait while we fetch your data.</p>
-        </div>
-      </div>
+      <MessageContainer
+        title="Loading..."
+        message="Please wait while we fetch your data."
+        titleColor="text-gray-900"
+      />
     );
   }
 
+  // Main layout
   return (
     <UserProvider userDetails={userDetails}>
       <div className="bg-gray-100 min-h-screen flex flex-col">
-        <div className="p-4 sm:p-8 pt-32 md:pt-36 bg-white shadow-sm">
-          <div className="flex flex-col sm:flex-row justify-start items-start gap-4">
-            <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 w-full">
-              {navItems.map((item) => (
-                <Link
-                  key={item.name}
-                  href={`/dashboard/consultee/${consulteeId}/${item.path}`}
-                >
-                  <Button
-                    className={`${
-                      currentPath === item.path
-                        ? "bg-[#f87171] text-white"
-                        : "text-gray-500 hover:bg-gray-200"
-                    } rounded-md px-4 py-2 transition-colors whitespace-nowrap`}
-                    variant={currentPath === item.path ? "default" : "ghost"}
-                  >
-                    {item.name}
-                  </Button>
-                </Link>
-              ))}
-            </div>
-          </div>
-        </div>
-        <div className="flex-grow overflow-y-auto p-8">{children}</div>
+        <ConsulteeNav consulteeId={consulteeId} currentPath={currentPath} />
+        <main className="flex-grow overflow-y-auto p-8">{children}</main>
       </div>
     </UserProvider>
   );
