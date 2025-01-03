@@ -10,9 +10,8 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      NODE_ENV: test # NODE_ENV is set to test by default
-      NEXTAUTH_SECRET: testing_secret
-      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+      NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -52,8 +51,9 @@ jobs:
 
       - name: Run Cypress Tests
         uses: cypress-io/github-action@v6
+        env:
+          NEXT_PUBLIC_TEST_USERID: ${{ secrets.NEXT_PUBLIC_TEST_USERID }}
         with:
-          build: npm run build
           start: npm run dev
           wait-on: "http://localhost:3000"
           record: false
