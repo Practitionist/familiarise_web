@@ -10,5 +10,9 @@ export default defineConfig({
     viewportHeight: 1080,
     experimentalMemoryManagement: true,
     numTestsKeptInMemory: 5,
+    retries: {
+      runMode: 2,
+      openMode: 0,
+    },
   },
 });
