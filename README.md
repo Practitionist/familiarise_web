@@ -17,11 +17,9 @@ Welcome to our development team! To help you get started, we've outlined the ess
 
 Before you start, make sure you have the following installed and configured on your development machine:
 
-```
 - Node.js (version 18 or higher)
 - npm or yarn
 - Git
-```
 
 ## Step 1: Clone the Project Repository
 

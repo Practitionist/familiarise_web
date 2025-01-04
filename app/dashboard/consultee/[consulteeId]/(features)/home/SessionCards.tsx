@@ -144,87 +144,91 @@ export function MonthlyEventCard({ event, slots }: MonthlyEventCardProps) {
   };
 
   return (
-    <Button
-      onClick={handleClick}
-      variant="ghost"
-      className="w-full text-left px-6 py-4 h-auto hover:bg-gray-50 block"
-    >
-      <div className="flex items-center gap-4">
-        <Avatar className="h-8 w-8">
-          <AvatarImage
-            src={getConsultantImage(event) ?? "/placeholder.svg"}
-            alt="Consultant"
-          />
-          <AvatarFallback>{getConsultantInitial(event)}</AvatarFallback>
-        </Avatar>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="font-medium text-sm text-gray-900 truncate">
-                {getEventTitle(event)}
-              </h3>
-              <span
-                className="text-sm text-gray-600"
-                data-testid="consultant-name"
-              >
-                {getConsultantName(event)}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge
-                className={`${
-                  event.type === "Subscription"
-                    ? "bg-purple-100 text-purple-800"
-                    : "bg-indigo-100 text-indigo-800"
-                } text-xs px-2 py-0.5`}
-              >
-                {event.type}
-              </Badge>
-              <Badge
-                className={`${getStatusColor(status)} text-xs px-2 py-0.5`}
-                data-testid="event-status"
-              >
-                {status}
-              </Badge>
-            </div>
-          </div>
-          <div className="mt-2 space-y-1">
-            {slots.map((slot) => (
-              <div
-                key={slot.date.getTime()}
-                className="text-sm text-gray-600 flex items-center gap-4"
-                data-testid="monthly-slot"
-              >
-                <span className="min-w-[100px]">
-                  {slot.date.toLocaleString(undefined, {
-                    weekday: "short",
-                    day: "numeric",
-                    month: "short",
-                  })}
-                </span>
-                <span>
-                  {slot.endTime
-                    ? `${formatTimeString(slot.date)} - ${formatTimeString(
-                        slot.endTime,
-                      )}`
-                    : formatTimeString(slot.date)}
-                  {slot.isTentative && (
-                    <span className="text-red-500 ml-1">*</span>
-                  )}
+    <div>
+      <Button
+        onClick={handleClick}
+        variant="ghost"
+        className="w-full text-left px-6 py-4 h-auto hover:bg-gray-50 block"
+      >
+        <div className="flex items-center gap-4">
+          <Avatar className="h-8 w-8">
+            <AvatarImage
+              src={getConsultantImage(event) ?? "/placeholder.svg"}
+              alt="Consultant"
+            />
+            <AvatarFallback>{getConsultantInitial(event)}</AvatarFallback>
+          </Avatar>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="font-medium text-sm text-gray-900 truncate">
+                  {getEventTitle(event)}
+                </h3>
+                <span
+                  className="text-sm text-gray-600"
+                  data-testid="consultant-name"
+                >
+                  {getConsultantName(event)}
                 </span>
               </div>
-            ))}
-            {slots.some((slot) => slot.isTentative) && (
-              <div
-                className="text-xs text-red-500"
-                data-testid="tentative-notice"
-              >
-                * Subject to change
+              <div className="flex items-center gap-2">
+                <Badge
+                  className={`${
+                    event.type === "Subscription"
+                      ? "bg-purple-100 text-purple-800"
+                      : "bg-indigo-100 text-indigo-800"
+                  } text-xs px-2 py-0.5`}
+                >
+                  {event.type}
+                </Badge>
+                <Badge
+                  className={`${getStatusColor(status)} text-xs px-2 py-0.5`}
+                  data-testid="event-status"
+                >
+                  {status}
+                </Badge>
               </div>
-            )}
+            </div>
           </div>
         </div>
+      </Button>
+      <div className="px-6 pb-4">
+        <div className="mt-2 space-y-1">
+          {slots.map((slot) => (
+            <div
+              key={slot.date.getTime()}
+              className="text-sm text-gray-600 flex items-center gap-4"
+              data-testid="monthly-slot"
+            >
+              <span className="min-w-[100px]">
+                {slot.date.toLocaleString(undefined, {
+                  weekday: "short",
+                  day: "numeric",
+                  month: "short",
+                })}
+              </span>
+              <span>
+                {slot.endTime
+                  ? `${formatTimeString(slot.date)} - ${formatTimeString(
+                      slot.endTime,
+                    )}`
+                  : formatTimeString(slot.date)}
+                {slot.isTentative && (
+                  <span className="text-red-500 ml-1">*</span>
+                )}
+              </span>
+            </div>
+          ))}
+          {slots.some((slot) => slot.isTentative) && (
+            <div
+              className="text-xs text-red-500"
+              data-testid="tentative-notice"
+            >
+              * Subject to change
+            </div>
+          )}
+        </div>
       </div>
-    </Button>
+    </div>
   );
 }

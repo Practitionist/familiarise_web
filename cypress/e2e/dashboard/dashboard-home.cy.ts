@@ -11,6 +11,7 @@ interface Slot {
   isTentative: boolean;
   event: {
     id: string;
+    type: string;
     status?: string;
     requestStatus?: string;
     consultationPlan?: {
@@ -50,13 +51,31 @@ interface Slot {
 
 function getAllSlots(events: any[]): Slot[] {
   return events.flatMap((event) => {
+    // Set the type first
+    const eventWithType = {
+      ...event,
+      type: event.consultationPlan
+        ? "Consultation"
+        : event.subscriptionPlan
+          ? "Subscription"
+          : event.webinarPlan
+            ? "Webinar"
+            : event.classPlan
+              ? "Class"
+              : "Unknown",
+    };
+
+    // Now get slots based on the type
     const slots =
-      event.appointment?.slotsOfAppointment ||
-      event.appointments?.flatMap((apt: any) => apt.slotsOfAppointment) ||
-      [];
+      eventWithType.type === "Subscription" || eventWithType.type === "Class"
+        ? eventWithType.appointments?.flatMap(
+            (apt: any) => apt.slotsOfAppointment,
+          ) || []
+        : eventWithType.appointment?.slotsOfAppointment || [];
+
     return slots.map((slot: any) => ({
       ...slot,
-      event,
+      event: eventWithType,
     }));
   });
 }
@@ -105,14 +124,12 @@ function getMonthYearString(date: Date): string {
             );
 
           // Log upcoming slots count
-          cy.writeFile("cypress/logs/info.json", [
-            {
-              timestamp: new Date().toISOString(),
-              type: "upcoming_slots",
-              count: futureSlots.length,
-              consulteeId,
-            },
-          ]);
+          cy.writeFile(`cypress/logs/${consulteeId}-upcoming.json`, {
+            timestamp: new Date().toISOString(),
+            type: "upcoming_slots",
+            count: futureSlots.length,
+            consulteeId,
+          });
 
           // Verify upcoming section
           cy.log("Verifying upcoming section");
@@ -191,40 +208,115 @@ function getMonthYearString(date: Date): string {
               const monthString = getMonthYearString(date);
               cy.log(`Checking month: ${monthString}`);
 
-              // Navigate to month
-              cy.get('[data-testid="monthly-slot-list"]')
+              // Log the events for debugging
+              cy.writeFile(`cypress/logs/${consulteeId}-events.json`, {
+                timestamp: new Date().toISOString(),
+                type: "events_debug",
+                month: monthString,
+                events: slots.map((slot) => ({
+                  event: slot.event,
+                  slot: {
+                    startTime: slot.slotStartTimeInUTC,
+                    endTime: slot.slotEndTimeInUTC,
+                    isTentative: slot.isTentative,
+                  },
+                })),
+              });
+
+              // Log current state before navigation
+              cy.get('[data-testid="monthly-slot-list"]', { timeout: 10000 })
                 .parent()
                 .find("h2")
                 .then(($header) => {
                   const currentMonth = $header.text();
+                  cy.writeFile(`cypress/logs/${consulteeId}-navigation.json`, {
+                    timestamp: new Date().toISOString(),
+                    type: "navigation_debug",
+                    currentMonth,
+                    targetMonth: monthString,
+                    slots: slots.map((slot) => ({
+                      date: slot.slotStartTimeInUTC,
+                      eventType: slot.event.type,
+                    })),
+                  });
 
                   // If not on target month, navigate to it
                   if (currentMonth !== monthString) {
-                    // Determine direction and click button
-                    const targetDate = date.getTime();
-                    const currentDate = new Date(currentMonth).getTime();
+                    // Function to navigate one step
+                    const navigateOneStep = () => {
+                      const targetDate = date.getTime();
+                      const currentDate = new Date(currentMonth).getTime();
+                      const button =
+                        targetDate < currentDate ? "prev-month" : "next-month";
+                      cy.log(
+                        `Attempting to navigate from ${currentMonth} to ${monthString} using ${button}`,
+                      );
+                      return cy
+                        .get(`[data-testid="${button}"]`)
+                        .click()
+                        .wait(500);
+                    };
 
-                    const button =
-                      targetDate < currentDate ? "prev-month" : "next-month";
-                    cy.get(`[data-testid="${button}"]`).click();
-                    cy.wait(200);
+                    // Try navigation up to 3 times
+                    cy.wrap(null).then(() => {
+                      const attemptNavigation = (attempt = 1) => {
+                        if (attempt > 3) {
+                          throw new Error(
+                            `Failed to navigate to ${monthString} after 3 attempts`,
+                          );
+                        }
+
+                        return navigateOneStep().then(() => {
+                          return cy
+                            .get('[data-testid="monthly-slot-list"]')
+                            .parent()
+                            .find("h2")
+                            .invoke("text")
+                            .then((newMonth) => {
+                              if (newMonth !== monthString) {
+                                cy.log(
+                                  `Navigation attempt ${attempt} failed, retrying...`,
+                                );
+                                return attemptNavigation(attempt + 1);
+                              }
+                            });
+                        });
+                      };
+
+                      return attemptNavigation();
+                    });
                   }
                 });
 
+              // Log the DOM state
+              cy.get('[data-testid="monthly-slot-list"]').then(($list) => {
+                cy.writeFile(`cypress/logs/${consulteeId}-dom.json`, {
+                  timestamp: new Date().toISOString(),
+                  type: "dom_debug",
+                  month: monthString,
+                  html: $list.html(),
+                });
+              });
+
               // Verify slots for this month
-              cy.get('[data-testid="monthly-slot"]')
+              cy.get('[data-testid="monthly-slot"]', { timeout: 10000 })
                 .should("have.length", slots.length)
                 .then(() => {
-                  cy.writeFile("cypress/logs/info.json", [
-                    {
-                      timestamp: new Date().toISOString(),
-                      type: "monthly_verification",
-                      month: monthString,
-                      expectedSlots: slots.length,
-                      actualSlots: slots.length,
-                      consulteeId,
-                    },
-                  ]);
+                  cy.writeFile(`cypress/logs/${consulteeId}-monthly.json`, {
+                    timestamp: new Date().toISOString(),
+                    type: "monthly_verification",
+                    month: monthString,
+                    expectedSlots: slots.length,
+                    actualSlots: slots.length,
+                    consulteeId,
+                    slots: slots.map((slot) => ({
+                      startTime: slot.slotStartTimeInUTC,
+                      endTime: slot.slotEndTimeInUTC,
+                      isTentative: slot.isTentative,
+                      eventType: slot.event.type,
+                      eventId: slot.event.id,
+                    })),
+                  });
                 });
             });
           }
