@@ -6,7 +6,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { id } = await params;
+    const resolvedParams = await params;
+    const { id } = resolvedParams;
 
     const consultee = await prisma.consulteeProfile.findUnique({
       where: { id: id },
@@ -14,7 +15,7 @@ export async function GET(
 
     if (!consultee) {
       return NextResponse.json(
-        { error: "Consultee not found" },
+        { error: "Consultee profile not found" },
         { status: 404 },
       );
     }
@@ -23,7 +24,11 @@ export async function GET(
   } catch (error) {
     console.error("Error getting consultee:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      {
+        error:
+          "An unexpected error occurred while fetching the consultee profile",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 },
     );
   }
@@ -34,7 +39,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { id } = await params;
+    const resolvedParams = await params;
+    const { id } = resolvedParams;
 
     const body = await req.json();
     const user = await prisma.user.findUnique({
@@ -42,7 +48,10 @@ export async function POST(
     });
 
     if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "User not found. Cannot create consultee profile." },
+        { status: 404 },
+      );
     }
 
     const createdConsultee = await prisma.consulteeProfile.create({
@@ -54,6 +63,7 @@ export async function POST(
         preferredLanguage: body.preferredLanguage,
         specialRequirements: body.specialRequirements,
         interests: body.interests,
+        goals: body.goals,
         user: { connect: { id: id } },
       },
       include: {
@@ -66,7 +76,11 @@ export async function POST(
   } catch (error) {
     console.error("Error creating consultee:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      {
+        error:
+          "An unexpected error occurred while creating the consultee profile",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 },
     );
   }
@@ -77,7 +91,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { id } = await params;
+    const resolvedParams = await params;
+    const { id } = resolvedParams;
 
     const body = await req.json();
 
@@ -87,7 +102,7 @@ export async function PATCH(
 
     if (!existingConsultee) {
       return NextResponse.json(
-        { error: "Consultee profile not found" },
+        { error: "Consultee profile not found for updating" },
         { status: 404 },
       );
     }
@@ -114,7 +129,11 @@ export async function PATCH(
   } catch (error) {
     console.error("Error updating consultee:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      {
+        error:
+          "An unexpected error occurred while updating the consultee profile",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 },
     );
   }
@@ -125,7 +144,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { id } = await params;
+    const resolvedParams = await params;
+    const { id } = resolvedParams;
 
     const existingConsultee = await prisma.consulteeProfile.findUnique({
       where: { id: id },
@@ -133,7 +153,7 @@ export async function DELETE(
 
     if (!existingConsultee) {
       return NextResponse.json(
-        { error: "Consultee profile not found" },
+        { error: "Consultee profile not found for deletion" },
         { status: 404 },
       );
     }
@@ -150,7 +170,11 @@ export async function DELETE(
   } catch (error) {
     console.error("Error deleting consultee:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      {
+        error:
+          "An unexpected error occurred while deleting the consultee profile",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 },
     );
   }

@@ -4,10 +4,14 @@ import { getServerSession } from "next-auth";
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { ticketId: string } },
+  { params }: { params: Promise<{ ticketId: string }> },
 ) {
   try {
-    const session = await getServerSession();
+    const [session, resolvedParams] = await Promise.all([
+      getServerSession(),
+      params,
+    ]);
+
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to respond to support tickets" },
@@ -15,7 +19,7 @@ export async function POST(
       );
     }
 
-    const { ticketId } = params;
+    const { ticketId } = resolvedParams;
     const body = await req.json();
 
     // Verify the ticket exists and belongs to the user
