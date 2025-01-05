@@ -7,11 +7,11 @@ import {
   SubscriptionWithPlan,
   WebinarWithPlan,
 } from "@/hooks/useEvents";
-import { EventWithType } from "../utils";
+import { EventWithType } from "../../utils";
 import {
   getActualNextSlotTime,
   getActualSlots,
-} from "../utils/actual-schedule";
+} from "../../utils/actual-schedule";
 import { EventCard } from "./EventCard";
 
 interface OverviewProps {

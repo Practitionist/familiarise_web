@@ -38,12 +38,92 @@ model User {
   slotsOfAppointment SlotOfAppointment[]
   Waitlist           Waitlist[]
 
+  // Feedback and Support
+  feedbacks        Feedback[]
+  supportTickets   SupportTicket[]
+  supportResponses SupportResponse[]
+
   accounts Account[] // NextAuth Accounts
   sessions Session[] // NextAuth Sessions
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
   @@map("users")
+}
+
+model Feedback {
+  id          String         @id @default(uuid())
+  title       String
+  description String         @db.Text
+  rating      Int?           @db.SmallInt
+  category    String?
+  status      FeedbackStatus @default(PENDING)
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model SupportTicket {
+  id          String              @id @default(uuid())
+  title       String
+  description String              @db.Text
+  priority    SupportPriority     @default(MEDIUM)
+  status      SupportTicketStatus @default(OPEN)
+  category    String?
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
+
+  responses SupportResponse[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model SupportResponse {
+  id      String @id @default(uuid())
+  message String @db.Text
+
+  supportTicket   SupportTicket @relation(fields: [supportTicketId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  supportTicketId String
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supportTicketId])
+}
+
+enum FeedbackStatus {
+  PENDING
+  ACKNOWLEDGED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  ON_HOLD
+  RESOLVED
+  CLOSED
+}
+
+enum SupportPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
 }
 
 model CookiePreference {
@@ -285,7 +365,7 @@ model SlotOfAppointment {
 
   slotStartTimeInUTC DateTime @db.Timestamptz()
   slotEndTimeInUTC   DateTime @db.Timestamptz()
-  isTentative       Boolean  @default(false)
+  isTentative        Boolean  @default(false)
 
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
@@ -469,19 +549,19 @@ model ClassPlan {
 }
 
 model Class {
-  id                 String      @id @default(cuid())
-  startDate          DateTime?
-  endDate            DateTime?
-  status             ClassStatus @default(SCHEDULED)
-  waitlist           Waitlist[]
-  recordingUrls      String[]
-  feedbackSummary    String?     @db.Text
+  id              String      @id @default(cuid())
+  startDate       DateTime?
+  endDate         DateTime?
+  status          ClassStatus @default(SCHEDULED)
+  waitlist        Waitlist[]
+  recordingUrls   String[]
+  feedbackSummary String?     @db.Text
 
   classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
 
   appointments Appointment[]
-  meetingRoom MeetingRoom?
+  meetingRoom  MeetingRoom?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

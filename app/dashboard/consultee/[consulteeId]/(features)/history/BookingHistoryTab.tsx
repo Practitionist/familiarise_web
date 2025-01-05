@@ -93,6 +93,9 @@ export default function BookingHistoryTab({
                 <TableRow className="bg-gray-50">
                   <TableHead className="font-semibold">Booking Date</TableHead>
                   <TableHead className="font-semibold">Payment Date</TableHead>
+                  <TableHead className="font-semibold">
+                    Payment Amount
+                  </TableHead>
                   <TableHead className="font-semibold">Session</TableHead>
                   <TableHead className="font-semibold">Expert</TableHead>
                   <TableHead className="font-semibold">Status</TableHead>
@@ -110,6 +113,28 @@ export default function BookingHistoryTab({
                     </TableCell>
                     <TableCell className="font-medium">
                       {formatDate(getPaymentDate(event))}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">
+                          {formatAmount(getPaymentAmount(event))}
+                        </span>
+                        {getPaymentStatus(event) && (
+                          <Badge
+                            className={`${
+                              getPaymentStatus(event)?.toLowerCase() ===
+                              "succeeded"
+                                ? "bg-green-100 text-green-800"
+                                : getPaymentStatus(event)?.toLowerCase() ===
+                                    "failed"
+                                  ? "bg-red-100 text-red-800"
+                                  : "bg-yellow-100 text-yellow-800"
+                            }`}
+                          >
+                            {getPaymentStatus(event)}
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -225,6 +250,36 @@ function getBookingDate(event: EventWithType): string | null {
       return event.appointments?.[0]?.createdAt
         ? new Date(event.appointments[0].createdAt).toISOString()
         : null;
+  }
+}
+
+function formatAmount(amount: number | null): string {
+  if (amount === null) return "Not available";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(amount / 100); // Convert cents to dollars
+}
+
+function getPaymentStatus(event: EventWithType): string | null {
+  switch (event.type) {
+    case "Consultation":
+    case "Webinar":
+      return event.appointment?.payment?.[0]?.paymentStatus ?? null;
+    case "Subscription":
+    case "Class":
+      return event.appointments?.[0]?.payment?.[0]?.paymentStatus ?? null;
+  }
+}
+
+function getPaymentAmount(event: EventWithType): number | null {
+  switch (event.type) {
+    case "Consultation":
+    case "Webinar":
+      return event.appointment?.payment?.[0]?.amount ?? null;
+    case "Subscription":
+    case "Class":
+      return event.appointments?.[0]?.payment?.[0]?.amount ?? null;
   }
 }
 

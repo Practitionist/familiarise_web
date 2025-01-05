@@ -10,8 +10,8 @@ import {
   WebinarWithPlan,
   ClassWithPlan,
 } from "@/hooks/useEvents";
-import { getStatusColor } from "../utils";
-import { getActualSlots } from "../utils/actual-schedule";
+import { getStatusColor } from "../../utils";
+import { getActualSlots } from "../../utils/actual-schedule";
 
 interface CalendarProps {
   consultations: ConsultationWithPlan[];

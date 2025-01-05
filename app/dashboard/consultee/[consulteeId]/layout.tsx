@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { name: "Booking History", path: "history" },
   { name: "Messages", path: "messages" },
   { name: "Feedback & Support", path: "feedback" },
+  { name: "Settings", path: "settings" },
   { name: "Policy", path: "policy" },
 ] as const;
 

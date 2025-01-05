@@ -72,7 +72,7 @@ export async function POST(
   }
 }
 
-export async function PUT(
+export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -102,6 +102,7 @@ export async function PUT(
         preferredLanguage: body.preferredLanguage,
         specialRequirements: body.specialRequirements,
         interests: body.interests,
+        goals: body.goals,
       },
       include: {
         consultantReviews: true,
