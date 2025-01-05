@@ -1,53 +1,54 @@
 "use client";
 
-import React, { useState, useCallback, useEffect } from "react";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
+import { ScheduleType } from "@prisma/client";
+import { TrashIcon } from "assets/icons";
+import { Button } from "components/ui/button";
+import { Input } from "components/ui/input";
+import { Label } from "components/ui/label";
+import { RadioGroup, RadioGroupItem } from "components/ui/radio-group";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Card } from "@/components/ui/card";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ScheduleType } from "@prisma/client";
-import { TConsultantProfile } from "@/types/consultant";
-import { useToast } from "@/components/ui/use-toast";
-import { TrashIcon } from "@/assets/icons";
-import { MultiSelect, type Option } from "../components/MultiSelect";
+} from "components/ui/select";
+import { Separator } from "components/ui/separator";
+import { Textarea } from "components/ui/textarea";
+import { useToast } from "components/ui/use-toast";
+import React, { useCallback, useEffect, useState } from "react";
+import { TConsultantProfile } from "types/consultant";
+import { MultiSelect } from "../../components/MultiSelect";
 import {
   DAYS_OF_WEEK,
   formatDayDisplay,
-  getInitialFormData,
-  getInitialWeeklySlots,
-  getInitialCustomSlots,
-  getInitialServiceSettings,
-  validateSlot,
-  validateAllSlots,
+  formatSlotsForApi,
   getDaysInMonth,
   getFirstDayOfMonth,
-  getMonthYearString,
+  getInitialCustomSlots,
+  getInitialFormData,
+  getInitialWeeklySlots,
   getLocalDateString,
-  formatSlotsForApi,
-  type FormData,
-  type SlotType,
-  type SlotsType,
-  type ServiceSettings,
+  getMonthYearString,
+  validateAllSlots,
+  validateSlot,
   type Domain,
+  type FormData,
+  type SlotsType,
   type SubDomain,
   type Tag,
-} from "../settings";
+} from "./settings";
+
+interface Option {
+  value: string;
+  label: string;
+}
 
 interface SettingsTabProps {
   consultant: TConsultantProfile;
 }
 
-export function SettingsTab({ consultant }: SettingsTabProps) {
+export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [isContentLoading, setIsContentLoading] = useState(true);
@@ -63,9 +64,6 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
   );
   const [formData, setFormData] = useState<FormData>(
     getInitialFormData(consultant),
-  );
-  const [serviceSettings, setServiceSettings] = useState<ServiceSettings>(
-    getInitialServiceSettings(consultant),
   );
   const [domains, setDomains] = useState<Domain[]>([]);
   const [subDomains, setSubDomains] = useState<SubDomain[]>([]);
@@ -385,10 +383,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
       // Only send slots for the current schedule type
       const updatedData = {
         ...formData,
-        language: serviceSettings.language,
-        level: serviceSettings.level,
-        prerequisites: serviceSettings.prerequisites,
-        scheduleType, // Ensure we're using the current scheduleType
+        scheduleType,
         slotsOfAvailabilityWeekly:
           scheduleType === ScheduleType.WEEKLY
             ? formatSlotsForApi(weeklySlots, true)
@@ -442,14 +437,8 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
     <form
       onSubmit={handleSubmit}
       className="bg-white p-6 rounded-lg shadow space-y-8"
-      onClick={(e) => {
-        if (
-          (e.target as HTMLElement).tagName !== "BUTTON" ||
-          (e.target as HTMLButtonElement).type !== "submit"
-        ) {
-          e.preventDefault();
-        }
-      }}
+      role="form"
+      aria-label="Settings form"
     >
       {/* Professional Profile */}
       <div>
@@ -478,11 +467,13 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                       <SelectValue placeholder="Select your primary domain" />
                     </SelectTrigger>
                     <SelectContent>
-                      {(domains || []).map((domain) => (
-                        <SelectItem key={domain.id} value={domain.id}>
-                          {domain.name}
-                        </SelectItem>
-                      ))}
+                      {(domains || [])
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((domain) => (
+                          <SelectItem key={domain.id} value={domain.id}>
+                            {domain.name}
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -620,8 +611,8 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                       Add Slot
                     </Button>
                   </div>
-                  {weeklySlots[day.toLowerCase()]?.map((slot, index) => (
-                    <div key={index} className="space-y-2">
+                  {weeklySlots[day.toLowerCase()]?.map((slot, slotIndex) => (
+                    <div key={`${day}-${slotIndex}`} className="space-y-2">
                       <div className="grid grid-cols-7 gap-2 items-center">
                         <Input
                           type="time"
@@ -629,7 +620,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                           onChange={(e) =>
                             handleUpdateSlot(
                               day.toLowerCase(),
-                              index,
+                              slotIndex,
                               "startTime",
                               e.target.value,
                             )
@@ -644,7 +635,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                           onChange={(e) =>
                             handleUpdateSlot(
                               day.toLowerCase(),
-                              index,
+                              slotIndex,
                               "endTime",
                               e.target.value,
                             )
@@ -652,12 +643,16 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                           className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
                           step="900"
                         />
-                        <TrashIcon
-                          className="w-5 h-5 cursor-pointer"
+                        <button
+                          type="button"
                           onClick={() =>
-                            handleDeleteSlot(day.toLowerCase(), index)
+                            handleDeleteSlot(day.toLowerCase(), slotIndex)
                           }
-                        />
+                          className="p-1 hover:bg-gray-100 rounded"
+                          aria-label={`Delete slot ${slotIndex + 1} for ${day}`}
+                        >
+                          <TrashIcon className="w-5 h-5" />
+                        </button>
                       </div>
                       {!slot.isValid && slot.errorMessage && (
                         <p className="text-red-500 text-sm">
@@ -688,6 +683,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                     type="button"
                     className="text-black hover:bg-gray-100 p-2 rounded-full"
                     onClick={handlePrevMonth}
+                    aria-label="Previous month"
                   >
                     &larr;
                   </button>
@@ -698,6 +694,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                     type="button"
                     className="text-black hover:bg-gray-100 p-2 rounded-full"
                     onClick={handleNextMonth}
+                    aria-label="Next month"
                   >
                     &rarr;
                   </button>
@@ -713,7 +710,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
               </div>
 
               {Object.keys(customSlots)
-                .sort()
+                .sort((a, b) => a.localeCompare(b))
                 .map((dateString) => {
                   const date = new Date(dateString);
                   return (
@@ -735,8 +732,11 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                           Add Slot
                         </Button>
                       </div>
-                      {customSlots[dateString]?.map((slot, index) => (
-                        <div key={index} className="space-y-2">
+                      {customSlots[dateString]?.map((slot, slotIndex) => (
+                        <div
+                          key={`${dateString}-${slotIndex}`}
+                          className="space-y-2"
+                        >
                           <div className="grid grid-cols-7 gap-2 items-center">
                             <Input
                               type="time"
@@ -744,7 +744,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                               onChange={(e) =>
                                 handleUpdateSlot(
                                   dateString,
-                                  index,
+                                  slotIndex,
                                   "startTime",
                                   e.target.value,
                                 )
@@ -759,7 +759,7 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                               onChange={(e) =>
                                 handleUpdateSlot(
                                   dateString,
-                                  index,
+                                  slotIndex,
                                   "endTime",
                                   e.target.value,
                                 )
@@ -767,12 +767,16 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
                               className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
                               step="900"
                             />
-                            <TrashIcon
-                              className="w-5 h-5 cursor-pointer"
+                            <button
+                              type="button"
                               onClick={() =>
-                                handleDeleteSlot(dateString, index)
+                                handleDeleteSlot(dateString, slotIndex)
                               }
-                            />
+                              className="p-1 hover:bg-gray-100 rounded"
+                              aria-label={`Delete slot ${slotIndex + 1} for ${dateString}`}
+                            >
+                              <TrashIcon className="w-5 h-5" />
+                            </button>
                           </div>
                           {!slot.isValid && slot.errorMessage && (
                             <p className="text-red-500 text-sm">
@@ -789,70 +793,6 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
         </RadioGroup>
       </div>
 
-      <Separator />
-
-      {/* Service Settings */}
-      <div>
-        <h2 className="text-xl font-semibold mb-2">Service Configuration</h2>
-        <p className="text-sm text-gray-500 mb-6">
-          Manage your service offerings and preferences
-        </p>
-
-        <div className="space-y-6">
-          <Card className="p-6">
-            <h3 className="font-medium mb-4">Default Service Settings</h3>
-            <div className="space-y-4">
-              <div>
-                <Label>Default Language</Label>
-                <Input
-                  name="language"
-                  value={serviceSettings.language}
-                  onChange={(e) =>
-                    setServiceSettings((prev) => ({
-                      ...prev,
-                      language: e.target.value,
-                    }))
-                  }
-                  placeholder="e.g., English"
-                />
-              </div>
-              <div>
-                <Label>Default Level</Label>
-                <Select
-                  value={serviceSettings.level}
-                  onValueChange={(value) =>
-                    setServiceSettings((prev) => ({ ...prev, level: value }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select default level" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="beginner">Beginner</SelectItem>
-                    <SelectItem value="intermediate">Intermediate</SelectItem>
-                    <SelectItem value="advanced">Advanced</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Prerequisites Template</Label>
-                <Textarea
-                  name="prerequisites"
-                  value={serviceSettings.prerequisites}
-                  onChange={(e) =>
-                    setServiceSettings((prev) => ({
-                      ...prev,
-                      prerequisites: e.target.value,
-                    }))
-                  }
-                  placeholder="Default prerequisites for your services"
-                />
-              </div>
-            </div>
-          </Card>
-        </div>
-      </div>
-
       {/* Action Buttons */}
       <div className="flex justify-end space-x-4 pt-6">
         <Button
@@ -860,7 +800,6 @@ export function SettingsTab({ consultant }: SettingsTabProps) {
           variant="outline"
           onClick={() => {
             setFormData(getInitialFormData(consultant));
-            setServiceSettings(getInitialServiceSettings(consultant));
             if (scheduleType === ScheduleType.WEEKLY) {
               setWeeklySlots(getInitialWeeklySlots(consultant));
             } else {

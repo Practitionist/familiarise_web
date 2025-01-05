@@ -1,9 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import authOptions from "../../../auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { ScheduleType, Prisma } from "@prisma/client";
+import { Prisma, ScheduleType } from "@prisma/client";
+import { getServerSession } from "next-auth";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import authOptions from "../../../auth/[...nextauth]/options";
 
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
@@ -49,9 +49,6 @@ const updateConsultantSchema = z
     specialization: z.string().optional(),
     experience: z.string().optional(),
     scheduleType: z.enum(["WEEKLY", "CUSTOM"]),
-    language: z.string().optional(),
-    level: z.string().optional(),
-    prerequisites: z.string().optional(),
     domainId: uuidSchema,
     subDomainIds: z.array(uuidSchema),
     tagIds: z.array(uuidSchema),
@@ -168,9 +165,6 @@ export async function PUT(
       tagIds,
       slotsOfAvailabilityWeekly,
       slotsOfAvailabilityCustom,
-      language,
-      level,
-      prerequisites,
     } = data;
 
     // Update consultant profile
@@ -238,48 +232,6 @@ export async function PUT(
           data: customSlotData,
         });
       }
-    }
-
-    // Update service settings in all plans if provided
-    if (language || level || prerequisites) {
-      await Promise.all([
-        // Update consultation plans
-        prisma.consultationPlan.updateMany({
-          where: { consultantProfileId: id },
-          data: {
-            ...(language && { language }),
-            ...(level && { level }),
-            ...(prerequisites && { prerequisites }),
-          },
-        }),
-        // Update subscription plans
-        prisma.subscriptionPlan.updateMany({
-          where: { consultantProfileId: id },
-          data: {
-            ...(language && { language }),
-            ...(level && { level }),
-            ...(prerequisites && { prerequisites }),
-          },
-        }),
-        // Update webinar plans
-        prisma.webinarPlan.updateMany({
-          where: { consultantProfileId: id },
-          data: {
-            ...(language && { language }),
-            ...(level && { level }),
-            ...(prerequisites && { prerequisites }),
-          },
-        }),
-        // Update class plans
-        prisma.classPlan.updateMany({
-          where: { consultantProfileId: id },
-          data: {
-            ...(language && { language }),
-            ...(level && { level }),
-            ...(prerequisites && { prerequisites }),
-          },
-        }),
-      ]);
     }
 
     // Fetch and return the updated consultant with all relations

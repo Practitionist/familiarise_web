@@ -1,5 +1,6 @@
 "use client";
 
+import { DayOfWeek } from "@prisma/client";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -10,19 +11,26 @@ import {
   TargetIcon,
   TimerIcon,
   UserIcon,
-} from "@/assets/icons";
-import { Button } from "@/components/ui/button";
-import { toast } from "@/components/ui/use-toast";
+} from "assets/icons";
+import { Button } from "components/ui/button";
+import { toast } from "components/ui/use-toast";
 import { format } from "date-fns";
-import { useCallback, useMemo, useState } from "react";
+import { use, useCallback, useState } from "react";
 import { AddScheduleDialog } from "./components/AddScheduleDialog";
-import { MonthView } from "./components/MonthView";
-import { WeekView } from "./components/WeekView";
+import { AllocationMonthView } from "./components/AllocationMonthView";
+import { AllocationWeekView } from "./components/AllocationWeekView";
 import { useCalendarNavigation } from "./hooks/useCalendarNavigation";
 import { useSlots } from "./hooks/useSlots";
-import { DayOfWeek, NewSlot } from "./utils";
+import { NewSlot } from "./utils";
 
-export default function EnhancedSlotAllocationCalendar() {
+export default function AllocationPage({
+  params,
+}: Readonly<{
+  params: Promise<{ consultantId: string }>;
+}>) {
+  const resolvedParams = use(params);
+  const consultantId = resolvedParams.consultantId;
+
   const [isAddScheduleOpen, setIsAddScheduleOpen] = useState(false);
   const [newSlot, setNewSlot] = useState<NewSlot>({
     type: "weekly",
@@ -88,21 +96,20 @@ export default function EnhancedSlotAllocationCalendar() {
     [view],
   );
 
-  const calendarContent = useMemo(() => {
-    return view === "week" ? (
-      <WeekView
+  const calendarContent =
+    view === "week" ? (
+      <AllocationWeekView
         currentDate={currentDate}
         slots={slots}
         onCellClick={handleCellClick}
       />
     ) : (
-      <MonthView
+      <AllocationMonthView
         currentDate={currentDate}
         slots={slots}
         onCellClick={handleCellClick}
       />
     );
-  }, [view, currentDate, slots, handleCellClick]);
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">

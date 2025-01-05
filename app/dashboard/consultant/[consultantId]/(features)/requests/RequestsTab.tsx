@@ -17,8 +17,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Loader2 } from "lucide-react";
-import { RequestsTabProps } from "../types";
 import { toast } from "@/components/ui/use-toast";
+import { RequestsTabProps } from "../../types";
 
 type ConfirmDialogState = {
   isOpen: boolean;

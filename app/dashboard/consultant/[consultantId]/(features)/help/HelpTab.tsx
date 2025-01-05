@@ -8,7 +8,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { faqs, searchFAQs } from "../questions";
+import { searchFAQs, faqs } from "./questions";
 
 export function HelpTab() {
   const [searchQuery, setSearchQuery] = useState("");

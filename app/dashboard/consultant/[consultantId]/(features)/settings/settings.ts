@@ -16,18 +16,9 @@ export interface FormData {
   specialization: string;
   experience: string;
   scheduleType: ScheduleType;
-  language: string;
-  level: string;
-  prerequisites: string;
   domainId: string;
   subDomainIds: string[];
   tagIds: string[];
-}
-
-export interface ServiceSettings {
-  language: string;
-  level: string;
-  prerequisites: string;
 }
 
 export interface Domain {
@@ -77,69 +68,10 @@ export const getInitialFormData = (
   specialization: consultant?.specialization || "",
   experience: consultant?.experience || "",
   scheduleType: consultant?.scheduleType || ScheduleType.WEEKLY,
-  language:
-    consultant?.consultationPlans?.[0]?.language ||
-    consultant?.subscriptionPlans?.[0]?.language ||
-    consultant?.webinarPlans?.[0]?.language ||
-    consultant?.classPlans?.[0]?.language ||
-    "English",
-  level:
-    consultant?.consultationPlans?.[0]?.level ||
-    consultant?.subscriptionPlans?.[0]?.level ||
-    consultant?.webinarPlans?.[0]?.level ||
-    consultant?.classPlans?.[0]?.level ||
-    "beginner",
-  prerequisites:
-    consultant?.consultationPlans?.[0]?.prerequisites ||
-    consultant?.subscriptionPlans?.[0]?.prerequisites ||
-    consultant?.webinarPlans?.[0]?.prerequisites ||
-    consultant?.classPlans?.[0]?.prerequisites ||
-    "",
   domainId: consultant?.domain?.id || "",
   subDomainIds: consultant?.subDomains?.map((sd) => sd.id) || [],
   tagIds: consultant?.tags?.map((t) => t.id) || [],
 });
-
-export const getInitialServiceSettings = (
-  consultant: TConsultantProfile,
-): ServiceSettings => {
-  const allPlans = [
-    ...(consultant.consultationPlans || []),
-    ...(consultant.subscriptionPlans || []),
-    ...(consultant.webinarPlans || []),
-    ...(consultant.classPlans || []),
-  ].sort((a, b) => {
-    const dateA = new Date(a.updatedAt);
-    const dateB = new Date(b.updatedAt);
-    return dateB.getTime() - dateA.getTime();
-  });
-
-  const mostRecentPlan = allPlans[0];
-
-  return {
-    language:
-      mostRecentPlan?.language ||
-      consultant?.consultationPlans?.[0]?.language ||
-      consultant?.subscriptionPlans?.[0]?.language ||
-      consultant?.webinarPlans?.[0]?.language ||
-      consultant?.classPlans?.[0]?.language ||
-      "English",
-    level:
-      mostRecentPlan?.level ||
-      consultant?.consultationPlans?.[0]?.level ||
-      consultant?.subscriptionPlans?.[0]?.level ||
-      consultant?.webinarPlans?.[0]?.level ||
-      consultant?.classPlans?.[0]?.level ||
-      "beginner",
-    prerequisites:
-      mostRecentPlan?.prerequisites ||
-      consultant?.consultationPlans?.[0]?.prerequisites ||
-      consultant?.subscriptionPlans?.[0]?.prerequisites ||
-      consultant?.webinarPlans?.[0]?.prerequisites ||
-      consultant?.classPlans?.[0]?.prerequisites ||
-      "",
-  };
-};
 
 export const getInitialWeeklySlots = (
   consultant: TConsultantProfile,

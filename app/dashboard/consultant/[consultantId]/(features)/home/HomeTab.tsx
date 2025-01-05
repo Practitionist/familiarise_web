@@ -1,11 +1,11 @@
 import React, { Suspense } from "react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { AppointmentCard } from "../components/AppointmentCard";
-import { ClientActivity } from "../components/ClientActivity";
-import { RequestsTab } from "./RequestsTab";
-import { HomeTabProps } from "../types";
+import { Button } from "components/ui/button";
+import { Badge } from "components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
+import { RequestsTab } from "../requests/RequestsTab";
+import { HomeTabProps } from "../../types";
+import { AppointmentCard } from "../../components/AppointmentCard";
+import { ClientActivity } from "../../components/ClientActivity";
 
 export function HomeTab({
   todayAppointments,

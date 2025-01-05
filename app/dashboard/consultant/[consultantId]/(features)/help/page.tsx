@@ -1,9 +1,9 @@
 "use client";
 
-import { redirect } from "next/navigation";
 import { use } from "react";
+import { HelpTab } from "./HelpTab";
 
-export default function ConsultantDashboard({
+export default function HelpPage({
   params,
 }: Readonly<{
   params: Promise<{ consultantId: string }>;
@@ -11,5 +11,5 @@ export default function ConsultantDashboard({
   const resolvedParams = use(params);
   const consultantId = resolvedParams.consultantId;
 
-  redirect(`/dashboard/consultant/${consultantId}/home`);
+  return <HelpTab />;
 }
