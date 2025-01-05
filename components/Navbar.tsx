@@ -15,7 +15,13 @@ const Navbar = () => {
   const { data: session } = useSession();
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
-  const [isAnnouncementBarOpen, setIsAnnouncementBarOpen] = useState(true);
+  const [isAnnouncementBarOpen, setIsAnnouncementBarOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("announcementBarOpen");
+      return stored === null ? true : stored === "true";
+    }
+    return true;
+  });
 
   const toggleMenu = () => {
     setIsOpen(!isOpen);
@@ -27,6 +33,7 @@ const Navbar = () => {
 
   const handleClose = () => {
     setIsAnnouncementBarOpen(false);
+    localStorage.setItem("announcementBarOpen", "false");
   };
 
   useEffect(() => {
@@ -46,30 +53,19 @@ const Navbar = () => {
   const publicAuthRoutes = ["/auth/**"];
   const formRoutes = ["/form/**"];
   const checkoutRoutes = ["/checkout/**"];
+  const dashboardRoutes = ["/dashboard/**"];
   const excludeNavbar =
     micromatch.isMatch(pathname, apiRoutes) ||
     micromatch.isMatch(pathname, publicAuthRoutes) ||
     micromatch.isMatch(pathname, formRoutes) ||
-    micromatch.isMatch(pathname, checkoutRoutes);
+    micromatch.isMatch(pathname, checkoutRoutes) ||
+    micromatch.isMatch(pathname, dashboardRoutes);
   if (excludeNavbar) return null;
 
   return (
     <>
       {isAnnouncementBarOpen && (
-        <div
-          style={{
-            width: "100%",
-            backgroundColor: "black",
-            color: "white",
-            textAlign: "center",
-            padding: "10px 0",
-            position: "fixed",
-            top: 0,
-            zIndex: 1000,
-            display: "flex",
-            justifyContent: "center",
-          }}
-        >
+        <div className="w-full bg-black text-white text-center py-2.5 fixed top-0 z-[1001] flex justify-center">
           🔥 Exciting sale coming soon! Get ready for amazing discounts on
           consultancy sessions! 🔥
           <Button
@@ -83,9 +79,9 @@ const Navbar = () => {
 
       {/* Main Navbar */}
       <nav
-        className={`fixed top-0 w-full z-50 py-2 bg-white bg-opacity-80 backdrop-blur-sm ${
-          isAnnouncementBarOpen ? "pt-12" : "pt-0"
-        } px-6 lg:px-0 ${isScrolled ? "shadow-md" : ""}`}
+        className={`fixed w-full z-[1000] py-2 bg-white px-6 lg:px-0 ${
+          isAnnouncementBarOpen ? "top-[42px]" : "top-0"
+        } ${isScrolled ? "shadow-md" : ""}`}
       >
         <div className="flex justify-between items-center">
           <Link href="/">
