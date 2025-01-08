@@ -6,7 +6,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const consulteeProfileId = searchParams.get("consulteeProfileId");
-    const consultantId = searchParams.get("consultantId");
+    const consultantProfileId = searchParams.get("consultantProfileId");
 
     let webinars;
 
@@ -103,13 +103,11 @@ export async function GET(request: Request) {
           },
         },
       });
-    } else if (consultantId) {
+    } else if (consultantProfileId) {
       webinars = await prisma.webinar.findMany({
         where: {
           webinarPlan: {
-            consultantProfile: {
-              id: consultantId,
-            },
+            consultantProfileId,
           },
         },
         include: {

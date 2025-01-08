@@ -11,24 +11,24 @@ type Event = {
   appointments?: TAppointment[];
 };
 
-type SlotWithAppointment = TAppointment['slotsOfAppointment'][0] & {
+type SlotWithAppointment = TAppointment["slotsOfAppointment"][0] & {
   appointment: TAppointment;
 };
 
 function getAllSlots(events: Event[]): SlotWithAppointment[] {
   return events.flatMap((event) => {
     if (event.appointment?.slotsOfAppointment) {
-      return event.appointment.slotsOfAppointment.map(slot => ({
+      return event.appointment.slotsOfAppointment.map((slot) => ({
         ...slot,
-        appointment: event.appointment!
+        appointment: event.appointment!,
       }));
     }
     if (event.appointments) {
-      return event.appointments.flatMap(apt => 
-        (apt.slotsOfAppointment || []).map(slot => ({
+      return event.appointments.flatMap((apt) =>
+        (apt.slotsOfAppointment || []).map((slot) => ({
           ...slot,
-          appointment: apt
-        }))
+          appointment: apt,
+        })),
       );
     }
     return [];
@@ -36,15 +36,28 @@ function getAllSlots(events: Event[]): SlotWithAppointment[] {
 }
 
 function formatDateTime(date: Date): string {
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+
   const dayName = days[date.getDay()];
   const monthName = months[date.getMonth()];
   const day = date.getDate();
   const hour = date.getHours() % 12 || 12;
-  const minute = date.getMinutes().toString().padStart(2, '0');
-  const period = date.getHours() < 12 ? 'AM' : 'PM';
+  const minute = date.getMinutes().toString().padStart(2, "0");
+  const period = date.getHours() < 12 ? "AM" : "PM";
 
   return `${dayName}, ${monthName} ${day}, ${hour}:${minute} ${period}`;
 }
@@ -58,29 +71,73 @@ function formatDateTime(date: Date): string {
 
       it("verifies appointments from API match UI", () => {
         // Wait for API responses
-        cy.wait(['@getConsultations', '@getSubscriptions', '@getWebinars', '@getClasses']).then((interceptions) => {
+        cy.wait([
+          "@getConsultations",
+          "@getSubscriptions",
+          "@getWebinars",
+          "@getClasses",
+        ]).then((interceptions) => {
+          // Log API responses for debugging
+          interceptions.forEach((intercept) => {
+            cy.log(
+              `API Response for ${intercept.id}:`,
+              intercept.response?.body,
+            );
+          });
+
           // Verify all responses are 200
-          interceptions.forEach(intercept => {
+          interceptions.forEach((intercept) => {
             expect(intercept.response?.statusCode).to.equal(200);
           });
-          const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] = interceptions;
+          const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] =
+            interceptions;
           const consultations = consultationsReq.response?.body?.data || [];
           const subscriptions = subscriptionsReq.response?.body?.data || [];
           const webinars = webinarsReq.response?.body?.data || [];
           const classes = classesReq.response?.body?.data || [];
 
+          // Log processed data for debugging
+          cy.log("Consultations:", consultations);
+          cy.log("Subscriptions:", subscriptions);
+          cy.log("Webinars:", webinars);
+          cy.log("Classes:", classes);
+
           // Process all slots
-          const allEvents = [...consultations, ...subscriptions, ...webinars, ...classes];
+          const allEvents = [
+            ...consultations,
+            ...subscriptions,
+            ...webinars,
+            ...classes,
+          ];
           const allSlots = getAllSlots(allEvents);
 
+          // Log slots for debugging
+          cy.log("All Slots:", allSlots);
+
           // Sort slots by time
-          const sortedSlots = allSlots.sort((a, b) =>
-            new Date(a.slotStartTimeInUTC).getTime() - new Date(b.slotStartTimeInUTC).getTime()
+          const sortedSlots = allSlots.sort(
+            (a, b) =>
+              new Date(a.slotStartTimeInUTC).getTime() -
+              new Date(b.slotStartTimeInUTC).getTime(),
           );
+
+          // If no slots, verify empty state
+          if (sortedSlots.length === 0) {
+            cy.contains("No Appointments Found").should("be.visible");
+            return;
+          }
 
           // Verify each slot appears in UI
           sortedSlots.forEach((slot) => {
-            const formattedTime = formatDateTime(new Date(slot.slotStartTimeInUTC));
+            const formattedTime = formatDateTime(
+              new Date(slot.slotStartTimeInUTC),
+            );
+
+            // Log slot details for debugging
+            cy.log("Checking slot:", {
+              time: formattedTime,
+              appointment: slot.appointment,
+            });
 
             // Find the appointment in UI
             cy.contains(formattedTime)
@@ -89,13 +146,25 @@ function formatDateTime(date: Date): string {
                 // Verify appointment type and details
                 const appointment = slot.appointment;
                 if (appointment.consultation) {
-                  cy.contains(`Consultation - ${appointment.consultation.consultationPlan.title}`);
-                  cy.contains(appointment.consultation.consultationPlan.consultantProfile?.user?.name || '');
+                  cy.contains(
+                    `Consultation - ${appointment.consultation.consultationPlan.title}`,
+                  );
+                  cy.contains(
+                    appointment.consultation.consultationPlan.consultantProfile
+                      ?.user?.name || "",
+                  );
                 } else if (appointment.subscription) {
-                  cy.contains(`Subscription - ${appointment.subscription.subscriptionPlan.title}`);
-                  cy.contains(appointment.subscription.subscriptionPlan.consultantProfile?.user?.name || '');
+                  cy.contains(
+                    `Subscription - ${appointment.subscription.subscriptionPlan.title}`,
+                  );
+                  cy.contains(
+                    appointment.subscription.subscriptionPlan.consultantProfile
+                      ?.user?.name || "",
+                  );
                 } else if (appointment.webinar) {
-                  cy.contains(`Webinar - ${appointment.webinar.webinarPlan.title}`);
+                  cy.contains(
+                    `Webinar - ${appointment.webinar.webinarPlan.title}`,
+                  );
                 } else if (appointment.class) {
                   cy.contains(`Class - ${appointment.class.classPlan.title}`);
                 }
@@ -106,29 +175,43 @@ function formatDateTime(date: Date): string {
           });
 
           // Verify total count matches
-          cy.get('[data-testid="appointment-item"]').should('have.length', sortedSlots.length);
+          cy.get('[data-testid="appointment-item"]').should(
+            "have.length",
+            sortedSlots.length,
+          );
 
           // Verify empty state if no appointments
           if (sortedSlots.length === 0) {
-            cy.contains('No Appointments Found').should('be.visible');
+            cy.contains("No Appointments Found").should("be.visible");
           }
         });
       });
 
       it("verifies timezone conversion", () => {
         // Wait for API responses
-        cy.wait(['@getConsultations', '@getSubscriptions', '@getWebinars', '@getClasses']).then((interceptions) => {
+        cy.wait([
+          "@getConsultations",
+          "@getSubscriptions",
+          "@getWebinars",
+          "@getClasses",
+        ]).then((interceptions) => {
           // Verify all responses are 200
-          interceptions.forEach(intercept => {
+          interceptions.forEach((intercept) => {
             expect(intercept.response?.statusCode).to.equal(200);
           });
-          const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] = interceptions;
+          const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] =
+            interceptions;
           const consultations = consultationsReq.response?.body?.data || [];
           const subscriptions = subscriptionsReq.response?.body?.data || [];
           const webinars = webinarsReq.response?.body?.data || [];
           const classes = classesReq.response?.body?.data || [];
 
-          const allEvents = [...consultations, ...subscriptions, ...webinars, ...classes];
+          const allEvents = [
+            ...consultations,
+            ...subscriptions,
+            ...webinars,
+            ...classes,
+          ];
           const allSlots = getAllSlots(allEvents);
 
           allSlots.forEach((slot) => {
@@ -143,30 +226,45 @@ function formatDateTime(date: Date): string {
 
       it("verifies chronological order", () => {
         // Wait for API responses
-        cy.wait(['@getConsultations', '@getSubscriptions', '@getWebinars', '@getClasses']).then((interceptions) => {
+        cy.wait([
+          "@getConsultations",
+          "@getSubscriptions",
+          "@getWebinars",
+          "@getClasses",
+        ]).then((interceptions) => {
           // Verify all responses are 200
-          interceptions.forEach(intercept => {
+          interceptions.forEach((intercept) => {
             expect(intercept.response?.statusCode).to.equal(200);
           });
-          const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] = interceptions;
+          const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] =
+            interceptions;
           const consultations = consultationsReq.response?.body?.data || [];
           const subscriptions = subscriptionsReq.response?.body?.data || [];
           const webinars = webinarsReq.response?.body?.data || [];
           const classes = classesReq.response?.body?.data || [];
 
-          const allEvents = [...consultations, ...subscriptions, ...webinars, ...classes];
+          const allEvents = [
+            ...consultations,
+            ...subscriptions,
+            ...webinars,
+            ...classes,
+          ];
           const allSlots = getAllSlots(allEvents);
 
           // Sort slots by time
-          const sortedSlots = allSlots.sort((a, b) =>
-            new Date(a.slotStartTimeInUTC).getTime() - new Date(b.slotStartTimeInUTC).getTime()
+          const sortedSlots = allSlots.sort(
+            (a, b) =>
+              new Date(a.slotStartTimeInUTC).getTime() -
+              new Date(b.slotStartTimeInUTC).getTime(),
           );
 
           // Verify appointments appear in chronological order
           let previousTime = new Date(0);
           sortedSlots.forEach((slot) => {
             const currentTime = new Date(slot.slotStartTimeInUTC);
-            expect(currentTime.getTime()).to.be.at.least(previousTime.getTime());
+            expect(currentTime.getTime()).to.be.at.least(
+              previousTime.getTime(),
+            );
             previousTime = currentTime;
           });
         });
@@ -174,25 +272,37 @@ function formatDateTime(date: Date): string {
 
       it("verifies status badges and join button states", () => {
         // Wait for API responses
-        cy.wait(['@getConsultations', '@getSubscriptions', '@getWebinars', '@getClasses']).then((interceptions) => {
+        cy.wait([
+          "@getConsultations",
+          "@getSubscriptions",
+          "@getWebinars",
+          "@getClasses",
+        ]).then((interceptions) => {
           // Verify all responses are 200
-          interceptions.forEach(intercept => {
+          interceptions.forEach((intercept) => {
             expect(intercept.response?.statusCode).to.equal(200);
           });
-          const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] = interceptions;
+          const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] =
+            interceptions;
           const consultations = consultationsReq.response?.body?.data || [];
           const subscriptions = subscriptionsReq.response?.body?.data || [];
           const webinars = webinarsReq.response?.body?.data || [];
           const classes = classesReq.response?.body?.data || [];
 
-          const allEvents = [...consultations, ...subscriptions, ...webinars, ...classes];
+          const allEvents = [
+            ...consultations,
+            ...subscriptions,
+            ...webinars,
+            ...classes,
+          ];
           const allSlots = getAllSlots(allEvents);
 
           allSlots.forEach((slot) => {
             const now = new Date();
             const appointmentTime = new Date(slot.slotStartTimeInUTC);
             const formattedTime = formatDateTime(appointmentTime);
-            const diffInMinutes = (appointmentTime.getTime() - now.getTime()) / (1000 * 60);
+            const diffInMinutes =
+              (appointmentTime.getTime() - now.getTime()) / (1000 * 60);
             const diffInDays = Math.ceil(diffInMinutes / (24 * 60));
 
             cy.contains(formattedTime)
@@ -200,23 +310,35 @@ function formatDateTime(date: Date): string {
               .within(() => {
                 // Verify status badge
                 if (appointmentTime < now) {
-                  cy.get('[data-testid="status-badge"]').should('contain', 'Completed');
+                  cy.get('[data-testid="status-badge"]').should(
+                    "contain",
+                    "Completed",
+                  );
                 } else if (diffInDays <= 7) {
-                  cy.get('[data-testid="status-badge"]').should('contain', 'days');
+                  cy.get('[data-testid="status-badge"]').should(
+                    "contain",
+                    "days",
+                  );
                 } else if (diffInDays <= 30) {
-                  cy.get('[data-testid="status-badge"]').should('contain', 'weeks');
+                  cy.get('[data-testid="status-badge"]').should(
+                    "contain",
+                    "weeks",
+                  );
                 } else {
-                  cy.get('[data-testid="status-badge"]').should('contain', 'months');
+                  cy.get('[data-testid="status-badge"]').should(
+                    "contain",
+                    "months",
+                  );
                 }
 
                 // Verify join button state
-                const joinButton = cy.get('button').contains('Join meet');
+                const joinButton = cy.get("button").contains("Join meet");
                 if (diffInMinutes < 0) {
-                  joinButton.should('be.disabled');
+                  joinButton.should("be.disabled");
                 } else if (diffInMinutes <= 5) {
-                  joinButton.should('not.be.disabled');
+                  joinButton.should("not.be.disabled");
                 } else {
-                  joinButton.should('be.disabled');
+                  joinButton.should("be.disabled");
                 }
               });
           });
@@ -228,31 +350,31 @@ function formatDateTime(date: Date): string {
         cy.intercept(
           "GET",
           `/api/events/consultations?consultantProfileId=${consultantId}`,
-          { statusCode: 500, body: { error: "Server error" } }
+          { statusCode: 500, body: { error: "Server error" } },
         ).as("failedConsultations");
 
         cy.intercept(
           "GET",
           `/api/events/subscriptions?consultantProfileId=${consultantId}`,
-          { statusCode: 500, body: { error: "Server error" } }
+          { statusCode: 500, body: { error: "Server error" } },
         ).as("failedSubscriptions");
 
         cy.intercept(
           "GET",
           `/api/events/webinars?consultantProfileId=${consultantId}`,
-          { statusCode: 500, body: { error: "Server error" } }
+          { statusCode: 500, body: { error: "Server error" } },
         ).as("failedWebinars");
 
         cy.intercept(
           "GET",
           `/api/events/classes?consultantProfileId=${consultantId}`,
-          { statusCode: 500, body: { error: "Server error" } }
+          { statusCode: 500, body: { error: "Server error" } },
         ).as("failedClasses");
 
         // Visit page and verify error state
         cy.visit(`/dashboard/consultant/${consultantId}/appointments`);
-        cy.contains('Error loading appointments').should('be.visible');
+        cy.contains("Error loading appointments").should("be.visible");
       });
     });
-  }
+  },
 );

@@ -5,7 +5,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const consulteeProfileId = searchParams.get("consulteeProfileId");
-    const consultantId = searchParams.get("consultantId");
+    const consultantProfileId = searchParams.get("consultantProfileId");
 
     let classes;
 
@@ -100,13 +100,11 @@ export async function GET(request: Request) {
           },
         ],
       });
-    } else if (consultantId) {
+    } else if (consultantProfileId) {
       classes = await prisma.class.findMany({
         where: {
           classPlan: {
-            consultantProfile: {
-              id: consultantId,
-            },
+            consultantProfileId,
           },
         },
         include: {
@@ -118,7 +116,6 @@ export async function GET(request: Request) {
           appointments: true,
         },
       });
-      console.log("classes", classes);
     } else {
       classes = await prisma.class.findMany({
         include: {
