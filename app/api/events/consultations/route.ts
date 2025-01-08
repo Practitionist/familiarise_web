@@ -15,7 +15,9 @@ export async function GET(request: NextRequest) {
 
     if (consultantProfileId) {
       whereClause.consultationPlan = {
-        consultantProfileId,
+        consultantProfile: {
+          id: consultantProfileId,
+        },
       };
     }
 
