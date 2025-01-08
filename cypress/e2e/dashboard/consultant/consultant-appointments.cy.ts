@@ -1,6 +1,6 @@
-import { TAppointment } from "../../../types/appointment";
-import consultantIdsFixture from "../../fixtures/consultant-ids.json";
-import { setupConsultantAppointments } from "./setup.cy";
+import { TAppointment } from "../../../../types/appointment";
+import consultantIdsFixture from "../../../fixtures/consultant-ids.json";
+import { setupConsultantAppointments } from "./consultant-setup.cy";
 
 interface ConsultantIdsFixture {
   consultantIds: string[];
@@ -57,13 +57,12 @@ function formatDateTime(date: Date): string {
       });
 
       it("verifies appointments from API match UI", () => {
-        // Get all events from API responses
-        cy.wait([
-          "@getConsultations",
-          "@getSubscriptions",
-          "@getWebinars",
-          "@getClasses"
-        ]).then((interceptions) => {
+        // Wait for API responses
+        cy.wait(['@getConsultations', '@getSubscriptions', '@getWebinars', '@getClasses']).then((interceptions) => {
+          // Verify all responses are 200
+          interceptions.forEach(intercept => {
+            expect(intercept.response?.statusCode).to.equal(200);
+          });
           const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] = interceptions;
           const consultations = consultationsReq.response?.body?.data || [];
           const subscriptions = subscriptionsReq.response?.body?.data || [];
@@ -117,13 +116,12 @@ function formatDateTime(date: Date): string {
       });
 
       it("verifies timezone conversion", () => {
-        // Get all events and verify their times
-        cy.wait([
-          "@getConsultations",
-          "@getSubscriptions",
-          "@getWebinars",
-          "@getClasses"
-        ]).then((interceptions) => {
+        // Wait for API responses
+        cy.wait(['@getConsultations', '@getSubscriptions', '@getWebinars', '@getClasses']).then((interceptions) => {
+          // Verify all responses are 200
+          interceptions.forEach(intercept => {
+            expect(intercept.response?.statusCode).to.equal(200);
+          });
           const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] = interceptions;
           const consultations = consultationsReq.response?.body?.data || [];
           const subscriptions = subscriptionsReq.response?.body?.data || [];
@@ -144,12 +142,12 @@ function formatDateTime(date: Date): string {
       });
 
       it("verifies chronological order", () => {
-        cy.wait([
-          "@getConsultations",
-          "@getSubscriptions",
-          "@getWebinars",
-          "@getClasses"
-        ]).then((interceptions) => {
+        // Wait for API responses
+        cy.wait(['@getConsultations', '@getSubscriptions', '@getWebinars', '@getClasses']).then((interceptions) => {
+          // Verify all responses are 200
+          interceptions.forEach(intercept => {
+            expect(intercept.response?.statusCode).to.equal(200);
+          });
           const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] = interceptions;
           const consultations = consultationsReq.response?.body?.data || [];
           const subscriptions = subscriptionsReq.response?.body?.data || [];
@@ -175,12 +173,12 @@ function formatDateTime(date: Date): string {
       });
 
       it("verifies status badges and join button states", () => {
-        cy.wait([
-          "@getConsultations",
-          "@getSubscriptions",
-          "@getWebinars",
-          "@getClasses"
-        ]).then((interceptions) => {
+        // Wait for API responses
+        cy.wait(['@getConsultations', '@getSubscriptions', '@getWebinars', '@getClasses']).then((interceptions) => {
+          // Verify all responses are 200
+          interceptions.forEach(intercept => {
+            expect(intercept.response?.statusCode).to.equal(200);
+          });
           const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] = interceptions;
           const consultations = consultationsReq.response?.body?.data || [];
           const subscriptions = subscriptionsReq.response?.body?.data || [];
