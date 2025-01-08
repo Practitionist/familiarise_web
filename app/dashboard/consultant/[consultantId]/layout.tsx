@@ -142,7 +142,7 @@ export default function ConsultantLayout({
   return (
     <div className="flex min-h-screen bg-gray-100">
       {/* Sidebar */}
-      <aside className="w-64 bg-white border-r">
+      <aside className="w-64 bg-white border-r relative min-h-screen">
         {/* Profile Section */}
         <div className="p-4 border-b">
           <div className="flex items-center space-x-3">
@@ -163,7 +163,7 @@ export default function ConsultantLayout({
         </div>
 
         {/* Navigation */}
-        <nav className="p-4">
+        <nav className="p-4 pb-48">
           <ul className="space-y-2">
             {NAV_ITEMS.map((item) => (
               <li key={item.path}>
@@ -183,8 +183,15 @@ export default function ConsultantLayout({
           </ul>
         </nav>
 
-        {/* Settings and Logout */}
-        <div className="absolute bottom-0 w-64 border-t">
+        {/* Bottom Navigation */}
+        <div className="fixed bottom-0 w-64 border-t bg-white">
+          <Link
+            href="/"
+            className="flex items-center space-x-2 p-4 text-gray-600 hover:bg-gray-100 transition-colors"
+          >
+            <span>⬅️</span>
+            <span>Back</span>
+          </Link>
           <Link
             href={`/dashboard/consultant/${consultantId}/settings`}
             className={`flex items-center space-x-2 p-4 transition-colors ${
