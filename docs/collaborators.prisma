@@ -1,0 +1,82 @@
+
+// Create a new model for collaborators
+model Collaborator {
+  id          String   @id @default(cuid())
+  role        CollaboratorRole
+  permissions Json?    // Store specific permissions for the collaborator
+  addedAt     DateTime @default(now())
+  
+  // The consultant who is collaborating
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
+
+  // Many-to-many relations
+  webinarPlans WebinarPlan[]
+  classPlans   ClassPlan[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
+}
+
+// Add enum for collaborator roles
+enum CollaboratorRole {
+  CO_HOST
+  ASSISTANT
+  GUEST_SPEAKER
+  MODERATOR
+}
+
+// Update WebinarPlan model to include collaborators
+model WebinarPlan {
+  id               String   @id @default(cuid())
+  title            String
+  topics           Topic[]
+  description      String?  @db.Text
+  price            Int
+  durationInHours  Float    @default(1)
+  maxParticipants  Int      @default(100)
+  language         String?  @default("English")
+  level            String?  @default("Beginner")
+  prerequisites    String?  @default("None")
+  materialProvided String?  @default("None")
+  learningOutcomes String[] @default([])
+
+  consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
+  consultantProfileId String?
+  collaborators      Collaborator[]    // Add this line
+  webinars           Webinar[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Update ClassPlan model to include collaborators
+model ClassPlan {
+  id                  String           @id @default(cuid())
+  title               String
+  description         String           @db.Text
+  topics              Topic[]
+  classContents       ClassContent[]
+  price               Int
+  certificateProvided Boolean          @default(false)
+  durationInMonths    Int              @default(1)
+  callsPerWeek        Int              @default(1)
+  videoMeetings       Int              @default(1)
+  emailSupport        PlanEmailSupport @default(GENERAL)
+  maxParticipants     Int              @default(1)
+  language            String?          @default("English")
+  level               String?          @default("Beginner")
+  prerequisites       String?          @default("None")
+  materialProvided    String?          @default("None")
+  learningOutcomes    String[]         @default([])
+
+  consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
+  consultantProfileId String?
+  collaborators      Collaborator[]    // Add this line
+  classes            Class[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
