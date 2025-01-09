@@ -6,13 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { fetchReviews } from "@/hooks/useUserData";
 import {
-    fetchReviews
-} from "@/hooks/useUserData";
-import {
-    ConsultantProfile,
-    ConsultantReview,
-    WebinarPlan
+  ConsultantProfile,
+  ConsultantReview,
+  WebinarPlan,
 } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useEffect, useState } from "react";
