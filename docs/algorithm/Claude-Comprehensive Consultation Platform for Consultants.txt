@@ -1,0 +1,1127 @@
+## Prompt:
+Here is the structure of my startup consultx, a consultation platform for consultants and consultees. we offer 4 kinds of services. Consultations, subscriptions, webinars, classes
+
+## Response:
+I'll help analyze your ConsultX platform structure. From the schema and directory tree, I can see you've built a comprehensive consultation platform with well-organized features. Let me break down the key aspects:
+Core Services:
+
+Consultations (1:1 sessions)
+
+
+Single session bookings
+Customizable duration and pricing
+Individual consultation plans
+
+
+Subscriptions (Long-term engagement)
+
+
+Monthly subscription models
+Multiple calls per week
+
+
+## Prompt:
+Based on this schema for my consultation platform startup i want you to suggest me the workflow for the 4 appointment types-consultation,subscription,webinar and classes. from the user sign up/onboarding -> explore mentors -> booking -> scheduling -> payment -> actual event -> follow up etc. Also, we want to handle surprise scenario, like refunds, cancellation, rescheduling, you tell me more. Please dont use your own models and types. use only the ones from schema. Based on this schema for my consultation platform startup i want you to suggest me the workflow for the 4 appointment types-consultation,subscription,webinar and classes. from the user sign up/onboarding -> explore mentors -> booking -> scheduling -> payment -> actual event -> follow up etc. Also, we want to handle surprise scenario, like refunds, cancellation, rescheduling, you tell me more. the thing is the consultationId, subscriptionId are generated after payment and booking not before it. but classes and webinar are created by the consultant before. Thus classId and webinarId are there before payment. Also, give me the sample url. also while booking please explain in what and why should be query param vs request body
+Also, remember that for subscriptions, a part of the workflow is that consultee requests for subscription. The consultant cannot approve without declaring the slots of appointment. In consultation, if paid , then confirmed or else pending until payment done but booking confirmed. Expires in sometime.(try this without affecting the schema).
+
+## Response:
+I'll help design comprehensive workflows for your consultation platform that align with your schema and handle various scenarios. Let me break it down by appointment type and then cover edge cases.Consultation Booking WorkflowClick to open diagramSubscription Booking WorkflowClick to open diagramLet me detail the workflows and APIs for each type:
+
+CONSULTATION WORKFLOW:
+
+A. Initial Setup:
+POST /api/auth/signup
+POST /api/form/onboarding/{userId}
+Body: {name, email, phone, role: CONSULTEE}
+B. Explore & Book:
+GET /api/user/consultants?domain={domainId}&subDomain={subDomainId}
+GET /api/user/consultants/{consultantId}
+GET /api/slots/availability/{consultantId}?date={date}
+C. Booking Process:
+POST /api/events/consultations/book
+Body: {
+  consultationPlanId,
+  requestedById,  // consulteeId
+  slotStartTimeInUTC,
+  slotEndTimeInUTC,
+  requestNotes
+}
+D. Payment & Confirmation:
+POST /api/payments/stripe/create
+Body: {
+  amount,
+  currency,
+  appointmentType: "CONSULTATION",
+  planId: consultationPlanId,
+  slotId
+}
+
+SUBSCRIPTION WORKFLOW:
+
+A. Request Submission:
+POST /api/events/subscriptions/book
+Body: {
+  subscriptionPlanId,
+  requestedById,
+  startDate,
+  endDate,
+  requestNotes
+}
+B. Consultant Slot Allocation:
+POST /api/slots/availability/weekly
+Body: {
+  consultantProfileId,
+  dayOfWeekforStartTimeInUTC,
+  slotStartTimeInUTC,
+  dayOfWeekforEndTimeInUTC,
+  slotEndTimeInUTC
+}
+
+WEBINAR WORKFLOW:
+
+A. Browse Webinars:
+GET /api/plans/webinars?topic={topicId}
+GET /api/plans/webinars/{webinarId}
+B. Booking:
+POST /api/events/webinars/book
+Body: {
+  webinarId,
+  userId
+}
+
+CLASS WORKFLOW:
+
+A. Browse Classes:
+GET /api/plans/classes?topic={topicId}
+GET /api/plans/classes/{classId}
+B. Enrollment:
+POST /api/events/classes/book
+Body: {
+  classId,
+  userId
+}
+HANDLING EDGE CASES:
+
+Cancellations:
+
+PATCH /api/events/consultations/{consultationId}
+Body: {
+  requestStatus: "CANCELLED",
+  cancellationReason
+}
+
+Rescheduling:
+
+PATCH /api/slots/appointments/{appointmentId}
+Body: {
+  newSlotStartTimeInUTC,
+  newSlotEndTimeInUTC
+}
+
+Refunds:
+
+POST /api/payments/{paymentGateway}/refund
+Body: {
+  paymentId,
+  refundAmount,
+  reason
+}
+Key Design Decisions:
+
+Query Params vs Request Body:
+
+
+Use Query Params for:
+
+Filtering (GET /consultants?domain=x)
+Pagination (GET /classes?page=1&limit=10)
+Simple lookups (GET /slots?date=2024-01-04)
+
+
+Use Request Body for:
+
+Complex data structures (booking details)
+Large payload data (user profiles)
+Sensitive information (payment details)
+
+
+
+
+Status Management:
+
+
+Consultation: Uses RequestStatus enum (PENDING, APPROVED, REJECTED, CANCELLED, EXPIRED)
+Webinar/Class: Uses specific status enums (SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED)
+
+
+Appointment Slots:
+
+
+SlotOfAppointment model handles actual bookings
+SlotOfAvailabilityWeekly for recurring slots
+SlotOfAvailabilityCustom for one-time slots
+
+
+Payment Integration:
+
+
+Payment model tracks all transactions
+Supports multiple payment gateways (STRIPE, RAZORPAY)
+Links payments to appointments via appointmentId
+
+
+MeetingRoom Management:
+
+
+Supports multiple platforms (ZOOM, GOOGLE_MEET, MICROSOFT_TEAMS, STREAM)
+Records meeting URLs and access credentials
+Handles recording storage for webinars and classes
+
+Additional Considerations:
+
+Expiration Handling:
+
+// Add to Consultation model
+expiryTime: DateTime
+paymentPendingUntil: DateTime
+
+Waitlist Management:
+
+
+Already supported by Waitlist model for classes and webinars
+Consider adding for high-demand consultants
+
+
+Notification System:
+
+// Utilize NotificationPreference model
+// Send notifications for:
+- Booking confirmations
+- Payment reminders
+- Session reminders
+- Cancellations/Rescheduling
+- Recording availability
+Would you like me to elaborate on any specific part of these workflows or create additional diagrams for specific scenarios?
+
+## Prompt:
+Good Progress. First give me the diagrams and other stuff for classes and webinars as well.
+
+## Response:
+I'll create the workflow diagrams for classes and webinars, then follow up with detailed implementation considerations.Class Enrollment WorkflowClick to open diagramWebinar Registration WorkflowClick to open diagramDetailed API Workflows for Classes and Webinars:
+
+CLASS WORKFLOW:
+
+A. Class Creation (Consultant Side):
+POST /api/plans/classes
+Body: {
+  title,
+  description,
+  topics: string[],
+  price,
+  durationInMonths,
+  maxParticipants,
+  certificateProvided,
+  classContents: [{
+    title,
+    description,
+    contentType,
+    contentUrl,
+    order,
+    hoursAllotted
+  }]
+}
+B. Class Schedule Management:
+POST /api/events/classes/{classId}
+Body: {
+  startDate,
+  endDate,
+  appointmentSlots: [{
+    slotStartTimeInUTC,
+    slotEndTimeInUTC
+  }]
+}
+C. Student Enrollment:
+POST /api/events/classes/book
+Body: {
+  classId,
+  userId
+}
+
+// If class is full, auto-waitlist:
+POST /api/events/classes/{classId}/waitlist
+Body: {
+  userId
+}
+D. Meeting Room Creation:
+POST /api/events/classes/{classId}/meeting
+Body: {
+  platform: Platform,
+  meetingUrl,
+  meetingId?,
+  passcode?
+}
+E. Recording Management:
+POST /api/events/classes/{classId}/recordings
+Body: {
+  title,
+  recordingUrl,
+  duration,
+  recordedAt
+}
+
+WEBINAR WORKFLOW:
+
+A. Webinar Creation:
+POST /api/plans/webinars
+Body: {
+  title,
+  description,
+  topics: string[],
+  price,
+  durationInHours,
+  maxParticipants,
+  language,
+  level,
+  prerequisites,
+  materialProvided,
+  learningOutcomes
+}
+B. Webinar Scheduling:
+POST /api/events/webinars/{webinarId}
+Body: {
+  appointment: {
+    slotStartTimeInUTC,
+    slotEndTimeInUTC
+  }
+}
+C. Registration Process:
+POST /api/events/webinars/book
+Body: {
+  webinarId,
+  userId
+}
+
+// Waitlist handling:
+POST /api/events/webinars/{webinarId}/waitlist
+Body: {
+  userId
+}
+Query Parameters vs Request Body Guidelines:
+
+Query Parameters:
+
+// Filtering
+GET /api/plans/classes?topic={topicId}&level={level}
+GET /api/plans/webinars?price_min={min}&price_max={max}
+
+// Searching
+GET /api/events/classes?search={searchTerm}
+
+// Pagination
+GET /api/plans/webinars?page={page}&limit={limit}
+
+// Sorting
+GET /api/events/classes?sort=startDate&order=desc
+
+Request Body (Examples of when to use):
+
+// Complex objects
+POST /api/plans/classes
+Body: {
+  classDetails: {...},
+  schedule: [...],
+  materials: [...]
+}
+
+// Batch operations
+POST /api/events/classes/bulk-update
+Body: {
+  classIds: string[],
+  updates: {...}
+}
+
+// Nested relationships
+POST /api/plans/webinars
+Body: {
+  webinarDetails: {...},
+  topics: [...],
+  prerequisites: [...]
+}
+Edge Cases Handling:
+
+Capacity Management:
+
+// Before booking:
+if (currentParticipants >= maxParticipants) {
+  // Add to waitlist
+  await addToWaitlist(userId, eventId);
+  // Notify user about waitlist status
+}
+
+Recording Access:
+
+// After session recording:
+POST /api/events/recordings
+Body: {
+  meetingRoomId,
+  title,
+  recordingUrl,
+  duration,
+  recordedAt
+}
+
+Certificate Generation (for Classes):
+
+// On class completion:
+POST /api/events/classes/{classId}/certificates
+Body: {
+  userId,
+  completionDate,
+  grade?: string
+}
+Would you like me to elaborate on any specific aspect or create additional diagrams for particular scenarios?
+
+## Prompt:
+Based on @/prisma/schema.prisma, i want to finish the complete workflow of the consultee registration for any of the 4 events/plans-consultation,subscription, webinar, class. consultations and subscriptions are first booked and then created. classes and webinars are first paid for and then joined by consultee.   Now in more depth:  In Consultation, the consultee selects the slot(slot of availability for the consultant) and if he pays he gets the slot confirmed. if he chooses to pay later the consultant has to approve, then also his slot is reserved but has to pay before the actual consultation. Other consultee can also make parallel requests for the same slot. However, the consultant's first approval consultee gets the slot booked.The slot of appointment is created correspondingly. Check out @app/explore/experts/[consultantId]/page.tsx.    In subscription, the consultee just makes the requests for the plan. unlike consultation, he cannot pay before the consultant has approved. The consultant after seeing the request has to not only approve the subscription request but also create the slots of appointment(from the slots of availability(if slots of availability not enough, creating slots of appointment creates the slots of availability by selection in the calendar UI)). Once the consultant has approved and allocated the slots, the consultee gets notification in his dashboard and also a mail in his inbox to go to the checkout page. If user doesn't pay in 2-3 days or before the event(in case < 2-3 days), the slots of appointment are expired but the slots of availability still remain for the consultant ease of use. The number of slots of appointment/frequency/duration/details are as per parent subscription plan. Check out prisma/schema.prisma for more details.   In webinar, the consultant first creates the webinar(which in turn creates the appointment and the slot of appointment and slot of availability if not present), the consultees have to pay first to join.  in classes, the consultant first creates the class(which in turn creates the appointment and the slot of appointment and slot of availability if not present), the consultees have to pay first to join.  
+ both webinars and classes based upon their parent plan has a max capacity.   we would be doing payments using stripe and razorpay. The appointment lock is during the payment process which expires in time.  I have written some partly correct code for booking and some partly correct code for payment. I am not able to make sense of the working.
+
+## Response:
+I'll help design a complete workflow for the consultation platform with payment integration and slot management. Let me break this down systematically.Consultation Booking SequenceClick to open diagramSubscription Booking SequenceClick to open diagramLet me provide the implementation details for each flow:
+
+CONSULTATION BOOKING API:
+
+// app/api/events/consultations/book/route.ts
+export async function POST(req: Request) {
+  const { consultationPlanId, slotId, paymentType } = await req.json();
+  
+  try {
+    // 1. Lock the slot temporarily (15 min expiry)
+    const tentativeSlot = await prisma.slotOfAppointment.create({
+      data: {
+        slotStartTimeInUTC,
+        slotEndTimeInUTC,
+        isTentative: true,
+        // Set expiry for 15 mins
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000)
+      }
+    });
+
+    if (paymentType === 'DIRECT') {
+      // 2. Create payment intent
+      const paymentIntent = await createPaymentIntent({
+        amount,
+        currency: 'USD',
+        appointmentType: 'CONSULTATION'
+      });
+
+      // 3. Return payment URL
+      return {
+        paymentUrl: paymentIntent.url,
+        slotId: tentativeSlot.id
+      };
+    } else {
+      // Create pending consultation
+      const consultation = await prisma.consultation.create({
+        data: {
+          consultationPlanId,
+          requestedById: consulteeId,
+          requestStatus: 'PENDING',
+          appointment: {
+            create: {
+              appointmentType: 'CONSULTATION',
+              slotsOfAppointment: {
+                connect: { id: tentativeSlot.id }
+              }
+            }
+          }
+        }
+      });
+      
+      return { consultationId: consultation.id };
+    }
+  } catch (error) {
+    // Handle errors and cleanup
+  }
+}
+
+// Payment webhook handler
+export async function POST(req: Request) {
+  const event = await validateWebhookEvent(req);
+  
+  if (event.type === 'payment_intent.succeeded') {
+    const { slotId } = event.data;
+    
+    await prisma.$transaction([
+      // Confirm slot
+      prisma.slotOfAppointment.update({
+        where: { id: slotId },
+        data: { isTentative: false }
+      }),
+      // Create or update consultation
+      prisma.consultation.create/update({
+        // ... consultation details
+      })
+    ]);
+  }
+}
+
+SUBSCRIPTION BOOKING:
+
+// app/api/events/subscriptions/book/route.ts
+export async function POST(req: Request) {
+  const { subscriptionPlanId, requestNotes } = await req.json();
+  
+  // Create subscription request
+  const subscription = await prisma.subscription.create({
+    data: {
+      subscriptionPlanId,
+      requestedById: consulteeId,
+      requestStatus: 'PENDING',
+      requestNotes
+    }
+  });
+  
+  // Notify consultant
+  await notifyConsultant(subscription.id);
+  
+  return { subscriptionId: subscription.id };
+}
+
+// Consultant approval & slot allocation
+export async function PATCH(req: Request) {
+  const { subscriptionId, slots } = await req.json();
+  
+  await prisma.$transaction(async (tx) => {
+    // 1. Create slots of appointment
+    const appointmentSlots = await Promise.all(
+      slots.map(slot => 
+        tx.slotOfAppointment.create({
+          data: {
+            slotStartTimeInUTC: slot.start,
+            slotEndTimeInUTC: slot.end,
+            isTentative: true,
+            expiresAt: new Date(Date.now() + 72 * 60 * 60 * 1000) // 3 days
+          }
+        })
+      )
+    );
+    
+    // 2. Create payment intent
+    const paymentIntent = await createPaymentIntent({/*...*/});
+    
+    // 3. Update subscription
+    await tx.subscription.update({
+      where: { id: subscriptionId },
+      data: {
+        requestStatus: 'APPROVED',
+        appointment: {
+          create: {
+            appointmentType: 'SUBSCRIPTION',
+            slotsOfAppointment: {
+              connect: appointmentSlots.map(slot => ({ id: slot.id }))
+            }
+          }
+        }
+      }
+    });
+    
+    // 4. Send payment link to consultee
+    await sendPaymentLink(paymentIntent.url);
+  });
+}
+
+CLEANUP CRON JOB:
+
+// Cleanup expired slots
+export async function cleanupExpiredSlots() {
+  await prisma.$transaction([
+    // Clean tentative slots
+    prisma.slotOfAppointment.deleteMany({
+      where: {
+        isTentative: true,
+        expiresAt: { lt: new Date() }
+      }
+    }),
+    
+    // Update expired subscription requests
+    prisma.subscription.updateMany({
+      where: {
+        requestStatus: 'APPROVED',
+        appointment: {
+          slotsOfAppointment: {
+            some: {
+              expiresAt: { lt: new Date() }
+            }
+          }
+        }
+      },
+      data: {
+        requestStatus: 'EXPIRED'
+      }
+    })
+  ]);
+}
+Key Implementation Details:
+
+Slot Locking:
+
+// Middleware to check slot availability
+export async function checkSlotAvailability(
+  slotId: string,
+  consultantId: string
+) {
+  const slot = await prisma.slotOfAppointment.findFirst({
+    where: {
+      id: slotId,
+      isTentative: false,
+      OR: [
+        { consultation: { requestStatus: 'APPROVED' } },
+        { subscription: { requestStatus: 'APPROVED' } }
+      ]
+    }
+  });
+  
+  if (slot) throw new Error('Slot already booked');
+}
+
+Payment Integration:
+
+// utils/payment.ts
+export async function createPaymentIntent({
+  amount,
+  currency,
+  appointmentType,
+  metadata
+}: PaymentIntentParams) {
+  if (metadata.gateway === 'STRIPE') {
+    return stripe.paymentIntents.create({
+      amount,
+      currency,
+      metadata: {
+        appointmentType,
+        ...metadata
+      }
+    });
+  } else {
+    return razorpay.orders.create({
+      amount,
+      currency,
+      notes: {
+        appointmentType,
+        ...metadata
+      }
+    });
+  }
+}
+Would you like me to:
+
+Add diagrams for webinar/class flows?
+Provide more detailed implementation for any specific part?
+Explain the payment locking mechanism in more detail?
+
+
+## Prompt:
+i am confused as to should we make 2 api calls when the customer clicks the checkout button. One for the appointment booking one for payment going through, or a single one doing both or should it be transaction or what. am totally confused
+
+## Response:
+Let me explain the best approach for handling checkout flow. The key challenge here is maintaining data consistency between booking and payment.
+Here's the recommended approach:
+
+SINGLE ENDPOINT WITH TRANSACTION (Best Approach):
+
+// app/api/checkout/register/[appointmentType]/route.ts
+
+export async function POST(
+  req: Request,
+  { params }: { params: { appointmentType: AppointmentsType } }
+) {
+  const { planId, slotIds, paymentGateway = 'STRIPE' } = await req.json();
+
+  // Start transaction to ensure atomicity
+  return await prisma.$transaction(async (tx) => {
+    // 1. First create temporary slot reservation
+    const slotOfAppointment = await tx.slotOfAppointment.create({
+      data: {
+        slotStartTimeInUTC,
+        slotEndTimeInUTC,
+        isTentative: true, // Important: Mark as tentative
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000) // 15 min expiry
+      }
+    });
+
+    // 2. Create payment intent with the slot reference
+    const paymentIntent = await createPaymentIntent({
+      amount,
+      currency: 'USD',
+      metadata: {
+        slotId: slotOfAppointment.id,
+        appointmentType: params.appointmentType,
+        planId
+      }
+    });
+
+    // 3. Return necessary info for frontend
+    return {
+      paymentIntentId: paymentIntent.id,
+      clientSecret: paymentIntent.client_secret,
+      slotId: slotOfAppointment.id
+    };
+  });
+}
+
+// Webhook handler that confirms the booking
+export async function POST(req: Request) {
+  const event = await validateWebhookEvent(req);
+  
+  if (event.type === 'payment_intent.succeeded') {
+    const { slotId, appointmentType, planId } = event.metadata;
+    
+    await prisma.$transaction(async (tx) => {
+      // 1. Confirm the slot
+      await tx.slotOfAppointment.update({
+        where: { id: slotId },
+        data: { isTentative: false }
+      });
+
+      // 2. Create the actual appointment based on type
+      if (appointmentType === 'CONSULTATION') {
+        await tx.consultation.create({
+          data: {
+            consultationPlanId: planId,
+            requestStatus: 'APPROVED',
+            appointment: {
+              create: {
+                appointmentType: 'CONSULTATION',
+                slotsOfAppointment: {
+                  connect: { id: slotId }
+                }
+              }
+            }
+          }
+        });
+      }
+      // Similar for other appointment types...
+    });
+  }
+}
+The key points here:
+
+Use a single endpoint for initiating checkout
+Always use transactions for data consistency
+Use tentative slots with expiry
+Confirm bookings only on successful payment webhook
+
+This approach is better than alternatives because:
+❌ TWO SEPARATE CALLS (Not Recommended):
+// DON'T DO THIS
+// Frontend
+const bookSlot = async () => {
+  // First API call
+  const booking = await fetch('/api/book-slot', ...);
+  
+  // Second API call
+  const payment = await fetch('/api/create-payment', ...);
+  // Problems: Race conditions, inconsistent state if one fails
+}
+❌ PAYMENT FIRST, THEN BOOKING (Not Recommended):
+// DON'T DO THIS
+const checkout = async () => {
+  // Create payment first
+  const payment = await createPayment();
+  
+  // Then book slot
+  const booking = await bookSlot();
+  // Problems: Slot might be taken by someone else while payment processes
+}
+Here's how the frontend should handle this:
+// app/checkout/register/[appointmentType]/page.tsx
+
+const CheckoutPage = () => {
+  const handleCheckout = async () => {
+    try {
+      // 1. Single API call to create both slot and payment intent
+      const response = await fetch(`/api/checkout/register/${appointmentType}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          planId,
+          slotIds,
+          paymentGateway
+        })
+      });
+      
+      const { clientSecret, slotId } = await response.json();
+
+      // 2. Handle payment using Stripe Elements or Razorpay
+      if (paymentGateway === 'STRIPE') {
+        const result = await stripe.confirmPayment({
+          clientSecret,
+          confirmParams: {
+            return_url: `/success?slot=${slotId}`,
+          }
+        });
+      } else {
+        // Razorpay flow
+      }
+    } catch (error) {
+      // Handle errors
+    }
+  };
+
+  return (
+    // Checkout UI
+  );
+};
+Important considerations:
+
+Slot Expiry:
+
+// Set up a cleanup job
+export const cleanupExpiredSlots = async () => {
+  await prisma.slotOfAppointment.deleteMany({
+    where: {
+      isTentative: true,
+      expiresAt: { lt: new Date() }
+    }
+  });
+};
+
+Concurrent Bookings:
+
+// Add a unique constraint or check in transaction
+const existingBooking = await tx.slotOfAppointment.findFirst({
+  where: {
+    slotStartTimeInUTC,
+    slotEndTimeInUTC,
+    isTentative: false
+  }
+});
+
+if (existingBooking) {
+  throw new Error('Slot already booked');
+}
+
+Payment Status Tracking:
+
+// Always track payment status in DB
+await prisma.payment.create({
+  data: {
+    amount,
+    paymentStatus: 'PENDING',
+    paymentIntent: paymentIntent.id,
+    appointmentId: appointment.id
+  }
+});
+Would you like me to elaborate on any part of this flow or show how to handle specific edge cases?
+
+## Prompt:
+please elaborate and also handle edge cases
+
+## Response:
+I'll elaborate on the checkout flow and cover important edge cases. Let me break this down into detailed components.Complete Checkout Flow with Edge CasesClick to open diagramNow, let's implement this complete flow with error handling:
+// types/checkout.ts
+interface CheckoutSession {
+  id: string;
+  slotId: string;
+  appointmentType: AppointmentsType;
+  planId: string;
+  status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'EXPIRED';
+  expiresAt: Date;
+  paymentIntentId?: string;
+  errorMessage?: string;
+  retryCount: number;
+}
+
+// app/api/checkout/register/[appointmentType]/route.ts
+export async function POST(
+  req: Request,
+  { params }: { params: { appointmentType: AppointmentsType } }
+) {
+  const { planId, slotIds, paymentGateway = 'STRIPE' } = await req.json();
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      // 1. Check slot availability with lock
+      const existingSlot = await tx.slotOfAppointment.findFirst({
+        where: {
+          slotStartTimeInUTC,
+          slotEndTimeInUTC,
+          OR: [
+            { isTentative: false },
+            {
+              isTentative: true,
+              expiresAt: { gt: new Date() }
+            }
+          ]
+        }
+      });
+
+      if (existingSlot) {
+        throw new Error('SLOT_UNAVAILABLE');
+      }
+
+      // 2. Create temporary slot with lock
+      const slot = await tx.slotOfAppointment.create({
+        data: {
+          slotStartTimeInUTC,
+          slotEndTimeInUTC,
+          isTentative: true,
+          expiresAt: new Date(Date.now() + 15 * 60 * 1000)
+        }
+      });
+
+      // 3. Create checkout session
+      const checkoutSession = await tx.checkoutSession.create({
+        data: {
+          slotId: slot.id,
+          appointmentType: params.appointmentType,
+          planId,
+          status: 'PENDING',
+          expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+          retryCount: 0
+        }
+      });
+
+      // 4. Create payment intent
+      const paymentIntent = await createPaymentIntent({
+        amount,
+        currency: 'USD',
+        metadata: {
+          checkoutSessionId: checkoutSession.id,
+          slotId: slot.id
+        }
+      });
+
+      // 5. Update session with payment info
+      await tx.checkoutSession.update({
+        where: { id: checkoutSession.id },
+        data: { paymentIntentId: paymentIntent.id }
+      });
+
+      return {
+        clientSecret: paymentIntent.client_secret,
+        sessionId: checkoutSession.id
+      };
+    });
+  } catch (error) {
+    if (error.message === 'SLOT_UNAVAILABLE') {
+      return new Response('Slot no longer available', { status: 409 });
+    }
+    throw error;
+  }
+}
+
+// Webhook handler with retry logic
+export async function POST(req: Request) {
+  const event = await validateWebhookEvent(req);
+  
+  if (event.type === 'payment_intent.succeeded') {
+    const { checkoutSessionId } = event.metadata;
+    
+    try {
+      await prisma.$transaction(async (tx) => {
+        // 1. Get checkout session
+        const session = await tx.checkoutSession.findUnique({
+          where: { id: checkoutSessionId }
+        });
+
+        if (!session) {
+          throw new Error('INVALID_SESSION');
+        }
+
+        // 2. Check slot availability again
+        const slot = await tx.slotOfAppointment.findUnique({
+          where: { id: session.slotId }
+        });
+
+        if (!slot || !slot.isTentative) {
+          // Slot was taken - initiate refund
+          await initiateRefund(session.paymentIntentId);
+          throw new Error('SLOT_TAKEN');
+        }
+
+        // 3. Create appointment based on type
+        switch (session.appointmentType) {
+          case 'CONSULTATION':
+            await createConsultationAppointment(tx, session, slot);
+            break;
+          case 'SUBSCRIPTION':
+            await createSubscriptionAppointment(tx, session, slot);
+            break;
+          // ... handle other types
+        }
+
+        // 4. Mark session as completed
+        await tx.checkoutSession.update({
+          where: { id: session.id },
+          data: { status: 'COMPLETED' }
+        });
+      });
+    } catch (error) {
+      // Handle specific errors
+      if (error.message === 'SLOT_TAKEN') {
+        await handleSlotTakenError(checkoutSessionId);
+      } else {
+        // Log error and mark for retry if possible
+        await handleWebhookError(checkoutSessionId, error);
+      }
+    }
+  }
+}
+
+// Error handling functions
+async function handleSlotTakenError(sessionId: string) {
+  await prisma.$transaction(async (tx) => {
+    const session = await tx.checkoutSession.findUnique({
+      where: { id: sessionId }
+    });
+
+    if (session.retryCount < 3) {
+      // Try to find alternative slot
+      const alternativeSlot = await findAlternativeSlot(tx, session);
+      
+      if (alternativeSlot) {
+        await tx.checkoutSession.update({
+          where: { id: sessionId },
+          data: {
+            slotId: alternativeSlot.id,
+            retryCount: session.retryCount + 1
+          }
+        });
+        // Retry webhook processing
+        await processWebhook(sessionId);
+      } else {
+        // No alternative found - refund
+        await initiateRefund(session.paymentIntentId);
+      }
+    } else {
+      // Max retries reached - refund
+      await initiateRefund(session.paymentIntentId);
+    }
+  });
+}
+
+// Cleanup job
+export async function cleanupExpiredSessions() {
+  const expiredSessions = await prisma.checkoutSession.findMany({
+    where: {
+      status: 'PENDING',
+      expiresAt: { lt: new Date() }
+    }
+  });
+
+  for (const session of expiredSessions) {
+    await prisma.$transaction(async (tx) => {
+      // Release slot
+      await tx.slotOfAppointment.update({
+        where: { id: session.slotId },
+        data: { isTentative: false }
+      });
+
+      // Cancel payment intent if exists
+      if (session.paymentIntentId) {
+        await cancelPaymentIntent(session.paymentIntentId);
+      }
+
+      // Mark session as expired
+      await tx.checkoutSession.update({
+        where: { id: session.id },
+        data: { status: 'EXPIRED' }
+      });
+    });
+  }
+}
+Frontend Implementation with Error Handling:
+// app/checkout/register/[appointmentType]/page.tsx
+const CheckoutPage = () => {
+  const [status, setStatus] = useState<'idle' | 'processing' | 'success' | 'error'>('idle');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCheckout = async () => {
+    try {
+      setStatus('processing');
+      
+      // 1. Initialize checkout
+      const response = await fetch(`/api/checkout/register/${appointmentType}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          planId,
+          slotIds,
+          paymentGateway
+        })
+      });
+
+      if (!response.ok) {
+        if (response.status === 409) {
+          setError('This slot is no longer available. Please choose another time.');
+          return;
+        }
+        throw new Error('Checkout initialization failed');
+      }
+
+      const { clientSecret, sessionId } = await response.json();
+
+      // 2. Handle payment
+      const result = await stripe.confirmPayment({
+        clientSecret,
+        confirmParams: {
+          return_url: `/success?session=${sessionId}`,
+        }
+      });
+
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
+
+      setStatus('success');
+    } catch (error) {
+      setStatus('error');
+      setError(error.message);
+    }
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (status === 'processing') {
+        // Call cleanup API
+        fetch(`/api/checkout/cleanup/${sessionId}`);
+      }
+    };
+  }, [status, sessionId]);
+
+  return (
+    <div>
+      {status === 'processing' && (
+        <LoadingOverlay message="Processing your booking..." />
+      )}
+      
+      {error && (
+        <ErrorAlert 
+          message={error}
+          action={handleCheckout}
+          actionLabel="Try Again"
+        />
+      )}
+      
+      {/* Rest of the checkout UI */}
+    </div>
+  );
+};
+Key Edge Cases Handled:
+
+Concurrent Bookings
+Payment Timeouts
+Slot Taken During Payment
+Failed Payments
+Session Expiry
+Network Issues
+Partial Transaction Failures
+Retry Logic for Recoverable Errors
+
+Would you like me to:
+
+Add more specific error handling scenarios?
+Explain the retry mechanism in more detail?
+Show how to handle specific appointment types differently?
+
+

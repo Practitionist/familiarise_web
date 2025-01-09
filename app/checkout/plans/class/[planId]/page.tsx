@@ -44,7 +44,7 @@ type PageProps = {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
-export default function ClassCheckoutPage({ params, searchParams }: PageProps) {
+export default function ClassCheckoutPage({ params, searchParams }: Readonly<PageProps>) {
   // Next.js 15 Synchronous params and searchParams
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);

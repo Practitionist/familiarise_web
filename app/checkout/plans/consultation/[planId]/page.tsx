@@ -38,10 +38,11 @@ const consultationSchema = z
   })
   .refine(
     (data) =>
-      data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId,
+      (data.slotOfAvailabilityWeeklyId && !data.slotOfAvailabilityCustomId) ||
+      (!data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId),
     {
       message:
-        "Either slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
+        "Exactly one of slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
       path: ["slotOfAvailabilityWeeklyId", "slotOfAvailabilityCustomId"],
     },
   );
@@ -54,7 +55,7 @@ type PageProps = {
 export default function ConsultationCheckoutPage({
   params,
   searchParams,
-}: PageProps) {
+}: Readonly<PageProps>) {
   // Next.js 15 Synchronous params and searchParams
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);

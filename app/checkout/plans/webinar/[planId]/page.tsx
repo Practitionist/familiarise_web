@@ -49,7 +49,7 @@ type PageProps = {
 export default function WebinarCheckoutPage({
   params,
   searchParams,
-}: PageProps) {
+}: Readonly<PageProps>) {
   // Next.js 15 Synchronous params and searchParams
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);

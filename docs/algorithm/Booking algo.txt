@@ -14,9 +14,9 @@ in classes, the consultant first creates the class(which in turn creates the app
 
 
 
-The classes and webinars pages are still in mock state. you have to make them more as well for our startup
-
 both webinars and classes based upon their parent plan has a max capacity.
 
+we would be doing payments using stripe and razorpay. The appointment lock is during the payment process which expires in time.
 
-we would be doing payments using stripe and razorpay. The appointment lock is during the payment process which expires in 15 minutes.
+I have written some partly correct code for booking and some partly correct code for payment. I am not able to make sense of the working. 
+
