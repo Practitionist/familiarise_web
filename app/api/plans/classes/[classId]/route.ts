@@ -11,7 +11,21 @@ export async function GET(
     const classPlan = await prisma.classPlan.findUniqueOrThrow({
       where: { id: classId },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+            domain: true,
+            subDomains: true,
+            tags: true,
+          },
+        },
         classes: true,
         topics: true,
         classContents: true,
@@ -132,7 +146,21 @@ export async function PUT(
           : undefined,
       },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+            domain: true,
+            subDomains: true,
+            tags: true,
+          },
+        },
         classes: true,
         topics: true,
         classContents: true,
@@ -180,7 +208,21 @@ export async function DELETE(
     const classPlan = await prisma.classPlan.delete({
       where: { id: classId },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+            domain: true,
+            subDomains: true,
+            tags: true,
+          },
+        },
         topics: true,
         classContents: true,
       },

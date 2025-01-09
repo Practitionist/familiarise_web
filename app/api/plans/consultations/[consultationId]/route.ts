@@ -11,7 +11,21 @@ export async function GET(
     const consultationPlan = await prisma.consultationPlan.findUniqueOrThrow({
       where: { id: consultationId },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+            domain: true,
+            subDomains: true,
+            tags: true,
+          },
+        },
         consultations: true,
       },
     });
@@ -77,7 +91,21 @@ export async function PUT(
           : undefined,
       },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+            domain: true,
+            subDomains: true,
+            tags: true,
+          },
+        },
         consultations: true,
       },
     });
@@ -126,7 +154,21 @@ export async function DELETE(
     const consultationPlan = await prisma.consultationPlan.delete({
       where: { id: consultationId },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+            domain: true,
+            subDomains: true,
+            tags: true,
+          },
+        },
       },
     });
 

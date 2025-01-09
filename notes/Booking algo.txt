@@ -5,109 +5,18 @@ Now in more depth:
 In Consultation, the consultee selects the slot(slot of availability for the consultant) and if he pays he gets the slot confirmed. if he chooses to pay later the consultant has to approve, then also his slot is reserved but has to pay before the actual consultation. Other consultee can also make parallel requests for the same slot. However, the consultant's first approval consultee gets the slot booked.The slot of appointment is created correspondingly. Check out @app/explore/experts/[consultantId]/page.tsx. 
 
 
-In subscription, the consultee just makes the requests for the plan. unlike consultation, he cannot pay before the consultant has approved. The consultant after seeing the request has to not only approve the subscription request but also create the slots of appointment(from the slots of availability(if slots of availability not enough, creating slots of appointment creates the slots of availability by selection in the calendar UI)). Once the consultant has approved and allocated the slots, the consultee gets notification in his dashboard and also a mail in his inbox to go to the checkout page. If user doesn't pay in 2-3 days or before the event, the slots of appointment are expired but the slots of availability still remain for the consultant ease of use. The number of slots of appointment/frequency/duration/details are as per parent subscription plan. Check out @app/explore/experts/[consultantId]/page.tsx.
+In subscription, the consultee just makes the requests for the plan. unlike consultation, he cannot pay before the consultant has approved. The consultant after seeing the request has to not only approve the subscription request but also create the slots of appointment(from the slots of availability(if slots of availability not enough, creating slots of appointment creates the slots of availability by selection in the calendar UI)). Once the consultant has approved and allocated the slots, the consultee gets notification in his dashboard and also a mail in his inbox to go to the checkout page. If user doesn't pay in 2-3 days or before the event(in case < 2-3 days), the slots of appointment are expired but the slots of availability still remain for the consultant ease of use. The number of slots of appointment/frequency/duration/details are as per parent subscription plan. Check out prisma/schema.prisma for more details.
 
 
-In webinar, the consultant first creates the webinar(which in turn creates the slot of appointment and slot of availability if not present), the consultees have to pay first to join.
+In webinar, the consultant first creates the webinar(which in turn creates the appointment and the slot of appointment and slot of availability if not present), the consultees have to pay first to join.
 
-in classes, the consultant first creates the class(which in turn creates the slots of appointment and slots of availability if not present), the consultees have to pay first to join.
+in classes, the consultant first creates the class(which in turn creates the appointment and the slot of appointment and slot of availability if not present), the consultees have to pay first to join.
 
-Check out app/explore/programs
-├── classes
-│   └── [classId]
-│       └── page.tsx
-├── page.tsx
-└── webinars
-    └── [webinarId]
-        └── page.tsx
+
 
 The classes and webinars pages are still in mock state. you have to make them more as well for our startup
 
 both webinars and classes based upon their parent plan has a max capacity.
 
-if you want to check out the apis, here is the directory structure
-app/api
-├── auth
-│   └── [...nextauth]
-│       ├── options.ts
-│       └── route.ts
-├── events
-│   ├── classes
-│   │   ├── [classId]
-│   │   │   └── route.ts
-│   │   └── route.ts
-│   ├── consultations
-│   │   ├── [consultationId]
-│   │   │   └── route.ts
-│   │   └── route.ts
-│   ├── subscriptions
-│   │   ├── route.ts
-│   │   └── [subscriptionId]
-│   │       └── route.ts
-│   └── webinars
-│       ├── route.ts
-│       └── [webinarId]
-│           └── route.ts
-├── form
-│   └── onboarding
-│       └── [id]
-│           └── route.ts
-├── payments
-│   ├── razorpay
-│   │   └── route.ts
-│   └── stripe
-│       └── route.ts
-├── plans
-│   ├── classes
-│   │   ├── [classId]
-│   │   │   └── route.ts
-│   │   └── route.ts
-│   ├── consultations
-│   │   ├── [consultationId]
-│   │   │   └── route.ts
-│   │   └── route.ts
-│   ├── subscriptions
-│   │   ├── route.ts
-│   │   └── [subscriptionId]
-│   │       └── route.ts
-│   └── webinars
-│       ├── route.ts
-│       └── [webinarId]
-│           └── route.ts
-├── slots
-│   ├── appointments
-│   │   ├── [appointmentId]
-│   │   │   └── route.ts
-│   │   └── route.ts
-│   └── availability
-│       ├── [consultantId]
-│       │   └── route.ts
-│       ├── custom
-│       │   ├── [id]
-│       │   │   └── route.ts
-│       │   └── route.ts
-│       └── weekly
-│           ├── [id]
-│           │   └── route.ts
-│           └── route.ts
-└── user
-    ├── consultants
-    │   ├── [id]
-    │   │   └── route.ts
-    │   ├── meta
-    │   │   └── route.ts
-    │   └── route.ts
-    ├── consultees
-    │   ├── [id]
-    │   │   └── route.ts
-    │   └── route.ts
-    ├── [id]
-    │   └── route.ts
-    ├── reviews
-    │   ├── [id]
-    │   │   └── route.ts
-    │   └── route.ts
-    └── route.ts
 
-45 directories, 37 files
 we would be doing payments using stripe and razorpay. The appointment lock is during the payment process which expires in 15 minutes.

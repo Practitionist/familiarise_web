@@ -11,7 +11,21 @@ export async function GET(
     const webinarPlan = await prisma.webinarPlan.findUniqueOrThrow({
       where: { id: webinarId },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+            domain: true,
+            subDomains: true,
+            tags: true,
+          },
+        },
         webinars: true,
         topics: true,
       },
@@ -91,7 +105,21 @@ export async function PUT(
           : undefined,
       },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+            domain: true,
+            subDomains: true,
+            tags: true,
+          },
+        },
         webinars: true,
         topics: true,
       },
@@ -138,7 +166,21 @@ export async function DELETE(
     const webinarPlan = await prisma.webinarPlan.delete({
       where: { id: webinarId },
       include: {
-        consultantProfile: true,
+        consultantProfile: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
+            },
+            domain: true,
+            subDomains: true,
+            tags: true,
+          },
+        },
         topics: true,
       },
     });
