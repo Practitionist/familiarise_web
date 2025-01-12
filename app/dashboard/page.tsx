@@ -74,14 +74,14 @@ export default function Dashboard() {
             case "CONSULTANT":
               router.push(
                 userDetails.consultantProfileId
-                  ? `/dashboard/consultant/${userDetails.consultantProfileId}`
+                  ? `/dashboard/consultant/${userDetails.consultantProfileId}/home`
                   : "/",
               );
               break;
             case "CONSULTEE":
               router.push(
                 userDetails.consulteeProfileId
-                  ? `/dashboard/consultee/${userDetails.consulteeProfileId}`
+                  ? `/dashboard/consultee/${userDetails.consulteeProfileId}/home`
                   : "/",
               );
               break;
@@ -91,7 +91,7 @@ export default function Dashboard() {
             case "STAFF":
               router.push(
                 userDetails.staffProfileId
-                  ? `/dashboard/staff/${userDetails.staffProfileId}`
+                  ? `/dashboard/staff/${userDetails.staffProfileId}/home`
                   : "/",
               );
               break;

@@ -52,11 +52,11 @@ const getCorrectDashboardUrl = (token: Token): string | null => {
     token;
 
   if (role === "CONSULTANT" && consultantProfileId) {
-    return `/dashboard/consultant/${consultantProfileId}`;
+    return `/dashboard/consultant/${consultantProfileId}/home`;
   } else if (role === "CONSULTEE" && consulteeProfileId) {
-    return `/dashboard/consultee/${consulteeProfileId}`;
+    return `/dashboard/consultee/${consulteeProfileId}/home`;
   } else if (role === "STAFF" && staffProfileId) {
-    return `/dashboard/staff/${staffProfileId}`;
+    return `/dashboard/staff/${staffProfileId}/home`;
   }
 
   return null;
@@ -98,7 +98,8 @@ const handleDashboardRedirect = (
   req: NextRequest,
 ): NextResponse | null => {
   const correctDashboardUrl = getCorrectDashboardUrl(token);
-  if (correctDashboardUrl && pathname !== correctDashboardUrl) {
+  // Allow both /home and non-/home paths for dashboard URLs
+  if (correctDashboardUrl && !pathname.startsWith(correctDashboardUrl.replace('/home', '')) && pathname !== correctDashboardUrl) {
     return NextResponse.redirect(new URL(correctDashboardUrl, req.url));
   }
   return null;

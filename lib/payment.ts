@@ -4,16 +4,16 @@ import { PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 
 // Initialize payment clients
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2024-12-18.acacia",
 });
 
-const razorpay = new Razorpay({
+export const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID!,
   key_secret: process.env.RAZORPAY_SECRET!,
 });
 
-interface PaymentIntentParams {
+export interface PaymentIntentParams {
   amount: number;
   currency: string;
   metadata: {
@@ -24,7 +24,7 @@ interface PaymentIntentParams {
   paymentGateway: PaymentGateway;
 }
 
-interface PaymentIntent {
+export interface PaymentIntent {
   id: string;
   client_secret: string;
   amount: number;
