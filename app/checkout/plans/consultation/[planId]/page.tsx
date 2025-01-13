@@ -12,7 +12,8 @@ import {
   ConsultationPlan,
 } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useState, useCallback } from "react";
+import { useToast } from "@/components/ui/use-toast";
 import { z } from "zod";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
@@ -34,6 +35,8 @@ const consultationSchema = z
   .object({
     slotOfAvailabilityWeeklyId: z.string().optional(),
     slotOfAvailabilityCustomId: z.string().optional(),
+    slotStartTimeInUTC: z.string().datetime(),
+    slotEndTimeInUTC: z.string().datetime(),
     discountCode: z.string().optional(),
   })
   .refine(
@@ -45,6 +48,13 @@ const consultationSchema = z
         "Exactly one of slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
       path: ["slotOfAvailabilityWeeklyId", "slotOfAvailabilityCustomId"],
     },
+  )
+  .refine(
+    (data) => new Date(data.slotStartTimeInUTC) < new Date(data.slotEndTimeInUTC),
+    {
+      message: "Start time must be before end time",
+      path: ["slotStartTime", "slotEndTime"],
+    }
   );
 
 type PageProps = {
@@ -61,12 +71,49 @@ export default function ConsultationCheckoutPage({
   const resolvedSearchParams = use(searchParams);
 
   const [eventData, setEventData] = useState<ConsultationResponse | null>(null);
+  const [slotData, setSlotData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
 
-  const handleCheckout = async () => {
+  // Fetch slot details
+  useEffect(() => {
+    async function fetchSlotData() {
+      try {
+        const { slotOfAvailabilityWeeklyId, slotOfAvailabilityCustomId } = resolvedSearchParams;
+        
+        if (slotOfAvailabilityWeeklyId) {
+          const response = await fetch(`/api/slots/availability/weekly/${slotOfAvailabilityWeeklyId}`);
+          if (response.ok) {
+            const data = await response.json();
+            setSlotData(data.data);
+          }
+        } else if (slotOfAvailabilityCustomId) {
+          const response = await fetch(`/api/slots/availability/custom/${slotOfAvailabilityCustomId}`);
+          if (response.ok) {
+            const data = await response.json();
+            setSlotData(data.data);
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching slot data:", error);
+      }
+    }
+
+    if (resolvedSearchParams.slotOfAvailabilityWeeklyId || resolvedSearchParams.slotOfAvailabilityCustomId) {
+      fetchSlotData();
+    }
+  }, [resolvedSearchParams]);
+  const { toast } = useToast();
+
+  const handleCheckout = useCallback(async (gateway: 'STRIPE' | 'RAZORPAY') => {
     try {
+      // Validate params first
+      const parsedParams = consultationSchema.safeParse(resolvedSearchParams);
+      if (!parsedParams.success) {
+        throw new Error('Invalid booking parameters');
+      }
+
       const response = await fetch("/api/checkout/consultation", {
         method: "POST",
         headers: {
@@ -74,11 +121,12 @@ export default function ConsultationCheckoutPage({
         },
         body: JSON.stringify({
           consultationPlanId: resolvedParams.planId,
-          slotOfAvailabilityWeeklyId:
-            resolvedSearchParams.slotOfAvailabilityWeeklyId,
-          slotOfAvailabilityCustomId:
-            resolvedSearchParams.slotOfAvailabilityCustomId,
-          discountCode: resolvedSearchParams.discountCode,
+          slotOfAvailabilityWeeklyId: parsedParams.data.slotOfAvailabilityWeeklyId,
+          slotOfAvailabilityCustomId: parsedParams.data.slotOfAvailabilityCustomId,
+          slotStartTimeInUTC: parsedParams.data.slotStartTimeInUTC,
+          slotEndTimeInUTC: parsedParams.data.slotEndTimeInUTC,
+          discountCode: parsedParams.data.discountCode,
+          paymentGateway: gateway
         }),
       });
 
@@ -87,13 +135,17 @@ export default function ConsultationCheckoutPage({
       }
 
       const data = await response.json();
-      // Handle successful checkout (e.g., redirect to success page)
+      // Handle successful checkout (e.g., redirect to payment page)
       window.location.href = data.redirectUrl;
     } catch (error) {
       console.error("Checkout error:", error);
-      setError("Failed to process checkout. Please try again.");
+      toast({
+        title: "Checkout Failed",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive"
+      });
     }
-  };
+  }, [resolvedParams, resolvedSearchParams, toast]);
 
   useEffect(() => {
     async function fetchEventData() {
@@ -211,6 +263,25 @@ export default function ConsultationCheckoutPage({
         <div className="grid gap-2">
           <div className="font-semibold">Consultation Details</div>
           <div className="grid gap-2">
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Date</div>
+              <div>
+                {new Date(resolvedSearchParams.slotStartTimeInUTC as string).toLocaleDateString(undefined, {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
+                })}
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Time</div>
+              <div>
+                {new Date(resolvedSearchParams.slotStartTimeInUTC as string).toLocaleTimeString()} - {" "}
+                {new Date(resolvedSearchParams.slotEndTimeInUTC as string).toLocaleTimeString()}{" "}
+                ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+              </div>
+            </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
               <div>{eventData?.data?.durationInHours || 1} hours</div>
@@ -334,7 +405,7 @@ export default function ConsultationCheckoutPage({
                     </div>
                   </div>
                 </div>
-                <Button variant="outline" onClick={handleCheckout}>
+                <Button variant="outline" onClick={() => handleCheckout('STRIPE')}>
                   Pay with Stripe
                 </Button>
               </div>
@@ -355,7 +426,7 @@ export default function ConsultationCheckoutPage({
                     </div>
                   </div>
                 </div>
-                <Button variant="outline" onClick={handleCheckout}>
+                <Button variant="outline" onClick={() => handleCheckout('RAZORPAY')}>
                   Pay with Razorpay
                 </Button>
               </div>

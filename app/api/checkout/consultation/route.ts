@@ -1,170 +1,205 @@
-import { createPaymentIntent } from "@/lib/payment";
+import { razorpay, stripe } from "@/lib/payment";
 import prisma from "@/lib/prisma";
-import { PaymentStatus, RequestStatus } from "@prisma/client";
 import { getServerSession } from "next-auth";
-import { NextResponse } from "next/server";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
-import { PaymentIntentParams, PaymentMetadata } from "@/types/checkout";
-import { ConsultationCheckoutSchema } from "@/schemas/checkout";
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import authOptions from "../../auth/[...nextauth]/options";
 
-export async function POST(req: Request) {
+
+
+// Validate request body
+const checkoutSchema = z.object({
+  consultationPlanId: z.string(),
+  slotOfAvailabilityWeeklyId: z.string().optional(),
+  slotOfAvailabilityCustomId: z.string().optional(),
+  slotStartTimeInUTC: z.string().datetime(),
+  slotEndTimeInUTC: z.string().datetime(),
+  discountCode: z.string().optional(),
+  paymentGateway: z.enum(["STRIPE", "RAZORPAY"]),
+})
+.refine(
+  (data) =>
+    (data.slotOfAvailabilityWeeklyId && !data.slotOfAvailabilityCustomId) ||
+    (!data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId),
+  {
+    message:
+      "Exactly one of slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
+  }
+)
+.refine(
+  (data) => new Date(data.slotStartTimeInUTC) < new Date(data.slotEndTimeInUTC),
+  {
+    message: "Start time must be before end time",
+  }
+);
+
+export async function POST(req: NextRequest) {
   try {
+    // Check authentication
     const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
+    if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Parse and validate request body
+    // Validate request body
     const body = await req.json();
-    const validationResult = ConsultationCheckoutSchema.safeParse(body);
-
-    if (!validationResult.success) {
-      return NextResponse.json(
-        {
-          error: "Invalid request data",
-          issues: validationResult.error.issues,
-        },
-        { status: 400 },
-      );
-    }
-
-    const {
-      consultationPlanId,
-      slotId,
-      slotStartTimeInUTC,
-      slotEndTimeInUTC,
-      paymentGateway,
-    } = validationResult.data;
-
-    // Get user with consultee profile
-    const userWithProfile = await prisma.user.findUnique({
-      where: { email: session.user.email },
-      include: { consulteeProfile: true },
-    });
-
-    if (!userWithProfile) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
-
-    if (!userWithProfile.consulteeProfile) {
-      return NextResponse.json(
-        { error: "Consultee profile not found" },
-        { status: 404 },
-      );
-    }
-
-    const { id: userId, consulteeProfile } = userWithProfile;
+    const validatedData = checkoutSchema.parse(body);
 
     // Start transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // 1. Validate slot availability
-      const existingSlot = await tx.slotOfAppointment.findFirst({
-        where: {
-          id: slotId,
-          OR: [
-            { isTentative: false },
-            {
-              isTentative: true,
-              appointment: {
-                payment: {
-                  some: {
-                    paymentStatus: PaymentStatus.PENDING,
-                    createdAt: { gt: new Date(Date.now() - 15 * 60 * 1000) },
-                  },
-                },
-              },
-            },
-          ],
-        },
-      });
-
-      if (existingSlot) {
-        return NextResponse.json(
-          { error: "Selected slot is no longer available" },
-          { status: 409 },
-        );
-      }
-
-      // 2. Create appointment
-      const appointment = await tx.appointment.create({
-        data: {
-          appointmentType: "CONSULTATION",
-        },
-      });
-
-      // 3. Create tentative slot
-      await tx.slotOfAppointment.create({
-        data: {
-          id: slotId,
-          slotStartTimeInUTC: new Date(slotStartTimeInUTC),
-          slotEndTimeInUTC: new Date(slotEndTimeInUTC),
-          isTentative: true,
-          user: { connect: { id: userId } },
-          appointment: { connect: { id: appointment.id } },
-        },
-      });
-
-      // 4. Create consultation
-      await tx.consultation.create({
-        data: {
-          consultationPlanId,
-          requestStatus: RequestStatus.PENDING,
-          appointment: { connect: { id: appointment.id } },
-          requestedById: consulteeProfile.id,
-        },
-      });
-
-      // 5. Get plan details for payment
+    return await prisma.$transaction(async (tx) => {
+      // 1. Get consultation plan details
       const plan = await tx.consultationPlan.findUnique({
-        where: { id: consultationPlanId },
+        where: { id: validatedData.consultationPlanId },
+        include: {
+          consultantProfile: true,
+        },
       });
 
       if (!plan) {
         throw new Error("Consultation plan not found");
       }
 
-      // 6. Create payment intent
-      const paymentMetadata: PaymentMetadata = {
-        appointmentId: appointment.id,
-        appointmentType: "CONSULTATION",
-        userId,
-      };
+      // 2. Create tentative slot reservation
+      const slotData = validatedData.slotOfAvailabilityWeeklyId
+        ? await tx.slotOfAvailabilityWeekly.findUnique({
+            where: { id: validatedData.slotOfAvailabilityWeeklyId },
+          })
+        : await tx.slotOfAvailabilityCustom.findUnique({
+            where: { id: validatedData.slotOfAvailabilityCustomId },
+          });
 
-      const paymentIntentParams: PaymentIntentParams = {
-        amount: plan.price,
-        currency: "USD",
-        metadata: paymentMetadata,
-        paymentGateway,
-      };
+      if (!slotData) {
+        throw new Error("Slot not found");
+      }
 
-      const paymentIntent = await createPaymentIntent(paymentIntentParams);
-
-      // 7. Create payment record
-      await tx.payment.create({
-        data: {
-          amount: paymentIntent.amount,
-          currency: paymentIntent.currency,
-          paymentMethod: paymentGateway,
-          paymentIntent: paymentIntent.id,
-          paymentGateway,
-          paymentStatus: PaymentStatus.PENDING,
-          appointment: { connect: { id: appointment.id } },
-          user: { connect: { id: userId } },
+      // Check if slot is already booked
+      const existingBooking = await tx.slotOfAppointment.findFirst({
+        where: {
+          slotStartTimeInUTC: new Date(validatedData.slotStartTimeInUTC),
+          slotEndTimeInUTC: new Date(validatedData.slotEndTimeInUTC),
+          isTentative: false,
         },
       });
 
-      return NextResponse.json({
-        clientSecret: paymentIntent.client_secret,
-        appointmentId: appointment.id,
-      });
-    });
+      if (existingBooking) {
+        throw new Error("Slot already booked");
+      }
 
-    return result;
+      // 3. Create consultation with pending status and appointment
+      const consultation = await tx.consultation.create({
+        data: {
+          consultationPlanId: plan.id,
+          requestStatus: "PENDING",
+          requestedById: session.user.id,
+          appointment: {
+            create: {
+              appointmentType: "CONSULTATION",
+              slotsOfAppointment: {
+                create: {
+                  slotStartTimeInUTC: new Date(validatedData.slotStartTimeInUTC),
+                  slotEndTimeInUTC: new Date(validatedData.slotEndTimeInUTC),
+                  isTentative: true,
+                  user: {
+                    connect: { id: session.user.id }
+                  }
+                }
+              }
+            }
+          }
+        },
+        include: {
+          appointment: true
+        }
+      });
+
+      // 4. Calculate final amount (including discounts if any)
+      let amount = plan.price;
+      if (validatedData.discountCode) {
+        const discount = await tx.discountCode.findUnique({
+          where: { code: validatedData.discountCode },
+        });
+        if (discount) {
+          amount =
+            discount.discountType === "PERCENTAGE"
+              ? amount * (1 - discount.discountValue / 100)
+              : amount - discount.discountValue;
+        }
+      }
+
+      if (!consultation.appointment) {
+        throw new Error("Failed to create appointment");
+      }
+
+      // 5. Create payment intent based on gateway
+      let paymentIntent;
+      if (validatedData.paymentGateway === "STRIPE") {
+        paymentIntent = await stripe.paymentIntents.create({
+          amount: Math.round(amount * 100), // Convert to cents
+          currency: "usd",
+          metadata: {
+            consultationId: consultation.id,
+            appointmentId: consultation.appointment.id,
+          },
+        });
+
+        // Create payment record
+        await tx.payment.create({
+          data: {
+            amount: amount,
+            currency: "USD",
+            paymentMethod: "CARD",
+            paymentIntent: paymentIntent.id,
+            paymentGateway: "STRIPE",
+            paymentStatus: "PENDING",
+            userId: session.user.id,
+            appointmentId: consultation.appointment.id,
+            discountCodeId: validatedData.discountCode || null,
+          },
+        });
+
+        return NextResponse.json({
+          clientSecret: paymentIntent.client_secret,
+          redirectUrl: `/checkout/stripe?payment_intent=${paymentIntent.id}`,
+        });
+      } else {
+        // Razorpay
+        const order = await razorpay.orders.create({
+          amount: Math.round(amount * 100),
+          currency: "INR",
+          notes: {
+            consultationId: consultation.id,
+            appointmentId: consultation.appointment.id,
+          },
+        });
+
+        // Create payment record
+        await tx.payment.create({
+          data: {
+            amount: amount,
+            currency: "INR",
+            paymentMethod: "CARD",
+            paymentIntent: order.id,
+            paymentGateway: "RAZORPAY",
+            paymentStatus: "PENDING",
+            userId: session.user.id,
+            appointmentId: consultation.appointment.id,
+            discountCodeId: validatedData.discountCode || null,
+          },
+        });
+
+        return NextResponse.json({
+          orderId: order.id,
+          redirectUrl: `/checkout/razorpay?order_id=${order.id}`,
+        });
+      }
+    });
   } catch (error) {
-    console.error("Consultation checkout error:", error);
+    console.error("Checkout error:", error);
     return NextResponse.json(
-      { error: "Failed to process consultation checkout" },
-      { status: 500 },
+      {
+        error: error instanceof Error ? error.message : "Checkout failed",
+      },
+      { status: 400 }
     );
   }
 }

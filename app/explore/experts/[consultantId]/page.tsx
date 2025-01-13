@@ -1,36 +1,25 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import {
   fetchConsultantDetails,
   fetchReviews,
   fetchUserDetails,
 } from "@/hooks/useUserData";
-import { ConsultantReview, User } from "@prisma/client";
-import { use, useCallback, useEffect, useState } from "react";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
 import { TConsultantProfile } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
-import { useTimezone } from "./hooks/useTimezone";
-import { ConsultantSkeletonLoader } from "./components/ConsultantSkeletonLoader";
-import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
-import { ProfileHeader } from "./components/ProfileHeader";
+import { ConsultantReview, User } from "@prisma/client";
+import Link from "next/link";
+import { use, useCallback, useEffect, useState } from "react";
 import { AboutSection } from "./components/AboutSection";
+import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
 import { ConsultantAvailability } from "./components/ConsultantAvailability";
-import { ReviewsSection } from "./components/ReviewsSection";
+import { ConsultantSkeletonLoader } from "./components/ConsultantSkeletonLoader";
 import { ConsultationPricing } from "./components/ConsultationPricing";
-import {
-  normalizeWeeklySlot,
-  normalizeCustomSlot,
-  createWeeklySlot,
-  createCustomSlot,
-  mergeOverlappingSlots,
-  getLocalDay,
-  isSameLocalDay,
-  dayMap,
-  convertUTCToLocalDate,
-} from "./utils";
+import { ProfileHeader } from "./components/ProfileHeader";
+import { ReviewsSection } from "./components/ReviewsSection";
+import { useTimezone } from "./hooks/useTimezone";
 
 type Params = Promise<{ consultantId: string }>;
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
@@ -97,132 +86,87 @@ export default function ExpertProfile(
   }, [params.consultantId, toast]);
 
   useEffect(() => {
-    // Only process slots if timezone is available and not loading
-    if (selectedDate && consultantDetails && timezone && !isTimezoneLoading) {
-      console.log("Using timezone:", timezone);
-      console.log("Selected date:", selectedDate.toISOString());
+    async function fetchSlots() {
+      if (selectedDate && consultantDetails && timezone && !isTimezoneLoading) {
+        try {
+          console.log("Using timezone:", timezone);
+          console.log("Selected date:", selectedDate.toISOString());
 
-      if (consultantDetails.scheduleType === "WEEKLY") {
-        const selectedDay = dayMap[getLocalDay(selectedDate, timezone)];
-        console.log("Selected day:", selectedDay);
+          // Get unallocated slots for the selected day
+          const startDateInUtc = new Date(selectedDate);
+          startDateInUtc.setHours(0, 0, 0, 0);
+          const endDateInUtc = new Date(selectedDate);
+          endDateInUtc.setHours(23, 59, 59, 999);
 
-        // Get slots for the selected day
-        const relevantSlots = consultantDetails.slotsOfAvailabilityWeekly
-          .map(normalizeWeeklySlot)
-          .filter((slot) => slot.dayOfWeekforStartTimeInUTC === selectedDay);
-
-        const weeklySlots = relevantSlots.map((slot) => {
-          // Convert UTC times to local date objects
-          const startDateTime = convertUTCToLocalDate(
-            slot.slotStartTimeInUTC,
-            selectedDate,
-            timezone,
+          const response = await fetch(
+            `/api/slots/unallocated/${consultantDetails.id}?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}`
           );
-          let endDateTime = convertUTCToLocalDate(
-            slot.slotEndTimeInUTC,
-            selectedDate,
-            timezone,
-          );
-
-          console.log("Processing slot:", {
-            utcStart: slot.slotStartTimeInUTC,
-            utcEnd: slot.slotEndTimeInUTC,
-            localStart: startDateTime.toISOString(),
-            localEnd: endDateTime.toISOString(),
-            timezone,
+          
+          if (!response.ok) {
+            throw new Error('Failed to fetch unallocated slots');
+          }
+          
+          const { data: slots } = await response.json();
+          setSlotTimings(slots);
+          
+        } catch (error) {
+          console.error("Error fetching slots:", error);
+          toast({
+            title: "Error fetching slots",
+            description: error instanceof Error ? error.message : "Please try again",
+            variant: "destructive"
           });
-
-          // Create the slot timing
-          return createWeeklySlot(
-            slot,
-            selectedDate,
-            startDateTime,
-            endDateTime,
-            timezone,
-          );
-        });
-
-        // Sort slots by start time
-        const sortedSlots = weeklySlots.sort(
-          (a, b) =>
-            new Date(a.slotStartTimeInUTC).getTime() -
-            new Date(b.slotStartTimeInUTC).getTime(),
-        );
-
-        // Merge overlapping slots
-        const mergedSlots = mergeOverlappingSlots(sortedSlots, timezone);
-        console.log(
-          "Final slots:",
-          mergedSlots.map((slot) => ({
-            start: slot.localStartTime,
-            end: slot.localEndTime,
-          })),
-        );
-        setSlotTimings(mergedSlots);
-      } else if (consultantDetails.scheduleType === "CUSTOM") {
-        const customSlots = consultantDetails.slotsOfAvailabilityCustom
-          .map(normalizeCustomSlot)
-          .filter((slot) => {
-            const startDateTime = new Date(slot.slotStartTimeInUTC);
-            return isSameLocalDay(startDateTime, selectedDate, timezone);
-          })
-          .map((slot) => {
-            const startDateTime = new Date(slot.slotStartTimeInUTC);
-            const endDateTime = new Date(slot.slotEndTimeInUTC);
-            return createCustomSlot(
-              slot,
-              selectedDate,
-              startDateTime,
-              endDateTime,
-              timezone,
-            );
-          });
-
-        // Sort slots by start time
-        const sortedSlots = customSlots.sort(
-          (a, b) =>
-            new Date(a.slotStartTimeInUTC).getTime() -
-            new Date(b.slotStartTimeInUTC).getTime(),
-        );
-
-        setSlotTimings(sortedSlots);
+        }
+      } else {
+        // Clear slots if timezone is not available
+        setSlotTimings([]);
       }
-    } else {
-      // Clear slots if timezone is not available
-      setSlotTimings([]);
     }
-  }, [selectedDate, consultantDetails, timezone, isTimezoneLoading]);
+
+    fetchSlots();
+  }, [selectedDate, consultantDetails, timezone, isTimezoneLoading, toast]);
 
   const handleBooking = useCallback(async () => {
-    if (!selectedSlot) {
+    if (!selectedSlot || !consultantDetails) {
       toast({ title: "Please select a time slot", variant: "destructive" });
       return;
     }
 
-    try {
-      const response = await fetch("/api/book-consultation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          consultantId: params.consultantId,
-          slotId: selectedSlot.slotId,
-          date: selectedDate,
-        }),
-      });
+    // Calculate duration in hours from slot times
+    const startTime = new Date(selectedSlot.slotStartTimeInUTC);
+    const endTime = new Date(selectedSlot.slotEndTimeInUTC);
+    const durationInHours = (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
 
-      if (response.ok) {
-        toast({ title: "Booking request sent successfully" });
-      } else {
-        toast({
-          title: "Failed to send booking request",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      console.error("Booking error:", error);
-      toast({ title: "An error occurred", variant: "destructive" });
+    // Get the active consultation plan
+    const activePlan = consultantDetails.consultationPlans.find(
+      plan => plan.durationInHours === durationInHours
+    );
+
+    if (!activePlan) {
+      toast({ title: "Invalid consultation plan", variant: "destructive" });
+      return;
     }
-  }, [selectedSlot, params.consultantId, selectedDate, toast]);
+
+    // Construct URL with necessary params
+    const params = new URLSearchParams();
+    
+    // Add the original slot ID and the selected time window
+    const slotStartTimeInUTC = new Date(selectedSlot.slotStartTimeInUTC);
+    const slotEndTimeInUTC = new Date(selectedSlot.slotEndTimeInUTC);
+
+    if (consultantDetails.scheduleType === 'WEEKLY') {
+      params.append('slotOfAvailabilityWeeklyId', selectedSlot.slotOfAvailabilityId);
+    } else {
+      params.append('slotOfAvailabilityCustomId', selectedSlot.slotOfAvailabilityId);
+    }
+    params.append('slotStartTimeInUTC', slotStartTimeInUTC.toISOString());
+    params.append('slotEndTimeInUTC', slotEndTimeInUTC.toISOString());
+
+    const checkoutUrl = `/checkout/plans/consultation/${activePlan.id}?${params.toString()}`;
+
+    // Redirect to checkout page
+    window.location.href = checkoutUrl;
+  }, [selectedSlot, consultantDetails, params.consultantId, toast]);
 
   const renderCalendar = useCallback(() => {
     const daysInMonth = new Date(
