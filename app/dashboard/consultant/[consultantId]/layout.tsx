@@ -1,13 +1,12 @@
 "use client";
 
-import { User } from "@prisma/client";
-import { fetchConsultantData } from "./utils";
-import { useSession } from "next-auth/react";
+import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
+import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { use, useEffect, useState } from "react";
-import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { TConsultantProfile } from "types/consultant";
+import { fetchConsultantData } from "./utils";
 
 // Navigation configuration
 const NAV_ITEMS = [
@@ -203,7 +202,10 @@ export default function ConsultantLayout({
             <span>⚙️</span>
             <span>Settings</span>
           </Link>
-          <button className="flex items-center space-x-2 p-4 w-full text-red-600 hover:bg-red-50 transition-colors">
+          <button 
+            onClick={() => signOut()}
+            className="flex items-center space-x-2 p-4 w-full text-red-600 hover:bg-red-50 transition-colors"
+          >
             <span>🚪</span>
             <span>Logout</span>
           </button>
