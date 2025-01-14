@@ -1,9 +1,15 @@
-import { razorpay, stripe } from "@/lib/payment";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import authOptions from "../../auth/[...nextauth]/options";
+
+// Error handling function
+function handleError(error: unknown) {
+  const message = error instanceof Error ? error.message : "Checkout failed";
+  console.error("Checkout error:", message);
+  return NextResponse.json({ error: message }, { status: 500 });
+}
 
 // Validate request body
 const checkoutSchema = z
@@ -69,7 +75,16 @@ export async function POST(req: NextRequest) {
         throw new Error("Consultation plan not found");
       }
 
-      // 2. Create tentative slot reservation
+      // 2. Get consultee profile
+      const consultee = await tx.consulteeProfile.findUnique({
+        where: { userId: session.user.id },
+      });
+
+      if (!consultee) {
+        throw new Error("Consultee profile not found");
+      }
+
+      // 3. Create tentative slot reservation
       const slotData = validatedData.slotOfAvailabilityWeeklyId
         ? await tx.slotOfAvailabilityWeekly.findUnique({
             where: { id: validatedData.slotOfAvailabilityWeeklyId },
@@ -95,22 +110,20 @@ export async function POST(req: NextRequest) {
         throw new Error("Slot already booked");
       }
 
-      // 3. Create consultation with pending status and appointment
+      // 4. Create consultation with appropriate status
       const consultation = await tx.consultation.create({
         data: {
           consultationPlanId: plan.id,
-          requestStatus: "PENDING",
-          requestedById: session.user.id,
+          requestStatus: process.env.NODE_ENV === "development" ? "APPROVED" : "PENDING",
+          requestedById: consultee.id,
           appointment: {
             create: {
               appointmentType: "CONSULTATION",
               slotsOfAppointment: {
                 create: {
-                  slotStartTimeInUTC: new Date(
-                    validatedData.slotStartTimeInUTC,
-                  ),
+                  slotStartTimeInUTC: new Date(validatedData.slotStartTimeInUTC),
                   slotEndTimeInUTC: new Date(validatedData.slotEndTimeInUTC),
-                  isTentative: true,
+                  isTentative: process.env.NODE_ENV !== "development",
                   user: {
                     connect: { id: session.user.id },
                   },
@@ -124,13 +137,20 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // 4. Calculate final amount (including discounts if any)
+      if (!consultation.appointment) {
+        throw new Error("Failed to create appointment");
+      }
+
+      // 5. Calculate final amount (including discounts if any)
       let amount = plan.price;
+      let discountCodeId = null;
+
       if (validatedData.discountCode) {
         const discount = await tx.discountCode.findUnique({
           where: { code: validatedData.discountCode },
         });
         if (discount) {
+          discountCodeId = discount.id;
           amount =
             discount.discountType === "PERCENTAGE"
               ? amount * (1 - discount.discountValue / 100)
@@ -138,46 +158,46 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      if (!consultation.appointment) {
-        throw new Error("Failed to create appointment");
-      }
-
-      // 5. Create payment record
+      // 6. Create payment record
       const payment = await tx.payment.create({
         data: {
-          amount: amount,
+          amount,
           currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
           paymentMethod: "CARD",
           paymentIntent: "", // Will be set by checkout route
           paymentGateway: validatedData.paymentGateway,
-          paymentStatus: "PENDING",
+          paymentStatus: process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
           userId: session.user.id,
           appointmentId: consultation.appointment.id,
-          discountCodeId: validatedData.discountCode || null,
+          discountCodeId,
         },
       });
 
-      // 6. Return data for checkout
+      // 7. Return appropriate response based on environment
+      if (process.env.NODE_ENV === "development") {
+        return NextResponse.json({
+          success: true,
+          message: "Consultation booked successfully",
+          consultationId: consultation.id,
+          appointmentId: consultation.appointment.id,
+        });
+      }
+
+      // Production response
       return NextResponse.json({
         paymentId: payment.id,
-        amount: amount,
+        amount,
         metadata: {
           consultationId: consultation.id,
           appointmentId: consultation.appointment.id,
           userId: session.user.id,
           planTitle: plan.title,
-          consultantName: plan.consultantProfile.user?.name,
+          consultantName: plan.consultantProfile?.user?.name,
         },
         redirectUrl: `/checkout/${validatedData.paymentGateway.toLowerCase()}`,
       });
     });
   } catch (error) {
-    console.error("Checkout error:", error);
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Checkout failed",
-      },
-      { status: 400 },
-    );
+    return handleError(error);
   }
 }

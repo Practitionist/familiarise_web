@@ -1,173 +1,175 @@
-import { createPaymentIntent } from "@/lib/payment";
-import { PaymentStatus, RequestStatus } from "@prisma/client";
-import { getServerSession } from "next-auth";
-import { NextResponse } from "next/server";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
-import { PaymentIntentParams, PaymentMetadata } from "@/types/checkout";
-import { SubscriptionCheckoutSchema } from "@/schemas/checkout";
 import prisma from "@/lib/prisma";
+import { getServerSession } from "next-auth";
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import authOptions from "../../auth/[...nextauth]/options";
 
-export async function POST(req: Request) {
+// Error handling function
+function handleError(error: unknown) {
+  const message = error instanceof Error ? error.message : "Checkout failed";
+  console.error("Checkout error:", message);
+  return NextResponse.json({ error: message }, { status: 500 });
+}
+
+// Validate request body
+const checkoutSchema = z.object({
+  subscriptionPlanId: z.string(),
+  discountCode: z.string().optional(),
+  paymentGateway: z.enum(["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"]),
+});
+
+export async function POST(req: NextRequest) {
   try {
+    // Check authentication
     const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
+    if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Parse and validate request body
+    // Validate request body
     const body = await req.json();
-    const validationResult = SubscriptionCheckoutSchema.safeParse(body);
-
-    if (!validationResult.success) {
-      return NextResponse.json(
-        {
-          error: "Invalid request data",
-          issues: validationResult.error.issues,
-        },
-        { status: 400 },
-      );
-    }
-
-    const { subscriptionPlanId, slotIds, slotTimes, paymentGateway } =
-      validationResult.data;
-
-    // Get user with consultee profile
-    const userWithProfile = await prisma.user.findUnique({
-      where: { email: session.user.email },
-      include: { consulteeProfile: true },
-    });
-
-    if (!userWithProfile) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
-
-    if (!userWithProfile.consulteeProfile) {
-      return NextResponse.json(
-        { error: "Consultee profile not found" },
-        { status: 404 },
-      );
-    }
-
-    const { id: userId, consulteeProfile } = userWithProfile;
+    const validatedData = checkoutSchema.parse(body);
 
     // Start transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // 1. Validate slot availability
-      const existingSlots = await tx.slotOfAppointment.findMany({
-        where: {
-          id: { in: slotIds },
-          OR: [
-            { isTentative: false },
-            {
-              isTentative: true,
-              appointment: {
-                payment: {
-                  some: {
-                    paymentStatus: PaymentStatus.PENDING,
-                    createdAt: { gt: new Date(Date.now() - 15 * 60 * 1000) },
-                  },
+    return await prisma.$transaction(async (tx) => {
+      // 1. Get subscription plan details
+      const plan = await tx.subscriptionPlan.findUnique({
+        where: { id: validatedData.subscriptionPlanId },
+        include: {
+          consultantProfile: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
                 },
               },
             },
-          ],
+          },
         },
-      });
-
-      if (existingSlots.length > 0) {
-        return NextResponse.json(
-          { error: "One or more selected slots are no longer available" },
-          { status: 409 },
-        );
-      }
-
-      // 2. Get subscription plan
-      const plan = await tx.subscriptionPlan.findUnique({
-        where: { id: subscriptionPlanId },
       });
 
       if (!plan) {
         throw new Error("Subscription plan not found");
       }
 
-      // 3. Create appointment
-      const appointment = await tx.appointment.create({
-        data: {
-          appointmentType: "SUBSCRIPTION",
+      // 2. Get consultee profile
+      const consultee = await tx.consulteeProfile.findUnique({
+        where: { userId: session.user.id },
+      });
+
+      if (!consultee) {
+        throw new Error("Consultee profile not found");
+      }
+
+      // 3. Check if user already has an active subscription
+      const existingSubscription = await tx.subscription.findFirst({
+        where: {
+          requestedById: consultee.id,
+          subscriptionPlanId: plan.id,
+          requestStatus: {
+            in: ["PENDING", "APPROVED"],
+          },
         },
       });
 
-      // 4. Create tentative slots
-      await Promise.all(
-        slotIds.map((slotId, index) =>
-          tx.slotOfAppointment.create({
-            data: {
-              id: slotId,
-              slotStartTimeInUTC: new Date(slotTimes[index].slotStartTimeInUTC),
-              slotEndTimeInUTC: new Date(slotTimes[index].slotEndTimeInUTC),
-              isTentative: true,
-              user: { connect: { id: userId } },
-              appointment: { connect: { id: appointment.id } },
+      if (existingSubscription) {
+        throw new Error(
+          existingSubscription.requestStatus === "PENDING"
+            ? "You already have a pending subscription"
+            : "You already have an active subscription"
+        );
+      }
+
+      // 4. Create subscription with appropriate status
+      const startDate = new Date();
+      const endDate = new Date(startDate);
+      endDate.setMonth(endDate.getMonth() + plan.durationInMonths);
+
+      const subscription = await tx.subscription.create({
+        data: {
+          subscriptionPlanId: plan.id,
+          requestStatus: process.env.NODE_ENV === "development" ? "APPROVED" : "PENDING",
+          requestedById: consultee.id,
+          startDate,
+          endDate,
+          appointments: {
+            create: {
+              appointmentType: "SUBSCRIPTION",
             },
-          }),
-        ),
-      );
-
-      // 5. Create subscription
-      await tx.subscription.create({
-        data: {
-          subscriptionPlanId,
-          startDate: new Date(),
-          endDate: new Date(
-            Date.now() + plan.durationInMonths * 30 * 24 * 60 * 60 * 1000,
-          ),
-          requestStatus: RequestStatus.PENDING,
-          requestedById: consulteeProfile.id,
-          appointments: { connect: { id: appointment.id } },
+          },
+        },
+        include: {
+          appointments: true,
         },
       });
 
-      // 6. Create payment intent
-      const paymentMetadata: PaymentMetadata = {
-        appointmentId: appointment.id,
-        appointmentType: "SUBSCRIPTION",
-        userId,
-      };
+      if (!subscription.appointments?.[0]) {
+        throw new Error("Failed to create appointment");
+      }
 
-      const paymentIntentParams: PaymentIntentParams = {
-        amount: plan.price,
-        currency: "USD",
-        metadata: paymentMetadata,
-        paymentGateway,
-      };
+      // 5. Calculate final amount (including discounts if any)
+      let amount = plan.price;
+      let discountCodeId = null;
 
-      const paymentIntent = await createPaymentIntent(paymentIntentParams);
+      if (validatedData.discountCode) {
+        const discount = await tx.discountCode.findUnique({
+          where: { code: validatedData.discountCode },
+        });
+        if (discount) {
+          discountCodeId = discount.id;
+          amount =
+            discount.discountType === "PERCENTAGE"
+              ? amount * (1 - discount.discountValue / 100)
+              : amount - discount.discountValue;
+        }
+      }
 
-      // 7. Create payment record
-      await tx.payment.create({
+      // 6. Create payment record
+      const payment = await tx.payment.create({
         data: {
-          amount: paymentIntent.amount,
-          currency: paymentIntent.currency,
-          paymentMethod: paymentGateway,
-          paymentIntent: paymentIntent.id,
-          paymentGateway,
-          paymentStatus: PaymentStatus.PENDING,
-          appointment: { connect: { id: appointment.id } },
-          user: { connect: { id: userId } },
+          amount,
+          currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
+          paymentMethod: "CARD",
+          paymentIntent: "", // Will be set by checkout route
+          paymentGateway: validatedData.paymentGateway,
+          paymentStatus: process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
+          userId: session.user.id,
+          appointmentId: subscription.appointments[0].id,
+          discountCodeId,
         },
       });
 
+      // 7. Return appropriate response based on environment
+      if (process.env.NODE_ENV === "development") {
+        return NextResponse.json({
+          success: true,
+          message: "Subscription created successfully",
+          subscriptionId: subscription.id,
+          appointmentId: subscription.appointments[0].id,
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+        });
+      }
+
+      // Production response
       return NextResponse.json({
-        clientSecret: paymentIntent.client_secret,
-        appointmentId: appointment.id,
+        paymentId: payment.id,
+        amount,
+        metadata: {
+          subscriptionId: subscription.id,
+          appointmentId: subscription.appointments[0].id,
+          userId: session.user.id,
+          planTitle: plan.title,
+          consultantName: plan.consultantProfile?.user?.name,
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+        },
+        redirectUrl: `/checkout/${validatedData.paymentGateway.toLowerCase()}`,
       });
     });
-
-    return result;
   } catch (error) {
-    console.error("Subscription checkout error:", error);
-    return NextResponse.json(
-      { error: "Failed to process subscription checkout" },
-      { status: 500 },
-    );
+    return handleError(error);
   }
 }

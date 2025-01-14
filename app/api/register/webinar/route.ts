@@ -1,135 +1,186 @@
-import { createPaymentIntent } from "@/lib/payment";
 import prisma from "@/lib/prisma";
-import { PaymentStatus } from "@prisma/client";
 import { getServerSession } from "next-auth";
-import { NextResponse } from "next/server";
-import authOptions from "@/app/api/auth/[...nextauth]/options";
-import { PaymentIntentParams, PaymentMetadata } from "@/types/checkout";
-import { WebinarCheckoutSchema } from "@/schemas/checkout";
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import authOptions from "../../auth/[...nextauth]/options";
 
-export async function POST(req: Request) {
+// Error handling function
+function handleError(error: unknown) {
+  const message = error instanceof Error ? error.message : "Checkout failed";
+  console.error("Checkout error:", message);
+  return NextResponse.json({ error: message }, { status: 500 });
+}
+
+// Validate request body
+const checkoutSchema = z.object({
+  webinarPlanId: z.string(),
+  discountCode: z.string().optional(),
+  paymentGateway: z.enum(["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"]),
+});
+
+export async function POST(req: NextRequest) {
   try {
+    // Check authentication
     const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
+    if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Parse and validate request body
+    // Validate request body
     const body = await req.json();
-    const validationResult = WebinarCheckoutSchema.safeParse(body);
-
-    if (!validationResult.success) {
-      return NextResponse.json(
-        {
-          error: "Invalid request data",
-          issues: validationResult.error.issues,
-        },
-        { status: 400 },
-      );
-    }
-
-    const { webinarId, paymentGateway } = validationResult.data;
-
-    // Get user
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-    });
-
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
+    const validatedData = checkoutSchema.parse(body);
 
     // Start transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // 1. Get webinar and check capacity
-      const webinar = await tx.webinar.findUnique({
-        where: { id: webinarId },
+    return await prisma.$transaction(async (tx) => {
+      // 1. Get webinar plan details
+      const plan = await tx.webinarPlan.findUnique({
+        where: { id: validatedData.webinarPlanId },
         include: {
-          webinarPlan: true,
-          appointment: {
+          consultantProfile: {
             include: {
-              payment: {
-                where: { paymentStatus: PaymentStatus.SUCCEEDED },
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
               },
+            },
+          },
+          webinars: {
+            where: {
+              status: {
+                in: ["SCHEDULED", "IN_PROGRESS"],
+              },
+            },
+            include: {
+              waitlist: true,
             },
           },
         },
       });
 
-      if (!webinar || !webinar.webinarPlan) {
-        return NextResponse.json(
-          { error: "Webinar not found" },
-          { status: 404 },
-        );
+      if (!plan) {
+        throw new Error("Webinar plan not found");
       }
 
-      const currentParticipants = webinar.appointment ? 1 : 0;
+      // 2. Get consultee profile
+      const consultee = await tx.consulteeProfile.findUnique({
+        where: { userId: session.user.id },
+      });
 
-      if (currentParticipants >= webinar.webinarPlan.maxParticipants) {
-        // Add to waitlist
-        await tx.waitlist.create({
-          data: {
-            user: { connect: { id: user.id } },
-            webinar: { connect: { id: webinarId } },
+      if (!consultee) {
+        throw new Error("Consultee profile not found");
+      }
+
+      // 3. Check if there's an active webinar and validate registration
+      const activeWebinar = plan.webinars[0];
+      if (!activeWebinar) {
+        throw new Error("No active webinar found for this plan");
+      }
+
+      const existingRegistration = await tx.waitlist.findFirst({
+        where: {
+          userId: session.user.id,
+          webinarId: activeWebinar.id,
+        },
+      });
+
+      if (existingRegistration) {
+        throw new Error("You are already registered for this webinar");
+      }
+
+      // 4. Check participant limit
+      if (activeWebinar.waitlist.length >= plan.maxParticipants) {
+        throw new Error("This webinar is already full");
+      }
+
+      // 5. Create webinar registration
+      const webinar = await tx.webinar.update({
+        where: { id: activeWebinar.id },
+        data: {
+          status: process.env.NODE_ENV === "development" ? "IN_PROGRESS" : "SCHEDULED",
+          waitlist: {
+            create: {
+              userId: session.user.id,
+            },
           },
-        });
+          appointment: {
+            create: {
+              appointmentType: "WEBINAR",
+            },
+          },
+        },
+        include: {
+          appointment: true,
+        },
+      });
 
-        return NextResponse.json(
-          { error: "Webinar is full", status: "WAITLISTED" },
-          { status: 409 },
-        );
+      if (!webinar.appointment) {
+        throw new Error("Failed to create appointment");
       }
 
-      // 2. Create appointment
-      const appointment = await tx.appointment.create({
+      // 6. Calculate final amount (including discounts if any)
+      let amount = plan.price;
+      let discountCodeId = null;
+
+      if (validatedData.discountCode) {
+        const discount = await tx.discountCode.findUnique({
+          where: { code: validatedData.discountCode },
+        });
+        if (discount) {
+          discountCodeId = discount.id;
+          amount =
+            discount.discountType === "PERCENTAGE"
+              ? amount * (1 - discount.discountValue / 100)
+              : amount - discount.discountValue;
+        }
+      }
+
+      // 7. Create payment record
+      const payment = await tx.payment.create({
         data: {
-          appointmentType: "WEBINAR",
-          webinar: { connect: { id: webinarId } },
+          amount,
+          currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
+          paymentMethod: "CARD",
+          paymentIntent: "", // Will be set by checkout route
+          paymentGateway: validatedData.paymentGateway,
+          paymentStatus: process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
+          userId: session.user.id,
+          appointmentId: webinar.appointment.id,
+          discountCodeId,
         },
       });
 
-      // 3. Create payment intent
-      const paymentMetadata: PaymentMetadata = {
-        appointmentId: appointment.id,
-        appointmentType: "WEBINAR",
-        userId: user.id,
-      };
+      // 8. Return appropriate response based on environment
+      if (process.env.NODE_ENV === "development") {
+        return NextResponse.json({
+          success: true,
+          message: "Webinar registration successful",
+          webinarId: webinar.id,
+          appointmentId: webinar.appointment.id,
+          participantNumber: activeWebinar.waitlist.length + 1,
+          maxParticipants: plan.maxParticipants,
+        });
+      }
 
-      const paymentIntentParams: PaymentIntentParams = {
-        amount: webinar.webinarPlan.price,
-        currency: "USD",
-        metadata: paymentMetadata,
-        paymentGateway,
-      };
-
-      const paymentIntent = await createPaymentIntent(paymentIntentParams);
-
-      // 4. Create payment record
-      await tx.payment.create({
-        data: {
-          amount: paymentIntent.amount,
-          currency: paymentIntent.currency,
-          paymentMethod: paymentGateway,
-          paymentIntent: paymentIntent.id,
-          paymentGateway,
-          paymentStatus: PaymentStatus.PENDING,
-          appointment: { connect: { id: appointment.id } },
-          user: { connect: { id: user.id } },
-        },
-      });
-
+      // Production response
       return NextResponse.json({
-        clientSecret: paymentIntent.client_secret,
-        appointmentId: appointment.id,
+        paymentId: payment.id,
+        amount,
+        metadata: {
+          webinarId: webinar.id,
+          appointmentId: webinar.appointment.id,
+          userId: session.user.id,
+          planTitle: plan.title,
+          consultantName: plan.consultantProfile?.user?.name,
+          participantNumber: activeWebinar.waitlist.length + 1,
+          maxParticipants: plan.maxParticipants,
+        },
+        redirectUrl: `/checkout/${validatedData.paymentGateway.toLowerCase()}`,
       });
     });
-
-    return result;
   } catch (error) {
-    console.error("Webinar checkout error:", error);
-    return NextResponse.json(
-      { error: "Failed to process webinar checkout" },
-      { status: 500 },
-    );
+    return handleError(error);
   }
 }
