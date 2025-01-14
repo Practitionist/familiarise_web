@@ -15,6 +15,7 @@ import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useEffect, useState, useCallback } from "react";
 import { useToast } from "@/components/ui/use-toast";
 import { z } from "zod";
+import { loadStripe } from "@stripe/stripe-js";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
   consultantProfile: ConsultantProfile & {
@@ -116,7 +117,7 @@ export default function ConsultationCheckoutPage({
   const { toast } = useToast();
 
   const handleCheckout = useCallback(
-    async (gateway: "STRIPE" | "RAZORPAY") => {
+    async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
       try {
         // Validate params first
         const parsedParams = consultationSchema.safeParse(resolvedSearchParams);
@@ -124,7 +125,40 @@ export default function ConsultationCheckoutPage({
           throw new Error("Invalid booking parameters");
         }
 
-        const response = await fetch("/api/checkout/consultation", {
+        // In development or test mode, directly create the appointment
+        if (
+          process.env.NODE_ENV === "development" ||
+          process.env.NODE_ENV === "test"
+        ) {
+          const response = await fetch("/api/register/consultation", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              consultationPlanId: resolvedParams.planId,
+              slotOfAvailabilityWeeklyId:
+                parsedParams.data.slotOfAvailabilityWeeklyId,
+              slotOfAvailabilityCustomId:
+                parsedParams.data.slotOfAvailabilityCustomId,
+              slotStartTimeInUTC: parsedParams.data.slotStartTimeInUTC,
+              slotEndTimeInUTC: parsedParams.data.slotEndTimeInUTC,
+              discountCode: parsedParams.data.discountCode,
+              paymentGateway: gateway,
+            }),
+          });
+
+          if (!response.ok) {
+            throw new Error("Booking failed");
+          }
+
+          const data = await response.json();
+          window.location.href = "/dashboard/consultee";
+          return;
+        }
+
+        // In production, proceed with payment gateway checkout
+        const response = await fetch(`/api/checkout/consultation/${gateway.toLowerCase()}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -138,7 +172,6 @@ export default function ConsultationCheckoutPage({
             slotStartTimeInUTC: parsedParams.data.slotStartTimeInUTC,
             slotEndTimeInUTC: parsedParams.data.slotEndTimeInUTC,
             discountCode: parsedParams.data.discountCode,
-            paymentGateway: gateway,
           }),
         });
 
@@ -147,8 +180,31 @@ export default function ConsultationCheckoutPage({
         }
 
         const data = await response.json();
-        // Handle successful checkout (e.g., redirect to payment page)
-        window.location.href = data.redirectUrl;
+
+        // Handle gateway-specific responses
+        switch (gateway) {
+          case "STRIPE":
+            // Load Stripe.js and redirect to checkout
+            const stripe = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
+            await stripe?.confirmPayment({
+              clientSecret: data.clientSecret,
+              confirmParams: {
+                return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
+              },
+            });
+            break;
+
+          case "RAZORPAY":
+            // Redirect to Razorpay checkout
+            window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
+            break;
+
+          case "LEMON_SQUEEZY":
+          case "XFLOW":
+            // Direct URL redirect
+            window.location.href = data.checkoutUrl;
+            break;
+        }
       } catch (error) {
         console.error("Checkout error:", error);
         toast({
@@ -412,54 +468,54 @@ export default function ConsultationCheckoutPage({
               Select your preferred payment method
             </div>
           </div>
-          <Card>
-            <CardHeader>
-              <CardTitle>Stripe</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <CreditCardIcon className="w-8 h-8" />
-                  <div>
-                    <div className="font-semibold">Credit/Debit Card</div>
-                    <div className="text-sm text-muted-foreground">
-                      Securely pay with your card
+          {/* Payment Gateway Cards */}
+          {[
+            {
+              name: "Stripe",
+              description: "International payments in USD",
+              gateway: "STRIPE" as const,
+            },
+            {
+              name: "Razorpay",
+              description: "Indian payments in INR",
+              gateway: "RAZORPAY" as const,
+            },
+            {
+              name: "Lemon Squeezy",
+              description: "Global payments in USD",
+              gateway: "LEMON_SQUEEZY" as const,
+            },
+            {
+              name: "Xflow",
+              description: "Secure payments in USD",
+              gateway: "XFLOW" as const,
+            },
+          ].map((gateway) => (
+            <Card key={gateway.name}>
+              <CardHeader>
+                <CardTitle>{gateway.name}</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <CreditCardIcon className="w-8 h-8" />
+                    <div>
+                      <div className="font-semibold">Credit/Debit Card</div>
+                      <div className="text-sm text-muted-foreground">
+                        {gateway.description}
+                      </div>
                     </div>
                   </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => handleCheckout(gateway.gateway)}
+                  >
+                    Pay with {gateway.name}
+                  </Button>
                 </div>
-                <Button
-                  variant="outline"
-                  onClick={() => handleCheckout("STRIPE")}
-                >
-                  Pay with Stripe
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Razorpay</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <CreditCardIcon className="w-8 h-8" />
-                  <div>
-                    <div className="font-semibold">Credit/Debit Card</div>
-                    <div className="text-sm text-muted-foreground">
-                      Securely pay with your card
-                    </div>
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  onClick={() => handleCheckout("RAZORPAY")}
-                >
-                  Pay with Razorpay
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       </div>
     </>

@@ -49,6 +49,7 @@
     "@radix-ui/react-tabs": "^1.1.2",
     "@radix-ui/react-toast": "^1.2.4",
     "@reduxjs/toolkit": "^2.5.0",
+    "@stripe/stripe-js": "^5.5.0",
     "@supabase/supabase-js": "^2.47.10",
     "@types/micromatch": "^4.0.9",
     "@types/redlock": "^4.0.7",

@@ -12,8 +12,10 @@ import {
   SubscriptionPlan,
 } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useState, useCallback } from "react";
+import { useToast } from "@/components/ui/use-toast";
 import { z } from "zod";
+import { loadStripe } from "@stripe/stripe-js";
 
 type SubscriptionPlanWithConsultant = SubscriptionPlan & {
   consultantProfile: ConsultantProfile & {
@@ -47,49 +49,105 @@ export default function SubscriptionCheckoutPage({
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);
 
-  const [eventData, setEventData] = useState<SubscriptionResponse | null>(null);
+  const [planData, setPlanData] = useState<SubscriptionResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
+  const { toast } = useToast();
 
-  const handleCheckout = async () => {
-    try {
-      const response = await fetch("/api/checkout/subscription", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          subscriptionPlanId: resolvedParams.planId,
-          discountCode: resolvedSearchParams.discountCode,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Checkout failed");
-      }
-
-      const data = await response.json();
-      // Handle successful checkout (e.g., redirect to success page)
-      window.location.href = data.redirectUrl;
-    } catch (error) {
-      console.error("Checkout error:", error);
-      setError("Failed to process checkout. Please try again.");
-    }
-  };
-
-  useEffect(() => {
-    async function fetchEventData() {
-      setIsLoading(true);
+  const handleCheckout = useCallback(
+    async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
       try {
+        // Validate params first
         const parsedParams = subscriptionSchema.safeParse(resolvedSearchParams);
-
         if (!parsedParams.success) {
-          const issues = parsedParams.error.issues;
-          const missingFields = issues.map((issue) => issue.path[0]).join(", ");
-          throw new Error(`Missing required fields: ${missingFields}`);
+          throw new Error("Invalid subscription parameters");
         }
 
+        // In development or test mode, directly create the subscription
+        if (
+          process.env.NODE_ENV === "development" ||
+          process.env.NODE_ENV === "test"
+        ) {
+          const response = await fetch("/api/register/subscription", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              subscriptionPlanId: resolvedParams.planId,
+              discountCode: parsedParams.data.discountCode,
+              paymentGateway: gateway,
+            }),
+          });
+
+          if (!response.ok) {
+            throw new Error("Subscription failed");
+          }
+
+          window.location.href = "/dashboard/consultee";
+          return;
+        }
+
+        // In production, proceed with payment gateway checkout
+        const response = await fetch(`/api/checkout/subscription/${gateway.toLowerCase()}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            subscriptionPlanId: resolvedParams.planId,
+            discountCode: parsedParams.data.discountCode,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Checkout failed");
+        }
+
+        const data = await response.json();
+
+        // Handle gateway-specific responses
+        switch (gateway) {
+          case "STRIPE":
+            // Load Stripe.js and redirect to checkout
+            const stripe = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
+            await stripe?.confirmPayment({
+              clientSecret: data.clientSecret,
+              confirmParams: {
+                return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
+              },
+            });
+            break;
+
+          case "RAZORPAY":
+            // Redirect to Razorpay checkout
+            window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
+            break;
+
+          case "LEMON_SQUEEZY":
+          case "XFLOW":
+            // Direct URL redirect
+            window.location.href = data.checkoutUrl;
+            break;
+        }
+      } catch (error) {
+        console.error("Checkout error:", error);
+        toast({
+          title: "Checkout Failed",
+          description:
+            error instanceof Error ? error.message : "Please try again",
+          variant: "destructive",
+        });
+      }
+    },
+    [resolvedParams, resolvedSearchParams, toast],
+  );
+
+  useEffect(() => {
+    async function fetchPlanData() {
+      setIsLoading(true);
+      try {
         const endpoint = `/api/plans/subscriptions/${resolvedParams.planId}`;
 
         const response = await fetch(endpoint);
@@ -103,33 +161,25 @@ export default function SubscriptionCheckoutPage({
           throw new Error("Consultant details not found");
         }
 
-        setEventData(data);
+        setPlanData(data);
 
         // Fetch reviews for the consultant
         const reviewsData = await fetchReviews(data.data.consultantProfile.id);
         setReviews(reviewsData);
       } catch (error) {
-        console.error("Error fetching event data:", error);
-        let errorMessage = "An unexpected error occurred. Please try again.";
-
-        if (error instanceof Error) {
-          if (error.message.includes("Missing required fields")) {
-            errorMessage =
-              error.message +
-              ". Please ensure you have provided all necessary information.";
-          } else {
-            errorMessage = error.message;
-          }
-        }
-
-        setError(errorMessage);
+        console.error("Error fetching plan data:", error);
+        setError(
+          error instanceof Error
+            ? error.message
+            : "An unexpected error occurred. Please try again."
+        );
       } finally {
         setIsLoading(false);
       }
     }
 
-    fetchEventData();
-  }, [resolvedParams.planId, resolvedSearchParams]);
+    fetchPlanData();
+  }, [resolvedParams.planId]);
 
   if (isLoading) {
     return (
@@ -157,8 +207,8 @@ export default function SubscriptionCheckoutPage({
     );
   }
 
-  const consultantDetails = eventData?.data.consultantProfile;
-  const userDetails = eventData?.data.consultantProfile.user;
+  const consultantDetails = planData?.data.consultantProfile;
+  const userDetails = planData?.data.consultantProfile.user;
 
   return (
     <>
@@ -186,7 +236,7 @@ export default function SubscriptionCheckoutPage({
           <div className="text-right">
             <div className="font-semibold">Subscription</div>
             <div className="text-sm text-muted-foreground">
-              {eventData?.data?.title || "Monthly Plan"}
+              {planData?.data?.title || "Monthly Plan"}
             </div>
           </div>
         </div>
@@ -196,27 +246,35 @@ export default function SubscriptionCheckoutPage({
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
-              <div>{eventData?.data?.durationInMonths || 1} months</div>
+              <div>{planData?.data?.durationInMonths || 1} months</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Calls per Week</div>
-              <div>{eventData?.data?.callsPerWeek || 1} calls</div>
+              <div>{planData?.data?.callsPerWeek || 1} calls</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Video Meetings</div>
-              <div>{eventData?.data?.videoMeetings || 1} meetings</div>
+              <div>{planData?.data?.videoMeetings || 1} per month</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Email Support</div>
-              <div>{eventData?.data?.emailSupport || "General"}</div>
+              <div>{planData?.data?.emailSupport || "General"}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Language</div>
-              <div>{eventData?.data?.language || "English"}</div>
+              <div>{planData?.data?.language || "English"}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Level</div>
-              <div>{eventData?.data?.level || "Beginner"}</div>
+              <div>{planData?.data?.level || "Beginner"}</div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Prerequisites</div>
+              <div>{planData?.data?.prerequisites || "None"}</div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Material Provided</div>
+              <div>{planData?.data?.materialProvided || "None"}</div>
             </div>
           </div>
         </div>
@@ -234,9 +292,9 @@ export default function SubscriptionCheckoutPage({
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
               <div>
-                <div className="font-medium">MONTHLY20</div>
+                <div className="font-medium">SUB20</div>
                 <div className="text-sm text-muted-foreground">
-                  Get 20% off your first month
+                  Get 20% off your subscription
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -258,7 +316,7 @@ export default function SubscriptionCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Monthly Fee</div>
-                <div>${eventData?.data?.price || 299}</div>
+                <div>${planData?.data?.price || 100}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
@@ -266,10 +324,10 @@ export default function SubscriptionCheckoutPage({
                 </div>
                 <div className="font-semibold">
                   <ul className="list-disc">
-                    <li>{eventData?.data?.callsPerWeek} weekly calls</li>
-                    <li>{eventData?.data?.videoMeetings} video meetings</li>
-                    <li>{eventData?.data?.emailSupport} email support</li>
-                    <li>Resource access</li>
+                    <li>{planData?.data?.callsPerWeek || 1} calls per week</li>
+                    <li>{planData?.data?.videoMeetings || 1} video meetings</li>
+                    <li>{planData?.data?.emailSupport || "General"} email support</li>
+                    <li>Learning materials</li>
                   </ul>
                 </div>
               </div>
@@ -278,23 +336,23 @@ export default function SubscriptionCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Subtotal</div>
-                <div>${eventData?.data?.price || 299}</div>
+                <div>${planData?.data?.price || 100}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div>Tax (10%)</div>
-                <div>${((eventData?.data?.price || 299) * 0.1).toFixed(2)}</div>
+                <div>${((planData?.data?.price || 100) * 0.1).toFixed(2)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div>Discount (20%)</div>
                 <div>
                   -$
-                  {((eventData?.data?.price || 299) * 0.2).toFixed(2)}
+                  {((planData?.data?.price || 100) * 0.2).toFixed(2)}
                 </div>
               </div>
               <Separator className="bg-gray-300" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Net Amount</div>
-                <div>${((eventData?.data?.price || 299) * 0.9).toFixed(2)}</div>
+                <div>${((planData?.data?.price || 100) * 0.9).toFixed(2)}</div>
               </div>
             </div>
           </CardContent>
@@ -306,48 +364,54 @@ export default function SubscriptionCheckoutPage({
               Select your preferred payment method
             </div>
           </div>
-          <Card>
-            <CardHeader>
-              <CardTitle>Stripe</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <CreditCardIcon className="w-8 h-8" />
-                  <div>
-                    <div className="font-semibold">Credit/Debit Card</div>
-                    <div className="text-sm text-muted-foreground">
-                      Securely pay with your card
+          {/* Payment Gateway Cards */}
+          {[
+            {
+              name: "Stripe",
+              description: "International payments in USD",
+              gateway: "STRIPE" as const,
+            },
+            {
+              name: "Razorpay",
+              description: "Indian payments in INR",
+              gateway: "RAZORPAY" as const,
+            },
+            {
+              name: "Lemon Squeezy",
+              description: "Global payments in USD",
+              gateway: "LEMON_SQUEEZY" as const,
+            },
+            {
+              name: "Xflow",
+              description: "Secure payments in USD",
+              gateway: "XFLOW" as const,
+            },
+          ].map((gateway) => (
+            <Card key={gateway.name}>
+              <CardHeader>
+                <CardTitle>{gateway.name}</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <CreditCardIcon className="w-8 h-8" />
+                    <div>
+                      <div className="font-semibold">Credit/Debit Card</div>
+                      <div className="text-sm text-muted-foreground">
+                        {gateway.description}
+                      </div>
                     </div>
                   </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => handleCheckout(gateway.gateway)}
+                  >
+                    Pay with {gateway.name}
+                  </Button>
                 </div>
-                <Button variant="outline" onClick={handleCheckout}>
-                  Pay with Stripe
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Razorpay</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <CreditCardIcon className="w-8 h-8" />
-                  <div>
-                    <div className="font-semibold">Credit/Debit Card</div>
-                    <div className="text-sm text-muted-foreground">
-                      Securely pay with your card
-                    </div>
-                  </div>
-                </div>
-                <Button variant="outline" onClick={handleCheckout}>
-                  Pay with Razorpay
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       </div>
     </>
