@@ -99,7 +99,11 @@ const handleDashboardRedirect = (
 ): NextResponse | null => {
   const correctDashboardUrl = getCorrectDashboardUrl(token);
   // Allow both /home and non-/home paths for dashboard URLs
-  if (correctDashboardUrl && !pathname.startsWith(correctDashboardUrl.replace('/home', '')) && pathname !== correctDashboardUrl) {
+  if (
+    correctDashboardUrl &&
+    !pathname.startsWith(correctDashboardUrl.replace("/home", "")) &&
+    pathname !== correctDashboardUrl
+  ) {
     return NextResponse.redirect(new URL(correctDashboardUrl, req.url));
   }
   return null;

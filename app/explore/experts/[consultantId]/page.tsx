@@ -99,22 +99,22 @@ export default function ExpertProfile(
           endDateInUtc.setHours(23, 59, 59, 999);
 
           const response = await fetch(
-            `/api/slots/unallocated/${consultantDetails.id}?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}`
+            `/api/slots/unallocated/${consultantDetails.id}?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}`,
           );
-          
+
           if (!response.ok) {
-            throw new Error('Failed to fetch unallocated slots');
+            throw new Error("Failed to fetch unallocated slots");
           }
-          
+
           const { data: slots } = await response.json();
           setSlotTimings(slots);
-          
         } catch (error) {
           console.error("Error fetching slots:", error);
           toast({
             title: "Error fetching slots",
-            description: error instanceof Error ? error.message : "Please try again",
-            variant: "destructive"
+            description:
+              error instanceof Error ? error.message : "Please try again",
+            variant: "destructive",
           });
         }
       } else {
@@ -135,11 +135,12 @@ export default function ExpertProfile(
     // Calculate duration in hours from slot times
     const startTime = new Date(selectedSlot.slotStartTimeInUTC);
     const endTime = new Date(selectedSlot.slotEndTimeInUTC);
-    const durationInHours = (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
+    const durationInHours =
+      (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
 
     // Get the active consultation plan
     const activePlan = consultantDetails.consultationPlans.find(
-      plan => plan.durationInHours === durationInHours
+      (plan) => plan.durationInHours === durationInHours,
     );
 
     if (!activePlan) {
@@ -149,18 +150,24 @@ export default function ExpertProfile(
 
     // Construct URL with necessary params
     const params = new URLSearchParams();
-    
+
     // Add the original slot ID and the selected time window
     const slotStartTimeInUTC = new Date(selectedSlot.slotStartTimeInUTC);
     const slotEndTimeInUTC = new Date(selectedSlot.slotEndTimeInUTC);
 
-    if (consultantDetails.scheduleType === 'WEEKLY') {
-      params.append('slotOfAvailabilityWeeklyId', selectedSlot.slotOfAvailabilityId);
+    if (consultantDetails.scheduleType === "WEEKLY") {
+      params.append(
+        "slotOfAvailabilityWeeklyId",
+        selectedSlot.slotOfAvailabilityId,
+      );
     } else {
-      params.append('slotOfAvailabilityCustomId', selectedSlot.slotOfAvailabilityId);
+      params.append(
+        "slotOfAvailabilityCustomId",
+        selectedSlot.slotOfAvailabilityId,
+      );
     }
-    params.append('slotStartTimeInUTC', slotStartTimeInUTC.toISOString());
-    params.append('slotEndTimeInUTC', slotEndTimeInUTC.toISOString());
+    params.append("slotStartTimeInUTC", slotStartTimeInUTC.toISOString());
+    params.append("slotEndTimeInUTC", slotEndTimeInUTC.toISOString());
 
     const checkoutUrl = `/checkout/plans/consultation/${activePlan.id}?${params.toString()}`;
 

@@ -46,11 +46,14 @@ export async function GET(req: NextRequest) {
 
     // Create a map of allocated time slots (both confirmed and tentative)
     const allocatedSlots = new Map();
-    appointments.forEach(appointment => {
-      appointment.slotsOfAppointment.forEach(slot => {
+    appointments.forEach((appointment) => {
+      appointment.slotsOfAppointment.forEach((slot) => {
         const start = slot.slotStartTimeInUTC;
         const end = slot.slotEndTimeInUTC;
-        allocatedSlots.set(`${start.toISOString()}-${end.toISOString()}`, slot.isTentative);
+        allocatedSlots.set(
+          `${start.toISOString()}-${end.toISOString()}`,
+          slot.isTentative,
+        );
       });
     });
 
@@ -59,10 +62,12 @@ export async function GET(req: NextRequest) {
       prisma.slotOfAvailabilityCustom.findMany({
         where: {
           consultantProfileId,
-          ...(startDateInUtc && endDateInUtc ? {
-            slotStartTimeInUTC: { gte: new Date(startDateInUtc) },
-            slotEndTimeInUTC: { lte: new Date(endDateInUtc) },
-          } : {}),
+          ...(startDateInUtc && endDateInUtc
+            ? {
+                slotStartTimeInUTC: { gte: new Date(startDateInUtc) },
+                slotEndTimeInUTC: { lte: new Date(endDateInUtc) },
+              }
+            : {}),
         },
         orderBy: {
           slotStartTimeInUTC: "asc",
@@ -86,16 +91,18 @@ export async function GET(req: NextRequest) {
       prisma.slotOfAvailabilityCustom.count({
         where: {
           consultantProfileId,
-          ...(startDateInUtc && endDateInUtc ? {
-            slotStartTimeInUTC: { gte: new Date(startDateInUtc) },
-            slotEndTimeInUTC: { lte: new Date(endDateInUtc) },
-          } : {}),
+          ...(startDateInUtc && endDateInUtc
+            ? {
+                slotStartTimeInUTC: { gte: new Date(startDateInUtc) },
+                slotEndTimeInUTC: { lte: new Date(endDateInUtc) },
+              }
+            : {}),
         },
       }),
     ]);
 
     // Filter out allocated slots
-    const unallocatedSlots = customSlots.filter(slot => {
+    const unallocatedSlots = customSlots.filter((slot) => {
       const key = `${slot.slotStartTimeInUTC.toISOString()}-${slot.slotEndTimeInUTC.toISOString()}`;
       return !allocatedSlots.has(key);
     });

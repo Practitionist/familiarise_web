@@ -52,11 +52,14 @@ export async function GET(req: NextRequest) {
 
     // Create a map of allocated time slots (both confirmed and tentative)
     const allocatedSlots = new Map();
-    appointments.forEach(appointment => {
-      appointment.slotsOfAppointment.forEach(slot => {
+    appointments.forEach((appointment) => {
+      appointment.slotsOfAppointment.forEach((slot) => {
         const start = slot.slotStartTimeInUTC;
         const end = slot.slotEndTimeInUTC;
-        allocatedSlots.set(`${start.toISOString()}-${end.toISOString()}`, slot.isTentative);
+        allocatedSlots.set(
+          `${start.toISOString()}-${end.toISOString()}`,
+          slot.isTentative,
+        );
       });
     });
 
@@ -93,24 +96,25 @@ export async function GET(req: NextRequest) {
 
     // For weekly slots, we need to check if any instance of the weekly slot
     // in the next few weeks is already allocated
-    const unallocatedSlots = weeklySlots.filter(slot => {
+    const unallocatedSlots = weeklySlots.filter((slot) => {
       // Check slots within the requested date range
       const startDate = new Date(startDateInUtc);
       const endDate = new Date(endDateInUtc);
       const currentDate = new Date(startDate);
 
       while (currentDate <= endDate) {
-
         // Check if current date matches the slot's day
-        if (currentDate.getDay() === dayToNumber[slot.dayOfWeekforStartTimeInUTC]) {
+        if (
+          currentDate.getDay() === dayToNumber[slot.dayOfWeekforStartTimeInUTC]
+        ) {
           // Set the time from the slot
           const start = new Date(currentDate);
-        start.setHours(slot.slotStartTimeInUTC.getHours());
-        start.setMinutes(slot.slotStartTimeInUTC.getMinutes());
+          start.setHours(slot.slotStartTimeInUTC.getHours());
+          start.setMinutes(slot.slotStartTimeInUTC.getMinutes());
 
           const end = new Date(currentDate);
-        end.setHours(slot.slotEndTimeInUTC.getHours());
-        end.setMinutes(slot.slotEndTimeInUTC.getMinutes());
+          end.setHours(slot.slotEndTimeInUTC.getHours());
+          end.setMinutes(slot.slotEndTimeInUTC.getMinutes());
 
           // Check if this instance is allocated
           const key = `${start.toISOString()}-${end.toISOString()}`;

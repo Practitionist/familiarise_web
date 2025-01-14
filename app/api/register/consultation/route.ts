@@ -5,33 +5,33 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import authOptions from "../../auth/[...nextauth]/options";
 
-
-
 // Validate request body
-const checkoutSchema = z.object({
-  consultationPlanId: z.string(),
-  slotOfAvailabilityWeeklyId: z.string().optional(),
-  slotOfAvailabilityCustomId: z.string().optional(),
-  slotStartTimeInUTC: z.string().datetime(),
-  slotEndTimeInUTC: z.string().datetime(),
-  discountCode: z.string().optional(),
-  paymentGateway: z.enum(["STRIPE", "RAZORPAY"]),
-})
-.refine(
-  (data) =>
-    (data.slotOfAvailabilityWeeklyId && !data.slotOfAvailabilityCustomId) ||
-    (!data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId),
-  {
-    message:
-      "Exactly one of slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
-  }
-)
-.refine(
-  (data) => new Date(data.slotStartTimeInUTC) < new Date(data.slotEndTimeInUTC),
-  {
-    message: "Start time must be before end time",
-  }
-);
+const checkoutSchema = z
+  .object({
+    consultationPlanId: z.string(),
+    slotOfAvailabilityWeeklyId: z.string().optional(),
+    slotOfAvailabilityCustomId: z.string().optional(),
+    slotStartTimeInUTC: z.string().datetime(),
+    slotEndTimeInUTC: z.string().datetime(),
+    discountCode: z.string().optional(),
+    paymentGateway: z.enum(["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"]),
+  })
+  .refine(
+    (data) =>
+      (data.slotOfAvailabilityWeeklyId && !data.slotOfAvailabilityCustomId) ||
+      (!data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId),
+    {
+      message:
+        "Exactly one of slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
+    },
+  )
+  .refine(
+    (data) =>
+      new Date(data.slotStartTimeInUTC) < new Date(data.slotEndTimeInUTC),
+    {
+      message: "Start time must be before end time",
+    },
+  );
 
 export async function POST(req: NextRequest) {
   try {
@@ -51,7 +51,17 @@ export async function POST(req: NextRequest) {
       const plan = await tx.consultationPlan.findUnique({
         where: { id: validatedData.consultationPlanId },
         include: {
-          consultantProfile: true,
+          consultantProfile: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+            },
+          },
         },
       });
 
@@ -96,20 +106,22 @@ export async function POST(req: NextRequest) {
               appointmentType: "CONSULTATION",
               slotsOfAppointment: {
                 create: {
-                  slotStartTimeInUTC: new Date(validatedData.slotStartTimeInUTC),
+                  slotStartTimeInUTC: new Date(
+                    validatedData.slotStartTimeInUTC,
+                  ),
                   slotEndTimeInUTC: new Date(validatedData.slotEndTimeInUTC),
                   isTentative: true,
                   user: {
-                    connect: { id: session.user.id }
-                  }
-                }
-              }
-            }
-          }
+                    connect: { id: session.user.id },
+                  },
+                },
+              },
+            },
+          },
         },
         include: {
-          appointment: true
-        }
+          appointment: true,
+        },
       });
 
       // 4. Calculate final amount (including discounts if any)
@@ -130,68 +142,34 @@ export async function POST(req: NextRequest) {
         throw new Error("Failed to create appointment");
       }
 
-      // 5. Create payment intent based on gateway
-      let paymentIntent;
-      if (validatedData.paymentGateway === "STRIPE") {
-        paymentIntent = await stripe.paymentIntents.create({
-          amount: Math.round(amount * 100), // Convert to cents
-          currency: "usd",
-          metadata: {
-            consultationId: consultation.id,
-            appointmentId: consultation.appointment.id,
-          },
-        });
+      // 5. Create payment record
+      const payment = await tx.payment.create({
+        data: {
+          amount: amount,
+          currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
+          paymentMethod: "CARD",
+          paymentIntent: "", // Will be set by checkout route
+          paymentGateway: validatedData.paymentGateway,
+          paymentStatus: "PENDING",
+          userId: session.user.id,
+          appointmentId: consultation.appointment.id,
+          discountCodeId: validatedData.discountCode || null,
+        },
+      });
 
-        // Create payment record
-        await tx.payment.create({
-          data: {
-            amount: amount,
-            currency: "USD",
-            paymentMethod: "CARD",
-            paymentIntent: paymentIntent.id,
-            paymentGateway: "STRIPE",
-            paymentStatus: "PENDING",
-            userId: session.user.id,
-            appointmentId: consultation.appointment.id,
-            discountCodeId: validatedData.discountCode || null,
-          },
-        });
-
-        return NextResponse.json({
-          clientSecret: paymentIntent.client_secret,
-          redirectUrl: `/checkout/stripe?payment_intent=${paymentIntent.id}`,
-        });
-      } else {
-        // Razorpay
-        const order = await razorpay.orders.create({
-          amount: Math.round(amount * 100),
-          currency: "INR",
-          notes: {
-            consultationId: consultation.id,
-            appointmentId: consultation.appointment.id,
-          },
-        });
-
-        // Create payment record
-        await tx.payment.create({
-          data: {
-            amount: amount,
-            currency: "INR",
-            paymentMethod: "CARD",
-            paymentIntent: order.id,
-            paymentGateway: "RAZORPAY",
-            paymentStatus: "PENDING",
-            userId: session.user.id,
-            appointmentId: consultation.appointment.id,
-            discountCodeId: validatedData.discountCode || null,
-          },
-        });
-
-        return NextResponse.json({
-          orderId: order.id,
-          redirectUrl: `/checkout/razorpay?order_id=${order.id}`,
-        });
-      }
+      // 6. Return data for checkout
+      return NextResponse.json({
+        paymentId: payment.id,
+        amount: amount,
+        metadata: {
+          consultationId: consultation.id,
+          appointmentId: consultation.appointment.id,
+          userId: session.user.id,
+          planTitle: plan.title,
+          consultantName: plan.consultantProfile.user?.name,
+        },
+        redirectUrl: `/checkout/${validatedData.paymentGateway.toLowerCase()}`,
+      });
     });
   } catch (error) {
     console.error("Checkout error:", error);
@@ -199,7 +177,7 @@ export async function POST(req: NextRequest) {
       {
         error: error instanceof Error ? error.message : "Checkout failed",
       },
-      { status: 400 }
+      { status: 400 },
     );
   }
 }

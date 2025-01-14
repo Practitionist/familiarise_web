@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { consultantId: string } }
+  { params }: { params: { consultantId: string } },
 ) {
   try {
     const { searchParams } = new URL(req.url);
@@ -78,11 +78,14 @@ export async function GET(
 
     // Create a map of allocated time slots
     const allocatedSlots = new Map();
-    appointments.forEach(appointment => {
-      appointment.slotsOfAppointment.forEach(slot => {
+    appointments.forEach((appointment) => {
+      appointment.slotsOfAppointment.forEach((slot) => {
         const start = slot.slotStartTimeInUTC;
         const end = slot.slotEndTimeInUTC;
-        allocatedSlots.set(`${start.toISOString()}-${end.toISOString()}`, slot.isTentative);
+        allocatedSlots.set(
+          `${start.toISOString()}-${end.toISOString()}`,
+          slot.isTentative,
+        );
       });
     });
 
@@ -110,22 +113,25 @@ export async function GET(
     });
 
     // Filter out allocated custom slots
-    const unallocatedCustomSlots = customSlots.filter(slot => {
+    const unallocatedCustomSlots = customSlots.filter((slot) => {
       const key = `${slot.slotStartTimeInUTC.toISOString()}-${slot.slotEndTimeInUTC.toISOString()}`;
       return !allocatedSlots.has(key);
     });
 
     // For weekly slots, generate instances for the date range and filter out allocated ones
     const unallocatedWeeklySlots: TSlotTiming[] = [];
-      const start = new Date(startDateInUtc);
-      const end = new Date(endDateInUtc);
+    const start = new Date(startDateInUtc);
+    const end = new Date(endDateInUtc);
 
-    weeklySlots.forEach(weeklySlot => {
+    weeklySlots.forEach((weeklySlot) => {
       const currentDate = new Date(start);
 
       while (currentDate <= end) {
         // Check if this day matches the slot's day
-        if (currentDate.getDay() === dayToNumber[weeklySlot.dayOfWeekforStartTimeInUTC]) {
+        if (
+          currentDate.getDay() ===
+          dayToNumber[weeklySlot.dayOfWeekforStartTimeInUTC]
+        ) {
           // Create slot instance for this date
           const slotStart = new Date(currentDate);
           slotStart.setHours(weeklySlot.slotStartTimeInUTC.getHours());
@@ -158,21 +164,25 @@ export async function GET(
     });
 
     // Convert custom slots to TSlotTiming format
-    const formattedCustomSlots: TSlotTiming[] = unallocatedCustomSlots.map(slot => ({
-      slotId: slot.id,
-      dateInISO: slot.slotStartTimeInUTC.toISOString(),
-      dayOfWeek: dayMap[new Date(slot.slotStartTimeInUTC).getDay()],
-      slotStartTimeInUTC: slot.slotStartTimeInUTC.toISOString(),
-      slotEndTimeInUTC: slot.slotEndTimeInUTC.toISOString(),
-      slotOfAvailabilityId: slot.id,
-      slotOfAppointmentId: "",
-      localStartTime: new Date(slot.slotStartTimeInUTC).toLocaleTimeString(),
-      localEndTime: new Date(slot.slotEndTimeInUTC).toLocaleTimeString(),
-    }));
+    const formattedCustomSlots: TSlotTiming[] = unallocatedCustomSlots.map(
+      (slot) => ({
+        slotId: slot.id,
+        dateInISO: slot.slotStartTimeInUTC.toISOString(),
+        dayOfWeek: dayMap[new Date(slot.slotStartTimeInUTC).getDay()],
+        slotStartTimeInUTC: slot.slotStartTimeInUTC.toISOString(),
+        slotEndTimeInUTC: slot.slotEndTimeInUTC.toISOString(),
+        slotOfAvailabilityId: slot.id,
+        slotOfAppointmentId: "",
+        localStartTime: new Date(slot.slotStartTimeInUTC).toLocaleTimeString(),
+        localEndTime: new Date(slot.slotEndTimeInUTC).toLocaleTimeString(),
+      }),
+    );
 
     // Combine and sort all slots by start time
     const allSlots = [...formattedCustomSlots, ...unallocatedWeeklySlots].sort(
-      (a, b) => new Date(a.slotStartTimeInUTC).getTime() - new Date(b.slotStartTimeInUTC).getTime()
+      (a, b) =>
+        new Date(a.slotStartTimeInUTC).getTime() -
+        new Date(b.slotStartTimeInUTC).getTime(),
     );
 
     return NextResponse.json({ data: allSlots }, { status: 200 });

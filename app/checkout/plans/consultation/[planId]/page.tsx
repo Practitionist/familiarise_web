@@ -50,11 +50,12 @@ const consultationSchema = z
     },
   )
   .refine(
-    (data) => new Date(data.slotStartTimeInUTC) < new Date(data.slotEndTimeInUTC),
+    (data) =>
+      new Date(data.slotStartTimeInUTC) < new Date(data.slotEndTimeInUTC),
     {
       message: "Start time must be before end time",
       path: ["slotStartTime", "slotEndTime"],
-    }
+    },
   );
 
 type PageProps = {
@@ -80,16 +81,21 @@ export default function ConsultationCheckoutPage({
   useEffect(() => {
     async function fetchSlotData() {
       try {
-        const { slotOfAvailabilityWeeklyId, slotOfAvailabilityCustomId } = resolvedSearchParams;
-        
+        const { slotOfAvailabilityWeeklyId, slotOfAvailabilityCustomId } =
+          resolvedSearchParams;
+
         if (slotOfAvailabilityWeeklyId) {
-          const response = await fetch(`/api/slots/availability/weekly/${slotOfAvailabilityWeeklyId}`);
+          const response = await fetch(
+            `/api/slots/availability/weekly/${slotOfAvailabilityWeeklyId}`,
+          );
           if (response.ok) {
             const data = await response.json();
             setSlotData(data.data);
           }
         } else if (slotOfAvailabilityCustomId) {
-          const response = await fetch(`/api/slots/availability/custom/${slotOfAvailabilityCustomId}`);
+          const response = await fetch(
+            `/api/slots/availability/custom/${slotOfAvailabilityCustomId}`,
+          );
           if (response.ok) {
             const data = await response.json();
             setSlotData(data.data);
@@ -100,52 +106,61 @@ export default function ConsultationCheckoutPage({
       }
     }
 
-    if (resolvedSearchParams.slotOfAvailabilityWeeklyId || resolvedSearchParams.slotOfAvailabilityCustomId) {
+    if (
+      resolvedSearchParams.slotOfAvailabilityWeeklyId ||
+      resolvedSearchParams.slotOfAvailabilityCustomId
+    ) {
       fetchSlotData();
     }
   }, [resolvedSearchParams]);
   const { toast } = useToast();
 
-  const handleCheckout = useCallback(async (gateway: 'STRIPE' | 'RAZORPAY') => {
-    try {
-      // Validate params first
-      const parsedParams = consultationSchema.safeParse(resolvedSearchParams);
-      if (!parsedParams.success) {
-        throw new Error('Invalid booking parameters');
+  const handleCheckout = useCallback(
+    async (gateway: "STRIPE" | "RAZORPAY") => {
+      try {
+        // Validate params first
+        const parsedParams = consultationSchema.safeParse(resolvedSearchParams);
+        if (!parsedParams.success) {
+          throw new Error("Invalid booking parameters");
+        }
+
+        const response = await fetch("/api/checkout/consultation", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            consultationPlanId: resolvedParams.planId,
+            slotOfAvailabilityWeeklyId:
+              parsedParams.data.slotOfAvailabilityWeeklyId,
+            slotOfAvailabilityCustomId:
+              parsedParams.data.slotOfAvailabilityCustomId,
+            slotStartTimeInUTC: parsedParams.data.slotStartTimeInUTC,
+            slotEndTimeInUTC: parsedParams.data.slotEndTimeInUTC,
+            discountCode: parsedParams.data.discountCode,
+            paymentGateway: gateway,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Checkout failed");
+        }
+
+        const data = await response.json();
+        // Handle successful checkout (e.g., redirect to payment page)
+        window.location.href = data.redirectUrl;
+      } catch (error) {
+        console.error("Checkout error:", error);
+        toast({
+          title: "Checkout Failed",
+          description:
+            error instanceof Error ? error.message : "Please try again",
+          variant: "destructive",
+        });
       }
-
-      const response = await fetch("/api/checkout/consultation", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          consultationPlanId: resolvedParams.planId,
-          slotOfAvailabilityWeeklyId: parsedParams.data.slotOfAvailabilityWeeklyId,
-          slotOfAvailabilityCustomId: parsedParams.data.slotOfAvailabilityCustomId,
-          slotStartTimeInUTC: parsedParams.data.slotStartTimeInUTC,
-          slotEndTimeInUTC: parsedParams.data.slotEndTimeInUTC,
-          discountCode: parsedParams.data.discountCode,
-          paymentGateway: gateway
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Checkout failed");
-      }
-
-      const data = await response.json();
-      // Handle successful checkout (e.g., redirect to payment page)
-      window.location.href = data.redirectUrl;
-    } catch (error) {
-      console.error("Checkout error:", error);
-      toast({
-        title: "Checkout Failed",
-        description: error instanceof Error ? error.message : "Please try again",
-        variant: "destructive"
-      });
-    }
-  }, [resolvedParams, resolvedSearchParams, toast]);
+    },
+    [resolvedParams, resolvedSearchParams, toast],
+  );
 
   useEffect(() => {
     async function fetchEventData() {
@@ -266,19 +281,26 @@ export default function ConsultationCheckoutPage({
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Date</div>
               <div>
-                {new Date(resolvedSearchParams.slotStartTimeInUTC as string).toLocaleDateString(undefined, {
-                  weekday: 'long',
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric'
+                {new Date(
+                  resolvedSearchParams.slotStartTimeInUTC as string,
+                ).toLocaleDateString(undefined, {
+                  weekday: "long",
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
                 })}
               </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Time</div>
               <div>
-                {new Date(resolvedSearchParams.slotStartTimeInUTC as string).toLocaleTimeString()} - {" "}
-                {new Date(resolvedSearchParams.slotEndTimeInUTC as string).toLocaleTimeString()}{" "}
+                {new Date(
+                  resolvedSearchParams.slotStartTimeInUTC as string,
+                ).toLocaleTimeString()}{" "}
+                -{" "}
+                {new Date(
+                  resolvedSearchParams.slotEndTimeInUTC as string,
+                ).toLocaleTimeString()}{" "}
                 ({Intl.DateTimeFormat().resolvedOptions().timeZone})
               </div>
             </div>
@@ -405,7 +427,10 @@ export default function ConsultationCheckoutPage({
                     </div>
                   </div>
                 </div>
-                <Button variant="outline" onClick={() => handleCheckout('STRIPE')}>
+                <Button
+                  variant="outline"
+                  onClick={() => handleCheckout("STRIPE")}
+                >
                   Pay with Stripe
                 </Button>
               </div>
@@ -426,7 +451,10 @@ export default function ConsultationCheckoutPage({
                     </div>
                   </div>
                 </div>
-                <Button variant="outline" onClick={() => handleCheckout('RAZORPAY')}>
+                <Button
+                  variant="outline"
+                  onClick={() => handleCheckout("RAZORPAY")}
+                >
                   Pay with Razorpay
                 </Button>
               </div>

@@ -715,7 +715,7 @@ model Payment {
   description    String?
   receiptUrl     String?
   paymentMethod  String
-  paymentIntent  String
+  paymentIntent  String         @unique
   paymentGateway PaymentGateway
   paymentStatus  PaymentStatus
 
@@ -733,6 +733,8 @@ model Payment {
 enum PaymentGateway {
   STRIPE
   RAZORPAY
+  LEMON_SQUEEZY
+  XFLOW
   CARD
 }
 
