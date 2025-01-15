@@ -2,7 +2,7 @@ export interface PricingOption {
   title: string;
   description: string;
   price: number;
-  duration?: string;
+  duration: string;
   features?: string[];
 }
 

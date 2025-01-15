@@ -4,18 +4,13 @@ import { TConsultantProfile } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
 import PricingToggle from "./PricingToggle";
 
-interface PricingOption {
-  title: string;
-  description: string;
-  price: number;
-  duration: string;
-  features?: string[];
-}
+import { PricingOption } from "../defaults";
 
 interface ConsultationPricingProps {
   userDetails: User;
   consultantDetails: TConsultantProfile;
-  handleBooking: () => Promise<void>;
+  handleConsultationBooking: () => Promise<void>;
+  handleSubscriptionBooking: (option: PricingOption) => Promise<void>;
   selectedDate: Date | null;
   setSelectedDate: (date: Date | null) => void;
   currentDate: Date;
@@ -29,7 +24,8 @@ interface ConsultationPricingProps {
 export function ConsultationPricing({
   userDetails,
   consultantDetails,
-  handleBooking,
+  handleConsultationBooking,
+  handleSubscriptionBooking,
   selectedDate,
   setSelectedDate,
   currentDate,
@@ -38,7 +34,7 @@ export function ConsultationPricing({
   slotTimings,
   selectedSlot,
   setSelectedSlot,
-}: ConsultationPricingProps) {
+}: Readonly<ConsultationPricingProps>) {
   const formatPricingOptions = (
     plans: (ConsultationPlan | SubscriptionPlan)[],
     type: "consultation" | "subscription",
@@ -56,7 +52,7 @@ export function ConsultationPricing({
           title: `${plan.durationInMonths} Month${plan.durationInMonths > 1 ? "s" : ""}`,
           description: `${plan.durationInMonths} month subscription`,
           price: plan.price,
-          duration: `${plan.durationInMonths} month${plan.durationInMonths > 1 ? "s" : ""}`,
+          duration: `${plan.durationInMonths}`,
           features: [
             `${plan.callsPerWeek} call${plan.callsPerWeek > 1 ? "s" : ""} per week`,
             `${plan.videoMeetings} video meeting${plan.videoMeetings > 1 ? "s" : ""}`,
@@ -102,7 +98,8 @@ export function ConsultationPricing({
           subscriptionOptions={subscriptionOptions}
           consultantDetails={consultantDetails}
           userDetails={userDetails}
-          handleBooking={handleBooking}
+          handleConsultationBooking={handleConsultationBooking}
+          handleSubscriptionBooking={handleSubscriptionBooking}
           selectedDate={selectedDate}
           setSelectedDate={setSelectedDate}
           currentDate={currentDate}

@@ -1,5 +1,5 @@
-import { getServerSession } from "next-auth";
-import { generateProgramImageUrl } from "../../utils";
+"use client";
+
 import {
   Card,
   CardContent,
@@ -7,21 +7,22 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import prisma from "@/lib/prisma";
-import type { Prisma } from "@prisma/client";
 import Image from "next/image";
-import { redirect } from "next/navigation";
 import {
-  CalendarIcon,
-  ClockIcon,
-  UsersIcon,
-  VideoIcon,
-  GlobeIcon,
-  CertificateIcon,
-} from "./icons";
-import { ClientWebinarRegistration } from "./components/ClientWebinarRegistration";
+  Calendar,
+  Clock,
+  Users,
+  Video,
+  Globe,
+  GraduationCap,
+  Book,
+  Award,
+} from "lucide-react";
+import { ClientClassRegistration } from "./ClientClassRegistration";
+import { generateProgramImageUrl } from "../../../utils";
+import type { Prisma } from "@prisma/client";
 
-type WebinarWithRelations = Prisma.WebinarPlanGetPayload<{
+type ClassPlanWithRelations = Prisma.ClassPlanGetPayload<{
   include: {
     consultantProfile: {
       include: {
@@ -29,50 +30,22 @@ type WebinarWithRelations = Prisma.WebinarPlanGetPayload<{
       };
     };
     topics: true;
-    webinars: {
+    classes: {
       where: {
         status: "SCHEDULED";
       };
       take: 1;
       include: {
-        appointment: {
-          include: {
-            slotsOfAppointment: true;
-          };
-        };
+        waitlist: true;
+      };
+    };
+    classContents: {
+      orderBy: {
+        order: "asc";
       };
     };
   };
 }>;
-
-async function getWebinarPlan(
-  webinarId: string,
-): Promise<WebinarWithRelations | null> {
-  return prisma.webinarPlan.findUnique({
-    where: { id: webinarId },
-    include: {
-      consultantProfile: {
-        include: {
-          user: true,
-        },
-      },
-      topics: true,
-      webinars: {
-        where: {
-          status: "SCHEDULED",
-        },
-        take: 1,
-        include: {
-          appointment: {
-            include: {
-              slotsOfAppointment: true,
-            },
-          },
-        },
-      },
-    },
-  });
-}
 
 type FeatureItemProps = {
   icon: React.ReactNode;
@@ -89,32 +62,18 @@ const FeatureItem = ({ icon, label, value }: FeatureItemProps) => (
   </div>
 );
 
-interface PageProps {
-  params: Promise<{ webinarId: string }>;
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+interface ClassDetailsProps {
+  classPlan: ClassPlanWithRelations;
+  startDate?: Date;
 }
 
-export default async function WebinarDetailsPage({
-  params,
-  searchParams,
-}: PageProps) {
-  const { webinarId } = await params;
-  const webinar = await getWebinarPlan(webinarId);
-
-  if (!webinar) {
-    redirect("/explore/programs/webinars");
-  }
-
-  const nextSession =
-    webinar.webinars[0]?.appointment?.slotsOfAppointment?.[0]
-      ?.slotStartTimeInUTC;
-
+export function ClassDetails({ classPlan, startDate }: ClassDetailsProps) {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="relative h-[300px] w-full">
         <Image
-          src={generateProgramImageUrl(webinar.id, 1200, 300)}
-          alt="Webinar cover"
+          src={generateProgramImageUrl(classPlan.id, 1200, 300)}
+          alt="Class cover"
           fill
           className="object-cover"
           priority
@@ -127,60 +86,61 @@ export default async function WebinarDetailsPage({
           <div className="md:col-span-2">
             <Card className="mb-8">
               <CardContent className="p-6">
-                <h1 className="text-3xl font-bold mb-2">{webinar.title}</h1>
+                <h1 className="text-3xl font-bold mb-2">{classPlan.title}</h1>
                 <p className="text-xl font-semibold mb-4 text-blue-600">
-                  ${webinar.price} USD
+                  ${classPlan.price} USD
                 </p>
 
                 <div className="grid grid-cols-2 gap-4 mb-6">
                   <FeatureItem
-                    icon={<CalendarIcon />}
-                    label="Next Session"
-                    value={
-                      nextSession
-                        ? new Date(nextSession).toLocaleString(undefined, {
-                            dateStyle: "long",
-                            timeStyle: "short",
-                            timeZone:
-                              Intl.DateTimeFormat().resolvedOptions().timeZone,
-                          })
-                        : "To be announced"
-                    }
-                  />
-                  <FeatureItem
-                    icon={<ClockIcon />}
+                    icon={<Calendar className="h-5 w-5" />}
                     label="Duration"
-                    value={`${webinar.durationInHours} hours`}
+                    value={`${classPlan.durationInMonths} months`}
                   />
                   <FeatureItem
-                    icon={<UsersIcon />}
+                    icon={<Clock className="h-5 w-5" />}
+                    label="Time Commitment"
+                    value={`${classPlan.callsPerWeek} hours/week`}
+                  />
+                  <FeatureItem
+                    icon={<Users className="h-5 w-5" />}
                     label="Participants"
-                    value={`${webinar.maxParticipants} max`}
+                    value={`${classPlan.maxParticipants} max`}
                   />
                   <FeatureItem
-                    icon={<VideoIcon />}
+                    icon={<Video className="h-5 w-5" />}
                     label="Platform"
-                    value={webinar.materialProvided || "Zoom"}
+                    value={classPlan.materialProvided || "Zoom"}
                   />
                   <FeatureItem
-                    icon={<GlobeIcon />}
+                    icon={<Globe className="h-5 w-5" />}
                     label="Language"
-                    value={webinar.language || "English"}
+                    value={classPlan.language || "English"}
                   />
                   <FeatureItem
-                    icon={<CertificateIcon />}
+                    icon={<GraduationCap className="h-5 w-5" />}
                     label="Level"
-                    value={webinar.level || "All Levels"}
+                    value={classPlan.level || "All Levels"}
+                  />
+                  <FeatureItem
+                    icon={<Book className="h-5 w-5" />}
+                    label="Modules"
+                    value={classPlan.classContents.length}
+                  />
+                  <FeatureItem
+                    icon={<Award className="h-5 w-5" />}
+                    label="Certificate"
+                    value={classPlan.certificateProvided ? "Yes" : "No"}
                   />
                 </div>
 
                 <div className="space-y-6">
                   <div>
                     <h2 className="text-xl font-semibold mb-2">
-                      About this Webinar
+                      About this Class
                     </h2>
                     <p className="text-gray-600 whitespace-pre-line">
-                      {webinar.description}
+                      {classPlan.description}
                     </p>
                   </div>
 
@@ -189,7 +149,7 @@ export default async function WebinarDetailsPage({
                       What you'll learn
                     </h2>
                     <ul className="list-disc list-inside text-gray-600 space-y-1">
-                      {webinar.learningOutcomes.map(
+                      {classPlan.learningOutcomes.map(
                         (outcome: string, index: number) => (
                           <li key={index}>{outcome}</li>
                         ),
@@ -199,10 +159,37 @@ export default async function WebinarDetailsPage({
 
                   <div>
                     <h2 className="text-xl font-semibold mb-2">
+                      Prerequisites
+                    </h2>
+                    <p className="text-gray-600">
+                      {classPlan.prerequisites || "No prerequisites required"}
+                    </p>
+                  </div>
+
+                  <div>
+                    <h2 className="text-xl font-semibold mb-2">
+                      Course Content
+                    </h2>
+                    <div className="space-y-4">
+                      {classPlan.classContents.map((content, index) => (
+                        <div key={content.id} className="bg-gray-800/10 p-4 rounded-lg">
+                          <h3 className="font-semibold">
+                            Module {index + 1}: {content.title}
+                          </h3>
+                          <p className="text-gray-600 mt-1">
+                            {content.description}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h2 className="text-xl font-semibold mb-2">
                       Topics Covered
                     </h2>
                     <div className="flex flex-wrap gap-2">
-                      {webinar.topics.map((topic) => (
+                      {classPlan.topics.map((topic) => (
                         <Badge key={topic.id} variant="secondary">
                           {topic.name}
                         </Badge>
@@ -224,11 +211,11 @@ export default async function WebinarDetailsPage({
                   <div className="relative h-16 w-16 rounded-full overflow-hidden">
                     <Image
                       src={
-                        webinar.consultantProfile?.user?.image ||
+                        classPlan.consultantProfile?.user?.image ||
                         "/placeholder-user.jpg"
                       }
                       alt={
-                        webinar.consultantProfile?.user?.name || "Instructor"
+                        classPlan.consultantProfile?.user?.name || "Instructor"
                       }
                       fill
                       className="object-cover"
@@ -236,7 +223,7 @@ export default async function WebinarDetailsPage({
                   </div>
                   <div>
                     <h3 className="font-semibold">
-                      {webinar.consultantProfile?.user?.name}
+                      {classPlan.consultantProfile?.user?.name}
                     </h3>
                     <p className="text-sm text-gray-600">Expert Instructor</p>
                   </div>
@@ -248,11 +235,11 @@ export default async function WebinarDetailsPage({
               </CardContent>
             </Card>
 
-            <ClientWebinarRegistration
-              webinarId={webinar.id}
-              price={webinar.price}
-              nextSession={nextSession}
-              language={webinar.language}
+            <ClientClassRegistration
+              classId={classPlan.id}
+              price={classPlan.price}
+              startDate={startDate}
+              language={classPlan.language}
             />
           </div>
         </div>

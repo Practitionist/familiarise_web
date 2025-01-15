@@ -164,7 +164,7 @@ export async function POST(req: NextRequest) {
           amount,
           currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
           paymentMethod: "CARD",
-          paymentIntent: "", // Will be set by checkout route
+          paymentIntent: `dev_${Date.now()}_${Math.random().toString(36).substring(7)}`, // Generate unique ID for dev mode
           paymentGateway: validatedData.paymentGateway,
           paymentStatus: process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
           userId: session.user.id,

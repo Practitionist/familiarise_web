@@ -78,54 +78,98 @@ export async function POST(req: NextRequest) {
         throw new Error("Consultee profile not found");
       }
 
-      // 3. Check if there's an active class and validate registration
+      // 3. Get or create active class
+      let classEntity;
       const activeClass = plan.classes[0];
-      if (!activeClass) {
-        throw new Error("No active class found for this plan");
-      }
-
-      const existingRegistration = await tx.waitlist.findFirst({
-        where: {
-          userId: session.user.id,
-          classId: activeClass.id,
-        },
-      });
-
-      if (existingRegistration) {
-        throw new Error("You are already registered for this class");
-      }
-
-      // 4. Check participant limit
-      if (activeClass.waitlist.length >= plan.maxParticipants) {
-        throw new Error("This class is already full");
-      }
-
-      // 5. Create class registration
       const startDate = new Date();
       const endDate = new Date(startDate);
       endDate.setMonth(endDate.getMonth() + plan.durationInMonths);
 
-      const classEntity = await tx.class.update({
-        where: { id: activeClass.id },
-        data: {
-          startDate,
-          endDate,
-          status: process.env.NODE_ENV === "development" ? "IN_PROGRESS" : "SCHEDULED",
-          waitlist: {
-            create: {
-              userId: session.user.id,
+      if (activeClass) {
+        // Check existing registration
+        const existingRegistration = await tx.waitlist.findFirst({
+          where: {
+            userId: session.user.id,
+            classId: activeClass.id,
+          },
+        });
+
+        if (existingRegistration) {
+          throw new Error("You are already registered for this class");
+        }
+
+        // Check participant limit
+        if (activeClass.waitlist.length >= plan.maxParticipants) {
+          // Create new class if current one is full
+          classEntity = await tx.class.create({
+            data: {
+              classPlanId: plan.id,
+              startDate,
+              endDate,
+              status: process.env.NODE_ENV === "development" ? "IN_PROGRESS" : "SCHEDULED",
+              waitlist: {
+                create: {
+                  userId: session.user.id,
+                },
+              },
+              appointments: {
+                create: {
+                  appointmentType: "CLASS",
+                },
+              },
+            },
+            include: {
+              appointments: true,
+            },
+          });
+        } else {
+          // Join existing class
+          classEntity = await tx.class.update({
+            where: { id: activeClass.id },
+            data: {
+              startDate,
+              endDate,
+              status: process.env.NODE_ENV === "development" ? "IN_PROGRESS" : "SCHEDULED",
+              waitlist: {
+                create: {
+                  userId: session.user.id,
+                },
+              },
+              appointments: {
+                create: {
+                  appointmentType: "CLASS",
+                },
+              },
+            },
+            include: {
+              appointments: true,
+            },
+          });
+        }
+      } else {
+        // Create first class
+        classEntity = await tx.class.create({
+          data: {
+            classPlanId: plan.id,
+            startDate,
+            endDate,
+            status: process.env.NODE_ENV === "development" ? "IN_PROGRESS" : "SCHEDULED",
+            waitlist: {
+              create: {
+                userId: session.user.id,
+              },
+            },
+            appointments: {
+              create: {
+                appointmentType: "CLASS",
+              },
             },
           },
-          appointments: {
-            create: {
-              appointmentType: "CLASS",
-            },
+          include: {
+            appointments: true,
           },
-        },
-        include: {
-          appointments: true,
-        },
-      });
+        });
+      }
 
       if (!classEntity.appointments?.[0]) {
         throw new Error("Failed to create appointment");
@@ -154,7 +198,7 @@ export async function POST(req: NextRequest) {
           amount,
           currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
           paymentMethod: "CARD",
-          paymentIntent: "", // Will be set by checkout route
+          paymentIntent: `dev_${Date.now()}_${Math.random().toString(36).substring(7)}`, // Generate unique ID for dev mode
           paymentGateway: validatedData.paymentGateway,
           paymentStatus: process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
           userId: session.user.id,
@@ -172,7 +216,7 @@ export async function POST(req: NextRequest) {
           appointmentId: classEntity.appointments[0].id,
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
-          participantNumber: activeClass.waitlist.length + 1,
+          participantNumber: 1,
           maxParticipants: plan.maxParticipants,
           modules: plan.classContents.length,
           certificateProvided: plan.certificateProvided,
@@ -191,7 +235,7 @@ export async function POST(req: NextRequest) {
           consultantName: plan.consultantProfile?.user?.name,
           startDate: startDate.toISOString(),
           endDate: endDate.toISOString(),
-          participantNumber: activeClass.waitlist.length + 1,
+          participantNumber: 1,
           maxParticipants: plan.maxParticipants,
           modules: plan.classContents.length,
           certificateProvided: plan.certificateProvided,

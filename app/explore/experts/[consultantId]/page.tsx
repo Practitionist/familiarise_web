@@ -126,7 +126,7 @@ export default function ExpertProfile(
     fetchSlots();
   }, [selectedDate, consultantDetails, timezone, isTimezoneLoading, toast]);
 
-  const handleBooking = useCallback(async () => {
+  const handleConsultationBooking = useCallback(async () => {
     if (!selectedSlot || !consultantDetails) {
       toast({ title: "Please select a time slot", variant: "destructive" });
       return;
@@ -174,6 +174,32 @@ export default function ExpertProfile(
     // Redirect to checkout page
     window.location.href = checkoutUrl;
   }, [selectedSlot, consultantDetails, params.consultantId, toast]);
+
+  const handleSubscriptionBooking = useCallback(async (option: { 
+    title: string;
+    price: number;
+    duration: string;
+  }) => {
+    if (!consultantDetails) {
+      toast({ title: "Consultant details not found", variant: "destructive" });
+      return;
+    }
+
+
+    // Get the active subscription plan
+    const activePlan = consultantDetails.subscriptionPlans.find(
+      (plan) => 
+        plan.durationInMonths === parseInt(option.duration)
+    );
+
+    if (!activePlan) {
+      toast({ title: "Invalid subscription plan", variant: "destructive" });
+      return;
+    }
+
+    // Redirect to subscription checkout page
+    window.location.href = `/checkout/plans/subscription/${activePlan.id}`;
+  }, [consultantDetails, toast]);
 
   const renderCalendar = useCallback(() => {
     const daysInMonth = new Date(
@@ -266,10 +292,13 @@ export default function ExpertProfile(
         <ReviewsSection reviews={reviews} />
       </div>
 
+
+
       <ConsultationPricing
         userDetails={userDetails}
         consultantDetails={consultantDetails}
-        handleBooking={handleBooking}
+        handleConsultationBooking={handleConsultationBooking}
+        handleSubscriptionBooking={handleSubscriptionBooking}
         selectedDate={selectedDate}
         setSelectedDate={setSelectedDate}
         currentDate={currentDate}

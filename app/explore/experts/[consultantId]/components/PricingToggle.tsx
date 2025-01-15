@@ -33,7 +33,8 @@ interface PricingToggleProps {
   subscriptionOptions?: PricingOption[];
   consultantDetails: any;
   userDetails: any;
-  handleBooking: () => void;
+  handleConsultationBooking: () => void;
+  handleSubscriptionBooking: (option: PricingOption) => void;
   selectedDate: Date | null;
   setSelectedDate: (date: Date | null) => void;
   currentDate: Date;
@@ -47,7 +48,8 @@ interface PricingToggleProps {
 export default function PricingToggle({
   consultationOptions = defaultConsultationOptions,
   subscriptionOptions = defaultSubscriptionOptions,
-  handleBooking,
+  handleConsultationBooking,
+  handleSubscriptionBooking,
   selectedDate,
   setSelectedDate,
   currentDate,
@@ -366,7 +368,7 @@ export default function PricingToggle({
                               </DialogTrigger>
                               <Button
                                 variant="default"
-                                onClick={handleBooking}
+                                onClick={handleConsultationBooking}
                                 disabled={!selectedDate || !selectedSlot}
                                 className="bg-white text-black hover:bg-gray-100"
                               >
@@ -471,40 +473,13 @@ export default function PricingToggle({
                             ))}
                           </ul>
                         </div>
-                        <Dialog>
-                          <DialogTrigger asChild>
-                            <Button
-                              variant="outline"
-                              className="w-full bg-white text-black hover:bg-gray-100 transition-colors duration-300"
-                            >
-                              Subscribe
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent className="sm:max-w-[425px] bg-[#15171B] text-white border-0">
-                            <DialogHeader>
-                              <DialogTitle>Confirm Subscription</DialogTitle>
-                              <DialogDescription className="text-gray-300">
-                                Are you sure you want to subscribe to this plan?
-                              </DialogDescription>
-                            </DialogHeader>
-                            <div className="flex justify-end gap-3 mt-6">
-                              <DialogTrigger asChild>
-                                <Button
-                                  variant="outline"
-                                  className="text-white border-gray-700 hover:bg-gray-700/50"
-                                >
-                                  Cancel
-                                </Button>
-                              </DialogTrigger>
-                              <Button
-                                variant="default"
-                                className="bg-white text-black hover:bg-gray-100"
-                              >
-                                Confirm Subscription
-                              </Button>
-                            </div>
-                          </DialogContent>
-                        </Dialog>
+                        <Button
+                          variant="outline"
+                          className="w-full bg-white text-black hover:bg-gray-100 transition-colors duration-300"
+                          onClick={() => handleSubscriptionBooking(option)}
+                        >
+                          Subscribe
+                        </Button>
                       </CardContent>
                     </Card>
                   </motion.div>
