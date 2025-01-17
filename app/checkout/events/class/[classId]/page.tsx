@@ -6,34 +6,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { fetchReviews } from "@/hooks/useUserData";
-import {
-  ConsultantProfile,
-  ConsultantReview,
-  ClassPlan,
-  Topic,
-  ClassContent,
-} from "@prisma/client";
+import type { ConsultantReview } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useEffect, useState, useCallback } from "react";
 import { useToast } from "@/components/ui/use-toast";
 import { z } from "zod";
 import { loadStripe } from "@stripe/stripe-js";
 
-type ClassPlanWithDetails = ClassPlan & {
-  topics: Topic[];
-  classContents: ClassContent[];
-  consultantProfile: ConsultantProfile & {
-    user: {
-      id: string;
-      name: string;
-      email: string;
-      image: string;
-    };
-  };
-};
+import type { TClass } from "@/types/appointment";
 
 type ClassResponse = {
-  data: ClassPlanWithDetails;
+  data: TClass;
 };
 
 const classSchema = z.object({
@@ -41,7 +24,7 @@ const classSchema = z.object({
 });
 
 type PageProps = {
-  params: Promise<{ planId: string }>;
+  params: Promise<{ classId: string }>;
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
@@ -56,7 +39,7 @@ export default function ClassCheckoutPage({
   const [planData, setPlanData] = useState<ClassResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [reviews, setReviews] = useState<ConsultantReview[]>([]);
+  const [_reviews, _setReviews] = useState<ConsultantReview[]>([]);
   const { toast } = useToast();
 
   const handleCheckout = useCallback(
@@ -79,7 +62,7 @@ export default function ClassCheckoutPage({
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              classPlanId: resolvedParams.planId,
+              classId: resolvedParams.classId,
               discountCode: parsedParams.data.discountCode,
               paymentGateway: gateway,
             }),
@@ -100,7 +83,7 @@ export default function ClassCheckoutPage({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            classPlanId: resolvedParams.planId,
+            classId: resolvedParams.classId,
             discountCode: parsedParams.data.discountCode,
           }),
         });
@@ -115,8 +98,11 @@ export default function ClassCheckoutPage({
         switch (gateway) {
           case "STRIPE":
             // Load Stripe.js and redirect to checkout
-            const stripe = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
-            await stripe?.confirmPayment({
+            const stripeInstance = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
+            if (!stripeInstance) {
+              throw new Error("Failed to load Stripe");
+            }
+            await stripeInstance.confirmPayment({
               clientSecret: data.clientSecret,
               confirmParams: {
                 return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
@@ -152,7 +138,7 @@ export default function ClassCheckoutPage({
     async function fetchPlanData() {
       setIsLoading(true);
       try {
-        const endpoint = `/api/plans/classes/${resolvedParams.planId}`;
+        const endpoint = `/api/events/classes/${resolvedParams.classId}`;
 
         const response = await fetch(endpoint);
         if (!response.ok) {
@@ -161,15 +147,15 @@ export default function ClassCheckoutPage({
 
         const data = await response.json();
 
-        if (!data.data.consultantProfile?.user) {
+        if (!data.data?.classPlan?.consultantProfile?.user) {
           throw new Error("Consultant details not found");
         }
 
         setPlanData(data);
 
         // Fetch reviews for the consultant
-        const reviewsData = await fetchReviews(data.data.consultantProfile.id);
-        setReviews(reviewsData);
+        const reviewsData = await fetchReviews(data.data.classPlan.consultantProfile?.id ?? '');
+        _setReviews(reviewsData);
       } catch (error) {
         console.error("Error fetching plan data:", error);
         setError(
@@ -183,7 +169,7 @@ export default function ClassCheckoutPage({
     }
 
     fetchPlanData();
-  }, [resolvedParams.planId]);
+  }, [resolvedParams.classId]);
 
   if (isLoading) {
     return (
@@ -211,18 +197,18 @@ export default function ClassCheckoutPage({
     );
   }
 
-  const consultantDetails = planData?.data.consultantProfile;
-  const userDetails = planData?.data.consultantProfile.user;
+  const consultantDetails = planData?.data?.classPlan?.consultantProfile;
+  const userDetails = planData?.data?.classPlan?.consultantProfile?.user;
 
   return (
-    <>
-      <div className="flex flex-col gap-8 border-r bg-muted/40 p-8">
+    <div className="grid grid-cols-1 md:grid-cols-[60%_40%] min-h-screen">
+      <div className="flex flex-col gap-8 border-r bg-muted/40 p-8 overflow-y-auto">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Avatar className="w-12 h-12 border">
               <AvatarImage
-                src={userDetails?.image || "/placeholder-user.jpg"}
-                alt={userDetails?.name || "Consultant"}
+                src={userDetails?.image ?? "/placeholder-user.jpg"}
+                alt={userDetails?.name ?? "Consultant"}
               />
               <AvatarFallback>
                 {userDetails?.name ? userDetails.name.charAt(0) : "C"}
@@ -230,17 +216,17 @@ export default function ClassCheckoutPage({
             </Avatar>
             <div>
               <div className="font-semibold">
-                {userDetails?.name || "Consultant Name"}
+                {userDetails?.name ?? "Consultant Name"}
               </div>
               <div className="text-sm text-muted-foreground">
-                {consultantDetails?.specialization || "Consultant"}
+                {consultantDetails?.specialization ?? "Consultant"}
               </div>
             </div>
           </div>
           <div className="text-right">
             <div className="font-semibold">Class</div>
             <div className="text-sm text-muted-foreground">
-              {planData?.data?.title || "Learning Program"}
+              {planData?.data?.classPlan?.title ?? "Learning Program"}
             </div>
           </div>
         </div>
@@ -250,50 +236,50 @@ export default function ClassCheckoutPage({
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
-              <div>{planData?.data?.durationInMonths || 1} months</div>
+              <div>{planData?.data?.classPlan?.durationInMonths ?? 1} months</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Max Participants</div>
-              <div>{planData?.data?.maxParticipants || 10} students</div>
+              <div>{planData?.data?.classPlan?.maxParticipants ?? 10} students</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Calls per Week</div>
-              <div>{planData?.data?.callsPerWeek || 1} calls</div>
+              <div>{planData?.data?.classPlan?.callsPerWeek ?? 1} calls</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Video Meetings</div>
-              <div>{planData?.data?.videoMeetings || 1} per month</div>
+              <div>{planData?.data?.classPlan?.videoMeetings ?? 1} per month</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Email Support</div>
-              <div>{planData?.data?.emailSupport || "General"}</div>
+              <div>{planData?.data?.classPlan?.emailSupport ?? "General"}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Certificate</div>
-              <div>{planData?.data?.certificateProvided ? "Yes" : "No"}</div>
+              <div>{planData?.data?.classPlan?.certificateProvided ? "Yes" : "No"}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Topics</div>
               <div>
-                {planData?.data?.topics.map((topic) => topic.name).join(", ") ||
+                {planData?.data?.classPlan?.topics?.map((topic) => topic.name).join(", ") ??
                   "General"}
               </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Language</div>
-              <div>{planData?.data?.language || "English"}</div>
+              <div>{planData?.data?.classPlan?.language ?? "English"}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Level</div>
-              <div>{planData?.data?.level || "Beginner"}</div>
+              <div>{planData?.data?.classPlan?.level ?? "Beginner"}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Prerequisites</div>
-              <div>{planData?.data?.prerequisites || "None"}</div>
+              <div>{planData?.data?.classPlan?.prerequisites ?? "None"}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Material Provided</div>
-              <div>{planData?.data?.materialProvided || "None"}</div>
+              <div>{planData?.data?.classPlan?.materialProvided ?? "None"}</div>
             </div>
           </div>
         </div>
@@ -301,7 +287,7 @@ export default function ClassCheckoutPage({
         <div className="grid gap-4">
           <div className="font-semibold">Course Content</div>
           <div className="grid gap-4">
-            {planData?.data?.classContents.map((content, index) => (
+            {planData?.data?.classPlan?.classContents?.map((content, index) => (
               <div key={content.id} className="grid gap-1">
                 <div className="font-medium">
                   Module {index + 1}: {content.title}
@@ -345,7 +331,7 @@ export default function ClassCheckoutPage({
           </div>
         </div>
       </div>
-      <div className="flex flex-col gap-8 p-6">
+      <div className="flex flex-col gap-8 p-8 overflow-y-auto">
         <Card>
           <CardHeader>
             <CardTitle>Class Pricing</CardTitle>
@@ -354,7 +340,7 @@ export default function ClassCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Course Fee</div>
-                <div>${planData?.data?.price || 500}</div>
+                <div>${planData?.data?.classPlan?.price ?? 500}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
@@ -362,11 +348,11 @@ export default function ClassCheckoutPage({
                 </div>
                 <div className="font-semibold">
                   <ul className="list-disc">
-                    <li>{planData?.data?.callsPerWeek || 1} calls per week</li>
-                    <li>{planData?.data?.videoMeetings || 1} video meetings</li>
-                    <li>{planData?.data?.emailSupport || "General"} email support</li>
+                    <li>{planData?.data?.classPlan?.callsPerWeek ?? 1} calls per week</li>
+                    <li>{planData?.data?.classPlan?.videoMeetings ?? 1} video meetings</li>
+                    <li>{planData?.data?.classPlan?.emailSupport ?? "General"} email support</li>
                     <li>Course materials</li>
-                    {planData?.data?.certificateProvided && (
+                    {planData?.data?.classPlan?.certificateProvided && (
                       <li>Completion certificate</li>
                     )}
                   </ul>
@@ -377,23 +363,23 @@ export default function ClassCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Subtotal</div>
-                <div>${planData?.data?.price || 500}</div>
+                <div>${planData?.data?.classPlan?.price ?? 500}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div>Tax (10%)</div>
-                <div>${((planData?.data?.price || 500) * 0.1).toFixed(2)}</div>
+                <div>${((planData?.data?.classPlan?.price ?? 500) * 0.1).toFixed(2)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div>Discount (25%)</div>
                 <div>
                   -$
-                  {((planData?.data?.price || 500) * 0.25).toFixed(2)}
+                  {((planData?.data?.classPlan?.price ?? 500) * 0.25).toFixed(2)}
                 </div>
               </div>
               <Separator className="bg-gray-300" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Net Amount</div>
-                <div>${((planData?.data?.price || 500) * 0.85).toFixed(2)}</div>
+                <div>${((planData?.data?.classPlan?.price ?? 500) * 0.85).toFixed(2)}</div>
               </div>
             </div>
           </CardContent>
@@ -455,6 +441,6 @@ export default function ClassCheckoutPage({
           ))}
         </div>
       </div>
-    </>
+    </div>
   );
 }

@@ -31,7 +31,7 @@ export function ClientWebinarRegistration({
       window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(window.location.href)}`;
       return;
     }
-    window.location.href = `/checkout/plans/webinar/${webinarId}`;
+    window.location.href = `/checkout/events/webinar/${webinarId}`;
   };
 
   if (!isLoggedIn) {

@@ -3,57 +3,61 @@ import type { Prisma } from "@prisma/client";
 import { redirect } from "next/navigation";
 import { ClassDetails } from "./components/ClassDetails";
 
-type ClassWithRelations = Prisma.ClassPlanGetPayload<{
+type ClassWithRelations = Prisma.ClassGetPayload<{
   include: {
-    consultantProfile: {
+    classPlan: {
       include: {
-        user: true;
+        consultantProfile: {
+          include: {
+            user: true;
+          };
+        };
+        topics: true;
+        classContents: {
+          orderBy: {
+            order: "asc";
+          };
+        };
       };
     };
-    topics: true;
-    classes: {
-      where: {
-        status: "SCHEDULED";
-      };
-      take: 1;
+    waitlist: true;
+    appointments: {
       include: {
-        waitlist: true;
+        slotsOfAppointment: true;
       };
     };
-    classContents: {
-      orderBy: {
-        order: "asc";
-      };
-    };
+    meetingRoom: true;
   };
 }>;
 
-async function getClassPlan(
+async function getClass(
   classId: string,
 ): Promise<ClassWithRelations | null> {
-  return prisma.classPlan.findUnique({
+  return prisma.class.findUnique({
     where: { id: classId },
     include: {
-      consultantProfile: {
+      classPlan: {
         include: {
-          user: true,
+          consultantProfile: {
+            include: {
+              user: true,
+            },
+          },
+          topics: true,
+          classContents: {
+            orderBy: {
+              order: "asc",
+            },
+          },
         },
       },
-      topics: true,
-      classes: {
-        where: {
-          status: "SCHEDULED",
-        },
-        take: 1,
+      waitlist: true,
+      appointments: {
         include: {
-          waitlist: true,
+          slotsOfAppointment: true,
         },
       },
-      classContents: {
-        orderBy: {
-          order: "asc",
-        },
-      },
+      meetingRoom: true,
     },
   });
 }
@@ -65,14 +69,11 @@ interface PageProps {
 export default async function ClassDetailsPage({
   params,
 }: PageProps) {
-  const classPlan = await getClassPlan(params.classId);
+  const classData = await getClass(params.classId);
 
-  if (!classPlan) {
+  if (!classData) {
     redirect("/explore/programs/classes");
   }
 
-  const activeClass = classPlan.classes[0];
-  const startDate = activeClass?.startDate || undefined;
-
-  return <ClassDetails classPlan={classPlan} startDate={startDate} />;
+  return <ClassDetails classData={classData} />;
 }

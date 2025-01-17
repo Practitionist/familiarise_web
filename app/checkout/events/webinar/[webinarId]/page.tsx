@@ -6,32 +6,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { fetchReviews } from "@/hooks/useUserData";
-import {
-  ConsultantProfile,
-  ConsultantReview,
-  WebinarPlan,
-  Topic,
-} from "@prisma/client";
+import type { ConsultantReview } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useEffect, useState, useCallback } from "react";
 import { useToast } from "@/components/ui/use-toast";
 import { z } from "zod";
 import { loadStripe } from "@stripe/stripe-js";
 
-type WebinarPlanWithDetails = WebinarPlan & {
-  topics: Topic[];
-  consultantProfile: ConsultantProfile & {
-    user: {
-      id: string;
-      name: string;
-      email: string;
-      image: string;
-    };
-  };
-};
+import type { TWebinar } from "@/types/appointment";
 
 type WebinarResponse = {
-  data: WebinarPlanWithDetails;
+  data: TWebinar;
 };
 
 const webinarSchema = z.object({
@@ -39,7 +24,7 @@ const webinarSchema = z.object({
 });
 
 type PageProps = {
-  params: Promise<{ planId: string }>;
+  params: Promise<{ webinarId: string }>;
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
@@ -49,23 +34,16 @@ export default function WebinarCheckoutPage({
 }: Readonly<PageProps>) {
   // Next.js 15 Synchronous params and searchParams
   const resolvedParams = use(params);
-  const resolvedSearchParams = use(searchParams);
 
   const [planData, setPlanData] = useState<WebinarResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [reviews, setReviews] = useState<ConsultantReview[]>([]);
+  const [_reviews, _setReviews] = useState<ConsultantReview[]>([]);
   const { toast } = useToast();
 
   const handleCheckout = useCallback(
     async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
       try {
-        // Validate params first
-        const parsedParams = webinarSchema.safeParse(resolvedSearchParams);
-        if (!parsedParams.success) {
-          throw new Error("Invalid webinar parameters");
-        }
-
         // In development or test mode, directly create the webinar registration
         if (
           process.env.NODE_ENV === "development" ||
@@ -77,8 +55,7 @@ export default function WebinarCheckoutPage({
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              webinarPlanId: resolvedParams.planId,
-              discountCode: parsedParams.data.discountCode,
+              webinarId: resolvedParams.webinarId,
               paymentGateway: gateway,
             }),
           });
@@ -98,8 +75,7 @@ export default function WebinarCheckoutPage({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            webinarPlanId: resolvedParams.planId,
-            discountCode: parsedParams.data.discountCode,
+            webinarId: resolvedParams.webinarId,
           }),
         });
 
@@ -111,16 +87,20 @@ export default function WebinarCheckoutPage({
 
         // Handle gateway-specific responses
         switch (gateway) {
-          case "STRIPE":
+          case "STRIPE": {
             // Load Stripe.js and redirect to checkout
-            const stripe = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
-            await stripe?.confirmPayment({
+            const stripeInstance = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
+            if (!stripeInstance) {
+              throw new Error("Failed to load Stripe");
+            }
+            await stripeInstance.confirmPayment({
               clientSecret: data.clientSecret,
               confirmParams: {
                 return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
               },
             });
             break;
+          }
 
           case "RAZORPAY":
             // Redirect to Razorpay checkout
@@ -143,14 +123,14 @@ export default function WebinarCheckoutPage({
         });
       }
     },
-    [resolvedParams, resolvedSearchParams, toast],
+    [resolvedParams.webinarId, toast],
   );
 
   useEffect(() => {
     async function fetchPlanData() {
       setIsLoading(true);
       try {
-        const endpoint = `/api/plans/webinars/${resolvedParams.planId}`;
+        const endpoint = `/api/events/webinars/${resolvedParams.webinarId}`;
 
         const response = await fetch(endpoint);
         if (!response.ok) {
@@ -159,15 +139,15 @@ export default function WebinarCheckoutPage({
 
         const data = await response.json();
 
-        if (!data.data.consultantProfile?.user) {
+        if (!data.data?.webinarPlan?.consultantProfile?.user) {
           throw new Error("Consultant details not found");
         }
 
         setPlanData(data);
 
         // Fetch reviews for the consultant
-        const reviewsData = await fetchReviews(data.data.consultantProfile.id);
-        setReviews(reviewsData);
+        const reviewsData = await fetchReviews(data.data.webinarPlan.consultantProfile?.id ?? '');
+        _setReviews(reviewsData);
       } catch (error) {
         console.error("Error fetching plan data:", error);
         setError(
@@ -181,7 +161,7 @@ export default function WebinarCheckoutPage({
     }
 
     fetchPlanData();
-  }, [resolvedParams.planId]);
+  }, [resolvedParams.webinarId]);
 
   if (isLoading) {
     return (
@@ -209,18 +189,19 @@ export default function WebinarCheckoutPage({
     );
   }
 
-  const consultantDetails = planData?.data.consultantProfile;
-  const userDetails = planData?.data.consultantProfile.user;
+  const consultantDetails = planData?.data?.webinarPlan?.consultantProfile;
+  const userDetails = planData?.data?.webinarPlan?.consultantProfile?.user;
+  const nextSession = planData?.data?.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
 
   return (
-    <>
-      <div className="flex flex-col gap-8 border-r bg-muted/40 p-8">
+    <div className="grid grid-cols-1 md:grid-cols-[60%_40%] min-h-screen">
+      <div className="flex flex-col gap-8 border-r bg-muted/40 p-8 overflow-y-auto">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Avatar className="w-12 h-12 border">
               <AvatarImage
-                src={userDetails?.image || "/placeholder-user.jpg"}
-                alt={userDetails?.name || "Consultant"}
+                src={userDetails?.image ?? "/placeholder-user.jpg"}
+                alt={userDetails?.name ?? "Consultant"}
               />
               <AvatarFallback>
                 {userDetails?.name ? userDetails.name.charAt(0) : "C"}
@@ -228,17 +209,17 @@ export default function WebinarCheckoutPage({
             </Avatar>
             <div>
               <div className="font-semibold">
-                {userDetails?.name || "Consultant Name"}
+                {userDetails?.name ?? "Consultant Name"}
               </div>
               <div className="text-sm text-muted-foreground">
-                {consultantDetails?.specialization || "Consultant"}
+                {consultantDetails?.specialization ?? "Consultant"}
               </div>
             </div>
           </div>
           <div className="text-right">
             <div className="font-semibold">Webinar</div>
             <div className="text-sm text-muted-foreground">
-              {planData?.data?.title || "Live Session"}
+              {planData?.data?.webinarPlan?.title ?? "Live Session"}
             </div>
           </div>
         </div>
@@ -247,35 +228,43 @@ export default function WebinarCheckoutPage({
           <div className="font-semibold">Webinar Details</div>
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Next Session</div>
+              <div>
+                {nextSession
+                  ? new Date(nextSession).toLocaleString(undefined, {
+                      dateStyle: "long",
+                      timeStyle: "short",
+                      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    })
+                  : "To be announced"}
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
-              <div>{planData?.data?.durationInHours || 1} hours</div>
+              <div>{planData?.data?.webinarPlan?.durationInHours ?? 1} hours</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Max Participants</div>
-              <div>{planData?.data?.maxParticipants || 100} attendees</div>
+              <div>{planData?.data?.webinarPlan?.maxParticipants ?? 100} attendees</div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Platform</div>
+              <div>{planData?.data?.webinarPlan?.materialProvided ?? "Zoom"}</div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Language</div>
+              <div>{planData?.data?.webinarPlan?.language ?? "English"}</div>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Level</div>
+              <div>{planData?.data?.webinarPlan?.level ?? "All Levels"}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Topics</div>
               <div>
-                {planData?.data?.topics.map((topic) => topic.name).join(", ") ||
+                {planData?.data?.webinarPlan?.topics?.map((topic) => topic.name).join(", ") ??
                   "General"}
               </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="text-muted-foreground">Language</div>
-              <div>{planData?.data?.language || "English"}</div>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="text-muted-foreground">Level</div>
-              <div>{planData?.data?.level || "Beginner"}</div>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="text-muted-foreground">Prerequisites</div>
-              <div>{planData?.data?.prerequisites || "None"}</div>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="text-muted-foreground">Material Provided</div>
-              <div>{planData?.data?.materialProvided || "None"}</div>
             </div>
           </div>
         </div>
@@ -308,7 +297,7 @@ export default function WebinarCheckoutPage({
           </div>
         </div>
       </div>
-      <div className="flex flex-col gap-8 p-6">
+      <div className="flex flex-col gap-8 p-8 overflow-y-auto">
         <Card>
           <CardHeader>
             <CardTitle>Webinar Pricing</CardTitle>
@@ -317,7 +306,7 @@ export default function WebinarCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Registration Fee</div>
-                <div>${planData?.data?.price || 50}</div>
+                <div>${planData?.data?.webinarPlan?.price ?? 50}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
@@ -337,23 +326,23 @@ export default function WebinarCheckoutPage({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div>Subtotal</div>
-                <div>${planData?.data?.price || 50}</div>
+                <div>${planData?.data?.webinarPlan?.price ?? 50}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div>Tax (10%)</div>
-                <div>${((planData?.data?.price || 50) * 0.1).toFixed(2)}</div>
+                <div>${((planData?.data?.webinarPlan?.price ?? 50) * 0.1).toFixed(2)}</div>
               </div>
               <div className="flex items-center justify-between">
                 <div>Discount (15%)</div>
                 <div>
                   -$
-                  {((planData?.data?.price || 50) * 0.15).toFixed(2)}
+                  {((planData?.data?.webinarPlan?.price ?? 50) * 0.15).toFixed(2)}
                 </div>
               </div>
               <Separator className="bg-gray-300" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Net Amount</div>
-                <div>${((planData?.data?.price || 50) * 0.95).toFixed(2)}</div>
+                <div>${((planData?.data?.webinarPlan?.price ?? 50) * 0.95).toFixed(2)}</div>
               </div>
             </div>
           </CardContent>
@@ -415,6 +404,6 @@ export default function WebinarCheckoutPage({
           ))}
         </div>
       </div>
-    </>
+    </div>
   );
 }

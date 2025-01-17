@@ -14,7 +14,11 @@ export async function GET(
         webinarPlan: {
           include: {
             topics: true,
-            consultantProfile: true,
+            consultantProfile: {
+              include: {
+                user: true,
+              },
+            },
           },
         },
         appointment: {
@@ -79,7 +83,11 @@ export async function PUT(
         webinarPlan: {
           include: {
             topics: true,
-            consultantProfile: true,
+            consultantProfile: {
+              include: {
+                user: true,
+              },
+            },
           },
         },
         appointment: {
@@ -123,7 +131,11 @@ export async function DELETE(
         webinarPlan: {
           include: {
             topics: true,
-            consultantProfile: true,
+            consultantProfile: {
+              include: {
+                user: true,
+              },
+            },
           },
         },
         appointment: {

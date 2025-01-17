@@ -31,7 +31,7 @@ export function ClientClassRegistration({
       window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(window.location.href)}`;
       return;
     }
-    window.location.href = `/checkout/plans/class/${classId}`;
+    window.location.href = `/checkout/events/class/${classId}`;
   };
 
   if (!isLoggedIn) {

@@ -11,7 +11,21 @@ export async function GET(
     const classData = await prisma.class.findUniqueOrThrow({
       where: { id: classId },
       include: {
-        classPlan: true,
+        classPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: true,
+              },
+            },
+            topics: true,
+            classContents: {
+              orderBy: {
+                order: "asc",
+              },
+            },
+          },
+        },
         appointments: {
           include: {
             slotsOfAppointment: {
@@ -58,7 +72,21 @@ export async function PUT(
         feedbackSummary: body.feedbackSummary,
       },
       include: {
-        classPlan: true,
+        classPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: true,
+              },
+            },
+            topics: true,
+            classContents: {
+              orderBy: {
+                order: "asc",
+              },
+            },
+          },
+        },
         appointments: {
           include: {
             slotsOfAppointment: {
@@ -91,7 +119,21 @@ export async function DELETE(
     const classData = await prisma.class.delete({
       where: { id: classId },
       include: {
-        classPlan: true,
+        classPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: true,
+              },
+            },
+            topics: true,
+            classContents: {
+              orderBy: {
+                order: "asc",
+              },
+            },
+          },
+        },
         appointments: {
           include: {
             slotsOfAppointment: {

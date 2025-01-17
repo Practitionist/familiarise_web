@@ -13,7 +13,7 @@ function handleError(error: unknown) {
 
 // Validate request body
 const checkoutSchema = z.object({
-  webinarPlanId: z.string(),
+  webinarId: z.string(),
   discountCode: z.string().optional(),
   paymentGateway: z.enum(["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"]),
 });
@@ -32,34 +32,39 @@ export async function POST(req: NextRequest) {
 
     // Start transaction
     return await prisma.$transaction(async (tx) => {
-      // 1. Get webinar plan details
-      const plan = await tx.webinarPlan.findUnique({
-        where: { id: validatedData.webinarPlanId },
+      // 1. Get webinar details
+      const webinar = await tx.webinar.findUnique({
+        where: { id: validatedData.webinarId },
         include: {
-          consultantProfile: {
+          webinarPlan: {
             include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
+              consultantProfile: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                    },
+                  },
                 },
               },
             },
           },
-          webinars: {
-            where: {
-              status: {
-                in: ["SCHEDULED", "IN_PROGRESS"],
-              },
-            },
+          appointment: {
             include: {
-              waitlist: true,
+              slotsOfAppointment: true,
             },
           },
+          waitlist: true,
         },
       });
 
+      if (!webinar) {
+        throw new Error("Webinar not found");
+      }
+
+      const plan = webinar.webinarPlan;
       if (!plan) {
         throw new Error("Webinar plan not found");
       }
@@ -73,76 +78,86 @@ export async function POST(req: NextRequest) {
         throw new Error("Consultee profile not found");
       }
 
-      // 3. Get or create active webinar
-      let webinar;
-      const activeWebinar = plan.webinars[0];
+      // Check existing registration
+      const existingRegistration = await tx.waitlist.findFirst({
+        where: {
+          userId: session.user.id,
+          webinarId: webinar.id,
+        },
+      });
 
-      if (activeWebinar) {
-        // Check existing registration
-        const existingRegistration = await tx.waitlist.findFirst({
+      if (existingRegistration) {
+        throw new Error("You are already registered for this webinar");
+      }
+
+      // Check participant limit
+      if (webinar.waitlist.length >= plan.maxParticipants) {
+        throw new Error("This webinar is already full");
+      }
+
+      // Add user to waitlist with appropriate status
+      await tx.waitlist.create({
+        data: {
+          userId: session.user.id,
+          webinarId: webinar.id,
+        },
+      });
+
+      // Update webinar status in development
+      if (process.env.NODE_ENV === "development") {
+        await tx.webinar.update({
+          where: { id: webinar.id },
+          data: { status: "IN_PROGRESS" },
+        });
+      }
+
+      // Create or get appointment
+      let appointment = webinar.appointment;
+      if (!appointment) {
+        if (!plan.consultantProfileId) {
+          throw new Error("Consultant profile not found for this webinar");
+        }
+
+        // Get the first available slot from the consultant's schedule
+        const slot = await tx.slotOfAvailabilityCustom.findFirst({
           where: {
-            userId: session.user.id,
-            webinarId: activeWebinar.id,
+            consultantProfileId: plan.consultantProfileId,
+          },
+          orderBy: {
+            slotStartTimeInUTC: 'asc',
           },
         });
 
-        if (existingRegistration) {
-          throw new Error("You are already registered for this webinar");
+        if (!slot) {
+          throw new Error("No available slots found for this webinar");
         }
 
-        // Check participant limit
-        if (activeWebinar.waitlist.length >= plan.maxParticipants) {
-          throw new Error("This webinar is already full");
-        }
-
-        // Update existing webinar
-        webinar = await tx.webinar.update({
-          where: { id: activeWebinar.id },
+        appointment = await tx.appointment.create({
           data: {
-            status: process.env.NODE_ENV === "development" ? "IN_PROGRESS" : "SCHEDULED",
-            waitlist: {
+            appointmentType: "WEBINAR",
+            webinarId: webinar.id,
+            slotsOfAppointment: {
               create: {
-                userId: session.user.id,
-              },
-            },
-            appointment: {
-              create: {
-                appointmentType: "WEBINAR",
+                slotStartTimeInUTC: slot.slotStartTimeInUTC,
+                slotEndTimeInUTC: slot.slotEndTimeInUTC,
+                isTentative: process.env.NODE_ENV !== "development",
+                user: {
+                  connect: { id: session.user.id },
+                },
               },
             },
           },
           include: {
-            appointment: true,
-          },
-        });
-      } else {
-        // Create new webinar
-        webinar = await tx.webinar.create({
-          data: {
-            webinarPlanId: plan.id,
-            status: process.env.NODE_ENV === "development" ? "IN_PROGRESS" : "SCHEDULED",
-            waitlist: {
-              create: {
-                userId: session.user.id,
-              },
-            },
-            appointment: {
-              create: {
-                appointmentType: "WEBINAR",
-              },
-            },
-          },
-          include: {
-            appointment: true,
+            slotsOfAppointment: true,
           },
         });
       }
 
-      if (!webinar.appointment) {
+      if (!appointment) {
         throw new Error("Failed to create appointment");
       }
 
-      // 6. Calculate final amount (including discounts if any)
+      // Calculate final amount (including discounts if any)
       let amount = plan.price;
       let discountCodeId = null;
 
@@ -159,29 +174,29 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // 7. Create payment record
+      // Create payment record
       const payment = await tx.payment.create({
         data: {
           amount,
           currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
           paymentMethod: "CARD",
-          paymentIntent: `dev_${Date.now()}_${Math.random().toString(36).substring(7)}`, // Generate unique ID for dev mode
+          paymentIntent: `dev_${Date.now()}_${Math.random().toString(36).substring(7)}`,
           paymentGateway: validatedData.paymentGateway,
           paymentStatus: process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
           userId: session.user.id,
-          appointmentId: webinar.appointment.id,
+          appointmentId: appointment.id,
           discountCodeId,
         },
       });
 
-      // 8. Return appropriate response based on environment
+      // Return appropriate response based on environment
       if (process.env.NODE_ENV === "development") {
         return NextResponse.json({
           success: true,
           message: "Webinar registration successful",
           webinarId: webinar.id,
-          appointmentId: webinar.appointment.id,
-          participantNumber: 1,
+          appointmentId: appointment.id,
+          participantNumber: webinar.waitlist.length,
           maxParticipants: plan.maxParticipants,
         });
       }
@@ -192,11 +207,11 @@ export async function POST(req: NextRequest) {
         amount,
         metadata: {
           webinarId: webinar.id,
-          appointmentId: webinar.appointment.id,
+          appointmentId: appointment.id,
           userId: session.user.id,
           planTitle: plan.title,
           consultantName: plan.consultantProfile?.user?.name,
-          participantNumber: 1,
+          participantNumber: webinar.waitlist.length,
           maxParticipants: plan.maxParticipants,
         },
         redirectUrl: `/checkout/${validatedData.paymentGateway.toLowerCase()}`,

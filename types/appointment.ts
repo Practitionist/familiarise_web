@@ -70,6 +70,7 @@ export type TWebinar = Prisma.WebinarGetPayload<{
             user: true;
           };
         };
+        topics: true;
       };
     };
     appointment: {
@@ -95,6 +96,8 @@ export type TClass = Prisma.ClassGetPayload<{
             user: true;
           };
         };
+        topics: true;
+        classContents: true;
       };
     };
     appointments: {

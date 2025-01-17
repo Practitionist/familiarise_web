@@ -16,14 +16,29 @@ import { useRouter } from "next/navigation";
 import { generateProgramImageUrl } from "./utils";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { ClassPlan, WebinarPlan } from "@prisma/client";
+import type { TClass, TWebinar } from "@/types/appointment";
 
 type ProgramType = "all" | "class" | "webinar";
 
-type Program = (ClassPlan | WebinarPlan) & {
-  type: "class" | "webinar";
+type ClassProgram = TClass & {
+  type: "class";
   imageUrl: string;
 };
+
+type WebinarProgram = TWebinar & {
+  type: "webinar";
+  imageUrl: string;
+};
+
+type Program = ClassProgram | WebinarProgram;
+
+function isClassProgram(program: Program): program is ClassProgram {
+  return program.type === "class";
+}
+
+function isWebinarProgram(program: Program): program is WebinarProgram {
+  return program.type === "webinar";
+}
 
 export default function Programs() {
   const router = useRouter();
@@ -63,12 +78,12 @@ export default function Programs() {
 
       if (programType === "all" || programType === "class") {
         requests.push(
-          fetch(`/api/plans/classes?page=${pageNum}&limit=${ITEMS_PER_PAGE}`),
+          fetch(`/api/events/classes?page=${pageNum}&limit=${ITEMS_PER_PAGE}`),
         );
       }
       if (programType === "all" || programType === "webinar") {
         requests.push(
-          fetch(`/api/plans/webinars?page=${pageNum}&limit=${ITEMS_PER_PAGE}`),
+          fetch(`/api/events/webinars?page=${pageNum}&limit=${ITEMS_PER_PAGE}`),
         );
       }
 
@@ -78,11 +93,13 @@ export default function Programs() {
       let newPrograms: Program[] = [];
 
       if ((programType === "all" || programType === "class") && data[0]) {
-        const formattedClasses = data[0].data.map((item: ClassPlan) => ({
-          ...item,
-          type: "class",
-          imageUrl: generateProgramImageUrl(item.id),
-        }));
+        const formattedClasses = data[0].data
+          .filter((item: TClass) => item.status !== "CANCELLED" && item.startDate && new Date(item.startDate) >= new Date())
+          .map((item: TClass): ClassProgram => ({
+            ...item,
+            type: "class",
+            imageUrl: generateProgramImageUrl(item.id),
+          }));
         newPrograms = [...newPrograms, ...formattedClasses];
       }
 
@@ -90,13 +107,13 @@ export default function Programs() {
         (programType === "all" || programType === "webinar") &&
         data[programType === "all" ? 1 : 0]
       ) {
-        const formattedWebinars = data[programType === "all" ? 1 : 0].data.map(
-          (item: WebinarPlan) => ({
+        const formattedWebinars = data[programType === "all" ? 1 : 0].data
+          .filter((item: TWebinar) => item.status !== "CANCELLED")
+          .map((item: TWebinar): WebinarProgram => ({
             ...item,
             type: "webinar",
             imageUrl: generateProgramImageUrl(item.id),
-          }),
-        );
+          }));
         newPrograms = [...newPrograms, ...formattedWebinars];
       }
 
@@ -140,32 +157,40 @@ export default function Programs() {
 
   const filteredAndSortedPrograms = programs
     .filter((item) => {
+      const title = isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title;
+      const description = isClassProgram(item) ? item.classPlan.description : item.webinarPlan.description;
+      const level = isClassProgram(item) ? item.classPlan.level : item.webinarPlan.level;
+      
       const searchMatch =
-        item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (item.description?.toLowerCase() || "").includes(
-          searchTerm.toLowerCase(),
-        );
+        title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (description?.toLowerCase() || "").includes(searchTerm.toLowerCase());
       const categoryMatch =
-        selectedCategory === "all" ? true : item.level === selectedCategory;
+        selectedCategory === "all" ? true : level === selectedCategory;
       return searchMatch && categoryMatch;
     })
     .sort((a, b) => {
       switch (sortBy) {
         case "price-asc":
-          return a.price - b.price;
+          return (isClassProgram(a) ? a.classPlan.price : a.webinarPlan.price) - 
+                 (isClassProgram(b) ? b.classPlan.price : b.webinarPlan.price);
         case "price-desc":
-          return b.price - a.price;
+          return (isClassProgram(b) ? b.classPlan.price : b.webinarPlan.price) - 
+                 (isClassProgram(a) ? a.classPlan.price : a.webinarPlan.price);
         case "title-asc":
-          return a.title.localeCompare(b.title);
+          return (isClassProgram(a) ? a.classPlan.title : a.webinarPlan.title)
+            .localeCompare(isClassProgram(b) ? b.classPlan.title : b.webinarPlan.title);
         case "title-desc":
-          return b.title.localeCompare(a.title);
+          return (isClassProgram(b) ? b.classPlan.title : b.webinarPlan.title)
+            .localeCompare(isClassProgram(a) ? a.classPlan.title : a.webinarPlan.title);
         default:
           return 0;
       }
     });
 
   const uniqueLevels = Array.from(
-    new Set(programs.map((program) => program.level)),
+    new Set(programs.map((program) => 
+      isClassProgram(program) ? program.classPlan.level : program.webinarPlan.level
+    )),
   );
 
   return (
@@ -355,11 +380,11 @@ export default function Programs() {
               }}
               tabIndex={0}
               role="button"
-              aria-label={`View details for ${item.title}`}
+              aria-label={`View details for ${isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title}`}
             >
               <Image
                 src={item.imageUrl}
-                alt={item.title}
+                alt={isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title}
                 width={600}
                 height={400}
                 className="w-full h-48 object-cover"
@@ -368,7 +393,7 @@ export default function Programs() {
               <div className="p-6">
                 <div className="flex justify-between items-start mb-3">
                   <h3 className="text-lg font-semibold text-gray-900">
-                    {item.title}
+                    {isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title}
                   </h3>
                   <output
                     className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
@@ -378,11 +403,11 @@ export default function Programs() {
                   </output>
                 </div>
                 <p className="text-gray-600 text-sm mb-4 line-clamp-2">
-                  {item.description}
+                  {isClassProgram(item) ? item.classPlan.description : item.webinarPlan.description}
                 </p>
                 <div className="flex items-center justify-between">
                   <div className="text-gray-900 font-semibold">
-                    ${item.price}
+                    ${isClassProgram(item) ? item.classPlan.price : item.webinarPlan.price}
                   </div>
                   <Button
                     variant="outline"
@@ -420,11 +445,11 @@ export default function Programs() {
               }}
               tabIndex={0}
               role="button"
-              aria-label={`View details for ${item.title}`}
+              aria-label={`View details for ${isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title}`}
             >
               <Image
                 src={item.imageUrl}
-                alt={item.title}
+                alt={isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title}
                 width={200}
                 height={150}
                 className="w-48 object-cover"
@@ -433,7 +458,7 @@ export default function Programs() {
               <div className="p-6 flex-1">
                 <div className="flex justify-between items-start mb-3">
                   <h3 className="text-lg font-semibold text-gray-900">
-                    {item.title}
+                    {isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title}
                   </h3>
                   <output
                     className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
@@ -443,11 +468,11 @@ export default function Programs() {
                   </output>
                 </div>
                 <p className="text-gray-600 text-sm mb-4 line-clamp-2">
-                  {item.description}
+                  {isClassProgram(item) ? item.classPlan.description : item.webinarPlan.description}
                 </p>
                 <div className="flex items-center justify-between">
                   <div className="text-gray-900 font-semibold">
-                    ${item.price}
+                    ${isClassProgram(item) ? item.classPlan.price : item.webinarPlan.price}
                   </div>
                   <Button
                     variant="outline"

@@ -22,28 +22,30 @@ import { ClientClassRegistration } from "./ClientClassRegistration";
 import { generateProgramImageUrl } from "../../../utils";
 import type { Prisma } from "@prisma/client";
 
-type ClassPlanWithRelations = Prisma.ClassPlanGetPayload<{
+type ClassWithRelations = Prisma.ClassGetPayload<{
   include: {
-    consultantProfile: {
+    classPlan: {
       include: {
-        user: true;
+        consultantProfile: {
+          include: {
+            user: true;
+          };
+        };
+        topics: true;
+        classContents: {
+          orderBy: {
+            order: "asc";
+          };
+        };
       };
     };
-    topics: true;
-    classes: {
-      where: {
-        status: "SCHEDULED";
-      };
-      take: 1;
+    waitlist: true;
+    appointments: {
       include: {
-        waitlist: true;
+        slotsOfAppointment: true;
       };
     };
-    classContents: {
-      orderBy: {
-        order: "asc";
-      };
-    };
+    meetingRoom: true;
   };
 }>;
 
@@ -63,16 +65,16 @@ const FeatureItem = ({ icon, label, value }: FeatureItemProps) => (
 );
 
 interface ClassDetailsProps {
-  classPlan: ClassPlanWithRelations;
-  startDate?: Date;
+  classData: ClassWithRelations;
 }
 
-export function ClassDetails({ classPlan, startDate }: ClassDetailsProps) {
+export function ClassDetails({ classData }: ClassDetailsProps) {
+  const { classPlan } = classData;
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="relative h-[300px] w-full">
         <Image
-          src={generateProgramImageUrl(classPlan.id, 1200, 300)}
+          src={generateProgramImageUrl(classData.id, 1200, 300)}
           alt="Class cover"
           fill
           className="object-cover"
@@ -143,6 +145,51 @@ export function ClassDetails({ classPlan, startDate }: ClassDetailsProps) {
                       {classPlan.description}
                     </p>
                   </div>
+
+                  {classData.appointments && classData.appointments.length > 0 && (
+                    <div>
+                      <h2 className="text-xl font-semibold mb-2">
+                        Class Schedule
+                      </h2>
+                      <div className="space-y-2">
+                        {classData.appointments
+                          .flatMap(appointment => 
+                            appointment.slotsOfAppointment?.map(slot => ({
+                              slot,
+                              appointmentId: appointment.id
+                            }))
+                          )
+                          .sort((a, b) => 
+                            new Date(a.slot.slotStartTimeInUTC).getTime() - 
+                            new Date(b.slot.slotStartTimeInUTC).getTime()
+                          )
+                          .map((item, index) => (
+                            <div key={`${item.appointmentId}-${index}`} className="bg-gray-800/10 p-4 rounded-lg">
+                              <div className="font-medium">
+                                {new Date(item.slot.slotStartTimeInUTC).toLocaleString(undefined, {
+                                  weekday: "long", 
+                                  year: "numeric",
+                                  month: "long",
+                                  day: "numeric",
+                                })}
+                              </div>
+                              <div className="text-gray-600 text-sm">
+                                {new Date(item.slot.slotStartTimeInUTC).toLocaleTimeString(undefined, {
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                                })} - {" "}
+                                {new Date(item.slot.slotEndTimeInUTC).toLocaleTimeString(undefined, {
+                                  hour: "numeric", 
+                                  minute: "2-digit",
+                                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div>
                     <h2 className="text-xl font-semibold mb-2">
@@ -236,9 +283,9 @@ export function ClassDetails({ classPlan, startDate }: ClassDetailsProps) {
             </Card>
 
             <ClientClassRegistration
-              classId={classPlan.id}
+              classId={classData.id}
               price={classPlan.price}
-              startDate={startDate}
+              startDate={classData.startDate || undefined}
               language={classPlan.language}
             />
           </div>

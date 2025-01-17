@@ -13,7 +13,7 @@ function handleError(error: unknown) {
 
 // Validate request body
 const checkoutSchema = z.object({
-  classPlanId: z.string(),
+  classId: z.string(),
   discountCode: z.string().optional(),
   paymentGateway: z.enum(["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"]),
 });
@@ -32,39 +32,44 @@ export async function POST(req: NextRequest) {
 
     // Start transaction
     return await prisma.$transaction(async (tx) => {
-      // 1. Get class plan details
-      const plan = await tx.classPlan.findUnique({
-        where: { id: validatedData.classPlanId },
+      // 1. Get class details
+      const classEntity = await tx.class.findUnique({
+        where: { id: validatedData.classId },
         include: {
-          consultantProfile: {
+          classPlan: {
             include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
+              consultantProfile: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                    },
+                  },
+                },
+              },
+              classContents: {
+                orderBy: {
+                  order: "asc",
                 },
               },
             },
           },
-          classes: {
-            where: {
-              status: {
-                in: ["SCHEDULED", "IN_PROGRESS"],
-              },
-            },
+          appointments: {
             include: {
-              waitlist: true,
+              slotsOfAppointment: true,
             },
           },
-          classContents: {
-            orderBy: {
-              order: "asc",
-            },
-          },
+          waitlist: true,
         },
       });
 
+      if (!classEntity) {
+        throw new Error("Class not found");
+      }
+
+      const plan = classEntity.classPlan;
       if (!plan) {
         throw new Error("Class plan not found");
       }
@@ -78,104 +83,102 @@ export async function POST(req: NextRequest) {
         throw new Error("Consultee profile not found");
       }
 
-      // 3. Get or create active class
-      let classEntity;
-      const activeClass = plan.classes[0];
-      const startDate = new Date();
-      const endDate = new Date(startDate);
-      endDate.setMonth(endDate.getMonth() + plan.durationInMonths);
+      // Check existing registration
+      const existingRegistration = await tx.waitlist.findFirst({
+        where: {
+          userId: session.user.id,
+          classId: classEntity.id,
+        },
+      });
 
-      if (activeClass) {
-        // Check existing registration
-        const existingRegistration = await tx.waitlist.findFirst({
-          where: {
-            userId: session.user.id,
-            classId: activeClass.id,
-          },
-        });
+      if (existingRegistration) {
+        throw new Error("You are already registered for this class");
+      }
 
-        if (existingRegistration) {
-          throw new Error("You are already registered for this class");
-        }
+      // Check participant limit
+      if (classEntity.waitlist.length >= plan.maxParticipants) {
+        throw new Error("This class is already full");
+      }
 
-        // Check participant limit
-        if (activeClass.waitlist.length >= plan.maxParticipants) {
-          // Create new class if current one is full
-          classEntity = await tx.class.create({
-            data: {
-              classPlanId: plan.id,
-              startDate,
-              endDate,
-              status: process.env.NODE_ENV === "development" ? "IN_PROGRESS" : "SCHEDULED",
-              waitlist: {
-                create: {
-                  userId: session.user.id,
-                },
-              },
-              appointments: {
-                create: {
-                  appointmentType: "CLASS",
-                },
-              },
-            },
-            include: {
-              appointments: true,
-            },
-          });
-        } else {
-          // Join existing class
-          classEntity = await tx.class.update({
-            where: { id: activeClass.id },
-            data: {
-              startDate,
-              endDate,
-              status: process.env.NODE_ENV === "development" ? "IN_PROGRESS" : "SCHEDULED",
-              waitlist: {
-                create: {
-                  userId: session.user.id,
-                },
-              },
-              appointments: {
-                create: {
-                  appointmentType: "CLASS",
-                },
-              },
-            },
-            include: {
-              appointments: true,
-            },
-          });
-        }
-      } else {
-        // Create first class
-        classEntity = await tx.class.create({
-          data: {
-            classPlanId: plan.id,
-            startDate,
-            endDate,
-            status: process.env.NODE_ENV === "development" ? "IN_PROGRESS" : "SCHEDULED",
-            waitlist: {
-              create: {
-                userId: session.user.id,
-              },
-            },
-            appointments: {
-              create: {
-                appointmentType: "CLASS",
-              },
-            },
-          },
-          include: {
-            appointments: true,
-          },
+      // Add user to waitlist
+      await tx.waitlist.create({
+        data: {
+          userId: session.user.id,
+          classId: classEntity.id,
+        },
+      });
+
+      // Update class status in development
+      if (process.env.NODE_ENV === "development") {
+        await tx.class.update({
+          where: { id: classEntity.id },
+          data: { status: "IN_PROGRESS" },
         });
       }
 
-      if (!classEntity.appointments?.[0]) {
+      // Get or create appointment with slots
+      let appointment = classEntity.appointments[0];
+      if (!plan.consultantProfileId) {
+        throw new Error("Consultant profile not found for this class");
+      }
+
+      // Get the first available slot from the consultant's schedule
+      const slot = await tx.slotOfAvailabilityCustom.findFirst({
+        where: {
+          consultantProfileId: plan.consultantProfileId,
+        },
+        orderBy: {
+          slotStartTimeInUTC: 'asc',
+        },
+      });
+
+      if (!slot) {
+        throw new Error("No available slots found for this class");
+      }
+
+      if (appointment) {
+        // Add user to existing appointment's slots
+        await tx.slotOfAppointment.create({
+          data: {
+            slotStartTimeInUTC: slot.slotStartTimeInUTC,
+            slotEndTimeInUTC: slot.slotEndTimeInUTC,
+            isTentative: process.env.NODE_ENV !== "development",
+            appointment: {
+              connect: { id: appointment.id }
+            },
+            user: {
+              connect: { id: session.user.id }
+            }
+          }
+        });
+      } else {
+        // Create new appointment with slots
+        appointment = await tx.appointment.create({
+          data: {
+            appointmentType: "CLASS",
+            classId: classEntity.id,
+            slotsOfAppointment: {
+              create: {
+                slotStartTimeInUTC: slot.slotStartTimeInUTC,
+                slotEndTimeInUTC: slot.slotEndTimeInUTC,
+                isTentative: process.env.NODE_ENV !== "development",
+                user: {
+                  connect: { id: session.user.id }
+                }
+              }
+            }
+          },
+          include: {
+            slotsOfAppointment: true
+          }
+        });
+      }
+
+      if (!appointment) {
         throw new Error("Failed to create appointment");
       }
 
-      // 6. Calculate final amount (including discounts if any)
+      // Calculate final amount (including discounts if any)
       let amount = plan.price;
       let discountCodeId = null;
 
@@ -192,31 +195,31 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // 7. Create payment record
+      // Create payment record
       const payment = await tx.payment.create({
         data: {
           amount,
           currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
           paymentMethod: "CARD",
-          paymentIntent: `dev_${Date.now()}_${Math.random().toString(36).substring(7)}`, // Generate unique ID for dev mode
+          paymentIntent: `dev_${Date.now()}_${Math.random().toString(36).substring(7)}`,
           paymentGateway: validatedData.paymentGateway,
           paymentStatus: process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
           userId: session.user.id,
-          appointmentId: classEntity.appointments[0].id,
+          appointmentId: appointment.id,
           discountCodeId,
         },
       });
 
-      // 8. Return appropriate response based on environment
+      // Return appropriate response based on environment
       if (process.env.NODE_ENV === "development") {
         return NextResponse.json({
           success: true,
           message: "Class registration successful",
           classId: classEntity.id,
-          appointmentId: classEntity.appointments[0].id,
-          startDate: startDate.toISOString(),
-          endDate: endDate.toISOString(),
-          participantNumber: 1,
+          appointmentId: appointment.id,
+          startDate: classEntity.startDate?.toISOString(),
+          endDate: classEntity.endDate?.toISOString(),
+          participantNumber: classEntity.waitlist.length,
           maxParticipants: plan.maxParticipants,
           modules: plan.classContents.length,
           certificateProvided: plan.certificateProvided,
@@ -229,13 +232,13 @@ export async function POST(req: NextRequest) {
         amount,
         metadata: {
           classId: classEntity.id,
-          appointmentId: classEntity.appointments[0].id,
+          appointmentId: appointment.id,
           userId: session.user.id,
           planTitle: plan.title,
           consultantName: plan.consultantProfile?.user?.name,
-          startDate: startDate.toISOString(),
-          endDate: endDate.toISOString(),
-          participantNumber: 1,
+          startDate: classEntity.startDate?.toISOString(),
+          endDate: classEntity.endDate?.toISOString(),
+          participantNumber: classEntity.waitlist.length,
           maxParticipants: plan.maxParticipants,
           modules: plan.classContents.length,
           certificateProvided: plan.certificateProvided,
