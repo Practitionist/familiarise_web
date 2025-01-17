@@ -62,7 +62,7 @@ function ConsulteeNav({
   currentPath,
 }: Readonly<ConsulteeNavProps>) {
   return (
-    <nav className="p-4 sm:p-8 pt-32 md:pt-36 bg-white shadow-sm">
+    <nav className="p-4 sm:p-8 bg-white shadow-sm">
       <div className="flex flex-col sm:flex-row justify-start items-start gap-4">
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 w-full">
           {NAV_ITEMS.map((item) => (

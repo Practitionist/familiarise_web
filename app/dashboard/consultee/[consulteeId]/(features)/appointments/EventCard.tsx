@@ -171,7 +171,32 @@ export function EventCard({
         </CardHeader>
         <CardContent>
           <div className="flex flex-col space-y-2">
-            {showSessionDetails ? (
+            {type === "Consultation" || type === "Webinar" ? (
+              <div className="flex items-center justify-between">
+                <span data-testid="slot-time" className="text-sm text-gray-600">
+                  {actualSlots && actualSlots.length > 0 ? (
+                    <div className="bg-gray-50 p-2 rounded flex flex-col space-y-1">
+                      <div className="text-sm font-medium text-gray-700">
+                        Scheduled Time
+                      </div>
+                      <div>
+                        <span className="text-sm text-gray-600">
+                          {formatSlotDate(actualSlots[0].startTime)}
+                        </span>
+                        <span className="text-sm text-gray-600 ml-2">
+                          {formatSlotTime(actualSlots[0].startTime)} -{" "}
+                          {formatSlotTime(actualSlots[0].endTime)}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-yellow-50 p-2 rounded text-yellow-700">
+                      {date}
+                    </div>
+                  )}
+                </span>
+              </div>
+            ) : showSessionDetails ? (
               <Accordion type="single" collapsible>
                 <AccordionItem value="sessions" className="border-none">
                   <AccordionTrigger className="py-2 hover:no-underline">
