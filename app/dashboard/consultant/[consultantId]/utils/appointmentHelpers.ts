@@ -112,8 +112,8 @@ export const sortAppointmentsByStartTime = (appointments: IAppointment[]): IAppo
 // Filter today's appointments
 export const getTodayAppointments = (appointments: IAppointment[]): IAppointment[] => {
   const now = new Date();
-  const todayStart = new Date(now.setHours(0, 0, 0, 0));
-  const todayEnd = new Date(now.setHours(23, 59, 59, 999));
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
   return appointments.filter(appointment => {
     const startTime = getStartTime(appointment);
@@ -126,7 +126,7 @@ export const getTodayAppointments = (appointments: IAppointment[]): IAppointment
 // Filter upcoming appointments
 export const getUpcomingAppointments = (appointments: IAppointment[]): IAppointment[] => {
   const now = new Date();
-  const todayEnd = new Date(now.setHours(23, 59, 59, 999));
+  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
   return appointments.filter(appointment => {
     const startTime = getStartTime(appointment);

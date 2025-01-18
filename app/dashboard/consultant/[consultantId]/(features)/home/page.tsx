@@ -13,11 +13,6 @@ import {
   BADGE_STYLES,
 } from "../../types";
 import { HomeTab } from "./HomeTab";
-import { 
-  getTodayAppointments,
-  getUpcomingAppointments,
-  getAppointmentStatus 
-} from "../../utils/appointmentHelpers";
 
 export default function HomePage({
   params,
@@ -75,20 +70,6 @@ export default function HomePage({
       </div>
     );
   }
-
-  // Filter appointments for today and upcoming
-  const todayAppointments = getTodayAppointments(appointments).filter(appointment => {
-    const status = getAppointmentStatus(appointment);
-    return status !== "Completed";
-  });
-
-  // Get next 2 upcoming appointments that aren't today and aren't completed
-  const upcomingAppointments = getUpcomingAppointments(appointments)
-    .filter(appointment => {
-      const status = getAppointmentStatus(appointment);
-      return status !== "Completed";
-    })
-    .slice(0, 2);
 
   const getBadgeStyle = (badge: string): string => {
     return BADGE_STYLES[badge] || BADGE_STYLES.default;

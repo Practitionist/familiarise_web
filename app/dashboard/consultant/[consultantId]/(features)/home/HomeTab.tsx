@@ -13,7 +13,8 @@ import {
   getAppointmentStatus,
   getAppointmentTypeAndPlan,
   getTodayAppointments,
-  getUpcomingAppointments
+  getUpcomingAppointments,
+  sortAppointmentsByStartTime
 } from "../../utils/appointmentHelpers";
 
 export function HomeTab({
@@ -33,12 +34,14 @@ export function HomeTab({
       return status !== "Completed";
     });
 
-  const upcomingAppointments = getUpcomingAppointments(appointments || [])
-    .filter(appointment => {
-      const status = getAppointmentStatus(appointment);
-      return status !== "Completed";
-    })
-    .slice(0, 2); // Only show next 2
+  // Get all upcoming appointments that aren't today and aren't completed
+  const upcomingAppointments = sortAppointmentsByStartTime(
+    getUpcomingAppointments(appointments || [])
+      .filter(appointment => {
+        const status = getAppointmentStatus(appointment);
+        return status !== "Completed" && status !== "Today";
+      })
+  );
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
