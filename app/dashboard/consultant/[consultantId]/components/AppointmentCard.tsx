@@ -10,72 +10,83 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { IAppointment, BADGE_STYLES } from "../types";
+import { IAppointment } from "../types";
+import {
+  getConsumeeName,
+  getConsumeeImage,
+  getStartTime,
+  formatAppointmentTime,
+  getAppointmentStatus,
+  getAppointmentTypeAndPlan,
+} from "../utils/appointmentHelpers";
 
 interface AppointmentCardProps extends IAppointment {
   getBadgeStyle: (badge: string) => string;
 }
 
-export function AppointmentCard({
-  name,
-  description,
-  time,
-  badge,
-  getBadgeStyle,
-}: Readonly<AppointmentCardProps>) {
-  // Get initials for avatar fallback
-  const initials = name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase();
+export function AppointmentCard(props: Readonly<AppointmentCardProps>) {
+  const appointment: IAppointment = {
+    id: props.id,
+    appointmentType: props.appointmentType,
+    slotsOfAppointment: props.slotsOfAppointment,
+    consultation: props.consultation,
+    subscription: props.subscription,
+    webinar: props.webinar,
+    class: props.class
+  };
 
-  // Determine if join button should be enabled and its style
-  const isJoinable = badge.includes("5 min");
+  const userName = getConsumeeName(appointment);
+  const status = getAppointmentStatus(appointment);
+  const isJoinable = status === "Meeting in 5 min";
   const joinButtonStyle = isJoinable
     ? "bg-black text-white hover:bg-gray-800"
     : "bg-gray-400 text-white cursor-not-allowed";
 
+  // Get initials for avatar fallback
+  const initials = userName
+    .split(" ")
+    .map((n: string) => n[0])
+    .join("")
+    .toUpperCase();
+
+  const startTime = getStartTime(appointment);
+
   return (
-    <Card className="bg-purple-100 hover:bg-purple-50 transition-colors">
+    <Card className="bg-white hover:bg-gray-50 transition-colors border">
       <CardHeader className="p-3 sm:p-4">
         <div className="flex items-center gap-2 sm:gap-4">
           <Avatar className="w-8 h-8 sm:w-10 sm:h-10">
-            <AvatarImage alt={name} src="/placeholder.svg" />
+            <AvatarImage 
+              alt={userName} 
+              src={getConsumeeImage(appointment)} 
+            />
             <AvatarFallback className="text-sm sm:text-base">
-              {initials || "?"}
+              {initials}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
             <CardTitle className="text-sm sm:text-base font-medium truncate">
-              {name}
+              {userName}
             </CardTitle>
             <CardDescription className="text-xs sm:text-sm text-gray-600 line-clamp-2">
-              {description}
+              {getAppointmentTypeAndPlan(appointment)}
             </CardDescription>
           </div>
         </div>
       </CardHeader>
       <CardContent className="px-3 sm:px-4 py-2">
-        <p className="text-xs sm:text-sm font-medium text-gray-700">{time}</p>
+        <p className="text-xs sm:text-sm font-medium text-gray-700">
+          {startTime ? formatAppointmentTime(startTime) : 'Time not set'}
+        </p>
       </CardContent>
       <CardFooter className="p-3 sm:p-4 flex flex-col sm:flex-row gap-2 sm:gap-4 sm:items-center sm:justify-between">
         <div className="w-full sm:w-auto">
-          {badge === "Schedule unavailable" ? (
-            <Badge
-              variant="secondary"
-              className={`${BADGE_STYLES.default} text-xs sm:text-sm w-full sm:w-auto justify-center sm:justify-start`}
-            >
-              Schedule unavailable
-            </Badge>
-          ) : (
-            <Badge
-              variant="secondary"
-              className={`${getBadgeStyle(badge)} text-xs sm:text-sm w-full sm:w-auto justify-center sm:justify-start`}
-            >
-              {badge}
-            </Badge>
-          )}
+          <Badge
+            variant="secondary"
+            className={`${props.getBadgeStyle(status)} text-xs sm:text-sm w-full sm:w-auto justify-center sm:justify-start`}
+          >
+            {status}
+          </Badge>
         </div>
         <Button
           variant="default"

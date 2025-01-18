@@ -1,11 +1,68 @@
 import { TConsultantProfile } from "@/types/consultant";
 
-export interface IAppointment {
+export interface IUser {
   id: string;
   name: string;
+  email: string;
+  image: string;
+  currentTimezone: string;
+}
+
+export interface ISlotOfAppointment {
+  id: string;
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
+  isTentative: boolean;
+  user: IUser[];
+}
+
+export interface IPlan {
+  id: string;
+  title: string;
   description: string;
-  time: string;
-  badge: string;
+}
+
+export interface IRequestedBy {
+  user: {
+    name: string;
+    image: string;
+  };
+}
+
+export interface IConsultation {
+  id: string;
+  consultationPlan: IPlan;
+  requestStatus: string;
+  requestedBy: IRequestedBy;
+}
+
+export interface ISubscription {
+  id: string;
+  subscriptionPlan: IPlan;
+  requestStatus: string;
+  requestedBy: IRequestedBy;
+}
+
+export interface IWebinar {
+  id: string;
+  webinarPlan: IPlan;
+  status: string;
+}
+
+export interface IClass {
+  id: string;
+  classPlan: IPlan;
+  status: string;
+}
+
+export interface IAppointment {
+  id: string;
+  appointmentType: 'CONSULTATION' | 'SUBSCRIPTION' | 'WEBINAR' | 'CLASS';
+  slotsOfAppointment: ISlotOfAppointment[];
+  consultation?: IConsultation;
+  subscription?: ISubscription;
+  webinar?: IWebinar;
+  class?: IClass;
 }
 
 export interface IDocument {
@@ -38,8 +95,7 @@ export interface WithBadgeStyle {
 
 // Props for each tab component
 export interface HomeTabProps extends WithBadgeStyle {
-  todayAppointments: IAppointment[];
-  upcomingAppointments: IAppointment[];
+  appointments: IAppointment[];
   activities: IActivity[];
   approvals: IApproval[];
 }

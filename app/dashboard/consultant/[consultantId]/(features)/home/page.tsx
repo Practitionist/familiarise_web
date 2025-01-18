@@ -13,6 +13,11 @@ import {
   BADGE_STYLES,
 } from "../../types";
 import { HomeTab } from "./HomeTab";
+import { 
+  getTodayAppointments,
+  getUpcomingAppointments,
+  getAppointmentStatus 
+} from "../../utils/appointmentHelpers";
 
 export default function HomePage({
   params,
@@ -71,33 +76,19 @@ export default function HomePage({
     );
   }
 
-  // Filter appointments for today
-  const todayAppointments = appointments.filter((appointment) => {
-    if (appointment.badge === "Completed") return false;
-    if (
-      appointment.badge.includes("min") ||
-      appointment.badge.includes("hours")
-    ) {
-      return true;
-    }
-    return !appointment.time.includes(",");
+  // Filter appointments for today and upcoming
+  const todayAppointments = getTodayAppointments(appointments).filter(appointment => {
+    const status = getAppointmentStatus(appointment);
+    return status !== "Completed";
   });
 
-  // Get upcoming appointments (not today)
-  const upcomingAppointments = appointments.filter((appointment) => {
-    if (
-      appointment.badge === "Completed" ||
-      appointment.badge.includes("min") ||
-      appointment.badge.includes("hours")
-    ) {
-      return false;
-    }
-    return (
-      appointment.time.includes(",") ||
-      appointment.badge === "Tomorrow" ||
-      appointment.badge.startsWith("In ")
-    );
-  });
+  // Get next 2 upcoming appointments that aren't today and aren't completed
+  const upcomingAppointments = getUpcomingAppointments(appointments)
+    .filter(appointment => {
+      const status = getAppointmentStatus(appointment);
+      return status !== "Completed";
+    })
+    .slice(0, 2);
 
   const getBadgeStyle = (badge: string): string => {
     return BADGE_STYLES[badge] || BADGE_STYLES.default;
@@ -105,8 +96,7 @@ export default function HomePage({
 
   return (
     <HomeTab
-      todayAppointments={todayAppointments}
-      upcomingAppointments={upcomingAppointments}
+      appointments={appointments}
       activities={activities}
       approvals={approvals}
       getBadgeStyle={getBadgeStyle}

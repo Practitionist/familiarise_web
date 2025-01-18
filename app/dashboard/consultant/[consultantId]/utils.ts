@@ -45,14 +45,68 @@ export async function fetchAppointments(
     // Transform the API response to match our IAppointment type
     return data.data.map((appointment) => ({
       id: appointment.id,
-      name: appointment.slotsOfAppointment[0]?.user[0]?.name ?? "Unknown",
-      description: getAppointmentDescription(appointment),
-      time: formatAppointmentTime(
-        appointment.slotsOfAppointment[0]?.slotStartTimeInUTC,
-      ),
-      badge: getAppointmentBadge(
-        appointment.slotsOfAppointment[0]?.slotStartTimeInUTC,
-      ),
+      appointmentType: appointment.appointmentType,
+      slotsOfAppointment: appointment.slotsOfAppointment.map(slot => ({
+        id: slot.id,
+        slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC).toISOString(),
+        slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC).toISOString(),
+        isTentative: slot.isTentative,
+        user: slot.user.map(u => ({
+          id: u.id,
+          name: u.name || 'Unknown User',
+          email: u.email || '',
+          image: u.image || '/placeholder.svg',
+          currentTimezone: u.currentTimezone || 'UTC'
+        }))
+      })),
+      consultation: appointment.consultation ? {
+        id: appointment.consultation.id,
+        consultationPlan: {
+          id: appointment.consultation.consultationPlan.id,
+          title: appointment.consultation.consultationPlan.title || 'Untitled Plan',
+          description: appointment.consultation.consultationPlan.description || ''
+        },
+        requestStatus: appointment.consultation.requestStatus,
+        requestedBy: {
+          user: {
+            name: appointment.consultation.consultationPlan.consultantProfile.user.name || 'Unknown User',
+            image: appointment.consultation.consultationPlan.consultantProfile.user.image || '/placeholder.svg'
+          }
+        }
+      } : undefined,
+      subscription: appointment.subscription ? {
+        id: appointment.subscription.id,
+        subscriptionPlan: {
+          id: appointment.subscription.subscriptionPlan.id,
+          title: appointment.subscription.subscriptionPlan.title || 'Untitled Plan',
+          description: appointment.subscription.subscriptionPlan.description || ''
+        },
+        requestStatus: appointment.subscription.requestStatus,
+        requestedBy: {
+          user: {
+            name: appointment.subscription.subscriptionPlan.consultantProfile.user.name || 'Unknown User',
+            image: appointment.subscription.subscriptionPlan.consultantProfile.user.image || '/placeholder.svg'
+          }
+        }
+      } : undefined,
+      webinar: appointment.webinar ? {
+        id: appointment.webinar.id,
+        webinarPlan: {
+          id: appointment.webinar.webinarPlan.id,
+          title: appointment.webinar.webinarPlan.title || 'Untitled Plan',
+          description: appointment.webinar.webinarPlan.description || ''
+        },
+        status: appointment.webinar.status
+      } : undefined,
+      class: appointment.class ? {
+        id: appointment.class.id,
+        classPlan: {
+          id: appointment.class.classPlan.id,
+          title: appointment.class.classPlan.title || 'Untitled Plan',
+          description: appointment.class.classPlan.description || ''
+        },
+        status: appointment.class.status
+      } : undefined
     }));
   } catch (error) {
     console.error("Error fetching appointments:", error);
@@ -136,70 +190,6 @@ export async function fetchDocuments(
 ): Promise<IDocument[]> {
   // TODO: Implement document management
   return [];
-}
-
-// Helper functions
-function getAppointmentDescription(appointment: TAppointment): string {
-  const type = appointment.appointmentType?.toLowerCase();
-  switch (type) {
-    case "consultation":
-      return `Consultation - ${appointment.consultation?.consultationPlan?.title ?? "No title"}`;
-    case "subscription":
-      return `Subscription - ${appointment.subscription?.subscriptionPlan?.title ?? "No title"}`;
-    case "webinar":
-      return `Webinar - ${appointment.webinar?.webinarPlan?.title ?? "No title"}`;
-    case "class":
-      return `Class - ${appointment.class?.classPlan?.title ?? "No title"}`;
-    default:
-      return "Appointment";
-  }
-}
-
-function formatAppointmentTime(dateString?: string | Date | null): string {
-  if (!dateString) return "Time not set";
-  const date = new Date(dateString);
-  if (isNaN(date.getTime())) return "Invalid date";
-
-  return date.toLocaleString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
-
-function getAppointmentBadge(dateString?: string | Date | null): string {
-  if (!dateString) return "Schedule unavailable";
-
-  const appointmentTime = new Date(dateString);
-  if (isNaN(appointmentTime.getTime())) return "Invalid date";
-
-  const now = new Date();
-  const diffInMinutes = Math.floor(
-    (appointmentTime.getTime() - now.getTime()) / (1000 * 60),
-  );
-
-  if (diffInMinutes < -30) return "Completed";
-  if (diffInMinutes <= 5) return "Meeting in 5 min";
-  if (diffInMinutes <= 120) return "Meeting in 2 hours";
-
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(0, 0, 0, 0);
-  const dayAfterTomorrow = new Date(tomorrow);
-  dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 1);
-
-  if (appointmentTime >= tomorrow && appointmentTime < dayAfterTomorrow) {
-    return "Tomorrow";
-  }
-
-  const diffInDays = Math.floor(diffInMinutes / (24 * 60));
-  if (diffInDays < 7) return `In ${diffInDays} days`;
-  if (diffInDays < 30) return `In ${Math.floor(diffInDays / 7)} weeks`;
-  if (diffInDays < 365) return `In ${Math.floor(diffInDays / 30)} months`;
-  return `In ${Math.floor(diffInDays / 365)} years`;
 }
 
 function formatDate(dateString?: string | Date | null): string {
