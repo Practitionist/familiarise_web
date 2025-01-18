@@ -1,18 +1,19 @@
 "use client";
 
-import React from "react";
-import { motion } from "framer-motion";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { PencilIcon, XIcon } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useToast } from "@/components/ui/use-toast";
+import { motion } from "framer-motion";
+import { ClockIcon, XIcon } from "lucide-react";
+import React from "react";
 
 interface EventCardProps {
   title: string;
@@ -26,6 +27,7 @@ interface EventCardProps {
   }>;
   type?: "Subscription" | "Class" | "Consultation" | "Webinar";
   isTentative?: boolean;
+  appointmentId?: string;
 }
 
 function formatSlotDate(date: Date | string): string {
@@ -58,6 +60,7 @@ export function EventCard({
   actualSlots,
   type,
   isTentative,
+  appointmentId,
 }: Readonly<EventCardProps>) {
   const getStatusColor = (status: string) => {
     const statusLower = status.toLowerCase();
@@ -72,24 +75,77 @@ export function EventCard({
     return "bg-gray-50 text-gray-700 border-gray-200";
   };
 
-  const handleEdit = (e: React.MouseEvent) => {
+  const { toast } = useToast();
+  const [isLoading, setIsLoading] = React.useState(false);
+
+  const handleReschedule = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    console.log("Edit clicked:", {
-      title,
-      type,
-      status,
-      isTentative,
-    });
+    if (!appointmentId) return;
+
+    try {
+      setIsLoading(true);
+      const response = await fetch(`/api/appointments/${appointmentId}/reschedule`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to request reschedule');
+      }
+
+      toast({
+        title: "Reschedule requested",
+        description: "Your request has been sent to the consultant.",
+      });
+
+      // Refresh the page to show updated status
+      window.location.reload();
+    } catch (error) {
+      console.error('Error requesting reschedule:', error);
+      toast({
+        title: "Error",
+        description: "Failed to request reschedule. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleCancel = (e: React.MouseEvent) => {
+  const handleCancel = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    console.log("Cancel clicked:", {
-      title,
-      type,
-      status,
-      isTentative,
-    });
+    if (!appointmentId) return;
+
+    if (!confirm('Are you sure you want to cancel this appointment?')) {
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const response = await fetch(`/api/appointments/${appointmentId}/cancel`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to cancel appointment');
+      }
+
+      toast({
+        title: "Appointment cancelled",
+        description: "Your appointment has been cancelled successfully.",
+      });
+
+      // Refresh the page to show updated status
+      window.location.reload();
+    } catch (error) {
+      console.error('Error cancelling appointment:', error);
+      toast({
+        title: "Error",
+        description: "Failed to cancel appointment. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleClick = () => {
@@ -234,26 +290,30 @@ export function EventCard({
               </div>
             )}
             <div className="flex justify-end gap-2 mt-4">
-              {showEditButton && (
+              {!isTentative && status?.toLowerCase() !== 'cancelled' && (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleEdit}
-                  className="flex items-center gap-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                  onClick={handleReschedule}
+                  disabled={isLoading}
+                  className="flex items-center gap-1 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50"
                 >
-                  <PencilIcon className="h-4 w-4" />
-                  Edit
+                  <ClockIcon className="h-4 w-4" />
+                  Request Reschedule
                 </Button>
               )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCancel}
-                className="flex items-center gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
-              >
-                <XIcon className="h-4 w-4" />
-                Cancel
-              </Button>
+              {status?.toLowerCase() !== 'cancelled' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCancel}
+                  disabled={isLoading}
+                  className="flex items-center gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
+                >
+                  <XIcon className="h-4 w-4" />
+                  Cancel
+                </Button>
+              )}
             </div>
           </div>
         </CardContent>

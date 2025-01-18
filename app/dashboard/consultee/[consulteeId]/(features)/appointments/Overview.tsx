@@ -86,6 +86,7 @@ export function Overview({
               ...consultation,
               type: "Consultation",
             }),
+            appointmentId: consultation.appointment?.id,
           };
         })}
       />
@@ -114,6 +115,7 @@ export function Overview({
               ...subscription,
               type: "Subscription",
             }),
+            appointmentId: subscription.appointments?.[0]?.id,
           };
         })}
       />
@@ -142,6 +144,7 @@ export function Overview({
               ...classItem,
               type: "Class",
             }),
+            appointmentId: classItem.appointments?.[0]?.id,
           };
         })}
       />
@@ -169,6 +172,7 @@ export function Overview({
               ...webinar,
               type: "Webinar",
             }),
+            appointmentId: webinar.appointment?.id,
           };
         })}
       />
@@ -188,6 +192,7 @@ interface DashboardCardProps {
     type: "Subscription" | "Class" | "Consultation" | "Webinar";
     isTentative: boolean;
     actualSlots?: AppointmentSlot[];
+    appointmentId?: string;
   }[];
 }
 
