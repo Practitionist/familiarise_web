@@ -80,23 +80,29 @@ export const getAppointmentStatus = (appointment: IAppointment): string => {
   const startTime = new Date(startTimeStr);
   const now = new Date();
   
+  // Check if appointment is marked as completed
   if (appointment.class?.status === "COMPLETED" || 
       appointment.webinar?.status === "COMPLETED") {
     return "Completed";
   }
   
-  const diffInDays = Math.ceil((startTime.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-  
-  if (diffInDays > 30) return `In ${Math.floor(diffInDays / 30)} months`;
-  if (diffInDays > 7) return `In ${Math.floor(diffInDays / 7)} weeks`;
-  if (diffInDays > 1) return `In ${diffInDays} days`;
-  if (diffInDays === 1) return "Tomorrow";
-  if (diffInDays === 0) {
-    const diffInMinutes = Math.floor((startTime.getTime() - now.getTime()) / (1000 * 60));
-    if (diffInMinutes <= 5) return "Meeting in 5 min";
-    return "Today";
+  // Check if appointment is in the past
+  if (startTime < now) {
+    return "Completed";
   }
-  return "Completed";
+  
+  const diffInMinutes = Math.floor((startTime.getTime() - now.getTime()) / (1000 * 60));
+  const diffInHours = Math.floor(diffInMinutes / 60);
+  const diffInDays = Math.floor(diffInHours / 24);
+  
+  // Upcoming appointments
+  if (diffInMinutes <= 5) return "Meeting in 5 min";
+  if (diffInHours === 0) return "Today";
+  if (diffInDays === 0) return "Today";
+  if (diffInDays === 1) return "Tomorrow";
+  if (diffInDays <= 7) return `In ${diffInDays} days`;
+  if (diffInDays <= 30) return `In ${Math.floor(diffInDays / 7)} weeks`;
+  return `In ${Math.floor(diffInDays / 30)} months`;
 };
 
 // Sort appointments by start time

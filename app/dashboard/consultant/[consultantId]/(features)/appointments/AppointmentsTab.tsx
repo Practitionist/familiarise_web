@@ -1,7 +1,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AppointmentsTabProps, IAppointment } from "../../types";
+import { AppointmentsTabProps } from "../../types";
 import {
   getConsumeeName,
   getConsumeeImage,
@@ -16,7 +16,7 @@ export function AppointmentsTab({
   appointments,
   getBadgeStyle,
 }: Readonly<AppointmentsTabProps>) {
-  // Sort appointments by start time
+  // Sort all appointments by date
   const sortedAppointments = sortAppointmentsByStartTime(appointments || []);
 
   return (
