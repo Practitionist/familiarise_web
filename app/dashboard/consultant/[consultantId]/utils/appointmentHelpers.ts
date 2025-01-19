@@ -1,6 +1,7 @@
 import { format } from "date-fns";
 import { IAppointment } from "../types";
 
+
 // Get the consultee name based on appointment type
 export const getConsumeeName = (appointment: IAppointment): string => {
   if (!appointment) return 'Unknown User';
@@ -185,4 +186,98 @@ export const getUpcomingAppointments = (appointments: IAppointment[]): IAppointm
     
     return appointmentDate > todayEnd;
   });
+};
+
+// Group recurring appointments
+export const groupRecurringAppointments = (appointments: IAppointment[]): { [key: string]: IAppointment[] } => {
+  const groups: { [key: string]: IAppointment[] } = {};
+
+  appointments.forEach(appointment => {
+    let groupKey = '';
+    let totalSessions = 0;
+    let completedSessions = 0;
+
+    if (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) {
+      groupKey = `subscription-${appointment.subscription.id}`;
+      const startDate = new Date(appointment.subscription.startDate);
+      const endDate = new Date(appointment.subscription.endDate);
+      const weeksInSubscription = Math.ceil((endDate.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
+      totalSessions = weeksInSubscription * (appointment.subscription.subscriptionPlan?.callsPerWeek || 1);
+    } else if (appointment.appointmentType === 'CLASS' && appointment.class) {
+      groupKey = `class-${appointment.class.id}`;
+    } else {
+      // For non-recurring appointments, use their own ID as the group key
+      groupKey = `single-${appointment.id}`;
+    }
+
+    if (!groups[groupKey]) {
+      groups[groupKey] = [];
+    }
+    groups[groupKey].push(appointment);
+  });
+
+  // Sort appointments within each group by start time
+  Object.keys(groups).forEach(key => {
+    groups[key] = sortAppointmentsByStartTime(groups[key]);
+  });
+
+  return groups;
+};
+
+// Get group title
+export const getGroupTitle = (appointments: IAppointment[]): string => {
+  if (!appointments.length) return '';
+
+  const firstAppointment = appointments[0];
+  const type = firstAppointment.appointmentType;
+
+  if (type === 'SUBSCRIPTION' && firstAppointment.subscription) {
+    const plan = firstAppointment.subscription.subscriptionPlan?.title || 'Unknown Plan';
+    const startDate = new Date(firstAppointment.subscription.startDate);
+    const endDate = new Date(firstAppointment.subscription.endDate);
+    const totalWeeks = Math.ceil((endDate.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
+    const sessionsPerWeek = firstAppointment.subscription.subscriptionPlan?.callsPerWeek || 1;
+    const totalSessions = totalWeeks * sessionsPerWeek;
+    const completedSessions = appointments.filter(app => 
+      new Date(app.slotsOfAppointment?.[0]?.slotStartTimeInUTC || '') < new Date()
+    ).length;
+
+    return `${plan} (${completedSessions}/${totalSessions} sessions)`;
+  }
+
+  if (type === 'CLASS' && firstAppointment.class) {
+    const plan = firstAppointment.class.classPlan?.title || 'Unknown Class';
+    const totalSessions = appointments.length;
+    const completedSessions = appointments.filter(app => app.class?.status === 'COMPLETED').length;
+
+    return `${plan} (${completedSessions}/${totalSessions} sessions)`;
+  }
+
+  return getAppointmentTypeAndPlan(firstAppointment);
+};
+
+// Get group status
+export const getGroupStatus = (appointments: IAppointment[]): string => {
+  if (!appointments.length) return 'Unknown';
+
+  const firstAppointment = appointments[0];
+  const type = firstAppointment.appointmentType;
+
+  if (type === 'SUBSCRIPTION' && firstAppointment.subscription) {
+    const now = new Date();
+    const startDate = new Date(firstAppointment.subscription.startDate);
+    const endDate = new Date(firstAppointment.subscription.endDate);
+
+    if (now > endDate) return 'Completed';
+    if (now < startDate) return 'Not Started';
+    return 'In Progress';
+  }
+
+  if (type === 'CLASS' && firstAppointment.class) {
+    if (firstAppointment.class.status === 'COMPLETED') return 'Completed';
+    if (firstAppointment.class.status === 'IN_PROGRESS') return 'In Progress';
+    return 'Not Started';
+  }
+
+  return getAppointmentStatus(firstAppointment);
 };

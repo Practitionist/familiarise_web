@@ -9,77 +9,132 @@ import {
   formatAppointmentTime,
   getAppointmentStatus,
   getAppointmentTypeAndPlan,
-  sortAppointmentsByStartTime
+  groupRecurringAppointments,
+  getGroupTitle,
+  getGroupStatus,
 } from "../../utils/appointmentHelpers";
 
 export function AppointmentsTab({
   appointments,
   getBadgeStyle,
 }: Readonly<AppointmentsTabProps>) {
-  // Sort all appointments by date
-  const sortedAppointments = sortAppointmentsByStartTime(appointments || []);
+  // Group appointments by subscription/class
+  const groupedAppointments = groupRecurringAppointments(appointments || []);
 
   return (
     <div className="bg-white p-6 rounded-lg shadow">
       <h2 className="text-xl font-semibold mb-4">All Appointments</h2>
-      <ul className="space-y-4">
-        {sortedAppointments.map((appointment) => {
-          const userName = getConsumeeName(appointment);
-          const status = getAppointmentStatus(appointment);
-          const isJoinable = status === "Meeting in 5 min";
-          const joinButtonStyle = isJoinable
-            ? "bg-black text-white hover:bg-gray-800"
-            : "bg-gray-400 text-white cursor-not-allowed";
+      <div className="space-y-6">
+        {Object.entries(groupedAppointments).map(([groupKey, groupAppointments]) => {
+          const isRecurring = groupKey.startsWith('subscription-') || groupKey.startsWith('class-');
+          const groupTitle = getGroupTitle(groupAppointments);
+          const groupStatus = getGroupStatus(groupAppointments);
+          const firstAppointment = groupAppointments[0];
 
           return (
-            <li
-              key={appointment.id}
-              className="flex items-center justify-between p-4 bg-gray-100 rounded-lg"
-            >
-              <div className="flex items-center space-x-4">
-                <Avatar>
-                  <AvatarImage 
-                    alt={userName} 
-                    src={getConsumeeImage(appointment)} 
-                  />
-                  <AvatarFallback>
-                    {userName
-                      .split(" ")
-                      .map((n: string) => n[0])
-                      .join("")}
-                  </AvatarFallback>
-                </Avatar>
-                <div>
-                  <h3 className="font-semibold">
-                    {userName}
-                  </h3>
-                  <p className="text-sm text-gray-600">
-                    {getAppointmentTypeAndPlan(appointment)}
-                  </p>
-                  <p className="text-sm text-gray-500">
-                    {getStartTime(appointment) ? formatAppointmentTime(getStartTime(appointment)!) : 'Time not set'}
-                  </p>
+            <div key={groupKey} className="border rounded-lg overflow-hidden">
+              {/* Group Header */}
+              {isRecurring && (
+                <div className="bg-gray-50 p-4 border-b">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-4">
+                      <Avatar>
+                        <AvatarImage 
+                          alt={getConsumeeName(firstAppointment)} 
+                          src={getConsumeeImage(firstAppointment)} 
+                        />
+                        <AvatarFallback>
+                          {getConsumeeName(firstAppointment)
+                            .split(" ")
+                            .map((n: string) => n[0])
+                            .join("")}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <h3 className="font-semibold">{getConsumeeName(firstAppointment)}</h3>
+                        <p className="text-sm text-gray-600">{groupTitle}</p>
+                      </div>
+                    </div>
+                    <Badge
+                      variant="secondary"
+                      className={getBadgeStyle(groupStatus)}
+                    >
+                      {groupStatus}
+                    </Badge>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Badge
-                  variant="secondary"
-                  className={getBadgeStyle(status)}
-                >
-                  {status}
-                </Badge>
-                <Button
-                  variant="default"
-                  className={joinButtonStyle}
-                  disabled={!isJoinable}
-                >
-                  Join meet
-                </Button>
-              </div>
-            </li>
+              )}
+
+              {/* Appointments List */}
+              <ul className="divide-y">
+                {groupAppointments.map((appointment) => {
+                  const status = getAppointmentStatus(appointment);
+                  const isJoinable = status === "Meeting in 5 min";
+                  const joinButtonStyle = isJoinable
+                    ? "bg-black text-white hover:bg-gray-800"
+                    : "bg-gray-400 text-white cursor-not-allowed";
+
+                  return (
+                    <li
+                      key={appointment.id}
+                      className="flex items-center justify-between p-4 hover:bg-gray-50"
+                    >
+                      <div className="flex items-center space-x-4">
+                        {!isRecurring && (
+                          <Avatar>
+                            <AvatarImage 
+                              alt={getConsumeeName(appointment)} 
+                              src={getConsumeeImage(appointment)} 
+                            />
+                            <AvatarFallback>
+                              {getConsumeeName(appointment)
+                                .split(" ")
+                                .map((n: string) => n[0])
+                                .join("")}
+                            </AvatarFallback>
+                          </Avatar>
+                        )}
+                        <div>
+                          {!isRecurring && (
+                            <>
+                              <h3 className="font-semibold">
+                                {getConsumeeName(appointment)}
+                              </h3>
+                              <p className="text-sm text-gray-600">
+                                {getAppointmentTypeAndPlan(appointment)}
+                              </p>
+                            </>
+                          )}
+                          <p className="text-sm text-gray-500">
+                            {getStartTime(appointment) ? formatAppointmentTime(getStartTime(appointment)!) : 'Time not set'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Badge
+                          variant="secondary"
+                          className={getBadgeStyle(status)}
+                        >
+                          {status}
+                        </Badge>
+                        {status !== "Completed" && (
+                          <Button
+                            variant="default"
+                            className={joinButtonStyle}
+                            disabled={!isJoinable}
+                          >
+                            {isJoinable ? "Join meet" : "Chat"}
+                          </Button>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           );
         })}
-        {!sortedAppointments.length && (
+        {!Object.keys(groupedAppointments).length && (
           <div className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-gray-50 rounded-lg">
             <div className="w-16 h-16 mb-4 text-gray-400">
               <svg
@@ -104,7 +159,7 @@ export function AppointmentsTab({
             </p>
           </div>
         )}
-      </ul>
+      </div>
     </div>
   );
 }

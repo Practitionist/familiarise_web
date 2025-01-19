@@ -64,7 +64,8 @@ export async function fetchAppointments(
         consultationPlan: {
           id: appointment.consultation.consultationPlan.id,
           title: appointment.consultation.consultationPlan.title || 'Untitled Plan',
-          description: appointment.consultation.consultationPlan.description || ''
+          description: appointment.consultation.consultationPlan.description || '',
+          durationInHours: appointment.consultation.consultationPlan.durationInHours || 1
         },
         requestStatus: appointment.consultation.requestStatus || 'PENDING',
         requestedBy: {
@@ -79,7 +80,9 @@ export async function fetchAppointments(
         subscriptionPlan: {
           id: appointment.subscription.subscriptionPlan.id,
           title: appointment.subscription.subscriptionPlan.title || 'Untitled Plan',
-          description: appointment.subscription.subscriptionPlan.description || ''
+          description: appointment.subscription.subscriptionPlan.description || '',
+          durationInMonths: appointment.subscription.subscriptionPlan.durationInMonths || 1,
+          callsPerWeek: appointment.subscription.subscriptionPlan.callsPerWeek || 1
         },
         requestStatus: appointment.subscription.requestStatus || 'PENDING',
         requestedBy: {
@@ -96,7 +99,8 @@ export async function fetchAppointments(
         webinarPlan: {
           id: appointment.webinar.webinarPlan.id,
           title: appointment.webinar.webinarPlan.title || 'Untitled Plan',
-          description: appointment.webinar.webinarPlan.description || ''
+          description: appointment.webinar.webinarPlan.description || '',
+          durationInHours: appointment.webinar.webinarPlan.durationInHours || 1
         },
         status: appointment.webinar.status
       } : undefined,
@@ -105,7 +109,8 @@ export async function fetchAppointments(
         classPlan: {
           id: appointment.class.classPlan.id,
           title: appointment.class.classPlan.title || 'Untitled Plan',
-          description: appointment.class.classPlan.description || ''
+          description: appointment.class.classPlan.description || '',
+          durationInMonths: appointment.class.classPlan.durationInMonths || 1
         },
         status: appointment.class.status
       } : undefined

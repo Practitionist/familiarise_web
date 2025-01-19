@@ -8,8 +8,6 @@ export async function GET(request: NextRequest) {
   const type = searchParams.get("type")?.toUpperCase();
   const consultantProfileId = searchParams.get("consultantProfileId");
   const userId = searchParams.get("userId");
-  const page = parseInt(searchParams.get("page") ?? "1");
-  const limit = parseInt(searchParams.get("limit") ?? "10");
 
   if (
     type &&
@@ -22,23 +20,13 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { appointments, total } = await getAppointments(
+    const appointments = await getAppointments(
       type as AppointmentsType | undefined,
       consultantProfileId,
       userId,
-      page,
-      limit,
     );
 
-    return NextResponse.json({
-      data: appointments,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    });
+    return NextResponse.json({ data: appointments });
   } catch (error) {
     console.error("Error fetching appointments:", error);
     return NextResponse.json(
@@ -52,10 +40,7 @@ async function getAppointments(
   type?: AppointmentsType,
   consultantProfileId?: string | null,
   userId?: string | null,
-  page: number = 1,
-  limit: number = 10,
 ) {
-  const skip = (page - 1) * limit;
   const whereClause: Prisma.AppointmentWhereInput = {};
 
   if (consultantProfileId) {
@@ -107,93 +92,85 @@ async function getAppointments(
     };
   }
 
-  const [appointments, total] = await Promise.all([
-    prisma.appointment.findMany({
-      where: whereClause,
-      include: {
-        slotsOfAppointment: {
-          include: {
-            user: true,
-          },
+  const appointments = await prisma.appointment.findMany({
+    where: whereClause,
+    include: {
+      slotsOfAppointment: {
+        include: {
+          user: true,
         },
-        consultation: {
-          include: {
-            consultationPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-            requestedBy: {
-              include: {
-                user: true,
-              },
-            },
-          },
-        },
-        subscription: {
-          select: {
-            id: true,
-            subscriptionPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-            requestedBy: {
-              include: {
-                user: true,
-              },
-            },
-            startDate: true,
-            endDate: true,
-            requestStatus: true,
-          },
-        },
-        webinar: {
-          include: {
-            webinarPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
+      },
+      consultation: {
+        include: {
+          consultationPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
                 },
               },
             },
           },
+          requestedBy: {
+            include: {
+              user: true,
+            },
+          },
         },
-        class: {
-          include: {
-            classPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
+      },
+      subscription: {
+        select: {
+          id: true,
+          subscriptionPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+          requestedBy: {
+            include: {
+              user: true,
+            },
+          },
+          startDate: true,
+          endDate: true,
+          requestStatus: true,
+        },
+      },
+      webinar: {
+        include: {
+          webinarPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
                 },
               },
             },
           },
         },
       },
-      orderBy: {
-        createdAt: "desc",
+      class: {
+        include: {
+          classPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+        },
       },
-      skip,
-      take: limit,
-    }),
-    prisma.appointment.count({ where: whereClause }),
-  ]);
+    },
+  });
 
   // Sort appointments by slot start time
-  const sortedAppointments = appointments
+  return appointments
     .filter((appointment) => appointment.slotsOfAppointment?.length > 0)
     .sort((a, b) => {
       const aTime = a.slotsOfAppointment[0]?.slotStartTimeInUTC;
@@ -201,8 +178,6 @@ async function getAppointments(
       if (!aTime || !bTime) return 0;
       return new Date(aTime).getTime() - new Date(bTime).getTime();
     });
-
-  return { appointments: sortedAppointments, total };
 }
 
 export async function POST(request: NextRequest) {

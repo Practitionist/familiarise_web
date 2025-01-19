@@ -14,7 +14,10 @@ import {
   getAppointmentTypeAndPlan,
   getTodayAppointments,
   getUpcomingAppointments,
-  sortAppointmentsByStartTime
+  sortAppointmentsByStartTime,
+  groupRecurringAppointments,
+  getGroupTitle,
+  getGroupStatus,
 } from "../../utils/appointmentHelpers";
 
 export function HomeTab({
@@ -35,14 +38,17 @@ export function HomeTab({
       return status !== "Completed";
     });
 
-  // Get all upcoming appointments that aren't today and aren't completed
+  // Get all upcoming appointments that aren't today
   const upcomingAppointments = sortAppointmentsByStartTime(
     getUpcomingAppointments(appointments || [])
       .filter(appointment => {
         const status = getAppointmentStatus(appointment);
-        return status !== "Completed" && status !== "Today";
+        return status !== "Today";
       })
   );
+
+  // Group upcoming appointments
+  const groupedUpcomingAppointments = groupRecurringAppointments(upcomingAppointments);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
@@ -120,61 +126,115 @@ export function HomeTab({
             <h2 className="text-lg lg:text-xl font-semibold mb-3 lg:mb-4">
               Upcoming Appointments
             </h2>
-            <ul className="space-y-3 lg:space-y-4">
-              {upcomingAppointments.map((appointment) => {
-                const userName = getConsumeeName(appointment);
-                const status = getAppointmentStatus(appointment);
-                const isSubscription = appointment.appointmentType === 'SUBSCRIPTION';
+            <div className="space-y-4">
+              {Object.entries(groupedUpcomingAppointments).map(([groupKey, groupAppointments]) => {
+                const isRecurring = groupKey.startsWith('subscription-') || groupKey.startsWith('class-');
+                const groupTitle = getGroupTitle(groupAppointments);
+                const groupStatus = getGroupStatus(groupAppointments);
+                const firstAppointment = groupAppointments[0];
+                const userName = getConsumeeName(firstAppointment);
 
                 return (
-                  <li
-                    key={appointment.id}
-                    className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-2 hover:bg-gray-50 rounded-lg transition-colors"
-                  >
-                    <Avatar className="w-10 h-10 lg:w-12 lg:h-12">
-                      <AvatarImage
-                        alt={userName}
-                        src={getConsumeeImage(appointment)}
-                      />
-                      <AvatarFallback>
-                        {userName
-                          .split(" ")
-                          .map((n: string) => n[0])
-                          .join("")}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-grow space-y-1">
-                      <h3 className="text-base lg:text-lg font-semibold">
-                        {userName}
-                      </h3>
-                      <p className="text-sm text-gray-500">
-                        {getAppointmentTypeAndPlan(appointment)}
-                      </p>
-                      <p className="text-sm">
-                        {getStartTime(appointment) ? formatAppointmentTime(getStartTime(appointment)!) : 'Time not set'}
-                      </p>
-                      {isSubscription && appointment.subscription && (
-                        <p className="text-xs text-gray-500">
-                          Subscription ends: {formatAppointmentTime(appointment.subscription.endDate)}
-                        </p>
-                      )}
-                      <Badge
-                        variant="secondary"
-                        className={getBadgeStyle(status)}
-                      >
-                        {status}
-                      </Badge>
-                    </div>
-                    <Button className="bg-blue-500 text-white w-full sm:w-auto">
-                      Chat
-                    </Button>
-                  </li>
+                  <div key={groupKey} className="border rounded-lg overflow-hidden">
+                    {/* Group Header for recurring appointments */}
+                    {isRecurring && (
+                      <div className="bg-gray-50 p-3 border-b">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3">
+                            <Avatar className="w-8 h-8">
+                              <AvatarImage
+                                alt={userName}
+                                src={getConsumeeImage(firstAppointment)}
+                              />
+                              <AvatarFallback>
+                                {userName
+                                  .split(" ")
+                                  .map((n: string) => n[0])
+                                  .join("")}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <h3 className="font-semibold text-sm">{userName}</h3>
+                              <p className="text-xs text-gray-600">{groupTitle}</p>
+                            </div>
+                          </div>
+                          <Badge
+                            variant="secondary"
+                            className={getBadgeStyle(groupStatus)}
+                          >
+                            {groupStatus}
+                          </Badge>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Appointment list */}
+                    <ul className="divide-y divide-gray-100">
+                      {groupAppointments.map((appointment) => {
+                        const status = getAppointmentStatus(appointment);
+                        const isJoinable = status === "Meeting in 5 min";
+
+                        return (
+                          <li
+                            key={appointment.id}
+                            className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-3 hover:bg-gray-50"
+                          >
+                            {!isRecurring && (
+                              <Avatar className="w-8 h-8">
+                                <AvatarImage
+                                  alt={getConsumeeName(appointment)}
+                                  src={getConsumeeImage(appointment)}
+                                />
+                                <AvatarFallback>
+                                  {getConsumeeName(appointment)
+                                    .split(" ")
+                                    .map((n: string) => n[0])
+                                    .join("")}
+                                </AvatarFallback>
+                              </Avatar>
+                            )}
+                            <div className="flex-grow space-y-1">
+                              {!isRecurring && (
+                                <>
+                                  <h3 className="text-sm font-semibold">
+                                    {getConsumeeName(appointment)}
+                                  </h3>
+                                  <p className="text-xs text-gray-500">
+                                    {getAppointmentTypeAndPlan(appointment)}
+                                  </p>
+                                </>
+                              )}
+                              <p className="text-xs">
+                                {getStartTime(appointment) ? formatAppointmentTime(getStartTime(appointment)!) : 'Time not set'}
+                              </p>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Badge
+                                variant="secondary"
+                                className={getBadgeStyle(status)}
+                              >
+                                {status}
+                              </Badge>
+                              {status !== "Completed" && (
+                                <Button 
+                                  className="bg-blue-500 text-white w-full sm:w-auto text-sm py-1"
+                                  disabled={!isJoinable}
+                                >
+                                  {isJoinable ? "Join meet" : "Chat"}
+                                </Button>
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
                 );
               })}
-              {upcomingAppointments.length === 0 && (
+              {Object.keys(groupedUpcomingAppointments).length === 0 && (
                 <p className="text-gray-500">No upcoming appointments</p>
               )}
-            </ul>
+            </div>
           </div>
         </Suspense>
       </div>

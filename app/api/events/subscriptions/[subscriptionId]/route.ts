@@ -3,7 +3,6 @@ import { AppointmentsType, Prisma, RequestStatus } from "@prisma/client";
 import { addMonths, addWeeks, setHours, setMinutes } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
 
-
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ subscriptionId: string }> },
@@ -46,7 +45,6 @@ export async function GET(
             slotsOfAppointment: {
               include: {
                 user: {
-                  // Changed from consulteeProfile to user
                   select: {
                     id: true,
                     name: true,
@@ -138,7 +136,6 @@ export async function PUT(
             slotsOfAppointment: {
               include: {
                 user: {
-                  // Changed from consulteeProfile to user
                   select: {
                     id: true,
                     name: true,
@@ -206,7 +203,6 @@ export async function DELETE(
             slotsOfAppointment: {
               include: {
                 user: {
-                  // Changed from consulteeProfile to user
                   select: {
                     id: true,
                     name: true,
@@ -338,7 +334,6 @@ export async function PATCH(
                   user: true,
                 },
               },
-              payment: true,
             },
           },
         },
@@ -346,7 +341,8 @@ export async function PATCH(
 
       // If approved, create appointments in batches
       if (status === RequestStatus.APPROVED) {
-        await createAppointmentsForSubscription(subscription);
+        const appointments = await createAppointmentsForSubscription(subscription);
+        subscription.appointments = appointments;
       }
 
       return NextResponse.json({ data: subscription });
@@ -361,10 +357,6 @@ export async function PATCH(
       { status: 500 }
     );
   }
-}
-
-function addHours(date: Date, hours: number): Date {
-  return new Date(date.getTime() + hours * 60 * 60 * 1000);
 }
 
 async function createAppointmentsForSubscription(subscription: any) {
@@ -435,7 +427,7 @@ async function createAppointmentsForSubscription(subscription: any) {
           appointments.push(...createdAppointments);
           batch = []; // Clear the batch
         } catch (error) {
-          console.error(`Error creating appointments batch:`, error);
+          console.error(`Error creating appointments batch:`, error instanceof Error ? error.message : 'Unknown error');
           throw error;
         }
       }
@@ -446,4 +438,8 @@ async function createAppointmentsForSubscription(subscription: any) {
   }
 
   return appointments;
+}
+
+function addHours(date: Date, hours: number): Date {
+  return new Date(date.getTime() + hours * 60 * 60 * 1000);
 }

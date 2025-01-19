@@ -16,10 +16,27 @@ export interface ISlotOfAppointment {
   user: IUser[];
 }
 
-export interface IPlan {
+export interface IBasePlan {
   id: string;
   title: string;
   description: string;
+}
+
+export interface IConsultationPlan extends IBasePlan {
+  durationInHours: number;
+}
+
+export interface ISubscriptionPlan extends IBasePlan {
+  durationInMonths: number;
+  callsPerWeek: number;
+}
+
+export interface IWebinarPlan extends IBasePlan {
+  durationInHours: number;
+}
+
+export interface IClassPlan extends IBasePlan {
+  durationInMonths: number;
 }
 
 export interface IRequestedBy {
@@ -31,14 +48,14 @@ export interface IRequestedBy {
 
 export interface IConsultation {
   id: string;
-  consultationPlan: IPlan;
+  consultationPlan: IConsultationPlan;
   requestStatus: string;
   requestedBy: IRequestedBy;
 }
 
 export interface ISubscription {
   id: string;
-  subscriptionPlan: IPlan;
+  subscriptionPlan: ISubscriptionPlan;
   requestStatus: string;
   requestedBy: IRequestedBy;
   startDate: string;
@@ -47,13 +64,13 @@ export interface ISubscription {
 
 export interface IWebinar {
   id: string;
-  webinarPlan: IPlan;
+  webinarPlan: IWebinarPlan;
   status: string;
 }
 
 export interface IClass {
   id: string;
-  classPlan: IPlan;
+  classPlan: IClassPlan;
   status: string;
 }
 
