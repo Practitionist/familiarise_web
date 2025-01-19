@@ -19,6 +19,7 @@ import {
 import { Loader2 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { RequestsTabProps } from "../../types";
+import { RequestStatus } from "@prisma/client";
 
 type ConfirmDialogState = {
   isOpen: boolean;
@@ -27,7 +28,7 @@ type ConfirmDialogState = {
   action: "APPROVED" | "REJECTED";
 };
 
-export function RequestsTab({ approvals }: Readonly<RequestsTabProps>) {
+export function RequestsTab({ approvals, onUpdate }: Readonly<RequestsTabProps>) {
   const [loadingStates, setLoadingStates] = useState<{
     [key: string]: boolean;
   }>({});
@@ -61,19 +62,22 @@ export function RequestsTab({ approvals }: Readonly<RequestsTabProps>) {
 
       const endpoint =
         approvalType === "Consultation"
-          ? "/api/events/consultations"
-          : "/api/events/subscriptions";
+          ? `/api/events/consultations/${approvalId}`
+          : `/api/events/subscriptions/${approvalId}`;
 
       const response = await fetch(endpoint, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ id: approvalId, status: action }),
+        body: JSON.stringify({ 
+          status: action as RequestStatus 
+        }),
       });
 
       if (!response.ok) {
-        throw new Error("Failed to update status");
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to update status");
       }
 
       toast({
@@ -81,14 +85,15 @@ export function RequestsTab({ approvals }: Readonly<RequestsTabProps>) {
         description: `Request ${action.toLowerCase()} successfully`,
       });
 
-      // Optionally trigger a refresh of the approvals data
-      // You might want to lift this state up to the parent component
-      // and pass down a refresh function as a prop
+      // Trigger refresh of the parent component
+      if (onUpdate) {
+        onUpdate();
+      }
     } catch (error) {
       console.error("Error updating status:", error);
       toast({
         title: "Error",
-        description: "Failed to update request status",
+        description: error instanceof Error ? error.message : "Failed to update request status",
         variant: "destructive",
       });
     } finally {
@@ -98,8 +103,7 @@ export function RequestsTab({ approvals }: Readonly<RequestsTabProps>) {
 
   return (
     <>
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h2 className="text-xl font-semibold mb-4">All Appointment Requests</h2>
+      <div className="bg-white rounded-lg">
         <div className="overflow-auto">
           <Table>
             <TableHeader>
@@ -164,7 +168,7 @@ export function RequestsTab({ approvals }: Readonly<RequestsTabProps>) {
               ))}
               {approvals.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-gray-500">
+                  <TableCell colSpan={5} className="text-center text-gray-500 py-4">
                     No pending approvals
                   </TableCell>
                 </TableRow>
@@ -202,8 +206,8 @@ export function RequestsTab({ approvals }: Readonly<RequestsTabProps>) {
               variant="default"
               className={
                 confirmDialog.action === "APPROVED"
-                  ? "bg-green-500"
-                  : "bg-red-500"
+                  ? "bg-green-500 hover:bg-green-600"
+                  : "bg-red-500 hover:bg-red-600"
               }
               onClick={handleConfirmedUpdate}
             >

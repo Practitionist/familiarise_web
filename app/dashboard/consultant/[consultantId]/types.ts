@@ -41,6 +41,8 @@ export interface ISubscription {
   subscriptionPlan: IPlan;
   requestStatus: string;
   requestedBy: IRequestedBy;
+  startDate: string;
+  endDate: string;
 }
 
 export interface IWebinar {
@@ -98,14 +100,17 @@ export interface HomeTabProps extends WithBadgeStyle {
   appointments: IAppointment[];
   activities: IActivity[];
   approvals: IApproval[];
+  onUpdate?: () => void;
 }
 
 export interface AppointmentsTabProps extends WithBadgeStyle {
   appointments: IAppointment[];
+  onUpdate?: () => void;
 }
 
 export interface RequestsTabProps {
   approvals: IApproval[];
+  onUpdate?: () => void;
 }
 
 export interface DocumentsTabProps {

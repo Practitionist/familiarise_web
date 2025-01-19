@@ -126,6 +126,11 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
             };
           };
         };
+        requestedBy: {
+          include: {
+            user: true;
+          };
+        };
       };
     };
     subscription: {
@@ -139,6 +144,14 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
             };
           };
         };
+        requestedBy: {
+          include: {
+            user: true;
+          };
+        };
+        startDate: true;
+        endDate: true;
+        requestStatus: true;
       };
     };
     webinar: {

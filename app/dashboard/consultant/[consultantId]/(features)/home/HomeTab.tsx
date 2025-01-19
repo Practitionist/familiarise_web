@@ -22,6 +22,7 @@ export function HomeTab({
   activities,
   approvals,
   getBadgeStyle,
+  onUpdate,
 }: Readonly<HomeTabProps>) {
   if (!getBadgeStyle) {
     throw new Error("getBadgeStyle is required for HomeTab");
@@ -123,6 +124,7 @@ export function HomeTab({
               {upcomingAppointments.map((appointment) => {
                 const userName = getConsumeeName(appointment);
                 const status = getAppointmentStatus(appointment);
+                const isSubscription = appointment.appointmentType === 'SUBSCRIPTION';
 
                 return (
                   <li
@@ -151,6 +153,11 @@ export function HomeTab({
                       <p className="text-sm">
                         {getStartTime(appointment) ? formatAppointmentTime(getStartTime(appointment)!) : 'Time not set'}
                       </p>
+                      {isSubscription && appointment.subscription && (
+                        <p className="text-xs text-gray-500">
+                          Subscription ends: {formatAppointmentTime(appointment.subscription.endDate)}
+                        </p>
+                      )}
                       <Badge
                         variant="secondary"
                         className={getBadgeStyle(status)}
@@ -189,7 +196,7 @@ export function HomeTab({
               Approvals for Consultations and Subscriptions
             </h2>
             <div className="max-h-[300px] overflow-auto">
-              <RequestsTab approvals={approvals.slice(0, 3)} />
+              <RequestsTab approvals={approvals.slice(0, 3)} onUpdate={onUpdate} />
             </div>
           </div>
         </Suspense>

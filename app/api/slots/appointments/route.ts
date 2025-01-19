@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
 
   const type = searchParams.get("type")?.toUpperCase();
   const consultantProfileId = searchParams.get("consultantProfileId");
-  const userId = searchParams.get("userId"); // Changed from consulteeProfileId
+  const userId = searchParams.get("userId");
   const page = parseInt(searchParams.get("page") ?? "1");
   const limit = parseInt(searchParams.get("limit") ?? "10");
 
@@ -25,40 +25,9 @@ export async function GET(request: NextRequest) {
     const { appointments, total } = await getAppointments(
       type as AppointmentsType | undefined,
       consultantProfileId,
-      userId, // Changed from consulteeProfileId
+      userId,
       page,
       limit,
-    );
-
-    // Log the appointments data for debugging
-    console.log(
-      "Raw appointments data:",
-      JSON.stringify(
-        appointments.map((a) => ({
-          id: a.id,
-          type: a.appointmentType,
-          slot: a.slotsOfAppointment?.[0]
-            ? {
-                startUTC: a.slotsOfAppointment[0].slotStartTimeInUTC,
-                endUTC: a.slotsOfAppointment[0].slotEndTimeInUTC,
-                currentUTC: new Date().toISOString(),
-              }
-            : null,
-          users: {
-            consultee: a.slotsOfAppointment?.[0]?.user?.[0]?.name ?? "Unknown",
-            requestedBy:
-              a.consultation?.requestedBy?.user?.name ??
-              a.subscription?.requestedBy?.user?.name,
-            consultant:
-              a.consultation?.consultationPlan?.consultantProfile?.user?.name ??
-              a.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
-              a.webinar?.webinarPlan?.consultantProfile?.user?.name ??
-              a.class?.classPlan?.consultantProfile?.user?.name,
-          },
-        })),
-        null,
-        2,
-      ),
     );
 
     return NextResponse.json({
@@ -82,26 +51,12 @@ export async function GET(request: NextRequest) {
 async function getAppointments(
   type?: AppointmentsType,
   consultantProfileId?: string | null,
-  userId?: string | null, // Changed from consulteeProfileId
+  userId?: string | null,
   page: number = 1,
   limit: number = 10,
 ) {
   const skip = (page - 1) * limit;
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-
-  // Get current time in UTC
-  const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-
-  const whereClause: Prisma.AppointmentWhereInput = {
-    slotsOfAppointment: {
-      some: {
-        slotStartTimeInUTC: {
-          gte: thirtyMinutesAgo,
-        },
-      },
-    },
-  };
+  const whereClause: Prisma.AppointmentWhereInput = {};
 
   if (consultantProfileId) {
     whereClause.OR = [
@@ -141,7 +96,6 @@ async function getAppointments(
   }
 
   if (userId) {
-    // Changed from consulteeProfileId
     whereClause.slotsOfAppointment = {
       some: {
         user: {
@@ -181,7 +135,8 @@ async function getAppointments(
           },
         },
         subscription: {
-          include: {
+          select: {
+            id: true,
             subscriptionPlan: {
               include: {
                 consultantProfile: {
@@ -196,6 +151,9 @@ async function getAppointments(
                 user: true,
               },
             },
+            startDate: true,
+            endDate: true,
+            requestStatus: true,
           },
         },
         webinar: {
@@ -225,11 +183,9 @@ async function getAppointments(
           },
         },
       },
-      orderBy: [
-        {
-          createdAt: "desc",
-        },
-      ],
+      orderBy: {
+        createdAt: "desc",
+      },
       skip,
       take: limit,
     }),
@@ -246,31 +202,6 @@ async function getAppointments(
       return new Date(aTime).getTime() - new Date(bTime).getTime();
     });
 
-  // Log the sorted appointments for debugging
-  console.log(
-    "Sorted appointments:",
-    JSON.stringify(
-      sortedAppointments.map((a) => ({
-        id: a.id,
-        type: a.appointmentType,
-        startTimeUTC: a.slotsOfAppointment[0]?.slotStartTimeInUTC,
-        endTimeUTC: a.slotsOfAppointment[0]?.slotEndTimeInUTC,
-        currentUTC: new Date().toISOString(),
-        consultee: a.slotsOfAppointment[0]?.user?.[0]?.name ?? "Unknown",
-        requestedBy:
-          a.consultation?.requestedBy?.user?.name ??
-          a.subscription?.requestedBy?.user?.name,
-        consultant:
-          a.consultation?.consultationPlan?.consultantProfile?.user?.name ??
-          a.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
-          a.webinar?.webinarPlan?.consultantProfile?.user?.name ??
-          a.class?.classPlan?.consultantProfile?.user?.name,
-      })),
-      null,
-      2,
-    ),
-  );
-
   return { appointments: sortedAppointments, total };
 }
 
@@ -279,7 +210,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       appointmentType,
-      userId, // Changed from consulteeProfileId
+      userId,
       slotStartTimeInUTC,
       slotEndTimeInUTC,
       ...appointmentData
@@ -287,7 +218,7 @@ export async function POST(request: NextRequest) {
 
     if (
       !appointmentType ||
-      !userId || // Changed from consulteeProfileId
+      !userId ||
       !slotStartTimeInUTC ||
       !slotEndTimeInUTC
     ) {
@@ -303,7 +234,7 @@ export async function POST(request: NextRequest) {
         ...appointmentData,
         slotsOfAppointment: {
           create: {
-            user: { connect: [{ id: userId }] }, // Changed from consulteeProfile connect
+            user: { connect: [{ id: userId }] },
             slotStartTimeInUTC: new Date(slotStartTimeInUTC),
             slotEndTimeInUTC: new Date(slotEndTimeInUTC),
           },
@@ -334,7 +265,8 @@ export async function POST(request: NextRequest) {
           },
         },
         subscription: {
-          include: {
+          select: {
+            id: true,
             subscriptionPlan: {
               include: {
                 consultantProfile: {
@@ -349,6 +281,9 @@ export async function POST(request: NextRequest) {
                 user: true,
               },
             },
+            startDate: true,
+            endDate: true,
+            requestStatus: true,
           },
         },
         webinar: {

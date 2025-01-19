@@ -66,11 +66,11 @@ export async function fetchAppointments(
           title: appointment.consultation.consultationPlan.title || 'Untitled Plan',
           description: appointment.consultation.consultationPlan.description || ''
         },
-        requestStatus: appointment.consultation.requestStatus,
+        requestStatus: appointment.consultation.requestStatus || 'PENDING',
         requestedBy: {
           user: {
-            name: appointment.consultation.consultationPlan.consultantProfile.user.name || 'Unknown User',
-            image: appointment.consultation.consultationPlan.consultantProfile.user.image || '/placeholder.svg'
+            name: appointment.consultation.requestedBy?.user?.name || 'Unknown User',
+            image: appointment.consultation.requestedBy?.user?.image || '/placeholder.svg'
           }
         }
       } : undefined,
@@ -81,13 +81,15 @@ export async function fetchAppointments(
           title: appointment.subscription.subscriptionPlan.title || 'Untitled Plan',
           description: appointment.subscription.subscriptionPlan.description || ''
         },
-        requestStatus: appointment.subscription.requestStatus,
+        requestStatus: appointment.subscription.requestStatus || 'PENDING',
         requestedBy: {
           user: {
-            name: appointment.subscription.subscriptionPlan.consultantProfile.user.name || 'Unknown User',
-            image: appointment.subscription.subscriptionPlan.consultantProfile.user.image || '/placeholder.svg'
+            name: appointment.subscription.requestedBy?.user?.name || 'Unknown User',
+            image: appointment.subscription.requestedBy?.user?.image || '/placeholder.svg'
           }
-        }
+        },
+        startDate: new Date(appointment.subscription.startDate).toISOString(),
+        endDate: new Date(appointment.subscription.endDate).toISOString()
       } : undefined,
       webinar: appointment.webinar ? {
         id: appointment.webinar.id,
