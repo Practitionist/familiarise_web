@@ -192,17 +192,29 @@ export const getUpcomingAppointments = (appointments: IAppointment[]): IAppointm
 export const groupRecurringAppointments = (appointments: IAppointment[]): { [key: string]: IAppointment[] } => {
   const groups: { [key: string]: IAppointment[] } = {};
 
-  appointments.forEach(appointment => {
+  // First, expand appointments with multiple slots into individual appointments
+  const expandedAppointments = appointments.flatMap(appointment => {
+    if (!appointment.slotsOfAppointment || appointment.slotsOfAppointment.length === 0) {
+      return [{
+        ...appointment,
+        id: `${appointment.id}-default` // Create unique ID for appointments without slots
+      }];
+    }
+    
+    // Create separate entries for each slot while maintaining the appointment data
+    return appointment.slotsOfAppointment.map(slot => ({
+      ...appointment,
+      id: `${appointment.id}-${slot.id}`, // Create unique ID combining appointment and slot IDs
+      slotsOfAppointment: [slot]
+    }));
+  });
+
+  // Now group the expanded appointments
+  expandedAppointments.forEach(appointment => {
     let groupKey = '';
-    let totalSessions = 0;
-    let completedSessions = 0;
 
     if (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) {
       groupKey = `subscription-${appointment.subscription.id}`;
-      const startDate = new Date(appointment.subscription.startDate);
-      const endDate = new Date(appointment.subscription.endDate);
-      const weeksInSubscription = Math.ceil((endDate.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
-      totalSessions = weeksInSubscription * (appointment.subscription.subscriptionPlan?.callsPerWeek || 1);
     } else if (appointment.appointmentType === 'CLASS' && appointment.class) {
       groupKey = `class-${appointment.class.id}`;
     } else {
@@ -233,14 +245,16 @@ export const getGroupTitle = (appointments: IAppointment[]): string => {
 
   if (type === 'SUBSCRIPTION' && firstAppointment.subscription) {
     const plan = firstAppointment.subscription.subscriptionPlan?.title || 'Unknown Plan';
-    const startDate = new Date(firstAppointment.subscription.startDate);
-    const endDate = new Date(firstAppointment.subscription.endDate);
-    const totalWeeks = Math.ceil((endDate.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
-    const sessionsPerWeek = firstAppointment.subscription.subscriptionPlan?.callsPerWeek || 1;
-    const totalSessions = totalWeeks * sessionsPerWeek;
-    const completedSessions = appointments.filter(app => 
-      new Date(app.slotsOfAppointment?.[0]?.slotStartTimeInUTC || '') < new Date()
-    ).length;
+    
+    // Use the actual number of appointments as total sessions
+    const totalSessions = appointments.length;
+    
+    // Count completed sessions
+    const now = new Date();
+    const completedSessions = appointments.filter(app => {
+      const slotTime = app.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+      return slotTime && new Date(slotTime) < now;
+    }).length;
 
     return `${plan} (${completedSessions}/${totalSessions} sessions)`;
   }
@@ -268,9 +282,15 @@ export const getGroupStatus = (appointments: IAppointment[]): string => {
     const startDate = new Date(firstAppointment.subscription.startDate);
     const endDate = new Date(firstAppointment.subscription.endDate);
 
+    // Check if any sessions are completed
+    const hasCompletedSessions = appointments.some(app => {
+      const slotTime = app.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+      return slotTime && new Date(slotTime) < now;
+    });
+
     if (now > endDate) return 'Completed';
     if (now < startDate) return 'Not Started';
-    return 'In Progress';
+    return hasCompletedSessions ? 'In Progress' : 'Not Started';
   }
 
   if (type === 'CLASS' && firstAppointment.class) {
