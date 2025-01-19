@@ -69,7 +69,10 @@ export const getStartTime = (appointment: IAppointment): string | undefined => {
 
 // Format UTC time to local time
 export const formatAppointmentTime = (utcTime: string): string => {
+  // Create a date object in local time
   const localDate = new Date(utcTime);
+  
+  // Format the date in local time with browser's timezone
   return format(localDate, "EEE, MMM d, h:mm a");
 };
 
@@ -78,6 +81,7 @@ export const getAppointmentStatus = (appointment: IAppointment): string => {
   const startTimeStr = getStartTime(appointment);
   if (!startTimeStr) return 'Unknown';
   
+  // Convert UTC to local time
   const startTime = new Date(startTimeStr);
   const now = new Date();
   
@@ -87,49 +91,26 @@ export const getAppointmentStatus = (appointment: IAppointment): string => {
     return "Completed";
   }
 
-  // For subscription appointments, check subscription status
-  if (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) {
-    const endDate = new Date(appointment.subscription.endDate);
-    const startDate = new Date(appointment.subscription.startDate);
-
-    // If subscription hasn't started yet
-    if (now < startDate) {
-      const diffInDays = Math.floor((startDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-      if (diffInDays <= 1) return "Tomorrow";
-      if (diffInDays <= 7) return `In ${diffInDays} days`;
-      if (diffInDays <= 30) return `In ${Math.floor(diffInDays / 7)} weeks`;
-      return `In ${Math.floor(diffInDays / 30)} months`;
-    }
-
-    // If subscription has ended
-    if (now > endDate) {
-      return "Completed";
-    }
-
-    // If subscription is active
-    const diffInMinutes = Math.floor((startTime.getTime() - now.getTime()) / (1000 * 60));
-    if (diffInMinutes <= 5) return "Meeting in 5 min";
-    if (diffInMinutes <= 0) return "Today";
-    return "Today";
-  }
-
-  // For other appointment types
+  // Check if appointment is in the past
   if (startTime < now) {
     return "Completed";
   }
+
+  // Calculate time differences using local time
+  const diffMs = startTime.getTime() - now.getTime();
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
   
-  const diffInMinutes = Math.floor((startTime.getTime() - now.getTime()) / (1000 * 60));
-  const diffInHours = Math.floor(diffInMinutes / 60);
-  const diffInDays = Math.floor(diffInHours / 24);
+  // Upcoming appointments with more precise timing
+  if (diffMinutes <= 5 && diffMinutes > 0) return "Meeting in 5 min";
+  if (diffHours < 24) return "Today";
+  if (diffDays === 1) return "Tomorrow";
+  if (diffDays < 7) return `In ${diffDays} days`;
   
-  // Upcoming appointments
-  if (diffInMinutes <= 5) return "Meeting in 5 min";
-  if (diffInHours === 0) return "Today";
-  if (diffInDays === 0) return "Today";
-  if (diffInDays === 1) return "Tomorrow";
-  if (diffInDays <= 7) return `In ${diffInDays} days`;
-  if (diffInDays <= 30) return `In ${Math.floor(diffInDays / 7)} weeks`;
-  return `In ${Math.floor(diffInDays / 30)} months`;
+  // For weekly intervals, show exact week number
+  const exactWeeks = Math.ceil(diffDays / 7);
+  return `In ${exactWeeks} ${exactWeeks === 1 ? 'week' : 'weeks'}`;
 };
 
 // Sort appointments by start time
