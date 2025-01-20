@@ -18,6 +18,7 @@ import {
   groupRecurringAppointments,
   getGroupTitle,
   getGroupStatus,
+  getSlotTimes,
 } from "../../utils/appointmentHelpers";
 
 export function HomeTab({
@@ -31,20 +32,28 @@ export function HomeTab({
     throw new Error("getBadgeStyle is required for HomeTab");
   }
 
-  // Filter appointments for today and upcoming
-  const todayAppointments = getTodayAppointments(appointments || [])
+  // Expand appointments into individual slots
+  const expandedAppointments = (appointments || []).flatMap(appointment => {
+    if (!appointment.slotsOfAppointment || appointment.slotsOfAppointment.length === 0) {
+      return [appointment];
+    }
+    return appointment.slotsOfAppointment.map(slot => ({
+      ...appointment,
+      id: `${appointment.id}-${slot.id}`,
+      slotsOfAppointment: [slot]
+    }));
+  });
+
+  // Filter appointments for today
+  const todayAppointments = getTodayAppointments(expandedAppointments)
     .filter(appointment => {
       const status = getAppointmentStatus(appointment);
       return status !== "Completed";
     });
 
-  // Get all upcoming appointments that aren't today
+  // Get all upcoming appointments
   const upcomingAppointments = sortAppointmentsByStartTime(
-    getUpcomingAppointments(appointments || [])
-      .filter(appointment => {
-        const status = getAppointmentStatus(appointment);
-        return status !== "Today";
-      })
+    getUpcomingAppointments(expandedAppointments)
   );
 
   // Group upcoming appointments

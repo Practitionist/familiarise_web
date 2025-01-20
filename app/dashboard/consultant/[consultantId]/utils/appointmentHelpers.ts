@@ -150,40 +150,60 @@ export const sortAppointmentsByStartTime = (appointments: IAppointment[]): IAppo
 // Filter today's appointments
 export const getTodayAppointments = (appointments: IAppointment[]): IAppointment[] => {
   const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
-  return appointments.filter(appointment => {
-    // Check if appointment has any slots today
-    if (hasTodaySlots(appointment)) {
-      // For subscription appointments, check if they're active
-      if (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) {
-        const startDate = new Date(appointment.subscription.startDate);
-        const endDate = new Date(appointment.subscription.endDate);
-        return now >= startDate && now <= endDate;
-      }
-      
-      return true;
+  // First expand appointments with multiple slots
+  const expandedAppointments = appointments.flatMap(appointment => {
+    if (!appointment.slotsOfAppointment || appointment.slotsOfAppointment.length === 0) {
+      return [appointment];
     }
-    
-    return false;
+
+    // Create separate appointments for each slot
+    return appointment.slotsOfAppointment.map(slot => ({
+      ...appointment,
+      id: `${appointment.id}-${slot.id}`,
+      slotsOfAppointment: [slot]
+    }));
+  });
+
+  return expandedAppointments.filter(appointment => {
+    const slotTime = getStartTime(appointment);
+    if (!slotTime) return false;
+
+    const slotDate = new Date(slotTime);
+    const isToday = slotDate >= todayStart && slotDate <= todayEnd;
+
+    // For subscription appointments, also check if they're active
+    if (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) {
+      const startDate = new Date(appointment.subscription.startDate);
+      const endDate = new Date(appointment.subscription.endDate);
+      return isToday && now >= startDate && now <= endDate;
+    }
+
+    return isToday;
   });
 };
 
 // Filter upcoming appointments
 export const getUpcomingAppointments = (appointments: IAppointment[]): IAppointment[] => {
-  return appointments.filter(appointment => {
-    // Check if appointment has any future slots
+  const now = new Date();
+
+  // First filter out completed appointments
+  const filteredAppointments = appointments.filter(appointment => {
+    // For multi-slotted appointments (subscription and class)
+    if (
+      (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) ||
+      (appointment.appointmentType === 'CLASS' && appointment.class)
+    ) {
+      // Check if all slots are in the past
+      const allSlotsCompleted = getSlotTimes(appointment).every(time => new Date(time) < now);
+      // Only include if not all slots are completed
+      return !allSlotsCompleted;
+    }
+    
+    // For single-slotted appointments (consultation and webinar)
     if (hasUpcomingSlots(appointment)) {
-      // For subscription appointments
-      if (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) {
-        // Show all appointments with future slots
-        return true;
-      }
-      
-      // For class appointments
-      if (appointment.appointmentType === 'CLASS' && appointment.class) {
-        return appointment.class.status !== "COMPLETED";
-      }
-      
       // For webinar appointments
       if (appointment.appointmentType === 'WEBINAR' && appointment.webinar) {
         return appointment.webinar.status !== "COMPLETED";
@@ -195,31 +215,16 @@ export const getUpcomingAppointments = (appointments: IAppointment[]): IAppointm
     
     return false;
   });
+
+  return filteredAppointments;
 };
 
 // Group recurring appointments
 export const groupRecurringAppointments = (appointments: IAppointment[]): { [key: string]: IAppointment[] } => {
   const groups: { [key: string]: IAppointment[] } = {};
 
-  // First, expand appointments with multiple slots into individual appointments
-  const expandedAppointments = appointments.flatMap(appointment => {
-    if (!appointment.slotsOfAppointment || appointment.slotsOfAppointment.length === 0) {
-      return [{
-        ...appointment,
-        id: `${appointment.id}-default` // Create unique ID for appointments without slots
-      }];
-    }
-    
-    // Create separate entries for each slot while maintaining the appointment data
-    return appointment.slotsOfAppointment.map(slot => ({
-      ...appointment,
-      id: `${appointment.id}-${slot.id}`, // Create unique ID combining appointment and slot IDs
-      slotsOfAppointment: [slot]
-    }));
-  });
-
-  // Now group the expanded appointments
-  expandedAppointments.forEach(appointment => {
+  // Group appointments by their type (subscription/class/single)
+  appointments.forEach(appointment => {
     let groupKey = '';
 
     if (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) {
@@ -227,14 +232,29 @@ export const groupRecurringAppointments = (appointments: IAppointment[]): { [key
     } else if (appointment.appointmentType === 'CLASS' && appointment.class) {
       groupKey = `class-${appointment.class.id}`;
     } else {
-      // For non-recurring appointments, use their own ID as the group key
       groupKey = `single-${appointment.id}`;
     }
 
     if (!groups[groupKey]) {
       groups[groupKey] = [];
     }
-    groups[groupKey].push(appointment);
+
+    // For appointments with slots, create separate entries for each slot
+    if (appointment.slotsOfAppointment && appointment.slotsOfAppointment.length > 0) {
+      appointment.slotsOfAppointment.forEach(slot => {
+        groups[groupKey].push({
+          ...appointment,
+          id: `${appointment.id}-${slot.id}`,
+          slotsOfAppointment: [slot]
+        });
+      });
+    } else {
+      // For appointments without slots, add them as is
+      groups[groupKey].push({
+        ...appointment,
+        id: `${appointment.id}-default`
+      });
+    }
   });
 
   // Sort appointments within each group by start time
@@ -255,10 +275,10 @@ export const getGroupTitle = (appointments: IAppointment[]): string => {
   if (type === 'SUBSCRIPTION' && firstAppointment.subscription) {
     const plan = firstAppointment.subscription.subscriptionPlan?.title || 'Unknown Plan';
     
-    // Use the actual number of appointments as total sessions
+    // Count total appointments as sessions
     const totalSessions = appointments.length;
     
-    // Count completed sessions based on all slots
+    // Count completed sessions based on slot times
     const now = new Date();
     const completedSessions = appointments.filter(app => 
       getSlotTimes(app).every(time => new Date(time) < now)
@@ -270,7 +290,12 @@ export const getGroupTitle = (appointments: IAppointment[]): string => {
   if (type === 'CLASS' && firstAppointment.class) {
     const plan = firstAppointment.class.classPlan?.title || 'Unknown Class';
     const totalSessions = appointments.length;
-    const completedSessions = appointments.filter(app => app.class?.status === 'COMPLETED').length;
+    
+    // Count completed sessions based on slot times, same as subscription
+    const now = new Date();
+    const completedSessions = appointments.filter(app => 
+      getSlotTimes(app).every(time => new Date(time) < now)
+    ).length;
 
     return `${plan} (${completedSessions}/${totalSessions} sessions)`;
   }
@@ -290,7 +315,7 @@ export const getGroupStatus = (appointments: IAppointment[]): string => {
     const startDate = new Date(firstAppointment.subscription.startDate);
     const endDate = new Date(firstAppointment.subscription.endDate);
 
-    // Check if any sessions are completed (all slots in the past)
+    // Check if any sessions are completed
     const hasCompletedSessions = appointments.some(app => 
       getSlotTimes(app).every(time => new Date(time) < now)
     );
@@ -301,9 +326,20 @@ export const getGroupStatus = (appointments: IAppointment[]): string => {
   }
 
   if (type === 'CLASS' && firstAppointment.class) {
-    if (firstAppointment.class.status === 'COMPLETED') return 'Completed';
-    if (firstAppointment.class.status === 'IN_PROGRESS') return 'In Progress';
-    return 'Not Started';
+    const now = new Date();
+    
+    // Check if any sessions are completed, same as subscription
+    const hasCompletedSessions = appointments.some(app => 
+      getSlotTimes(app).every(time => new Date(time) < now)
+    );
+
+    // Check if all sessions are completed
+    const allSessionsCompleted = appointments.every(app => 
+      getSlotTimes(app).every(time => new Date(time) < now)
+    );
+
+    if (allSessionsCompleted) return 'Completed';
+    return hasCompletedSessions ? 'In Progress' : 'Not Started';
   }
 
   return getAppointmentStatus(firstAppointment);
