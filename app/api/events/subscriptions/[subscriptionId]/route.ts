@@ -304,48 +304,56 @@ export async function PATCH(
     const endDate = addMonths(startDate, existingSubscription.subscriptionPlan.durationInMonths);
 
     try {
-      // Update subscription status and dates
-      const subscription = await prisma.subscription.update({
-        where: { id: subscriptionId },
-        data: { 
-          requestStatus: status,
-          startDate: startDate,
-          endDate: endDate
-        },
-        include: {
-          subscriptionPlan: {
-            include: {
-              consultantProfile: {
-                include: {
-                  user: true,
+      // Wrap everything in a transaction
+      const result = await prisma.$transaction(async (tx) => {
+        // Update subscription status and dates
+        const subscription = await tx.subscription.update({
+          where: { id: subscriptionId },
+          data: { 
+            requestStatus: status,
+            startDate: startDate,
+            endDate: endDate
+          },
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: true,
+              },
+            },
+            appointments: {
+              include: {
+                slotsOfAppointment: {
+                  include: {
+                    user: true,
+                  },
                 },
               },
             },
           },
-          requestedBy: {
-            include: {
-              user: true,
-            },
-          },
-          appointments: {
-            include: {
-              slotsOfAppointment: {
-                include: {
-                  user: true,
-                },
-              },
-            },
-          },
-        },
+        });
+
+        // If approved, create appointments
+        if (status === RequestStatus.APPROVED) {
+          const appointments = await createAppointmentsForSubscription(subscription, tx);
+          subscription.appointments = appointments;
+        }
+
+        return subscription;
+      }, {
+        maxWait: 10000, // 10s max wait time
+        timeout: 30000, // 30s timeout
       });
 
-      // If approved, create appointments in batches
-      if (status === RequestStatus.APPROVED) {
-        const appointments = await createAppointmentsForSubscription(subscription);
-        subscription.appointments = appointments;
-      }
-
-      return NextResponse.json({ data: subscription });
+      return NextResponse.json({ data: result });
     } catch (error) {
       console.error("Transaction error:", error instanceof Error ? error.message : 'Unknown error');
       throw error;
@@ -359,7 +367,7 @@ export async function PATCH(
   }
 }
 
-async function createAppointmentsForSubscription(subscription: any) {
+async function createAppointmentsForSubscription(subscription: any, tx: any) {
   const { subscriptionPlan, requestedBy } = subscription;
   
   if (!subscriptionPlan?.durationInMonths || !subscriptionPlan?.callsPerWeek) {
@@ -376,65 +384,76 @@ async function createAppointmentsForSubscription(subscription: any) {
   const endDate = subscription.endDate || addMonths(startDate, subscriptionPlan.durationInMonths);
   const appointments = [];
 
-  // Create appointments for each week
+  // Prepare all appointment data first
+  const allAppointmentData = [];
   let currentDate = startDate;
-  const batchSize = 10; // Process 10 appointments at a time
-  let batch = [];
 
   while (currentDate < endDate) {
     // Create callsPerWeek appointments for this week
     for (let i = 0; i < subscriptionPlan.callsPerWeek; i++) {
-      // Set a default time (e.g., 10 AM) for each appointment
       const appointmentDate = setHours(setMinutes(currentDate, 0), 10);
       
-      batch.push({
-        appointmentType: AppointmentsType.SUBSCRIPTION,
-        subscription: {
-          connect: { id: subscription.id }
-        },
-        slotsOfAppointment: {
-          create: {
-            slotStartTimeInUTC: appointmentDate,
-            slotEndTimeInUTC: addHours(appointmentDate, 1),
-            isTentative: false,
-            user: {
-              connect: [
-                { id: requestedBy.user.id },
-                { id: subscriptionPlan.consultantProfile.user.id }
-              ]
+      // Check if appointment already exists for this time slot using transaction
+      const existingAppointment = await tx.appointment.findFirst({
+        where: {
+          subscription: { id: subscription.id },
+          slotsOfAppointment: {
+            some: {
+              slotStartTimeInUTC: appointmentDate
             }
           }
         }
       });
 
-      // When batch is full or we're at the last appointment, create them
-      if (batch.length === batchSize || (currentDate >= endDate && i === subscriptionPlan.callsPerWeek - 1)) {
-        try {
-          const createdAppointments = await prisma.$transaction(
-            batch.map(appointmentData => 
-              prisma.appointment.create({
-                data: appointmentData,
-                include: {
-                  slotsOfAppointment: {
-                    include: {
-                      user: true
-                    }
-                  }
-                }
-              })
-            )
-          );
-          appointments.push(...createdAppointments);
-          batch = []; // Clear the batch
-        } catch (error) {
-          console.error(`Error creating appointments batch:`, error instanceof Error ? error.message : 'Unknown error');
-          throw error;
-        }
+      if (!existingAppointment) {
+        allAppointmentData.push({
+          appointmentType: AppointmentsType.SUBSCRIPTION,
+          subscription: {
+            connect: { id: subscription.id }
+          },
+          slotsOfAppointment: {
+            create: {
+              slotStartTimeInUTC: appointmentDate,
+              slotEndTimeInUTC: addHours(appointmentDate, 1),
+              isTentative: false,
+              user: {
+                connect: [
+                  { id: requestedBy.user.id },
+                  { id: subscriptionPlan.consultantProfile.user.id }
+                ]
+              }
+            }
+          }
+        });
       }
     }
-    
-    // Move to next week
     currentDate = addWeeks(currentDate, 1);
+  }
+
+  // Process appointments in batches
+  const batchSize = 10;
+  for (let i = 0; i < allAppointmentData.length; i += batchSize) {
+    const batch = allAppointmentData.slice(i, i + batchSize);
+    try {
+      const createdAppointments = await Promise.all(
+        batch.map(appointmentData => 
+          tx.appointment.create({
+            data: appointmentData,
+            include: {
+              slotsOfAppointment: {
+                include: {
+                  user: true
+                }
+              }
+            }
+          })
+        )
+      );
+      appointments.push(...createdAppointments);
+    } catch (error) {
+      console.error(`Error creating appointments batch ${i/batchSize + 1}:`, error instanceof Error ? error.message : 'Unknown error');
+      throw error;
+    }
   }
 
   return appointments;

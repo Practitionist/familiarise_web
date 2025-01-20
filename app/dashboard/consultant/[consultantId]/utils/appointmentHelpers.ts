@@ -62,9 +62,33 @@ export const getAppointmentTypeAndPlan = (appointment: IAppointment): string => 
   return `${type} - ${plan}`;
 };
 
-// Get start time from appointment
+// Get all slot times from appointment
+export const getSlotTimes = (appointment: IAppointment): string[] => {
+  return appointment?.slotsOfAppointment?.map(slot => slot.slotStartTimeInUTC) || [];
+};
+
+// Get first slot time from appointment (for backwards compatibility)
 export const getStartTime = (appointment: IAppointment): string | undefined => {
-  return appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+  const times = getSlotTimes(appointment);
+  return times[0];
+};
+
+// Check if appointment has any future slots
+export const hasUpcomingSlots = (appointment: IAppointment): boolean => {
+  const now = new Date();
+  return getSlotTimes(appointment).some(time => new Date(time) > now);
+};
+
+// Check if appointment has any slots today
+export const hasTodaySlots = (appointment: IAppointment): boolean => {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  
+  return getSlotTimes(appointment).some(time => {
+    const date = new Date(time);
+    return date >= todayStart && date <= todayEnd;
+  });
 };
 
 // Format UTC time to local time
@@ -91,8 +115,8 @@ export const getAppointmentStatus = (appointment: IAppointment): string => {
     return "Completed";
   }
 
-  // Check if appointment is in the past
-  if (startTime < now) {
+  // Check if all slots are in the past
+  if (getSlotTimes(appointment).every(time => new Date(time) < now)) {
     return "Completed";
   }
 
@@ -126,46 +150,50 @@ export const sortAppointmentsByStartTime = (appointments: IAppointment[]): IAppo
 // Filter today's appointments
 export const getTodayAppointments = (appointments: IAppointment[]): IAppointment[] => {
   const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
   return appointments.filter(appointment => {
-    const startTime = getStartTime(appointment);
-    if (!startTime) return false;
-
-    // For subscription appointments, check if they're active today
-    if (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) {
-      const startDate = new Date(appointment.subscription.startDate);
-      const endDate = new Date(appointment.subscription.endDate);
-      const appointmentDate = new Date(startTime);
-      return appointmentDate >= todayStart && appointmentDate <= todayEnd && now >= startDate && now <= endDate;
+    // Check if appointment has any slots today
+    if (hasTodaySlots(appointment)) {
+      // For subscription appointments, check if they're active
+      if (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) {
+        const startDate = new Date(appointment.subscription.startDate);
+        const endDate = new Date(appointment.subscription.endDate);
+        return now >= startDate && now <= endDate;
+      }
+      
+      return true;
     }
-
-    // For other appointments
-    const appointmentDate = new Date(startTime);
-    return appointmentDate >= todayStart && appointmentDate <= todayEnd;
+    
+    return false;
   });
 };
 
 // Filter upcoming appointments
 export const getUpcomingAppointments = (appointments: IAppointment[]): IAppointment[] => {
-  const now = new Date();
-  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-
   return appointments.filter(appointment => {
-    const startTime = getStartTime(appointment);
-    if (!startTime) return false;
-    
-    const appointmentDate = new Date(startTime);
-    
-    // For subscription appointments, check if they're still active
-    if (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) {
-      const startDate = new Date(appointment.subscription.startDate);
-      const endDate = new Date(appointment.subscription.endDate);
-      return appointmentDate > todayEnd && now <= endDate && appointmentDate >= startDate;
+    // Check if appointment has any future slots
+    if (hasUpcomingSlots(appointment)) {
+      // For subscription appointments
+      if (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) {
+        // Show all appointments with future slots
+        return true;
+      }
+      
+      // For class appointments
+      if (appointment.appointmentType === 'CLASS' && appointment.class) {
+        return appointment.class.status !== "COMPLETED";
+      }
+      
+      // For webinar appointments
+      if (appointment.appointmentType === 'WEBINAR' && appointment.webinar) {
+        return appointment.webinar.status !== "COMPLETED";
+      }
+      
+      // For consultation appointments
+      return true;
     }
     
-    return appointmentDate > todayEnd;
+    return false;
   });
 };
 
@@ -230,12 +258,11 @@ export const getGroupTitle = (appointments: IAppointment[]): string => {
     // Use the actual number of appointments as total sessions
     const totalSessions = appointments.length;
     
-    // Count completed sessions
+    // Count completed sessions based on all slots
     const now = new Date();
-    const completedSessions = appointments.filter(app => {
-      const slotTime = app.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
-      return slotTime && new Date(slotTime) < now;
-    }).length;
+    const completedSessions = appointments.filter(app => 
+      getSlotTimes(app).every(time => new Date(time) < now)
+    ).length;
 
     return `${plan} (${completedSessions}/${totalSessions} sessions)`;
   }
@@ -263,11 +290,10 @@ export const getGroupStatus = (appointments: IAppointment[]): string => {
     const startDate = new Date(firstAppointment.subscription.startDate);
     const endDate = new Date(firstAppointment.subscription.endDate);
 
-    // Check if any sessions are completed
-    const hasCompletedSessions = appointments.some(app => {
-      const slotTime = app.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
-      return slotTime && new Date(slotTime) < now;
-    });
+    // Check if any sessions are completed (all slots in the past)
+    const hasCompletedSessions = appointments.some(app => 
+      getSlotTimes(app).every(time => new Date(time) < now)
+    );
 
     if (now > endDate) return 'Completed';
     if (now < startDate) return 'Not Started';

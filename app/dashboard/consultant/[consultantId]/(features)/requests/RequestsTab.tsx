@@ -44,6 +44,9 @@ export function RequestsTab({ approvals, onUpdate }: Readonly<RequestsTabProps>)
     type: string,
     status: "APPROVED" | "REJECTED",
   ) => {
+    // Prevent double submission
+    if (loadingStates[id]) return;
+    
     // Show confirmation dialog
     setConfirmDialog({
       isOpen: true,
@@ -55,10 +58,14 @@ export function RequestsTab({ approvals, onUpdate }: Readonly<RequestsTabProps>)
 
   const handleConfirmedUpdate = async () => {
     const { approvalId, approvalType, action } = confirmDialog;
+    
+    // Prevent double submission
+    if (loadingStates[approvalId]) return;
+    
     setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+    setLoadingStates((prev) => ({ ...prev, [approvalId]: true }));
 
     try {
-      setLoadingStates((prev) => ({ ...prev, [approvalId]: true }));
 
       const endpoint =
         approvalType === "Consultation"
@@ -85,10 +92,12 @@ export function RequestsTab({ approvals, onUpdate }: Readonly<RequestsTabProps>)
         description: `Request ${action.toLowerCase()} successfully`,
       });
 
-      // Trigger refresh of the parent component
-      if (onUpdate) {
-        onUpdate();
-      }
+      // Add a small delay before triggering refresh to allow transaction to complete
+      setTimeout(() => {
+        if (onUpdate) {
+          onUpdate();
+        }
+      }, 1000);
     } catch (error) {
       console.error("Error updating status:", error);
       toast({
