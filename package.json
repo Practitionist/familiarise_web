@@ -22,10 +22,11 @@
     "test:watch": "jest --watch",
     "cypress:open": "cypress open",
     "cypress:run": "cypress run",
-    "e2e": "start-server-and-test dev http://localhost:3000 \"cypress open --e2e\"",
-    "e2e:headless": "start-server-and-test dev http://localhost:3000 \"cypress run --e2e\"",
-    "component": "cypress open --component",
-    "component:headless": "cypress run --component"
+    "cypress:e2e": "start-server-and-test dev http://localhost:3000 \"cypress open --e2e\"",
+    "cypress:e2e:headless": "start-server-and-test dev http://localhost:3000 \"cypress run --e2e\"",
+    "cypress:component": "cypress open --component",
+    "cypress:component:headless": "cypress run --component",
+    "update-postman": "npx ts-node scripts/typescript/update-postman-collection.ts"
   },
   "dependencies": {
     "@faker-js/faker": "^9.3.0",

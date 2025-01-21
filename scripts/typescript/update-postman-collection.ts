@@ -344,7 +344,7 @@ async function generatePostmanCollection(): Promise<PostmanCollection> {
   // Read existing collection to preserve variables and events
   const existingCollection = JSON.parse(
     fs.readFileSync(
-      path.join(process.cwd(), 'ConsultXLabs_Complete_Postman_Collection.json'),
+      path.join(process.cwd(), 'postman-collection.json'),
       'utf8'
     )
   );
@@ -364,7 +364,7 @@ async function generatePostmanCollection(): Promise<PostmanCollection> {
 generatePostmanCollection()
   .then(newCollection => {
     fs.writeFileSync(
-      path.join(process.cwd(), 'ConsultXLabs_Complete_Postman_Collection.json'),
+      path.join(process.cwd(), 'postman-collection.json'),
       JSON.stringify(newCollection, null, 2)
     );
     console.log('Postman collection updated successfully!');
