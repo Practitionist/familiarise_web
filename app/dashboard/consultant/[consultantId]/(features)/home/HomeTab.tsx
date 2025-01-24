@@ -1,9 +1,8 @@
 import React, { Suspense } from "react";
-import { Button } from "components/ui/button";
-import { Badge } from "components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
-import { RequestsTab } from "../requests/RequestsTab";
-import { HomeTabProps } from "../../types";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { RequestSlotAllocationTab } from "../requests/RequestSlotAllocationTab";
 import { ClientActivity } from "../../components/ClientActivity";
 import {
   getConsumeeName,
@@ -18,13 +17,33 @@ import {
   groupRecurringAppointments,
   getGroupTitle,
   getGroupStatus,
-  getSlotTimes,
 } from "../../utils/appointmentHelpers";
+import { TAppointment } from "@/types/appointment";
+
+import { IActivity, IAppointment } from "../../types";
+
+interface Activity {
+  id: string;
+  type: string;
+  message: string;
+  timestamp: Date;
+  user: {
+    id: string;
+    name: string | null;
+    image: string | null;
+  };
+}
+
+interface HomeTabProps {
+  appointments: IAppointment[];
+  activities: Activity[];
+  getBadgeStyle: (status: string) => string;
+  onUpdate: () => void;
+}
 
 export function HomeTab({
   appointments,
   activities,
-  approvals,
   getBadgeStyle,
   onUpdate,
 }: Readonly<HomeTabProps>) {
@@ -37,7 +56,7 @@ export function HomeTab({
     if (!appointment.slotsOfAppointment || appointment.slotsOfAppointment.length === 0) {
       return [appointment];
     }
-    return appointment.slotsOfAppointment.map(slot => ({
+    return appointment.slotsOfAppointment.map((slot) => ({
       ...appointment,
       id: `${appointment.id}-${slot.id}`,
       slotsOfAppointment: [slot]
@@ -253,7 +272,12 @@ export function HomeTab({
             <h2 className="text-lg lg:text-xl font-semibold mb-3 lg:mb-4">
               Clients Activity
             </h2>
-            <ClientActivity activities={activities} />
+            <ClientActivity activities={activities.map(activity => ({
+              id: activity.id,
+              name: activity.user.name || 'Unknown',
+              action: activity.type,
+              time: activity.timestamp.toISOString()
+            } satisfies IActivity))} />
             <Button className="mt-3 lg:mt-4 w-full bg-blue-500 text-white">
               Login Report
             </Button>
@@ -262,10 +286,10 @@ export function HomeTab({
         <Suspense fallback={<div>Loading approvals...</div>}>
           <div className="bg-white p-4 lg:p-6 rounded-lg shadow">
             <h2 className="text-lg lg:text-xl font-semibold mb-3 lg:mb-4">
-              Approvals for Consultations and Subscriptions
+              Pending Approvals
             </h2>
             <div className="max-h-[300px] overflow-auto">
-              <RequestsTab approvals={approvals.slice(0, 3)} onUpdate={onUpdate} />
+              <RequestSlotAllocationTab type="all" onUpdate={onUpdate} />
             </div>
           </div>
         </Suspense>
