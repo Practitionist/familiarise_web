@@ -37,97 +37,78 @@ export function Calendar({
     setCurrentDate(new Date(currentDate.setDate(currentDate.getDate() + (view === 'week' ? 7 : 30))))
   }
 
-  const startOfWeek = new Date(currentDate)
-  startOfWeek.setDate(currentDate.getDate() - currentDate.getDay())
-
   const getDaysInMonth = (date: Date) => {
-    const year = date.getFullYear()
-    const month = date.getMonth()
-    return new Date(year, month + 1, 0).getDate()
+    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()
+  }
+
+  const renderTimeCell = (date: Date, hour: number) => {
+    const slotDate = new Date(date)
+    slotDate.setHours(hour, 0, 0, 0)
+    const slotString = slotDate.toISOString()
+    const isAvailable = availableSlots?.includes(slotString)
+    const isExisting = existingAppointments?.includes(slotString)
+    const isSelected = selectedSlots?.includes(slotString)
+    const now = new Date()
+    const isInPast = slotDate < now
+
+    return (
+      <Button
+        key={`${date.toISOString()}-${hour}`}
+        variant={isSelected ? "default" : isAvailable ? "outline" : "ghost"}
+        className={`h-12 w-full relative
+          ${isExisting ? 'bg-gray-200 hover:bg-gray-200' : ''}
+          ${isInPast ? 'opacity-50' : ''}
+        `}
+        onClick={() => isAvailable && !isInPast && onSlotSelect(slotString)}
+        disabled={!isAvailable || isExisting || isInPast}
+      >
+        <div className="flex flex-col items-center gap-1 text-xs">
+          {scheduleType === 'WEEKLY' && isAvailable && <span>🔄</span>}
+          {isExisting ? 'Booked' : isSelected ? 'Selected' : isAvailable ? 'Available' : ''}
+        </div>
+      </Button>
+    )
   }
 
   const renderWeekView = () => {
     const startOfWeek = new Date(currentDate)
     startOfWeek.setDate(currentDate.getDate() - currentDate.getDay())
-    
-    const now = new Date()
-    const currentDayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    
-    return (
-      <div className="grid grid-cols-8 gap-1">
-        <div className="col-span-1"></div>
-        {DAYS.map((day, index) => {
-          const date = new Date(startOfWeek)
-          date.setDate(startOfWeek.getDate() + index)
-          const isToday = date.getTime() === currentDayStart.getTime()
-          
-          return (
-            <div key={day} className={`text-center ${isToday ? 'bg-primary/10 rounded-t-md' : ''}`}>
-              <div className="font-bold">{day}</div>
-              <div className="text-sm text-muted-foreground">
-                {date.getDate()}
-              </div>
-            </div>
-          )
-        })}
-        {HOURS.map(hour => (
-          <React.Fragment key={hour}>
-            <div className="text-right pr-2">{hour}:00</div>
-            {Array.from({ length: 7 }, (_, i) => {
-              const currentSlotDate = new Date(startOfWeek)
-              currentSlotDate.setDate(startOfWeek.getDate() + i)
-              currentSlotDate.setHours(hour, 0, 0, 0)
-              const slotString = currentSlotDate.toISOString()
-              const isAvailable = availableSlots?.includes(slotString) || false
-              const isExisting = existingAppointments?.includes(slotString) || false
-              const isSelected = selectedSlots?.includes(slotString) || false
 
-              const isInPast = currentSlotDate < now
-              const isToday = currentSlotDate.getTime() >= currentDayStart.getTime() && 
-                             currentSlotDate.getTime() < currentDayStart.getTime() + 24 * 60 * 60 * 1000
-              
-              return (
-                <Button
-                  key={i}
-                  variant={isSelected ? "default" : isAvailable ? "outline" : "ghost"}
-                  className={`h-8 relative
-                    ${isExisting ? 'bg-gray-200 hover:bg-gray-200' : ''}
-                    ${isToday ? 'bg-primary/5' : ''}
-                    ${isInPast ? 'opacity-50' : ''}
-                  `}
-                  onClick={() => isAvailable && !isInPast && onSlotSelect(slotString)}
-                  disabled={!isAvailable || isExisting || isInPast}
-                  title={`${new Date(slotString).toLocaleTimeString([], { 
-                    hour: '2-digit', 
-                    minute: '2-digit'
-                  })} - ${new Date(new Date(slotString).getTime() + 60 * 60 * 1000).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })} (Your local time)
-${new Date(slotString).toLocaleTimeString([], { 
-                    hour: '2-digit', 
-                    minute: '2-digit',
-                    timeZone: consultantTimezone
-                  })} - ${new Date(new Date(slotString).getTime() + 60 * 60 * 1000).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    timeZone: consultantTimezone
-                  })} (Consultant's time - ${consultantTimezone})
-${isExisting ? 'Booked' : isSelected ? 'Selected' : isAvailable ? 'Available' : 'Unavailable'}
-${scheduleType === 'WEEKLY' ? '🔄 Repeats weekly' : '📅 One-time slot'}`}
-                >
-                  <div className="flex items-center gap-1">
-                    {scheduleType === 'WEEKLY' && isAvailable && <span className="text-xs">🔄</span>}
-                    {isExisting ? 'Booked' : isSelected ? 'Selected' : isAvailable ? 'Available' : ''}
-                  </div>
-                  {isToday && hour === now.getHours() && (
-                    <div className="absolute left-0 w-full h-0.5 bg-primary"></div>
-                  )}
-                </Button>
-              )
-            })}
-          </React.Fragment>
-        ))}
+    return (
+      <div className="flex flex-col h-[75vh]">
+        <div className="grid grid-cols-8 gap-1">
+          <div className="w-20"></div>
+          {DAYS.map((day, index) => {
+            const date = new Date(startOfWeek)
+            date.setDate(startOfWeek.getDate() + index)
+            return (
+              <div key={day} className="text-center">
+                <div className="font-bold">{day}</div>
+                <div className="text-sm text-muted-foreground">{date.getDate()}</div>
+              </div>
+            )
+          })}
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          <div className="grid grid-cols-8 gap-1">
+            {HOURS.map(hour => (
+              <React.Fragment key={hour}>
+                <div className="w-20 text-right pr-2 py-2 text-sm">
+                  {hour.toString().padStart(2, '0')}:00
+                </div>
+                {DAYS.map((_, dayIndex) => {
+                  const date = new Date(startOfWeek)
+                  date.setDate(startOfWeek.getDate() + dayIndex)
+                  return (
+                    <div key={dayIndex}>
+                      {renderTimeCell(date, hour)}
+                    </div>
+                  )
+                })}
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
       </div>
     )
   }
@@ -135,20 +116,19 @@ ${scheduleType === 'WEEKLY' ? '🔄 Repeats weekly' : '📅 One-time slot'}`}
   const renderMonthView = () => {
     const year = currentDate.getFullYear()
     const month = currentDate.getMonth()
-    const daysInMonth = new Date(year, month + 1, 0).getDate()
     const firstDayOfMonth = new Date(year, month, 1).getDay()
     const now = new Date()
     const currentDayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
     return (
-      <div className="grid grid-cols-7 gap-1">
+      <div className="grid grid-cols-7 gap-1 h-[75vh]">
         {DAYS.map(day => (
           <div key={day} className="text-center font-bold p-2">{day}</div>
         ))}
         {Array.from({ length: firstDayOfMonth }, (_, i) => (
-          <div key={`empty-${i}`} className="h-32 bg-gray-50/50"></div>
+          <div key={`empty-${i}`} className="h-full bg-gray-50/50"></div>
         ))}
-        {Array.from({ length: daysInMonth }, (_, i) => {
+        {Array.from({ length: getDaysInMonth(currentDate) }, (_, i) => {
           const date = new Date(year, month, i + 1)
           const dateString = date.toISOString().split('T')[0]
           const daySlots = availableSlots?.filter(slot => slot?.startsWith(dateString)) || []
@@ -160,60 +140,43 @@ ${scheduleType === 'WEEKLY' ? '🔄 Repeats weekly' : '📅 One-time slot'}`}
           return (
             <Card 
               key={i} 
-              className={`h-32 overflow-y-auto relative ${
-                isToday ? 'ring-2 ring-primary' : ''
-              } ${
-                isPast ? 'bg-gray-50' : ''
-              }`}
+              className={`h-full ${isToday ? 'ring-2 ring-primary' : ''} ${isPast ? 'bg-gray-50' : ''}`}
             >
-              <CardContent className="p-1">
-                <div className={`font-bold sticky top-0 bg-background/95 backdrop-blur p-1 flex justify-between items-center ${
+              <CardContent className="p-1 h-full flex flex-col">
+                <div className={`font-bold bg-background/95 backdrop-blur p-1 flex justify-between items-center ${
                   isToday ? 'text-primary' : ''
                 }`}>
                   <span>{i + 1}</span>
                   {daySlots.length > 0 && (
                     <Badge variant="outline" className="text-xs">
-                      {daySlots.length} slot{daySlots.length !== 1 ? 's' : ''}
+                      {daySlots.length}
                     </Badge>
                   )}
                 </div>
-                <div className="text-xs space-y-1 mt-1">
+                <div className="flex-1 space-y-1 mt-1 overflow-y-auto">
                   {daySlots.map((slot, index) => {
                     const slotDate = new Date(slot)
                     const isInPast = slotDate < now
                     const isSelected = selectedDaySlots.includes(slot)
                     const isExisting = existingSlots.includes(slot)
-                    const slotTime = slotDate.toLocaleTimeString([], { 
-                      hour: '2-digit', 
-                      minute: '2-digit'
-                    })
 
                     return (
                       <Button
                         key={index}
                         variant={isSelected ? "default" : "outline"}
                         size="sm"
-                        className={`w-full justify-start text-left ${
-                          isExisting ? 'bg-gray-200 hover:bg-gray-200' : ''
+                        className={`w-full h-6 text-xs justify-start ${
+                          isExisting ? 'bg-gray-200' : ''
                         } ${
                           isInPast ? 'opacity-50' : ''
                         }`}
                         onClick={() => !isInPast && onSlotSelect(slot)}
                         disabled={isExisting || isInPast}
-                        title={`${new Date(slot).toLocaleTimeString([], { 
+                      >
+                        {slotDate.toLocaleTimeString([], { 
                           hour: '2-digit', 
                           minute: '2-digit'
-                        })} (Your local time)
-${new Date(slot).toLocaleTimeString([], { 
-                          hour: '2-digit', 
-                          minute: '2-digit',
-                          timeZone: consultantTimezone
-                        })} (Consultant's time - ${consultantTimezone})
-${isExisting ? 'Booked' : isSelected ? 'Selected' : isInPast ? 'Past' : 'Available'}
-${scheduleType === 'WEEKLY' ? '(Repeats weekly)' : '(One-time slot)'}`}
-                      >
-                        {slotTime}
-                        {isExisting && <span className="ml-1 text-muted-foreground">(Booked)</span>}
+                        })}
                       </Button>
                     )
                   })}
@@ -226,8 +189,9 @@ ${scheduleType === 'WEEKLY' ? '(Repeats weekly)' : '(One-time slot)'}`}
     )
   }
 
+
   return (
-    <div>
+    <div className="flex flex-col h-full">
       <div className="flex justify-between items-center mb-4">
         <Button variant="outline" onClick={navigatePrevious}>
           <ChevronLeft className="h-4 w-4" />
@@ -239,46 +203,28 @@ ${scheduleType === 'WEEKLY' ? '(Repeats weekly)' : '(One-time slot)'}`}
           <ChevronRight className="h-4 w-4" />
         </Button>
       </div>
-      <div className="flex justify-end mb-2">
-        <Button variant="outline" size="sm" onClick={() => setView('week')} className={view === 'week' ? 'bg-primary text-primary-foreground' : ''}>Week</Button>
-        <Button variant="outline" size="sm" onClick={() => setView('month')} className={view === 'month' ? 'bg-primary text-primary-foreground' : ''}>Month</Button>
+      <div className="flex justify-end gap-2 mb-2">
+        <Button 
+          variant={view === 'week' ? 'default' : 'outline'} 
+          size="sm" 
+          onClick={() => setView('week')}
+        >
+          Week
+        </Button>
+        <Button 
+          variant={view === 'month' ? 'default' : 'outline'} 
+          size="sm" 
+          onClick={() => setView('month')}
+        >
+          Month
+        </Button>
       </div>
       {view === 'week' ? renderWeekView() : renderMonthView()}
-      <div className="mt-4 space-y-4">
+      <div className="mt-4">
         <div className="flex items-center justify-between">
-          <div>Selected slots: {selectedSlots.length} / {requiredSlots}</div>
+          <div>Selected: {selectedSlots.length} / {requiredSlots}</div>
           <div className="text-sm text-muted-foreground">
-            Timezone: {consultantTimezone}
-          </div>
-        </div>
-        <div className="text-sm text-muted-foreground">
-          Schedule Type: {scheduleType === 'WEEKLY' ? 'Weekly Recurring' : 'Custom Schedule'}
-        </div>
-        <div className="text-sm border rounded-md p-2 space-y-1">
-          <div className="font-medium mb-2">Legend:</div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" className="pointer-events-none">Available</Button>
-              <span>Available slot</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" className="pointer-events-none bg-gray-200">Booked</Button>
-              <span>Booked slot</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="default" size="sm" className="pointer-events-none">Selected</Button>
-              <span>Selected slot</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" className="pointer-events-none opacity-50">Unavailable</Button>
-              <span>Past/Unavailable</span>
-            </div>
-            {scheduleType === 'WEEKLY' && (
-              <div className="flex items-center gap-2">
-                <span className="text-base">🔄</span>
-                <span>Repeats weekly</span>
-              </div>
-            )}
+            {consultantTimezone}
           </div>
         </div>
       </div>
