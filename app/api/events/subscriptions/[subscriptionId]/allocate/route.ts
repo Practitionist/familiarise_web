@@ -11,13 +11,14 @@ type PrismaTransaction = Omit<
 interface AllocationRequest {
   isAuto: boolean;
   slots?: string[]; // Required for manual allocation
+  useRequestedSlots?: boolean; // For using consultee's requested slots
 }
 
 const subscriptionInclude = {
   subscriptionPlan: {
     include: {
       consultantProfile: {
-        include: {
+        select: {
           user: true,
           scheduleType: true,
           slotsOfAvailabilityWeekly: true,
@@ -31,6 +32,11 @@ const subscriptionInclude = {
       user: true,
     },
   },
+  appointments: {
+    include: {
+      slotsOfAppointment: true
+    }
+  }
 } as const;
 
 type SubscriptionWithRelations = Prisma.SubscriptionGetPayload<{
@@ -185,6 +191,49 @@ async function allocateSlotsAuto(
   }
 
   return selectedSlots.sort((a, b) => a.getTime() - b.getTime());
+}
+
+async function allocateSlotsRequested(
+  subscription: SubscriptionWithRelations,
+  tx: PrismaTransaction
+): Promise<Date[]> {
+  // Get the requested slots from appointments
+  const requestedSlots = subscription.appointments?.flatMap(appt => 
+    appt.slotsOfAppointment?.map(slot => new Date(slot.slotStartTimeInUTC)) || []
+  );
+  
+  if (!requestedSlots?.length) {
+    throw new Error("No requested slots found");
+  }
+
+  // Validate all slots are still available
+  const existingAppointments = await tx.appointment.findMany({
+    where: {
+      AND: [
+        {
+          OR: [
+            { subscription: { requestStatus: RequestStatus.APPROVED } },
+            { consultation: { requestStatus: RequestStatus.APPROVED } }
+          ]
+        },
+        {
+          slotsOfAppointment: {
+            some: {
+              slotStartTimeInUTC: {
+                in: requestedSlots
+              }
+            }
+          }
+        }
+      ]
+    }
+  });
+
+  if (existingAppointments.length > 0) {
+    throw new Error("Some requested slots are no longer available");
+  }
+
+  return requestedSlots;
 }
 
 // Helper functions
@@ -347,7 +396,10 @@ export async function PATCH(
       );
     }
 
-    if (!body.isAuto && !Array.isArray(body.slots)) {
+    if (body.useRequestedSlots) {
+      // When using requested slots, we don't need manual slots
+      body.isAuto = false;
+    } else if (!body.isAuto && !Array.isArray(body.slots)) {
       return NextResponse.json(
         { error: "slots array is required for manual allocation" },
         { status: 400 }
@@ -375,17 +427,38 @@ export async function PATCH(
       );
     }
 
+    // Check if subscription is already approved
+    if (subscription.requestStatus === RequestStatus.APPROVED) {
+      return NextResponse.json(
+        { error: "Subscription is already approved" },
+        { status: 400 }
+      );
+    }
+
+    // Check if subscription already has appointments
+    if (subscription.appointments?.length > 0) {
+      return NextResponse.json(
+        { error: "Subscription already has appointments allocated" },
+        { status: 400 }
+      );
+    }
+
     try {
-      // Use transaction to ensure atomic updates
+      // Use transaction to ensure atomic updates with increased timeout
       const result = await prisma.$transaction(async (tx) => {
         // Get slots based on allocation method
-        const selectedSlots = body.isAuto
-          ? await allocateSlotsAuto(subscription, tx)
-          : await allocateSlotsManual(subscription, body.slots!, tx);
+        let selectedSlots;
+        if (body.useRequestedSlots) {
+          selectedSlots = await allocateSlotsRequested(subscription, tx);
+        } else if (body.isAuto) {
+          selectedSlots = await allocateSlotsAuto(subscription, tx);
+        } else {
+          selectedSlots = await allocateSlotsManual(subscription, body.slots!, tx);
+        }
 
         // Create appointments for selected slots
         const appointments = await Promise.all(
-          selectedSlots.map((slotTime) =>
+          selectedSlots.map((slotTime: Date) =>
             tx.appointment.create({
               data: {
                 appointmentType: AppointmentsType.SUBSCRIPTION,
@@ -432,6 +505,8 @@ export async function PATCH(
           subscription: updatedSubscription,
           appointments,
         };
+      }, {
+        timeout: 30000 // Increase timeout to 30 seconds for subscription allocations
       });
 
       return NextResponse.json({ data: result });

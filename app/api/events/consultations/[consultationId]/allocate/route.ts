@@ -11,6 +11,7 @@ type PrismaTransaction = Omit<
 interface AllocationRequest {
   isAuto: boolean;
   slots?: string[]; // Required for manual allocation
+  useRequestedSlots?: boolean; // For using consultee's requested slots
 }
 
 const consultationInclude = {
@@ -31,6 +32,11 @@ const consultationInclude = {
       user: true,
     },
   },
+  appointment: {
+    include: {
+      slotsOfAppointment: true
+    }
+  }
 } as const;
 
 type ConsultationWithRelations = Prisma.ConsultationGetPayload<{
@@ -153,6 +159,43 @@ async function allocateSlotAuto(
   throw new Error("No available slots found");
 }
 
+async function allocateSlotRequested(
+  consultation: ConsultationWithRelations,
+  tx: PrismaTransaction
+): Promise<Date> {
+  // Get the requested slot from the appointment
+  const requestedSlot = consultation.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+  if (!requestedSlot) {
+    throw new Error("No requested slot found");
+  }
+  const selectedSlot = new Date(requestedSlot);
+  
+  // Validate the slot is still available
+  const existingAppointment = await tx.appointment.findFirst({
+    where: {
+      AND: [
+        {
+          OR: [
+            { subscription: { requestStatus: RequestStatus.APPROVED } },
+            { consultation: { requestStatus: RequestStatus.APPROVED } }
+          ]
+        },
+        {
+          slotsOfAppointment: {
+            some: { slotStartTimeInUTC: selectedSlot }
+          }
+        }
+      ]
+    }
+  });
+
+  if (existingAppointment) {
+    throw new Error("Requested slot is no longer available");
+  }
+
+  return selectedSlot;
+}
+
 async function allocateSlotManual(
   consultation: ConsultationWithRelations,
   slots: string[],
@@ -256,7 +299,10 @@ export async function PATCH(
       );
     }
 
-    if (!body.isAuto && !Array.isArray(body.slots)) {
+    if (body.useRequestedSlots) {
+      // When using requested slots, we don't need manual slots
+      body.isAuto = false;
+    } else if (!body.isAuto && !Array.isArray(body.slots)) {
       return NextResponse.json(
         { error: "slots array is required for manual allocation" },
         { status: 400 }
@@ -284,13 +330,34 @@ export async function PATCH(
       );
     }
 
+    // Check if consultation is already approved
+    if (consultation.requestStatus === RequestStatus.APPROVED) {
+      return NextResponse.json(
+        { error: "Consultation is already approved" },
+        { status: 400 }
+      );
+    }
+
+    // Check if consultation already has appointments
+    if (consultation.appointment) {
+      return NextResponse.json(
+        { error: "Consultation already has appointments allocated" },
+        { status: 400 }
+      );
+    }
+
     try {
       // Use transaction to ensure atomic updates
       const result = await prisma.$transaction(async (tx) => {
         // Get slot based on allocation method
-        const selectedSlot = body.isAuto
-          ? await allocateSlotAuto(consultation, tx)
-          : await allocateSlotManual(consultation, body.slots!, tx);
+        let selectedSlot;
+        if (body.useRequestedSlots) {
+          selectedSlot = await allocateSlotRequested(consultation, tx);
+        } else if (body.isAuto) {
+          selectedSlot = await allocateSlotAuto(consultation, tx);
+        } else {
+          selectedSlot = await allocateSlotManual(consultation, body.slots!, tx);
+        }
 
         // Create appointment for selected slot
         const appointment = await tx.appointment.create({
