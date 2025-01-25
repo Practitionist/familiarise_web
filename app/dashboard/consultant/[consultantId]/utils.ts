@@ -34,9 +34,7 @@ export async function fetchAppointments(
   consultantId: string,
 ): Promise<IAppointment[]> {
   try {
-    const response = await fetch(
-      `/api/slots/appointments?consultantProfileId=${consultantId}`,
-    );
+    const response = await fetch(`/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`)
     if (!response.ok) {
       throw new Error(`Failed to fetch appointments: ${response.statusText}`);
     }

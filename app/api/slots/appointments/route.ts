@@ -7,14 +7,46 @@ export async function GET(request: NextRequest) {
 
   const type = searchParams.get("type")?.toUpperCase();
   const consultantProfileId = searchParams.get("consultantProfileId");
+  const consulteeProfileId = searchParams.get("consulteeProfileId");
   const userId = searchParams.get("userId");
+  
+  // Get status for each appointment type
+  const consultationStatus = searchParams.get("consultationStatus")?.toUpperCase();
+  const subscriptionStatus = searchParams.get("subscriptionStatus")?.toUpperCase();
+  const webinarStatus = searchParams.get("webinarStatus")?.toUpperCase();
+  const classStatus = searchParams.get("classStatus")?.toUpperCase();
 
-  if (
-    type &&
-    !Object.values(AppointmentsType).includes(type as AppointmentsType)
-  ) {
+  // Validate appointment type
+  if (type && !Object.values(AppointmentsType).includes(type as AppointmentsType)) {
     return NextResponse.json(
       { error: "Invalid appointment type" },
+      { status: 400 },
+    );
+  }
+
+  // Validate statuses
+  const validStatuses = ["PENDING", "APPROVED", "REJECTED", "CANCELLED"];
+  if (consultationStatus && !validStatuses.includes(consultationStatus)) {
+    return NextResponse.json(
+      { error: "Invalid consultation status" },
+      { status: 400 },
+    );
+  }
+  if (subscriptionStatus && !validStatuses.includes(subscriptionStatus)) {
+    return NextResponse.json(
+      { error: "Invalid subscription status" },
+      { status: 400 },
+    );
+  }
+  if (webinarStatus && !validStatuses.includes(webinarStatus)) {
+    return NextResponse.json(
+      { error: "Invalid webinar status" },
+      { status: 400 },
+    );
+  }
+  if (classStatus && !validStatuses.includes(classStatus)) {
+    return NextResponse.json(
+      { error: "Invalid class status" },
       { status: 400 },
     );
   }
@@ -23,7 +55,14 @@ export async function GET(request: NextRequest) {
     const appointments = await getAppointments(
       type as AppointmentsType | undefined,
       consultantProfileId,
+      consulteeProfileId,
       userId,
+      {
+        consultation: consultationStatus as "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | undefined,
+        subscription: subscriptionStatus as "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | undefined,
+        webinar: webinarStatus as "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | undefined,
+        class: classStatus as "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | undefined,
+      }
     );
 
     return NextResponse.json({ data: appointments });
@@ -39,42 +78,63 @@ export async function GET(request: NextRequest) {
 async function getAppointments(
   type?: AppointmentsType,
   consultantProfileId?: string | null,
+  consulteeProfileId?: string | null,
   userId?: string | null,
+  statuses?: {
+    consultation?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED",
+    subscription?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED",
+    webinar?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED",
+    class?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED",
+  }
 ) {
-  const whereClause: Prisma.AppointmentWhereInput = {};
-
-  if (consultantProfileId) {
-    whereClause.OR = [
+  const whereClause: Prisma.AppointmentWhereInput = {
+    OR: [
       {
         consultation: {
-          consultationPlan: {
+          requestStatus: statuses?.consultation || "APPROVED",
+          consultationPlan: consultantProfileId ? {
             consultantProfileId,
-          },
+          } : undefined,
+          requestedBy: consulteeProfileId ? {
+            id: consulteeProfileId,
+          } : undefined,
         },
       },
       {
         subscription: {
-          subscriptionPlan: {
+          requestStatus: statuses?.subscription || "APPROVED",
+          subscriptionPlan: consultantProfileId ? {
             consultantProfileId,
-          },
+          } : undefined,
+          requestedBy: consulteeProfileId ? {
+            id: consulteeProfileId,
+          } : undefined,
         },
       },
       {
         webinar: {
-          webinarPlan: {
+          status: (statuses?.webinar === "APPROVED" ? "SCHEDULED" : 
+                  statuses?.webinar === "CANCELLED" ? "CANCELLED" :
+                  statuses?.webinar === "REJECTED" ? "CANCELLED" :
+                  "SCHEDULED"),
+          webinarPlan: consultantProfileId ? {
             consultantProfileId,
-          },
+          } : undefined,
         },
       },
       {
         class: {
-          classPlan: {
+          status: (statuses?.class === "APPROVED" ? "SCHEDULED" : 
+                  statuses?.class === "CANCELLED" ? "CANCELLED" :
+                  statuses?.class === "REJECTED" ? "CANCELLED" :
+                  "SCHEDULED"),
+          classPlan: consultantProfileId ? {
             consultantProfileId,
-          },
+          } : undefined,
         },
       },
-    ];
-  }
+    ],
+  };
 
   if (type) {
     whereClause.appointmentType = type;

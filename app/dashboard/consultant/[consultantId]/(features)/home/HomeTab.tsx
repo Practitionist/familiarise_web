@@ -1,42 +1,30 @@
-import React, { Suspense } from "react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { RequestSlotAllocationTab } from "../requests/RequestSlotAllocationTab";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Suspense } from "react";
 import { ClientActivity } from "../../components/ClientActivity";
 import {
-  getConsumeeName,
-  getConsumeeImage,
-  getStartTime,
   formatAppointmentTime,
   getAppointmentStatus,
   getAppointmentTypeAndPlan,
+  getConsumeeImage,
+  getConsumeeName,
+  getGroupStatus,
+  getGroupTitle,
+  getStartTime,
   getTodayAppointments,
   getUpcomingAppointments,
-  sortAppointmentsByStartTime,
   groupRecurringAppointments,
-  getGroupTitle,
-  getGroupStatus,
+  sortAppointmentsByStartTime,
 } from "../../utils/appointmentHelpers";
-import { TAppointment } from "@/types/appointment";
+import { RequestSlotAllocationTab } from "../requests/RequestSlotAllocationTab";
 
-import { IActivity, IAppointment } from "../../types";
-
-interface Activity {
-  id: string;
-  type: string;
-  message: string;
-  timestamp: Date;
-  user: {
-    id: string;
-    name: string | null;
-    image: string | null;
-  };
-}
+import { IActivity, IAppointment, IApproval } from "../../types";
 
 interface HomeTabProps {
   appointments: IAppointment[];
-  activities: Activity[];
+  activities: IActivity[];
+  approvals: IApproval[];
   getBadgeStyle: (status: string) => string;
   onUpdate: () => void;
 }
@@ -274,10 +262,10 @@ export function HomeTab({
             </h2>
             <ClientActivity activities={activities.map(activity => ({
               id: activity.id,
-              name: activity.user.name || 'Unknown',
-              action: activity.type,
-              time: activity.timestamp.toISOString()
-            } satisfies IActivity))} />
+              name: activity.name,
+              action: activity.action,
+              time: activity.time
+            }))} />
             <Button className="mt-3 lg:mt-4 w-full bg-blue-500 text-white">
               Login Report
             </Button>
