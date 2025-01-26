@@ -285,7 +285,6 @@ async function allocateSlotManual(
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ consultationId: string }> },
-
 ) {
   try {
     const { consultationId } = await params;
@@ -338,17 +337,58 @@ export async function PATCH(
       );
     }
 
-    // Check if consultation already has appointments
-    if (consultation.appointment) {
-      return NextResponse.json(
-        { error: "Consultation already has appointments allocated" },
-        { status: 400 }
-      );
-    }
-
     try {
       // Use transaction to ensure atomic updates
       const result = await prisma.$transaction(async (tx) => {
+        // If using requested slots and appointment exists, just approve the consultation
+        if (body.useRequestedSlots && consultation.appointment) {
+          // Validate the slot is still available
+          const existingAppointment = await tx.appointment.findFirst({
+            where: {
+              AND: [
+                {
+                  OR: [
+                    { subscription: { requestStatus: RequestStatus.APPROVED } },
+                    { consultation: { requestStatus: RequestStatus.APPROVED } }
+                  ]
+                },
+                {
+                  slotsOfAppointment: {
+                    some: { 
+                      slotStartTimeInUTC: consultation.appointment.slotsOfAppointment[0].slotStartTimeInUTC 
+                    }
+                  }
+                }
+              ]
+            }
+          });
+
+          if (existingAppointment) {
+            throw new Error("Requested slot is no longer available");
+          }
+
+          // Just approve the consultation
+          const updatedConsultation = await tx.consultation.update({
+            where: { id: consultationId },
+            data: {
+              requestStatus: RequestStatus.APPROVED,
+            },
+            include: consultationInclude,
+          });
+
+          return {
+            consultation: updatedConsultation,
+            appointment: consultation.appointment,
+          };
+        }
+
+        // For auto/manual allocation, delete existing appointment if any
+        if (!body.useRequestedSlots && consultation.appointment) {
+          await tx.appointment.delete({
+            where: { id: consultation.appointment.id }
+          });
+        }
+
         // Get slot based on allocation method
         let selectedSlot;
         if (body.useRequestedSlots) {

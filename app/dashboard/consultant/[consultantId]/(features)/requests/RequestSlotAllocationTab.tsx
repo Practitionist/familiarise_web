@@ -342,6 +342,18 @@ export function RequestSlotAllocationTab({ type, onUpdate }: RequestSlotAllocati
   // Check if manual allocation quota is met
   const isQuotaMet = selectedRequest?.requiredSlots === selectedSlots.length;
 
+  // Check if requested slots are still available
+  const canUseRequestedSlots = (request: Request) => {
+    if (!request.requestedTimes?.length) return false;
+
+    // Check if any requested slot conflicts with existing appointments
+    return !request.requestedTimes.some(requestedSlot =>
+      existingAppointments.some(existing =>
+        existing.slotStartTimeInUTC === requestedSlot
+      )
+    );
+  };
+
   if (loading) {
     return (
       <Card>
@@ -432,7 +444,8 @@ export function RequestSlotAllocationTab({ type, onUpdate }: RequestSlotAllocati
                           size="sm"
                           className="mr-2"
                           onClick={() => handleRequestedAllocate(request)}
-                          disabled={isAllocating}
+                          disabled={isAllocating || !canUseRequestedSlots(request)}
+                          title={!canUseRequestedSlots(request) ? "Some requested slots are no longer available" : undefined}
                         >
                           {isAllocating ? 'Allocating...' : 'Use Requested Times'}
                         </Button>

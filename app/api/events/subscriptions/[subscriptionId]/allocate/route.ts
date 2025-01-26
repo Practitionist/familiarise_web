@@ -435,17 +435,70 @@ export async function PATCH(
       );
     }
 
-    // Check if subscription already has appointments
-    if (subscription.appointments?.length > 0) {
-      return NextResponse.json(
-        { error: "Subscription already has appointments allocated" },
-        { status: 400 }
-      );
-    }
-
     try {
-      // Use transaction to ensure atomic updates with increased timeout
+      // Use transaction to ensure atomic updates
       const result = await prisma.$transaction(async (tx) => {
+        // If using requested slots and appointments exist, just approve the subscription
+        if (body.useRequestedSlots && subscription.appointments?.length > 0) {
+          // Validate all slots are still available
+          const requestedSlots = subscription.appointments.flatMap(appt => 
+            appt.slotsOfAppointment.map(slot => slot.slotStartTimeInUTC)
+          );
+
+          const existingAppointments = await tx.appointment.findMany({
+            where: {
+              AND: [
+                {
+                  OR: [
+                    { subscription: { requestStatus: RequestStatus.APPROVED } },
+                    { consultation: { requestStatus: RequestStatus.APPROVED } }
+                  ]
+                },
+                {
+                  slotsOfAppointment: {
+                    some: {
+                      slotStartTimeInUTC: {
+                        in: requestedSlots
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          });
+
+          if (existingAppointments.length > 0) {
+            throw new Error("Some requested slots are no longer available");
+          }
+
+          // Just approve the subscription
+          const updatedSubscription = await tx.subscription.update({
+            where: { id: subscriptionId },
+            data: {
+              requestStatus: RequestStatus.APPROVED,
+              startDate: requestedSlots[0],
+              endDate: addWeeks(requestedSlots[0], subscription.subscriptionPlan.durationInMonths * 4),
+            },
+            include: subscriptionInclude,
+          });
+
+          return {
+            subscription: updatedSubscription,
+            appointments: subscription.appointments,
+          };
+        }
+
+        // For auto/manual allocation, delete existing appointments if any
+        if (!body.useRequestedSlots && subscription.appointments?.length > 0) {
+          await Promise.all(
+            subscription.appointments.map(appointment =>
+              tx.appointment.delete({
+                where: { id: appointment.id }
+              })
+            )
+          );
+        }
+
         // Get slots based on allocation method
         let selectedSlots;
         if (body.useRequestedSlots) {
@@ -525,6 +578,8 @@ export async function PATCH(
     }
   } catch (error) {
     if (error instanceof Error) {
+      // Fixes the below error:
+      //  ⨯ TypeError: The "payload" argument must be of type object. Received null
       console.log("Error: ", error.stack);
     }
     return NextResponse.json(
