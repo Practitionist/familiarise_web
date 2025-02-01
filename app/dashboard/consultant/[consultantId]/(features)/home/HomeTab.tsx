@@ -17,9 +17,9 @@ import {
   groupRecurringAppointments,
   sortAppointmentsByStartTime,
 } from "../../utils/appointmentHelpers";
-import { RequestSlotAllocationTab } from "../requests/RequestSlotAllocationTab";
 
 import { IActivity, IAppointment, IApproval } from "../../types";
+import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationTabMini";
 
 interface HomeTabProps {
   appointments: IAppointment[];
@@ -277,7 +277,7 @@ export function HomeTab({
               Pending Approvals
             </h2>
             <div className="max-h-[300px] overflow-auto">
-              <RequestSlotAllocationTab type="all" onUpdate={onUpdate} />
+              <RequestSlotAllocationTabMini />
             </div>
           </div>
         </Suspense>
