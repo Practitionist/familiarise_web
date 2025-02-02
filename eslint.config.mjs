@@ -17,6 +17,7 @@ export default [
       "out/**",
       "coverage/**",
       "public/static/**",
+      "**/*.json",
     ],
   },
 
