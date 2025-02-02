@@ -7,7 +7,7 @@ import pluginJest from "eslint-plugin-jest";
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
-  // Ignore patterns for build artifacts and dependencies
+  // Ignore patterns
   {
     ignores: [
       ".next/**",
@@ -17,7 +17,7 @@ export default [
       "out/**",
       "coverage/**",
       "public/static/**",
-      "**/*.json",
+      "update-postman-collection.ts",
     ],
   },
 
