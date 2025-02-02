@@ -32,7 +32,7 @@ export function AppointmentCard(props: Readonly<AppointmentCardProps>) {
     consultation: props.consultation,
     subscription: props.subscription,
     webinar: props.webinar,
-    class: props.class
+    class: props.class,
   };
 
   const userName = getConsumeeName(appointment);
@@ -56,10 +56,7 @@ export function AppointmentCard(props: Readonly<AppointmentCardProps>) {
       <CardHeader className="p-3 sm:p-4">
         <div className="flex items-center gap-2 sm:gap-4">
           <Avatar className="w-8 h-8 sm:w-10 sm:h-10">
-            <AvatarImage 
-              alt={userName} 
-              src={getConsumeeImage(appointment)} 
-            />
+            <AvatarImage alt={userName} src={getConsumeeImage(appointment)} />
             <AvatarFallback className="text-sm sm:text-base">
               {initials}
             </AvatarFallback>
@@ -76,7 +73,7 @@ export function AppointmentCard(props: Readonly<AppointmentCardProps>) {
       </CardHeader>
       <CardContent className="px-3 sm:px-4 py-2">
         <p className="text-xs sm:text-sm font-medium text-gray-700">
-          {startTime ? formatAppointmentTime(startTime) : 'Time not set'}
+          {startTime ? formatAppointmentTime(startTime) : "Time not set"}
         </p>
       </CardContent>
       <CardFooter className="p-3 sm:p-4 flex flex-col sm:flex-row gap-2 sm:gap-4 sm:items-center sm:justify-between">

@@ -128,7 +128,7 @@ export async function POST(req: NextRequest) {
           consultantProfileId: plan.consultantProfileId,
         },
         orderBy: {
-          slotStartTimeInUTC: 'asc',
+          slotStartTimeInUTC: "asc",
         },
       });
 
@@ -144,12 +144,12 @@ export async function POST(req: NextRequest) {
             slotEndTimeInUTC: slot.slotEndTimeInUTC,
             isTentative: process.env.NODE_ENV !== "development",
             appointment: {
-              connect: { id: appointment.id }
+              connect: { id: appointment.id },
             },
             user: {
-              connect: { id: session.user.id }
-            }
-          }
+              connect: { id: session.user.id },
+            },
+          },
         });
       } else {
         // Create new appointment with slots
@@ -163,14 +163,14 @@ export async function POST(req: NextRequest) {
                 slotEndTimeInUTC: slot.slotEndTimeInUTC,
                 isTentative: process.env.NODE_ENV !== "development",
                 user: {
-                  connect: { id: session.user.id }
-                }
-              }
-            }
+                  connect: { id: session.user.id },
+                },
+              },
+            },
           },
           include: {
-            slotsOfAppointment: true
-          }
+            slotsOfAppointment: true,
+          },
         });
       }
 
@@ -203,7 +203,8 @@ export async function POST(req: NextRequest) {
           paymentMethod: "CARD",
           paymentIntent: `dev_${Date.now()}_${Math.random().toString(36).substring(7)}`,
           paymentGateway: validatedData.paymentGateway,
-          paymentStatus: process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
+          paymentStatus:
+            process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
           userId: session.user.id,
           appointmentId: appointment.id,
           discountCodeId,

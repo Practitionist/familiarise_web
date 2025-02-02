@@ -24,7 +24,8 @@ const AnnouncementBar = () => {
 
   return (
     <div className="w-full bg-black text-white text-center py-2.5 fixed top-0 z-[1001] flex justify-center">
-      🔥 Exciting sale coming soon! Get ready for amazing discounts on consultancy sessions! 🔥
+      🔥 Exciting sale coming soon! Get ready for amazing discounts on
+      consultancy sessions! 🔥
       <Button
         style={{ color: "white", marginRight: "10px" }}
         onClick={handleClose}

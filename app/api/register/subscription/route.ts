@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
         throw new Error(
           existingSubscription.requestStatus === "PENDING"
             ? "You already have a pending subscription"
-            : "You already have an active subscription"
+            : "You already have an active subscription",
         );
       }
 
@@ -90,7 +90,8 @@ export async function POST(req: NextRequest) {
       const subscription = await tx.subscription.create({
         data: {
           subscriptionPlanId: plan.id,
-          requestStatus: process.env.NODE_ENV === "development" ? "APPROVED" : "PENDING",
+          requestStatus:
+            process.env.NODE_ENV === "development" ? "APPROVED" : "PENDING",
           requestedById: consultee.id,
           startDate,
           endDate,
@@ -134,7 +135,8 @@ export async function POST(req: NextRequest) {
           paymentMethod: "CARD",
           paymentIntent: `dev_${Date.now()}_${Math.random().toString(36).substring(7)}`, // Generate unique ID for dev mode
           paymentGateway: validatedData.paymentGateway,
-          paymentStatus: process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
+          paymentStatus:
+            process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
           userId: session.user.id,
           appointmentId: subscription.appointments[0].id,
           discountCodeId,

@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import {
@@ -146,50 +141,66 @@ export function ClassDetails({ classData }: ClassDetailsProps) {
                     </p>
                   </div>
 
-                  {classData.appointments && classData.appointments.length > 0 && (
-                    <div>
-                      <h2 className="text-xl font-semibold mb-2">
-                        Class Schedule
-                      </h2>
-                      <div className="space-y-2">
-                        {classData.appointments
-                          .flatMap(appointment => 
-                            appointment.slotsOfAppointment?.map(slot => ({
-                              slot,
-                              appointmentId: appointment.id
-                            }))
-                          )
-                          .sort((a, b) => 
-                            new Date(a.slot.slotStartTimeInUTC).getTime() - 
-                            new Date(b.slot.slotStartTimeInUTC).getTime()
-                          )
-                          .map((item, index) => (
-                            <div key={`${item.appointmentId}-${index}`} className="bg-gray-800/10 p-4 rounded-lg">
-                              <div className="font-medium">
-                                {new Date(item.slot.slotStartTimeInUTC).toLocaleString(undefined, {
-                                  weekday: "long", 
-                                  year: "numeric",
-                                  month: "long",
-                                  day: "numeric",
-                                })}
+                  {classData.appointments &&
+                    classData.appointments.length > 0 && (
+                      <div>
+                        <h2 className="text-xl font-semibold mb-2">
+                          Class Schedule
+                        </h2>
+                        <div className="space-y-2">
+                          {classData.appointments
+                            .flatMap((appointment) =>
+                              appointment.slotsOfAppointment?.map((slot) => ({
+                                slot,
+                                appointmentId: appointment.id,
+                              })),
+                            )
+                            .sort(
+                              (a, b) =>
+                                new Date(a.slot.slotStartTimeInUTC).getTime() -
+                                new Date(b.slot.slotStartTimeInUTC).getTime(),
+                            )
+                            .map((item, index) => (
+                              <div
+                                key={`${item.appointmentId}-${index}`}
+                                className="bg-gray-800/10 p-4 rounded-lg"
+                              >
+                                <div className="font-medium">
+                                  {new Date(
+                                    item.slot.slotStartTimeInUTC,
+                                  ).toLocaleString(undefined, {
+                                    weekday: "long",
+                                    year: "numeric",
+                                    month: "long",
+                                    day: "numeric",
+                                  })}
+                                </div>
+                                <div className="text-gray-600 text-sm">
+                                  {new Date(
+                                    item.slot.slotStartTimeInUTC,
+                                  ).toLocaleTimeString(undefined, {
+                                    hour: "numeric",
+                                    minute: "2-digit",
+                                    timeZone:
+                                      Intl.DateTimeFormat().resolvedOptions()
+                                        .timeZone,
+                                  })}{" "}
+                                  -{" "}
+                                  {new Date(
+                                    item.slot.slotEndTimeInUTC,
+                                  ).toLocaleTimeString(undefined, {
+                                    hour: "numeric",
+                                    minute: "2-digit",
+                                    timeZone:
+                                      Intl.DateTimeFormat().resolvedOptions()
+                                        .timeZone,
+                                  })}
+                                </div>
                               </div>
-                              <div className="text-gray-600 text-sm">
-                                {new Date(item.slot.slotStartTimeInUTC).toLocaleTimeString(undefined, {
-                                  hour: "numeric",
-                                  minute: "2-digit",
-                                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                                })} - {" "}
-                                {new Date(item.slot.slotEndTimeInUTC).toLocaleTimeString(undefined, {
-                                  hour: "numeric", 
-                                  minute: "2-digit",
-                                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                                })}
-                              </div>
-                            </div>
-                          ))}
+                            ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
                   <div>
                     <h2 className="text-xl font-semibold mb-2">
@@ -219,7 +230,10 @@ export function ClassDetails({ classData }: ClassDetailsProps) {
                     </h2>
                     <div className="space-y-4">
                       {classPlan.classContents.map((content, index) => (
-                        <div key={content.id} className="bg-gray-800/10 p-4 rounded-lg">
+                        <div
+                          key={content.id}
+                          className="bg-gray-800/10 p-4 rounded-lg"
+                        >
                           <h3 className="font-semibold">
                             Module {index + 1}: {content.title}
                           </h3>

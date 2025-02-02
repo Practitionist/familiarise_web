@@ -1,28 +1,34 @@
 import { z } from "zod";
 
-export const consultationCheckoutSchema = z.object({
-  consultationPlanId: z.string(),
-  slotOfAvailabilityWeeklyId: z.string().optional(),
-  slotOfAvailabilityCustomId: z.string().optional(),
-  slotStartTimeInUTC: z.string().datetime(),
-  slotEndTimeInUTC: z.string().datetime(),
-  discountCode: z.string().optional(),
-}).refine(
-  (data) =>
-    (data.slotOfAvailabilityWeeklyId && !data.slotOfAvailabilityCustomId) ||
-    (!data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId),
-  {
-    message:
-      "Exactly one of slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
-  }
-).refine(
-  (data) => new Date(data.slotStartTimeInUTC) < new Date(data.slotEndTimeInUTC),
-  {
-    message: "Start time must be before end time",
-  }
-);
+export const consultationCheckoutSchema = z
+  .object({
+    consultationPlanId: z.string(),
+    slotOfAvailabilityWeeklyId: z.string().optional(),
+    slotOfAvailabilityCustomId: z.string().optional(),
+    slotStartTimeInUTC: z.string().datetime(),
+    slotEndTimeInUTC: z.string().datetime(),
+    discountCode: z.string().optional(),
+  })
+  .refine(
+    (data) =>
+      (data.slotOfAvailabilityWeeklyId && !data.slotOfAvailabilityCustomId) ||
+      (!data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId),
+    {
+      message:
+        "Exactly one of slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
+    },
+  )
+  .refine(
+    (data) =>
+      new Date(data.slotStartTimeInUTC) < new Date(data.slotEndTimeInUTC),
+    {
+      message: "Start time must be before end time",
+    },
+  );
 
-export type ConsultationCheckoutInput = z.infer<typeof consultationCheckoutSchema>;
+export type ConsultationCheckoutInput = z.infer<
+  typeof consultationCheckoutSchema
+>;
 
 // Common types for consultation checkout
 export interface ConsultationPlanWithDetails {

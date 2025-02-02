@@ -5,7 +5,7 @@ import authOptions from "@/app/api/auth/[...nextauth]/options";
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { appointmentId: string } }
+  { params }: { params: { appointmentId: string } },
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -70,7 +70,7 @@ export async function POST(
     console.error("Error requesting reschedule:", error);
     return NextResponse.json(
       { error: "Failed to request reschedule" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

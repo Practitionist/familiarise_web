@@ -3,7 +3,7 @@ import { WebinarCheckoutInput, WebinarPlanWithDetails } from "./schema";
 
 export async function validateAndGetPlan(
   tx: Prisma.TransactionClient,
-  webinarPlanId: string
+  webinarPlanId: string,
 ): Promise<WebinarPlanWithDetails> {
   const plan = await tx.webinarPlan.findUnique({
     where: { id: webinarPlanId },
@@ -33,7 +33,7 @@ export async function validateAndGetPlan(
 export async function calculateFinalAmount(
   tx: Prisma.TransactionClient,
   baseAmount: number,
-  discountCode?: string
+  discountCode?: string,
 ): Promise<{ amount: number; discountCodeId: string | null }> {
   let amount = baseAmount;
   let discountCodeId = null;
@@ -62,7 +62,7 @@ export async function createWebinarAppointment(
   }: {
     webinarPlanId: string;
     userId: string;
-  }
+  },
 ) {
   // Create webinar with initial appointment
   const webinar = await tx.webinar.create({
@@ -118,7 +118,7 @@ export async function createPaymentRecord(
     appointmentId: string;
     discountCodeId: string | null;
     initialPaymentIntent?: string;
-  }
+  },
 ) {
   return tx.payment.create({
     data: {
@@ -138,7 +138,7 @@ export async function createPaymentRecord(
 export async function updatePaymentIntent(
   tx: Prisma.TransactionClient,
   paymentId: string,
-  paymentIntent: string
+  paymentIntent: string,
 ) {
   return tx.payment.update({
     where: { id: paymentId },
@@ -149,7 +149,7 @@ export async function updatePaymentIntent(
 export async function validateWebinarEligibility(
   tx: Prisma.TransactionClient,
   userId: string,
-  webinarPlanId: string
+  webinarPlanId: string,
 ): Promise<void> {
   // Get webinar plan to check max participants
   const webinarPlan = await tx.webinarPlan.findUnique({
@@ -183,10 +183,13 @@ export async function validateWebinarEligibility(
 
   // Check if webinar is full
   const activeWebinar = webinarPlan.webinars.find(
-    (w) => w.status === "SCHEDULED" || w.status === "IN_PROGRESS"
+    (w) => w.status === "SCHEDULED" || w.status === "IN_PROGRESS",
   );
 
-  if (activeWebinar && activeWebinar.waitlist.length >= webinarPlan.maxParticipants) {
+  if (
+    activeWebinar &&
+    activeWebinar.waitlist.length >= webinarPlan.maxParticipants
+  ) {
     throw new Error("This webinar is already full");
   }
 }

@@ -1,70 +1,90 @@
 import { format } from "date-fns";
 import { IAppointment } from "../types";
 
-
 // Get the consultee name based on appointment type
 export const getConsumeeName = (appointment: IAppointment): string => {
-  if (!appointment) return 'Unknown User';
-  
+  if (!appointment) return "Unknown User";
+
   switch (appointment.appointmentType) {
-    case 'CONSULTATION':
-      return appointment.consultation?.requestedBy?.user?.name || 'Unknown User';
-    case 'SUBSCRIPTION':
-      return appointment.subscription?.requestedBy?.user?.name || 'Unknown User';
-    case 'WEBINAR':
-    case 'CLASS':
-      return appointment.slotsOfAppointment?.[0]?.user?.[0]?.name || 'Unknown User';
+    case "CONSULTATION":
+      return (
+        appointment.consultation?.requestedBy?.user?.name || "Unknown User"
+      );
+    case "SUBSCRIPTION":
+      return (
+        appointment.subscription?.requestedBy?.user?.name || "Unknown User"
+      );
+    case "WEBINAR":
+    case "CLASS":
+      return (
+        appointment.slotsOfAppointment?.[0]?.user?.[0]?.name || "Unknown User"
+      );
     default:
-      return 'Unknown User';
+      return "Unknown User";
   }
 };
 
 // Get the consultee image based on appointment type
 export const getConsumeeImage = (appointment: IAppointment): string => {
-  if (!appointment) return '/placeholder.svg';
-  
+  if (!appointment) return "/placeholder.svg";
+
   switch (appointment.appointmentType) {
-    case 'CONSULTATION':
-      return appointment.consultation?.requestedBy?.user?.image || '/placeholder.svg';
-    case 'SUBSCRIPTION':
-      return appointment.subscription?.requestedBy?.user?.image || '/placeholder.svg';
-    case 'WEBINAR':
-    case 'CLASS':
-      return appointment.slotsOfAppointment?.[0]?.user?.[0]?.image || '/placeholder.svg';
+    case "CONSULTATION":
+      return (
+        appointment.consultation?.requestedBy?.user?.image || "/placeholder.svg"
+      );
+    case "SUBSCRIPTION":
+      return (
+        appointment.subscription?.requestedBy?.user?.image || "/placeholder.svg"
+      );
+    case "WEBINAR":
+    case "CLASS":
+      return (
+        appointment.slotsOfAppointment?.[0]?.user?.[0]?.image ||
+        "/placeholder.svg"
+      );
     default:
-      return '/placeholder.svg';
+      return "/placeholder.svg";
   }
 };
 
 // Get appointment type and plan
-export const getAppointmentTypeAndPlan = (appointment: IAppointment): string => {
-  if (!appointment?.appointmentType) return 'Unknown Type';
-  
-  const type = appointment.appointmentType.charAt(0) + 
-              appointment.appointmentType.slice(1).toLowerCase();
+export const getAppointmentTypeAndPlan = (
+  appointment: IAppointment,
+): string => {
+  if (!appointment?.appointmentType) return "Unknown Type";
+
+  const type =
+    appointment.appointmentType.charAt(0) +
+    appointment.appointmentType.slice(1).toLowerCase();
   let plan = "Unknown Plan";
-  
+
   switch (appointment.appointmentType) {
-    case 'CONSULTATION':
-      plan = appointment.consultation?.consultationPlan?.title || 'Unknown Plan';
+    case "CONSULTATION":
+      plan =
+        appointment.consultation?.consultationPlan?.title || "Unknown Plan";
       break;
-    case 'SUBSCRIPTION':
-      plan = appointment.subscription?.subscriptionPlan?.title || 'Unknown Plan';
+    case "SUBSCRIPTION":
+      plan =
+        appointment.subscription?.subscriptionPlan?.title || "Unknown Plan";
       break;
-    case 'WEBINAR':
-      plan = appointment.webinar?.webinarPlan?.title || 'Unknown Plan';
+    case "WEBINAR":
+      plan = appointment.webinar?.webinarPlan?.title || "Unknown Plan";
       break;
-    case 'CLASS':
-      plan = appointment.class?.classPlan?.title || 'Unknown Plan';
+    case "CLASS":
+      plan = appointment.class?.classPlan?.title || "Unknown Plan";
       break;
   }
-  
+
   return `${type} - ${plan}`;
 };
 
 // Get all slot times from appointment
 export const getSlotTimes = (appointment: IAppointment): string[] => {
-  return appointment?.slotsOfAppointment?.map(slot => slot.slotStartTimeInUTC) || [];
+  return (
+    appointment?.slotsOfAppointment?.map((slot) => slot.slotStartTimeInUTC) ||
+    []
+  );
 };
 
 // Get first slot time from appointment (for backwards compatibility)
@@ -76,16 +96,24 @@ export const getStartTime = (appointment: IAppointment): string | undefined => {
 // Check if appointment has any future slots
 export const hasUpcomingSlots = (appointment: IAppointment): boolean => {
   const now = new Date();
-  return getSlotTimes(appointment).some(time => new Date(time) > now);
+  return getSlotTimes(appointment).some((time) => new Date(time) > now);
 };
 
 // Check if appointment has any slots today
 export const hasTodaySlots = (appointment: IAppointment): boolean => {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  
-  return getSlotTimes(appointment).some(time => {
+  const todayEnd = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    23,
+    59,
+    59,
+    999,
+  );
+
+  return getSlotTimes(appointment).some((time) => {
     const date = new Date(time);
     return date >= todayStart && date <= todayEnd;
   });
@@ -95,7 +123,7 @@ export const hasTodaySlots = (appointment: IAppointment): boolean => {
 export const formatAppointmentTime = (utcTime: string): string => {
   // Create a date object in local time
   const localDate = new Date(utcTime);
-  
+
   // Format the date in local time with browser's timezone
   return format(localDate, "EEE, MMM d, h:mm a");
 };
@@ -103,20 +131,22 @@ export const formatAppointmentTime = (utcTime: string): string => {
 // Get appointment status
 export const getAppointmentStatus = (appointment: IAppointment): string => {
   const startTimeStr = getStartTime(appointment);
-  if (!startTimeStr) return 'Unknown';
-  
+  if (!startTimeStr) return "Unknown";
+
   // Convert UTC to local time
   const startTime = new Date(startTimeStr);
   const now = new Date();
-  
+
   // Check if appointment is marked as completed
-  if (appointment.class?.status === "COMPLETED" || 
-      appointment.webinar?.status === "COMPLETED") {
+  if (
+    appointment.class?.status === "COMPLETED" ||
+    appointment.webinar?.status === "COMPLETED"
+  ) {
     return "Completed";
   }
 
   // Check if all slots are in the past
-  if (getSlotTimes(appointment).every(time => new Date(time) < now)) {
+  if (getSlotTimes(appointment).every((time) => new Date(time) < now)) {
     return "Completed";
   }
 
@@ -125,20 +155,22 @@ export const getAppointmentStatus = (appointment: IAppointment): string => {
   const diffMinutes = Math.floor(diffMs / (1000 * 60));
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  
+
   // Upcoming appointments with more precise timing
   if (diffMinutes <= 5 && diffMinutes > 0) return "Meeting in 5 min";
   if (diffHours < 24) return "Today";
   if (diffDays === 1) return "Tomorrow";
   if (diffDays < 7) return `In ${diffDays} days`;
-  
+
   // For weekly intervals, show exact week number
   const exactWeeks = Math.ceil(diffDays / 7);
-  return `In ${exactWeeks} ${exactWeeks === 1 ? 'week' : 'weeks'}`;
+  return `In ${exactWeeks} ${exactWeeks === 1 ? "week" : "weeks"}`;
 };
 
 // Sort appointments by start time
-export const sortAppointmentsByStartTime = (appointments: IAppointment[]): IAppointment[] => {
+export const sortAppointmentsByStartTime = (
+  appointments: IAppointment[],
+): IAppointment[] => {
   return [...appointments].sort((a, b) => {
     const aTime = getStartTime(a);
     const bTime = getStartTime(b);
@@ -148,26 +180,39 @@ export const sortAppointmentsByStartTime = (appointments: IAppointment[]): IAppo
 };
 
 // Filter today's appointments
-export const getTodayAppointments = (appointments: IAppointment[]): IAppointment[] => {
+export const getTodayAppointments = (
+  appointments: IAppointment[],
+): IAppointment[] => {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  const todayEnd = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    23,
+    59,
+    59,
+    999,
+  );
 
   // First expand appointments with multiple slots
-  const expandedAppointments = appointments.flatMap(appointment => {
-    if (!appointment.slotsOfAppointment || appointment.slotsOfAppointment.length === 0) {
+  const expandedAppointments = appointments.flatMap((appointment) => {
+    if (
+      !appointment.slotsOfAppointment ||
+      appointment.slotsOfAppointment.length === 0
+    ) {
       return [appointment];
     }
 
     // Create separate appointments for each slot
-    return appointment.slotsOfAppointment.map(slot => ({
+    return appointment.slotsOfAppointment.map((slot) => ({
       ...appointment,
       id: `${appointment.id}-${slot.id}`,
-      slotsOfAppointment: [slot]
+      slotsOfAppointment: [slot],
     }));
   });
 
-  return expandedAppointments.filter(appointment => {
+  return expandedAppointments.filter((appointment) => {
     const slotTime = getStartTime(appointment);
     if (!slotTime) return false;
 
@@ -175,7 +220,10 @@ export const getTodayAppointments = (appointments: IAppointment[]): IAppointment
     const isToday = slotDate >= todayStart && slotDate <= todayEnd;
 
     // For subscription appointments, also check if they're active
-    if (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) {
+    if (
+      appointment.appointmentType === "SUBSCRIPTION" &&
+      appointment.subscription
+    ) {
       const startDate = new Date(appointment.subscription.startDate);
       const endDate = new Date(appointment.subscription.endDate);
       return isToday && now >= startDate && now <= endDate;
@@ -186,33 +234,38 @@ export const getTodayAppointments = (appointments: IAppointment[]): IAppointment
 };
 
 // Filter upcoming appointments
-export const getUpcomingAppointments = (appointments: IAppointment[]): IAppointment[] => {
+export const getUpcomingAppointments = (
+  appointments: IAppointment[],
+): IAppointment[] => {
   const now = new Date();
 
   // First filter out completed appointments
-  const filteredAppointments = appointments.filter(appointment => {
+  const filteredAppointments = appointments.filter((appointment) => {
     // For multi-slotted appointments (subscription and class)
     if (
-      (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) ||
-      (appointment.appointmentType === 'CLASS' && appointment.class)
+      (appointment.appointmentType === "SUBSCRIPTION" &&
+        appointment.subscription) ||
+      (appointment.appointmentType === "CLASS" && appointment.class)
     ) {
       // Check if all slots are in the past
-      const allSlotsCompleted = getSlotTimes(appointment).every(time => new Date(time) < now);
+      const allSlotsCompleted = getSlotTimes(appointment).every(
+        (time) => new Date(time) < now,
+      );
       // Only include if not all slots are completed
       return !allSlotsCompleted;
     }
-    
+
     // For single-slotted appointments (consultation and webinar)
     if (hasUpcomingSlots(appointment)) {
       // For webinar appointments
-      if (appointment.appointmentType === 'WEBINAR' && appointment.webinar) {
+      if (appointment.appointmentType === "WEBINAR" && appointment.webinar) {
         return appointment.webinar.status !== "COMPLETED";
       }
-      
+
       // For consultation appointments
       return true;
     }
-    
+
     return false;
   });
 
@@ -220,16 +273,21 @@ export const getUpcomingAppointments = (appointments: IAppointment[]): IAppointm
 };
 
 // Group recurring appointments
-export const groupRecurringAppointments = (appointments: IAppointment[]): { [key: string]: IAppointment[] } => {
+export const groupRecurringAppointments = (
+  appointments: IAppointment[],
+): { [key: string]: IAppointment[] } => {
   const groups: { [key: string]: IAppointment[] } = {};
 
   // Group appointments by their type (subscription/class/single)
-  appointments.forEach(appointment => {
-    let groupKey = '';
+  appointments.forEach((appointment) => {
+    let groupKey = "";
 
-    if (appointment.appointmentType === 'SUBSCRIPTION' && appointment.subscription) {
+    if (
+      appointment.appointmentType === "SUBSCRIPTION" &&
+      appointment.subscription
+    ) {
       groupKey = `subscription-${appointment.subscription.id}`;
-    } else if (appointment.appointmentType === 'CLASS' && appointment.class) {
+    } else if (appointment.appointmentType === "CLASS" && appointment.class) {
       groupKey = `class-${appointment.class.id}`;
     } else {
       groupKey = `single-${appointment.id}`;
@@ -240,25 +298,28 @@ export const groupRecurringAppointments = (appointments: IAppointment[]): { [key
     }
 
     // For appointments with slots, create separate entries for each slot
-    if (appointment.slotsOfAppointment && appointment.slotsOfAppointment.length > 0) {
-      appointment.slotsOfAppointment.forEach(slot => {
+    if (
+      appointment.slotsOfAppointment &&
+      appointment.slotsOfAppointment.length > 0
+    ) {
+      appointment.slotsOfAppointment.forEach((slot) => {
         groups[groupKey].push({
           ...appointment,
           id: `${appointment.id}-${slot.id}`,
-          slotsOfAppointment: [slot]
+          slotsOfAppointment: [slot],
         });
       });
     } else {
       // For appointments without slots, add them as is
       groups[groupKey].push({
         ...appointment,
-        id: `${appointment.id}-default`
+        id: `${appointment.id}-default`,
       });
     }
   });
 
   // Sort appointments within each group by start time
-  Object.keys(groups).forEach(key => {
+  Object.keys(groups).forEach((key) => {
     groups[key] = sortAppointmentsByStartTime(groups[key]);
   });
 
@@ -267,34 +328,35 @@ export const groupRecurringAppointments = (appointments: IAppointment[]): { [key
 
 // Get group title
 export const getGroupTitle = (appointments: IAppointment[]): string => {
-  if (!appointments.length) return '';
+  if (!appointments.length) return "";
 
   const firstAppointment = appointments[0];
   const type = firstAppointment.appointmentType;
 
-  if (type === 'SUBSCRIPTION' && firstAppointment.subscription) {
-    const plan = firstAppointment.subscription.subscriptionPlan?.title || 'Unknown Plan';
-    
+  if (type === "SUBSCRIPTION" && firstAppointment.subscription) {
+    const plan =
+      firstAppointment.subscription.subscriptionPlan?.title || "Unknown Plan";
+
     // Count total appointments as sessions
     const totalSessions = appointments.length;
-    
+
     // Count completed sessions based on slot times
     const now = new Date();
-    const completedSessions = appointments.filter(app => 
-      getSlotTimes(app).every(time => new Date(time) < now)
+    const completedSessions = appointments.filter((app) =>
+      getSlotTimes(app).every((time) => new Date(time) < now),
     ).length;
 
     return `${plan} (${completedSessions}/${totalSessions} sessions)`;
   }
 
-  if (type === 'CLASS' && firstAppointment.class) {
-    const plan = firstAppointment.class.classPlan?.title || 'Unknown Class';
+  if (type === "CLASS" && firstAppointment.class) {
+    const plan = firstAppointment.class.classPlan?.title || "Unknown Class";
     const totalSessions = appointments.length;
-    
+
     // Count completed sessions based on slot times, same as subscription
     const now = new Date();
-    const completedSessions = appointments.filter(app => 
-      getSlotTimes(app).every(time => new Date(time) < now)
+    const completedSessions = appointments.filter((app) =>
+      getSlotTimes(app).every((time) => new Date(time) < now),
     ).length;
 
     return `${plan} (${completedSessions}/${totalSessions} sessions)`;
@@ -305,41 +367,41 @@ export const getGroupTitle = (appointments: IAppointment[]): string => {
 
 // Get group status
 export const getGroupStatus = (appointments: IAppointment[]): string => {
-  if (!appointments.length) return 'Unknown';
+  if (!appointments.length) return "Unknown";
 
   const firstAppointment = appointments[0];
   const type = firstAppointment.appointmentType;
 
-  if (type === 'SUBSCRIPTION' && firstAppointment.subscription) {
+  if (type === "SUBSCRIPTION" && firstAppointment.subscription) {
     const now = new Date();
     const startDate = new Date(firstAppointment.subscription.startDate);
     const endDate = new Date(firstAppointment.subscription.endDate);
 
     // Check if any sessions are completed
-    const hasCompletedSessions = appointments.some(app => 
-      getSlotTimes(app).every(time => new Date(time) < now)
+    const hasCompletedSessions = appointments.some((app) =>
+      getSlotTimes(app).every((time) => new Date(time) < now),
     );
 
-    if (now > endDate) return 'Completed';
-    if (now < startDate) return 'Not Started';
-    return hasCompletedSessions ? 'In Progress' : 'Not Started';
+    if (now > endDate) return "Completed";
+    if (now < startDate) return "Not Started";
+    return hasCompletedSessions ? "In Progress" : "Not Started";
   }
 
-  if (type === 'CLASS' && firstAppointment.class) {
+  if (type === "CLASS" && firstAppointment.class) {
     const now = new Date();
-    
+
     // Check if any sessions are completed, same as subscription
-    const hasCompletedSessions = appointments.some(app => 
-      getSlotTimes(app).every(time => new Date(time) < now)
+    const hasCompletedSessions = appointments.some((app) =>
+      getSlotTimes(app).every((time) => new Date(time) < now),
     );
 
     // Check if all sessions are completed
-    const allSessionsCompleted = appointments.every(app => 
-      getSlotTimes(app).every(time => new Date(time) < now)
+    const allSessionsCompleted = appointments.every((app) =>
+      getSlotTimes(app).every((time) => new Date(time) < now),
     );
 
-    if (allSessionsCompleted) return 'Completed';
-    return hasCompletedSessions ? 'In Progress' : 'Not Started';
+    if (allSessionsCompleted) return "Completed";
+    return hasCompletedSessions ? "In Progress" : "Not Started";
   }
 
   return getAppointmentStatus(firstAppointment);

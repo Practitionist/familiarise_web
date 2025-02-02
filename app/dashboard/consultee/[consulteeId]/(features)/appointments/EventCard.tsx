@@ -84,12 +84,15 @@ export function EventCard({
 
     try {
       setIsLoading(true);
-      const response = await fetch(`/api/appointments/${appointmentId}/reschedule`, {
-        method: 'POST',
-      });
+      const response = await fetch(
+        `/api/appointments/${appointmentId}/reschedule`,
+        {
+          method: "POST",
+        },
+      );
 
       if (!response.ok) {
-        throw new Error('Failed to request reschedule');
+        throw new Error("Failed to request reschedule");
       }
 
       toast({
@@ -100,7 +103,7 @@ export function EventCard({
       // Refresh the page to show updated status
       window.location.reload();
     } catch (error) {
-      console.error('Error requesting reschedule:', error);
+      console.error("Error requesting reschedule:", error);
       toast({
         title: "Error",
         description: "Failed to request reschedule. Please try again.",
@@ -115,18 +118,21 @@ export function EventCard({
     e.stopPropagation();
     if (!appointmentId) return;
 
-    if (!confirm('Are you sure you want to cancel this appointment?')) {
+    if (!confirm("Are you sure you want to cancel this appointment?")) {
       return;
     }
 
     try {
       setIsLoading(true);
-      const response = await fetch(`/api/appointments/${appointmentId}/cancel`, {
-        method: 'POST',
-      });
+      const response = await fetch(
+        `/api/appointments/${appointmentId}/cancel`,
+        {
+          method: "POST",
+        },
+      );
 
       if (!response.ok) {
-        throw new Error('Failed to cancel appointment');
+        throw new Error("Failed to cancel appointment");
       }
 
       toast({
@@ -137,7 +143,7 @@ export function EventCard({
       // Refresh the page to show updated status
       window.location.reload();
     } catch (error) {
-      console.error('Error cancelling appointment:', error);
+      console.error("Error cancelling appointment:", error);
       toast({
         title: "Error",
         description: "Failed to cancel appointment. Please try again.",
@@ -290,7 +296,7 @@ export function EventCard({
               </div>
             )}
             <div className="flex justify-end gap-2 mt-4">
-              {!isTentative && status?.toLowerCase() !== 'cancelled' && (
+              {!isTentative && status?.toLowerCase() !== "cancelled" && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -302,7 +308,7 @@ export function EventCard({
                   Request Reschedule
                 </Button>
               )}
-              {status?.toLowerCase() !== 'cancelled' && (
+              {status?.toLowerCase() !== "cancelled" && (
                 <Button
                   variant="outline"
                   size="sm"

@@ -77,7 +77,7 @@ export default function HomePage({
 
   const handleUpdate = async () => {
     // Add a small delay to ensure the backend has completed processing
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     await fetchData();
   };
 

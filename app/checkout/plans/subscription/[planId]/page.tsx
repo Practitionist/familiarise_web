@@ -90,16 +90,19 @@ export default function SubscriptionCheckoutPage({
         }
 
         // In production, proceed with payment gateway checkout
-        const response = await fetch(`/api/checkout/subscription/${gateway.toLowerCase()}`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
+        const response = await fetch(
+          `/api/checkout/subscription/${gateway.toLowerCase()}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              subscriptionPlanId: resolvedParams.planId,
+              discountCode: parsedParams.data.discountCode,
+            }),
           },
-          body: JSON.stringify({
-            subscriptionPlanId: resolvedParams.planId,
-            discountCode: parsedParams.data.discountCode,
-          }),
-        });
+        );
 
         if (!response.ok) {
           throw new Error("Checkout failed");
@@ -111,7 +114,9 @@ export default function SubscriptionCheckoutPage({
         switch (gateway) {
           case "STRIPE":
             // Load Stripe.js and redirect to checkout
-            const stripe = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
+            const stripe = await loadStripe(
+              process.env.NEXT_PUBLIC_STRIPE_KEY!,
+            );
             await stripe?.confirmPayment({
               clientSecret: data.clientSecret,
               confirmParams: {
@@ -171,7 +176,7 @@ export default function SubscriptionCheckoutPage({
         setError(
           error instanceof Error
             ? error.message
-            : "An unexpected error occurred. Please try again."
+            : "An unexpected error occurred. Please try again.",
         );
       } finally {
         setIsLoading(false);
@@ -326,7 +331,9 @@ export default function SubscriptionCheckoutPage({
                   <ul className="list-disc">
                     <li>{planData?.data?.callsPerWeek || 1} calls per week</li>
                     <li>{planData?.data?.videoMeetings || 1} video meetings</li>
-                    <li>{planData?.data?.emailSupport || "General"} email support</li>
+                    <li>
+                      {planData?.data?.emailSupport || "General"} email support
+                    </li>
                     <li>Learning materials</li>
                   </ul>
                 </div>

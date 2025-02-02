@@ -76,7 +76,7 @@ export interface IClass {
 
 export interface IAppointment {
   id: string;
-  appointmentType: 'CONSULTATION' | 'SUBSCRIPTION' | 'WEBINAR' | 'CLASS';
+  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
   slotsOfAppointment: ISlotOfAppointment[];
   consultation?: IConsultation;
   subscription?: ISubscription;

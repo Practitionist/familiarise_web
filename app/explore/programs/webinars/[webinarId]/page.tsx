@@ -1,11 +1,6 @@
 import { getServerSession } from "next-auth";
 import { generateProgramImageUrl } from "../../utils";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
@@ -100,7 +95,8 @@ export default async function WebinarDetailsPage({
   }
 
   const { webinarPlan } = webinar;
-  const nextSession = webinar.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+  const nextSession =
+    webinar.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -177,39 +173,56 @@ export default async function WebinarDetailsPage({
                     </p>
                   </div>
 
-                  {webinar.appointment?.slotsOfAppointment && webinar.appointment.slotsOfAppointment.length > 0 && (
-                    <div>
-                      <h2 className="text-xl font-semibold mb-2">
-                        Webinar Schedule
-                      </h2>
-                      <div className="space-y-2">
-                        {webinar.appointment.slotsOfAppointment.map((slot, slotIndex) => (
-                          <div key={slotIndex} className="bg-gray-800/10 p-4 rounded-lg">
-                            <div className="font-medium">
-                              {new Date(slot.slotStartTimeInUTC).toLocaleString(undefined, {
-                                weekday: "long",
-                                year: "numeric",
-                                month: "long",
-                                day: "numeric",
-                              })}
-                            </div>
-                            <div className="text-gray-600 text-sm">
-                              {new Date(slot.slotStartTimeInUTC).toLocaleTimeString(undefined, {
-                                hour: "numeric",
-                                minute: "2-digit",
-                                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                              })} - {" "}
-                              {new Date(slot.slotEndTimeInUTC).toLocaleTimeString(undefined, {
-                                hour: "numeric",
-                                minute: "2-digit",
-                                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                              })}
-                            </div>
-                          </div>
-                        ))}
+                  {webinar.appointment?.slotsOfAppointment &&
+                    webinar.appointment.slotsOfAppointment.length > 0 && (
+                      <div>
+                        <h2 className="text-xl font-semibold mb-2">
+                          Webinar Schedule
+                        </h2>
+                        <div className="space-y-2">
+                          {webinar.appointment.slotsOfAppointment.map(
+                            (slot, slotIndex) => (
+                              <div
+                                key={slotIndex}
+                                className="bg-gray-800/10 p-4 rounded-lg"
+                              >
+                                <div className="font-medium">
+                                  {new Date(
+                                    slot.slotStartTimeInUTC,
+                                  ).toLocaleString(undefined, {
+                                    weekday: "long",
+                                    year: "numeric",
+                                    month: "long",
+                                    day: "numeric",
+                                  })}
+                                </div>
+                                <div className="text-gray-600 text-sm">
+                                  {new Date(
+                                    slot.slotStartTimeInUTC,
+                                  ).toLocaleTimeString(undefined, {
+                                    hour: "numeric",
+                                    minute: "2-digit",
+                                    timeZone:
+                                      Intl.DateTimeFormat().resolvedOptions()
+                                        .timeZone,
+                                  })}{" "}
+                                  -{" "}
+                                  {new Date(
+                                    slot.slotEndTimeInUTC,
+                                  ).toLocaleTimeString(undefined, {
+                                    hour: "numeric",
+                                    minute: "2-digit",
+                                    timeZone:
+                                      Intl.DateTimeFormat().resolvedOptions()
+                                        .timeZone,
+                                  })}
+                                </div>
+                              </div>
+                            ),
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
                   <div>
                     <h2 className="text-xl font-semibold mb-2">
@@ -255,7 +268,8 @@ export default async function WebinarDetailsPage({
                         "/placeholder-user.jpg"
                       }
                       alt={
-                        webinarPlan.consultantProfile?.user?.name || "Instructor"
+                        webinarPlan.consultantProfile?.user?.name ||
+                        "Instructor"
                       }
                       fill
                       className="object-cover"

@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
             consultantProfileId: plan.consultantProfileId,
           },
           orderBy: {
-            slotStartTimeInUTC: 'asc',
+            slotStartTimeInUTC: "asc",
           },
         });
 
@@ -182,7 +182,8 @@ export async function POST(req: NextRequest) {
           paymentMethod: "CARD",
           paymentIntent: `dev_${Date.now()}_${Math.random().toString(36).substring(7)}`,
           paymentGateway: validatedData.paymentGateway,
-          paymentStatus: process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
+          paymentStatus:
+            process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
           userId: session.user.id,
           appointmentId: appointment.id,
           discountCodeId,

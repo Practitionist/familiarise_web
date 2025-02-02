@@ -3,7 +3,7 @@ import { ClassCheckoutInput, ClassPlanWithDetails } from "./schema";
 
 export async function validateAndGetPlan(
   tx: Prisma.TransactionClient,
-  classPlanId: string
+  classPlanId: string,
 ): Promise<ClassPlanWithDetails> {
   const plan = await tx.classPlan.findUnique({
     where: { id: classPlanId },
@@ -38,7 +38,7 @@ export async function validateAndGetPlan(
 export async function calculateFinalAmount(
   tx: Prisma.TransactionClient,
   baseAmount: number,
-  discountCode?: string
+  discountCode?: string,
 ): Promise<{ amount: number; discountCodeId: string | null }> {
   let amount = baseAmount;
   let discountCodeId = null;
@@ -67,7 +67,7 @@ export async function createClassAppointment(
   }: {
     classPlanId: string;
     userId: string;
-  }
+  },
 ) {
   // Get class plan to calculate end date
   const classPlan = await tx.classPlan.findUnique({
@@ -80,7 +80,7 @@ export async function createClassAppointment(
 
   const startDate = new Date();
   const endDate = new Date(
-    startDate.getTime() + classPlan.durationInMonths * 30 * 24 * 60 * 60 * 1000
+    startDate.getTime() + classPlan.durationInMonths * 30 * 24 * 60 * 60 * 1000,
   );
 
   // Create class with initial appointment
@@ -139,7 +139,7 @@ export async function createPaymentRecord(
     appointmentId: string;
     discountCodeId: string | null;
     initialPaymentIntent?: string;
-  }
+  },
 ) {
   return tx.payment.create({
     data: {
@@ -159,7 +159,7 @@ export async function createPaymentRecord(
 export async function updatePaymentIntent(
   tx: Prisma.TransactionClient,
   paymentId: string,
-  paymentIntent: string
+  paymentIntent: string,
 ) {
   return tx.payment.update({
     where: { id: paymentId },
@@ -170,7 +170,7 @@ export async function updatePaymentIntent(
 export async function validateClassEligibility(
   tx: Prisma.TransactionClient,
   userId: string,
-  classPlanId: string
+  classPlanId: string,
 ): Promise<void> {
   // Get class plan to check max participants
   const classPlan = await tx.classPlan.findUnique({
@@ -204,7 +204,7 @@ export async function validateClassEligibility(
 
   // Check if class is full
   const activeClass = classPlan.classes.find(
-    (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS"
+    (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
   );
 
   if (activeClass && activeClass.waitlist.length >= classPlan.maxParticipants) {

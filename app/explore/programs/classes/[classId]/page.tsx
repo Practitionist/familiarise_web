@@ -30,9 +30,7 @@ type ClassWithRelations = Prisma.ClassGetPayload<{
   };
 }>;
 
-async function getClass(
-  classId: string,
-): Promise<ClassWithRelations | null> {
+async function getClass(classId: string): Promise<ClassWithRelations | null> {
   return prisma.class.findUnique({
     where: { id: classId },
     include: {
@@ -66,9 +64,7 @@ interface PageProps {
   params: { classId: string };
 }
 
-export default async function ClassDetailsPage({
-  params,
-}: PageProps) {
+export default async function ClassDetailsPage({ params }: PageProps) {
   const classData = await getClass(params.classId);
 
   if (!classData) {

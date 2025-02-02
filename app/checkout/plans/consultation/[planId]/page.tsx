@@ -158,22 +158,25 @@ export default function ConsultationCheckoutPage({
         }
 
         // In production, proceed with payment gateway checkout
-        const response = await fetch(`/api/checkout/consultation/${gateway.toLowerCase()}`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
+        const response = await fetch(
+          `/api/checkout/consultation/${gateway.toLowerCase()}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              consultationPlanId: resolvedParams.planId,
+              slotOfAvailabilityWeeklyId:
+                parsedParams.data.slotOfAvailabilityWeeklyId,
+              slotOfAvailabilityCustomId:
+                parsedParams.data.slotOfAvailabilityCustomId,
+              slotStartTimeInUTC: parsedParams.data.slotStartTimeInUTC,
+              slotEndTimeInUTC: parsedParams.data.slotEndTimeInUTC,
+              discountCode: parsedParams.data.discountCode,
+            }),
           },
-          body: JSON.stringify({
-            consultationPlanId: resolvedParams.planId,
-            slotOfAvailabilityWeeklyId:
-              parsedParams.data.slotOfAvailabilityWeeklyId,
-            slotOfAvailabilityCustomId:
-              parsedParams.data.slotOfAvailabilityCustomId,
-            slotStartTimeInUTC: parsedParams.data.slotStartTimeInUTC,
-            slotEndTimeInUTC: parsedParams.data.slotEndTimeInUTC,
-            discountCode: parsedParams.data.discountCode,
-          }),
-        });
+        );
 
         if (!response.ok) {
           throw new Error("Checkout failed");
@@ -185,7 +188,9 @@ export default function ConsultationCheckoutPage({
         switch (gateway) {
           case "STRIPE":
             // Load Stripe.js and redirect to checkout
-            const stripe = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
+            const stripe = await loadStripe(
+              process.env.NEXT_PUBLIC_STRIPE_KEY!,
+            );
             await stripe?.confirmPayment({
               clientSecret: data.clientSecret,
               confirmParams: {

@@ -9,15 +9,22 @@ export async function GET(request: NextRequest) {
   const consultantProfileId = searchParams.get("consultantProfileId");
   const consulteeProfileId = searchParams.get("consulteeProfileId");
   const userId = searchParams.get("userId");
-  
+
   // Get status for each appointment type
-  const consultationStatus = searchParams.get("consultationStatus")?.toUpperCase();
-  const subscriptionStatus = searchParams.get("subscriptionStatus")?.toUpperCase();
+  const consultationStatus = searchParams
+    .get("consultationStatus")
+    ?.toUpperCase();
+  const subscriptionStatus = searchParams
+    .get("subscriptionStatus")
+    ?.toUpperCase();
   const webinarStatus = searchParams.get("webinarStatus")?.toUpperCase();
   const classStatus = searchParams.get("classStatus")?.toUpperCase();
 
   // Validate appointment type
-  if (type && !Object.values(AppointmentsType).includes(type as AppointmentsType)) {
+  if (
+    type &&
+    !Object.values(AppointmentsType).includes(type as AppointmentsType)
+  ) {
     return NextResponse.json(
       { error: "Invalid appointment type" },
       { status: 400 },
@@ -58,11 +65,31 @@ export async function GET(request: NextRequest) {
       consulteeProfileId,
       userId,
       {
-        consultation: consultationStatus as "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | undefined,
-        subscription: subscriptionStatus as "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | undefined,
-        webinar: webinarStatus as "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | undefined,
-        class: classStatus as "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | undefined,
-      }
+        consultation: consultationStatus as
+          | "PENDING"
+          | "APPROVED"
+          | "REJECTED"
+          | "CANCELLED"
+          | undefined,
+        subscription: subscriptionStatus as
+          | "PENDING"
+          | "APPROVED"
+          | "REJECTED"
+          | "CANCELLED"
+          | undefined,
+        webinar: webinarStatus as
+          | "PENDING"
+          | "APPROVED"
+          | "REJECTED"
+          | "CANCELLED"
+          | undefined,
+        class: classStatus as
+          | "PENDING"
+          | "APPROVED"
+          | "REJECTED"
+          | "CANCELLED"
+          | undefined,
+      },
     );
 
     return NextResponse.json({ data: appointments });
@@ -81,56 +108,76 @@ async function getAppointments(
   consulteeProfileId?: string | null,
   userId?: string | null,
   statuses?: {
-    consultation?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED",
-    subscription?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED",
-    webinar?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED",
-    class?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED",
-  }
+    consultation?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+    subscription?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+    webinar?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+    class?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+  },
 ) {
   const whereClause: Prisma.AppointmentWhereInput = {
     OR: [
       {
         consultation: {
           requestStatus: statuses?.consultation || "APPROVED",
-          consultationPlan: consultantProfileId ? {
-            consultantProfileId,
-          } : undefined,
-          requestedBy: consulteeProfileId ? {
-            id: consulteeProfileId,
-          } : undefined,
+          consultationPlan: consultantProfileId
+            ? {
+                consultantProfileId,
+              }
+            : undefined,
+          requestedBy: consulteeProfileId
+            ? {
+                id: consulteeProfileId,
+              }
+            : undefined,
         },
       },
       {
         subscription: {
           requestStatus: statuses?.subscription || "APPROVED",
-          subscriptionPlan: consultantProfileId ? {
-            consultantProfileId,
-          } : undefined,
-          requestedBy: consulteeProfileId ? {
-            id: consulteeProfileId,
-          } : undefined,
+          subscriptionPlan: consultantProfileId
+            ? {
+                consultantProfileId,
+              }
+            : undefined,
+          requestedBy: consulteeProfileId
+            ? {
+                id: consulteeProfileId,
+              }
+            : undefined,
         },
       },
       {
         webinar: {
-          status: (statuses?.webinar === "APPROVED" ? "SCHEDULED" : 
-                  statuses?.webinar === "CANCELLED" ? "CANCELLED" :
-                  statuses?.webinar === "REJECTED" ? "CANCELLED" :
-                  "SCHEDULED"),
-          webinarPlan: consultantProfileId ? {
-            consultantProfileId,
-          } : undefined,
+          status:
+            statuses?.webinar === "APPROVED"
+              ? "SCHEDULED"
+              : statuses?.webinar === "CANCELLED"
+                ? "CANCELLED"
+                : statuses?.webinar === "REJECTED"
+                  ? "CANCELLED"
+                  : "SCHEDULED",
+          webinarPlan: consultantProfileId
+            ? {
+                consultantProfileId,
+              }
+            : undefined,
         },
       },
       {
         class: {
-          status: (statuses?.class === "APPROVED" ? "SCHEDULED" : 
-                  statuses?.class === "CANCELLED" ? "CANCELLED" :
-                  statuses?.class === "REJECTED" ? "CANCELLED" :
-                  "SCHEDULED"),
-          classPlan: consultantProfileId ? {
-            consultantProfileId,
-          } : undefined,
+          status:
+            statuses?.class === "APPROVED"
+              ? "SCHEDULED"
+              : statuses?.class === "CANCELLED"
+                ? "CANCELLED"
+                : statuses?.class === "REJECTED"
+                  ? "CANCELLED"
+                  : "SCHEDULED",
+          classPlan: consultantProfileId
+            ? {
+                consultantProfileId,
+              }
+            : undefined,
         },
       },
     ],

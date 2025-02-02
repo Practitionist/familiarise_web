@@ -38,38 +38,48 @@ export function RequestSlotAllocationTabMini() {
       try {
         setLoading(true);
         const [consultationsRes, subscriptionsRes] = await Promise.all([
-          fetch(`/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`),
-          fetch(`/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`)
+          fetch(
+            `/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
+          ),
+          fetch(
+            `/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
+          ),
         ]);
 
         const requests = [];
         if (consultationsRes.ok) {
           const data = await consultationsRes.json();
-          requests.push(...data.data.map((c: any) => ({
-            id: c.id,
-            type: AppointmentsType.CONSULTATION,
-            title: c.consultationPlan?.title || 'Untitled Plan',
-            requestedBy: { user: { name: c.requestedBy.user.name } },
-            requestedAt: c.requestedAt,
-            status: c.requestStatus
-          })));
+          requests.push(
+            ...data.data.map((c: any) => ({
+              id: c.id,
+              type: AppointmentsType.CONSULTATION,
+              title: c.consultationPlan?.title || "Untitled Plan",
+              requestedBy: { user: { name: c.requestedBy.user.name } },
+              requestedAt: c.requestedAt,
+              status: c.requestStatus,
+            })),
+          );
         }
 
         if (subscriptionsRes.ok) {
           const data = await subscriptionsRes.json();
-          requests.push(...data.data.map((s: any) => ({
-            id: s.id,
-            type: AppointmentsType.SUBSCRIPTION,
-            title: s.subscriptionPlan?.title || 'Untitled Plan',
-            requestedBy: { user: { name: s.requestedBy.user.name } },
-            requestedAt: s.requestedAt,
-            status: s.requestStatus
-          })));
+          requests.push(
+            ...data.data.map((s: any) => ({
+              id: s.id,
+              type: AppointmentsType.SUBSCRIPTION,
+              title: s.subscriptionPlan?.title || "Untitled Plan",
+              requestedBy: { user: { name: s.requestedBy.user.name } },
+              requestedAt: s.requestedAt,
+              status: s.requestStatus,
+            })),
+          );
         }
 
         setRequests(requests);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load requests');
+        setError(
+          err instanceof Error ? err.message : "Failed to load requests",
+        );
       } finally {
         setLoading(false);
       }
@@ -79,7 +89,11 @@ export function RequestSlotAllocationTabMini() {
   }, [consultantId]);
 
   if (loading) {
-    return <div className="p-4 text-sm text-muted-foreground">Loading requests...</div>;
+    return (
+      <div className="p-4 text-sm text-muted-foreground">
+        Loading requests...
+      </div>
+    );
   }
 
   if (error) {
@@ -110,11 +124,13 @@ export function RequestSlotAllocationTabMini() {
           ))}
         </TableBody>
       </Table>
-      
+
       <div className="mt-4 flex justify-end pr-4">
         <Button
           variant="outline"
-          onClick={() => router.push(`/dashboard/consultant/${consultantId}/requests`)}
+          onClick={() =>
+            router.push(`/dashboard/consultant/${consultantId}/requests`)
+          }
         >
           See All Requests →
         </Button>

@@ -232,11 +232,11 @@ export async function PATCH(
 ) {
   try {
     const body = await request.json();
-    
-    if (!body || typeof body !== 'object') {
+
+    if (!body || typeof body !== "object") {
       return NextResponse.json(
         { error: "Invalid request body" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -246,15 +246,12 @@ export async function PATCH(
     if (!status) {
       return NextResponse.json(
         { error: "Status is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!Object.values(RequestStatus).includes(status)) {
-      return NextResponse.json(
-        { error: "Invalid status" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
 
     // First fetch the consultation to validate it exists and get all necessary data
@@ -281,21 +278,21 @@ export async function PATCH(
     if (!existingConsultation) {
       return NextResponse.json(
         { error: "Consultation not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     if (!existingConsultation.consultationPlan?.consultantProfile?.user?.id) {
       return NextResponse.json(
         { error: "Invalid consultation: missing consultant information" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!existingConsultation.requestedBy?.user?.id) {
       return NextResponse.json(
         { error: "Invalid consultation: missing requestedBy information" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -303,7 +300,7 @@ export async function PATCH(
       // Update consultation status
       const consultation = await prisma.consultation.update({
         where: { id: consultationId },
-        data: { 
+        data: {
           requestStatus: status,
         },
         include: {
@@ -340,28 +337,40 @@ export async function PATCH(
 
       return NextResponse.json({ data: consultation });
     } catch (error) {
-      console.error("Transaction error:", error instanceof Error ? error.message : 'Unknown error');
+      console.error(
+        "Transaction error:",
+        error instanceof Error ? error.message : "Unknown error",
+      );
       throw error;
     }
   } catch (error) {
-    console.error("Error updating consultation:", error instanceof Error ? error.message : 'Unknown error');
+    console.error(
+      "Error updating consultation:",
+      error instanceof Error ? error.message : "Unknown error",
+    );
     return NextResponse.json(
       { error: "An error occurred while updating consultation" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 async function createAppointmentForConsultation(consultation: any) {
   const { consultationPlan, requestedBy } = consultation;
-  
+
   if (!consultationPlan?.durationInHours) {
     console.error("Missing consultation plan details:", consultationPlan);
     throw new Error("Invalid consultation plan details");
   }
 
-  if (!requestedBy?.user?.id || !consultationPlan?.consultantProfile?.user?.id) {
-    console.error("Missing user information:", { requestedBy, consultantProfile: consultationPlan.consultantProfile });
+  if (
+    !requestedBy?.user?.id ||
+    !consultationPlan?.consultantProfile?.user?.id
+  ) {
+    console.error("Missing user information:", {
+      requestedBy,
+      consultantProfile: consultationPlan.consultantProfile,
+    });
     throw new Error("Missing user information");
   }
 
@@ -375,29 +384,32 @@ async function createAppointmentForConsultation(consultation: any) {
       data: {
         appointmentType: AppointmentsType.CONSULTATION,
         consultation: {
-          connect: { id: consultation.id }
+          connect: { id: consultation.id },
         },
         slotsOfAppointment: {
           create: {
             slotStartTimeInUTC: startDate,
-            slotEndTimeInUTC: addHours(startDate, consultationPlan.durationInHours),
+            slotEndTimeInUTC: addHours(
+              startDate,
+              consultationPlan.durationInHours,
+            ),
             isTentative: false,
             user: {
               connect: [
                 { id: requestedBy.user.id },
-                { id: consultationPlan.consultantProfile.user.id }
-              ]
-            }
-          }
-        }
+                { id: consultationPlan.consultantProfile.user.id },
+              ],
+            },
+          },
+        },
       },
       include: {
         slotsOfAppointment: {
           include: {
-            user: true
-          }
-        }
-      }
+            user: true,
+          },
+        },
+      },
     });
 
     return appointment;

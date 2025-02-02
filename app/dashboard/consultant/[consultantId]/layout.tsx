@@ -202,7 +202,7 @@ export default function ConsultantLayout({
             <span>⚙️</span>
             <span>Settings</span>
           </Link>
-          <button 
+          <button
             onClick={() => signOut()}
             className="flex items-center space-x-2 p-4 w-full text-red-600 hover:bg-red-50 transition-colors"
           >

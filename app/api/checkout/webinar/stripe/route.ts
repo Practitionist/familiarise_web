@@ -33,14 +33,14 @@ export async function POST(req: NextRequest) {
       await validateWebinarEligibility(
         tx,
         session.user.id,
-        validatedData.webinarPlanId
+        validatedData.webinarPlanId,
       );
 
       // 3. Calculate final amount
       const { amount, discountCodeId } = await calculateFinalAmount(
         tx,
         plan.price,
-        validatedData.discountCode
+        validatedData.discountCode,
       );
 
       // 4. Create webinar and appointment
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
       {
         error: error instanceof Error ? error.message : "Checkout failed",
       },
-      { status: 400 }
+      { status: 400 },
     );
   }
 }

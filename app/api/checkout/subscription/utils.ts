@@ -1,9 +1,12 @@
 import { PrismaClient, Prisma } from "@prisma/client";
-import { SubscriptionCheckoutInput, SubscriptionPlanWithDetails } from "./schema";
+import {
+  SubscriptionCheckoutInput,
+  SubscriptionPlanWithDetails,
+} from "./schema";
 
 export async function validateAndGetPlan(
   tx: Prisma.TransactionClient,
-  subscriptionPlanId: string
+  subscriptionPlanId: string,
 ): Promise<SubscriptionPlanWithDetails> {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: subscriptionPlanId },
@@ -32,7 +35,7 @@ export async function validateAndGetPlan(
 export async function calculateFinalAmount(
   tx: Prisma.TransactionClient,
   baseAmount: number,
-  discountCode?: string
+  discountCode?: string,
 ): Promise<{ amount: number; discountCodeId: string | null }> {
   let amount = baseAmount;
   let discountCodeId = null;
@@ -61,7 +64,7 @@ export async function createSubscriptionAppointment(
   }: {
     subscriptionPlanId: string;
     userId: string;
-  }
+  },
 ) {
   // Create subscription and initial appointment
   const subscription = await tx.subscription.create({
@@ -112,7 +115,7 @@ export async function createPaymentRecord(
     appointmentId: string;
     discountCodeId: string | null;
     initialPaymentIntent?: string;
-  }
+  },
 ) {
   return tx.payment.create({
     data: {
@@ -132,7 +135,7 @@ export async function createPaymentRecord(
 export async function updatePaymentIntent(
   tx: Prisma.TransactionClient,
   paymentId: string,
-  paymentIntent: string
+  paymentIntent: string,
 ) {
   return tx.payment.update({
     where: { id: paymentId },
@@ -143,7 +146,7 @@ export async function updatePaymentIntent(
 export async function validateSubscriptionEligibility(
   tx: Prisma.TransactionClient,
   userId: string,
-  subscriptionPlanId: string
+  subscriptionPlanId: string,
 ): Promise<void> {
   // Check if user already has an active subscription
   const activeSubscription = await tx.subscription.findFirst({
@@ -160,7 +163,7 @@ export async function validateSubscriptionEligibility(
     throw new Error(
       activeSubscription.requestStatus === "PENDING"
         ? "You already have a pending subscription"
-        : "You already have an active subscription"
+        : "You already have an active subscription",
     );
   }
 }

@@ -1,11 +1,16 @@
 import prisma from "@/lib/prisma";
-import { AppointmentsType, Prisma, RequestStatus, ScheduleType } from "@prisma/client";
+import {
+  AppointmentsType,
+  Prisma,
+  RequestStatus,
+  ScheduleType,
+} from "@prisma/client";
 import { addHours } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
 
 type PrismaTransaction = Omit<
   Prisma.TransactionClient,
-  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use'
+  "$connect" | "$disconnect" | "$on" | "$transaction" | "$use"
 >;
 
 interface AllocationRequest {
@@ -23,7 +28,7 @@ const consultationInclude = {
           scheduleType: true,
           slotsOfAvailabilityWeekly: true,
           slotsOfAvailabilityCustom: true,
-        }
+        },
       },
     },
   },
@@ -34,9 +39,9 @@ const consultationInclude = {
   },
   appointment: {
     include: {
-      slotsOfAppointment: true
-    }
-  }
+      slotsOfAppointment: true,
+    },
+  },
 } as const;
 
 type ConsultationWithRelations = Prisma.ConsultationGetPayload<{
@@ -45,16 +50,17 @@ type ConsultationWithRelations = Prisma.ConsultationGetPayload<{
 
 async function allocateSlotAuto(
   consultation: ConsultationWithRelations,
-  tx: PrismaTransaction
+  tx: PrismaTransaction,
 ): Promise<Date> {
   const { consultationPlan, requestedBy } = consultation;
   const { consultantProfile } = consultationPlan;
-  const consultantTimezone = consultantProfile.user.currentTimezone || 'UTC';
+  const consultantTimezone = consultantProfile.user.currentTimezone || "UTC";
 
   // Get available slots based on schedule type
-  const availableSlots = consultantProfile.scheduleType === ScheduleType.WEEKLY
-    ? consultantProfile.slotsOfAvailabilityWeekly
-    : consultantProfile.slotsOfAvailabilityCustom;
+  const availableSlots =
+    consultantProfile.scheduleType === ScheduleType.WEEKLY
+      ? consultantProfile.slotsOfAvailabilityWeekly
+      : consultantProfile.slotsOfAvailabilityCustom;
 
   if (!availableSlots.length) {
     throw new Error("No available slots found for consultant");
@@ -75,15 +81,15 @@ async function allocateSlotAuto(
           OR: [
             {
               subscription: {
-                requestStatus: RequestStatus.APPROVED
-              }
+                requestStatus: RequestStatus.APPROVED,
+              },
             },
             {
               consultation: {
-                requestStatus: RequestStatus.APPROVED
-              }
-            }
-          ]
+                requestStatus: RequestStatus.APPROVED,
+              },
+            },
+          ],
         },
         {
           slotsOfAppointment: {
@@ -91,34 +97,31 @@ async function allocateSlotAuto(
               user: {
                 some: {
                   id: {
-                    in: [
-                      consultantProfile.user.id,
-                      requestedBy.user.id
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        }
-      ]
+                    in: [consultantProfile.user.id, requestedBy.user.id],
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
     },
     include: {
       slotsOfAppointment: {
         include: {
-          user: true
-        }
-      }
-    }
+          user: true,
+        },
+      },
+    },
   });
 
   // Get booked time slots
   const bookedSlots = new Set(
     existingAppointments.flatMap((app) =>
-      app.slotsOfAppointment.map((slot: { slotStartTimeInUTC: Date }) => 
-        slot.slotStartTimeInUTC.toISOString()
-      )
-    )
+      app.slotsOfAppointment.map((slot: { slotStartTimeInUTC: Date }) =>
+        slot.slotStartTimeInUTC.toISOString(),
+      ),
+    ),
   );
 
   // Find first available slot
@@ -137,7 +140,7 @@ async function allocateSlotAuto(
         new Date(slot.slotStartTimeInUTC).getHours(),
         new Date(slot.slotStartTimeInUTC).getMinutes(),
         0,
-        0
+        0,
       );
       slotTime = slotDate;
     } else {
@@ -146,10 +149,7 @@ async function allocateSlotAuto(
     }
 
     // Skip if slot is already booked or in the past
-    if (
-      bookedSlots.has(slotTime.toISOString()) ||
-      slotTime < now
-    ) {
+    if (bookedSlots.has(slotTime.toISOString()) || slotTime < now) {
       continue;
     }
 
@@ -161,15 +161,16 @@ async function allocateSlotAuto(
 
 async function allocateSlotRequested(
   consultation: ConsultationWithRelations,
-  tx: PrismaTransaction
+  tx: PrismaTransaction,
 ): Promise<Date> {
   // Get the requested slot from the appointment
-  const requestedSlot = consultation.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+  const requestedSlot =
+    consultation.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
   if (!requestedSlot) {
     throw new Error("No requested slot found");
   }
   const selectedSlot = new Date(requestedSlot);
-  
+
   // Validate the slot is still available
   const existingAppointment = await tx.appointment.findFirst({
     where: {
@@ -177,16 +178,16 @@ async function allocateSlotRequested(
         {
           OR: [
             { subscription: { requestStatus: RequestStatus.APPROVED } },
-            { consultation: { requestStatus: RequestStatus.APPROVED } }
-          ]
+            { consultation: { requestStatus: RequestStatus.APPROVED } },
+          ],
         },
         {
           slotsOfAppointment: {
-            some: { slotStartTimeInUTC: selectedSlot }
-          }
-        }
-      ]
-    }
+            some: { slotStartTimeInUTC: selectedSlot },
+          },
+        },
+      ],
+    },
   });
 
   if (existingAppointment) {
@@ -199,11 +200,11 @@ async function allocateSlotRequested(
 async function allocateSlotManual(
   consultation: ConsultationWithRelations,
   slots: string[],
-  tx: PrismaTransaction
+  tx: PrismaTransaction,
 ): Promise<Date> {
   const { consultationPlan, requestedBy } = consultation;
   const { consultantProfile } = consultationPlan;
-  const consultantTimezone = consultantProfile.user.currentTimezone || 'UTC';
+  const consultantTimezone = consultantProfile.user.currentTimezone || "UTC";
 
   // Validate number of slots
   if (slots.length !== 1) {
@@ -220,29 +221,37 @@ async function allocateSlotManual(
   // Validate slot matches consultant's schedule type
   if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
     // For weekly schedule, validate slot follows the weekly pattern
-    const availableWeeklySlots = consultantProfile.slotsOfAvailabilityWeekly.some(slot => {
-      const slotDay = new Date(slot.slotStartTimeInUTC).getDay();
-      const slotHours = new Date(slot.slotStartTimeInUTC).getHours();
-      const slotMinutes = new Date(slot.slotStartTimeInUTC).getMinutes();
+    const availableWeeklySlots =
+      consultantProfile.slotsOfAvailabilityWeekly.some((slot) => {
+        const slotDay = new Date(slot.slotStartTimeInUTC).getDay();
+        const slotHours = new Date(slot.slotStartTimeInUTC).getHours();
+        const slotMinutes = new Date(slot.slotStartTimeInUTC).getMinutes();
 
-      return (
-        slotDate.getDay() === slotDay &&
-        slotDate.getHours() === slotHours &&
-        slotDate.getMinutes() === slotMinutes
-      );
-    });
+        return (
+          slotDate.getDay() === slotDay &&
+          slotDate.getHours() === slotHours &&
+          slotDate.getMinutes() === slotMinutes
+        );
+      });
 
     if (!availableWeeklySlots) {
-      throw new Error(`Slot ${slotDate.toLocaleString()} does not match consultant's weekly schedule`);
+      throw new Error(
+        `Slot ${slotDate.toLocaleString()} does not match consultant's weekly schedule`,
+      );
     }
   } else {
     // For custom schedule, validate slot exists in custom slots
-    const availableCustomSlots = consultantProfile.slotsOfAvailabilityCustom.some(slot =>
-      new Date(slot.slotStartTimeInUTC).toISOString() === slotDate.toISOString()
-    );
+    const availableCustomSlots =
+      consultantProfile.slotsOfAvailabilityCustom.some(
+        (slot) =>
+          new Date(slot.slotStartTimeInUTC).toISOString() ===
+          slotDate.toISOString(),
+      );
 
     if (!availableCustomSlots) {
-      throw new Error(`Slot ${slotDate.toLocaleString()} is not in consultant's custom schedule`);
+      throw new Error(
+        `Slot ${slotDate.toLocaleString()} is not in consultant's custom schedule`,
+      );
     }
   }
 
@@ -254,25 +263,25 @@ async function allocateSlotManual(
           OR: [
             {
               subscription: {
-                requestStatus: RequestStatus.APPROVED
-              }
+                requestStatus: RequestStatus.APPROVED,
+              },
             },
             {
               consultation: {
-                requestStatus: RequestStatus.APPROVED
-              }
-            }
-          ]
+                requestStatus: RequestStatus.APPROVED,
+              },
+            },
+          ],
         },
         {
           slotsOfAppointment: {
             some: {
               slotStartTimeInUTC: slotDate,
             },
-          }
-        }
-      ]
-    }
+          },
+        },
+      ],
+    },
   });
 
   if (existingAppointment) {
@@ -291,10 +300,10 @@ export async function PATCH(
     const body: AllocationRequest = await request.json();
 
     // Validate request body
-    if (typeof body.isAuto !== 'boolean') {
+    if (typeof body.isAuto !== "boolean") {
       return NextResponse.json(
         { error: "isAuto flag is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -304,7 +313,7 @@ export async function PATCH(
     } else if (!body.isAuto && !Array.isArray(body.slots)) {
       return NextResponse.json(
         { error: "slots array is required for manual allocation" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -317,15 +326,18 @@ export async function PATCH(
     if (!consultation) {
       return NextResponse.json(
         { error: "Consultation not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     // Validate user information
-    if (!consultation.consultationPlan?.consultantProfile?.user?.id || !consultation.requestedBy?.user?.id) {
+    if (
+      !consultation.consultationPlan?.consultantProfile?.user?.id ||
+      !consultation.requestedBy?.user?.id
+    ) {
       return NextResponse.json(
         { error: "Missing user information" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -333,7 +345,7 @@ export async function PATCH(
     if (consultation.requestStatus === RequestStatus.APPROVED) {
       return NextResponse.json(
         { error: "Consultation is already approved" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -349,18 +361,20 @@ export async function PATCH(
                 {
                   OR: [
                     { subscription: { requestStatus: RequestStatus.APPROVED } },
-                    { consultation: { requestStatus: RequestStatus.APPROVED } }
-                  ]
+                    { consultation: { requestStatus: RequestStatus.APPROVED } },
+                  ],
                 },
                 {
                   slotsOfAppointment: {
-                    some: { 
-                      slotStartTimeInUTC: consultation.appointment.slotsOfAppointment[0].slotStartTimeInUTC 
-                    }
-                  }
-                }
-              ]
-            }
+                    some: {
+                      slotStartTimeInUTC:
+                        consultation.appointment.slotsOfAppointment[0]
+                          .slotStartTimeInUTC,
+                    },
+                  },
+                },
+              ],
+            },
           });
 
           if (existingAppointment) {
@@ -385,7 +399,7 @@ export async function PATCH(
         // For auto/manual allocation, delete existing appointment if any
         if (!body.useRequestedSlots && consultation.appointment) {
           await tx.appointment.delete({
-            where: { id: consultation.appointment.id }
+            where: { id: consultation.appointment.id },
           });
         }
 
@@ -396,7 +410,11 @@ export async function PATCH(
         } else if (body.isAuto) {
           selectedSlot = await allocateSlotAuto(consultation, tx);
         } else {
-          selectedSlot = await allocateSlotManual(consultation, body.slots!, tx);
+          selectedSlot = await allocateSlotManual(
+            consultation,
+            body.slots!,
+            tx,
+          );
         }
 
         // Create appointment for selected slot
@@ -409,12 +427,18 @@ export async function PATCH(
             slotsOfAppointment: {
               create: {
                 slotStartTimeInUTC: selectedSlot,
-                slotEndTimeInUTC: addHours(selectedSlot, consultation.consultationPlan.durationInHours),
+                slotEndTimeInUTC: addHours(
+                  selectedSlot,
+                  consultation.consultationPlan.durationInHours,
+                ),
                 isTentative: false,
                 user: {
                   connect: [
                     { id: consultation.requestedBy.user.id },
-                    { id: consultation.consultationPlan.consultantProfile.user.id },
+                    {
+                      id: consultation.consultationPlan.consultantProfile.user
+                        .id,
+                    },
                   ],
                 },
               },
@@ -453,20 +477,21 @@ export async function PATCH(
       }
       return NextResponse.json(
         {
-          error: error instanceof Error ? error.message : "Failed to allocate slot",
+          error:
+            error instanceof Error ? error.message : "Failed to allocate slot",
         },
-        { status: 500 }
+        { status: 500 },
       );
     }
   } catch (error) {
     if (error instanceof Error) {
-        // Fixes the below error:
-        //  ⨯ TypeError: The "payload" argument must be of type object. Received null
+      // Fixes the below error:
+      //  ⨯ TypeError: The "payload" argument must be of type object. Received null
       console.log("Error: ", error.stack);
     }
     return NextResponse.json(
       { error: "An error occurred during slot allocation" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

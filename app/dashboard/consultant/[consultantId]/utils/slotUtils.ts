@@ -1,4 +1,4 @@
-import { startOfWeek, addDays, parse, format } from 'date-fns';
+import { startOfWeek, addDays, parse, format } from "date-fns";
 
 interface WeeklySlot {
   id: string;
@@ -18,26 +18,32 @@ const DAYS_OF_WEEK = {
   SATURDAY: 6,
 };
 
-export function convertWeeklyToActualSlots(weeklySlots: WeeklySlot[], baseDate: Date = new Date()) {
+export function convertWeeklyToActualSlots(
+  weeklySlots: WeeklySlot[],
+  baseDate: Date = new Date(),
+) {
   // Get the start of the week for the base date
   const weekStart = startOfWeek(baseDate);
 
   return weeklySlots.flatMap((slot) => {
     // Get the day number (0-6) for this slot
-    const dayNumber = DAYS_OF_WEEK[slot.dayOfWeekforStartTimeInUTC as keyof typeof DAYS_OF_WEEK];
+    const dayNumber =
+      DAYS_OF_WEEK[
+        slot.dayOfWeekforStartTimeInUTC as keyof typeof DAYS_OF_WEEK
+      ];
     if (dayNumber === undefined) return [];
 
     // Get the actual date for this slot
     const slotDate = addDays(weekStart, dayNumber);
 
     // Parse the time from the 1970 timestamp
-    const timeOnly = format(new Date(slot.slotStartTimeInUTC), 'HH:mm:ss');
+    const timeOnly = format(new Date(slot.slotStartTimeInUTC), "HH:mm:ss");
 
     // Combine the date and time
     const actualSlotTime = parse(
-      `${format(slotDate, 'yyyy-MM-dd')} ${timeOnly}`,
-      'yyyy-MM-dd HH:mm:ss',
-      new Date()
+      `${format(slotDate, "yyyy-MM-dd")} ${timeOnly}`,
+      "yyyy-MM-dd HH:mm:ss",
+      new Date(),
     );
 
     return {

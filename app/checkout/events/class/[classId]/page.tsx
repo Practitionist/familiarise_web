@@ -77,16 +77,19 @@ export default function ClassCheckoutPage({
         }
 
         // In production, proceed with payment gateway checkout
-        const response = await fetch(`/api/checkout/class/${gateway.toLowerCase()}`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
+        const response = await fetch(
+          `/api/checkout/class/${gateway.toLowerCase()}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              classId: resolvedParams.classId,
+              discountCode: parsedParams.data.discountCode,
+            }),
           },
-          body: JSON.stringify({
-            classId: resolvedParams.classId,
-            discountCode: parsedParams.data.discountCode,
-          }),
-        });
+        );
 
         if (!response.ok) {
           throw new Error("Checkout failed");
@@ -98,7 +101,9 @@ export default function ClassCheckoutPage({
         switch (gateway) {
           case "STRIPE":
             // Load Stripe.js and redirect to checkout
-            const stripeInstance = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
+            const stripeInstance = await loadStripe(
+              process.env.NEXT_PUBLIC_STRIPE_KEY!,
+            );
             if (!stripeInstance) {
               throw new Error("Failed to load Stripe");
             }
@@ -154,14 +159,16 @@ export default function ClassCheckoutPage({
         setPlanData(data);
 
         // Fetch reviews for the consultant
-        const reviewsData = await fetchReviews(data.data.classPlan.consultantProfile?.id ?? '');
+        const reviewsData = await fetchReviews(
+          data.data.classPlan.consultantProfile?.id ?? "",
+        );
         _setReviews(reviewsData);
       } catch (error) {
         console.error("Error fetching plan data:", error);
         setError(
           error instanceof Error
             ? error.message
-            : "An unexpected error occurred. Please try again."
+            : "An unexpected error occurred. Please try again.",
         );
       } finally {
         setIsLoading(false);
@@ -236,11 +243,15 @@ export default function ClassCheckoutPage({
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
-              <div>{planData?.data?.classPlan?.durationInMonths ?? 1} months</div>
+              <div>
+                {planData?.data?.classPlan?.durationInMonths ?? 1} months
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Max Participants</div>
-              <div>{planData?.data?.classPlan?.maxParticipants ?? 10} students</div>
+              <div>
+                {planData?.data?.classPlan?.maxParticipants ?? 10} students
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Calls per Week</div>
@@ -248,7 +259,9 @@ export default function ClassCheckoutPage({
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Video Meetings</div>
-              <div>{planData?.data?.classPlan?.videoMeetings ?? 1} per month</div>
+              <div>
+                {planData?.data?.classPlan?.videoMeetings ?? 1} per month
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Email Support</div>
@@ -256,13 +269,16 @@ export default function ClassCheckoutPage({
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Certificate</div>
-              <div>{planData?.data?.classPlan?.certificateProvided ? "Yes" : "No"}</div>
+              <div>
+                {planData?.data?.classPlan?.certificateProvided ? "Yes" : "No"}
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Topics</div>
               <div>
-                {planData?.data?.classPlan?.topics?.map((topic) => topic.name).join(", ") ??
-                  "General"}
+                {planData?.data?.classPlan?.topics
+                  ?.map((topic) => topic.name)
+                  .join(", ") ?? "General"}
               </div>
             </div>
             <div className="flex items-center justify-between">
@@ -348,9 +364,18 @@ export default function ClassCheckoutPage({
                 </div>
                 <div className="font-semibold">
                   <ul className="list-disc">
-                    <li>{planData?.data?.classPlan?.callsPerWeek ?? 1} calls per week</li>
-                    <li>{planData?.data?.classPlan?.videoMeetings ?? 1} video meetings</li>
-                    <li>{planData?.data?.classPlan?.emailSupport ?? "General"} email support</li>
+                    <li>
+                      {planData?.data?.classPlan?.callsPerWeek ?? 1} calls per
+                      week
+                    </li>
+                    <li>
+                      {planData?.data?.classPlan?.videoMeetings ?? 1} video
+                      meetings
+                    </li>
+                    <li>
+                      {planData?.data?.classPlan?.emailSupport ?? "General"}{" "}
+                      email support
+                    </li>
                     <li>Course materials</li>
                     {planData?.data?.classPlan?.certificateProvided && (
                       <li>Completion certificate</li>
@@ -367,19 +392,29 @@ export default function ClassCheckoutPage({
               </div>
               <div className="flex items-center justify-between">
                 <div>Tax (10%)</div>
-                <div>${((planData?.data?.classPlan?.price ?? 500) * 0.1).toFixed(2)}</div>
+                <div>
+                  $
+                  {((planData?.data?.classPlan?.price ?? 500) * 0.1).toFixed(2)}
+                </div>
               </div>
               <div className="flex items-center justify-between">
                 <div>Discount (25%)</div>
                 <div>
                   -$
-                  {((planData?.data?.classPlan?.price ?? 500) * 0.25).toFixed(2)}
+                  {((planData?.data?.classPlan?.price ?? 500) * 0.25).toFixed(
+                    2,
+                  )}
                 </div>
               </div>
               <Separator className="bg-gray-300" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Net Amount</div>
-                <div>${((planData?.data?.classPlan?.price ?? 500) * 0.85).toFixed(2)}</div>
+                <div>
+                  $
+                  {((planData?.data?.classPlan?.price ?? 500) * 0.85).toFixed(
+                    2,
+                  )}
+                </div>
               </div>
             </div>
           </CardContent>

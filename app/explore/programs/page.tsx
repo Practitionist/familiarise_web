@@ -94,12 +94,19 @@ export default function Programs() {
 
       if ((programType === "all" || programType === "class") && data[0]) {
         const formattedClasses = data[0].data
-          .filter((item: TClass) => item.status !== "CANCELLED" && item.startDate && new Date(item.startDate) >= new Date())
-          .map((item: TClass): ClassProgram => ({
-            ...item,
-            type: "class",
-            imageUrl: generateProgramImageUrl(item.id),
-          }));
+          .filter(
+            (item: TClass) =>
+              item.status !== "CANCELLED" &&
+              item.startDate &&
+              new Date(item.startDate) >= new Date(),
+          )
+          .map(
+            (item: TClass): ClassProgram => ({
+              ...item,
+              type: "class",
+              imageUrl: generateProgramImageUrl(item.id),
+            }),
+          );
         newPrograms = [...newPrograms, ...formattedClasses];
       }
 
@@ -109,11 +116,13 @@ export default function Programs() {
       ) {
         const formattedWebinars = data[programType === "all" ? 1 : 0].data
           .filter((item: TWebinar) => item.status !== "CANCELLED")
-          .map((item: TWebinar): WebinarProgram => ({
-            ...item,
-            type: "webinar",
-            imageUrl: generateProgramImageUrl(item.id),
-          }));
+          .map(
+            (item: TWebinar): WebinarProgram => ({
+              ...item,
+              type: "webinar",
+              imageUrl: generateProgramImageUrl(item.id),
+            }),
+          );
         newPrograms = [...newPrograms, ...formattedWebinars];
       }
 
@@ -157,10 +166,16 @@ export default function Programs() {
 
   const filteredAndSortedPrograms = programs
     .filter((item) => {
-      const title = isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title;
-      const description = isClassProgram(item) ? item.classPlan.description : item.webinarPlan.description;
-      const level = isClassProgram(item) ? item.classPlan.level : item.webinarPlan.level;
-      
+      const title = isClassProgram(item)
+        ? item.classPlan.title
+        : item.webinarPlan.title;
+      const description = isClassProgram(item)
+        ? item.classPlan.description
+        : item.webinarPlan.description;
+      const level = isClassProgram(item)
+        ? item.classPlan.level
+        : item.webinarPlan.level;
+
       const searchMatch =
         title.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (description?.toLowerCase() || "").includes(searchTerm.toLowerCase());
@@ -171,26 +186,40 @@ export default function Programs() {
     .sort((a, b) => {
       switch (sortBy) {
         case "price-asc":
-          return (isClassProgram(a) ? a.classPlan.price : a.webinarPlan.price) - 
-                 (isClassProgram(b) ? b.classPlan.price : b.webinarPlan.price);
+          return (
+            (isClassProgram(a) ? a.classPlan.price : a.webinarPlan.price) -
+            (isClassProgram(b) ? b.classPlan.price : b.webinarPlan.price)
+          );
         case "price-desc":
-          return (isClassProgram(b) ? b.classPlan.price : b.webinarPlan.price) - 
-                 (isClassProgram(a) ? a.classPlan.price : a.webinarPlan.price);
+          return (
+            (isClassProgram(b) ? b.classPlan.price : b.webinarPlan.price) -
+            (isClassProgram(a) ? a.classPlan.price : a.webinarPlan.price)
+          );
         case "title-asc":
-          return (isClassProgram(a) ? a.classPlan.title : a.webinarPlan.title)
-            .localeCompare(isClassProgram(b) ? b.classPlan.title : b.webinarPlan.title);
+          return (
+            isClassProgram(a) ? a.classPlan.title : a.webinarPlan.title
+          ).localeCompare(
+            isClassProgram(b) ? b.classPlan.title : b.webinarPlan.title,
+          );
         case "title-desc":
-          return (isClassProgram(b) ? b.classPlan.title : b.webinarPlan.title)
-            .localeCompare(isClassProgram(a) ? a.classPlan.title : a.webinarPlan.title);
+          return (
+            isClassProgram(b) ? b.classPlan.title : b.webinarPlan.title
+          ).localeCompare(
+            isClassProgram(a) ? a.classPlan.title : a.webinarPlan.title,
+          );
         default:
           return 0;
       }
     });
 
   const uniqueLevels = Array.from(
-    new Set(programs.map((program) => 
-      isClassProgram(program) ? program.classPlan.level : program.webinarPlan.level
-    )),
+    new Set(
+      programs.map((program) =>
+        isClassProgram(program)
+          ? program.classPlan.level
+          : program.webinarPlan.level,
+      ),
+    ),
   );
 
   return (
@@ -384,7 +413,11 @@ export default function Programs() {
             >
               <Image
                 src={item.imageUrl}
-                alt={isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title}
+                alt={
+                  isClassProgram(item)
+                    ? item.classPlan.title
+                    : item.webinarPlan.title
+                }
                 width={600}
                 height={400}
                 className="w-full h-48 object-cover"
@@ -393,7 +426,9 @@ export default function Programs() {
               <div className="p-6">
                 <div className="flex justify-between items-start mb-3">
                   <h3 className="text-lg font-semibold text-gray-900">
-                    {isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title}
+                    {isClassProgram(item)
+                      ? item.classPlan.title
+                      : item.webinarPlan.title}
                   </h3>
                   <output
                     className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
@@ -403,11 +438,16 @@ export default function Programs() {
                   </output>
                 </div>
                 <p className="text-gray-600 text-sm mb-4 line-clamp-2">
-                  {isClassProgram(item) ? item.classPlan.description : item.webinarPlan.description}
+                  {isClassProgram(item)
+                    ? item.classPlan.description
+                    : item.webinarPlan.description}
                 </p>
                 <div className="flex items-center justify-between">
                   <div className="text-gray-900 font-semibold">
-                    ${isClassProgram(item) ? item.classPlan.price : item.webinarPlan.price}
+                    $
+                    {isClassProgram(item)
+                      ? item.classPlan.price
+                      : item.webinarPlan.price}
                   </div>
                   <Button
                     variant="outline"
@@ -449,7 +489,11 @@ export default function Programs() {
             >
               <Image
                 src={item.imageUrl}
-                alt={isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title}
+                alt={
+                  isClassProgram(item)
+                    ? item.classPlan.title
+                    : item.webinarPlan.title
+                }
                 width={200}
                 height={150}
                 className="w-48 object-cover"
@@ -458,7 +502,9 @@ export default function Programs() {
               <div className="p-6 flex-1">
                 <div className="flex justify-between items-start mb-3">
                   <h3 className="text-lg font-semibold text-gray-900">
-                    {isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title}
+                    {isClassProgram(item)
+                      ? item.classPlan.title
+                      : item.webinarPlan.title}
                   </h3>
                   <output
                     className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
@@ -468,11 +514,16 @@ export default function Programs() {
                   </output>
                 </div>
                 <p className="text-gray-600 text-sm mb-4 line-clamp-2">
-                  {isClassProgram(item) ? item.classPlan.description : item.webinarPlan.description}
+                  {isClassProgram(item)
+                    ? item.classPlan.description
+                    : item.webinarPlan.description}
                 </p>
                 <div className="flex items-center justify-between">
                   <div className="text-gray-900 font-semibold">
-                    ${isClassProgram(item) ? item.classPlan.price : item.webinarPlan.price}
+                    $
+                    {isClassProgram(item)
+                      ? item.classPlan.price
+                      : item.webinarPlan.price}
                   </div>
                   <Button
                     variant="outline"

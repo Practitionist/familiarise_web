@@ -5,7 +5,9 @@ export const subscriptionCheckoutSchema = z.object({
   discountCode: z.string().optional(),
 });
 
-export type SubscriptionCheckoutInput = z.infer<typeof subscriptionCheckoutSchema>;
+export type SubscriptionCheckoutInput = z.infer<
+  typeof subscriptionCheckoutSchema
+>;
 
 // Common types for subscription checkout
 export interface SubscriptionPlanWithDetails {

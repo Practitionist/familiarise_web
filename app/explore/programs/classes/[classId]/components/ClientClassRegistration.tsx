@@ -41,7 +41,9 @@ export function ClientClassRegistration({
           <CardTitle>Register for Class</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-gray-600 mb-4">Please sign in to register for this class.</p>
+          <p className="text-gray-600 mb-4">
+            Please sign in to register for this class.
+          </p>
           {/* TODO: Implement registration form for non-logged in users
           <div className="space-y-4">
             <div>
@@ -107,7 +109,7 @@ export function ClientClassRegistration({
             </div>
           </div>
           */}
-          <Button 
+          <Button
             onClick={handleRegistration}
             className="w-full bg-black hover:bg-gray-800"
           >
@@ -126,19 +128,16 @@ export function ClientClassRegistration({
       <CardContent>
         <p className="text-sm text-gray-600 mb-4">
           {startDate
-            ? `Class starts on ${new Date(startDate).toLocaleString(
-                undefined,
-                {
-                  dateStyle: "long",
-                  timeStyle: "short",
-                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                },
-              )}`
+            ? `Class starts on ${new Date(startDate).toLocaleString(undefined, {
+                dateStyle: "long",
+                timeStyle: "short",
+                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              })}`
             : "Start date to be announced"}
         </p>
       </CardContent>
       <CardFooter>
-        <Button 
+        <Button
           onClick={handleRegistration}
           className="w-full bg-black hover:bg-gray-800"
         >

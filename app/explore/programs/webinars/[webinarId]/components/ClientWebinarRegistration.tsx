@@ -41,7 +41,9 @@ export function ClientWebinarRegistration({
           <CardTitle>Register for Webinar</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-gray-600 mb-4">Please sign in to register for this webinar.</p>
+          <p className="text-gray-600 mb-4">
+            Please sign in to register for this webinar.
+          </p>
           {/* TODO: Implement registration form for non-logged in users
           <div className="space-y-4">
             <div>
@@ -107,7 +109,7 @@ export function ClientWebinarRegistration({
             </div>
           </div>
           */}
-          <Button 
+          <Button
             onClick={handleRegistration}
             className="w-full bg-black hover:bg-gray-800"
           >
@@ -138,7 +140,7 @@ export function ClientWebinarRegistration({
         </p>
       </CardContent>
       <CardFooter>
-        <Button 
+        <Button
           onClick={handleRegistration}
           className="w-full bg-black hover:bg-gray-800"
         >

@@ -27,7 +27,10 @@ export async function POST(req: NextRequest) {
     // Start transaction
     return await prisma.$transaction(async (tx) => {
       // 1. Get and validate consultation plan
-      const plan = await validateAndGetPlan(tx, validatedData.consultationPlanId);
+      const plan = await validateAndGetPlan(
+        tx,
+        validatedData.consultationPlanId,
+      );
 
       // 2. Validate slot availability
       await validateSlotAvailability(tx, validatedData);
@@ -36,7 +39,7 @@ export async function POST(req: NextRequest) {
       const { amount, discountCodeId } = await calculateFinalAmount(
         tx,
         plan.price,
-        validatedData.discountCode
+        validatedData.discountCode,
       );
 
       // 4. Create consultation and appointment
@@ -79,7 +82,7 @@ export async function POST(req: NextRequest) {
       {
         error: error instanceof Error ? error.message : "Checkout failed",
       },
-      { status: 400 }
+      { status: 400 },
     );
   }
 }

@@ -114,14 +114,17 @@ export async function POST(req: NextRequest) {
       const consultation = await tx.consultation.create({
         data: {
           consultationPlanId: plan.id,
-          requestStatus: process.env.NODE_ENV === "development" ? "APPROVED" : "PENDING",
+          requestStatus:
+            process.env.NODE_ENV === "development" ? "APPROVED" : "PENDING",
           requestedById: consultee.id,
           appointment: {
             create: {
               appointmentType: "CONSULTATION",
               slotsOfAppointment: {
                 create: {
-                  slotStartTimeInUTC: new Date(validatedData.slotStartTimeInUTC),
+                  slotStartTimeInUTC: new Date(
+                    validatedData.slotStartTimeInUTC,
+                  ),
                   slotEndTimeInUTC: new Date(validatedData.slotEndTimeInUTC),
                   isTentative: process.env.NODE_ENV !== "development",
                   user: {
@@ -166,7 +169,8 @@ export async function POST(req: NextRequest) {
           paymentMethod: "CARD",
           paymentIntent: `dev_${Date.now()}_${Math.random().toString(36).substring(7)}`, // Generate unique ID for dev mode
           paymentGateway: validatedData.paymentGateway,
-          paymentStatus: process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
+          paymentStatus:
+            process.env.NODE_ENV === "development" ? "SUCCEEDED" : "PENDING",
           userId: session.user.id,
           appointmentId: consultation.appointment.id,
           discountCodeId,

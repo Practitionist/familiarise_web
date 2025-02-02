@@ -69,15 +69,18 @@ export default function WebinarCheckoutPage({
         }
 
         // In production, proceed with payment gateway checkout
-        const response = await fetch(`/api/checkout/webinar/${gateway.toLowerCase()}`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
+        const response = await fetch(
+          `/api/checkout/webinar/${gateway.toLowerCase()}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              webinarId: resolvedParams.webinarId,
+            }),
           },
-          body: JSON.stringify({
-            webinarId: resolvedParams.webinarId,
-          }),
-        });
+        );
 
         if (!response.ok) {
           throw new Error("Checkout failed");
@@ -89,7 +92,9 @@ export default function WebinarCheckoutPage({
         switch (gateway) {
           case "STRIPE": {
             // Load Stripe.js and redirect to checkout
-            const stripeInstance = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
+            const stripeInstance = await loadStripe(
+              process.env.NEXT_PUBLIC_STRIPE_KEY!,
+            );
             if (!stripeInstance) {
               throw new Error("Failed to load Stripe");
             }
@@ -146,14 +151,16 @@ export default function WebinarCheckoutPage({
         setPlanData(data);
 
         // Fetch reviews for the consultant
-        const reviewsData = await fetchReviews(data.data.webinarPlan.consultantProfile?.id ?? '');
+        const reviewsData = await fetchReviews(
+          data.data.webinarPlan.consultantProfile?.id ?? "",
+        );
         _setReviews(reviewsData);
       } catch (error) {
         console.error("Error fetching plan data:", error);
         setError(
           error instanceof Error
             ? error.message
-            : "An unexpected error occurred. Please try again."
+            : "An unexpected error occurred. Please try again.",
         );
       } finally {
         setIsLoading(false);
@@ -191,7 +198,8 @@ export default function WebinarCheckoutPage({
 
   const consultantDetails = planData?.data?.webinarPlan?.consultantProfile;
   const userDetails = planData?.data?.webinarPlan?.consultantProfile?.user;
-  const nextSession = planData?.data?.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+  const nextSession =
+    planData?.data?.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-[60%_40%] min-h-screen">
@@ -234,22 +242,29 @@ export default function WebinarCheckoutPage({
                   ? new Date(nextSession).toLocaleString(undefined, {
                       dateStyle: "long",
                       timeStyle: "short",
-                      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                      timeZone:
+                        Intl.DateTimeFormat().resolvedOptions().timeZone,
                     })
                   : "To be announced"}
               </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
-              <div>{planData?.data?.webinarPlan?.durationInHours ?? 1} hours</div>
+              <div>
+                {planData?.data?.webinarPlan?.durationInHours ?? 1} hours
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Max Participants</div>
-              <div>{planData?.data?.webinarPlan?.maxParticipants ?? 100} attendees</div>
+              <div>
+                {planData?.data?.webinarPlan?.maxParticipants ?? 100} attendees
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Platform</div>
-              <div>{planData?.data?.webinarPlan?.materialProvided ?? "Zoom"}</div>
+              <div>
+                {planData?.data?.webinarPlan?.materialProvided ?? "Zoom"}
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Language</div>
@@ -262,8 +277,9 @@ export default function WebinarCheckoutPage({
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Topics</div>
               <div>
-                {planData?.data?.webinarPlan?.topics?.map((topic) => topic.name).join(", ") ??
-                  "General"}
+                {planData?.data?.webinarPlan?.topics
+                  ?.map((topic) => topic.name)
+                  .join(", ") ?? "General"}
               </div>
             </div>
           </div>
@@ -330,19 +346,31 @@ export default function WebinarCheckoutPage({
               </div>
               <div className="flex items-center justify-between">
                 <div>Tax (10%)</div>
-                <div>${((planData?.data?.webinarPlan?.price ?? 50) * 0.1).toFixed(2)}</div>
+                <div>
+                  $
+                  {((planData?.data?.webinarPlan?.price ?? 50) * 0.1).toFixed(
+                    2,
+                  )}
+                </div>
               </div>
               <div className="flex items-center justify-between">
                 <div>Discount (15%)</div>
                 <div>
                   -$
-                  {((planData?.data?.webinarPlan?.price ?? 50) * 0.15).toFixed(2)}
+                  {((planData?.data?.webinarPlan?.price ?? 50) * 0.15).toFixed(
+                    2,
+                  )}
                 </div>
               </div>
               <Separator className="bg-gray-300" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Net Amount</div>
-                <div>${((planData?.data?.webinarPlan?.price ?? 50) * 0.95).toFixed(2)}</div>
+                <div>
+                  $
+                  {((planData?.data?.webinarPlan?.price ?? 50) * 0.95).toFixed(
+                    2,
+                  )}
+                </div>
               </div>
             </div>
           </CardContent>

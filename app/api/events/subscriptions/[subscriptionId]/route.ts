@@ -233,11 +233,11 @@ export async function PATCH(
 ) {
   try {
     const body = await request.json();
-    
-    if (!body || typeof body !== 'object') {
+
+    if (!body || typeof body !== "object") {
       return NextResponse.json(
         { error: "Invalid request body" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -247,15 +247,12 @@ export async function PATCH(
     if (!status) {
       return NextResponse.json(
         { error: "Status is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!Object.values(RequestStatus).includes(status)) {
-      return NextResponse.json(
-        { error: "Invalid status" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
 
     // First fetch the subscription to validate it exists and get all necessary data
@@ -282,106 +279,129 @@ export async function PATCH(
     if (!existingSubscription) {
       return NextResponse.json(
         { error: "Subscription not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
     if (!existingSubscription.subscriptionPlan?.consultantProfile?.user?.id) {
       return NextResponse.json(
         { error: "Invalid subscription: missing consultant information" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!existingSubscription.requestedBy?.user?.id) {
       return NextResponse.json(
         { error: "Invalid subscription: missing requestedBy information" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const startDate = new Date();
-    const endDate = addMonths(startDate, existingSubscription.subscriptionPlan.durationInMonths);
+    const endDate = addMonths(
+      startDate,
+      existingSubscription.subscriptionPlan.durationInMonths,
+    );
 
     try {
       // Wrap everything in a transaction
-      const result = await prisma.$transaction(async (tx) => {
-        // Update subscription status and dates
-        const subscription = await tx.subscription.update({
-          where: { id: subscriptionId },
-          data: { 
-            requestStatus: status,
-            startDate: startDate,
-            endDate: endDate
-          },
-          include: {
-            subscriptionPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
+      const result = await prisma.$transaction(
+        async (tx) => {
+          // Update subscription status and dates
+          const subscription = await tx.subscription.update({
+            where: { id: subscriptionId },
+            data: {
+              requestStatus: status,
+              startDate: startDate,
+              endDate: endDate,
+            },
+            include: {
+              subscriptionPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: true,
+                    },
+                  },
+                },
+              },
+              requestedBy: {
+                include: {
+                  user: true,
+                },
+              },
+              appointments: {
+                include: {
+                  slotsOfAppointment: {
+                    include: {
+                      user: true,
+                    },
                   },
                 },
               },
             },
-            requestedBy: {
-              include: {
-                user: true,
-              },
-            },
-            appointments: {
-              include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-          },
-        });
+          });
 
-        // If approved, create appointments
-        if (status === RequestStatus.APPROVED) {
-          const appointments = await createAppointmentsForSubscription(subscription, tx);
-          subscription.appointments = appointments;
-        }
+          // If approved, create appointments
+          if (status === RequestStatus.APPROVED) {
+            const appointments = await createAppointmentsForSubscription(
+              subscription,
+              tx,
+            );
+            subscription.appointments = appointments;
+          }
 
-        return subscription;
-      }, {
-        maxWait: 10000, // 10s max wait time
-        timeout: 30000, // 30s timeout
-      });
+          return subscription;
+        },
+        {
+          maxWait: 10000, // 10s max wait time
+          timeout: 30000, // 30s timeout
+        },
+      );
 
       return NextResponse.json({ data: result });
     } catch (error) {
-      console.error("Transaction error:", error instanceof Error ? error.message : 'Unknown error');
+      console.error(
+        "Transaction error:",
+        error instanceof Error ? error.message : "Unknown error",
+      );
       throw error;
     }
   } catch (error) {
-    console.error("Error updating subscription:", error instanceof Error ? error.message : 'Unknown error');
+    console.error(
+      "Error updating subscription:",
+      error instanceof Error ? error.message : "Unknown error",
+    );
     return NextResponse.json(
       { error: "An error occurred while updating subscription" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 async function createAppointmentsForSubscription(subscription: any, tx: any) {
   const { subscriptionPlan, requestedBy } = subscription;
-  
+
   if (!subscriptionPlan?.durationInMonths || !subscriptionPlan?.callsPerWeek) {
     console.error("Missing subscription plan details:", subscriptionPlan);
     throw new Error("Invalid subscription plan details");
   }
 
-  if (!requestedBy?.user?.id || !subscriptionPlan?.consultantProfile?.user?.id) {
-    console.error("Missing user information:", { requestedBy, consultantProfile: subscriptionPlan.consultantProfile });
+  if (
+    !requestedBy?.user?.id ||
+    !subscriptionPlan?.consultantProfile?.user?.id
+  ) {
+    console.error("Missing user information:", {
+      requestedBy,
+      consultantProfile: subscriptionPlan.consultantProfile,
+    });
     throw new Error("Missing user information");
   }
 
   const startDate = subscription.startDate || new Date();
-  const endDate = subscription.endDate || addMonths(startDate, subscriptionPlan.durationInMonths);
+  const endDate =
+    subscription.endDate ||
+    addMonths(startDate, subscriptionPlan.durationInMonths);
   const appointments = [];
 
   // Prepare all appointment data first
@@ -392,24 +412,24 @@ async function createAppointmentsForSubscription(subscription: any, tx: any) {
     // Create callsPerWeek appointments for this week
     for (let i = 0; i < subscriptionPlan.callsPerWeek; i++) {
       const appointmentDate = setHours(setMinutes(currentDate, 0), 10);
-      
+
       // Check if appointment already exists for this time slot using transaction
       const existingAppointment = await tx.appointment.findFirst({
         where: {
           subscription: { id: subscription.id },
           slotsOfAppointment: {
             some: {
-              slotStartTimeInUTC: appointmentDate
-            }
-          }
-        }
+              slotStartTimeInUTC: appointmentDate,
+            },
+          },
+        },
       });
 
       if (!existingAppointment) {
         allAppointmentData.push({
           appointmentType: AppointmentsType.SUBSCRIPTION,
           subscription: {
-            connect: { id: subscription.id }
+            connect: { id: subscription.id },
           },
           slotsOfAppointment: {
             create: {
@@ -419,11 +439,11 @@ async function createAppointmentsForSubscription(subscription: any, tx: any) {
               user: {
                 connect: [
                   { id: requestedBy.user.id },
-                  { id: subscriptionPlan.consultantProfile.user.id }
-                ]
-              }
-            }
-          }
+                  { id: subscriptionPlan.consultantProfile.user.id },
+                ],
+              },
+            },
+          },
         });
       }
     }
@@ -436,22 +456,25 @@ async function createAppointmentsForSubscription(subscription: any, tx: any) {
     const batch = allAppointmentData.slice(i, i + batchSize);
     try {
       const createdAppointments = await Promise.all(
-        batch.map(appointmentData => 
+        batch.map((appointmentData) =>
           tx.appointment.create({
             data: appointmentData,
             include: {
               slotsOfAppointment: {
                 include: {
-                  user: true
-                }
-              }
-            }
-          })
-        )
+                  user: true,
+                },
+              },
+            },
+          }),
+        ),
       );
       appointments.push(...createdAppointments);
     } catch (error) {
-      console.error(`Error creating appointments batch ${i/batchSize + 1}:`, error instanceof Error ? error.message : 'Unknown error');
+      console.error(
+        `Error creating appointments batch ${i / batchSize + 1}:`,
+        error instanceof Error ? error.message : "Unknown error",
+      );
       throw error;
     }
   }

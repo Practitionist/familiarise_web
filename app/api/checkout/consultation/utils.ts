@@ -1,9 +1,12 @@
 import { PrismaClient, Prisma } from "@prisma/client";
-import { ConsultationCheckoutInput, ConsultationPlanWithDetails } from "./schema";
+import {
+  ConsultationCheckoutInput,
+  ConsultationPlanWithDetails,
+} from "./schema";
 
 export async function validateAndGetPlan(
   tx: Prisma.TransactionClient,
-  consultationPlanId: string
+  consultationPlanId: string,
 ): Promise<ConsultationPlanWithDetails> {
   const plan = await tx.consultationPlan.findUnique({
     where: { id: consultationPlanId },
@@ -31,7 +34,7 @@ export async function validateAndGetPlan(
 
 export async function validateSlotAvailability(
   tx: Prisma.TransactionClient,
-  data: ConsultationCheckoutInput
+  data: ConsultationCheckoutInput,
 ): Promise<void> {
   // Check if slot exists
   const slotData = data.slotOfAvailabilityWeeklyId
@@ -63,7 +66,7 @@ export async function validateSlotAvailability(
 export async function calculateFinalAmount(
   tx: Prisma.TransactionClient,
   baseAmount: number,
-  discountCode?: string
+  discountCode?: string,
 ): Promise<{ amount: number; discountCodeId: string | null }> {
   let amount = baseAmount;
   let discountCodeId = null;
@@ -103,7 +106,7 @@ export async function createConsultationAppointment(
     userId: string;
     slotStartTimeInUTC: string;
     slotEndTimeInUTC: string;
-  }
+  },
 ): Promise<ConsultationWithAppointment> {
   const consultation = await tx.consultation.create({
     data: {
@@ -161,7 +164,7 @@ export async function createPaymentRecord(
     appointmentId: string;
     discountCodeId: string | null;
     initialPaymentIntent?: string;
-  }
+  },
 ) {
   return tx.payment.create({
     data: {
@@ -181,7 +184,7 @@ export async function createPaymentRecord(
 export async function updatePaymentIntent(
   tx: Prisma.TransactionClient,
   paymentId: string,
-  paymentIntent: string
+  paymentIntent: string,
 ) {
   return tx.payment.update({
     where: { id: paymentId },
