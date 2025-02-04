@@ -336,7 +336,7 @@ function createRequestObject(
 ): PostmanRequest {
   const queryParams = getDefaultQueryParams(pathSegments);
   const pathWithParams = pathSegments.map((segment) =>
-    segment.startsWith("[") ? `{{${segment.replace(/[\[\]]/g, "")}}}` : segment,
+    segment.startsWith("[") ? `{{${segment.replace(/[[\]]/g, "")}}}` : segment,
   );
 
   const request: PostmanRequest = {
