@@ -43,10 +43,10 @@ const subscriptionInclude = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { subscriptionId: string } },
+  { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
   try {
-    const { subscriptionId } = params;
+    const { subscriptionId } = await params;
     const body: ValidationRequest = await request.json();
 
     // Fetch subscription with necessary relations

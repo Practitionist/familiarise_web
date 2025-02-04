@@ -5,7 +5,7 @@ import authOptions from "@/app/api/auth/[...nextauth]/options";
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { appointmentId: string } },
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
     const session = await getServerSession(authOptions);
@@ -13,7 +13,7 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { appointmentId } = params;
+    const { appointmentId } = await params;
 
     // Start transaction
     const result = await prisma.$transaction(async (tx) => {

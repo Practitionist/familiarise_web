@@ -5,9 +5,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { consultantId: string } },
+  { params }: { params: Promise<{ consultantId: string }> },
 ) {
   try {
+    const { consultantId } = await params;
     const { searchParams } = new URL(req.url);
     const startDateInUtc = searchParams.get("startDateInUtc");
     const endDateInUtc = searchParams.get("endDateInUtc");
@@ -40,14 +41,14 @@ export async function GET(
           {
             consultation: {
               consultationPlan: {
-                consultantProfileId: params.consultantId,
+                consultantProfileId: consultantId,
               },
             },
           },
           {
             subscription: {
               subscriptionPlan: {
-                consultantProfileId: params.consultantId,
+                consultantProfileId: consultantId,
               },
             },
           },
@@ -92,7 +93,7 @@ export async function GET(
     // Get custom slots
     const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
       where: {
-        consultantProfileId: params.consultantId,
+        consultantProfileId: consultantId,
         slotStartTimeInUTC: { gte: new Date(startDateInUtc) },
         slotEndTimeInUTC: { lte: new Date(endDateInUtc) },
       },
@@ -104,7 +105,7 @@ export async function GET(
     // Get weekly slots
     const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
       where: {
-        consultantProfileId: params.consultantId,
+        consultantProfileId: consultantId,
       },
       orderBy: [
         { dayOfWeekforStartTimeInUTC: "asc" },

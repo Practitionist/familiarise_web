@@ -43,10 +43,10 @@ const consultationInclude = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { consultationId: string } },
+  { params }: { params: Promise<{ consultationId: string }> },
 ) {
   try {
-    const { consultationId } = params;
+    const { consultationId } = await params;
     const body: ValidationRequest = await request.json();
 
     // Fetch consultation with necessary relations

@@ -1,6 +1,9 @@
+"use client";
+
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { redirect } from "next/navigation";
+import { use } from "react";
 import { ClassDetails } from "./components/ClassDetails";
 
 type ClassWithRelations = Prisma.ClassGetPayload<{
@@ -60,12 +63,14 @@ async function getClass(classId: string): Promise<ClassWithRelations | null> {
   });
 }
 
-interface PageProps {
-  params: { classId: string };
-}
+type PageProps = {
+  params: Promise<{ classId: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+};
 
-export default async function ClassDetailsPage({ params }: PageProps) {
-  const classData = await getClass(params.classId);
+export default function ClassDetailsPage({ params }: Readonly<PageProps>) {
+  const resolvedParams = use(params);
+  const classData = use(getClass(resolvedParams.classId));
 
   if (!classData) {
     redirect("/explore/programs/classes");
