@@ -5,10 +5,14 @@
  */
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useToast } from "@/hooks/use-toast";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 
 export default function SignIn() {
+  
+  const { toast } = useToast();
+
   return (
     <div className="min-h-screen flex flex-col md:flex-row h-full">
       <div className="flex-1 md:w-1/2 bg-white text-black p-6 md:p-12 flex flex-col justify-between">
@@ -61,21 +65,39 @@ export default function SignIn() {
           </div>
           <Button
             className="w-full flex items-center justify-center bg-black hover:bg-gray-700"
-            onClick={() => signIn("github")}
+            onClick={() => {
+              signIn("github");
+              toast({
+                title: "Signing in with GitHub...",
+                description: "Please wait while we redirect you.",
+              });
+            }}
           >
             <GithubIcon className="w-6 h-6 text-white mr-2" />
             Github
           </Button>
           <Button
             className="w-full flex items-center justify-center mt-4 bg-red-600 hover:bg-red-500"
-            onClick={() => signIn("google")}
+            onClick={() => {
+              signIn("google");
+              toast({
+                title: "Signing in with Google...", 
+                description: "Please wait while we redirect you.",
+              });
+            }}
           >
             <ChromeIcon className="w-6 h-6 text-white mr-2" />
             Google
           </Button>
           <Button
             className="w-full flex items-center justify-center mt-4 bg-blue-600 hover:bg-blue-500"
-            onClick={() => signIn("facebook")}
+            onClick={() => {
+              signIn("facebook");
+              toast({
+                title: "Signing in with Facebook...",
+                description: "Please wait while we redirect you.",
+              });
+            }}
           >
             <FacebookIcon className="w-6 h-6 text-white mr-2" />
             Facebook

@@ -13,7 +13,6 @@ import {
   UserIcon,
 } from "assets/icons";
 import { Button } from "components/ui/button";
-import { toast } from "components/ui/use-toast";
 import { format } from "date-fns";
 import { use, useCallback, useState } from "react";
 import { AddScheduleDialog } from "./components/AddScheduleDialog";
@@ -22,6 +21,7 @@ import { AllocationWeekView } from "./components/AllocationWeekView";
 import { useCalendarNavigation } from "./hooks/useCalendarNavigation";
 import { useSlots } from "./hooks/useSlots";
 import { NewSlot } from "./utils";
+import { useToast } from "@/hooks/use-toast";
 
 export default function AllocationPage({
   params,
@@ -29,6 +29,7 @@ export default function AllocationPage({
   params: Promise<{ consultantId: string }>;
 }>) {
   const resolvedParams = use(params);
+  const { toast } = useToast();
   const consultantId = resolvedParams.consultantId;
 
   const [isAddScheduleOpen, setIsAddScheduleOpen] = useState(false);

@@ -51,14 +51,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { toast } from "@/components/ui/use-toast";
+
 import { User } from "@prisma/client";
 import { useSession } from "next-auth/react";
 import Image from "next/image";
 import { useState } from "react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Profile() {
   const { data: session } = useSession();
+  const { toast } = useToast();
   const [name, setName] = useState(session?.user?.name ?? "");
   const [phone, setPhone] = useState(session?.user?.phone ?? "");
   const [address, setAddress] = useState(session?.user?.address ?? "");

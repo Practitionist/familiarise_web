@@ -1,5 +1,4 @@
 "use client";
-import { toast } from "@/components/ui/use-toast";
 import {
   ConsultantProfile,
   ConsulteeProfile,
@@ -28,6 +27,7 @@ import StaffProfileForm from "./components/StaffProfileForm";
 import StaffResponsibilitiesForm from "./components/StaffResponsibilitiesForm";
 import StaffReviewForm from "./components/StaffReviewForm";
 import ConsulteePreferencesForm from "./components/ConsulteePreferencesForm";
+import { useToast } from "@/hooks/use-toast";
 
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsultantProfile> &
@@ -75,6 +75,7 @@ const MultiStepForm: React.FC = () => {
     preferredCommunicationMethod: "VIDEO",
   } as OnboardingFormData);
   const router = useRouter();
+  const {toast} = useToast();
 
   const methods = useForm<OnboardingFormData>({
     resolver: zodResolver(PersonalInfoAndRoleSchema),
@@ -210,6 +211,11 @@ const MultiStepForm: React.FC = () => {
       };
 
       console.log("Request Body:", JSON.stringify(requestBody, null, 2));
+      toast({
+        title: "Updating Onboarding Information",
+        description: "Please wait...",
+        variant: "default",
+      });
 
       const response = await fetch(`/api/form/onboarding/${id}`, {
         method: "PATCH",
