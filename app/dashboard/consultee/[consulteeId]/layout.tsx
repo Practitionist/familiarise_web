@@ -71,10 +71,11 @@ function ConsulteeNav({
               href={`/dashboard/consultee/${consulteeId}/${item.path}`}
             >
               <Button
-                className={`${currentPath === item.path
+                className={`${
+                  currentPath === item.path
                     ? "bg-[#f87171] text-white"
                     : "text-gray-500 hover:bg-gray-200"
-                  } rounded-md px-4 py-2 transition-colors whitespace-nowrap`}
+                } rounded-md px-4 py-2 transition-colors whitespace-nowrap`}
                 variant={currentPath === item.path ? "default" : "ghost"}
               >
                 {item.name}
@@ -103,8 +104,8 @@ function useConsulteeData(consulteeId: string) {
         setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
         const userId =
-          (process.env.NODE_ENV === "test" ||
-            process.env.NODE_ENV === "development")
+          process.env.NODE_ENV === "test" ||
+          process.env.NODE_ENV === "development"
             ? process.env.NEXT_PUBLIC_TEST_USERID
             : session?.user?.id;
 

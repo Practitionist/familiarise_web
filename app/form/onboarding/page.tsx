@@ -75,7 +75,7 @@ const MultiStepForm: React.FC = () => {
     preferredCommunicationMethod: "VIDEO",
   } as OnboardingFormData);
   const router = useRouter();
-  const {toast} = useToast();
+  const { toast } = useToast();
 
   const methods = useForm<OnboardingFormData>({
     resolver: zodResolver(PersonalInfoAndRoleSchema),

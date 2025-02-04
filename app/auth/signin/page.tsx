@@ -10,7 +10,6 @@ import { signIn } from "next-auth/react";
 import Link from "next/link";
 
 export default function SignIn() {
-  
   const { toast } = useToast();
 
   return (
@@ -81,7 +80,7 @@ export default function SignIn() {
             onClick={() => {
               signIn("google");
               toast({
-                title: "Signing in with Google...", 
+                title: "Signing in with Google...",
                 description: "Please wait while we redirect you.",
               });
             }}
