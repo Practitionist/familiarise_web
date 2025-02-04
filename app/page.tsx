@@ -19,7 +19,7 @@ import { useImages } from "@/hooks/useImages";
 import store from "@/redux/store";
 
 export default function Home() {
-  const images = useImages("consultx_bucket", "assets/images");
+  const images = useImages("assets", "images/landing-page");
 
   return (
     <ReduxProvider store={store}>
