@@ -25,9 +25,16 @@ export async function GET(
 
     return NextResponse.json({ data: user }, { status: 200 });
   } catch (error) {
-    console.error("Error getting user:", error);
+    if (error instanceof Error) {
+      console.error("Error: ", error.stack);
+    }
     return NextResponse.json(
-      { error: "An error occurred while fetching the user" },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "An error occurred while fetching the user",
+      },
       { status: 500 },
     );
   }

@@ -32,7 +32,7 @@ const fetchImagesFromSupabaseStorage = async (bucket: string, path: string) => {
       return { ...file, url: publicUrl };
     });
   } catch (error) {
-    console.log("error", error);
+    console.error("error", error);
     return [];
   }
 };

@@ -620,7 +620,7 @@ export async function PATCH(
       if (error instanceof Error) {
         // Fixes the below error:
         //  ⨯ TypeError: The "payload" argument must be of type object. Received null
-        console.log("Error: ", error.stack);
+        console.error("Error: ", error.stack);
       }
       return NextResponse.json(
         {
@@ -634,7 +634,7 @@ export async function PATCH(
     if (error instanceof Error) {
       // Fixes the below error:
       //  ⨯ TypeError: The "payload" argument must be of type object. Received null
-      console.log("Error: ", error.stack);
+      console.error("Error: ", error.stack);
     }
     return NextResponse.json(
       { error: "An error occurred during slot allocation" },

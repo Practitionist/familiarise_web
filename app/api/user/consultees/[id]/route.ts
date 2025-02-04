@@ -22,12 +22,15 @@ export async function GET(
 
     return NextResponse.json({ data: consultee }, { status: 200 });
   } catch (error) {
-    console.error("Error getting consultee:", error);
+    if (error instanceof Error) {
+      console.error("Error: ", error.stack);
+    }
     return NextResponse.json(
       {
         error:
-          "An unexpected error occurred while fetching the consultee profile",
-        details: error instanceof Error ? error.message : "Unknown error",
+          error instanceof Error
+            ? error.message
+            : "Failed to get consultee profile",
       },
       { status: 500 },
     );
