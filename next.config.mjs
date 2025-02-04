@@ -9,7 +9,7 @@ const config = {
         hostname: "firebasestorage.googleapis.com",
       },
       {
-        hostname: "spyhtvtmrektuyogsxze.supabase.co",
+        hostname: "*.supabase.co",
       },
       {
         hostname: "avatars.githubusercontent.com",

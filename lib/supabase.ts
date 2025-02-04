@@ -3,7 +3,14 @@ import { createClient } from "@supabase/supabase-js";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string;
 
-const supabase = createClient(supabaseUrl, supabaseKey);
+let supabase;
+try {
+  supabase = createClient(supabaseUrl, supabaseKey);
+  console.log("Supabase client created successfully");
+} catch (error) {
+  console.error("Error creating Supabase client:", error);
+  throw error;
+}
 
 const fetchImagesFromSupabaseStorage = async (bucket: string, path: string) => {
   try {
@@ -14,7 +21,7 @@ const fetchImagesFromSupabaseStorage = async (bucket: string, path: string) => {
     });
 
     if (error) {
-      console.error("Error fetching images:", error);
+      console.error("Error fetching images from Supabase:", error);
       return [];
     }
 

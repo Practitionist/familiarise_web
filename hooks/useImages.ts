@@ -18,8 +18,13 @@ export function useImages(bucket: string, path: string): ImageType[] {
 
   useEffect(() => {
     const getImages = async () => {
-      const fetchedImages = await fetchImagesFromSupabaseStorage(bucket, path);
-      setImages(fetchedImages);
+      try {
+        const fetchedImages = await fetchImagesFromSupabaseStorage(bucket, path);
+        setImages(fetchedImages);
+      } catch (error) {
+        console.error("Error fetching images in useImages hook:", error);
+        setImages([]);
+      }
     };
 
     getImages();
