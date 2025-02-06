@@ -1,9 +1,9 @@
-import { getServerSession } from "next-auth";
+"use client";
+
+import { use, useEffect, useState } from "react";
 import { generateProgramImageUrl } from "../../utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import prisma from "@/lib/prisma";
-import type { Prisma } from "@prisma/client";
 import Image from "next/image";
 import { redirect } from "next/navigation";
 import {
@@ -15,53 +15,7 @@ import {
   CertificateIcon,
 } from "./icons";
 import { ClientWebinarRegistration } from "./components/ClientWebinarRegistration";
-
-type WebinarWithRelations = Prisma.WebinarGetPayload<{
-  include: {
-    webinarPlan: {
-      include: {
-        consultantProfile: {
-          include: {
-            user: true;
-          };
-        };
-        topics: true;
-      };
-    };
-    appointment: {
-      include: {
-        slotsOfAppointment: true;
-      };
-    };
-    meetingRoom: true;
-  };
-}>;
-
-async function getWebinar(
-  webinarId: string,
-): Promise<WebinarWithRelations | null> {
-  return prisma.webinar.findUnique({
-    where: { id: webinarId },
-    include: {
-      webinarPlan: {
-        include: {
-          consultantProfile: {
-            include: {
-              user: true,
-            },
-          },
-          topics: true,
-        },
-      },
-      appointment: {
-        include: {
-          slotsOfAppointment: true,
-        },
-      },
-      meetingRoom: true,
-    },
-  });
-}
+import type { TWebinar } from "@/types/appointment";
 
 type FeatureItemProps = {
   icon: React.ReactNode;
@@ -78,25 +32,47 @@ const FeatureItem = ({ icon, label, value }: FeatureItemProps) => (
   </div>
 );
 
-interface PageProps {
-  params: Promise<{ webinarId: string }>;
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
-}
-
-export default async function WebinarDetailsPage({
+export default function WebinarDetailsPage({
   params,
-  searchParams,
-}: PageProps) {
-  const { webinarId } = await params;
-  const webinar = await getWebinar(webinarId);
+}: Readonly<{
+  params: Promise<{ webinarId: string }>;
+}>) {
+  const [webinarData, setWebinarData] = useState<TWebinar | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const resolvedParams = use(params);
+  const webinarId = resolvedParams.webinarId;
 
-  if (!webinar) {
-    redirect("/explore/programs/webinars");
+  useEffect(() => {
+    const fetchWebinarData = async () => {
+      try {
+        const response = await fetch(`/api/events/webinars/${webinarId}`);
+        if (!response.ok) throw new Error("Failed to fetch webinar data");
+        const resJson = await response.json();
+        setWebinarData(resJson.data);
+      } catch (error) {
+        console.error("Error fetching webinar data:", error);
+        redirect("/explore/programs/webinars");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchWebinarData();
+  }, [webinarId]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    );
   }
 
-  const { webinarPlan } = webinar;
+  if (!webinarData) return null;
+
+  const { webinarPlan } = webinarData;
   const nextSession =
-    webinar.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+    webinarData.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -173,15 +149,22 @@ export default async function WebinarDetailsPage({
                     </p>
                   </div>
 
-                  {webinar.appointment?.slotsOfAppointment &&
-                    webinar.appointment.slotsOfAppointment.length > 0 && (
+                  {webinarData.appointment?.slotsOfAppointment &&
+                    webinarData.appointment.slotsOfAppointment.length > 0 && (
                       <div>
                         <h2 className="text-xl font-semibold mb-2">
                           Webinar Schedule
                         </h2>
                         <div className="space-y-2">
-                          {webinar.appointment.slotsOfAppointment.map(
-                            (slot, slotIndex) => (
+                          {webinarData.appointment.slotsOfAppointment.map(
+                            (
+                              slot: {
+                                slotStartTimeInUTC: Date;
+                                slotEndTimeInUTC: Date;
+                                user: any[];
+                              },
+                              slotIndex: number,
+                            ) => (
                               <div
                                 key={slotIndex}
                                 className="bg-gray-800/10 p-4 rounded-lg"
@@ -290,7 +273,7 @@ export default async function WebinarDetailsPage({
             </Card>
 
             <ClientWebinarRegistration
-              webinarId={webinar.id}
+              webinarId={webinarData.id}
               price={webinarPlan.price}
               nextSession={nextSession}
               language={webinarPlan.language}

@@ -16,33 +16,7 @@ import {
 import { ClientClassRegistration } from "./ClientClassRegistration";
 import { generateProgramImageUrl } from "../../../utils";
 import type { Prisma } from "@prisma/client";
-
-type ClassWithRelations = Prisma.ClassGetPayload<{
-  include: {
-    classPlan: {
-      include: {
-        consultantProfile: {
-          include: {
-            user: true;
-          };
-        };
-        topics: true;
-        classContents: {
-          orderBy: {
-            order: "asc";
-          };
-        };
-      };
-    };
-    waitlist: true;
-    appointments: {
-      include: {
-        slotsOfAppointment: true;
-      };
-    };
-    meetingRoom: true;
-  };
-}>;
+import { TClass } from "@/types/appointment";
 
 type FeatureItemProps = {
   icon: React.ReactNode;
@@ -60,7 +34,7 @@ const FeatureItem = ({ icon, label, value }: FeatureItemProps) => (
 );
 
 interface ClassDetailsProps {
-  classData: ClassWithRelations;
+  classData: TClass;
 }
 
 export function ClassDetails({ classData }: ClassDetailsProps) {
