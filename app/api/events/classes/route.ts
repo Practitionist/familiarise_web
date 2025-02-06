@@ -13,6 +13,24 @@ export async function GET(request: Request) {
       classes = await prisma.class.findMany({
         where: {
           OR: [
+            // Get classes where consultee is registered through appointments
+            {
+              appointments: {
+                some: {
+                  slotsOfAppointment: {
+                    some: {
+                      user: {
+                        some: {
+                          consulteeProfile: {
+                            id: consulteeProfileId,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
             // Get classes where consultee is in waitlist
             {
               waitlist: {
