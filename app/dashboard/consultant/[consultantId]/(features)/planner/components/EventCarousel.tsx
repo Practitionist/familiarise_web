@@ -65,29 +65,47 @@ export function EventCarousel({ events, onEdit, eventType }: EventCarouselProps)
       : `${event.classPlan.durationInMonths} months`
   }
 
+  const [participantCounts, setParticipantCounts] = React.useState<Record<string, number>>({})
+  const [isLoadingCounts, setIsLoadingCounts] = React.useState(true)
+
+  React.useEffect(() => {
+    const fetchParticipantCounts = async () => {
+      setIsLoadingCounts(true)
+      try {
+        for (const event of events) {
+        try {
+          const response = await fetch(
+            isWebinarEvent(event) 
+              ? `/api/participants/webinar/${event.id}`
+              : `/api/participants/class/${event.id}`
+          )
+          if (response.ok) {
+            const data = await response.json()
+            setParticipantCounts(prev => ({
+              ...prev,
+              [event.id]: data.participants.length
+            }))
+          }
+        } catch (error) {
+          console.error('Error fetching participant count:', error)
+        }
+        }
+      } finally {
+        setIsLoadingCounts(false)
+      }
+    }
+
+    if (events.length > 0) {
+      fetchParticipantCounts()
+    }
+  }, [events])
+
   const getParticipantsCount = (event: Event) => {
-    if (isWebinarEvent(event)) {
-      const currentParticipants = event.appointment?.slotsOfAppointment?.reduce(
-        (count: number, slot: { user: any[] }) => count + (slot.user?.length || 0),
-        0
-      ) || 0
-      return {
-        currentParticipants,
-        maxParticipants: event.webinarPlan.maxParticipants
-      }
-    } else {
-      const currentParticipants = event.appointments?.reduce(
-        (count: number, appointment: { slotsOfAppointment?: { user: any[] }[] }) => 
-          count + (appointment.slotsOfAppointment?.reduce(
-            (slotCount: number, slot: { user: any[] }) => slotCount + (slot.user?.length || 0),
-            0
-          ) || 0),
-        0
-      ) || 0
-      return {
-        currentParticipants,
-        maxParticipants: event.classPlan.maxParticipants
-      }
+    return {
+      currentParticipants: participantCounts[event.id] || 0,
+      maxParticipants: isWebinarEvent(event) 
+        ? event.webinarPlan.maxParticipants 
+        : event.classPlan.maxParticipants
     }
   }
 
@@ -100,19 +118,33 @@ export function EventCarousel({ events, onEdit, eventType }: EventCarouselProps)
   }
 
   return (
-    <div className="relative">
-      <div className="flex overflow-hidden">
+    <div className="flex items-center gap-4">
+      {events.length > 3 && (
+        <Button
+          variant="outline"
+          size="icon"
+          className="hidden md:flex bg-white shadow-md"
+          onClick={prevSlide}
+        >
+          <ChevronLeftIcon className="h-4 w-4" />
+        </Button>
+      )}
+      <div className="flex flex-col md:flex-row gap-4 overflow-x-auto md:overflow-hidden">
         {events.slice(startIndex, startIndex + 3).map((event) => {
           const { currentParticipants, maxParticipants } = getParticipantsCount(event)
           
           return (
-            <Card key={event.id} className="w-1/3 flex-shrink-0 m-2 bg-white shadow-lg rounded-lg overflow-hidden">
+            <Card key={event.id} className="w-full md:w-1/3 flex-shrink-0 bg-white shadow-lg rounded-lg overflow-hidden">
               <CardHeader className="bg-gray-50 border-b">
                 <CardTitle className="text-lg font-semibold text-gray-800">
                   {getEventTitle(event)}
                 </CardTitle>
                 <CardDescription className="text-sm text-gray-600">
-                  {currentParticipants}/{maxParticipants} participants
+                  {isLoadingCounts ? (
+                    "Loading participants..."
+                  ) : (
+                    `${currentParticipants}/${maxParticipants} participants`
+                  )}
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-4">
@@ -121,8 +153,20 @@ export function EventCarousel({ events, onEdit, eventType }: EventCarouselProps)
                 <p className="text-sm text-gray-600">Duration: {getEventDuration(event)}</p>
               </CardContent>
               <CardFooter className="bg-gray-50 border-t p-4 flex justify-between">
-                <Button variant="outline" size="sm" asChild>
-                  <Link href={`/dashboard/consultant/${event.id}/participants`}>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  asChild
+                >
+                  <Link 
+                    href={
+                      eventType === "webinar" && isWebinarEvent(event)
+                        ? `/dashboard/consultant/${event.webinarPlan.consultantProfileId}/planner/webinars/${event.id}/participants`
+                        : isClassEvent(event)
+                          ? `/dashboard/consultant/${event.classPlan.consultantProfileId}/planner/classes/${event.id}/participants`
+                          : "#"
+                    }
+                  >
                     <Users className="w-4 h-4 mr-2" />
                     Manage Participants
                   </Link>
@@ -141,24 +185,14 @@ export function EventCarousel({ events, onEdit, eventType }: EventCarouselProps)
         })}
       </div>
       {events.length > 3 && (
-        <>
-          <Button
-            variant="outline"
-            size="icon"
-            className="absolute top-1/2 left-0 transform -translate-y-1/2 bg-white shadow-md"
-            onClick={prevSlide}
-          >
-            <ChevronLeftIcon className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            className="absolute top-1/2 right-0 transform -translate-y-1/2 bg-white shadow-md"
-            onClick={nextSlide}
-          >
-            <ChevronRightIcon className="h-4 w-4" />
-          </Button>
-        </>
+        <Button
+          variant="outline"
+          size="icon"
+          className="hidden md:flex bg-white shadow-md"
+          onClick={nextSlide}
+        >
+          <ChevronRightIcon className="h-4 w-4" />
+        </Button>
       )}
     </div>
   )
