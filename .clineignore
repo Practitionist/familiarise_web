@@ -1,0 +1,31 @@
+node_modules/
+
+# Next.js build output
+.next/
+out/
+
+# Next.js environment variables
+.env*
+
+# Next.js debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Next.js cache
+.vercel/
+.swc/
+
+# Next.js PWA files
+**/public/sw.js
+**/public/workbox-*.js
+**/public/worker-*.js
+**/public/sw.js.map
+**/public/workbox-*.js.map
+**/public/worker-*.js.map
+
+# Prisma
+prisma/*.db
+*.sqlite
+*.sqlite-journal
+/prisma/migrations/

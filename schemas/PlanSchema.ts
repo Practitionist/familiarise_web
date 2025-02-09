@@ -61,36 +61,77 @@ export const SubscriptionPlanSchema = z.object({
 
 export const WebinarPlanSchema = z.object({
   id: z.string().optional(),
-  title: z.string(),
-  description: z.string().optional(),
-  price: z.number(),
-  durationInHours: z.number(),
-  maxParticipants: z.number(),
-  language: z.string().optional(),
-  level: z.string().optional(),
-  prerequisites: z.string().optional(),
-  materialProvided: z.string().optional(),
-  learningOutcomes: z.array(z.string()),
-  topics: z.array(TagSchema),
+  title: z.string().min(1, "Title is required"),
+  description: z.string().min(1, "Description is required"),
+  price: z.number().nonnegative("Price must be non-negative"),
+  durationInHours: z.number().positive("Duration must be positive"),
+  maxParticipants: z.number().int().positive("Max participants must be a positive integer"),
+  language: z.string().min(1, "Language is required"),
+  level: z.string().min(1, "Level is required"),
+  prerequisites: z.string().nullable(),
+  materialProvided: z.string().nullable(),
+  learningOutcomes: z.array(z.string()).min(1, "At least one learning outcome is required"),
+  topics: z.array(TagSchema).min(1, "At least one topic is required"),
+  createdAt: z.date().optional(),
+  updatedAt: z.date().optional(),
+  consultantProfileId: z.string().nullable(),
+  consultantProfile: z.object({
+    user: z.object({
+      id: z.string(),
+      name: z.string().nullable(),
+      consultantProfileId: z.string().nullable(),
+      address: z.string().nullable(),
+      image: z.string().nullable(),
+      email: z.string().nullable(),
+      staffProfileId: z.string().nullable()
+    })
+  }).nullable()
 });
 
 export const ClassPlanSchema = z.object({
   id: z.string().optional(),
-  title: z.string(),
-  description: z.string(),
-  price: z.number(),
+  title: z.string().min(1, "Title is required"),
+  description: z.string().min(1, "Description is required"),
+  price: z.number().nonnegative("Price must be non-negative"),
   certificateProvided: z.boolean(),
-  durationInMonths: z.number(),
-  callsPerWeek: z.number(),
-  videoMeetings: z.number(),
+  durationInMonths: z.number().int().positive("Duration in months must be a positive integer"),
+  callsPerWeek: z.number().int().nonnegative("Calls per week must be non-negative"),
+  videoMeetings: z.number().int().nonnegative("Video meetings must be non-negative"),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]),
-  maxParticipants: z.number(),
-  language: z.string().optional(),
-  level: z.string().optional(),
-  prerequisites: z.string().optional(),
-  materialProvided: z.string().optional(),
-  learningOutcomes: z.array(z.string()),
-  topics: z.array(TagSchema),
+  maxParticipants: z.number().int().positive("Max participants must be a positive integer"),
+  language: z.string().min(1, "Language is required"),
+  level: z.string().min(1, "Level is required"),
+  prerequisites: z.string().nullable(),
+  materialProvided: z.string().nullable(),
+  learningOutcomes: z.array(z.string()).min(1, "At least one learning outcome is required"),
+  topics: z.array(TagSchema).min(1, "At least one topic is required"),
+  classContents: z.array(z.object({
+    id: z.string(),
+    title: z.string(),
+    description: z.string(),
+    contentType: z.string().nullable(),
+    contentUrl: z.string().nullable(),
+    order: z.number(),
+    hoursAllotted: z.number(),
+    createdAt: z.date(),
+    updatedAt: z.date(),
+    classPlanId: z.string()
+  })),
+  createdAt: z.date().optional(),
+  updatedAt: z.date().optional(),
+  consultantProfileId: z.string().nullable(),
+  consultantProfile: z.object({
+    user: z.object({
+      id: z.string(),
+      name: z.string().nullable(),
+      consultantProfileId: z.string().nullable(),
+      address: z.string().nullable(),
+      image: z.string().nullable(),
+      email: z.string().nullable(),
+      staffProfileId: z.string().nullable()
+    })
+  }).nullable(),
+  
 });
 
 export const ClassContentSchema = z.object({
