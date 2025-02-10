@@ -31,35 +31,19 @@ export function mapWeeklySlots(consultantData: ConsultantData, currentDate: Date
     endDate = new Date(year, month + 1, 0)
   }
 
-  window.console.log('Date range:', {
-    view,
-    startDate: startDate.toISOString(),
-    endDate: endDate.toISOString()
-  })
-
   // Create slots for each weekly pattern within the date range
   const slots: TimeSlot[] = []
   let iterDate = new Date(startDate)
 
   while (iterDate <= endDate) {
     const dayOfWeek = iterDate.getDay()
-    window.console.log('Processing date:', {
-      date: iterDate.toISOString(),
-      dayOfWeek
-    })
-
     const matchingSlots = consultantData.slotsOfAvailabilityWeekly.filter(
       slot => DAY_INDEX[slot.dayOfWeekforStartTimeInUTC] === dayOfWeek
     )
-    window.console.log('Matching slots:', matchingSlots)
 
     matchingSlots.forEach(slot => {
       const startTime = new Date(slot.slotStartTimeInUTC)
       const endTime = new Date(slot.slotEndTimeInUTC)
-      window.console.log('Original slot times:', {
-        start: startTime.toISOString(),
-        end: endTime.toISOString()
-      })
 
       // Create a new date with current date and slot's time
       const slotStartTime = new Date(iterDate)
@@ -68,11 +52,6 @@ export function mapWeeklySlots(consultantData: ConsultantData, currentDate: Date
       const slotEndTime = new Date(iterDate)
       slotEndTime.setHours(endTime.getHours(), endTime.getMinutes(), 0, 0)
 
-      window.console.log('Mapped slot times:', {
-        start: slotStartTime.toISOString(),
-        end: slotEndTime.toISOString()
-      })
-
       // Handle slots that cross midnight
       if (slotEndTime <= slotStartTime) {
         slotEndTime.setDate(slotEndTime.getDate() + 1)
@@ -80,17 +59,11 @@ export function mapWeeklySlots(consultantData: ConsultantData, currentDate: Date
 
       // Create hourly slots
       let currentHour = new Date(slotStartTime)
-      window.console.log('Creating hourly slots starting from:', currentHour.toISOString())
-
       while (currentHour < slotEndTime) {
         const nextHour = new Date(currentHour)
         nextHour.setHours(currentHour.getHours() + 1)
         
         const endTimeForSlot = nextHour > slotEndTime ? slotEndTime : nextHour
-        window.console.log('Creating slot:', {
-          start: currentHour.toISOString(),
-          end: endTimeForSlot.toISOString()
-        })
         
         slots.push({
           startTime: new Date(currentHour),

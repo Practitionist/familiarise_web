@@ -2,6 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, AppointmentsType } from "@prisma/client";
 
+interface UpdateSlotsRequest {
+  slotsOfAppointment?: {
+    deleteMany?: Record<string, never>;
+    createMany?: {
+      data: Array<{
+        slotStartTimeInUTC: string;
+        slotEndTimeInUTC: string;
+      }>;
+    };
+  };
+}
+
 interface UpdateAppointmentRequest {
   appointmentType?: AppointmentsType;
   slotsOfAppointmentId?: string;
@@ -10,6 +22,128 @@ interface UpdateAppointmentRequest {
   webinarId?: string;
   classId?: string;
 }
+
+type AppointmentInclude = Prisma.AppointmentGetPayload<{
+  include: {
+    slotsOfAppointment: {
+      include: {
+        user: {
+          select: {
+            id: true;
+            name: true;
+            email: true;
+            image: true;
+            consulteeProfile: true;
+          };
+        };
+      };
+    };
+    consultation: {
+      include: {
+        consultationPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true;
+                    name: true;
+                    email: true;
+                    image: true;
+                  };
+                };
+              };
+            };
+          };
+        };
+        requestedBy: {
+          include: {
+            user: {
+              select: {
+                id: true;
+                name: true;
+                email: true;
+                image: true;
+              };
+            };
+          };
+        };
+      };
+    };
+    subscription: {
+      include: {
+        subscriptionPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true;
+                    name: true;
+                    email: true;
+                    image: true;
+                  };
+                };
+              };
+            };
+          };
+        };
+        requestedBy: {
+          include: {
+            user: {
+              select: {
+                id: true;
+                name: true;
+                email: true;
+                image: true;
+              };
+            };
+          };
+        };
+      };
+    };
+    webinar: {
+      include: {
+        webinarPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true;
+                    name: true;
+                    email: true;
+                    image: true;
+                  };
+                };
+              };
+            };
+          };
+        };
+      };
+    };
+    class: {
+      include: {
+        classPlan: {
+          include: {
+            consultantProfile: {
+              include: {
+                user: {
+                  select: {
+                    id: true;
+                    name: true;
+                    email: true;
+                    image: true;
+                  };
+                };
+              };
+            };
+          };
+        };
+      };
+    };
+  };
+}>;
 
 export async function GET(
   request: NextRequest,
@@ -170,6 +304,173 @@ export async function GET(
   }
 }
 
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ appointmentId: string }> },
+) {
+  try {
+    const { appointmentId } = await params;
+    const body: UpdateSlotsRequest = await request.json();
+
+    if (!body.slotsOfAppointment?.createMany?.data) {
+      return NextResponse.json(
+        { error: "Missing slots data" },
+        { status: 400 }
+      );
+    }
+
+    const data: Prisma.AppointmentUpdateInput = {
+      slotsOfAppointment: {
+        deleteMany: {},
+        create: body.slotsOfAppointment.createMany.data.map((slot) => ({
+          slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
+          slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+        }))
+      }
+    };
+
+    const updatedAppointment = await prisma.appointment.update({
+      where: { id: appointmentId },
+      data,
+      include: {
+        slotsOfAppointment: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+                consulteeProfile: true,
+              },
+            },
+          },
+        },
+        consultation: {
+          include: {
+            consultationPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        subscription: {
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        webinar: {
+          include: {
+            webinarPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        class: {
+          include: {
+            classPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return NextResponse.json({ data: updatedAppointment }, { status: 200 });
+  } catch (error) {
+    console.error("Error updating appointment slots:", error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2025") {
+        return NextResponse.json(
+          { error: "Appointment not found" },
+          { status: 404 },
+        );
+      }
+    }
+    return NextResponse.json(
+      { error: "An error occurred while updating the appointment slots" },
+      { status: 500 },
+    );
+  }
+}
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -188,24 +489,17 @@ export async function PUT(
       );
     }
 
+    const data: Prisma.AppointmentUpdateInput = {
+      appointmentType: body.appointmentType,
+      consultation: body.consultationId ? { connect: { id: body.consultationId } } : undefined,
+      subscription: body.subscriptionId ? { connect: { id: body.subscriptionId } } : undefined,
+      webinar: body.webinarId ? { connect: { id: body.webinarId } } : undefined,
+      class: body.classId ? { connect: { id: body.classId } } : undefined,
+    };
+
     const updatedAppointment = await prisma.appointment.update({
       where: { id: appointmentId },
-      data: {
-        appointmentType: body.appointmentType,
-        slotsOfAppointment: body.slotsOfAppointmentId
-          ? { connect: { id: body.slotsOfAppointmentId } }
-          : undefined,
-        consultation: body.consultationId
-          ? { connect: { id: body.consultationId } }
-          : undefined,
-        subscription: body.subscriptionId
-          ? { connect: { id: body.subscriptionId } }
-          : undefined,
-        webinar: body.webinarId
-          ? { connect: { id: body.webinarId } }
-          : undefined,
-        class: body.classId ? { connect: { id: body.classId } } : undefined,
-      },
+      data,
       include: {
         slotsOfAppointment: {
           include: {

@@ -1,12 +1,18 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { useParams } from "next/navigation"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useToast } from "@/components/ui/use-toast"
+import { addDays, format, isSameDay, startOfWeek } from "date-fns"
 import { ChevronLeft, ChevronRight } from "lucide-react"
-import { format, startOfWeek, addDays, isSameDay } from "date-fns"
+import { useParams } from "next/navigation"
+import React, { useEffect, useState } from "react"
+import { AppointmentsType } from "@prisma/client"
+import { Appointment, AppointmentSlot, TimeSlot } from "../types/calendar"
+import { mapCustomSlots, mapWeeklySlots } from "../utils"
+
+const HOURS = Array.from({ length: 24 }, (_, i) => i)
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
 interface TimingsCalendarProps {
   isOpen: boolean
@@ -16,12 +22,6 @@ interface TimingsCalendarProps {
   callsPerWeek?: number
   durationInMonths?: number
 }
-
-import { TimeSlot, Appointment, AppointmentSlot, ConsultantData } from "../types/calendar"
-import { mapWeeklySlots, mapCustomSlots } from "../utils"
-
-const HOURS = Array.from({ length: 24 }, (_, i) => i)
-const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
 export function TimingsCalendar({
   isOpen,
@@ -50,6 +50,41 @@ export function TimingsCalendar({
   const startDate = startOfWeek(currentDate)
   const weekDates = [...Array(7)].map((_, i) => addDays(startDate, i))
 
+  const fetchEventSlots = async () => {
+    try {
+      const params = new URLSearchParams({
+        type: eventType.toUpperCase()
+      })
+      
+      if (eventType === "webinar") {
+        params.append("webinarId", eventId)
+      } else {
+        params.append("classId", eventId)
+      }
+
+      const response = await fetch(`/api/slots/appointments?${params}`)
+
+      if (response.ok) {
+        const { data } = await response.json()
+        if (data && data.length > 0 && data[0].slotsOfAppointment?.length > 0) {
+          const slots = data[0].slotsOfAppointment.map((slot: AppointmentSlot) => ({
+            startTime: new Date(slot.slotStartTimeInUTC),
+            endTime: new Date(slot.slotEndTimeInUTC),
+            isAvailable: true,
+            isBooked: false,
+            originalSlot: slot
+          }))
+          setSelectedSlots(slots)
+          
+          // Set current date to the first slot's date
+          setCurrentDate(new Date(slots[0].startTime))
+        }
+      }
+    } catch (error) {
+      console.error("Error fetching event slots:", error)
+    }
+  }
+
   const fetchData = async () => {
     try {
       if (!params.consultantId) {
@@ -59,49 +94,37 @@ export function TimingsCalendar({
       setLoading(true)
 
       const consultantId = params.consultantId.toString()
+      const searchParams = new URLSearchParams()
+      
+      searchParams.append("consultantProfileId", consultantId)
+      searchParams.append("type", eventType.toUpperCase())
 
-      // Fetch consultant and appointments data in parallel
+      if (eventType === "webinar") {
+        searchParams.append("webinarStatus", "APPROVED")
+      } else {
+        searchParams.append("classStatus", "APPROVED")
+      }
+
       const [consultantResponse, appointmentsResponse] = await Promise.all([
         fetch(`/api/user/consultants/${consultantId}`),
-        fetch(
-          `/api/slots/appointments?` + 
-          new URLSearchParams({
-            consultantProfileId: consultantId,
-            type: eventType.toUpperCase(),
-            ...(eventType === "webinar" ? { webinarStatus: "APPROVED" } : {}),
-            ...(eventType === "class" ? { classStatus: "APPROVED" } : {})
-          }).toString()
-        )
+        fetch(`/api/slots/appointments?${searchParams}`)
       ])
 
       // Handle consultant data
       if (consultantResponse.ok) {
         const { data: consultantData } = await consultantResponse.json()
-        console.log('Consultant Data:', consultantData)
         if (!consultantData) {
           throw new Error("Consultant not found")
         }
 
         setScheduleType(consultantData.scheduleType)
 
-        window.console.group('Mapping Slots')
-        window.console.log('Raw consultant data:', consultantData)
-        window.console.log('Current date:', currentDate.toISOString())
-        window.console.log('Schedule type:', consultantData.scheduleType)
-
         // Map slots based on schedule type
         if (consultantData.scheduleType === "WEEKLY") {
-          window.console.log('Weekly slots count:', consultantData.slotsOfAvailabilityWeekly?.length || 0)
-          window.console.log('Raw weekly slots:', consultantData.slotsOfAvailabilityWeekly)
-          window.console.log('Current view:', view)
           const slots = mapWeeklySlots(consultantData, currentDate, view)
-          window.console.log('Weekly slots mapped:', slots)
           setAvailableSlots(slots)
         } else if (consultantData.scheduleType === "CUSTOM") {
-          window.console.log('Custom slots count:', consultantData.slotsOfAvailabilityCustom?.length || 0)
-          window.console.log('Raw custom slots:', consultantData.slotsOfAvailabilityCustom)
           const slots = mapCustomSlots(consultantData)
-          window.console.log('Custom slots mapped:', slots)
           setAvailableSlots(slots)
         } else {
           toast({
@@ -115,30 +138,7 @@ export function TimingsCalendar({
       // Handle appointments data
       if (appointmentsResponse.ok) {
         const appointmentsData = await appointmentsResponse.json()
-        // Log detailed appointments data to browser console
-        window.console.group('Appointments Data')
-        window.console.log('Raw Response:', appointmentsData)
-        window.console.log('Event Type:', eventType.toUpperCase())
-        window.console.log('Consultant ID:', params.consultantId)
-        
         const rawAppointments = appointmentsData.data || []
-        window.console.log('Total Appointments:', rawAppointments.length)
-        
-        // Log each appointment's details
-        window.console.group('Appointments')
-        rawAppointments.forEach((appointment: Appointment, index: number) => {
-          window.console.group(`Appointment ${index + 1}`)
-          window.console.log('Type:', appointment.appointmentType)
-          window.console.log('Status:', appointment.webinar?.status || appointment.class?.status)
-          window.console.log('Slots:', appointment.slotsOfAppointment?.length || 0)
-          window.console.log('Full Data:', appointment)
-          window.console.groupEnd()
-        })
-        window.console.groupEnd()
-        
-        window.console.groupEnd()
-
-        window.console.log('Filtering appointments:', rawAppointments.length)
         
         const bookedSlots = rawAppointments
           .filter((appointment: Appointment) => {
@@ -150,37 +150,16 @@ export function TimingsCalendar({
                 ? appointment.class?.status === "SCHEDULED"
                 : true
 
-            const shouldInclude = slots.length > 0 && isCorrectType && isScheduled
-            
-            // Log filtering decision
-            window.console.log('Appointment filtering:', {
-              id: appointment.id,
-              type: appointment.appointmentType,
-              hasSlots: slots.length > 0,
-              isCorrectType,
-              isScheduled,
-              included: shouldInclude
-            })
-
-            return shouldInclude
+            return slots.length > 0 && isCorrectType && isScheduled
           })
           .flatMap((appointment: Appointment) => {
             const slots = appointment.slotsOfAppointment || []
-            const mappedSlots = slots.map((slot: AppointmentSlot) => ({
+            return slots.map((slot: AppointmentSlot) => ({
               startTime: new Date(slot.slotStartTimeInUTC),
               endTime: new Date(slot.slotEndTimeInUTC),
               isAvailable: false,
               isBooked: true
             }))
-            
-            // Log mapped slots
-            window.console.log('Mapped slots for appointment:', {
-              id: appointment.id,
-              originalSlots: slots,
-              mappedSlots
-            })
-            
-            return mappedSlots
           })
         setExistingAppointments(bookedSlots)
       }
@@ -196,26 +175,30 @@ export function TimingsCalendar({
     }
   }
 
+  // Fetch event slots and data when dialog opens
   useEffect(() => {
     if (isOpen) {
+      fetchEventSlots()
+      fetchData()
+    } else {
+      // Reset state when dialog closes
+      setSelectedSlots([])
+      setCurrentDate(new Date())
+    }
+  }, [isOpen])
+
+  // Fetch data when date, schedule type, or view changes
+  useEffect(() => {
+    if (isOpen && scheduleType) {
       fetchData()
     }
-  }, [isOpen, currentDate, scheduleType, view])
+  }, [currentDate, scheduleType, view])
 
   const handleSlotSelect = (hour: number, date: Date) => {
     const slotStart = new Date(date)
     slotStart.setHours(hour, 0, 0, 0)
     const slotEnd = new Date(slotStart)
     slotEnd.setHours(hour + 1, 0, 0, 0)
-
-    // Check if slot is available
-    window.console.group('Checking slot availability')
-    window.console.log('Checking slot:', {
-      date: slotStart.toISOString(),
-      hour,
-      availableSlots: availableSlots.length,
-      existingAppointments: existingAppointments.length
-    })
 
     // Get all slots for this hour
     const hourSlots = availableSlots.filter(slot => 
@@ -227,11 +210,6 @@ export function TimingsCalendar({
       isSameDay(slot.startTime, slotStart) && 
       slot.startTime.getHours() === hour
     )
-
-    window.console.log('Found slots:', {
-      available: hourSlots.length,
-      booked: bookedHourSlots.length
-    })
 
     // Apply overlap rules
     const isAvailable = hourSlots.some(availableSlot => {
@@ -252,18 +230,7 @@ export function TimingsCalendar({
           (availableSlot.startTime < bookedSlot.endTime && availableSlot.endTime > bookedSlot.startTime) ||
           (bookedSlot.startTime < availableSlot.endTime && bookedSlot.endTime > availableSlot.startTime)
 
-        const overlaps = availableFullyOverlapped || bookedFullyOverlapped || partialOverlap
-        window.console.log('Checking overlap:', {
-          availableStart: availableSlot.startTime.toISOString(),
-          availableEnd: availableSlot.endTime.toISOString(),
-          bookedStart: bookedSlot.startTime.toISOString(),
-          bookedEnd: bookedSlot.endTime.toISOString(),
-          availableFullyOverlapped,
-          bookedFullyOverlapped,
-          partialOverlap,
-          overlaps
-        })
-        return overlaps
+        return availableFullyOverlapped || bookedFullyOverlapped || partialOverlap
       })
 
       // Case 4: No overlap - show the available slot
@@ -271,9 +238,6 @@ export function TimingsCalendar({
     })
 
     const isBooked = bookedHourSlots.length > 0
-
-    window.console.log('Slot status:', { isAvailable, isBooked })
-    window.console.groupEnd()
 
     if (!isAvailable || isBooked) return
 
@@ -313,27 +277,67 @@ export function TimingsCalendar({
   const handleSave = async () => {
     try {
       setSaving(true)
-      const response = await fetch(`/api/slots/appointments`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          appointmentType: eventType.toUpperCase(),
-          [eventType]: { connect: { id: eventId } },
-          slotsOfAppointment: {
-            createMany: {
-              data: selectedSlots.map(slot => ({
-                slotStartTimeInUTC: slot.originalSlot?.slotStartTimeInUTC || slot.startTime.toISOString(),
-                slotEndTimeInUTC: slot.originalSlot?.slotEndTimeInUTC || slot.endTime.toISOString(),
-              }))
-            }
-          }
-        })
+
+      // First, fetch existing appointments for this event
+      const params = new URLSearchParams({
+        type: eventType.toUpperCase()
       })
       
-      if (!response.ok) {
-        throw new Error('Failed to save timings')
+      if (eventType === "webinar") {
+        params.append("webinarId", eventId)
+      } else {
+        params.append("classId", eventId)
+      }
+
+      const existingResponse = await fetch(`/api/slots/appointments?${params}`)
+
+      if (existingResponse.ok) {
+        const { data } = await existingResponse.json()
+        const existingAppointment = data?.[0]
+
+        let response
+        // If there's an existing appointment, update it
+        if (existingAppointment) {
+          response = await fetch(`/api/slots/appointments/${existingAppointment.id}`, {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              slotsOfAppointment: {
+                deleteMany: {},
+                createMany: {
+                  data: selectedSlots.map(slot => ({
+                    slotStartTimeInUTC: slot.originalSlot?.slotStartTimeInUTC || slot.startTime.toISOString(),
+                    slotEndTimeInUTC: slot.originalSlot?.slotEndTimeInUTC || slot.endTime.toISOString(),
+                  }))
+                }
+              }
+            })
+          })
+        } else {
+          // Create new appointment if none exists
+          response = await fetch(`/api/slots/appointments`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              appointmentType: eventType.toUpperCase() as AppointmentsType,
+              [eventType]: { connect: { id: eventId } },
+              slotsOfAppointment: {
+                create: selectedSlots.map(slot => ({
+                  slotStartTimeInUTC: slot.originalSlot?.slotStartTimeInUTC || slot.startTime,
+                  slotEndTimeInUTC: slot.originalSlot?.slotEndTimeInUTC || slot.endTime,
+                }))
+              }
+            })
+          })
+        }
+
+        if (!response.ok) {
+          throw new Error('Failed to save timings')
+        }
       }
       
       toast({
@@ -583,13 +587,6 @@ export function TimingsCalendar({
 
                   // Case 4: No overlap - show the available slot
                   return overlappingBookedSlots.length === 0
-                })
-
-                window.console.log('Slot filtering:', {
-                  date: date.toISOString(),
-                  totalAvailable: daySlots.length,
-                  totalBooked: bookedSlots.length,
-                  displaySlots: displaySlots.length
                 })
 
                 return (

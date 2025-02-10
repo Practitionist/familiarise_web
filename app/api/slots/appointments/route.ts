@@ -289,39 +289,29 @@ async function getAppointments(
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const {
-      appointmentType,
-      userId,
-      slotStartTimeInUTC,
-      slotEndTimeInUTC,
-      ...appointmentData
-    } = body;
+    const body = await request.json()
+    const { appointmentType, slotsOfAppointment, ...appointmentData } = body
 
-    if (
-      !appointmentType ||
-      !userId ||
-      !slotStartTimeInUTC ||
-      !slotEndTimeInUTC
-    ) {
+    if (!appointmentType || !slotsOfAppointment?.createMany?.data?.length) {
       return NextResponse.json(
         { error: "Missing required fields" },
-        { status: 400 },
-      );
+        { status: 400 }
+      )
+    }
+
+    const data: Prisma.AppointmentCreateInput = {
+      appointmentType,
+      ...appointmentData,
+      slotsOfAppointment: {
+        create: slotsOfAppointment.createMany.data.map((slot: { slotStartTimeInUTC: string; slotEndTimeInUTC: string }) => ({
+          slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
+          slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+        }))
+      }
     }
 
     const newAppointment = await prisma.appointment.create({
-      data: {
-        appointmentType,
-        ...appointmentData,
-        slotsOfAppointment: {
-          create: {
-            user: { connect: [{ id: userId }] },
-            slotStartTimeInUTC: new Date(slotStartTimeInUTC),
-            slotEndTimeInUTC: new Date(slotEndTimeInUTC),
-          },
-        },
-      },
+      data,
       include: {
         slotsOfAppointment: {
           include: {
