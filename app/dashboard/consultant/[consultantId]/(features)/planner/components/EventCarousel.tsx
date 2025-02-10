@@ -4,7 +4,7 @@ import React from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Users, Edit, Clock } from "lucide-react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { TimingsCalendar } from "./TimingsCalendar"
 import Link from "next/link"
 import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons"
 import { WebinarEvent, ClassEvent, Event } from "../types"
@@ -194,16 +194,12 @@ export function EventCarousel({ events, onEdit, eventType }: EventCarouselProps)
           )
         })}
       </div>
-    <Dialog open={!!selectedEventId} onOpenChange={() => setSelectedEventId(null)}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
-            Manage Timings
-          </DialogTitle>
-        </DialogHeader>
-        {/* TODO: Add timing management UI */}
-      </DialogContent>
-    </Dialog>
+    <TimingsCalendar 
+      isOpen={!!selectedEventId}
+      onClose={() => setSelectedEventId(null)}
+      eventType={eventType}
+      eventId={selectedEventId || ""}
+    />
       {events.length > 3 && (
         <Button
           variant="outline"
