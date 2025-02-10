@@ -7,7 +7,7 @@ import { Users, Edit, Clock } from "lucide-react"
 import { TimingsCalendar } from "./TimingsCalendar"
 import Link from "next/link"
 import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons"
-import { WebinarEvent, ClassEvent, Event } from "../types"
+import { WebinarEvent, ClassEvent, Event } from "../types/event"
 
 interface WebinarCarouselProps {
   events: WebinarEvent[];

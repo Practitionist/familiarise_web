@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { ClassPlanSchema, WebinarPlanSchema } from "@/schemas/PlanSchema"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
-import { EventPlannerProps, FormData } from "../types"
+import { EventPlannerProps, FormData } from "../types/event"
 
 export function EventPlanner({ isOpen, onClose, onSave, eventType, initialData, isSaving }: EventPlannerProps) {
   const schema = eventType === "webinar" ? WebinarPlanSchema : ClassPlanSchema

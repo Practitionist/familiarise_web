@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { WebinarEvent } from "../../../types"
+import { WebinarEvent } from "../../../types/event"
 import { useParams } from "next/navigation"
 
 export default function WebinarParticipantsPage() {

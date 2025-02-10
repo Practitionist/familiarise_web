@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { EventCarousel } from "./EventCarousel"
 import { EventPlanner } from "./EventPlanner"
-import { WebinarEvent, ClassEvent, Event } from "../types"
+import { WebinarEvent, ClassEvent, Event } from "../types/event"
 
 interface Props {
   consultantId: string
