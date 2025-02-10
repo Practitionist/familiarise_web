@@ -13,30 +13,12 @@ interface TimingsCalendarProps {
   onClose: () => void
   eventType: "webinar" | "class"
   eventId: string
+  callsPerWeek?: number
+  durationInMonths?: number
 }
 
-import { TSlotTiming } from "@/types/slots"
-
-interface TimeSlot {
-  startTime: Date
-  endTime: Date
-  isAvailable: boolean
-  isBooked: boolean
-  originalSlot?: TSlotTiming
-}
-
-interface AppointmentSlot {
-  slotStartTimeInUTC: string | Date
-  slotEndTimeInUTC: string | Date
-}
-
-interface Appointment {
-  id: string
-  appointmentType: string
-  slotsOfAppointment?: AppointmentSlot[]
-  webinar?: { status: string }
-  class?: { status: string }
-}
+import { TimeSlot, Appointment, AppointmentSlot, ConsultantData } from "../types/calendar"
+import { mapWeeklySlots, mapCustomSlots } from "../utils"
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i)
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -46,6 +28,8 @@ export function TimingsCalendar({
   onClose,
   eventType,
   eventId,
+  callsPerWeek = 1,
+  durationInMonths = 1
 }: TimingsCalendarProps) {
   const params = useParams()
   const { toast } = useToast()
@@ -93,30 +77,31 @@ export function TimingsCalendar({
       // Handle consultant data
       if (consultantResponse.ok) {
         const { data: consultantData } = await consultantResponse.json()
+        console.log('Consultant Data:', consultantData)
         if (!consultantData) {
           throw new Error("Consultant not found")
         }
 
         setScheduleType(consultantData.scheduleType)
 
-        // Map slots directly from consultant data
-        if (consultantData.scheduleType === "WEEKLY" && consultantData.slotsOfAvailabilityWeekly?.length > 0) {
-          const slots = consultantData.slotsOfAvailabilityWeekly.map((slot: any) => ({
-            startTime: new Date(slot.slotStartTimeInUTC),
-            endTime: new Date(slot.slotEndTimeInUTC),
-            isAvailable: true,
-            isBooked: false,
-            originalSlot: slot
-          }))
+        window.console.group('Mapping Slots')
+        window.console.log('Raw consultant data:', consultantData)
+        window.console.log('Current date:', currentDate.toISOString())
+        window.console.log('Schedule type:', consultantData.scheduleType)
+
+        // Map slots based on schedule type
+        if (consultantData.scheduleType === "WEEKLY") {
+          window.console.log('Weekly slots count:', consultantData.slotsOfAvailabilityWeekly?.length || 0)
+          window.console.log('Raw weekly slots:', consultantData.slotsOfAvailabilityWeekly)
+          window.console.log('Current view:', view)
+          const slots = mapWeeklySlots(consultantData, currentDate, view)
+          window.console.log('Weekly slots mapped:', slots)
           setAvailableSlots(slots)
-        } else if (consultantData.scheduleType === "CUSTOM" && consultantData.slotsOfAvailabilityCustom?.length > 0) {
-          const slots = consultantData.slotsOfAvailabilityCustom.map((slot: any) => ({
-            startTime: new Date(slot.slotStartTimeInUTC),
-            endTime: new Date(slot.slotEndTimeInUTC),
-            isAvailable: true,
-            isBooked: false,
-            originalSlot: slot
-          }))
+        } else if (consultantData.scheduleType === "CUSTOM") {
+          window.console.log('Custom slots count:', consultantData.slotsOfAvailabilityCustom?.length || 0)
+          window.console.log('Raw custom slots:', consultantData.slotsOfAvailabilityCustom)
+          const slots = mapCustomSlots(consultantData)
+          window.console.log('Custom slots mapped:', slots)
           setAvailableSlots(slots)
         } else {
           toast({
@@ -140,6 +125,7 @@ export function TimingsCalendar({
         window.console.log('Total Appointments:', rawAppointments.length)
         
         // Log each appointment's details
+        window.console.group('Appointments')
         rawAppointments.forEach((appointment: Appointment, index: number) => {
           window.console.group(`Appointment ${index + 1}`)
           window.console.log('Type:', appointment.appointmentType)
@@ -148,6 +134,7 @@ export function TimingsCalendar({
           window.console.log('Full Data:', appointment)
           window.console.groupEnd()
         })
+        window.console.groupEnd()
         
         window.console.groupEnd()
 
@@ -213,7 +200,7 @@ export function TimingsCalendar({
     if (isOpen) {
       fetchData()
     }
-  }, [isOpen, currentDate, scheduleType])
+  }, [isOpen, currentDate, scheduleType, view])
 
   const handleSlotSelect = (hour: number, date: Date) => {
     const slotStart = new Date(date)
@@ -222,16 +209,71 @@ export function TimingsCalendar({
     slotEnd.setHours(hour + 1, 0, 0, 0)
 
     // Check if slot is available
-    const isAvailable = availableSlots.some(slot => 
+    window.console.group('Checking slot availability')
+    window.console.log('Checking slot:', {
+      date: slotStart.toISOString(),
+      hour,
+      availableSlots: availableSlots.length,
+      existingAppointments: existingAppointments.length
+    })
+
+    // Get all slots for this hour
+    const hourSlots = availableSlots.filter(slot => 
       isSameDay(slot.startTime, slotStart) && 
       slot.startTime.getHours() === hour
     )
 
-    // Check if slot is booked
-    const isBooked = existingAppointments.some(slot => 
+    const bookedHourSlots = existingAppointments.filter(slot => 
       isSameDay(slot.startTime, slotStart) && 
       slot.startTime.getHours() === hour
     )
+
+    window.console.log('Found slots:', {
+      available: hourSlots.length,
+      booked: bookedHourSlots.length
+    })
+
+    // Apply overlap rules
+    const isAvailable = hourSlots.some(availableSlot => {
+      // Check for any type of overlap with booked slots
+      const hasOverlap = bookedHourSlots.some(bookedSlot => {
+        // Case 1: Available fully overlapped by Booked
+        const availableFullyOverlapped = 
+          availableSlot.startTime >= bookedSlot.startTime && 
+          availableSlot.endTime <= bookedSlot.endTime
+
+        // Case 2: Booked fully overlapped by Available
+        const bookedFullyOverlapped = 
+          bookedSlot.startTime >= availableSlot.startTime && 
+          bookedSlot.endTime <= availableSlot.endTime
+
+        // Case 3: Partial overlap
+        const partialOverlap = 
+          (availableSlot.startTime < bookedSlot.endTime && availableSlot.endTime > bookedSlot.startTime) ||
+          (bookedSlot.startTime < availableSlot.endTime && bookedSlot.endTime > availableSlot.startTime)
+
+        const overlaps = availableFullyOverlapped || bookedFullyOverlapped || partialOverlap
+        window.console.log('Checking overlap:', {
+          availableStart: availableSlot.startTime.toISOString(),
+          availableEnd: availableSlot.endTime.toISOString(),
+          bookedStart: bookedSlot.startTime.toISOString(),
+          bookedEnd: bookedSlot.endTime.toISOString(),
+          availableFullyOverlapped,
+          bookedFullyOverlapped,
+          partialOverlap,
+          overlaps
+        })
+        return overlaps
+      })
+
+      // Case 4: No overlap - show the available slot
+      return !hasOverlap
+    })
+
+    const isBooked = bookedHourSlots.length > 0
+
+    window.console.log('Slot status:', { isAvailable, isBooked })
+    window.console.groupEnd()
 
     if (!isAvailable || isBooked) return
 
@@ -255,6 +297,15 @@ export function TimingsCalendar({
         slot.startTime.getHours() !== hour
       ))
     } else {
+      const requiredSlots = callsPerWeek * 4 * durationInMonths
+      if (eventType === "class" && selectedSlots.length >= requiredSlots) {
+        toast({
+          variant: "destructive",
+          title: "Maximum slots reached",
+          description: `You can only select ${requiredSlots} slots for this class (${callsPerWeek} calls/week × 4 weeks × ${durationInMonths} months)`
+        })
+        return
+      }
       setSelectedSlots([...selectedSlots, newSlot])
     }
   }
@@ -322,15 +373,44 @@ export function TimingsCalendar({
     const slotStart = new Date(date)
     slotStart.setHours(hour, 0, 0, 0)
 
-    const isAvailable = availableSlots.some(slot => 
+    // Get all slots for this hour
+    const hourSlots = availableSlots.filter(slot => 
       isSameDay(slot.startTime, slotStart) && 
       slot.startTime.getHours() === hour
     )
 
-    const isBooked = existingAppointments.some(slot => 
+    const bookedHourSlots = existingAppointments.filter(slot => 
       isSameDay(slot.startTime, slotStart) && 
       slot.startTime.getHours() === hour
     )
+
+    // Apply overlap rules
+    const isAvailable = hourSlots.some(availableSlot => {
+      // Check for any type of overlap with booked slots
+      const hasOverlap = bookedHourSlots.some(bookedSlot => {
+        // Case 1: Available fully overlapped by Booked
+        const availableFullyOverlapped = 
+          availableSlot.startTime >= bookedSlot.startTime && 
+          availableSlot.endTime <= bookedSlot.endTime
+
+        // Case 2: Booked fully overlapped by Available
+        const bookedFullyOverlapped = 
+          bookedSlot.startTime >= availableSlot.startTime && 
+          bookedSlot.endTime <= availableSlot.endTime
+
+        // Case 3: Partial overlap
+        const partialOverlap = 
+          (availableSlot.startTime < bookedSlot.endTime && availableSlot.endTime > bookedSlot.startTime) ||
+          (bookedSlot.startTime < availableSlot.endTime && bookedSlot.endTime > availableSlot.startTime)
+
+        return availableFullyOverlapped || bookedFullyOverlapped || partialOverlap
+      })
+
+      // Case 4: No overlap - show the available slot
+      return !hasOverlap
+    })
+
+    const isBooked = bookedHourSlots.length > 0
 
     const isSelected = selectedSlots.some(slot => 
       isSameDay(slot.startTime, slotStart) && 
@@ -385,8 +465,10 @@ export function TimingsCalendar({
             Manage {eventType === "webinar" ? "Webinar" : "Class"} Timings
           </DialogTitle>
           <DialogDescription>
-            Select available time slots for your {eventType === "webinar" ? "webinar" : "class"}. 
-            {eventType === "webinar" ? " You can select one slot." : " You can select multiple slots."}
+            {eventType === "webinar" 
+              ? "Select one time slot for your webinar."
+              : `Select ${callsPerWeek * 4 * durationInMonths} time slots for your class (${callsPerWeek} calls/week × 4 weeks × ${durationInMonths} months).`
+            }
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
@@ -474,23 +556,40 @@ export function TimingsCalendar({
                 const bookedSlots = existingAppointments.filter(slot => isSameDay(slot.startTime, date))
                 const selectedDaySlots = selectedSlots.filter(slot => isSameDay(slot.startTime, date))
 
-                // Apply overlap rules
+                // Filter slots based on overlap rules
                 const displaySlots = daySlots.filter(availableSlot => {
-                  const hasOverlap = bookedSlots.some(bookedSlot => {
+                  // Check for any type of overlap with booked slots
+                  const overlappingBookedSlots = bookedSlots.filter(bookedSlot => {
                     const availableStart = availableSlot.startTime
                     const availableEnd = availableSlot.endTime
                     const bookedStart = bookedSlot.startTime
                     const bookedEnd = bookedSlot.endTime
 
-                    // Check for any type of overlap
-                    return (
-                      (availableStart <= bookedEnd && availableEnd >= bookedStart) ||
-                      (bookedStart <= availableEnd && bookedEnd >= availableStart)
-                    )
+                    // Case 1: Available fully overlapped by Booked
+                    const availableFullyOverlapped = 
+                      availableStart >= bookedStart && availableEnd <= bookedEnd
+
+                    // Case 2: Booked fully overlapped by Available
+                    const bookedFullyOverlapped = 
+                      bookedStart >= availableStart && bookedEnd <= availableEnd
+
+                    // Case 3: Partial overlap
+                    const partialOverlap = 
+                      (availableStart < bookedEnd && availableEnd > bookedStart) ||
+                      (bookedStart < availableEnd && bookedEnd > availableStart)
+
+                    return availableFullyOverlapped || bookedFullyOverlapped || partialOverlap
                   })
 
-                  // Only show available slot if there's no overlap
-                  return !hasOverlap
+                  // Case 4: No overlap - show the available slot
+                  return overlappingBookedSlots.length === 0
+                })
+
+                window.console.log('Slot filtering:', {
+                  date: date.toISOString(),
+                  totalAvailable: daySlots.length,
+                  totalBooked: bookedSlots.length,
+                  displaySlots: displaySlots.length
                 })
 
                 return (
@@ -531,7 +630,11 @@ export function TimingsCalendar({
 
           <div className="flex justify-between items-center">
             <div className="text-sm">
-              Selected: {selectedSlots.length} {eventType === "webinar" ? "/ 1" : "slots"}
+              Selected: {selectedSlots.length} / {
+                eventType === "webinar" 
+                  ? "1" 
+                  : `${callsPerWeek * 4 * durationInMonths}`
+              } slots
             </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={onClose}>
@@ -539,7 +642,11 @@ export function TimingsCalendar({
               </Button>
               <Button 
                 onClick={handleSave}
-                disabled={selectedSlots.length === 0 || saving}
+                disabled={
+                  selectedSlots.length === 0 || 
+                  saving || 
+                  (eventType === "class" && selectedSlots.length !== callsPerWeek * 4 * durationInMonths)
+                }
               >
                 {saving ? "Saving..." : "Save Timings"}
               </Button>
