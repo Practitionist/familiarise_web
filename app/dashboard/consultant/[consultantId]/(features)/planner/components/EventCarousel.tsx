@@ -3,7 +3,8 @@
 import React from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Users, Edit } from "lucide-react"
+import { Users, Edit, Clock } from "lucide-react"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import Link from "next/link"
 import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons"
 import { WebinarEvent, ClassEvent, Event } from "../types"
@@ -31,6 +32,7 @@ function isClassEvent(event: Event): event is ClassEvent {
 }
 
 export function EventCarousel({ events, onEdit, eventType }: EventCarouselProps) {
+  const [selectedEventId, setSelectedEventId] = React.useState<string | null>(null)
   const [startIndex, setStartIndex] = React.useState(0)
 
   const nextSlide = () => {
@@ -134,9 +136,17 @@ export function EventCarousel({ events, onEdit, eventType }: EventCarouselProps)
           const { currentParticipants, maxParticipants } = getParticipantsCount(event)
           
           return (
-            <Card key={event.id} className="w-full md:w-1/3 flex-shrink-0 bg-white shadow-lg rounded-lg overflow-hidden">
-              <CardHeader className="bg-gray-50 border-b">
-                <CardTitle className="text-lg font-semibold text-gray-800">
+            <Card key={event.id} className="w-full md:w-1/3 flex-shrink-0 bg-white shadow-lg rounded-lg overflow-hidden flex flex-col">
+              <CardHeader className="bg-gray-50 border-b relative flex-shrink-0">
+                <Button 
+                  variant="ghost" 
+                  size="icon"
+                  className="absolute right-4 top-4"
+                  onClick={() => handleEdit(event)}
+                >
+                  <Edit className="h-4 w-4" />
+                </Button>
+                <CardTitle className="text-lg font-semibold text-gray-800 pr-8">
                   {getEventTitle(event)}
                 </CardTitle>
                 <CardDescription className="text-sm text-gray-600">
@@ -147,12 +157,12 @@ export function EventCarousel({ events, onEdit, eventType }: EventCarouselProps)
                   )}
                 </CardDescription>
               </CardHeader>
-              <CardContent className="p-4">
+              <CardContent className="p-4 flex-grow">
                 <p className="text-sm text-gray-700 mb-2">{getEventDescription(event)}</p>
                 <p className="text-sm font-medium text-gray-900">Price: ${getEventPrice(event)}</p>
                 <p className="text-sm text-gray-600">Duration: {getEventDuration(event)}</p>
               </CardContent>
-              <CardFooter className="bg-gray-50 border-t p-4 flex justify-between">
+              <CardFooter className="bg-gray-50 border-t p-4 flex justify-between flex-shrink-0">
                 <Button 
                   variant="outline" 
                   size="sm" 
@@ -173,17 +183,27 @@ export function EventCarousel({ events, onEdit, eventType }: EventCarouselProps)
                 </Button>
                 <Button 
                   variant="outline" 
-                  size="sm" 
-                  onClick={() => handleEdit(event)}
+                  size="sm"
+                  onClick={() => setSelectedEventId(event.id)}
                 >
-                  <Edit className="w-4 h-4 mr-2" />
-                  Edit Event
+                  <Clock className="w-4 h-4 mr-2" />
+                  Manage Timings
                 </Button>
               </CardFooter>
             </Card>
           )
         })}
       </div>
+    <Dialog open={!!selectedEventId} onOpenChange={() => setSelectedEventId(null)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            Manage Timings
+          </DialogTitle>
+        </DialogHeader>
+        {/* TODO: Add timing management UI */}
+      </DialogContent>
+    </Dialog>
       {events.length > 3 && (
         <Button
           variant="outline"
