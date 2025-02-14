@@ -315,7 +315,7 @@ export async function PATCH(
     if (!body.slotsOfAppointment?.createMany?.data) {
       return NextResponse.json(
         { error: "Missing slots data" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -325,8 +325,8 @@ export async function PATCH(
         create: body.slotsOfAppointment.createMany.data.map((slot) => ({
           slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
           slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
-        }))
-      }
+        })),
+      },
     };
 
     const updatedAppointment = await prisma.appointment.update({
@@ -491,8 +491,12 @@ export async function PUT(
 
     const data: Prisma.AppointmentUpdateInput = {
       appointmentType: body.appointmentType,
-      consultation: body.consultationId ? { connect: { id: body.consultationId } } : undefined,
-      subscription: body.subscriptionId ? { connect: { id: body.subscriptionId } } : undefined,
+      consultation: body.consultationId
+        ? { connect: { id: body.consultationId } }
+        : undefined,
+      subscription: body.subscriptionId
+        ? { connect: { id: body.subscriptionId } }
+        : undefined,
       webinar: body.webinarId ? { connect: { id: body.webinarId } } : undefined,
       class: body.classId ? { connect: { id: body.classId } } : undefined,
     };

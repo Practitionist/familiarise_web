@@ -1,74 +1,78 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
-import { Button } from "@/components/ui/button"
-import { EventCarousel } from "./EventCarousel"
-import { EventPlanner } from "./EventPlanner"
-import { WebinarEvent, ClassEvent, Event } from "../types/event"
+import { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { EventCarousel } from "./EventCarousel";
+import { EventPlanner } from "./EventPlanner";
+import { WebinarEvent, ClassEvent, Event } from "../types/event";
 
 interface Props {
-  consultantId: string
+  consultantId: string;
 }
 
 export function EventManagementDashboard({ consultantId }: Props) {
-  const [webinars, setWebinars] = useState<WebinarEvent[]>([])
-  const [classes, setClasses] = useState<ClassEvent[]>([])
-  const [isWebinarDialogOpen, setIsWebinarDialogOpen] = useState(false)
-  const [isClassDialogOpen, setIsClassDialogOpen] = useState(false)
-  const [editingEvent, setEditingEvent] = useState<Event | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [isSaving, setIsSaving] = useState(false)
+  const [webinars, setWebinars] = useState<WebinarEvent[]>([]);
+  const [classes, setClasses] = useState<ClassEvent[]>([]);
+  const [isWebinarDialogOpen, setIsWebinarDialogOpen] = useState(false);
+  const [isClassDialogOpen, setIsClassDialogOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<Event | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     const fetchEvents = async () => {
       try {
-        setIsLoading(true)
-        setError(null)
+        setIsLoading(true);
+        setError(null);
 
         const [webinarsRes, classesRes] = await Promise.all([
           fetch(`/api/events/webinars?consultantProfileId=${consultantId}`),
-          fetch(`/api/events/classes?consultantProfileId=${consultantId}`)
-        ])
+          fetch(`/api/events/classes?consultantProfileId=${consultantId}`),
+        ]);
 
         if (!webinarsRes.ok || !classesRes.ok) {
-          throw new Error("Failed to fetch events")
+          throw new Error("Failed to fetch events");
         }
 
-        const webinarsData = await webinarsRes.json()
-        const classesData = await classesRes.json()
+        const webinarsData = await webinarsRes.json();
+        const classesData = await classesRes.json();
 
-        setWebinars(webinarsData.data.map((webinar: any) => ({
-          id: webinar.id,
-          type: "webinar" as const,
-          webinarPlan: webinar.webinarPlan,
-          appointment: webinar.appointment,
-          waitlist: webinar.waitlist,
-          meetingRoom: webinar.meetingRoom
-        })))
-        
-        setClasses(classesData.data.map((classEvent: any) => ({
-          id: classEvent.id,
-          type: "class" as const,
-          classPlan: classEvent.classPlan,
-          appointments: classEvent.appointments,
-          waitlist: classEvent.waitlist,
-          meetingRoom: classEvent.meetingRoom
-        })))
+        setWebinars(
+          webinarsData.data.map((webinar: any) => ({
+            id: webinar.id,
+            type: "webinar" as const,
+            webinarPlan: webinar.webinarPlan,
+            appointment: webinar.appointment,
+            waitlist: webinar.waitlist,
+            meetingRoom: webinar.meetingRoom,
+          })),
+        );
+
+        setClasses(
+          classesData.data.map((classEvent: any) => ({
+            id: classEvent.id,
+            type: "class" as const,
+            classPlan: classEvent.classPlan,
+            appointments: classEvent.appointments,
+            waitlist: classEvent.waitlist,
+            meetingRoom: classEvent.meetingRoom,
+          })),
+        );
       } catch (err) {
-        setError(err instanceof Error ? err.message : "An error occurred")
-        console.error("Error fetching events:", err)
+        setError(err instanceof Error ? err.message : "An error occurred");
+        console.error("Error fetching events:", err);
       } finally {
-        setIsLoading(false)
+        setIsLoading(false);
       }
-    }
+    };
 
-    fetchEvents()
-  }, [consultantId])
+    fetchEvents();
+  }, [consultantId]);
 
   const handleSaveWebinar = async (webinarData: Partial<WebinarEvent>) => {
     try {
-      setIsSaving(true)
+      setIsSaving(true);
       const response = await fetch("/api/events/webinars", {
         method: "POST",
         headers: {
@@ -76,42 +80,42 @@ export function EventManagementDashboard({ consultantId }: Props) {
         },
         body: JSON.stringify({
           ...webinarData,
-          consultantProfileId: consultantId
+          consultantProfileId: consultantId,
         }),
-      })
+      });
 
       if (!response.ok) {
-        throw new Error("Failed to save webinar")
+        throw new Error("Failed to save webinar");
       }
 
-      const { data } = await response.json()
+      const { data } = await response.json();
       const newWebinar: WebinarEvent = {
         id: data.id,
         type: "webinar",
         webinarPlan: data.webinarPlan,
         appointment: data.appointment,
         waitlist: data.waitlist,
-        meetingRoom: data.meetingRoom
-      }
-      
-      if ('id' in webinarData && webinarData.id) {
-        setWebinars(webinars.map((w) => (w.id === data.id ? newWebinar : w)))
+        meetingRoom: data.meetingRoom,
+      };
+
+      if ("id" in webinarData && webinarData.id) {
+        setWebinars(webinars.map((w) => (w.id === data.id ? newWebinar : w)));
       } else {
-        setWebinars([...webinars, newWebinar])
+        setWebinars([...webinars, newWebinar]);
       }
 
-      setIsWebinarDialogOpen(false)
-      setEditingEvent(null)
+      setIsWebinarDialogOpen(false);
+      setEditingEvent(null);
     } catch (err) {
-      console.error("Error saving webinar:", err)
+      console.error("Error saving webinar:", err);
     } finally {
-      setIsSaving(false)
+      setIsSaving(false);
     }
-  }
+  };
 
   const handleSaveClass = async (classData: Partial<ClassEvent>) => {
     try {
-      setIsSaving(true)
+      setIsSaving(true);
       const response = await fetch("/api/events/classes", {
         method: "POST",
         headers: {
@@ -119,48 +123,48 @@ export function EventManagementDashboard({ consultantId }: Props) {
         },
         body: JSON.stringify({
           ...classData,
-          consultantProfileId: consultantId
+          consultantProfileId: consultantId,
         }),
-      })
+      });
 
       if (!response.ok) {
-        throw new Error("Failed to save class")
+        throw new Error("Failed to save class");
       }
 
-      const { data } = await response.json()
+      const { data } = await response.json();
       const newClass: ClassEvent = {
         id: data.id,
         type: "class",
         classPlan: data.classPlan,
         appointments: data.appointments,
         waitlist: data.waitlist,
-        meetingRoom: data.meetingRoom
-      }
-      
-      if ('id' in classData && classData.id) {
-        setClasses(classes.map((c) => (c.id === data.id ? newClass : c)))
+        meetingRoom: data.meetingRoom,
+      };
+
+      if ("id" in classData && classData.id) {
+        setClasses(classes.map((c) => (c.id === data.id ? newClass : c)));
       } else {
-        setClasses([...classes, newClass])
+        setClasses([...classes, newClass]);
       }
 
-      setIsClassDialogOpen(false)
-      setEditingEvent(null)
+      setIsClassDialogOpen(false);
+      setEditingEvent(null);
     } catch (err) {
-      console.error("Error saving class:", err)
+      console.error("Error saving class:", err);
     } finally {
-      setIsSaving(false)
+      setIsSaving(false);
     }
-  }
+  };
 
   const handleEditWebinar = (webinar: WebinarEvent) => {
-    setEditingEvent(webinar)
-    setIsWebinarDialogOpen(true)
-  }
+    setEditingEvent(webinar);
+    setIsWebinarDialogOpen(true);
+  };
 
   const handleEditClass = (classEvent: ClassEvent) => {
-    setEditingEvent(classEvent)
-    setIsClassDialogOpen(true)
-  }
+    setEditingEvent(classEvent);
+    setIsClassDialogOpen(true);
+  };
 
   if (error) {
     return (
@@ -169,7 +173,7 @@ export function EventManagementDashboard({ consultantId }: Props) {
           {error}
         </div>
       </div>
-    )
+    );
   }
 
   if (isLoading) {
@@ -187,7 +191,7 @@ export function EventManagementDashboard({ consultantId }: Props) {
           </div>
         </div>
       </div>
-    )
+    );
   }
 
   return (
@@ -197,32 +201,36 @@ export function EventManagementDashboard({ consultantId }: Props) {
       <div className="mb-8">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-2xl font-semibold">Webinars</h2>
-          <Button onClick={() => setIsWebinarDialogOpen(true)}>Create New Webinar</Button>
+          <Button onClick={() => setIsWebinarDialogOpen(true)}>
+            Create New Webinar
+          </Button>
         </div>
-        <EventCarousel 
-          events={webinars} 
-          onEdit={handleEditWebinar} 
-          eventType="webinar" 
+        <EventCarousel
+          events={webinars}
+          onEdit={handleEditWebinar}
+          eventType="webinar"
         />
       </div>
 
       <div className="mb-8">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-2xl font-semibold">Classes</h2>
-          <Button onClick={() => setIsClassDialogOpen(true)}>Create New Class</Button>
+          <Button onClick={() => setIsClassDialogOpen(true)}>
+            Create New Class
+          </Button>
         </div>
-        <EventCarousel 
-          events={classes} 
-          onEdit={handleEditClass} 
-          eventType="class" 
+        <EventCarousel
+          events={classes}
+          onEdit={handleEditClass}
+          eventType="class"
         />
       </div>
 
       <EventPlanner
         isOpen={isWebinarDialogOpen}
         onClose={() => {
-          setIsWebinarDialogOpen(false)
-          setEditingEvent(null)
+          setIsWebinarDialogOpen(false);
+          setEditingEvent(null);
         }}
         onSave={handleSaveWebinar}
         eventType="webinar"
@@ -233,8 +241,8 @@ export function EventManagementDashboard({ consultantId }: Props) {
       <EventPlanner
         isOpen={isClassDialogOpen}
         onClose={() => {
-          setIsClassDialogOpen(false)
-          setEditingEvent(null)
+          setIsClassDialogOpen(false);
+          setEditingEvent(null);
         }}
         onSave={handleSaveClass}
         eventType="class"
@@ -242,5 +250,5 @@ export function EventManagementDashboard({ consultantId }: Props) {
         isSaving={isSaving}
       />
     </div>
-  )
+  );
 }

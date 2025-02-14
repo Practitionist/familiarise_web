@@ -442,10 +442,7 @@ const MultiStepForm: React.FC = () => {
     <FormProvider {...methods}>
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
         <Header />
-        <Progress 
-          value={((step + 1) / 4) * 100} 
-          className="w-[60%] mb-8" 
-        />
+        <Progress value={((step + 1) / 4) * 100} className="w-[60%] mb-8" />
         <WelcomeMessage />
         {renderFormStep()}
       </div>

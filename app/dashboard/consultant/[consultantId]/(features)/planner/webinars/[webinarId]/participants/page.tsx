@@ -1,71 +1,88 @@
-"use client"
+"use client";
 
-import React, { useEffect, useState } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { WebinarEvent } from "../../../types/event"
-import { useParams } from "next/navigation"
+import React, { useEffect, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { WebinarEvent } from "../../../types/event";
+import { useParams } from "next/navigation";
 
 export default function WebinarParticipantsPage() {
-  const params = useParams()
-  const [webinar, setWebinar] = useState<WebinarEvent | null>(null)
-  const [loading, setLoading] = useState(true)
+  const params = useParams();
+  const [webinar, setWebinar] = useState<WebinarEvent | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const response = await fetch(`/api/participants/webinar/${params.webinarId}`)
+        const response = await fetch(
+          `/api/participants/webinar/${params.webinarId}`,
+        );
         if (!response.ok) {
-          throw new Error('Failed to fetch webinar data')
+          throw new Error("Failed to fetch webinar data");
         }
-        const data = await response.json()
-        setWebinar(data.webinarEvent)
-        setLoading(false)
+        const data = await response.json();
+        setWebinar(data.webinarEvent);
+        setLoading(false);
       } catch (error) {
-        console.error('Error fetching webinar data:', error)
-        setLoading(false)
+        console.error("Error fetching webinar data:", error);
+        setLoading(false);
       }
-    }
+    };
 
-    fetchData()
-  }, [params.webinarId])
+    fetchData();
+  }, [params.webinarId]);
 
   const handleRemoveParticipant = async (userId: string) => {
     try {
-      const response = await fetch(`/api/participants/webinar/${params.webinarId}?userId=${userId}`, {
-        method: 'DELETE',
-      })
-      
+      const response = await fetch(
+        `/api/participants/webinar/${params.webinarId}?userId=${userId}`,
+        {
+          method: "DELETE",
+        },
+      );
+
       if (!response.ok) {
-        throw new Error('Failed to remove participant')
+        throw new Error("Failed to remove participant");
       }
 
       // Refresh the data
-      const updatedResponse = await fetch(`/api/participants/webinar/${params.webinarId}`)
+      const updatedResponse = await fetch(
+        `/api/participants/webinar/${params.webinarId}`,
+      );
       if (!updatedResponse.ok) {
-        throw new Error('Failed to fetch updated webinar data')
+        throw new Error("Failed to fetch updated webinar data");
       }
-      const updatedData = await updatedResponse.json()
-      setWebinar(updatedData.webinarEvent)
+      const updatedData = await updatedResponse.json();
+      setWebinar(updatedData.webinarEvent);
     } catch (error) {
-      console.error('Error removing participant:', error)
+      console.error("Error removing participant:", error);
     }
-  }
+  };
 
   if (loading) {
-    return <div>Loading...</div>
+    return <div>Loading...</div>;
   }
 
   if (!webinar) {
-    return <div>Webinar not found</div>
+    return <div>Webinar not found</div>;
   }
 
   // Get unique participants by user ID
-  const participants = Array.from(new Map(
-    ((webinar.appointment?.slotsOfAppointment || []).flatMap(slot => slot.user || []))
-      .map(user => [user.id, user]) || []
-  ).values())
+  const participants = Array.from(
+    new Map(
+      (webinar.appointment?.slotsOfAppointment || [])
+        .flatMap((slot) => slot.user || [])
+        .map((user) => [user.id, user]) || [],
+    ).values(),
+  );
 
   return (
     <div className="container mx-auto py-8">
@@ -75,7 +92,8 @@ export default function WebinarParticipantsPage() {
             {webinar.webinarPlan.title} - Participants
           </CardTitle>
           <p className="text-sm text-gray-500">
-            {participants.length}/{webinar.webinarPlan.maxParticipants} participants
+            {participants.length}/{webinar.webinarPlan.maxParticipants}{" "}
+            participants
           </p>
         </CardHeader>
         <CardContent>
@@ -99,8 +117,8 @@ export default function WebinarParticipantsPage() {
                     </span>
                   </TableCell>
                   <TableCell>
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       size="sm"
                       onClick={() => handleRemoveParticipant(participant.id)}
                     >
@@ -114,5 +132,5 @@ export default function WebinarParticipantsPage() {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

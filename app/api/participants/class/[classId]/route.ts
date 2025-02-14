@@ -1,10 +1,9 @@
-import { NextResponse } from "next/server"
+import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ classId: string }> },
-
 ) {
   try {
     const { classId } = await params;
@@ -24,27 +23,33 @@ export async function GET(
           },
         },
       },
-    })
+    });
 
     if (!classEvent) {
-      return new NextResponse("Class not found", { status: 404 })
+      return new NextResponse("Class not found", { status: 404 });
     }
 
     // Get unique participants by user ID
-    const participants = Array.from(new Map(
-      classEvent.appointments?.flatMap(
-        appointment => 
-          appointment.slotsOfAppointment?.flatMap(slot => slot.user || []) || []
-      ).map(user => [user.id, user]) || []
-    ).values())
+    const participants = Array.from(
+      new Map(
+        classEvent.appointments
+          ?.flatMap(
+            (appointment) =>
+              appointment.slotsOfAppointment?.flatMap(
+                (slot) => slot.user || [],
+              ) || [],
+          )
+          .map((user) => [user.id, user]) || [],
+      ).values(),
+    );
 
     return NextResponse.json({
       classEvent,
-      participants
-    })
+      participants,
+    });
   } catch (error) {
-    console.error("[CLASS_PARTICIPANTS_GET]", error)
-    return new NextResponse("Internal error", { status: 500 })
+    console.error("[CLASS_PARTICIPANTS_GET]", error);
+    return new NextResponse("Internal error", { status: 500 });
   }
 }
 
@@ -54,12 +59,12 @@ export async function DELETE(
 ) {
   try {
     const { classId } = await params;
-    
-    const { searchParams } = new URL(request.url)
-    const userId = searchParams.get("userId")
+
+    const { searchParams } = new URL(request.url);
+    const userId = searchParams.get("userId");
 
     if (!userId) {
-      return new NextResponse("User ID is required", { status: 400 })
+      return new NextResponse("User ID is required", { status: 400 });
     }
 
     // Remove user from all slots in all appointments for this class
@@ -70,12 +75,12 @@ export async function DELETE(
           include: {
             slotsOfAppointment: {
               include: {
-                user: true
-              }
-            }
-          }
-        }
-      }
+                user: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!classEvent) {
@@ -85,22 +90,22 @@ export async function DELETE(
     // Disconnect user from all slots they are in
     for (const appointment of classEvent.appointments) {
       for (const slot of appointment.slotsOfAppointment) {
-        if (slot.user.some(user => user.id === userId)) {
+        if (slot.user.some((user) => user.id === userId)) {
           await prisma.slotOfAppointment.update({
             where: { id: slot.id },
             data: {
               user: {
-                disconnect: { id: userId }
-              }
-            }
+                disconnect: { id: userId },
+              },
+            },
           });
         }
       }
     }
 
-    return new NextResponse(null, { status: 204 })
+    return new NextResponse(null, { status: 204 });
   } catch (error) {
-    console.error("[CLASS_PARTICIPANT_DELETE]", error)
-    return new NextResponse("Internal error", { status: 500 })
+    console.error("[CLASS_PARTICIPANT_DELETE]", error);
+    return new NextResponse("Internal error", { status: 500 });
   }
 }

@@ -1,4 +1,4 @@
-import { TWebinar, TClass } from "@/types/appointment"
+import { TWebinar, TClass } from "@/types/appointment";
 
 type ConsultantProfile = {
   user: {
@@ -10,7 +10,7 @@ type ConsultantProfile = {
     email: string | null;
     staffProfileId: string | null;
   };
-}
+};
 
 export type WebinarEvent = {
   id: string;
@@ -27,7 +27,7 @@ export type WebinarEvent = {
     prerequisites: string | null;
     materialProvided: string | null;
     learningOutcomes: string[];
-    topics: { id: string; name: string; createdAt: Date; updatedAt: Date; }[];
+    topics: { id: string; name: string; createdAt: Date; updatedAt: Date }[];
     consultantProfileId: string | null;
     consultantProfile: ConsultantProfile | null;
     createdAt: Date;
@@ -36,7 +36,7 @@ export type WebinarEvent = {
   appointment: TWebinar["appointment"];
   waitlist: TWebinar["waitlist"];
   meetingRoom: TWebinar["meetingRoom"];
-}
+};
 
 export type ClassEvent = {
   id: string;
@@ -57,7 +57,7 @@ export type ClassEvent = {
     prerequisites: string | null;
     materialProvided: string | null;
     learningOutcomes: string[];
-    topics: { id: string; name: string; createdAt: Date; updatedAt: Date; }[];
+    topics: { id: string; name: string; createdAt: Date; updatedAt: Date }[];
     classContents: {
       id: string;
       title: string;
@@ -78,7 +78,7 @@ export type ClassEvent = {
   appointments: TClass["appointments"];
   waitlist: TClass["waitlist"];
   meetingRoom: TClass["meetingRoom"];
-}
+};
 
 export type Event = WebinarEvent | ClassEvent;
 
@@ -103,35 +103,35 @@ export interface ClassPlannerProps {
 export type EventPlannerProps = WebinarPlannerProps | ClassPlannerProps;
 
 export type FormData = {
-  title: string
-  description: string
-  price: number
-  maxParticipants: number
-  language: string
-  level: string
-  prerequisites: string | null
-  materialProvided: string | null
-  learningOutcomes: string[]
-  topics: string[]
-  consultantProfileId?: string | null
+  title: string;
+  description: string;
+  price: number;
+  maxParticipants: number;
+  language: string;
+  level: string;
+  prerequisites: string | null;
+  materialProvided: string | null;
+  learningOutcomes: string[];
+  topics: string[];
+  consultantProfileId?: string | null;
 } & (
   | {
-      durationInHours: number
+      durationInHours: number;
     }
   | {
-      durationInMonths: number
-      callsPerWeek: number
-      videoMeetings: number
-      emailSupport: "GENERAL" | "PRIORITY" | "DEDICATED"
-      certificateProvided: boolean
+      durationInMonths: number;
+      callsPerWeek: number;
+      videoMeetings: number;
+      emailSupport: "GENERAL" | "PRIORITY" | "DEDICATED";
+      certificateProvided: boolean;
       classContents: {
-        id?: string
-        title: string
-        description: string
-        contentType?: string
-        contentUrl?: string
-        order: number
-        hoursAllotted: number
-      }[]
+        id?: string;
+        title: string;
+        description: string;
+        contentType?: string;
+        contentUrl?: string;
+        order: number;
+        hoursAllotted: number;
+      }[];
     }
-)
+);
