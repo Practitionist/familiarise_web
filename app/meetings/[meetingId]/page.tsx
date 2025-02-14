@@ -1,21 +1,14 @@
 'use client';
 
-import AudioVolumeIndicator from "@/components/ui/meeting/audio-volume-indicator";
-import Button from "@/components/ui/meeting/button";
-import FlexibleCallLayout from "@/components/ui/meeting/flexible-call-layout";
-import PermissionPrompt from "@/components/ui/meeting/permission-prompt";
-import { useSession } from "next-auth/react";
+import MeetingUI from "@/components/ui/meeting/meeting-ui";
 import {
-  CallingState,
-  DeviceSettings,
   StreamCall,
   StreamVideo,
   StreamVideoClient,
-  VideoPreview,
-  useCallStateHooks,
 } from "@stream-io/video-react-sdk";
 import { Loader2 } from "lucide-react";
-import React, { useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
+import { use, useEffect, useRef, useState } from "react";
 
 interface MeetingPageProps {
   params: Promise<{
@@ -24,13 +17,16 @@ interface MeetingPageProps {
 }
 
 export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
-  const { meetingId } = React.use(params);
+  const { meetingId } = use(params);
   const { data: session } = useSession();
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<any>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!session?.user?.id) return;
+
+    let mounted = true;
 
     const initClient = async () => {
       try {
@@ -42,6 +38,7 @@ export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
         });
 
         if (!response.ok) throw new Error('Failed to get token');
+        if (!mounted) return;
 
         const { token } = await response.json();
 
@@ -58,13 +55,26 @@ export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
 
         // Connect user
         await streamClient.connectUser(user, token);
+        if (!mounted) {
+          streamClient.disconnectUser();
+          return;
+        }
+
+        // Store cleanup function
+        cleanupRef.current = () => {
+          streamClient.disconnectUser();
+        };
 
         setClient(streamClient);
 
         // Create and join call
-        const call = streamClient.call('default', meetingId);
-        await call.join({ create: true });
-        setCall(call);
+        const newCall = streamClient.call('default', meetingId);
+        await newCall.join({ create: true });
+        if (!mounted) {
+          newCall.leave();
+          return;
+        }
+        setCall(newCall);
       } catch (error) {
         console.error('Error initializing meeting:', error);
       }
@@ -73,12 +83,29 @@ export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
     initClient();
 
     return () => {
-      if (call) {
-        call.leave();
-      }
-      if (client) {
-        client.disconnectUser();
-      }
+      mounted = false;
+      const cleanup = async () => {
+        if (call) {
+          // Ensure camera and mic are disabled before leaving
+          const cameraManager = call.camera;
+          const microphoneManager = call.microphone;
+          
+          if (cameraManager?.enabled) {
+            await cameraManager.disable();
+          }
+          if (microphoneManager?.enabled) {
+            await microphoneManager.disable();
+          }
+          
+          await call.leave();
+        }
+        
+        // Run stored cleanup function
+        if (cleanupRef.current) {
+          cleanupRef.current();
+        }
+      };
+      cleanup();
     };
   }, [session?.user, meetingId]);
 
@@ -97,69 +124,4 @@ export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
       </StreamCall>
     </StreamVideo>
   );
-}
-
-interface SetupUIProps {
-  onSetupComplete: () => void;
-}
-
-function SetupUI({ onSetupComplete }: Readonly<SetupUIProps>) {
-  const { useMicrophoneState, useCameraState } = useCallStateHooks();
-  const micState = useMicrophoneState();
-  const camState = useCameraState();
-  const [micCamDisabled, setMicCamDisabled] = useState(false);
-
-  useEffect(() => {
-    if (micCamDisabled) {
-      micState.microphone.disable();
-      camState.camera.disable();
-    } else {
-      micState.microphone.enable();
-      camState.camera.enable();
-    }
-  }, [micCamDisabled, micState, camState]);
-
-  if (!micState.hasBrowserPermission || !camState.hasBrowserPermission) {
-    return <PermissionPrompt />;
-  }
-
-  return (
-    <div className="flex flex-col items-center gap-3">
-      <h1 className="text-2xl font-bold">Setup</h1>
-      <VideoPreview />
-      <div className="flex h-16 items-center gap-3">
-        <AudioVolumeIndicator />
-        <DeviceSettings />
-      </div>
-      <label className="flex items-center gap-2 font-medium">
-        <input
-          type="checkbox"
-          checked={micCamDisabled}
-          onChange={(e) => setMicCamDisabled(e.target.checked)}
-        />
-        Join with mic and camera off
-      </label>
-      <Button onClick={onSetupComplete}>Join meeting</Button>
-    </div>
-  );
-}
-
-function MeetingUI() {
-  const [setupComplete, setSetupComplete] = useState(false);
-  const { useCallCallingState } = useCallStateHooks();
-  const callingState = useCallCallingState();
-
-  if (!setupComplete) {
-    return <SetupUI onSetupComplete={() => setSetupComplete(true)} />;
-  }
-
-  if (callingState !== CallingState.JOINED) {
-    return (
-      <div className="flex items-center justify-center min-h-[calc(100vh-80px)]">
-        <Loader2 className="animate-spin" />
-      </div>
-    );
-  }
-
-  return <FlexibleCallLayout />;
 }
