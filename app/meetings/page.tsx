@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import Button from "@/components/ui/meeting/button";
+import Button from "./components/button";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -8,8 +8,8 @@ import { useState } from "react";
 export default function MeetingsPage() {
   const router = useRouter();
   const { data: session } = useSession();
-  const [meetingId, setMeetingId] = useState('');
-  const [description, setDescription] = useState('');
+  const [meetingId, setMeetingId] = useState("");
+  const [description, setDescription] = useState("");
 
   const createMeeting = () => {
     // Generate a random meeting ID if none is provided
@@ -22,7 +22,9 @@ export default function MeetingsPage() {
       <div className="flex items-center justify-center min-h-[calc(100vh-80px)]">
         <div className="text-center">
           <h2 className="text-2xl font-semibold mb-2">Please sign in</h2>
-          <p className="text-muted-foreground">You need to be signed in to create or join meetings.</p>
+          <p className="text-muted-foreground">
+            You need to be signed in to create or join meetings.
+          </p>
         </div>
       </div>
     );

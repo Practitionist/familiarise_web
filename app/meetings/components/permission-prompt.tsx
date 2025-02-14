@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import { Mic, Video } from "lucide-react";
 export default function PermissionPrompt() {

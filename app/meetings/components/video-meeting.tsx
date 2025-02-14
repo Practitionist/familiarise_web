@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import {
   CallControls,
@@ -7,11 +7,11 @@ import {
   StreamVideo,
   StreamVideoClient,
   useStreamVideoClient,
-  useCallStateHooks
-} from '@stream-io/video-react-sdk';
-import '@stream-io/video-react-sdk/dist/css/styles.css';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useToast } from './use-toast';
+  useCallStateHooks,
+} from "@stream-io/video-react-sdk";
+import "@stream-io/video-react-sdk/dist/css/styles.css";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useToast } from "../../../components/ui/use-toast";
 
 interface VideoMeetingProps {
   apiKey: string;
@@ -21,7 +21,13 @@ interface VideoMeetingProps {
   username: string;
 }
 
-export function VideoMeeting({ apiKey, token, userId, callId, username }: Readonly<VideoMeetingProps>) {
+export function VideoMeeting({
+  apiKey,
+  token,
+  userId,
+  callId,
+  username,
+}: Readonly<VideoMeetingProps>) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const { toast } = useToast();
 
@@ -34,18 +40,18 @@ export function VideoMeeting({ apiKey, token, userId, callId, username }: Readon
         user: {
           id: userId,
           name: username,
-          type: 'authenticated',
+          type: "authenticated",
         },
         token,
       });
 
       setClient(streamClient);
     } catch (error) {
-      console.error('Error initializing Stream client:', error);
+      console.error("Error initializing Stream client:", error);
       toast({
-        title: 'Error',
-        description: 'Failed to initialize video client',
-        variant: 'destructive',
+        title: "Error",
+        description: "Failed to initialize video client",
+        variant: "destructive",
       });
     }
   }, [apiKey, token, userId, username, client]);
@@ -67,7 +73,9 @@ export function VideoMeeting({ apiKey, token, userId, callId, username }: Readon
 
   const VideoCallContent = () => {
     const videoClient = useStreamVideoClient();
-    const [callState, setCallState] = useState<'joining' | 'joined' | 'error'>('joining');
+    const [callState, setCallState] = useState<"joining" | "joined" | "error">(
+      "joining",
+    );
     const callRef = useRef<any>(null);
 
     useEffect(() => {
@@ -84,21 +92,21 @@ export function VideoMeeting({ apiKey, token, userId, callId, username }: Readon
           }
 
           // Create and join new call
-          const newCall = videoClient.call('default', callId);
+          const newCall = videoClient.call("default", callId);
           await newCall.join({ create: true });
-          
+
           if (isSubscribed) {
             callRef.current = newCall;
-            setCallState('joined');
+            setCallState("joined");
           }
         } catch (error) {
-          console.error('Error joining call:', error);
+          console.error("Error joining call:", error);
           if (isSubscribed) {
-            setCallState('error');
+            setCallState("error");
             toast({
-              title: 'Error',
-              description: 'Failed to join the meeting',
-              variant: 'destructive',
+              title: "Error",
+              description: "Failed to join the meeting",
+              variant: "destructive",
             });
           }
         }
@@ -114,7 +122,7 @@ export function VideoMeeting({ apiKey, token, userId, callId, username }: Readon
               await callRef.current.leave();
               callRef.current = null;
             } catch (error) {
-              console.error('Error leaving call:', error);
+              console.error("Error leaving call:", error);
             }
           }
         };
@@ -122,7 +130,7 @@ export function VideoMeeting({ apiKey, token, userId, callId, username }: Readon
       };
     }, [videoClient, callId]);
 
-    if (callState === 'joining') {
+    if (callState === "joining") {
       return (
         <div className="flex items-center justify-center h-full">
           <div className="text-center">
@@ -133,11 +141,13 @@ export function VideoMeeting({ apiKey, token, userId, callId, username }: Readon
       );
     }
 
-    if (callState === 'error') {
+    if (callState === "error") {
       return (
         <div className="flex items-center justify-center h-full">
           <div className="text-center">
-            <h2 className="text-2xl font-semibold text-red-600 mb-2">Failed to join meeting</h2>
+            <h2 className="text-2xl font-semibold text-red-600 mb-2">
+              Failed to join meeting
+            </h2>
             <p className="text-muted-foreground">Please try again later</p>
           </div>
         </div>
@@ -151,8 +161,10 @@ export function VideoMeeting({ apiKey, token, userId, callId, username }: Readon
             <div className="absolute inset-0">
               <SpeakerLayout />
             </div>
-            <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10 bg-background/80 rounded-lg p-4 flex gap-4">
-              <CallControls />
+            <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-50">
+              <div className="bg-black/80 backdrop-blur-sm rounded-lg p-4 flex gap-4 items-center">
+                <CallControls />
+              </div>
             </div>
           </div>
         </div>

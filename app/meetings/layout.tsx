@@ -9,17 +9,13 @@ export default async function MeetingsLayout({
   const session = await getServerSession();
 
   if (!session?.user) {
-    redirect('/auth/signin');
+    redirect("/auth/signin");
   }
 
-  return (
-    <main className="mt-20 container mx-auto px-4">
-      {children}
-    </main>
-  );
+  return <main className="mt-20 container mx-auto px-4">{children}</main>;
 }
 
 export const metadata = {
-  title: 'Video Meetings',
-  description: 'Create and join video meetings',
+  title: "Video Meetings",
+  description: "Create and join video meetings",
 };

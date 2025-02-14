@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import {
   CallControls,
@@ -83,7 +83,7 @@ function CallLayoutView({ layout }: Readonly<CallLayoutViewProps>) {
       return (
         <div className={containerClass}>
           <div className={layoutClass}>
-            <SpeakerLayout 
+            <SpeakerLayout
               {...commonProps}
               participantsBarPosition="bottom"
               participantsBarLimit="dynamic"
@@ -96,7 +96,7 @@ function CallLayoutView({ layout }: Readonly<CallLayoutViewProps>) {
       return (
         <div className={containerClass}>
           <div className={layoutClass}>
-            <SpeakerLayout 
+            <SpeakerLayout
               {...commonProps}
               participantsBarPosition="right"
               participantsBarLimit="dynamic"
@@ -109,10 +109,7 @@ function CallLayoutView({ layout }: Readonly<CallLayoutViewProps>) {
       return (
         <div className={containerClass}>
           <div className={layoutClass}>
-            <PaginatedGridLayout 
-              {...commonProps}
-              groupSize={4}
-            />
+            <PaginatedGridLayout {...commonProps} groupSize={4} />
           </div>
         </div>
       );

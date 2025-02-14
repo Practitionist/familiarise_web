@@ -1,7 +1,11 @@
-'use client';
+"use client";
 
 import { useEffect, useRef, useState } from "react";
-import { DeviceSettings, VideoPreview, useCallStateHooks } from "@stream-io/video-react-sdk";
+import {
+  DeviceSettings,
+  VideoPreview,
+  useCallStateHooks,
+} from "@stream-io/video-react-sdk";
 import Button from "./button";
 import AudioVolumeIndicator from "./audio-volume-indicator";
 import PermissionPrompt from "./permission-prompt";
@@ -36,7 +40,7 @@ export default function SetupUI({ onSetupComplete }: Readonly<SetupUIProps>) {
           }
         }
       } catch (error) {
-        console.error('Error setting up devices:', error);
+        console.error("Error setting up devices:", error);
       }
     };
 
@@ -52,7 +56,7 @@ export default function SetupUI({ onSetupComplete }: Readonly<SetupUIProps>) {
             await camState.camera.disable();
           }
         } catch (error) {
-          console.error('Error cleaning up devices:', error);
+          console.error("Error cleaning up devices:", error);
         }
       };
       cleanup();
