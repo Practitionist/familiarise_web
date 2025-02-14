@@ -1,4 +1,7 @@
 "use client";
+import { Progress } from "@/components/ui/progress";
+import { useToast } from "@/hooks/use-toast";
+import { Domain, SubDomain, Tag } from "@/schemas/PlanSchema";
 import {
   ConsultantProfile,
   ConsulteeProfile,
@@ -7,18 +10,17 @@ import {
   PreferredSchedule,
   StaffProfile,
 } from "@/schemas/UserSchema";
-import { Domain, SubDomain, Tag } from "@/schemas/PlanSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
-import ProgressIndicator from "../consultant/plans/components/ui/ProgressIndicator";
 import ConsultantAgreementForm from "./components/ConsultantAgreementForm";
 import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
 import ConsultantProfileForm from "./components/ConsultantProfileForm";
 import ConsultantReviewForm from "./components/ConsultantReviewForm";
 import ConsulteeAgreementForm from "./components/ConsulteeAgreementForm";
+import ConsulteePreferencesForm from "./components/ConsulteePreferencesForm";
 import ConsulteeProfileForm from "./components/ConsulteeProfileForm";
 import ConsulteeReviewForm from "./components/ConsulteeReviewForm";
 import PersonalInfoAndRoleForm from "./components/PersonalInfoAndRoleForm";
@@ -26,8 +28,6 @@ import StaffAgreementForm from "./components/StaffAgreementForm";
 import StaffProfileForm from "./components/StaffProfileForm";
 import StaffResponsibilitiesForm from "./components/StaffResponsibilitiesForm";
 import StaffReviewForm from "./components/StaffReviewForm";
-import ConsulteePreferencesForm from "./components/ConsulteePreferencesForm";
-import { useToast } from "@/hooks/use-toast";
 
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsultantProfile> &
@@ -442,7 +442,10 @@ const MultiStepForm: React.FC = () => {
     <FormProvider {...methods}>
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
         <Header />
-        <ProgressIndicator currentStep={step} totalSteps={4} />
+        <Progress 
+          value={((step + 1) / 4) * 100} 
+          className="w-[60%] mb-8" 
+        />
         <WelcomeMessage />
         {renderFormStep()}
       </div>
