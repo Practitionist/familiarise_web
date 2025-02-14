@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { name: "Home", path: "home", icon: "🏠" },
   { name: "Chats", path: "chats", icon: "💬" },
   { name: "Appointments", path: "appointments", icon: "📅" },
+  { name: "Event Planner", path: "planner", icon: "📋" },
   { name: "Requests", path: "requests", icon: "📝" },
   { name: "Documents for Review", path: "documents", icon: "📄" },
   { name: "Help", path: "help", icon: "❓" },
