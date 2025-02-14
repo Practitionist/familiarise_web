@@ -6,17 +6,14 @@ export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession();
     if (!session?.user) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { userId } = await req.json();
     if (!userId) {
       return NextResponse.json(
         { error: "User ID is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -26,7 +23,7 @@ export async function POST(req: NextRequest) {
     if (!api_key || !api_secret) {
       return NextResponse.json(
         { error: "Stream credentials not configured" },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -44,7 +41,7 @@ export async function POST(req: NextRequest) {
     console.error("Error generating Stream token:", error);
     return NextResponse.json(
       { error: "Failed to generate token" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -1,7 +1,11 @@
-'use client';
+"use client";
 
 import { useEffect, useState } from "react";
-import { StreamVideoParticipant, CallingState, useCallStateHooks } from "@stream-io/video-react-sdk";
+import {
+  StreamVideoParticipant,
+  CallingState,
+  useCallStateHooks,
+} from "@stream-io/video-react-sdk";
 import { Loader2 } from "lucide-react";
 import FlexibleCallLayout from "./flexible-call-layout";
 import SetupUI from "./setup-ui";
@@ -18,7 +22,8 @@ export default function MeetingUI() {
     }
   }, [callingState]);
 
-  const { useCameraState, useMicrophoneState, useParticipants } = useCallStateHooks();
+  const { useCameraState, useMicrophoneState, useParticipants } =
+    useCallStateHooks();
   const cameraState = useCameraState();
   const microphoneState = useMicrophoneState();
   const participants = useParticipants();
@@ -29,15 +34,16 @@ export default function MeetingUI() {
       if (callingState === CallingState.JOINED) {
         try {
           // Only enable devices if we're not already publishing
-          const isPublishing = participants.some((p: StreamVideoParticipant) => 
-            p.isLocalParticipant && p.publishedTracks.length > 0
+          const isPublishing = participants.some(
+            (p: StreamVideoParticipant) =>
+              p.isLocalParticipant && p.publishedTracks.length > 0,
           );
           if (!isPublishing) {
             await cameraState.camera.enable();
             await microphoneState.microphone.enable();
           }
         } catch (error) {
-          console.error('Error enabling devices:', error);
+          console.error("Error enabling devices:", error);
         }
       }
     };

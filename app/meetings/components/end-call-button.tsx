@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import { useCallStateHooks } from "@stream-io/video-react-sdk";
 import useStreamCall from "@/hooks/use-stream-call";

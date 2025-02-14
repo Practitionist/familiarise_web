@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import MeetingUI from "@/components/ui/meeting/meeting-ui";
+import MeetingUI from "../components/meeting-ui";
 import {
   StreamCall,
   StreamVideo,
@@ -31,13 +31,13 @@ export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
     const initClient = async () => {
       try {
         // Get token from our API
-        const response = await fetch('/api/meetings/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const response = await fetch("/api/meetings/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userId: session.user.id }),
         });
 
-        if (!response.ok) throw new Error('Failed to get token');
+        if (!response.ok) throw new Error("Failed to get token");
         if (!mounted) return;
 
         const { token } = await response.json();
@@ -45,13 +45,16 @@ export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
         const user = {
           id: session.user.id,
           name: session.user.name ?? session.user.id,
-          type: 'authenticated' as const,
+          type: "authenticated" as const,
         };
 
         // Initialize Stream client
-        const streamClient = new StreamVideoClient(process.env.NEXT_PUBLIC_STREAM_API_KEY!, {
-          logLevel: 'info',
-        });
+        const streamClient = new StreamVideoClient(
+          process.env.NEXT_PUBLIC_STREAM_API_KEY!,
+          {
+            logLevel: "info",
+          },
+        );
 
         // Connect user
         await streamClient.connectUser(user, token);
@@ -68,7 +71,7 @@ export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
         setClient(streamClient);
 
         // Create and join call
-        const newCall = streamClient.call('default', meetingId);
+        const newCall = streamClient.call("default", meetingId);
         await newCall.join({ create: true });
         if (!mounted) {
           newCall.leave();
@@ -76,7 +79,7 @@ export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
         }
         setCall(newCall);
       } catch (error) {
-        console.error('Error initializing meeting:', error);
+        console.error("Error initializing meeting:", error);
       }
     };
 
@@ -89,17 +92,17 @@ export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
           // Ensure camera and mic are disabled before leaving
           const cameraManager = call.camera;
           const microphoneManager = call.microphone;
-          
+
           if (cameraManager?.enabled) {
             await cameraManager.disable();
           }
           if (microphoneManager?.enabled) {
             await microphoneManager.disable();
           }
-          
+
           await call.leave();
         }
-        
+
         // Run stored cleanup function
         if (cleanupRef.current) {
           cleanupRef.current();
