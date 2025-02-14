@@ -21,10 +21,18 @@ export default function FlexibleCallLayout() {
   const router = useRouter();
 
   return (
-    <div className="space-y-3">
-      <CallLayoutButtons layout={layout} setLayout={setLayout} />
-      <CallLayoutView layout={layout} />
-      <div className="flex flex-col items-center gap-4">
+    <div className="flex flex-col h-full">
+      <div className="flex justify-center py-2">
+        <CallLayoutButtons layout={layout} setLayout={setLayout} />
+      </div>
+      <div className="flex-1 min-h-0 relative">
+        <div className="absolute inset-0 bg-gray-900 rounded-lg overflow-hidden">
+          <div className="w-full h-full flex">
+            <CallLayoutView layout={layout} />
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-col items-center gap-2 py-2">
         <CallControls onLeave={() => router.back()} />
         <EndCallButton />
       </div>
@@ -61,18 +69,55 @@ interface CallLayoutViewProps {
   layout: CallLayout;
 }
 
-function CallLayoutView({ layout }: CallLayoutViewProps) {
-  if (layout === "speaker-vert") {
-    return <SpeakerLayout />;
-  }
+function CallLayoutView({ layout }: Readonly<CallLayoutViewProps>) {
+  const commonProps = {
+    mirrorLocalParticipantVideo: true,
+    pageArrowsVisible: true,
+  };
 
-  if (layout === "speaker-horiz") {
-    return <SpeakerLayout participantsBarPosition="right" />;
-  }
+  const containerClass = "flex-1 relative";
+  const layoutClass = "absolute inset-0";
 
-  if (layout === "grid") {
-    return <PaginatedGridLayout />;
-  }
+  switch (layout) {
+    case "speaker-vert":
+      return (
+        <div className={containerClass}>
+          <div className={layoutClass}>
+            <SpeakerLayout 
+              {...commonProps}
+              participantsBarPosition="bottom"
+              participantsBarLimit="dynamic"
+            />
+          </div>
+        </div>
+      );
 
-  return null;
+    case "speaker-horiz":
+      return (
+        <div className={containerClass}>
+          <div className={layoutClass}>
+            <SpeakerLayout 
+              {...commonProps}
+              participantsBarPosition="right"
+              participantsBarLimit="dynamic"
+            />
+          </div>
+        </div>
+      );
+
+    case "grid":
+      return (
+        <div className={containerClass}>
+          <div className={layoutClass}>
+            <PaginatedGridLayout 
+              {...commonProps}
+              groupSize={4}
+            />
+          </div>
+        </div>
+      );
+
+    default:
+      return null;
+  }
 }
