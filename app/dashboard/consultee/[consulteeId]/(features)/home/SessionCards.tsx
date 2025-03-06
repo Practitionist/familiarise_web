@@ -102,7 +102,7 @@ export function SlotCard({
                   onClick={handleJoinMeeting}
                   className="ml-auto bg-green-600 hover:bg-green-700 text-white text-xs h-7"
                 >
-                  Join Now
+                  Join meet
                 </Button>
               )}
             </div>

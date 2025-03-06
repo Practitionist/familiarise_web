@@ -1,14 +1,14 @@
+import AnnouncementBar from "@/components/AnnouncementBar";
 import Footer from "@/components/Footer";
 import Navbar from "@/components/Navbar";
-import AnnouncementBar from "@/components/AnnouncementBar";
 import { Toaster } from "@/components/ui/toaster";
+import NextAuthProvider from "@/providers/NextAuthSessionProvider";
+import StreamVideoProvider from "@/providers/StreamClientProvider";
 import type { Metadata } from "next";
 import { getServerSession } from "next-auth";
 import { Inter } from "next/font/google";
 import authOptions from "./api/auth/[...nextauth]/options";
 import "./globals.css";
-import NextAuthProvider from "./nextauth-session-provider";
-import StreamVideoProvider from "@/providers/StreamClientProvider";
 
 const inter = Inter({ subsets: ["latin"] });
 
