@@ -1,3 +1,5 @@
+"use client";
+
 import { StreamVideo, StreamVideoClient } from "@stream-io/video-react-sdk";
 import { useEffect, useState } from "react";
 import { useUserData } from "@/hooks/useUserData";

@@ -6,7 +6,7 @@ import {
   fetchConsultantDetails,
   fetchReviews,
   fetchUserDetails,
-} from "@/hooks/useUserData";
+} from "@/lib/user";
 import { TConsultantProfile } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
 import { ConsultantReview, User } from "@prisma/client";

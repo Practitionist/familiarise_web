@@ -8,6 +8,7 @@ import { Inter } from "next/font/google";
 import authOptions from "./api/auth/[...nextauth]/options";
 import "./globals.css";
 import NextAuthProvider from "./nextauth-session-provider";
+import StreamVideoProvider from "@/providers/StreamClientProvider";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -28,7 +29,9 @@ export default async function RootLayout({
         <NextAuthProvider session={session}>
           <AnnouncementBar />
           <Navbar />
-          {children}
+          <StreamVideoProvider userId={session?.user?.id ?? ""}>
+            {children}
+          </StreamVideoProvider>
           <Toaster />
           <Footer />
         </NextAuthProvider>

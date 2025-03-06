@@ -1,10 +1,10 @@
 "use server";
 
-import { fetchUserDetails } from "@/hooks/useUserData";
+import { fetchUserDetails } from "@/lib/user";
 import { StreamClient } from "@stream-io/node-sdk";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
-const apiSecret = process.env.STREAM_API_SECRET;
+const apiSecret = process.env.STREAM_SECRET_KEY;
 
 export const tokenProvider = async (userId: string) => {
     try {

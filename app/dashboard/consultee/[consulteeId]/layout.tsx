@@ -2,7 +2,7 @@
 
 import { ConsulteeProfile, User } from "@prisma/client";
 import { Button } from "components/ui/button";
-import { fetchConsulteeDetails, fetchUserDetails } from "hooks/useUserData";
+import { fetchConsulteeDetails, fetchUserDetails } from "@/lib/user";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
