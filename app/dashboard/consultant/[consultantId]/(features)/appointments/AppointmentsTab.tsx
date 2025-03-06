@@ -1,6 +1,12 @@
+"use client";
+
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast";
+import { joinAppointmentMeeting } from "@/lib/meeting";
+import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+import { useRouter } from "next/navigation";
 import { AppointmentsTabProps } from "../../types";
 import {
   getConsumeeName,
@@ -18,6 +24,32 @@ export function AppointmentsTab({
   appointments,
   getBadgeStyle,
 }: Readonly<AppointmentsTabProps>) {
+  const router = useRouter();
+  const client = useStreamVideoClient();
+  const { toast } = useToast();
+
+  const handleJoinMeeting = async (appointment: any) => {
+    try {
+      if (!client) {
+        toast({
+          title: "Error",
+          description: "Video client not initialized",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const meetingId = await joinAppointmentMeeting(client, appointment);
+      router.push(`/meetings/${meetingId}`);
+    } catch (error) {
+      console.error("Error joining meeting:", error);
+      toast({
+        title: "Error joining meeting",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    }
+  };
   // Group appointments by subscription/class
   const groupedAppointments = groupRecurringAppointments(appointments || []);
 
@@ -131,6 +163,9 @@ export function AppointmentsTab({
                               variant="default"
                               className={joinButtonStyle}
                               disabled={!isJoinable}
+                              onClick={() =>
+                                isJoinable && handleJoinMeeting(appointment)
+                              }
                             >
                               {isJoinable ? "Join meet" : "Chat"}
                             </Button>

@@ -14,9 +14,9 @@ const getBaseUrl = () => {
   if (process.env.VERCEL_URL) {
     return `https://${process.env.VERCEL_URL}`;
   }
-  
+
   // Default to localhost for development
-  return 'http://localhost:3000';
+  return "http://localhost:3000";
 };
 
 export const fetchUserDetails = async (userId: string): Promise<User> => {
@@ -32,7 +32,9 @@ export const fetchConsultantDetails = async (
   consultantId: string,
 ): Promise<TConsultantProfile> => {
   const baseUrl = getBaseUrl();
-  const response = await fetch(`${baseUrl}/api/user/consultants/${consultantId}`);
+  const response = await fetch(
+    `${baseUrl}/api/user/consultants/${consultantId}`,
+  );
   if (!response.ok)
     throw new Error(
       `Failed to fetch consultant details: ${response.statusText}`,

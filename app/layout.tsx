@@ -29,9 +29,13 @@ export default async function RootLayout({
         <NextAuthProvider session={session}>
           <AnnouncementBar />
           <Navbar />
-          <StreamVideoProvider userId={session?.user?.id ?? ""}>
-            {children}
-          </StreamVideoProvider>
+          {session?.user?.id ? (
+            <StreamVideoProvider userId={session.user.id}>
+              {children}
+            </StreamVideoProvider>
+          ) : (
+            children
+          )}
           <Toaster />
           <Footer />
         </NextAuthProvider>

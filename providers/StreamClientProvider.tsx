@@ -20,10 +20,12 @@ const StreamVideoProvider = ({
 
   useEffect(() => {
     if (isLoading || !userDetails) {
+      console.warn("User not found");
       return;
     }
+
     if (!apiKey) {
-      console.error("Stream API key not configured");
+      console.warn("Stream API key not configured");
       return;
     }
 

@@ -6,12 +6,12 @@ import { TConsultantProfile } from "@/types/consultant";
 import { TConsulteeProfile } from "@/types/consultee";
 import { TStaffProfile } from "@/types/staff";
 import { User, ConsultantReview } from "@prisma/client";
-import { 
+import {
   fetchUserDetails,
   fetchConsultantDetails,
   fetchConsulteeDetails,
   fetchStaffDetails,
-  fetchReviews
+  fetchReviews,
 } from "@/lib/user";
 
 export const useUserData = (userId: string) => {
