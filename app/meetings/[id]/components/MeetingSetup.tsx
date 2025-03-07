@@ -19,12 +19,12 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   const { useMicrophoneState, useCameraState } = useCallStateHooks();
   const micState = useMicrophoneState();
   const camState = useCameraState();
-  
+
   // Initialize state based on actual device state
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isMicOn, setIsMicOn] = useState(true);
   const [micLevel, setMicLevel] = useState(0);
-  
+
   // Initialize devices on component mount
   useEffect(() => {
     const initDevices = async () => {
@@ -32,7 +32,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
         // Start with camera off
         await camState.camera.disable();
         setIsCameraOn(false);
-        
+
         // Start with mic on
         await micState.microphone.enable();
         setIsMicOn(true);
@@ -40,12 +40,12 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
         console.error("Error initializing devices:", error);
       }
     };
-    
+
     if (call) {
       initDevices();
     }
   }, [call, camState.camera, micState.microphone]);
-  
+
   // Monitor microphone level for visual feedback using real mic input
   useEffect(() => {
     let animationFrame: number;
@@ -53,55 +53,57 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
     let analyser: AnalyserNode | null = null;
     let microphone: MediaStreamAudioSourceNode | null = null;
     let dataArray: Uint8Array | null = null;
-    
+
     // Reset mic level when toggled
     setMicLevel(0);
-    
+
     const setupAudioAnalyzer = async () => {
       try {
         // Get user media for audio
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+
         // Create audio context and analyzer
         audioContext = new AudioContext();
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 256;
-        
+
         // Connect microphone to analyzer
         microphone = audioContext.createMediaStreamSource(stream);
         microphone.connect(analyser);
-        
+
         // Create data array for frequency data
         const bufferLength = analyser.frequencyBinCount;
         dataArray = new Uint8Array(bufferLength);
-        
+
         // Start analyzing audio levels
         const updateLevel = () => {
           if (analyser && dataArray) {
             analyser.getByteFrequencyData(dataArray);
-            
+
             // Calculate average volume level
             const average = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
             const normalizedLevel = Math.min(average / 128, 1); // Normalize to 0-1
-            
+
             setMicLevel(normalizedLevel);
           }
-          
+
           animationFrame = requestAnimationFrame(updateLevel);
         };
-        
+
         updateLevel();
       } catch (error) {
         console.error("Error accessing microphone:", error);
       }
     };
-    
+
     if (isMicOn) {
       // Small delay to ensure the mic is initialized
       const timer = setTimeout(() => {
         setupAudioAnalyzer();
       }, 100);
-      
+
       return () => {
         clearTimeout(timer);
         if (animationFrame) {
@@ -112,7 +114,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
         }
       };
     }
-    
+
     return () => {
       if (animationFrame) {
         cancelAnimationFrame(animationFrame);
@@ -183,13 +185,15 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
           <div className="mb-4">
             <p className="text-sm text-gray-700 mb-1">Microphone Level</p>
             <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div 
+              <div
                 className="h-full bg-green-500 transition-all duration-100"
                 style={{ width: `${micLevel * 100}%` }}
               ></div>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              {micLevel < 0.05 ? "No sound detected. Try speaking..." : "Sound detected!"}
+              {micLevel < 0.05
+                ? "No sound detected. Try speaking..."
+                : "Sound detected!"}
             </p>
           </div>
         )}
@@ -229,7 +233,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
               )}
             </Button>
           </div>
-          
+
           {/* Device Settings */}
           <div className="flex justify-center">
             <DeviceSettings />
@@ -237,7 +241,10 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
         </div>
 
         {/* Join button */}
-        <Button onClick={handleJoinMeeting} className="w-full bg-green-600 hover:bg-green-700">
+        <Button
+          onClick={handleJoinMeeting}
+          className="w-full bg-green-600 hover:bg-green-700"
+        >
           Join Meeting
         </Button>
       </div>

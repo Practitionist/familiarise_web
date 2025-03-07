@@ -18,12 +18,12 @@ export const useGetCallById = (callId: string) => {
 
       try {
         setIsCallLoading(true);
-        
+
         // First try to query for the call to find it regardless of type
-        const { calls } = await client.queryCalls({ 
-          filter_conditions: { id: callId } 
+        const { calls } = await client.queryCalls({
+          filter_conditions: { id: callId },
         });
-        
+
         if (calls.length > 0) {
           // If found via query, use the first match
           setCall(calls[0]);

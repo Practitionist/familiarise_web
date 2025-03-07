@@ -56,12 +56,14 @@ const Navbar = () => {
   const formRoutes = ["/form/**"];
   const checkoutRoutes = ["/checkout/**"];
   const dashboardRoutes = ["/dashboard/**"];
+  const meetingRoutes = ["/meetings/**"];
   const excludeNavbar =
     micromatch.isMatch(pathname, apiRoutes) ||
     micromatch.isMatch(pathname, publicAuthRoutes) ||
     micromatch.isMatch(pathname, formRoutes) ||
     micromatch.isMatch(pathname, checkoutRoutes) ||
-    micromatch.isMatch(pathname, dashboardRoutes);
+    micromatch.isMatch(pathname, dashboardRoutes) ||
+    micromatch.isMatch(pathname, meetingRoutes);
   if (excludeNavbar) return null;
 
   return (

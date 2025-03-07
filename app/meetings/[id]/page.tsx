@@ -28,8 +28,8 @@ const MeetingPage = () => {
 
   if (!call) {
     return (
-      <Alert 
-        title="Meeting Not Found" 
+      <Alert
+        title="Meeting Not Found"
         description="The meeting you're trying to join doesn't exist or has ended."
       />
     );
