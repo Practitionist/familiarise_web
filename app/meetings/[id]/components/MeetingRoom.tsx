@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   CallControls,
   CallParticipantsList,
@@ -8,6 +8,7 @@ import {
   CallingState,
   PaginatedGridLayout,
   SpeakerLayout,
+  useCall,
   useCallStateHooks,
 } from "@stream-io/video-react-sdk";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import Loader from "./Loader";
 import EndCallButton from "./EndCallButton";
+import CallEnded from "./CallEnded";
 import { cn } from "@/lib/utils";
 
 type CallLayoutType = "grid" | "speaker-left" | "speaker-right";
@@ -32,12 +34,68 @@ const MeetingRoom = () => {
   const router = useRouter();
   const [layout, setLayout] = useState<CallLayoutType>("speaker-left");
   const [showParticipants, setShowParticipants] = useState(false);
-  const { useCallCallingState } = useCallStateHooks();
+  const call = useCall();
+  const { useCallCallingState, useCallEndedAt } = useCallStateHooks();
 
   // Check if we've joined the call
   const callingState = useCallCallingState();
+  const callEndedAt = useCallEndedAt();
 
-  if (callingState !== CallingState.JOINED) return <Loader />;
+  // Track if we're trying to rejoin
+  const [isRejoining, setIsRejoining] = useState(false);
+
+  // Check if the user is the call owner
+  const { useLocalParticipant } = useCallStateHooks();
+  const localParticipant = useLocalParticipant();
+  const isCallOwner =
+    localParticipant &&
+    call?.state.createdBy &&
+    localParticipant.userId === call.state.createdBy.id;
+
+  // Listen for call ended events and check if call is active
+  useEffect(() => {
+    if (call) {
+      const handleCallStateUpdated = () => {
+        console.log("Call state updated:", call.state);
+      };
+
+      call.on("call.updated", handleCallStateUpdated);
+
+      return () => {
+        call.off("call.updated", handleCallStateUpdated);
+      };
+    }
+  }, [call]);
+
+  // Function to rejoin the call
+  const handleRejoinCall = async () => {
+    if (!call) return;
+
+    try {
+      setIsRejoining(true);
+      await call.join();
+    } catch (error) {
+      console.error("Error rejoining call:", error);
+    } finally {
+      setIsRejoining(false);
+    }
+  };
+
+  // Show loading state while joining
+  if ((callingState !== CallingState.JOINED && !callEndedAt) || isRejoining) {
+    return <Loader />;
+  }
+
+  // Show call ended screen if the call has ended and user is not the owner
+  // Owners can always access the call even if it was previously ended
+  if (callEndedAt && !isCallOwner) {
+    return (
+      <CallEnded
+        message="The call has been ended by the host"
+        onRejoin={handleRejoinCall}
+      />
+    );
+  }
 
   const CallLayout = () => {
     switch (layout) {
