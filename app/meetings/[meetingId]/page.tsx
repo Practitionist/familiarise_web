@@ -1,5 +1,6 @@
 "use client";
 
+import { useToast } from "@/components/ui/use-toast";
 import MeetingUI from "../components/meeting-ui";
 import {
   StreamCall,
@@ -22,6 +23,7 @@ export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
   const [client, setClient] = useState<StreamVideoClient | null>(null);
   const [call, setCall] = useState<any>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const { toast } = useToast();
 
   useEffect(() => {
     if (!session?.user?.id) return;
@@ -37,10 +39,16 @@ export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
           body: JSON.stringify({ userId: session.user.id }),
         });
 
-        if (!response.ok) throw new Error("Failed to get token");
+        if (!response.ok) {
+          const error = await response.text();
+          throw new Error(`Failed to get token: ${error}`);
+        }
         if (!mounted) return;
 
         const { token } = await response.json();
+        if (!token) {
+          throw new Error("No token received from server");
+        }
 
         const user = {
           id: session.user.id,
@@ -80,6 +88,13 @@ export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
         setCall(newCall);
       } catch (error) {
         console.error("Error initializing meeting:", error);
+        // Show error to user
+        const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+        toast({
+          title: "Error",
+          description: `Failed to initialize meeting: ${errorMessage}`,
+          variant: "destructive",
+        });
       }
     };
 
@@ -88,27 +103,40 @@ export default function MeetingPage({ params }: Readonly<MeetingPageProps>) {
     return () => {
       mounted = false;
       const cleanup = async () => {
-        if (call) {
-          // Ensure camera and mic are disabled before leaving
-          const cameraManager = call.camera;
-          const microphoneManager = call.microphone;
+        try {
+          if (call) {
+            // Ensure camera and mic are disabled before leaving
+            const promises = [];
+            const cameraManager = call.camera;
+            const microphoneManager = call.microphone;
 
-          if (cameraManager?.enabled) {
-            await cameraManager.disable();
+            if (cameraManager?.enabled) {
+              promises.push(cameraManager.disable());
+            }
+            if (microphoneManager?.enabled) {
+              promises.push(microphoneManager.disable());
+            }
+
+            // Wait for all devices to be disabled
+            await Promise.all(promises);
+            await call.leave();
           }
-          if (microphoneManager?.enabled) {
-            await microphoneManager.disable();
+
+          // Run stored cleanup function
+          if (cleanupRef.current) {
+            cleanupRef.current();
           }
-
-          await call.leave();
-        }
-
-        // Run stored cleanup function
-        if (cleanupRef.current) {
-          cleanupRef.current();
+        } catch (error) {
+          console.error("Error during cleanup:", error);
+          toast({
+            title: "Error",
+            description: "Failed to clean up meeting",
+            variant: "destructive",
+          });
         }
       };
-      cleanup();
+      // Execute cleanup immediately
+      cleanup().catch(console.error);
     };
   }, [session?.user, meetingId]);
 
