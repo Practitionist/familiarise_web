@@ -8,6 +8,8 @@ import type { Metadata } from "next";
 import { getServerSession } from "next-auth";
 import { Inter } from "next/font/google";
 import authOptions from "./api/auth/[...nextauth]/options";
+
+import "@stream-io/video-react-sdk/dist/css/styles.css";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
