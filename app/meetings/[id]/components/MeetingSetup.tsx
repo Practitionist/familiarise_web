@@ -171,8 +171,13 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
         </h1>
 
         {/* Video preview */}
-        <div className="mb-6 rounded-lg overflow-hidden bg-gray-900 aspect-video relative">
-          <VideoPreview />
+        <div className="mb-6 rounded-lg overflow-hidden bg-gray-900 relative" style={{ height: "300px" }}>
+          <div className="w-full h-full flex items-center justify-center">
+            <VideoPreview 
+              mirror={true}
+              className="w-full h-full object-contain"
+            />
+          </div>
           {!isCameraOn && (
             <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-70 text-white">
               <p className="text-lg font-medium">Camera is disabled</p>

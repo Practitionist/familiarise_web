@@ -19,13 +19,18 @@ const StreamVideoProvider = ({
   const { userDetails, isLoading } = useUserData(userId);
 
   useEffect(() => {
-    if (isLoading || !userDetails) {
+    if (isLoading) {
+      console.info("User data is loading");
+      return;
+    }
+    
+    if (!userDetails) {
       console.warn("User not found");
       return;
     }
 
     if (!apiKey) {
-      console.warn("Stream API key not configured");
+      console.error("Stream API key not configured");
       return;
     }
 
