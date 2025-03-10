@@ -27,17 +27,17 @@ export default async function RootLayout({
   const session = await getServerSession(authOptions);
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body className={`${inter.className} flex flex-col min-h-screen`}>
         <NextAuthProvider session={session}>
           <AnnouncementBar />
           <Navbar />
-          {session?.user?.id ? (
-            <StreamVideoProvider userId={session.user.id}>
-              {children}
-            </StreamVideoProvider>
-          ) : (
-            children
-          )}
+            {session?.user?.id ? (
+              <StreamVideoProvider userId={session.user.id}>
+                {children}
+              </StreamVideoProvider>
+            ) : (
+              children
+            )}
           <Toaster />
           <Footer />
         </NextAuthProvider>

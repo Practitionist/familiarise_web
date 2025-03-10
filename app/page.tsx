@@ -24,7 +24,7 @@ export default function Home() {
   return (
     <ReduxProvider store={store}>
       <AnimatePresence>
-        <main className="flex-0">
+        <main className="flex-1 w-full">
           <HeroSection images={images} />
           <TransformCareerSection images={images} />
           <UnlockPotentialSection images={images} />

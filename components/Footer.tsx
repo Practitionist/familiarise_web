@@ -33,7 +33,7 @@ const Footer: React.FC = () => {
   if (excludeFooter) return null;
 
   return (
-    <footer className="flex flex-col items-center justify-center p-5 bg-black text-white">
+    <footer className="flex flex-col items-center justify-center p-5 bg-black text-white mt-auto">
       <div className="w-full flex justify-center pb-5">
         {/* Replace with your company logo */}
         <Image src={consultxlogo} alt="Company Logo" width={50} height={60} />
