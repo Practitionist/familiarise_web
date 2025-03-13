@@ -15,7 +15,7 @@ type CalendarProps = {
 };
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
+const HOURS = Array.from({ length: 48 }, (_, i) => i / 2);
 
 export function Calendar({
   availableSlots = [],
@@ -28,6 +28,8 @@ export function Calendar({
 }: CalendarProps) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState<"week" | "month">("week");
+
+  console.log("From Calendar availableSlots", availableSlots);
 
   const navigatePrevious = () => {
     setCurrentDate(
@@ -50,10 +52,18 @@ export function Calendar({
   };
 
   const renderTimeCell = (date: Date, hour: number) => {
+    const { hr, min } = {
+      hr: Math.floor(hour),
+      min: hour % 1 === 0 ? 0 : 30,
+    };
     const slotDate = new Date(date);
-    slotDate.setHours(hour, 0, 0, 0);
+    const slotDateWithZeroDate = new Date(0);
+    slotDate.setUTCHours(hr, min, 0, 0);
+    slotDateWithZeroDate.setUTCHours(hr, min, 0, 0);
+    slotDateWithZeroDate.setDate(date.getDay());
     const slotString = slotDate.toISOString();
-    const isAvailable = availableSlots?.includes(slotString);
+    const slotStringWithZeroDate = slotDateWithZeroDate.toISOString();
+    const isAvailable = availableSlots?.includes(slotStringWithZeroDate);
     const isExisting = existingAppointments?.includes(slotString);
     const isSelected = selectedSlots?.includes(slotString);
     const now = new Date();
@@ -63,7 +73,7 @@ export function Calendar({
       <Button
         key={`${date.toISOString()}-${hour}`}
         variant={isSelected ? "default" : isAvailable ? "outline" : "ghost"}
-        className={`h-8 md:h-12 w-full relative
+        className={`h-8 md:h-12 w-full relative border
           ${isExisting ? "bg-gray-200 hover:bg-gray-200" : ""}
           ${isInPast ? "opacity-50" : ""}
         `}
@@ -114,8 +124,9 @@ export function Calendar({
           <div className="grid grid-cols-8 gap-0.5 md:gap-1">
             {HOURS.map((hour) => (
               <React.Fragment key={hour}>
-                <div className="w-12 md:w-20 text-right pr-2 py-2 text-[10px] md:text-sm sticky left-0 bg-background z-10">
-                  {hour.toString().padStart(2, "0")}:00
+                <div className="w-12 md:w-20 text-right pr-2 text-[10px] md:text-sm sticky left-0 bg-background z-10">
+
+                  {Math.floor(hour).toString().padStart(2, "0")}:{hour % 1 === 0 ? "00" : "30"}
                 </div>
                 {DAYS.map((_, dayIndex) => {
                   const date = new Date(startOfWeek);
@@ -160,6 +171,7 @@ export function Calendar({
           const daySlots =
             availableSlots?.filter((slot) => slot?.startsWith(dateString)) ||
             [];
+          // console.log("daySlots", daySlots);
           const existingSlots =
             existingAppointments?.filter((slot) =>
               slot?.startsWith(dateString),
@@ -272,7 +284,7 @@ export function Calendar({
             Selected: {selectedSlots.length} / {requiredSlots}
           </div>
           <div className="text-xs md:text-sm text-muted-foreground">
-            {consultantTimezone}
+            {new Date().toLocaleTimeString('en-us', { timeZoneName: 'short' }).split(' ')[2]}
           </div>
         </div>
       </div>

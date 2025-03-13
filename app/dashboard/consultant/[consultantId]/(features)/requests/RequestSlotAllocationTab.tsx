@@ -1,3 +1,5 @@
+"use client";
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,9 +29,10 @@ import {
 import { toast } from "@/components/ui/use-toast";
 import { AppointmentsType, RequestStatus } from "@prisma/client";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { Calendar } from "./components/Calendar";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
+import { convertUtcToLocalTime, roundToNearest30Minutes } from "../../utils/dateTime";
 
 interface Request {
   id: string;
@@ -60,12 +63,12 @@ type RequestType = "all" | "consultation" | "subscription";
 
 interface RequestSlotAllocationTabProps {
   type: RequestType;
-  onUpdate: () => void;
+  onUpdate?: () => void;
 }
 
 export function RequestSlotAllocationTab({
   type,
-  onUpdate,
+  onUpdate = () => {},
 }: RequestSlotAllocationTabProps) {
   const params = useParams();
   const consultantId = params.consultantId as string;
@@ -561,12 +564,17 @@ export function RequestSlotAllocationTab({
                               : "Use Requested Times"}
                           </Button>
                         )}
-                      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                      <Dialog
+                        open={dialogOpen}
+                        onOpenChange={setDialogOpen}
+                        key={request.id}
+                      >
                         <DialogTrigger asChild>
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => {
+                              console.log("Allocate Slots button clicked", request);
                               setSelectedRequest(request);
                               setSelectedSlots([]);
                               setDialogOpen(true);
@@ -587,20 +595,25 @@ export function RequestSlotAllocationTab({
                           <DialogHeader>
                             <DialogTitle>Allocate Slots</DialogTitle>
                             <DialogDescription>
-                              Choose {request.requiredSlots} slots for{" "}
-                              {request.type.toLowerCase()}
+                              Choose {selectedRequest?.requiredSlots} slots for{" "}
+                              {selectedRequest?.type.toLowerCase()}
                             </DialogDescription>
                           </DialogHeader>
                           <Calendar
                             availableSlots={availableSlots.map(
-                              (slot) => slot.slotStartTimeInUTC,
+                              (slot) =>
+                                  roundToNearest30Minutes(slot.slotStartTimeInUTC),
                             )}
                             existingAppointments={existingAppointments.map(
-                              (slot) => slot.slotStartTimeInUTC,
-                            )}
+                              (slot: any) =>
+                                slot.slotsOfAppointment.map(
+                                  (s: any) =>
+                                      roundToNearest30Minutes(s.slotStartTimeInUTC),
+                                ),
+                            ).flat()}
                             onSlotSelect={handleSlotSelect}
                             selectedSlots={selectedSlots}
-                            requiredSlots={request.requiredSlots}
+                            requiredSlots={selectedRequest?.requiredSlots || 0}
                             scheduleType={consultantData.scheduleType}
                             consultantTimezone={consultantData.timezone}
                           />

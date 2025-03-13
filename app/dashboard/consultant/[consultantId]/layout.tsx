@@ -57,11 +57,12 @@ function useConsultantData(consultantId: string) {
     isLoading: true,
   });
 
+
   useEffect(() => {
     async function fetchData() {
       try {
         setState((prev) => ({ ...prev, isLoading: true, error: null }));
-
+        // console.log("session", session);
         const userId =
           process.env.NODE_ENV === "test" ||
           process.env.NODE_ENV === "development"
@@ -90,7 +91,7 @@ function useConsultantData(consultantId: string) {
     }
 
     fetchData();
-  }, [session, consultantId]);
+  }, [consultantId]);
 
   return state;
 }

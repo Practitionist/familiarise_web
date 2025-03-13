@@ -8,10 +8,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    console.log(
-      "Received request to update onboarding information",
-      JSON.stringify(params, null, 2),
-    );
+    // console.log(
+    //   "Received request to update onboarding information",
+    //   JSON.stringify(params, null, 2),
+    // );
     const { id } = await params;
     const body = await req.json();
     console.log("Request Body:", JSON.stringify(body, null, 2));
@@ -20,7 +20,9 @@ export async function PATCH(
     const existingUser = await getExistingUser(id);
     validateRole(body.role);
 
-    const updatedUser = await updateUser(id, body);
+    console.log("Existing User:", JSON.stringify(existingUser, null, 2));
+
+    // const updatedUser = await updateUser(id, body);
     const userProfileData = await updateUserProfile(id, body, existingUser);
 
     const finalUpdatedUser = await prisma.user.update({
@@ -33,7 +35,7 @@ export async function PATCH(
       user: finalUpdatedUser,
     });
   } catch (error: unknown) {
-    console.error("Error updating onboarding information:", error);
+    // console.error("Error updating onboarding information:", error);
     if (error instanceof Error) {
       console.error("Error message:", error.message);
       console.error("Error stack:", error.stack);

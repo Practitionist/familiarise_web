@@ -68,10 +68,18 @@ const getAppointmentDate = (
     });
   }
 
-  const startDate = new Date(now.getTime() + startOffset * 24 * 60 * 60 * 1000);
-  const endDate = new Date(now.getTime() + endOffset * 24 * 60 * 60 * 1000);
+  const startDate = roundToNearest30Minutes(
+    new Date(now.getTime() + startOffset * 24 * 60 * 60 * 1000).toISOString(),
+  );
+  const endDate = roundToNearest30Minutes(
+    new Date(now.getTime() + endOffset * 24 * 60 * 60 * 1000).toISOString(),
+  );
 
-  return { startDate, endDate, isPastAppointment };
+  return {
+    startDate: new Date(startDate),
+    endDate: new Date(endDate),
+    isPastAppointment,
+  };
 };
 
 const getNumSlots = (appointmentType: AppointmentsType): number => {
@@ -496,4 +504,23 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
       console.log(`Created ${i + 1} appointments`);
     }
   }
+}
+
+function roundToNearest30Minutes(timestamp: string): string {
+  // Parse the input timestamp into a Date object
+  const date = new Date(timestamp);
+
+  // Get the minutes of the given time
+  const minutes = date.getMinutes();
+  
+  // Calculate the nearest 30-minute interval (either 0 or 30)
+  const roundedMinutes = Math.round(minutes / 30) * 30;
+  
+  // Set the rounded minutes to the date object
+  date.setMinutes(roundedMinutes);
+  date.setSeconds(0);
+  date.setMilliseconds(0);
+
+  // Return the result in ISO 8601 format
+  return date.toISOString();
 }

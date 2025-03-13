@@ -83,3 +83,12 @@
     @apply bg-background text-foreground;
   }
 }
+
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 0.5rem;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: #ccc;
+}
