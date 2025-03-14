@@ -9,7 +9,7 @@ type CalendarProps = {
   existingAppointments: string[] | undefined;
   onSlotSelect: (slot: string) => void;
   selectedSlots: string[] | undefined;
-  requiredSlots: number;
+  requiredSlots: number | undefined;
   scheduleType: "WEEKLY" | "CUSTOM";
   consultantTimezone: string;
 };
@@ -29,7 +29,7 @@ export function Calendar({
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState<"week" | "month">("week");
 
-  console.log("From Calendar availableSlots", availableSlots);
+  // console.log("From Calendar availableSlots", availableSlots);
 
   const navigatePrevious = () => {
     setCurrentDate(
@@ -60,10 +60,10 @@ export function Calendar({
     const slotDateWithZeroDate = new Date(0);
     slotDate.setUTCHours(hr, min, 0, 0);
     slotDateWithZeroDate.setUTCHours(hr, min, 0, 0);
-    slotDateWithZeroDate.setDate(date.getDay());
+    slotDateWithZeroDate.setUTCDate(date.getDay());
     const slotString = slotDate.toISOString();
     const slotStringWithZeroDate = slotDateWithZeroDate.toISOString();
-    const isAvailable = availableSlots?.includes(slotStringWithZeroDate);
+    const isAvailable = availableSlots?.includes(slotStringWithZeroDate) || availableSlots?.includes(slotString);
     const isExisting = existingAppointments?.includes(slotString);
     const isSelected = selectedSlots?.includes(slotString);
     const now = new Date();
@@ -73,14 +73,14 @@ export function Calendar({
       <Button
         key={`${date.toISOString()}-${hour}`}
         variant={isSelected ? "default" : isAvailable ? "outline" : "ghost"}
-        className={`h-8 md:h-12 w-full relative border
+        className={`h-4 md:h-8 w-full relative border
           ${isExisting ? "bg-gray-200 hover:bg-gray-200" : ""}
           ${isInPast ? "opacity-50" : ""}
         `}
         onClick={() => isAvailable && !isInPast && onSlotSelect(slotString)}
         disabled={!isAvailable || isExisting || isInPast}
       >
-        <div className="flex flex-col items-center gap-0.5 md:gap-1 text-[10px] md:text-xs">
+        <div className="flex items-center gap-0.5 md:gap-1 text-[10px] md:text-xs">
           {scheduleType === "WEEKLY" && isAvailable && <span>🔄</span>}
           {isExisting
             ? "Booked"
@@ -121,11 +121,10 @@ export function Calendar({
           })}
         </div>
         <div className="flex-1 overflow-y-auto scrollbar-thin">
-          <div className="grid grid-cols-8 gap-0.5 md:gap-1">
+          <div className="grid grid-cols-8 gap-0.5 md:gap-1 items-center">
             {HOURS.map((hour) => (
               <React.Fragment key={hour}>
                 <div className="w-12 md:w-20 text-right pr-2 text-[10px] md:text-sm sticky left-0 bg-background z-10">
-
                   {Math.floor(hour).toString().padStart(2, "0")}:{hour % 1 === 0 ? "00" : "30"}
                 </div>
                 {DAYS.map((_, dayIndex) => {
@@ -153,7 +152,7 @@ export function Calendar({
     );
 
     return (
-      <div className="grid grid-cols-7 gap-0.5 md:gap-1 h-[calc(100vh-20rem)] md:h-[65vh] max-h-[600px]">
+      <div className="grid grid-cols-7 gap-0.5 md:gap-1 h-[calc(100vh-20rem)] md:h-[65vh] max-h-[600px] overflow-y-auto scrollbar-thin">
         {DAYS.map((day) => (
           <div
             key={day}
@@ -165,19 +164,24 @@ export function Calendar({
         {Array.from({ length: firstDayOfMonth }, (_, i) => (
           <div key={`empty-${i}`} className="h-full bg-gray-50/50"></div>
         ))}
-        {Array.from({ length: getDaysInMonth(currentDate) }, (_, i) => {
+        {Array.from({ length: getDaysInMonth(currentDate) }, (_, i: number) => {
           const date = new Date(year, month, i + 1);
+          const zeroDate = new Date(0);
+          zeroDate.setDate(date.getDay());
+          const zeroDateString = zeroDate.toISOString().split("T")[0];
           const dateString = date.toISOString().split("T")[0];
           const daySlots =
-            availableSlots?.filter((slot) => slot?.startsWith(dateString)) ||
+            availableSlots?.filter((slot) => slot?.startsWith(dateString) || slot?.startsWith(zeroDateString)) ||
             [];
-          // console.log("daySlots", daySlots);
+          daySlots.sort((a, b) => {
+            const dateA = new Date(a);
+            const dateB = new Date(b);
+            return dateA.getTime() - dateB.getTime();
+          });
           const existingSlots =
             existingAppointments?.filter((slot) =>
               slot?.startsWith(dateString),
             ) || [];
-          const selectedDaySlots =
-            selectedSlots?.filter((slot) => slot?.startsWith(dateString)) || [];
           const isToday = date.getTime() === currentDayStart.getTime();
           const isPast = date < currentDayStart;
 
@@ -192,35 +196,48 @@ export function Calendar({
                     isToday ? "text-primary" : ""
                   }`}
                 >
-                  <span>{i + 1}</span>
-                  {daySlots.length > 0 && (
+                  <span>
+                    {i + 1}
+                    {(i + 1) % 10 === 1 && (i + 1) !== 11
+                      ? "st"
+                      : (i + 1) % 10 === 2 && (i + 1) !== 12
+                      ? "nd" 
+                      : (i + 1) % 10 === 3 && (i + 1) !== 13
+                      ? "rd"
+                      : "th"}
+                  </span>
+                    {daySlots.length > 0 && (
                     <Badge variant="outline" className="text-[10px] md:text-xs">
                       {daySlots.length}
                     </Badge>
                   )}
                 </div>
                 <div className="flex-1 space-y-0.5 md:space-y-1 mt-0.5 md:mt-1 overflow-y-auto scrollbar-thin">
-                  {daySlots.map((slot, index) => {
+                  {daySlots.map((slot: string, index: number) => {
                     const slotDate = new Date(slot);
+                    slotDate.setUTCFullYear(now.getUTCFullYear());
+                    slotDate.setUTCMonth(now.getUTCMonth());
+                    slotDate.setDate(i + 1);
+                    console.log("slotDate", slotDate.toISOString());
                     const isInPast = slotDate < now;
-                    const isSelected = selectedDaySlots.includes(slot);
+                    const isSelected =  selectedSlots?.includes(slotDate.toISOString());
                     const isExisting = existingSlots.includes(slot);
+
 
                     return (
                       <Button
                         key={index}
                         variant={isSelected ? "default" : "outline"}
                         size="sm"
-                        className={`w-full h-5 md:h-6 text-[10px] md:text-xs justify-start ${
+                        className={`w-full h-5 md:h-6 text-[10px] md:text-xs justify-start text-center ${
                           isExisting ? "bg-gray-200" : ""
-                        } ${isInPast ? "opacity-50" : ""}`}
-                        onClick={() => !isInPast && onSlotSelect(slot)}
+                        } ${isInPast ? "opacity-50" : ""} ${isSelected ? "bg-primary text-white" : ""}`}
+                        onClick={() => !isInPast && onSlotSelect(slotDate.toISOString())}
                         disabled={isExisting || isInPast}
                       >
-                        {slotDate.toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                        {slotDate.getUTCHours() % 12 || 12}:
+                        {slotDate.getUTCMinutes().toString().padStart(2, '0')}
+                        {slotDate.getUTCHours() >= 12 ? ' PM' : ' AM'}
                       </Button>
                     );
                   })}

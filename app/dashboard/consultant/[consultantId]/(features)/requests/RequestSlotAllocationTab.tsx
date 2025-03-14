@@ -613,7 +613,7 @@ export function RequestSlotAllocationTab({
                             ).flat()}
                             onSlotSelect={handleSlotSelect}
                             selectedSlots={selectedSlots}
-                            requiredSlots={selectedRequest?.requiredSlots || 0}
+                            requiredSlots={selectedRequest?.requiredSlots}
                             scheduleType={consultantData.scheduleType}
                             consultantTimezone={consultantData.timezone}
                           />
