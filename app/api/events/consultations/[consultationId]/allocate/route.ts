@@ -213,10 +213,6 @@ async function allocateSlotManual(
 
   const slotDate = new Date(slots[0]);
 
-  // Validate slot is in the future
-  if (slotDate <= new Date()) {
-    throw new Error("Cannot allocate slots in the past");
-  }
 
   // Validate slot matches consultant's schedule type
   if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {

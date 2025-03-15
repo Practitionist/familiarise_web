@@ -299,13 +299,6 @@ async function allocateSlotsManual(
   // Convert string dates to Date objects for validation
   const slotDates = slots.map((slot) => new Date(slot));
 
-  // Validate all slots are in the future
-  const now = new Date();
-  for (const slotDate of slotDates) {
-    if (slotDate <= now) {
-      throw new Error("Cannot allocate slots in the past");
-    }
-  }
 
   // Validate slots match consultant's schedule type
   if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
