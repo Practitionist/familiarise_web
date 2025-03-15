@@ -64,8 +64,8 @@ export function Calendar({
     const slotString = slotDate.toISOString();
     const slotStringWithZeroDate = slotDateWithZeroDate.toISOString();
     const isAvailable = availableSlots?.includes(slotStringWithZeroDate) || availableSlots?.includes(slotString);
-    const isExisting = existingAppointments?.includes(slotString);
-    const isSelected = selectedSlots?.includes(slotString);
+    const isExisting = existingAppointments?.includes(scheduleType === "WEEKLY" ? slotStringWithZeroDate : slotString);
+    const isSelected = selectedSlots?.includes(scheduleType === "WEEKLY" ? slotStringWithZeroDate : slotString);
     const now = new Date();
     const isInPast = slotDate < now;
 
@@ -77,7 +77,7 @@ export function Calendar({
           ${isExisting ? "bg-gray-200 hover:bg-gray-200" : ""}
           ${isInPast ? "opacity-50" : ""}
         `}
-        onClick={() => isAvailable && !isInPast && onSlotSelect(slotString)}
+        onClick={() => isAvailable && !isInPast && onSlotSelect(scheduleType === "WEEKLY" ? slotStringWithZeroDate : slotString)}
         disabled={!isAvailable || isExisting || isInPast}
       >
         <div className="flex items-center gap-0.5 md:gap-1 text-[10px] md:text-xs">
@@ -218,9 +218,8 @@ export function Calendar({
                     slotDate.setUTCFullYear(now.getUTCFullYear());
                     slotDate.setUTCMonth(now.getUTCMonth());
                     slotDate.setDate(i + 1);
-                    console.log("slotDate", slotDate.toISOString());
                     const isInPast = slotDate < now;
-                    const isSelected =  selectedSlots?.includes(slotDate.toISOString());
+                    const isSelected =  selectedSlots?.includes(slotDate.toUTCString());
                     const isExisting = existingSlots.includes(slot);
 
 
@@ -232,7 +231,7 @@ export function Calendar({
                         className={`w-full h-5 md:h-6 text-[10px] md:text-xs justify-start text-center ${
                           isExisting ? "bg-gray-200" : ""
                         } ${isInPast ? "opacity-50" : ""} ${isSelected ? "bg-primary text-white" : ""}`}
-                        onClick={() => !isInPast && onSlotSelect(slotDate.toISOString())}
+                        onClick={() => !isInPast && onSlotSelect(slotDate.toUTCString())}
                         disabled={isExisting || isInPast}
                       >
                         {slotDate.getUTCHours() % 12 || 12}:
