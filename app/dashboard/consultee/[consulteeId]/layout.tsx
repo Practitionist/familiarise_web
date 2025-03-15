@@ -135,7 +135,7 @@ function useConsulteeData(consulteeId: string) {
     }
 
     fetchData();
-  }, [session, consulteeId]);
+  }, [consulteeId]);
 
   return state;
 }
