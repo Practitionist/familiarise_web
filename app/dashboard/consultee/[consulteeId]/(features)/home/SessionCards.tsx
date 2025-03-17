@@ -4,7 +4,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Badge } from "components/ui/badge";
 import { Button } from "components/ui/button";
 import { Card } from "components/ui/card";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@/hooks/use-toast";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { useRouter } from "next/navigation";
 import {
@@ -52,9 +52,9 @@ export function SlotCard({
     try {
       if (!client) {
         toast({
-          title: "Error",
-          description: "Video client not initialized",
-          variant: "destructive",
+          title: "Not signed in",
+          description: "Video client not initialized. You have to sign in to join a meeting.",
+          variant: "warning",
         });
         return;
       }
@@ -89,6 +89,11 @@ export function SlotCard({
 
       // Navigate to the meeting page
       router.push(`/meetings/${meetingId}`);
+      toast({
+        title: "Joining meeting",
+        description: "You will now be redirected to the meeting",
+        variant: "success",
+      });
     } catch (error) {
       console.error("Error joining meeting:", error);
       toast({
@@ -134,12 +139,12 @@ export function SlotCard({
               {isTentative && (
                 <span className="text-red-500 text-xs">*Subject to change</span>
               )}
-              {isJoinable && (
+              {(process.env.NODE_ENV === "production" ? isJoinable : true) && (
                 <Button
                   onClick={handleJoinMeeting}
                   className="ml-auto bg-green-600 hover:bg-green-700 text-white text-xs h-7"
                 >
-                  Join meet
+                  {process.env.NODE_ENV === "production" ? "Join meet" : "Join (Dev)"}
                 </Button>
               )}
             </div>

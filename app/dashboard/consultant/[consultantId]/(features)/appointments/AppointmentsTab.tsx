@@ -3,7 +3,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@/hooks/use-toast";
 import { joinAppointmentMeeting } from "@/lib/meeting";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { useRouter } from "next/navigation";
@@ -32,15 +32,20 @@ export function AppointmentsTab({
     try {
       if (!client) {
         toast({
-          title: "Error",
-          description: "Video client not initialized",
-          variant: "destructive",
+          title: "Not signed in",
+          description: "Video client not initialized. You have to sign in to join a meeting.",
+          variant: "warning",
         });
         return;
       }
 
       const meetingId = await joinAppointmentMeeting(client, appointment);
       router.push(`/meetings/${meetingId}`);
+      toast({
+        title: "Joining meeting",
+        description: "You will now be redirected to the meeting",
+        variant: "success",
+      });
     } catch (error) {
       console.error("Error joining meeting:", error);
       toast({
@@ -162,12 +167,27 @@ export function AppointmentsTab({
                             <Button
                               variant="default"
                               className={joinButtonStyle}
-                              disabled={!isJoinable}
-                              onClick={() =>
-                                isJoinable && handleJoinMeeting(appointment)
-                              }
+                              disabled={process.env.NODE_ENV === "production" ? !isJoinable : false}
+                              onClick={() => {
+                                if (process.env.NODE_ENV === "production") {
+                                  // Production behavior
+                                  if (isJoinable) {
+                                    handleJoinMeeting(appointment);
+                                  }
+                                } else {
+                                  // Development behavior - more flexible for testing
+                                  toast({
+                                    title: "Development Mode",
+                                    description: `Joining meeting with ID: ${appointment.id}`,
+                                    variant: "info"
+                                  });
+                                  handleJoinMeeting(appointment);
+                                }
+                              }}
                             >
-                              {isJoinable ? "Join meet" : "Chat"}
+                              {process.env.NODE_ENV === "production" 
+                                ? (isJoinable ? "Join meet" : "Not available") 
+                                : "Join (Dev)"}
                             </Button>
                           )}
                         </div>

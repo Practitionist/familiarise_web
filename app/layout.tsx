@@ -29,6 +29,7 @@ export default async function RootLayout({
     <html lang="en">
       <body className={`${inter.className} flex flex-col min-h-screen`}>
         <NextAuthProvider session={session}>
+          <Toaster />
           <AnnouncementBar />
           <Navbar />
             {session?.user?.id ? (
@@ -38,7 +39,6 @@ export default async function RootLayout({
             ) : (
               children
             )}
-          <Toaster />
           <Footer />
         </NextAuthProvider>
       </body>
