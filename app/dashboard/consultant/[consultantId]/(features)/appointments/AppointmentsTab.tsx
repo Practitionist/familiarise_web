@@ -33,7 +33,8 @@ export function AppointmentsTab({
       if (!client) {
         toast({
           title: "Not signed in",
-          description: "Video client not initialized. You have to sign in to join a meeting.",
+          description:
+            "Video client not initialized. You have to sign in to join a meeting.",
           variant: "warning",
         });
         return;
@@ -167,7 +168,11 @@ export function AppointmentsTab({
                             <Button
                               variant="default"
                               className={joinButtonStyle}
-                              disabled={process.env.NODE_ENV === "production" ? !isJoinable : false}
+                              disabled={
+                                process.env.NODE_ENV === "production"
+                                  ? !isJoinable
+                                  : false
+                              }
                               onClick={() => {
                                 if (process.env.NODE_ENV === "production") {
                                   // Production behavior
@@ -179,14 +184,16 @@ export function AppointmentsTab({
                                   toast({
                                     title: "Development Mode",
                                     description: `Joining meeting with ID: ${appointment.id}`,
-                                    variant: "info"
+                                    variant: "info",
                                   });
                                   handleJoinMeeting(appointment);
                                 }
                               }}
                             >
-                              {process.env.NODE_ENV === "production" 
-                                ? (isJoinable ? "Join meet" : "Not available") 
+                              {process.env.NODE_ENV === "production"
+                                ? isJoinable
+                                  ? "Join meet"
+                                  : "Not available"
                                 : "Join (Dev)"}
                             </Button>
                           )}

@@ -53,7 +53,8 @@ export function SlotCard({
       if (!client) {
         toast({
           title: "Not signed in",
-          description: "Video client not initialized. You have to sign in to join a meeting.",
+          description:
+            "Video client not initialized. You have to sign in to join a meeting.",
           variant: "warning",
         });
         return;
@@ -144,7 +145,9 @@ export function SlotCard({
                   onClick={handleJoinMeeting}
                   className="ml-auto bg-green-600 hover:bg-green-700 text-white text-xs h-7"
                 >
-                  {process.env.NODE_ENV === "production" ? "Join meet" : "Join (Dev)"}
+                  {process.env.NODE_ENV === "production"
+                    ? "Join meet"
+                    : "Join (Dev)"}
                 </Button>
               )}
             </div>

@@ -171,9 +171,12 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
         </h1>
 
         {/* Video preview */}
-        <div className="mb-6 rounded-lg overflow-hidden bg-gray-900 relative" style={{ height: "300px" }}>
+        <div
+          className="mb-6 rounded-lg overflow-hidden bg-gray-900 relative"
+          style={{ height: "300px" }}
+        >
           <div className="w-full h-full flex items-center justify-center">
-            <VideoPreview 
+            <VideoPreview
               mirror={true}
               className="w-full h-full object-contain"
             />
