@@ -4,12 +4,14 @@ import { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 
 const AnnouncementBar = () => {
-  const [isVisible, setIsVisible] = useState(true);
+  const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
     const isClosed = localStorage.getItem("announcementBarClosed");
     if (isClosed === "true") {
       setIsVisible(false);
+    } else {
+      setIsVisible(true);
     }
   }, []);
 
