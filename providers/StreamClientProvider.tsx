@@ -23,7 +23,7 @@ const StreamVideoProvider = ({
       console.info("User data is loading");
       return;
     }
-    
+
     if (!userDetails) {
       console.warn("User not found");
       return;

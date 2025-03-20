@@ -32,13 +32,13 @@ export default async function RootLayout({
           <Toaster />
           <AnnouncementBar />
           <Navbar />
-            {session?.user?.id ? (
-              <StreamVideoProvider userId={session.user.id}>
-                {children}
-              </StreamVideoProvider>
-            ) : (
-              children
-            )}
+          {session?.user?.id ? (
+            <StreamVideoProvider userId={session.user.id}>
+              {children}
+            </StreamVideoProvider>
+          ) : (
+            children
+          )}
           <Footer />
         </NextAuthProvider>
       </body>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect } from "react";
 import { useCall, useCallStateHooks } from "@stream-io/video-react-sdk";
 import { Button } from "@/components/ui/button";
 
@@ -19,7 +19,7 @@ const EndCallButton = () => {
             endCall();
             return 100;
           }
-          return prev + 100/(5000/50); // 5 second duration with 50ms intervals
+          return prev + 100 / (5000 / 50); // 5 second duration with 50ms intervals
         });
       }, 50);
     }
@@ -50,18 +50,16 @@ const EndCallButton = () => {
   };
 
   return (
-    <Button 
+    <Button
       onMouseDown={() => setIsPressed(true)}
       onMouseUp={() => setIsPressed(false)}
       onMouseLeave={() => setIsPressed(false)}
       className="relative overflow-hidden bg-red-500 transition-colors"
-      style={{ 
-        background: `linear-gradient(to right, rgba(239,68,68,1) ${progress}%, rgba(185,28,28,1) ${progress}%)`
+      style={{
+        background: `linear-gradient(to right, rgba(239,68,68,1) ${progress}%, rgba(185,28,28,1) ${progress}%)`,
       }}
     >
-      <span className="relative z-10">
-        End call for everyone
-      </span>
+      <span className="relative z-10">End call for everyone</span>
     </Button>
   );
 };
