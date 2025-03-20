@@ -1,10 +1,10 @@
 "use client";
 
+import { tokenProvider } from "@/actions/stream.action";
+import { useUserData } from "@/hooks/useUserData";
+import { useEffect, useState } from "react";
 import { StreamChat } from "stream-chat";
 import { Chat } from "stream-chat-react";
-import { useEffect, useState } from "react";
-import { useUserData } from "@/hooks/useUserData";
-import { tokenProvider } from "@/actions/stream.action";
 
 // Import Stream Chat CSS
 import "stream-chat-react/dist/css/v2/index.css";
@@ -42,12 +42,34 @@ const StreamChatProvider = ({ children, userId }: StreamChatProviderProps) => {
     // Connect the user to Stream Chat
     const connectUser = async () => {
       try {
+        // Map our application roles to Stream Chat roles
+        // Stream Chat roles are: admin, user, guest, anonymous
+        let streamRole = "user"; // Default role
+        
+        if (userDetails.role) {
+          // Map our application roles to Stream Chat roles
+          switch (userDetails.role.toUpperCase()) {
+            case "ADMIN":
+              streamRole = "admin";
+              break;
+            case "CONSULTANT":
+            case "CONSULTEE":
+            case "USER":
+              streamRole = "user";
+              break;
+            default:
+              streamRole = "user";
+          }
+        }
+        
+        console.log(`Connecting user ${userDetails.id} with role ${streamRole}`);
+        
         await client.connectUser(
           {
             id: userDetails.id,
             name: userDetails.name ?? userDetails.id,
             image: userDetails.image ?? undefined,
-            role: userDetails.role ?? "user",
+            role: streamRole,
           },
           async () => await tokenProvider(userId)
         );

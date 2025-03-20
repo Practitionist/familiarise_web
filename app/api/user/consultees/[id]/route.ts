@@ -11,6 +11,9 @@ export async function GET(
 
     const consultee = await prisma.consulteeProfile.findUnique({
       where: { id: id },
+      include: {
+        user: true,
+      },
     });
 
     if (!consultee) {
