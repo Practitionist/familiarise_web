@@ -1,155 +1,51 @@
 "use client";
 
-import React from "react";
-import Link from "next/link";
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  MoveHorizontalIcon,
-  SendIcon,
-  PhoneIcon,
-  VideoIcon,
-  SearchIcon,
-} from "lucide-react";
+import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import StreamChatProvider from "@/providers/StreamChatProvider";
+import { ChatLayout } from "@/components/chat/ChatLayout";
+import { fetchConsulteeDetails } from "@/lib/user";
 
 export default function MessagesTab() {
+  const { consulteeId } = useParams();
+  const [userId, setUserId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchUserId = async () => {
+      try {
+        const consulteeDetails = await fetchConsulteeDetails(consulteeId as string);
+        setUserId(consulteeDetails.user.id);
+      } catch (error) {
+        console.error("Error fetching consultee details:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (consulteeId) {
+      fetchUserId();
+    }
+  }, [consulteeId]);
+
+  if (loading || !userId) {
+    return (
+      <div className="min-h-[calc(100vh-200px)]">
+        <h2 className="text-3xl font-bold mb-6">Messages</h2>
+        <div className="h-[calc(100vh-280px)] w-full flex items-center justify-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-[calc(100vh-200px)]">
       <h2 className="text-3xl font-bold mb-6">Messages</h2>
-      <div className="flex flex-col md:flex-row h-[calc(100vh-280px)] w-full bg-white rounded-lg shadow-lg overflow-hidden">
-        <div className="w-full md:w-[320px] lg:w-[380px] border-b md:border-b-0 md:border-r">
-          <header className="flex items-center justify-between px-4 py-3 bg-gray-100 border-b">
-            <div className="font-bold text-lg">Chats</div>
-            <div className="relative flex-1 max-w-[200px] ml-2">
-              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <Input
-                type="search"
-                placeholder="Search or start new chat"
-                className="pl-10 pr-4 py-2 w-full text-sm bg-white"
-              />
-            </div>
-          </header>
-          <div className="h-[250px] md:h-[calc(100%-4rem)] overflow-y-auto">
-            {[
-              "John Doe (Consultant)",
-              "Jane Doe (Consultant)",
-              "Bob Smith (Consultant)",
-              "Sarah Johnson (Consultant)",
-            ].map((name, index) => (
-              <Link
-                key={index}
-                href="#"
-                className="flex items-center gap-4 p-4 hover:bg-gray-100 transition-colors duration-200"
-                prefetch={false}
-              >
-                <Avatar className="w-12 h-12">
-                  <AvatarImage src="/placeholder-user.jpg" alt={name} />
-                  <AvatarFallback>
-                    {name
-                      .split(" ")
-                      .map((n) => n[0])
-                      .join("")}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium">{name}</div>
-                  <div className="text-sm text-gray-500 truncate">
-                    Last message preview...
-                  </div>
-                </div>
-                <div className="text-xs text-gray-400">{`${index + 1}:${index * 15} PM`}</div>
-              </Link>
-            ))}
-          </div>
-        </div>
-        <div className="flex-1 flex flex-col">
-          <header className="flex items-center justify-between px-2 sm:px-4 py-3 bg-gray-100 border-b">
-            <div className="flex items-center gap-2 sm:gap-4">
-              <Avatar className="w-10 h-10">
-                <AvatarImage src="/placeholder-user.jpg" alt="John Doe" />
-                <AvatarFallback>JD</AvatarFallback>
-              </Avatar>
-              <div>
-                <div className="font-medium">John Doe (Consultant)</div>
-                <div className="text-xs text-gray-500">
-                  Last seen 2 hours ago
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="hidden sm:inline-flex"
-              >
-                <PhoneIcon className="w-5 h-5" />
-                <span className="sr-only">Call</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="hidden sm:inline-flex"
-              >
-                <VideoIcon className="w-5 h-5" />
-                <span className="sr-only">Video call</span>
-              </Button>
-              <Button variant="ghost" size="icon">
-                <MoveHorizontalIcon className="w-5 h-5" />
-                <span className="sr-only">More options</span>
-              </Button>
-            </div>
-          </header>
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {[
-              {
-                text: "Hello, how can I assist you today?",
-                sender: "them",
-                time: "2:30 PM",
-              },
-              {
-                text: "Hi, I have a question about my upcoming consultation.",
-                sender: "me",
-                time: "2:31 PM",
-              },
-              {
-                text: "Of course, I'd be happy to help. What would you like to know?",
-                sender: "them",
-                time: "2:32 PM",
-              },
-              {
-                text: "I was wondering if we could reschedule for next week.",
-                sender: "me",
-                time: "2:33 PM",
-              },
-            ].map((message, index) => (
-              <div
-                key={index}
-                className={`flex ${message.sender === "me" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-[85%] sm:max-w-[70%] rounded-lg px-3 sm:px-4 py-2 ${message.sender === "me" ? "bg-blue-500 text-white" : "bg-gray-200"}`}
-                >
-                  <p>{message.text}</p>
-                  <div
-                    className={`text-xs mt-1 ${message.sender === "me" ? "text-blue-100" : "text-gray-500"}`}
-                  >
-                    {message.time}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="border-t p-2 sm:p-4">
-            <form className="flex items-center gap-1 sm:gap-2">
-              <Input placeholder="Type your message..." className="flex-1" />
-              <Button type="submit" size="icon">
-                <SendIcon className="w-5 h-5" />
-                <span className="sr-only">Send</span>
-              </Button>
-            </form>
-          </div>
-        </div>
+      <div className="h-[calc(100vh-280px)] w-full bg-white rounded-lg shadow-lg overflow-hidden">
+        <StreamChatProvider userId={userId}>
+          <ChatLayout />
+        </StreamChatProvider>
       </div>
     </div>
   );
