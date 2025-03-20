@@ -1,6 +1,12 @@
+"use client";
+
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast";
+import { joinAppointmentMeeting } from "@/lib/meeting";
+import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+import { useRouter } from "next/navigation";
 import { Suspense } from "react";
 import { ClientActivity } from "../../components/ClientActivity";
 import {
@@ -35,6 +41,32 @@ export function HomeTab({
   getBadgeStyle,
   onUpdate,
 }: Readonly<HomeTabProps>) {
+  const router = useRouter();
+  const client = useStreamVideoClient();
+  const { toast } = useToast();
+
+  const handleJoinMeeting = async (appointment: IAppointment) => {
+    try {
+      if (!client) {
+        toast({
+          title: "Error",
+          description: "Video client not initialized",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const meetingId = await joinAppointmentMeeting(client, appointment);
+      router.push(`/meetings/${meetingId}`);
+    } catch (error) {
+      console.error("Error joining meeting:", error);
+      toast({
+        title: "Error joining meeting",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    }
+  };
   if (!getBadgeStyle) {
     throw new Error("getBadgeStyle is required for HomeTab");
   }
@@ -131,6 +163,9 @@ export function HomeTab({
                           size="sm"
                           className={joinButtonStyle}
                           disabled={!isJoinable}
+                          onClick={() =>
+                            isJoinable && handleJoinMeeting(appointment)
+                          }
                         >
                           Join meet
                         </Button>
@@ -259,6 +294,10 @@ export function HomeTab({
                                   <Button
                                     className="bg-blue-500 text-white w-full sm:w-auto text-sm py-1"
                                     disabled={!isJoinable}
+                                    onClick={() =>
+                                      isJoinable &&
+                                      handleJoinMeeting(appointment)
+                                    }
                                   >
                                     {isJoinable ? "Join meet" : "Chat"}
                                   </Button>

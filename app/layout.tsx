@@ -1,13 +1,16 @@
+import AnnouncementBar from "@/components/AnnouncementBar";
 import Footer from "@/components/Footer";
 import Navbar from "@/components/Navbar";
-import AnnouncementBar from "@/components/AnnouncementBar";
 import { Toaster } from "@/components/ui/toaster";
+import NextAuthProvider from "@/providers/NextAuthSessionProvider";
+import StreamVideoProvider from "@/providers/StreamClientProvider";
 import type { Metadata } from "next";
 import { getServerSession } from "next-auth";
 import { Inter } from "next/font/google";
 import authOptions from "./api/auth/[...nextauth]/options";
+
+import "@stream-io/video-react-sdk/dist/css/styles.css";
 import "./globals.css";
-import NextAuthProvider from "./nextauth-session-provider";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -24,12 +27,18 @@ export default async function RootLayout({
   const session = await getServerSession(authOptions);
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body className={`${inter.className} flex flex-col min-h-screen`}>
         <NextAuthProvider session={session}>
+          <Toaster />
           <AnnouncementBar />
           <Navbar />
-          {children}
-          <Toaster />
+          {session?.user?.id ? (
+            <StreamVideoProvider userId={session.user.id}>
+              {children}
+            </StreamVideoProvider>
+          ) : (
+            children
+          )}
           <Footer />
         </NextAuthProvider>
       </body>

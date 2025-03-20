@@ -15,27 +15,25 @@ import micromatch from "micromatch";
 
 const apiRoutes = ["/api/**"];
 const publicAuthRoutes = ["/auth/**"];
-const protectedRoutes = [
-  "/form/**",
-  "/admin/**",
-  "/dashboard/**",
-  "/settings/**",
-  "/profile/**",
-  "/checkout/**", // Added checkout route
-];
+const formRoutes = ["/form/**"];
+const checkoutRoutes = ["/checkout/**"];
+const dashboardRoutes = ["/dashboard/**"];
+const meetingRoutes = ["/meetings/**"];
 
 const Footer: React.FC = () => {
   const pathname = usePathname();
 
-  // Exclude footer from both API and protected routes
   const excludeFooter =
     micromatch.isMatch(pathname, apiRoutes) ||
-    micromatch.isMatch(pathname, protectedRoutes) ||
-    micromatch.isMatch(pathname, publicAuthRoutes);
+    micromatch.isMatch(pathname, publicAuthRoutes) ||
+    micromatch.isMatch(pathname, formRoutes) ||
+    micromatch.isMatch(pathname, checkoutRoutes) ||
+    micromatch.isMatch(pathname, dashboardRoutes) ||
+    micromatch.isMatch(pathname, meetingRoutes);
   if (excludeFooter) return null;
 
   return (
-    <footer className="flex flex-col items-center justify-center p-5 bg-black text-white">
+    <footer className="flex flex-col items-center justify-center p-5 bg-black text-white mt-auto">
       <div className="w-full flex justify-center pb-5">
         {/* Replace with your company logo */}
         <Image src={consultxlogo} alt="Company Logo" width={50} height={60} />

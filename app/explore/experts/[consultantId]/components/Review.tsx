@@ -1,6 +1,6 @@
 import { Avatar } from "@/components/ui/avatar";
 
-import { fetchConsulteeDetails, fetchUserDetails } from "@/hooks/useUserData";
+import { fetchConsulteeDetails, fetchUserDetails } from "@/lib/user";
 
 import { ConsultantReview } from "@prisma/client";
 import { StarIcon } from "lucide-react";

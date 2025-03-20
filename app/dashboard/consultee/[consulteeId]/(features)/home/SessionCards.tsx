@@ -4,6 +4,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Badge } from "components/ui/badge";
 import { Button } from "components/ui/button";
 import { Card } from "components/ui/card";
+import { useToast } from "@/hooks/use-toast";
+import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+import { useRouter } from "next/navigation";
 import {
   EventWithType,
   getConsultantImage,
@@ -31,7 +34,7 @@ export function SlotCard({
   endTime,
   isTentative,
   isFirst = false,
-}: SlotCardProps) {
+}: Readonly<SlotCardProps>) {
   const now = new Date();
   const diffInMinutes = Math.floor(
     (slotTime.getTime() - now.getTime()) / 60000,
@@ -39,25 +42,65 @@ export function SlotCard({
   const isJoinable = !isTentative && diffInMinutes <= 10 && diffInMinutes >= 0;
   const status = getEventStatus(event);
 
-  const handleJoinMeeting = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    console.log("Joining meeting:", {
-      id: event.id,
-      title: getEventTitle(event),
-      type: event.type,
-    });
-  };
+  const router = useRouter();
+  const client = useStreamVideoClient();
+  const { toast } = useToast();
 
-  const handleClick = () => {
-    if (!isJoinable) {
-      console.log("SlotCard clicked:", {
-        id: event.id,
-        title: getEventTitle(event),
-        type: event.type,
-        status,
-        consultant: getConsultantName(event),
-        time: slotTime,
-        isTentative,
+  const handleJoinMeeting = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+
+    try {
+      if (!client) {
+        toast({
+          title: "Not signed in",
+          description:
+            "Video client not initialized. You have to sign in to join a meeting.",
+          variant: "warning",
+        });
+        return;
+      }
+
+      // Generate a meeting ID based on the event ID
+      const meetingId = `appointment-${event.id}`;
+
+      // Create or join the meeting
+      const call = client.call("default", meetingId);
+
+      if (!call) {
+        toast({
+          title: "Error",
+          description: "Failed to create call",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Create the meeting with event details
+      await call.getOrCreate({
+        data: {
+          starts_at: new Date().toISOString(),
+          custom: {
+            title: getEventTitle(event),
+            description: `${event.type} Meeting`,
+            eventId: event.id,
+            eventType: event.type,
+          },
+        },
+      });
+
+      // Navigate to the meeting page
+      router.push(`/meetings/${meetingId}`);
+      toast({
+        title: "Joining meeting",
+        description: "You will now be redirected to the meeting",
+        variant: "success",
+      });
+    } catch (error) {
+      console.error("Error joining meeting:", error);
+      toast({
+        title: "Error joining meeting",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
       });
     }
   };
@@ -97,12 +140,14 @@ export function SlotCard({
               {isTentative && (
                 <span className="text-red-500 text-xs">*Subject to change</span>
               )}
-              {isJoinable && (
+              {(process.env.NODE_ENV === "production" ? isJoinable : true) && (
                 <Button
                   onClick={handleJoinMeeting}
                   className="ml-auto bg-green-600 hover:bg-green-700 text-white text-xs h-7"
                 >
-                  Join Now
+                  {process.env.NODE_ENV === "production"
+                    ? "Join meet"
+                    : "Join (Dev)"}
                 </Button>
               )}
             </div>
@@ -129,7 +174,10 @@ interface MonthlyEventCardProps {
   slots: SlotWithStatus[];
 }
 
-export function MonthlyEventCard({ event, slots }: MonthlyEventCardProps) {
+export function MonthlyEventCard({
+  event,
+  slots,
+}: Readonly<MonthlyEventCardProps>) {
   const status = getEventStatus(event);
 
   const handleClick = () => {
