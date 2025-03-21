@@ -10,7 +10,9 @@ export const CustomMessage = () => {
   const isMyMessage = message.user?.id === client.userID;
 
   return (
-    <div className={`flex ${isMyMessage ? "justify-end" : "justify-start"} mb-4`}>
+    <div
+      className={`flex ${isMyMessage ? "justify-end" : "justify-start"} mb-4`}
+    >
       {!isMyMessage && (
         <Avatar className="mr-2">
           <AvatarImage src={message.user?.image} />
@@ -19,13 +21,19 @@ export const CustomMessage = () => {
           </AvatarFallback>
         </Avatar>
       )}
-      
-      <div className={`max-w-[70%] ${isMyMessage ? "bg-blue-500 text-white" : "bg-gray-100"} rounded-lg px-4 py-2`}>
+
+      <div
+        className={`max-w-[70%] ${isMyMessage ? "bg-blue-500 text-white" : "bg-gray-100"} rounded-lg px-4 py-2`}
+      >
         {!isMyMessage && (
-          <div className="font-semibold text-sm">{message.user?.name || message.user?.id}</div>
+          <div className="font-semibold text-sm">
+            {message.user?.name || message.user?.id}
+          </div>
         )}
         <div>{message.text}</div>
-        <div className={`text-xs mt-1 ${isMyMessage ? "text-blue-100" : "text-gray-500"}`}>
+        <div
+          className={`text-xs mt-1 ${isMyMessage ? "text-blue-100" : "text-gray-500"}`}
+        >
           {message.created_at && format(new Date(message.created_at), "h:mm a")}
         </div>
       </div>

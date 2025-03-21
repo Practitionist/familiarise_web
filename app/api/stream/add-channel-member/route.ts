@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
     if (!apiKey || !apiSecret) {
       return NextResponse.json(
         { success: false, error: "Stream API keys not configured" },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     if (!channelId || !userId) {
       return NextResponse.json(
         { success: false, error: "Channel ID and User ID are required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -31,20 +31,20 @@ export async function POST(req: NextRequest) {
     await upsertUserToStream(userId);
 
     // Get the channel
-    const channel = client.channel('team', channelId);
-    
+    const channel = client.channel("team", channelId);
+
     // Add the user to the channel
     await channel.addMembers([userId]);
 
     return NextResponse.json(
       { success: true, message: "User added to channel successfully" },
-      { status: 200 }
+      { status: 200 },
     );
   } catch (error) {
     console.error("Error adding user to channel:", error);
     return NextResponse.json(
       { success: false, error: (error as Error).message },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

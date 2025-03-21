@@ -45,7 +45,7 @@ const StreamChatProvider = ({ children, userId }: StreamChatProviderProps) => {
         // Map our application roles to Stream Chat roles
         // Stream Chat roles are: admin, user, guest, anonymous
         let streamRole = "user"; // Default role
-        
+
         if (userDetails.role) {
           // Map our application roles to Stream Chat roles
           switch (userDetails.role.toUpperCase()) {
@@ -61,9 +61,11 @@ const StreamChatProvider = ({ children, userId }: StreamChatProviderProps) => {
               streamRole = "user";
           }
         }
-        
-        console.log(`Connecting user ${userDetails.id} with role ${streamRole}`);
-        
+
+        console.log(
+          `Connecting user ${userDetails.id} with role ${streamRole}`,
+        );
+
         await client.connectUser(
           {
             id: userDetails.id,
@@ -71,7 +73,7 @@ const StreamChatProvider = ({ children, userId }: StreamChatProviderProps) => {
             image: userDetails.image ?? undefined,
             role: streamRole,
           },
-          async () => await tokenProvider(userId)
+          async () => await tokenProvider(userId),
         );
         setChatClient(client);
       } catch (error) {

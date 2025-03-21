@@ -39,7 +39,7 @@ export const upsertUserToStream = async (userId: string) => {
     // Map our application roles to Stream Chat roles
     // Stream Chat roles are: admin, user, guest, anonymous
     let streamRole = "user"; // Default role
-    
+
     if (user.role) {
       // Map our application roles to Stream Chat roles
       switch (user.role.toUpperCase()) {
@@ -55,9 +55,9 @@ export const upsertUserToStream = async (userId: string) => {
           streamRole = "user";
       }
     }
-    
+
     console.log(`Upserting user ${user.id} with role ${streamRole}`);
-    
+
     // Upsert the user to Stream Chat
     const streamUser = await client.upsertUser({
       id: user.id,
@@ -109,7 +109,7 @@ export const upsertUsersToStream = async (userIds: string[]) => {
       // Map our application roles to Stream Chat roles
       // Stream Chat roles are: admin, user, guest, anonymous
       let streamRole = "user"; // Default role
-      
+
       if (user.role) {
         // Map our application roles to Stream Chat roles
         switch (user.role.toUpperCase()) {
@@ -125,9 +125,11 @@ export const upsertUsersToStream = async (userIds: string[]) => {
             streamRole = "user";
         }
       }
-      
-      console.log(`Preparing to upsert user ${user.id} with role ${streamRole}`);
-      
+
+      console.log(
+        `Preparing to upsert user ${user.id} with role ${streamRole}`,
+      );
+
       return {
         id: user.id,
         name: user.name || user.id,

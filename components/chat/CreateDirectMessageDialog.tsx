@@ -3,7 +3,13 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
@@ -21,7 +27,9 @@ interface CreateDirectMessageDialogProps {
   onChannelCreated?: () => void;
 }
 
-export const CreateDirectMessageDialog = ({ onChannelCreated }: CreateDirectMessageDialogProps) => {
+export const CreateDirectMessageDialog = ({
+  onChannelCreated,
+}: CreateDirectMessageDialogProps) => {
   const [open, setOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -33,48 +41,52 @@ export const CreateDirectMessageDialog = ({ onChannelCreated }: CreateDirectMess
 
   const handleSearch = async () => {
     if (!client || !searchTerm.trim()) return;
-    
+
     setIsSearching(true);
-    
+
     try {
       console.log("Searching for users with term:", searchTerm);
-      
+
       // First try to search using Stream's built-in search
       const response = await client.queryUsers(
-        { 
+        {
           $or: [
             { name: { $autocomplete: searchTerm } },
-            { id: { $autocomplete: searchTerm } }
+            { id: { $autocomplete: searchTerm } },
           ],
-          id: { $ne: client.userID || "" } // Exclude current user
+          id: { $ne: client.userID || "" }, // Exclude current user
         },
         { id: 1 },
-        { limit: 10 }
+        { limit: 10 },
       );
-      
+
       console.log("Stream search results:", response.users);
-      
+
       // If no results found, try to search using our API
       if (response.users.length === 0) {
         try {
           console.log("No users found in Stream, trying API search");
-          const apiResponse = await fetch(`/api/user/search?term=${encodeURIComponent(searchTerm)}`);
-          
+          const apiResponse = await fetch(
+            `/api/user/search?term=${encodeURIComponent(searchTerm)}`,
+          );
+
           if (apiResponse.ok) {
             const data = await apiResponse.json();
             console.log("API search results:", data.users);
-            
+
             if (data.users && data.users.length > 0) {
               // We don't need to upsert users here anymore
               // The API has already done that for us
               console.log("Users found via API search:", data.users.length);
-              
+
               // Return the users from our API
-              return setUsers(data.users.map((user: any) => ({
-                id: user.id,
-                name: user.name || user.id,
-                image: user.image
-              })));
+              return setUsers(
+                data.users.map((user: any) => ({
+                  id: user.id,
+                  name: user.name || user.id,
+                  image: user.image,
+                })),
+              );
             }
           } else {
             console.error("API search failed:", await apiResponse.text());
@@ -83,12 +95,14 @@ export const CreateDirectMessageDialog = ({ onChannelCreated }: CreateDirectMess
           console.error("Error searching users via API:", apiError);
         }
       }
-      
-      setUsers(response.users.map(user => ({
-        id: user.id,
-        name: user.name || user.id,
-        image: user.image
-      })));
+
+      setUsers(
+        response.users.map((user) => ({
+          id: user.id,
+          name: user.name || user.id,
+          image: user.image,
+        })),
+      );
     } catch (error) {
       console.error("Error searching users:", error);
       toast({
@@ -102,10 +116,10 @@ export const CreateDirectMessageDialog = ({ onChannelCreated }: CreateDirectMess
   };
 
   const toggleUserSelection = (userId: string) => {
-    setSelectedUsers(prev => 
+    setSelectedUsers((prev) =>
       prev.includes(userId)
-        ? prev.filter(id => id !== userId)
-        : [...prev, userId]
+        ? prev.filter((id) => id !== userId)
+        : [...prev, userId],
     );
   };
 
@@ -118,7 +132,7 @@ export const CreateDirectMessageDialog = ({ onChannelCreated }: CreateDirectMess
       });
       return;
     }
-    
+
     if (selectedUsers.length === 0) {
       toast({
         title: "Error",
@@ -127,77 +141,83 @@ export const CreateDirectMessageDialog = ({ onChannelCreated }: CreateDirectMess
       });
       return;
     }
-    
+
     setIsLoading(true);
-    
+
     try {
       // First, ensure all selected users are upserted to Stream Chat
       for (const userId of selectedUsers) {
         try {
           // Use the server-side API to upsert the user
-          const response = await fetch('/api/stream/upsert-user', {
-            method: 'POST',
+          const response = await fetch("/api/stream/upsert-user", {
+            method: "POST",
             headers: {
-              'Content-Type': 'application/json',
+              "Content-Type": "application/json",
             },
             body: JSON.stringify({ userId }),
           });
-          
+
           if (!response.ok) {
-            console.error(`Failed to upsert user ${userId}:`, await response.text());
+            console.error(
+              `Failed to upsert user ${userId}:`,
+              await response.text(),
+            );
           }
         } catch (error) {
           console.error(`Error upserting user ${userId}:`, error);
           // Continue even if upserting fails for one user
         }
       }
-      
+
       // Also upsert the current user
       if (client.userID) {
         try {
-          const response = await fetch('/api/stream/upsert-user', {
-            method: 'POST',
+          const response = await fetch("/api/stream/upsert-user", {
+            method: "POST",
             headers: {
-              'Content-Type': 'application/json',
+              "Content-Type": "application/json",
             },
             body: JSON.stringify({ userId: client.userID }),
           });
-          
+
           if (!response.ok) {
-            console.error(`Failed to upsert current user:`, await response.text());
+            console.error(
+              `Failed to upsert current user:`,
+              await response.text(),
+            );
           }
         } catch (error) {
           console.error(`Error upserting current user:`, error);
         }
       }
-      
+
       // Include current user in members
       const members = [client.userID || "", ...selectedUsers];
-      
+
       // Create a unique channel ID based on sorted member IDs
       const channelId = members.sort().join("-");
-      
+
       // Create a new direct message channel
       const channel = client.channel("messaging", channelId, {
         members,
         created_by_id: client.userID,
       });
-      
+
       await channel.create();
-      
+
       // Set the new channel as active
       setActiveChannel(channel);
-      
+
       toast({
         title: "Success",
         description: "Direct message created successfully",
       });
-      
+
       // Call the onChannelCreated callback if provided
       if (onChannelCreated) {
         onChannelCreated();
       }
-      
+
       // Close the dialog
       setOpen(false);
       setSearchTerm("");
@@ -225,7 +245,11 @@ export const CreateDirectMessageDialog = ({ onChannelCreated }: CreateDirectMess
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="ghost" size="sm" className="p-1 text-white hover:bg-blue-700">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="p-1 text-white hover:bg-blue-700"
+        >
           <PlusIcon className="h-4 w-4" />
         </Button>
       </DialogTrigger>
@@ -245,9 +269,9 @@ export const CreateDirectMessageDialog = ({ onChannelCreated }: CreateDirectMess
                 disabled={isSearching || isLoading}
                 onKeyDown={handleKeyDown}
               />
-              <Button 
-                type="button" 
-                variant="outline" 
+              <Button
+                type="button"
+                variant="outline"
                 onClick={handleSearch}
                 disabled={isSearching || isLoading}
               >
@@ -255,7 +279,7 @@ export const CreateDirectMessageDialog = ({ onChannelCreated }: CreateDirectMess
               </Button>
             </div>
           </div>
-          
+
           {isSearching ? (
             <div className="py-4 text-center">
               <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary mx-auto"></div>
@@ -263,22 +287,24 @@ export const CreateDirectMessageDialog = ({ onChannelCreated }: CreateDirectMess
             </div>
           ) : users.length > 0 ? (
             <div className="max-h-60 overflow-y-auto border rounded-md p-2">
-              {users.map(user => (
-                <div 
-                  key={user.id} 
+              {users.map((user) => (
+                <div
+                  key={user.id}
                   className="flex items-center space-x-2 p-2 hover:bg-gray-100 rounded-md cursor-pointer"
                   onClick={() => toggleUserSelection(user.id)}
                 >
-                  <Checkbox 
+                  <Checkbox
                     id={`user-${user.id}`}
                     checked={selectedUsers.includes(user.id)}
                     onCheckedChange={() => toggleUserSelection(user.id)}
                   />
                   <Avatar className="h-8 w-8">
                     <AvatarImage src={user.image || "/placeholder-user.jpg"} />
-                    <AvatarFallback>{user.name?.charAt(0) || user.id.charAt(0)}</AvatarFallback>
+                    <AvatarFallback>
+                      {user.name?.charAt(0) || user.id.charAt(0)}
+                    </AvatarFallback>
                   </Avatar>
-                  <Label 
+                  <Label
                     htmlFor={`user-${user.id}`}
                     className="cursor-pointer flex-1"
                   >
@@ -288,12 +314,14 @@ export const CreateDirectMessageDialog = ({ onChannelCreated }: CreateDirectMess
               ))}
             </div>
           ) : searchTerm ? (
-            <p className="text-sm text-gray-500 py-4 text-center">No users found. Try a different search term.</p>
+            <p className="text-sm text-gray-500 py-4 text-center">
+              No users found. Try a different search term.
+            </p>
           ) : null}
-          
-          <Button 
-            type="button" 
-            className="w-full" 
+
+          <Button
+            type="button"
+            className="w-full"
             disabled={isLoading || selectedUsers.length === 0}
             onClick={handleCreateDirectMessage}
           >

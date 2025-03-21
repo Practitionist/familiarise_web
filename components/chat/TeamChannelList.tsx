@@ -6,8 +6,8 @@ type TeamChannelListProps = ChannelListMessengerProps & {
   type: "team" | "messaging";
 };
 
-export const TeamChannelList = ({ 
-  children, 
+export const TeamChannelList = ({
+  children,
   error = false,
   loading,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -39,9 +39,7 @@ export const TeamChannelList = ({
 
   return (
     <div className="team-channel-list">
-      <div className="px-4">
-        {children}
-      </div>
+      <div className="px-4">{children}</div>
     </div>
   );
 };

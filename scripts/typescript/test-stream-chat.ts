@@ -56,15 +56,15 @@ async function main() {
 
     // Create a direct message channel between consultant and consultee
     const channelId = [consultant.id, consultee.id].sort().join("-");
-    
+
     console.log("Creating channel with ID:", channelId);
-    
+
     // Create the channel
     const channel = serverClient.channel("messaging", channelId, {
       members: [consultant.id, consultee.id],
       created_by_id: consultant.id,
     });
-    
+
     await channel.create();
     console.log("Channel created:", channel.id);
 
@@ -72,24 +72,35 @@ async function main() {
     const consultantChannels = await serverClient.queryChannels(
       { members: { $in: [consultant.id] } },
       { last_message_at: -1 },
-      { limit: 30 }
+      { limit: 30 },
     );
-    
+
     console.log(`Found ${consultantChannels.length} channels for consultant`);
-    console.log("Channel IDs:", consultantChannels.map(c => c.id));
-    console.log("Channel members:", consultantChannels.map(c => Object.keys(c.state.members || {})));
+    console.log(
+      "Channel IDs:",
+      consultantChannels.map((c) => c.id),
+    );
+    console.log(
+      "Channel members:",
+      consultantChannels.map((c) => Object.keys(c.state.members || {})),
+    );
 
     // List channels for consultee
     const consulteeChannels = await serverClient.queryChannels(
       { members: { $in: [consultee.id] } },
       { last_message_at: -1 },
-      { limit: 30 }
+      { limit: 30 },
     );
-    
-    console.log(`Found ${consulteeChannels.length} channels for consultee`);
-    console.log("Channel IDs:", consulteeChannels.map(c => c.id));
-    console.log("Channel members:", consulteeChannels.map(c => Object.keys(c.state.members || {})));
 
+    console.log(`Found ${consulteeChannels.length} channels for consultee`);
+    console.log(
+      "Channel IDs:",
+      consulteeChannels.map((c) => c.id),
+    );
+    console.log(
+      "Channel members:",
+      consulteeChannels.map((c) => Object.keys(c.state.members || {})),
+    );
   } catch (error) {
     console.error("Error:", error);
   } finally {

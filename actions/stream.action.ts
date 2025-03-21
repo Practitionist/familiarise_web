@@ -22,7 +22,7 @@ export const tokenProvider = async (userId: string) => {
     // Map our application roles to Stream Chat roles
     // Stream Chat roles are: admin, user, guest, anonymous
     let streamRole = "user"; // Default role
-    
+
     if (userDetails.role) {
       // Map our application roles to Stream Chat roles
       switch (userDetails.role.toUpperCase()) {
@@ -38,8 +38,10 @@ export const tokenProvider = async (userId: string) => {
           streamRole = "user";
       }
     }
-    
-    console.log(`Generating token for user ${userDetails.id} with role ${streamRole}`);
+
+    console.log(
+      `Generating token for user ${userDetails.id} with role ${streamRole}`,
+    );
 
     // Generate user token with the correct payload structure
     const token = client.generateUserToken({

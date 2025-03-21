@@ -6,7 +6,13 @@ import { useState } from "react";
 
 interface InitializeUserChannelsButtonProps {
   userId: string;
-  variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
+  variant?:
+    | "default"
+    | "destructive"
+    | "outline"
+    | "secondary"
+    | "ghost"
+    | "link";
   size?: "default" | "sm" | "lg" | "icon";
   className?: string;
   children?: React.ReactNode;
@@ -46,7 +52,9 @@ export const InitializeUserChannelsButton = ({
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to initialize channels: ${await response.text()}`);
+        throw new Error(
+          `Failed to initialize channels: ${await response.text()}`,
+        );
       }
 
       const data = await response.json();
@@ -57,7 +65,7 @@ export const InitializeUserChannelsButton = ({
       });
 
       console.log("Channels initialized:", data);
-      
+
       // Call the onSuccess callback if provided
       if (onSuccess) {
         onSuccess();

@@ -10,23 +10,23 @@ export async function GET(req: NextRequest) {
     if (!apiKey || !apiSecret) {
       return NextResponse.json(
         { success: false, error: "Stream API keys not configured" },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
     const serverClient = StreamChat.getInstance(apiKey, apiSecret);
-    
+
     // Get query parameters
     const url = new URL(req.url);
     const userId = url.searchParams.get("userId");
-    
+
     if (!userId) {
       return NextResponse.json(
         { success: false, error: "userId is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
-    
+
     // Get user details
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -35,21 +35,21 @@ export async function GET(req: NextRequest) {
         consulteeProfile: true,
       },
     });
-    
+
     if (!user) {
       return NextResponse.json(
         { success: false, error: "User not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
-    
+
     // Get channels for the user
     const channels = await serverClient.queryChannels(
       { members: { $in: [userId] } },
       { last_message_at: -1 },
-      { limit: 30 }
+      { limit: 30 },
     );
-    
+
     // Get consultations for the user
     let consultations: any[] = [];
     if (user.consultantProfile) {
@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
         },
       });
     }
-    
+
     // Get subscriptions for the user
     let subscriptions: any[] = [];
     if (user.consultantProfile) {
@@ -127,7 +127,7 @@ export async function GET(req: NextRequest) {
         },
       });
     }
-    
+
     // Get webinars for the user
     let webinars: any[] = [];
     if (user.consultantProfile) {
@@ -168,7 +168,7 @@ export async function GET(req: NextRequest) {
         },
       });
     }
-    
+
     // Get classes for the user
     let classes: any[] = [];
     if (user.consultantProfile) {
@@ -209,7 +209,7 @@ export async function GET(req: NextRequest) {
         },
       });
     }
-    
+
     return NextResponse.json({
       success: true,
       user: {
@@ -220,7 +220,7 @@ export async function GET(req: NextRequest) {
         consultantProfileId: user.consultantProfileId,
         consulteeProfileId: user.consulteeProfileId,
       },
-      channels: channels.map(channel => ({
+      channels: channels.map((channel) => ({
         id: channel.id,
         type: channel.type,
         name: channel.data?.name,
@@ -230,56 +230,58 @@ export async function GET(req: NextRequest) {
         lastMessage: channel.lastMessage,
         data: channel.data,
       })),
-      consultations: consultations.map(consultation => ({
+      consultations: consultations.map((consultation) => ({
         id: consultation.id,
         status: consultation.requestStatus,
         consultationPlanId: consultation.consultationPlanId,
         consultationPlanTitle: consultation.consultationPlan.title,
-        consultantId: user.consultantProfileId 
-          ? consultation.requestedBy.user.id 
+        consultantId: user.consultantProfileId
+          ? consultation.requestedBy.user.id
           : consultation.consultationPlan.consultantProfile.user.id,
-        consulteeId: user.consultantProfileId 
-          ? consultation.requestedBy.user.id 
+        consulteeId: user.consultantProfileId
+          ? consultation.requestedBy.user.id
           : user.id,
       })),
-      subscriptions: subscriptions.map(subscription => ({
+      subscriptions: subscriptions.map((subscription) => ({
         id: subscription.id,
         status: subscription.requestStatus,
         subscriptionPlanId: subscription.subscriptionPlanId,
         subscriptionPlanTitle: subscription.subscriptionPlan.title,
-        consultantId: user.consultantProfileId 
-          ? user.id 
+        consultantId: user.consultantProfileId
+          ? user.id
           : subscription.subscriptionPlan.consultantProfile.user.id,
-        consulteeId: user.consultantProfileId 
-          ? subscription.requestedBy.user.id 
+        consulteeId: user.consultantProfileId
+          ? subscription.requestedBy.user.id
           : user.id,
       })),
-      webinars: webinars.map(webinar => ({
+      webinars: webinars.map((webinar) => ({
         id: webinar.id,
         status: webinar.status,
         webinarPlanId: webinar.webinarPlanId,
         webinarPlanTitle: webinar.webinarPlan.title,
-        consultantId: user.consultantProfileId 
-          ? user.id 
+        consultantId: user.consultantProfileId
+          ? user.id
           : webinar.webinarPlan.consultantProfile.user.id,
-        participantIds: webinar.waitlist?.map((entry: any) => entry.userId) || [],
+        participantIds:
+          webinar.waitlist?.map((entry: any) => entry.userId) || [],
       })),
-      classes: classes.map(classData => ({
+      classes: classes.map((classData) => ({
         id: classData.id,
         status: classData.status,
         classPlanId: classData.classPlanId,
         classPlanTitle: classData.classPlan.title,
-        consultantId: user.consultantProfileId 
-          ? user.id 
+        consultantId: user.consultantProfileId
+          ? user.id
           : classData.classPlan.consultantProfile.user.id,
-        participantIds: classData.waitlist?.map((entry: any) => entry.userId) || [],
+        participantIds:
+          classData.waitlist?.map((entry: any) => entry.userId) || [],
       })),
     });
   } catch (error) {
     console.error("Error debugging Stream Chat:", error);
     return NextResponse.json(
       { success: false, error: (error as Error).message },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -15,7 +15,7 @@ const apiSecret = process.env.STREAM_SECRET_KEY;
  */
 export const checkEventChannelExists = async (
   eventType: "webinar" | "class",
-  eventId: string
+  eventId: string,
 ) => {
   try {
     if (!apiKey || !apiSecret) {
@@ -51,7 +51,7 @@ export const checkEventChannelExists = async (
 export const addUserToEventChannel = async (
   eventType: "webinar" | "class",
   eventId: string,
-  userId: string
+  userId: string,
 ) => {
   try {
     if (!apiKey || !apiSecret) {

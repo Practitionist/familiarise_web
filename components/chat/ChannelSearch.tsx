@@ -30,20 +30,20 @@ export const ChannelSearch = () => {
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!query) {
       return;
     }
 
     try {
       setLoading(true);
-      
+
       // Search for channels
       const channelResponse = await client.queryChannels({
         type: { $in: ["messaging", "team"] },
         name: { $autocomplete: query },
       });
-      
+
       // Search for users
       const userResponse = await client.queryUsers({
         id: { $ne: client.userID || "" },
@@ -52,7 +52,7 @@ export const ChannelSearch = () => {
           { id: { $autocomplete: query } },
         ],
       });
-      
+
       const channels = channelResponse.map((channel: Channel) => ({
         id: channel.id || "",
         type: "channel" as const,
@@ -60,7 +60,7 @@ export const ChannelSearch = () => {
         image: channel.data?.image as string | undefined,
         channel,
       }));
-      
+
       const users = userResponse.users.map((user: Record<string, unknown>) => ({
         id: user.id as string,
         type: "user" as const,
@@ -68,7 +68,7 @@ export const ChannelSearch = () => {
         image: user.image as string,
         user,
       }));
-      
+
       setSearchResults([...channels, ...users]);
     } catch (error) {
       console.error("Error searching channels:", error);
@@ -89,7 +89,7 @@ export const ChannelSearch = () => {
           className="pl-9 w-full text-sm bg-blue-700 border-blue-700 text-white placeholder-blue-300"
         />
       </form>
-      
+
       {searchResults.length > 0 && (
         <div className="absolute z-10 mt-1 w-full bg-white rounded-md shadow-lg max-h-60 overflow-auto">
           {searchResults.map((result) => (

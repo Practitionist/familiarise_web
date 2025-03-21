@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     if (!userId) {
       return NextResponse.json(
         { success: false, error: "User ID is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -21,13 +21,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message: "Channels initialized successfully",
-      result
+      result,
     });
   } catch (error) {
     console.error("Error initializing channels:", error);
     return NextResponse.json(
       { success: false, error: (error as Error).message },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

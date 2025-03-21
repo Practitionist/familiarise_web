@@ -19,8 +19,10 @@ export default function MessagesTab() {
   useEffect(() => {
     const fetchUserId = async () => {
       try {
-        const consulteeDetails = await fetchConsulteeDetails(consulteeId as string);
-        
+        const consulteeDetails = await fetchConsulteeDetails(
+          consulteeId as string,
+        );
+
         // Check if user property exists before accessing its properties
         if (consulteeDetails && consulteeDetails.user) {
           setUserId(consulteeDetails.user.id);
@@ -29,7 +31,8 @@ export default function MessagesTab() {
           console.error("User property missing in consultee details");
           toast({
             title: "Error",
-            description: "Failed to get user information. Please try again later.",
+            description:
+              "Failed to get user information. Please try again later.",
             variant: "destructive",
           });
         }
@@ -54,22 +57,23 @@ export default function MessagesTab() {
   useEffect(() => {
     const autoInitializeChannels = async () => {
       if (!userId) return;
-      
+
       try {
         setInitializing(true);
         console.log("Auto-initializing channels...");
-        
+
         const result = await initializeAllChannels();
-        
+
         console.log("Channels initialized:", result);
-        
+
         toast({
           title: "Channels initialized",
-          description: "Channels have been created for all webinars, classes, consultations, and subscriptions.",
+          description:
+            "Channels have been created for all webinars, classes, consultations, and subscriptions.",
         });
       } catch (error) {
         console.error("Error initializing channels:", error);
-        
+
         toast({
           title: "Error initializing channels",
           description: (error as Error).message || "An error occurred",
@@ -79,7 +83,7 @@ export default function MessagesTab() {
         setInitializing(false);
       }
     };
-    
+
     if (userRole === "ADMIN") {
       autoInitializeChannels();
     }

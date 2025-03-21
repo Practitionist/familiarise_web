@@ -21,8 +21,10 @@ export function ChatsTab() {
   useEffect(() => {
     const fetchUserId = async () => {
       try {
-        const consultantDetails = await fetchConsultantDetails(consultantId as string);
-        
+        const consultantDetails = await fetchConsultantDetails(
+          consultantId as string,
+        );
+
         // Check if user property exists before accessing its properties
         if (consultantDetails && consultantDetails.user) {
           setUserId(consultantDetails.user.id);
@@ -31,7 +33,8 @@ export function ChatsTab() {
           console.error("User property missing in consultant details");
           toast({
             title: "Error",
-            description: "Failed to get user information. Please try again later.",
+            description:
+              "Failed to get user information. Please try again later.",
             variant: "destructive",
           });
         }
@@ -56,22 +59,23 @@ export function ChatsTab() {
   useEffect(() => {
     const autoInitializeChannels = async () => {
       if (!userId) return;
-      
+
       try {
         setInitializing(true);
         console.log("Auto-initializing channels...");
-        
+
         const result = await initializeAllChannels();
-        
+
         console.log("Channels initialized:", result);
-        
+
         toast({
           title: "Channels initialized",
-          description: "Channels have been created for all webinars, classes, consultations, and subscriptions.",
+          description:
+            "Channels have been created for all webinars, classes, consultations, and subscriptions.",
         });
       } catch (error) {
         console.error("Error initializing channels:", error);
-        
+
         toast({
           title: "Error initializing channels",
           description: (error as Error).message || "An error occurred",
@@ -81,7 +85,7 @@ export function ChatsTab() {
         setInitializing(false);
       }
     };
-    
+
     if (userRole === "ADMIN") {
       autoInitializeChannels();
     }
@@ -127,7 +131,7 @@ export function ChatsTab() {
           </div>
         </div>
       )} */}
-      
+
       <div className="flex-1 bg-white rounded-lg shadow-lg overflow-hidden">
         <StreamChatProvider userId={userId}>
           <ChatLayout />

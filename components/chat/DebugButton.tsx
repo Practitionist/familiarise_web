@@ -48,18 +48,14 @@ export const DebugButton = ({ userId }: { userId: string }) => {
 
   return (
     <div className="space-y-4">
-      <Button
-        onClick={handleDebug}
-        disabled={isLoading}
-        className="w-full"
-      >
+      <Button onClick={handleDebug} disabled={isLoading} className="w-full">
         {isLoading ? "Debugging..." : "Debug Stream Chat"}
       </Button>
-      
+
       {debugData && (
         <div className="mt-4 p-4 bg-gray-100 rounded-lg">
           <h3 className="text-lg font-medium mb-2">Debug Results</h3>
-          
+
           <div className="space-y-4">
             <div>
               <h4 className="font-medium">User</h4>
@@ -67,37 +63,47 @@ export const DebugButton = ({ userId }: { userId: string }) => {
                 {JSON.stringify(debugData.user, null, 2)}
               </pre>
             </div>
-            
+
             <div>
-              <h4 className="font-medium">Channels ({debugData.channels.length})</h4>
+              <h4 className="font-medium">
+                Channels ({debugData.channels.length})
+              </h4>
               <pre className="bg-white p-2 rounded text-xs overflow-auto">
                 {JSON.stringify(debugData.channels, null, 2)}
               </pre>
             </div>
-            
+
             <div>
-              <h4 className="font-medium">Consultations ({debugData.consultations.length})</h4>
+              <h4 className="font-medium">
+                Consultations ({debugData.consultations.length})
+              </h4>
               <pre className="bg-white p-2 rounded text-xs overflow-auto">
                 {JSON.stringify(debugData.consultations, null, 2)}
               </pre>
             </div>
-            
+
             <div>
-              <h4 className="font-medium">Subscriptions ({debugData.subscriptions.length})</h4>
+              <h4 className="font-medium">
+                Subscriptions ({debugData.subscriptions.length})
+              </h4>
               <pre className="bg-white p-2 rounded text-xs overflow-auto">
                 {JSON.stringify(debugData.subscriptions, null, 2)}
               </pre>
             </div>
-            
+
             <div>
-              <h4 className="font-medium">Webinars ({debugData.webinars.length})</h4>
+              <h4 className="font-medium">
+                Webinars ({debugData.webinars.length})
+              </h4>
               <pre className="bg-white p-2 rounded text-xs overflow-auto">
                 {JSON.stringify(debugData.webinars, null, 2)}
               </pre>
             </div>
-            
+
             <div>
-              <h4 className="font-medium">Classes ({debugData.classes.length})</h4>
+              <h4 className="font-medium">
+                Classes ({debugData.classes.length})
+              </h4>
               <pre className="bg-white p-2 rounded text-xs overflow-auto">
                 {JSON.stringify(debugData.classes, null, 2)}
               </pre>

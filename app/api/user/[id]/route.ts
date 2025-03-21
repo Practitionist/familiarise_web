@@ -27,7 +27,7 @@ export async function GET(
             experience: true,
             rating: true,
             domainId: true,
-          }
+          },
         },
         consulteeProfile: {
           select: {
@@ -40,7 +40,7 @@ export async function GET(
             specialRequirements: true,
             interests: true,
             goals: true,
-          }
+          },
         },
       },
     });

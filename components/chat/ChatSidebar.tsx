@@ -19,41 +19,51 @@ const EmptyChannelState = () => (
 );
 
 // Custom channel item component for the sidebar
-const ChannelItem = ({ channel, isActive, onClick }: { channel: Channel; isActive: boolean; onClick: () => void }) => {
+const ChannelItem = ({
+  channel,
+  isActive,
+  onClick,
+}: {
+  channel: Channel;
+  isActive: boolean;
+  onClick: () => void;
+}) => {
   const { client } = useChatContext();
-  const isTeamChannel = channel.type === 'team';
-  
+  const isTeamChannel = channel.type === "team";
+
   // For direct messages, get the other user's details
-  let displayName = channel.data?.name || channel.id || '';
+  let displayName = channel.data?.name || channel.id || "";
   let displayImage: string | undefined = undefined;
-  
+
   if (!isTeamChannel && client) {
     // Find the other member in the channel
     const otherMember = Object.values(channel.state.members || {}).find(
-      (member) => member.user?.id !== client.userID
+      (member) => member.user?.id !== client.userID,
     )?.user;
-    
+
     if (otherMember) {
-      displayName = otherMember.name || otherMember.id || 'Unknown User';
-      displayImage = otherMember.image as string || undefined;
+      displayName = otherMember.name || otherMember.id || "Unknown User";
+      displayImage = (otherMember.image as string) || undefined;
     }
   }
-  
+
   // Get unread count directly from the channel
   const unreadCount = channel.countUnread();
   const hasUnread = unreadCount > 0;
-  
+
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left px-4 py-2 hover:bg-blue-700 transition-colors ${isActive ? 'bg-blue-700' : ''}`}
+      className={`w-full text-left px-4 py-2 hover:bg-blue-700 transition-colors ${isActive ? "bg-blue-700" : ""}`}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center">
           {isTeamChannel ? (
             <div className="flex items-center">
               <span className="text-blue-200 mr-2">#</span>
-              <span className={`font-medium ${hasUnread ? 'font-bold' : ''}`}>{displayName}</span>
+              <span className={`font-medium ${hasUnread ? "font-bold" : ""}`}>
+                {displayName}
+              </span>
             </div>
           ) : (
             <div className="flex items-center">
@@ -61,15 +71,17 @@ const ChannelItem = ({ channel, isActive, onClick }: { channel: Channel; isActiv
                 <AvatarImage src={displayImage || "/placeholder-user.jpg"} />
                 <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
               </Avatar>
-              <span className={`font-medium ${hasUnread ? 'font-bold' : ''}`}>{displayName}</span>
+              <span className={`font-medium ${hasUnread ? "font-bold" : ""}`}>
+                {displayName}
+              </span>
             </div>
           )}
         </div>
-        
+
         {/* Unread indicator */}
         {hasUnread && (
           <div className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-            {unreadCount > 9 ? '9+' : unreadCount}
+            {unreadCount > 9 ? "9+" : unreadCount}
           </div>
         )}
       </div>
@@ -84,10 +96,10 @@ export const ChatSidebar = () => {
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
-  
+
   // Function to trigger a refresh of the channel list
   const refreshChannels = () => {
-    setRefreshTrigger(prev => prev + 1);
+    setRefreshTrigger((prev) => prev + 1);
   };
 
   // Add a periodic refresh to ensure unread counts are updated
@@ -96,93 +108,99 @@ export const ChatSidebar = () => {
     const intervalId = setInterval(() => {
       refreshChannels();
     }, 5000);
-    
+
     return () => {
       clearInterval(intervalId);
     };
   }, []);
-  
+
   useEffect(() => {
     const fetchChannels = async () => {
       if (!client) return;
-      
+
       try {
         console.log("Fetching channels for user:", client.userID);
-        
+
         // Fetch team channels (webinars and classes)
         // Use more specific filters to find channels related to webinars and classes
         const teamResponse = await client.queryChannels(
-          { 
-            type: 'team',
-            members: { $in: [client.userID || ""] }
+          {
+            type: "team",
+            members: { $in: [client.userID || ""] },
           },
           { last_message_at: -1 },
-          { 
-            watch: true, 
-            state: true, 
+          {
+            watch: true,
+            state: true,
             limit: 30,
             // Make sure we get message counts for unread indicators
             message_limit: 30,
             // Ensure we're watching for new messages
-            presence: true
-          }
+            presence: true,
+          },
         );
-        
+
         console.log("Team channels found:", teamResponse.length);
-        console.log("Team channels:", teamResponse.map(c => ({ 
-          id: c.id, 
-          name: c.data?.name,
-          members: Object.keys(c.state.members || {}),
-          unreadCount: c.countUnread()
-        })));
-        
+        console.log(
+          "Team channels:",
+          teamResponse.map((c) => ({
+            id: c.id,
+            name: c.data?.name,
+            members: Object.keys(c.state.members || {}),
+            unreadCount: c.countUnread(),
+          })),
+        );
+
         // Fetch direct message channels
         const dmResponse = await client.queryChannels(
-          { 
-            type: 'messaging',
-            members: { $in: [client.userID || ""] }
+          {
+            type: "messaging",
+            members: { $in: [client.userID || ""] },
           },
           { last_message_at: -1 },
-          { 
-            watch: true, 
-            state: true, 
+          {
+            watch: true,
+            state: true,
             limit: 30,
             // Make sure we get message counts for unread indicators
             message_limit: 30,
             // Ensure we're watching for new messages
-            presence: true
-          }
+            presence: true,
+          },
         );
-        
+
         console.log("DM channels found:", dmResponse.length);
-        console.log("DM channels:", dmResponse.map(c => ({ 
-          id: c.id, 
-          members: Object.keys(c.state.members || {}),
-          unreadCount: c.countUnread()
-        })));
-        
+        console.log(
+          "DM channels:",
+          dmResponse.map((c) => ({
+            id: c.id,
+            members: Object.keys(c.state.members || {}),
+            unreadCount: c.countUnread(),
+          })),
+        );
+
         setChannels(teamResponse);
         setDirectMessages(dmResponse);
       } catch (error) {
-        console.error('Error fetching channels:', error);
+        console.error("Error fetching channels:", error);
       } finally {
         setLoading(false);
       }
     };
-    
+
     if (client) {
       fetchChannels();
-      
+
       // Set up event listeners for new messages to update unread counts
       const handleMessageNew = () => {
         console.log("New message received, refreshing channels");
         refreshChannels();
       };
-      
-      client.on('message.new', handleMessageNew);
-      
+
+      client.on("message.new", handleMessageNew);
+
       return () => {
-        client.off('message.new', handleMessageNew);
+        client.off("message.new", handleMessageNew);
       };
     }
   }, [client, refreshTrigger]);
@@ -197,17 +215,17 @@ export const ChatSidebar = () => {
       <div className="p-4 border-b border-blue-700">
         <h1 className="text-xl font-bold">Worksly</h1>
       </div>
-      
+
       <div className="p-4">
         <ChannelSearch />
       </div>
-      
+
       <div className="flex-1 overflow-y-auto">
         <div className="px-4 py-2 flex justify-between items-center">
           <h2 className="font-semibold">Channels</h2>
           <CreateChannelDialog onChannelCreated={refreshChannels} />
         </div>
-        
+
         {loading ? (
           <div className="p-4">
             <div className="animate-pulse space-y-2">
@@ -219,9 +237,9 @@ export const ChatSidebar = () => {
         ) : channels.length > 0 ? (
           <div>
             {channels.map((channel) => (
-              <ChannelItem 
-                key={channel.id} 
-                channel={channel} 
+              <ChannelItem
+                key={channel.id}
+                channel={channel}
                 isActive={channel.id === activeChannelId}
                 onClick={() => handleChannelSelect(channel)}
               />
@@ -230,12 +248,12 @@ export const ChatSidebar = () => {
         ) : (
           <EmptyChannelState />
         )}
-        
+
         <div className="px-4 py-2 flex justify-between items-center mt-4">
           <h2 className="font-semibold">Direct Messages</h2>
           <CreateDirectMessageDialog onChannelCreated={refreshChannels} />
         </div>
-        
+
         {loading ? (
           <div className="p-4">
             <div className="animate-pulse space-y-2">
@@ -247,9 +265,9 @@ export const ChatSidebar = () => {
         ) : directMessages.length > 0 ? (
           <div>
             {directMessages.map((channel) => (
-              <ChannelItem 
-                key={channel.id} 
-                channel={channel} 
+              <ChannelItem
+                key={channel.id}
+                channel={channel}
                 isActive={channel.id === activeChannelId}
                 onClick={() => handleChannelSelect(channel)}
               />
@@ -259,13 +277,13 @@ export const ChatSidebar = () => {
           <EmptyChannelState />
         )}
       </div>
-      
+
       {/* Add a footer with the initialize channels button */}
       <div className="p-4 border-t border-blue-700">
         {client && client.userID && (
-          <InitializeUserChannelsButton 
-            userId={client.userID} 
-            variant="default" 
+          <InitializeUserChannelsButton
+            userId={client.userID}
+            variant="default"
             size="sm"
             className="w-full flex items-center justify-center gap-2 text-sm"
             onSuccess={refreshChannels}

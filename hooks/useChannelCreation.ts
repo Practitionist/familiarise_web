@@ -1,10 +1,10 @@
 "use client";
 
 import {
-    createClassChannel,
-    createConsultationChannel,
-    createSubscriptionChannel,
-    createWebinarChannel
+  createClassChannel,
+  createConsultationChannel,
+  createSubscriptionChannel,
+  createWebinarChannel,
 } from "@/actions/channel.action";
 import { useEffect, useState } from "react";
 
@@ -21,13 +21,13 @@ export const useChannelCreation = ({ type, id }: ChannelCreationProps) => {
   useEffect(() => {
     const createChannel = async () => {
       if (!id) return;
-      
+
       setIsCreating(true);
       setError(null);
-      
+
       try {
         let result;
-        
+
         switch (type) {
           case "consultation":
             result = await createConsultationChannel(id);
@@ -44,7 +44,7 @@ export const useChannelCreation = ({ type, id }: ChannelCreationProps) => {
           default:
             throw new Error(`Invalid channel type: ${type}`);
         }
-        
+
         console.log(`Created ${type} channel:`, result);
         setIsCreated(true);
       } catch (err) {
@@ -54,9 +54,9 @@ export const useChannelCreation = ({ type, id }: ChannelCreationProps) => {
         setIsCreating(false);
       }
     };
-    
+
     createChannel();
   }, [type, id]);
-  
+
   return { isCreating, isCreated, error };
 };

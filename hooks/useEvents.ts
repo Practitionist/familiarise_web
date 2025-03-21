@@ -27,8 +27,12 @@ export type ClassWithPlan = TClass & {
 // Original hook for consultee events
 // TODO: Replace with useEventsByConsultee
 export const useEvents = (consulteeProfileId: string) => {
-  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>([]);
-  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>([]);
+  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>(
+    [],
+  );
+  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>(
+    [],
+  );
   const [webinars, setWebinars] = useState<WebinarWithPlan[]>([]);
   const [classes, setClasses] = useState<ClassWithPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -97,8 +101,12 @@ export const useEvents = (consulteeProfileId: string) => {
 
 // Hook for fetching events by consultee
 export const useEventsByConsultee = (consulteeProfileId: string) => {
-  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>([]);
-  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>([]);
+  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>(
+    [],
+  );
+  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>(
+    [],
+  );
   const [webinars, setWebinars] = useState<WebinarWithPlan[]>([]);
   const [classes, setClasses] = useState<ClassWithPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -167,8 +175,12 @@ export const useEventsByConsultee = (consulteeProfileId: string) => {
 
 // Hook for fetching events by consultant
 export const useEventsByConsultant = (consultantProfileId: string) => {
-  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>([]);
-  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>([]);
+  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>(
+    [],
+  );
+  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>(
+    [],
+  );
   const [webinars, setWebinars] = useState<WebinarWithPlan[]>([]);
   const [classes, setClasses] = useState<ClassWithPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -237,8 +249,12 @@ export const useEventsByConsultant = (consultantProfileId: string) => {
 
 // Hook for fetching events by user (detects role and fetches accordingly)
 export const useEventsByUser = (userId: string) => {
-  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>([]);
-  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>([]);
+  const [consultations, setConsultations] = useState<ConsultationWithPlan[]>(
+    [],
+  );
+  const [subscriptions, setSubscriptions] = useState<SubscriptionWithPlan[]>(
+    [],
+  );
   const [webinars, setWebinars] = useState<WebinarWithPlan[]>([]);
   const [classes, setClasses] = useState<ClassWithPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -252,7 +268,7 @@ export const useEventsByUser = (userId: string) => {
         if (!response.ok) {
           throw new Error("Failed to fetch user details");
         }
-        
+
         const userData = await response.json();
         return userData.data;
       } catch (err: any) {
@@ -269,7 +285,7 @@ export const useEventsByUser = (userId: string) => {
     const fetchEvents = async () => {
       setIsLoading(true);
       setError(null);
-      
+
       try {
         const userDetails = await fetchUserDetails();
         if (!userDetails) {
@@ -277,9 +293,15 @@ export const useEventsByUser = (userId: string) => {
         }
         console.log("userDetails", userDetails);
         let queryParam = "";
-        if (userDetails.role === "CONSULTANT" && userDetails.consultantProfile?.id) {
+        if (
+          userDetails.role === "CONSULTANT" &&
+          userDetails.consultantProfile?.id
+        ) {
           queryParam = `consultantProfileId=${userDetails.consultantProfile.id}`;
-        } else if (userDetails.role === "CONSULTEE" && userDetails.consulteeProfile?.id) {
+        } else if (
+          userDetails.role === "CONSULTEE" &&
+          userDetails.consulteeProfile?.id
+        ) {
           queryParam = `consulteeProfileId=${userDetails.consulteeProfile.id}`;
         } else {
           // If role or profile is not found, just use empty arrays for now
