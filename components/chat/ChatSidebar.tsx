@@ -39,25 +39,40 @@ const ChannelItem = ({ channel, isActive, onClick }: { channel: Channel; isActiv
     }
   }
   
+  // Get unread count directly from the channel
+  const unreadCount = channel.countUnread();
+  const hasUnread = unreadCount > 0;
+  
   return (
     <button
       onClick={onClick}
       className={`w-full text-left px-4 py-2 hover:bg-blue-700 transition-colors ${isActive ? 'bg-blue-700' : ''}`}
     >
-      {isTeamChannel ? (
+      <div className="flex items-center justify-between">
         <div className="flex items-center">
-          <span className="text-blue-200 mr-2">#</span>
-          <span className="font-medium">{displayName}</span>
+          {isTeamChannel ? (
+            <div className="flex items-center">
+              <span className="text-blue-200 mr-2">#</span>
+              <span className={`font-medium ${hasUnread ? 'font-bold' : ''}`}>{displayName}</span>
+            </div>
+          ) : (
+            <div className="flex items-center">
+              <Avatar className="w-6 h-6 mr-2">
+                <AvatarImage src={displayImage || "/placeholder-user.jpg"} />
+                <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
+              </Avatar>
+              <span className={`font-medium ${hasUnread ? 'font-bold' : ''}`}>{displayName}</span>
+            </div>
+          )}
         </div>
-      ) : (
-        <div className="flex items-center">
-          <Avatar className="w-6 h-6 mr-2">
-            <AvatarImage src={displayImage || "/placeholder-user.jpg"} />
-            <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
-          </Avatar>
-          <span className="font-medium">{displayName}</span>
-        </div>
-      )}
+        
+        {/* Unread indicator */}
+        {hasUnread && (
+          <div className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+            {unreadCount > 9 ? '9+' : unreadCount}
+          </div>
+        )}
+      </div>
     </button>
   );
 };
@@ -75,6 +90,18 @@ export const ChatSidebar = () => {
     setRefreshTrigger(prev => prev + 1);
   };
 
+  // Add a periodic refresh to ensure unread counts are updated
+  useEffect(() => {
+    // Set up a timer to refresh channels every 5 seconds
+    const intervalId = setInterval(() => {
+      refreshChannels();
+    }, 5000);
+    
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, []);
+  
   useEffect(() => {
     const fetchChannels = async () => {
       if (!client) return;
@@ -90,14 +117,23 @@ export const ChatSidebar = () => {
             members: { $in: [client.userID || ""] }
           },
           { last_message_at: -1 },
-          { watch: true, state: true, limit: 30 }
+          { 
+            watch: true, 
+            state: true, 
+            limit: 30,
+            // Make sure we get message counts for unread indicators
+            message_limit: 30,
+            // Ensure we're watching for new messages
+            presence: true
+          }
         );
         
         console.log("Team channels found:", teamResponse.length);
         console.log("Team channels:", teamResponse.map(c => ({ 
           id: c.id, 
           name: c.data?.name,
-          members: Object.keys(c.state.members || {})
+          members: Object.keys(c.state.members || {}),
+          unreadCount: c.countUnread()
         })));
         
         // Fetch direct message channels
@@ -107,13 +143,22 @@ export const ChatSidebar = () => {
             members: { $in: [client.userID || ""] }
           },
           { last_message_at: -1 },
-          { watch: true, state: true, limit: 30 }
+          { 
+            watch: true, 
+            state: true, 
+            limit: 30,
+            // Make sure we get message counts for unread indicators
+            message_limit: 30,
+            // Ensure we're watching for new messages
+            presence: true
+          }
         );
         
         console.log("DM channels found:", dmResponse.length);
         console.log("DM channels:", dmResponse.map(c => ({ 
           id: c.id, 
-          members: Object.keys(c.state.members || {})
+          members: Object.keys(c.state.members || {}),
+          unreadCount: c.countUnread()
         })));
         
         setChannels(teamResponse);
@@ -127,6 +172,18 @@ export const ChatSidebar = () => {
     
     if (client) {
       fetchChannels();
+      
+      // Set up event listeners for new messages to update unread counts
+      const handleMessageNew = () => {
+        console.log("New message received, refreshing channels");
+        refreshChannels();
+      };
+      
+      client.on('message.new', handleMessageNew);
+      
+      return () => {
+        client.off('message.new', handleMessageNew);
+      };
     }
   }, [client, refreshTrigger]);
 
