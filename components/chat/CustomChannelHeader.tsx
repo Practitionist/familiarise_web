@@ -1,8 +1,8 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { InfoIcon } from "lucide-react";
 import { useChatContext } from "stream-chat-react";
+import { ChannelInfoAndManageDialog } from "./ChannelInfoAndManageDialog";
 
 export const CustomChannelHeader = () => {
   const { channel, client } = useChatContext();
@@ -35,9 +35,7 @@ export const CustomChannelHeader = () => {
           </div>
         </div>
         
-        <button className="p-2 rounded-full hover:bg-gray-100">
-          <InfoIcon className="h-5 w-5 text-gray-500" />
-        </button>
+        <ChannelInfoAndManageDialog channel={channel} />
       </div>
     );
   }
@@ -59,9 +57,7 @@ export const CustomChannelHeader = () => {
         </div>
       </div>
       
-      <button className="p-2 rounded-full hover:bg-gray-100">
-        <InfoIcon className="h-5 w-5 text-gray-500" />
-      </button>
+      <ChannelInfoAndManageDialog channel={channel} />
     </div>
   );
 };
