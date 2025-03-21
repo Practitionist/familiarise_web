@@ -1,13 +1,14 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { MessageSquareIcon } from "lucide-react";
+import { MessageSquareIcon, RefreshCwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Channel } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
 import { ChannelSearch } from "./ChannelSearch";
 import { CreateChannelDialog } from "./CreateChannelDialog";
 import { CreateDirectMessageDialog } from "./CreateDirectMessageDialog";
+import { InitializeUserChannelsButton } from "./InitializeUserChannelsButton";
 
 // Empty state component for when there are no channels
 const EmptyChannelState = () => (
@@ -199,6 +200,22 @@ export const ChatSidebar = () => {
           </div>
         ) : (
           <EmptyChannelState />
+        )}
+      </div>
+      
+      {/* Add a footer with the initialize channels button */}
+      <div className="p-4 border-t border-blue-700">
+        {client && client.userID && (
+          <InitializeUserChannelsButton 
+            userId={client.userID} 
+            variant="default" 
+            size="sm"
+            className="w-full flex items-center justify-center gap-2 text-sm"
+            onSuccess={refreshChannels}
+          >
+            <RefreshCwIcon className="h-4 w-4" />
+            Sync Event Channels
+          </InitializeUserChannelsButton>
         )}
       </div>
     </div>

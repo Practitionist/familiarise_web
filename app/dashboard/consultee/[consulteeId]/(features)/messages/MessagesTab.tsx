@@ -97,16 +97,16 @@ export default function MessagesTab() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-200px)]">
-      <h2 className="text-3xl font-bold mb-6">Messages</h2>
+    <div className="min-h-[calc(100vh-200px)] flex flex-col w-full">
+      {/* <h2 className="text-3xl font-bold mb-6">Messages</h2> */}
       {initializing && (
-        <div className="mb-4 p-4 bg-blue-50 rounded-lg">
+        <div className="mb-4 p-4 bg-blue-50 rounded-lg w-full">
           <p className="text-sm text-blue-600">
             Initializing channels... This may take a moment.
           </p>
         </div>
       )}
-      <div className="h-[calc(100vh-280px)] w-full bg-white rounded-lg shadow-lg overflow-hidden">
+      <div className="h-[calc(100vh-220px)] w-full bg-white rounded-lg shadow-lg overflow-hidden flex-grow">
         <StreamChatProvider userId={userId}>
           <ChatLayout />
         </StreamChatProvider>

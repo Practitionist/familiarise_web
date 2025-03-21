@@ -1,9 +1,9 @@
 "use client";
 
+// import { DebugButton } from "@/components/chat/DebugButton";
+// import { InitializeChannelsButton } from "@/components/chat/InitializeChannelsButton";
 import { initializeAllChannels } from "@/actions/channel.action";
 import { ChatLayout } from "@/components/chat/ChatLayout";
-import { DebugButton } from "@/components/chat/DebugButton";
-import { InitializeChannelsButton } from "@/components/chat/InitializeChannelsButton";
 import { useToast } from "@/components/ui/use-toast";
 import { fetchConsultantDetails } from "@/lib/user";
 import StreamChatProvider from "@/providers/StreamChatProvider";
@@ -97,7 +97,7 @@ export function ChatsTab() {
 
   return (
     <div className="flex flex-col h-full w-full">
-      {/* Admin tools - only visible to admins */}
+      {/* Admin tools - only visible to admins
       {userRole === "ADMIN" && (
         <div className="mb-4 p-4 bg-gray-100 rounded-lg">
           <h3 className="text-lg font-medium mb-2">Admin Tools</h3>
@@ -126,7 +126,7 @@ export function ChatsTab() {
             </div>
           </div>
         </div>
-      )}
+      )} */}
       
       <div className="flex-1 bg-white rounded-lg shadow-lg overflow-hidden">
         <StreamChatProvider userId={userId}>

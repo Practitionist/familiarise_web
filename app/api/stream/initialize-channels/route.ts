@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
 import { initializeAllChannels } from "@/actions/channel.action";
+import { NextResponse } from "next/server";
 
-export async function POST(req: NextRequest) {
+export async function POST() {
   try {
     const result = await initializeAllChannels();
     return NextResponse.json({ success: true, result });

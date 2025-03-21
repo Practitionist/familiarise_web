@@ -6,8 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
 import { PlusIcon } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useChatContext } from "stream-chat-react";
+import { useEventsByUser } from "@/hooks/useEvents";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface CreateChannelDialogProps {
   onChannelCreated?: () => void;
@@ -16,9 +18,37 @@ interface CreateChannelDialogProps {
 export const CreateChannelDialog = ({ onChannelCreated }: CreateChannelDialogProps) => {
   const [open, setOpen] = useState(false);
   const [channelName, setChannelName] = useState("");
+  const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const { client, setActiveChannel } = useChatContext();
   const { toast } = useToast();
+  
+  // Fetch user's events
+  const { webinars, classes, isLoading: isLoadingEvents } = useEventsByUser(client?.userID || "");
+  
+  // Prepare events for dropdown
+  const events = [
+    ...webinars.map(webinar => ({
+      id: `webinar-${webinar.id}`,
+      name: webinar.webinarPlan.title,
+      type: 'webinar'
+    })),
+    ...classes.map(classItem => ({
+      id: `class-${classItem.id}`,
+      name: classItem.classPlan.title,
+      type: 'class'
+    }))
+  ];
+
+  // Update channel name when event is selected
+  useEffect(() => {
+    if (selectedEvent) {
+      const event = events.find(e => e.id === selectedEvent);
+      if (event) {
+        setChannelName(event.name);
+      }
+    }
+  }, [selectedEvent, events]);
 
   const handleCreateChannel = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,8 +93,16 @@ export const CreateChannelDialog = ({ onChannelCreated }: CreateChannelDialogPro
         }
       }
       
+      // Determine channel ID based on selection
+      let channelId = channelName.toLowerCase().replace(/\s+/g, "-");
+      
+      // If an event is selected, use its ID as the channel ID
+      if (selectedEvent) {
+        channelId = selectedEvent;
+      }
+      
       // Create a new team channel
-      const channel = client.channel("team", channelName.toLowerCase().replace(/\s+/g, "-"), {
+      const channel = client.channel("team", channelId, {
         name: channelName,
         members: [client.userID || ""],
         created_by_id: client.userID,
@@ -88,6 +126,7 @@ export const CreateChannelDialog = ({ onChannelCreated }: CreateChannelDialogPro
       // Close the dialog
       setOpen(false);
       setChannelName("");
+      setSelectedEvent(null);
     } catch (error) {
       console.error("Error creating channel:", error);
       toast({
@@ -113,6 +152,33 @@ export const CreateChannelDialog = ({ onChannelCreated }: CreateChannelDialogPro
         </DialogHeader>
         <form onSubmit={handleCreateChannel} className="space-y-4 pt-4">
           <div className="space-y-2">
+            <Label htmlFor="eventSelect">Select Webinar or Class (Optional)</Label>
+            <Select
+              value={selectedEvent || ""}
+              onValueChange={(value) => setSelectedEvent(value || null)}
+              disabled={isLoadingEvents || isLoading}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select a webinar or class" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="custom">Custom Channel</SelectItem>
+                {events.length > 0 ? (
+                  events.map((event) => (
+                    <SelectItem key={event.id} value={event.id}>
+                      {event.name} ({event.type})
+                    </SelectItem>
+                  ))
+                ) : (
+                  <SelectItem value="no-events" disabled>
+                    {isLoadingEvents ? "Loading events..." : "No events found"}
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+          
+          <div className="space-y-2">
             <Label htmlFor="channelName">Channel Name</Label>
             <Input
               id="channelName"
@@ -122,6 +188,7 @@ export const CreateChannelDialog = ({ onChannelCreated }: CreateChannelDialogPro
               disabled={isLoading}
             />
           </div>
+          
           <Button type="submit" className="w-full" disabled={isLoading}>
             {isLoading ? "Creating..." : "Create Channel"}
           </Button>

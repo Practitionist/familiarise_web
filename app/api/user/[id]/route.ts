@@ -17,6 +17,32 @@ export async function GET(
 
     const user = await prisma.user.findUnique({
       where: { id: id },
+      include: {
+        consultantProfile: {
+          select: {
+            id: true,
+            description: true,
+            qualifications: true,
+            specialization: true,
+            experience: true,
+            rating: true,
+            domainId: true,
+          }
+        },
+        consulteeProfile: {
+          select: {
+            id: true,
+            education: true,
+            occupation: true,
+            aboutMe: true,
+            preferredCommunicationMethod: true,
+            preferredLanguage: true,
+            specialRequirements: true,
+            interests: true,
+            goals: true,
+          }
+        },
+      },
     });
 
     if (!user) {
