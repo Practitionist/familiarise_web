@@ -76,6 +76,18 @@ export function EventCarousel({
       : event.classPlan.price;
   };
 
+  const getEventStartTime = (event: Event) => {
+    return isWebinarEvent(event)
+      ? (event as WebinarEvent).appointment?.slotsOfAppointment[0]?.slotStartTimeInUTC
+      : '';
+  };
+
+  const getEventEndTime = (event: Event) => {
+    return isWebinarEvent(event)
+      ? (event as WebinarEvent).appointment?.slotsOfAppointment[0]?.slotEndTimeInUTC
+      : '';
+  };
+
   const getEventDuration = (event: Event) => {
     return isWebinarEvent(event)
       ? `${event.webinarPlan.durationInHours} hours`
@@ -142,7 +154,7 @@ export function EventCarousel({
         <Button
           variant="outline"
           size="icon"
-          className="hidden md:flex bg-white shadow-md"
+          className="hidden md:flex bg-white shadow-md aspect-square"
           onClick={prevSlide}
         >
           <ChevronLeftIcon className="h-4 w-4" />
@@ -152,7 +164,6 @@ export function EventCarousel({
         {events.slice(startIndex, startIndex + 3).map((event) => {
           const { currentParticipants, maxParticipants } =
             getParticipantsCount(event);
-
           return (
             <Card
               key={event.id}
@@ -174,6 +185,8 @@ export function EventCarousel({
                   {isLoadingCounts
                     ? "Loading participants..."
                     : `${currentParticipants}/${maxParticipants} participants`}
+                  <br />
+                  {getEventStartTime(event)?.toLocaleString() || ""} to {getEventEndTime(event)?.toLocaleString() || ""}
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-4 flex-grow">
@@ -187,7 +200,7 @@ export function EventCarousel({
                   Duration: {getEventDuration(event)}
                 </p>
               </CardContent>
-              <CardFooter className="bg-gray-50 border-t p-4 flex justify-between flex-shrink-0">
+              <CardFooter className="bg-gray-50 border-t py-4 px-1 flex justify-between flex-shrink-0">
                 <Button variant="outline" size="sm" asChild>
                   <Link
                     href={
@@ -225,7 +238,7 @@ export function EventCarousel({
         <Button
           variant="outline"
           size="icon"
-          className="hidden md:flex bg-white shadow-md"
+          className="hidden md:flex bg-white shadow-md aspect-square"
           onClick={nextSlide}
         >
           <ChevronRightIcon className="h-4 w-4" />

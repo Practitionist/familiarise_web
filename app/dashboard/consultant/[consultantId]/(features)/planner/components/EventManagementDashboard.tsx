@@ -38,6 +38,8 @@ export function EventManagementDashboard({ consultantId }: Props) {
         const webinarsData = await webinarsRes.json();
         const classesData = await classesRes.json();
 
+        console.log(webinarsData);
+
         setWebinars(
           webinarsData.data.map((webinar: any) => ({
             id: webinar.id,

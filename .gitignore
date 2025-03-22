@@ -76,3 +76,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+precompile-route.bat
+precom

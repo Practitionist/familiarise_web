@@ -306,10 +306,11 @@ export async function GET(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ appointmentId: string }> },
+  { params }: { params: Promise<{ eventId: string }> },
 ) {
   try {
-    const { appointmentId } = await params;
+    console.log("params", await params);
+    const { eventId } = await params;
     const body: UpdateSlotsRequest = await request.json();
 
     if (!body.slotsOfAppointment?.createMany?.data) {
@@ -318,6 +319,10 @@ export async function PATCH(
         { status: 400 },
       );
     }
+
+    console.log("eventId", eventId);
+
+    console.log("body.slotsOfAppointment.createMany.data", body.slotsOfAppointment.createMany.data);
 
     const data: Prisma.AppointmentUpdateInput = {
       slotsOfAppointment: {
@@ -329,8 +334,27 @@ export async function PATCH(
       },
     };
 
+    // find the appointment by eventId
+    const appointment = await prisma.appointment.findFirst({
+      where: {
+        OR: [
+          { classId: eventId },
+          { webinarId: eventId }
+        ]
+      },
+    });
+
+    console.log("appointment", appointment);
+
+    if (!appointment) {
+      return NextResponse.json(
+        { error: "Appointment not found" },
+        { status: 404 },
+      );
+    }
+
     const updatedAppointment = await prisma.appointment.update({
-      where: { id: appointmentId },
+      where: { id: appointment?.id },
       data,
       include: {
         slotsOfAppointment: {
@@ -452,6 +476,8 @@ export async function PATCH(
         },
       },
     });
+
+    console.log(updatedAppointment);
 
     return NextResponse.json({ data: updatedAppointment }, { status: 200 });
   } catch (error) {

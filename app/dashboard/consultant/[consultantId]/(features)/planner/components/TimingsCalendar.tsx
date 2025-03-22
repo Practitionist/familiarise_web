@@ -322,6 +322,7 @@ export function TimingsCalendar({
 
       if (existingResponse.ok) {
         const { data } = await existingResponse.json();
+        console.log("data from existingResponse", data);
         const existingAppointment = data?.[0];
 
         let response;
@@ -498,7 +499,7 @@ export function TimingsCalendar({
   if (loading || !scheduleType) {
     return (
       <Dialog open={isOpen} onOpenChange={onClose}>
-        <DialogContent>
+        <DialogContent className="max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {loading
@@ -518,7 +519,7 @@ export function TimingsCalendar({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-7xl">
+      <DialogContent className="max-w-7xl max-h-[99vh] overflow-y-auto scrollbar-thin">
         <DialogHeader>
           <DialogTitle>
             Manage {eventType === "webinar" ? "Webinar" : "Class"} Timings
@@ -572,7 +573,7 @@ export function TimingsCalendar({
                 ))}
               </div>
 
-              <div className="grid grid-cols-8 gap-1 h-[600px] overflow-y-auto">
+              <div className="grid grid-cols-8 gap-1 h-[600px] overflow-y-auto scrollbar-thin">
                 {HOURS.map((hour) => (
                   <React.Fragment key={hour}>
                     <div className="w-20 text-right pr-2 py-2 text-sm sticky left-0 bg-background z-10">
