@@ -82,25 +82,32 @@ const authOptions: NextAuthOptions = {
         // Set user ID in token
         token.sub = user.id;
 
-        // Fetch user data from database
-        const dbUser = await prisma.user.findUnique({
-          where: { id: user.id },
-          select: {
-            onboardingCompleted: true,
-            role: true,
-            consultantProfile: { select: { id: true } },
-            consulteeProfile: { select: { id: true } },
-            staffProfile: { select: { id: true } },
-          },
-        });
+        try {
+          // Fetch user data from database
+          const dbUser = await prisma.user.findUnique({
+            where: { id: user.id },
+            select: {
+              onboardingCompleted: true,
+              role: true,
+              consultantProfile: { select: { id: true } },
+              consulteeProfile: { select: { id: true } },
+              staffProfile: { select: { id: true } },
+            },
+          });
 
-        if (dbUser) {
-          // Update token with user data
-          token.onboardingCompleted = dbUser.onboardingCompleted ?? false;
-          token.role = dbUser.role ?? "";
-          token.consultantProfileId = dbUser.consultantProfile?.id ?? undefined;
-          token.consulteeProfileId = dbUser.consulteeProfile?.id ?? undefined;
-          token.staffProfileId = dbUser.staffProfile?.id ?? undefined;
+          if (dbUser) {
+            // Update token with user data
+            token.onboardingCompleted = dbUser.onboardingCompleted ?? false;
+            token.role = dbUser.role ?? "";
+            token.consultantProfileId = dbUser.consultantProfile?.id ?? undefined;
+            token.consulteeProfileId = dbUser.consulteeProfile?.id ?? undefined;
+            token.staffProfileId = dbUser.staffProfile?.id ?? undefined;
+          }
+        } catch (error) {
+          console.error("Error fetching user data in jwt callback:", error);
+          // Set default values if database query fails
+          token.onboardingCompleted = false;
+          token.role = "";
         }
       } else if (account?.providerAccountId) {
         // Set account ID in token
@@ -136,29 +143,34 @@ const authOptions: NextAuthOptions = {
           | string
           | undefined;
 
-        // Fetch additional user data from database
-        const user = await prisma.user.findUnique({
-          where: { email: session.user.email ?? "" },
-          select: {
-            email: true,
-            name: true,
-            image: true,
-            phone: true,
-            address: true,
-            currentTimezone: true,
-          },
-        });
-
-        if (user) {
-          // Merge fetched user data with session
-          Object.assign(session.user, {
-            ...user,
-            phone: user.phone ?? "",
-            address: user.address ?? "",
-            currentTimezone:
-              user.currentTimezone ??
-              Intl.DateTimeFormat().resolvedOptions().timeZone,
+        try {
+          // Fetch additional user data from database
+          const user = await prisma.user.findUnique({
+            where: { email: session.user.email ?? "" },
+            select: {
+              email: true,
+              name: true,
+              image: true,
+              phone: true,
+              address: true,
+              currentTimezone: true,
+            },
           });
+
+          if (user) {
+            // Merge fetched user data with session
+            Object.assign(session.user, {
+              ...user,
+              phone: user.phone ?? "",
+              address: user.address ?? "",
+              currentTimezone:
+                user.currentTimezone ??
+                Intl.DateTimeFormat().resolvedOptions().timeZone,
+            });
+          }
+        } catch (error) {
+          console.error("Error fetching user data in session callback:", error);
+          // Keep existing session data if database query fails
         }
       }
       return session;
