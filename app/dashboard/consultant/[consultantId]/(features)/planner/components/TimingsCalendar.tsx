@@ -318,16 +318,48 @@ export function TimingsCalendar({
         params.append("classId", eventId);
       }
 
+      console.log("Fetching appointments with params:", params.toString());
       const existingResponse = await fetch(`/api/slots/appointments?${params}`);
 
       if (existingResponse.ok) {
         const { data } = await existingResponse.json();
-        console.log("data from existingResponse", data);
+        console.log("Data from existingResponse:", data);
         const existingAppointment = data?.[0];
 
         let response;
         // If there's an existing appointment, update it
         if (existingAppointment) {
+          const selectedSlotsWithIsoFormat = selectedSlots.map((slot) => {
+            const startTime = slot.originalSlot?.slotStartTimeInUTC || 
+              (typeof slot.startTime === 'string' ? slot.startTime : slot.startTime.toISOString());
+            const endTime = slot.originalSlot?.slotEndTimeInUTC || 
+              (typeof slot.endTime === 'string' ? slot.endTime : slot.endTime.toISOString());
+            
+            console.log("Formatted slot time:", { 
+              startTime, 
+              endTime,
+              originalStartTime: slot.originalSlot?.slotStartTimeInUTC,
+              originalEndTime: slot.originalSlot?.slotEndTimeInUTC,
+              slotStartType: typeof slot.startTime,
+              slotEndType: typeof slot.endTime
+            });
+            
+            return {
+              slotStartTimeInUTC: startTime,
+              slotEndTimeInUTC: endTime,
+            };
+          });
+          
+          const requestBody = {
+            slotsOfAppointment: {
+              deleteMany: {},
+              createMany: {
+                data: selectedSlotsWithIsoFormat
+              },
+            },
+          };
+          console.log("PATCH request body:", JSON.stringify(requestBody, null, 2));
+          
           response = await fetch(
             `/api/slots/appointments/${existingAppointment.id}`,
             {
@@ -335,48 +367,73 @@ export function TimingsCalendar({
               headers: {
                 "Content-Type": "application/json",
               },
-              body: JSON.stringify({
-                slotsOfAppointment: {
-                  deleteMany: {},
-                  createMany: {
-                    data: selectedSlots.map((slot) => ({
-                      slotStartTimeInUTC:
-                        slot.originalSlot?.slotStartTimeInUTC ||
-                        slot.startTime.toISOString(),
-                      slotEndTimeInUTC:
-                        slot.originalSlot?.slotEndTimeInUTC ||
-                        slot.endTime.toISOString(),
-                    })),
-                  },
-                },
-              }),
+              body: JSON.stringify(requestBody),
             },
           );
+          
+          if (!response.ok) {
+            const errorData = await response.json();
+            console.error("PATCH response error:", response.status, errorData);
+            throw new Error(`Failed to save timings: ${response.status} ${JSON.stringify(errorData)}`);
+          } else {
+            const responseData = await response.json();
+            console.log("PATCH response success:", responseData);
+          }
         } else {
           // Create new appointment if none exists
+          console.log("Creating new appointment for", eventType, eventId);
+          const selectedSlotsWithIsoFormat = selectedSlots.map((slot) => {
+            const startTime = slot.originalSlot?.slotStartTimeInUTC || 
+              (typeof slot.startTime === 'string' ? slot.startTime : slot.startTime.toISOString());
+            const endTime = slot.originalSlot?.slotEndTimeInUTC || 
+              (typeof slot.endTime === 'string' ? slot.endTime : slot.endTime.toISOString());
+            
+            console.log("Formatted slot time:", { 
+              startTime, 
+              endTime,
+              originalStartTime: slot.originalSlot?.slotStartTimeInUTC,
+              originalEndTime: slot.originalSlot?.slotEndTimeInUTC,
+              slotStartType: typeof slot.startTime,
+              slotEndType: typeof slot.endTime
+            });
+            
+            return {
+              slotStartTimeInUTC: startTime,
+              slotEndTimeInUTC: endTime,
+            };
+          });
+          
+          const requestBody = {
+            appointmentType: eventType.toUpperCase() as AppointmentsType,
+            [eventType]: { connect: { id: eventId } },
+            slotsOfAppointment: {
+              createMany: {
+                data: selectedSlotsWithIsoFormat
+              }
+            }
+          };
+          console.log("POST request body:", JSON.stringify(requestBody, null, 2));
+          
           response = await fetch(`/api/slots/appointments`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({
-              appointmentType: eventType.toUpperCase() as AppointmentsType,
-              [eventType]: { connect: { id: eventId } },
-              slotsOfAppointment: {
-                create: selectedSlots.map((slot) => ({
-                  slotStartTimeInUTC:
-                    slot.originalSlot?.slotStartTimeInUTC || slot.startTime,
-                  slotEndTimeInUTC:
-                    slot.originalSlot?.slotEndTimeInUTC || slot.endTime,
-                })),
-              },
-            }),
+            body: JSON.stringify(requestBody),
           });
+          
+          if (!response.ok) {
+            const errorData = await response.json();
+            console.error("POST response error:", response.status, errorData);
+            throw new Error(`Failed to save timings: ${response.status} ${JSON.stringify(errorData)}`);
+          } else {
+            const responseData = await response.json();
+            console.log("POST response success:", responseData);
+          }
         }
-
-        if (!response.ok) {
-          throw new Error("Failed to save timings");
-        }
+      } else {
+        console.error("Failed to fetch existing appointments:", await existingResponse.text());
+        throw new Error(`Failed to fetch existing appointments: ${existingResponse.status}`);
       }
 
       toast({
@@ -389,7 +446,7 @@ export function TimingsCalendar({
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to save timings",
+        description: error instanceof Error ? error.message : "Failed to save timings",
       });
     } finally {
       setSaving(false);

@@ -306,12 +306,20 @@ export async function GET(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ eventId: string }> },
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    console.log("params", await params);
-    const { eventId } = await params;
-    const body: UpdateSlotsRequest = await request.json();
+    const rawParams = await params;
+    console.log("Raw params:", JSON.stringify(rawParams));
+    
+    const { appointmentId } = rawParams;
+    console.log("Extracted appointmentId:", appointmentId);
+    
+    const rawBody = await request.text();
+    console.log("Raw request body:", rawBody);
+    
+    const body: UpdateSlotsRequest = JSON.parse(rawBody);
+    console.log("Parsed body:", JSON.stringify(body, null, 2));
 
     if (!body.slotsOfAppointment?.createMany?.data) {
       return NextResponse.json(
@@ -320,41 +328,47 @@ export async function PATCH(
       );
     }
 
-    console.log("eventId", eventId);
+    console.log("Number of slots to update:", body.slotsOfAppointment.createMany.data.length);
 
-    console.log("body.slotsOfAppointment.createMany.data", body.slotsOfAppointment.createMany.data);
-
+    // Validate that we can parse all dates correctly
+    const slotData = body.slotsOfAppointment.createMany.data.map((slot) => {
+      try {
+        return {
+          slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
+          slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+        };
+      } catch (error) {
+        console.error("Error parsing dates:", error);
+        console.error("Problem slot:", slot);
+        throw new Error(`Invalid date format in slots: ${JSON.stringify(slot)}`);
+      }
+    });
+    
     const data: Prisma.AppointmentUpdateInput = {
       slotsOfAppointment: {
         deleteMany: {},
-        create: body.slotsOfAppointment.createMany.data.map((slot) => ({
-          slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
-          slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
-        })),
+        create: slotData,
       },
     };
 
-    // find the appointment by eventId
-    const appointment = await prisma.appointment.findFirst({
-      where: {
-        OR: [
-          { classId: eventId },
-          { webinarId: eventId }
-        ]
-      },
+    console.log("Looking for appointment with id:", appointmentId);
+    const existingAppointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
     });
-
-    console.log("appointment", appointment);
-
-    if (!appointment) {
+    
+    if (!existingAppointment) {
+      console.log("No appointment found with id:", appointmentId);
       return NextResponse.json(
-        { error: "Appointment not found" },
+        { error: `Appointment not found with id: ${appointmentId}` },
         { status: 404 },
       );
     }
+    
+    console.log("Found existing appointment:", JSON.stringify(existingAppointment, null, 2));
+    console.log("Updating with data:", JSON.stringify(data, null, 2));
 
     const updatedAppointment = await prisma.appointment.update({
-      where: { id: appointment?.id },
+      where: { id: appointmentId },
       data,
       include: {
         slotsOfAppointment: {

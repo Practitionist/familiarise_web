@@ -9,6 +9,17 @@ export async function GET(request: NextRequest) {
   const consultantProfileId = searchParams.get("consultantProfileId");
   const consulteeProfileId = searchParams.get("consulteeProfileId");
   const userId = searchParams.get("userId");
+  const webinarId = searchParams.get("webinarId");
+  const classId = searchParams.get("classId");
+
+  console.log("GET /api/slots/appointments - Query params:", {
+    type,
+    consultantProfileId,
+    consulteeProfileId,
+    userId,
+    webinarId,
+    classId
+  });
 
   // Get status for each appointment type
   const consultationStatus = searchParams
@@ -90,7 +101,36 @@ export async function GET(request: NextRequest) {
           | "CANCELLED"
           | undefined,
       },
+      webinarId,
+      classId
     );
+    
+    // If no appointments found but webinarId is provided, do a direct query
+    // as a sanity check without any filters
+    if (appointments.length === 0 && webinarId) {
+      console.log("No appointments found with filters, doing direct webinarId query");
+      
+      const directQuery = await prisma.appointment.findMany({
+        where: { webinarId },
+        include: { slotsOfAppointment: true },
+      });
+      
+      console.log(`Direct query found ${directQuery.length} appointments for webinarId ${webinarId}`);
+      
+      if (directQuery.length > 0) {
+        directQuery.forEach((app, i) => {
+          console.log(`Direct Query Appointment ${i+1}:`, {
+            id: app.id,
+            type: app.appointmentType,
+            webinarId: app.webinarId,
+            slots: app.slotsOfAppointment.length,
+          });
+        });
+        
+        // If we found appointments with the direct query, return these instead
+        return NextResponse.json({ data: directQuery });
+      }
+    }
 
     return NextResponse.json({ data: appointments });
   } catch (error) {
@@ -113,75 +153,21 @@ async function getAppointments(
     webinar?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
     class?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
   },
+  webinarId?: string | null,
+  classId?: string | null
 ) {
-  const whereClause: Prisma.AppointmentWhereInput = {
-    OR: [
-      {
-        consultation: {
-          requestStatus: statuses?.consultation || "APPROVED",
-          consultationPlan: consultantProfileId
-            ? {
-                consultantProfileId,
-              }
-            : undefined,
-          requestedBy: consulteeProfileId
-            ? {
-                id: consulteeProfileId,
-              }
-            : undefined,
-        },
-      },
-      {
-        subscription: {
-          requestStatus: statuses?.subscription || "APPROVED",
-          subscriptionPlan: consultantProfileId
-            ? {
-                consultantProfileId,
-              }
-            : undefined,
-          requestedBy: consulteeProfileId
-            ? {
-                id: consulteeProfileId,
-              }
-            : undefined,
-        },
-      },
-      {
-        webinar: {
-          status:
-            statuses?.webinar === "APPROVED"
-              ? "SCHEDULED"
-              : statuses?.webinar === "CANCELLED"
-                ? "CANCELLED"
-                : statuses?.webinar === "REJECTED"
-                  ? "CANCELLED"
-                  : "SCHEDULED",
-          webinarPlan: consultantProfileId
-            ? {
-                consultantProfileId,
-              }
-            : undefined,
-        },
-      },
-      {
-        class: {
-          status:
-            statuses?.class === "APPROVED"
-              ? "SCHEDULED"
-              : statuses?.class === "CANCELLED"
-                ? "CANCELLED"
-                : statuses?.class === "REJECTED"
-                  ? "CANCELLED"
-                  : "SCHEDULED",
-          classPlan: consultantProfileId
-            ? {
-                consultantProfileId,
-              }
-            : undefined,
-        },
-      },
-    ],
-  };
+  console.log("getAppointments called with params:", {
+    type,
+    consultantProfileId,
+    consulteeProfileId,
+    userId,
+    statuses,
+    webinarId,
+    classId
+  });
+
+  // Create a base where clause
+  let whereClause: Prisma.AppointmentWhereInput = {};
 
   if (type) {
     whereClause.appointmentType = type;
@@ -198,6 +184,100 @@ async function getAppointments(
       },
     };
   }
+
+  // Direct filtering by webinarId or classId if provided
+  if (webinarId) {
+    whereClause.webinarId = webinarId;
+    console.log("Added direct webinarId filter:", webinarId);
+  }
+
+  if (classId) {
+    whereClause.classId = classId;
+    console.log("Added direct classId filter:", classId);
+  }
+
+  // If no direct ID filters are applied, use the traditional filtering approach
+  if (!webinarId && !classId) {
+    const whereConditions: Prisma.AppointmentWhereInput[] = [];
+
+    // Add consultation condition if applicable
+    whereConditions.push({
+      consultation: {
+        requestStatus: statuses?.consultation || "APPROVED",
+        consultationPlan: consultantProfileId
+          ? {
+              consultantProfileId,
+            }
+          : undefined,
+        requestedBy: consulteeProfileId
+          ? {
+              id: consulteeProfileId,
+            }
+          : undefined,
+      },
+    });
+
+    // Add subscription condition if applicable
+    whereConditions.push({
+      subscription: {
+        requestStatus: statuses?.subscription || "APPROVED",
+        subscriptionPlan: consultantProfileId
+          ? {
+              consultantProfileId,
+            }
+          : undefined,
+        requestedBy: consulteeProfileId
+          ? {
+              id: consulteeProfileId,
+            }
+          : undefined,
+      },
+    });
+
+    // Add webinar condition
+    const webinarCondition: Prisma.AppointmentWhereInput = {
+      webinar: {
+        status:
+          statuses?.webinar === "APPROVED"
+            ? "SCHEDULED"
+            : statuses?.webinar === "CANCELLED"
+              ? "CANCELLED"
+              : statuses?.webinar === "REJECTED"
+                ? "CANCELLED"
+                : "SCHEDULED",
+        webinarPlan: consultantProfileId
+          ? {
+              consultantProfileId,
+            }
+          : undefined,
+      },
+    };
+    whereConditions.push(webinarCondition);
+
+    // Add class condition
+    const classCondition: Prisma.AppointmentWhereInput = {
+      class: {
+        status:
+          statuses?.class === "APPROVED"
+            ? "SCHEDULED"
+            : statuses?.class === "CANCELLED"
+              ? "CANCELLED"
+              : statuses?.class === "REJECTED"
+                ? "CANCELLED"
+                : "SCHEDULED",
+        classPlan: consultantProfileId
+          ? {
+              consultantProfileId,
+            }
+          : undefined,
+      },
+    };
+    whereConditions.push(classCondition);
+
+    whereClause.OR = whereConditions;
+  }
+
+  console.log("Final whereClause:", JSON.stringify(whereClause, null, 2));
 
   const appointments = await prisma.appointment.findMany({
     where: whereClause,
@@ -276,6 +356,39 @@ async function getAppointments(
     },
   });
 
+  console.log(`Found ${appointments.length} appointments`);
+  if (appointments.length > 0) {
+    appointments.forEach((app, index) => {
+      console.log(`Appointment ${index + 1}:`, {
+        id: app.id,
+        type: app.appointmentType,
+        webinarId: app.webinarId,
+        classId: app.classId,
+        slots: app.slotsOfAppointment.length,
+        webinar: app.webinar ? { id: app.webinar.id, status: app.webinar.status } : null,
+        class: app.class ? { id: app.class.id, status: app.class.status } : null,
+      });
+    });
+  } else if (webinarId || classId) {
+    console.log(`No appointments found for ${webinarId ? 'webinarId: ' + webinarId : 'classId: ' + classId}`);
+    
+    // Do a direct database check to see if the webinar/class exists
+    if (webinarId) {
+      const webinar = await prisma.webinar.findUnique({
+        where: { id: webinarId },
+        select: { id: true, status: true }
+      });
+      console.log("Direct webinar lookup result:", webinar);
+    }
+    if (classId) {
+      const classEntity = await prisma.class.findUnique({
+        where: { id: classId },
+        select: { id: true, status: true }
+      });
+      console.log("Direct class lookup result:", classEntity);
+    }
+  }
+
   // Sort appointments by slot start time
   return appointments
     .filter((appointment) => appointment.slotsOfAppointment?.length > 0)
@@ -290,12 +403,40 @@ async function getAppointments(
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    console.log("POST request body:", JSON.stringify(body, null, 2));
+    
     const { appointmentType, slotsOfAppointment, ...appointmentData } = body;
 
-    if (!appointmentType || !slotsOfAppointment?.createMany?.data?.length) {
+    // Check for both formats of slot data
+    const hasCreateManyData = !!slotsOfAppointment?.createMany?.data?.length;
+    const hasCreateData = Array.isArray(slotsOfAppointment?.create) && slotsOfAppointment.create.length > 0;
+    
+    if (!appointmentType || (!hasCreateManyData && !hasCreateData)) {
+      console.error("Missing required fields:", {
+        hasAppointmentType: !!appointmentType,
+        hasCreateManyData,
+        hasCreateData
+      });
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },
+      );
+    }
+
+    let slotData;
+    if (hasCreateManyData) {
+      slotData = slotsOfAppointment.createMany.data.map(
+        (slot: { slotStartTimeInUTC: string; slotEndTimeInUTC: string }) => ({
+          slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
+          slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+        })
+      );
+    } else if (hasCreateData) {
+      slotData = slotsOfAppointment.create.map(
+        (slot: { slotStartTimeInUTC: any; slotEndTimeInUTC: any }) => ({
+          slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
+          slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+        })
       );
     }
 
@@ -303,14 +444,11 @@ export async function POST(request: NextRequest) {
       appointmentType,
       ...appointmentData,
       slotsOfAppointment: {
-        create: slotsOfAppointment.createMany.data.map(
-          (slot: { slotStartTimeInUTC: string; slotEndTimeInUTC: string }) => ({
-            slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
-            slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
-          }),
-        ),
+        create: slotData,
       },
     };
+
+    console.log("Creating appointment with data:", JSON.stringify(data, null, 2));
 
     const newAppointment = await prisma.appointment.create({
       data,
