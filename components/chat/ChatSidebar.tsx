@@ -213,7 +213,7 @@ export const ChatSidebar = () => {
   return (
     <div className="w-64 bg-blue-600 text-white flex flex-col h-full">
       <div className="p-4 border-b border-blue-700">
-        <h1 className="text-xl font-bold">Worksly</h1>
+        <h1 className="text-xl font-bold">Familiarise</h1>
       </div>
 
       <div className="p-4">
