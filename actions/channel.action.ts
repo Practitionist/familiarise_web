@@ -17,8 +17,10 @@ export async function createDirectMessageChannel(
 
   const serverClient = StreamChat.getInstance(apiKey, apiSecret);
 
-  // Create a unique channel ID for the DM
-  const channelId = [currentUserId, targetUserId].sort().join("-");
+  // Create a unique channel ID for the DM using localeCompare for reliable alphabetical sorting
+  const channelId = [currentUserId, targetUserId]
+    .sort((a, b) => a.localeCompare(b))
+    .join("-");
 
   // Create the channel
   const channel = serverClient.channel("messaging", channelId, {

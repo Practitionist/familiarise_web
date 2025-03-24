@@ -26,7 +26,7 @@ export function ChatsTab() {
         );
 
         // Check if user property exists before accessing its properties
-        if (consultantDetails && consultantDetails.user) {
+        if (consultantDetails?.user) {
           setUserId(consultantDetails.user.id);
           setUserRole(consultantDetails.user.role);
         } else {

@@ -2,6 +2,7 @@
 
 import { StreamChat } from "stream-chat";
 import prisma from "@/lib/prisma";
+import { mapRoleToStream } from "@/lib/user";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 const apiSecret = process.env.STREAM_SECRET_KEY;
@@ -36,25 +37,8 @@ export const upsertUserToStream = async (userId: string) => {
     // Initialize the Stream Chat client
     const client = StreamChat.getInstance(apiKey, apiSecret);
 
-    // Map our application roles to Stream Chat roles
-    // Stream Chat roles are: admin, user, guest, anonymous
-    let streamRole = "user"; // Default role
-
-    if (user.role) {
-      // Map our application roles to Stream Chat roles
-      switch (user.role.toUpperCase()) {
-        case "ADMIN":
-          streamRole = "admin";
-          break;
-        case "CONSULTANT":
-        case "CONSULTEE":
-        case "USER":
-          streamRole = "user";
-          break;
-        default:
-          streamRole = "user";
-      }
-    }
+    // Use the shared utility function
+    const streamRole = mapRoleToStream(user.role);
 
     console.log(`Upserting user ${user.id} with role ${streamRole}`);
 
@@ -106,25 +90,8 @@ export const upsertUsersToStream = async (userIds: string[]) => {
 
     // Prepare users for upsert
     const streamUsers = users.map((user) => {
-      // Map our application roles to Stream Chat roles
-      // Stream Chat roles are: admin, user, guest, anonymous
-      let streamRole = "user"; // Default role
-
-      if (user.role) {
-        // Map our application roles to Stream Chat roles
-        switch (user.role.toUpperCase()) {
-          case "ADMIN":
-            streamRole = "admin";
-            break;
-          case "CONSULTANT":
-          case "CONSULTEE":
-          case "USER":
-            streamRole = "user";
-            break;
-          default:
-            streamRole = "user";
-        }
-      }
+      // Use the shared utility function
+      const streamRole = mapRoleToStream(user.role);
 
       console.log(
         `Preparing to upsert user ${user.id} with role ${streamRole}`,

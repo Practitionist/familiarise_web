@@ -24,7 +24,7 @@ export default function MessagesTab() {
         );
 
         // Check if user property exists before accessing its properties
-        if (consulteeDetails && consulteeDetails.user) {
+        if (consulteeDetails?.user) {
           setUserId(consulteeDetails.user.id);
           setUserRole(consulteeDetails.user.role);
         } else {

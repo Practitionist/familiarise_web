@@ -79,3 +79,23 @@ export const fetchReviews = async (
   const reviewsData: { data: ConsultantReview[] } = await response.json();
   return reviewsData.data;
 };
+
+/**
+ * Maps application user roles to Stream Chat roles
+ * @param role The application user role
+ * @returns The corresponding Stream Chat role
+ */
+export function mapRoleToStream(role: string | null | undefined): string {
+  if (!role) return "user"; // Handle null or undefined case
+  
+  switch (role.toUpperCase()) {
+    case "ADMIN":
+      return "admin";
+    case "CONSULTANT":
+    case "CONSULTEE":
+    case "USER":
+      return "user";
+    default:
+      return "user";
+  }
+}
