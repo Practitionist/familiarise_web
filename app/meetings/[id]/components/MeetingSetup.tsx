@@ -78,7 +78,11 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   }, [call, initDevices]);
 
   // Extracted audio level calculation function
-  const calculateAudioLevel = (analyser: AnalyserNode, dataArray: Uint8Array, bufferLength: number) => {
+  const calculateAudioLevel = (
+    analyser: AnalyserNode,
+    dataArray: Uint8Array,
+    bufferLength: number,
+  ) => {
     analyser.getByteFrequencyData(dataArray);
     // Calculate average volume level
     const average = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
@@ -96,32 +100,36 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
 
     // Extracted update level function
     const updateLevel = (
-      analyser: AnalyserNode, 
-      dataArray: Uint8Array, 
-      bufferLength: number
+      analyser: AnalyserNode,
+      dataArray: Uint8Array,
+      bufferLength: number,
     ) => {
-      const normalizedLevel = calculateAudioLevel(analyser, dataArray, bufferLength);
+      const normalizedLevel = calculateAudioLevel(
+        analyser,
+        dataArray,
+        bufferLength,
+      );
       setMicLevel(normalizedLevel);
-      animationFrame = requestAnimationFrame(() => 
-        updateLevel(analyser, dataArray, bufferLength)
+      animationFrame = requestAnimationFrame(() =>
+        updateLevel(analyser, dataArray, bufferLength),
       );
     };
 
     const setupAnalyzer = async () => {
       const analyzerData = await createAudioAnalyzer();
       if (!analyzerData) return;
-      
+
       // Destructure the analyzer components
-      const { 
-        audioContext: context, 
-        analyser: analyzer, 
-        dataArray, 
-        bufferLength 
+      const {
+        audioContext: context,
+        analyser: analyzer,
+        dataArray,
+        bufferLength,
       } = analyzerData;
-      
+
       // Store references for cleanup
       audioContext = context;
-      
+
       // Start analyzing audio levels
       updateLevel(analyzer, dataArray, bufferLength);
     };
@@ -165,7 +173,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
             });
             setIsSetupComplete(true);
             return;
-            
+
           case CallingState.JOINING:
             console.log("Call is currently joining");
             toast({
@@ -173,7 +181,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
               description: "Please wait while we connect you to the meeting.",
             });
             return;
-            
+
           case CallingState.RECONNECTING:
             console.log("Call is reconnecting");
             toast({
@@ -181,16 +189,18 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
               description: "Please wait while we reconnect you to the meeting.",
             });
             return;
-            
+
           case CallingState.IDLE:
             console.log("Call is in idle state, attempting to join");
             await call.join();
             setIsSetupComplete(true);
             return;
-            
+
           default:
             // For any other state, attempt to join
-            console.log(`Call is in ${call.state.callingState} state, attempting to join`);
+            console.log(
+              `Call is in ${call.state.callingState} state, attempting to join`,
+            );
             await call.join();
             setIsSetupComplete(true);
             return;
@@ -198,11 +208,12 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
       }
     } catch (error) {
       console.error("Error joining meeting:", error);
-      
+
       // Show error toast
       toast({
         title: "Failed to join meeting",
-        description: "There was an error joining the meeting. Please try again.",
+        description:
+          "There was an error joining the meeting. Please try again.",
         variant: "destructive",
       });
     }
