@@ -28,6 +28,22 @@ import { cn } from "@/lib/utils";
 
 type CallLayoutType = "grid" | "speaker-left" | "speaker-right";
 
+// Move the component outside of the parent component
+type CallLayoutProps = {
+  layout: string;
+};
+
+const CallLayout = ({ layout }: CallLayoutProps) => {
+  switch (layout) {
+    case "grid":
+      return <PaginatedGridLayout />;
+    case "speaker-right":
+      return <SpeakerLayout participantsBarPosition="left" />;
+    default:
+      return <SpeakerLayout participantsBarPosition="right" />;
+  }
+};
+
 const MeetingRoom = () => {
   const searchParams = useSearchParams();
   const isPersonalRoom = !!searchParams.get("personal");
@@ -97,22 +113,11 @@ const MeetingRoom = () => {
     );
   }
 
-  const CallLayout = () => {
-    switch (layout) {
-      case "grid":
-        return <PaginatedGridLayout />;
-      case "speaker-right":
-        return <SpeakerLayout participantsBarPosition="left" />;
-      default:
-        return <SpeakerLayout participantsBarPosition="right" />;
-    }
-  };
-
   return (
     <section className="relative h-screen w-full overflow-hidden pt-4 text-white">
       <div className="relative flex size-full items-center justify-center">
         <div className="flex size-full max-w-[1000px] items-center">
-          <CallLayout />
+          <CallLayout layout={layout} />
         </div>
         <div
           className={cn("h-[calc(100vh-86px)] hidden ml-2", {
