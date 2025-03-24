@@ -15,12 +15,12 @@ async function createChannel({
   createdById,
   additionalData = {},
 }: {
-  channelType: 'messaging' | 'team',
-  channelId: string,
-  channelName?: string,
-  members: string[],
-  createdById: string,
-  additionalData?: Record<string, any>,
+  channelType: "messaging" | "team";
+  channelId: string;
+  channelName?: string;
+  members: string[];
+  createdById: string;
+  additionalData?: Record<string, any>;
 }) {
   if (!apiKey || !apiSecret) {
     throw new Error("Stream API keys not configured");
@@ -52,7 +52,7 @@ export async function createDirectMessageChannel(
     .join("-");
 
   return createChannel({
-    channelType: 'messaging',
+    channelType: "messaging",
     channelId,
     members: [currentUserId, targetUserId],
     createdById: currentUserId,
@@ -92,7 +92,7 @@ export async function createWebinarChannel(webinarId: string) {
   const participantIds = webinar.waitlist.map((entry) => entry.userId);
 
   return createChannel({
-    channelType: 'team',
+    channelType: "team",
     channelId: `webinar-${webinarId}`,
     channelName: webinar.webinarPlan.title,
     members: [consultantId, ...participantIds],
@@ -134,7 +134,7 @@ export async function createClassChannel(classId: string) {
   const participantIds = classData.waitlist.map((entry) => entry.userId);
 
   return createChannel({
-    channelType: 'team',
+    channelType: "team",
     channelId: `class-${classId}`,
     channelName: classData.classPlan.title,
     members: [consultantId, ...participantIds],
@@ -178,7 +178,7 @@ export async function createConsultationChannel(consultationId: string) {
   }
 
   return createChannel({
-    channelType: 'messaging',
+    channelType: "messaging",
     channelId: `consultation-${consultationId}`,
     members: [consultantId, consulteeId],
     createdById: consultantId,
@@ -221,7 +221,7 @@ export async function createSubscriptionChannel(subscriptionId: string) {
   }
 
   return createChannel({
-    channelType: 'messaging',
+    channelType: "messaging",
     channelId: `subscription-${subscriptionId}`,
     members: [consultantId, consulteeId],
     createdById: consultantId,
@@ -398,7 +398,10 @@ export async function initializeAllChannels() {
       await createWebinarChannel(webinarData.id);
       console.log(`Created channel for webinar ${webinarData.id}`);
     } catch (error) {
-      console.error(`Error creating channel for webinar ${webinarData.id}:`, error);
+      console.error(
+        `Error creating channel for webinar ${webinarData.id}:`,
+        error,
+      );
     }
   }
 

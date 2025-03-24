@@ -99,7 +99,8 @@ const authOptions: NextAuthOptions = {
             // Update token with user data
             token.onboardingCompleted = dbUser.onboardingCompleted ?? false;
             token.role = dbUser.role ?? "";
-            token.consultantProfileId = dbUser.consultantProfile?.id ?? undefined;
+            token.consultantProfileId =
+              dbUser.consultantProfile?.id ?? undefined;
             token.consulteeProfileId = dbUser.consulteeProfile?.id ?? undefined;
             token.staffProfileId = dbUser.staffProfile?.id ?? undefined;
           }

@@ -87,7 +87,7 @@ export const fetchReviews = async (
  */
 export function mapRoleToStream(role: string | null | undefined): string {
   if (!role) return "user"; // Handle null or undefined case
-  
+
   switch (role.toUpperCase()) {
     case "ADMIN":
       return "admin";
