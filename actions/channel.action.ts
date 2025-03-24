@@ -6,26 +6,34 @@ import prisma from "@/lib/prisma";
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 const apiSecret = process.env.STREAM_SECRET_KEY;
 
-// Create a direct message channel
-export async function createDirectMessageChannel(
-  currentUserId: string,
-  targetUserId: string,
-) {
+// Generic function to create a channel
+async function createChannel({
+  channelType,
+  channelId,
+  channelName,
+  members,
+  createdById,
+  additionalData = {},
+}: {
+  channelType: 'messaging' | 'team',
+  channelId: string,
+  channelName?: string,
+  members: string[],
+  createdById: string,
+  additionalData?: Record<string, any>,
+}) {
   if (!apiKey || !apiSecret) {
     throw new Error("Stream API keys not configured");
   }
 
   const serverClient = StreamChat.getInstance(apiKey, apiSecret);
 
-  // Create a unique channel ID for the DM using localeCompare for reliable alphabetical sorting
-  const channelId = [currentUserId, targetUserId]
-    .sort((a, b) => a.localeCompare(b))
-    .join("-");
-
   // Create the channel
-  const channel = serverClient.channel("messaging", channelId, {
-    members: [currentUserId, targetUserId],
-    created_by_id: currentUserId,
+  const channel = serverClient.channel(channelType, channelId, {
+    name: channelName,
+    members,
+    created_by_id: createdById,
+    ...additionalData,
   });
 
   await channel.create();
@@ -33,12 +41,26 @@ export async function createDirectMessageChannel(
   return { channelId };
 }
 
+// Create a direct message channel
+export async function createDirectMessageChannel(
+  currentUserId: string,
+  targetUserId: string,
+) {
+  // Create a unique channel ID for the DM using localeCompare for reliable alphabetical sorting
+  const channelId = [currentUserId, targetUserId]
+    .sort((a, b) => a.localeCompare(b))
+    .join("-");
+
+  return createChannel({
+    channelType: 'messaging',
+    channelId,
+    members: [currentUserId, targetUserId],
+    createdById: currentUserId,
+  });
+}
+
 // Create a webinar channel
 export async function createWebinarChannel(webinarId: string) {
-  if (!apiKey || !apiSecret) {
-    throw new Error("Stream API keys not configured");
-  }
-
   // Get webinar details
   const webinar = await prisma.webinar.findUnique({
     where: { id: webinarId },
@@ -66,33 +88,21 @@ export async function createWebinarChannel(webinarId: string) {
     throw new Error("Consultant not found for webinar");
   }
 
-  const serverClient = StreamChat.getInstance(apiKey, apiSecret);
-
-  // Create a channel for the webinar
-  const channelId = `webinar-${webinarId}`;
-
   // Get all participant IDs
   const participantIds = webinar.waitlist.map((entry) => entry.userId);
 
-  // Create the channel
-  const channel = serverClient.channel("team", channelId, {
-    name: webinar.webinarPlan.title,
+  return createChannel({
+    channelType: 'team',
+    channelId: `webinar-${webinarId}`,
+    channelName: webinar.webinarPlan.title,
     members: [consultantId, ...participantIds],
-    created_by_id: consultantId,
-    webinar_id: webinarId,
+    createdById: consultantId,
+    additionalData: { webinar_id: webinarId },
   });
-
-  await channel.create();
-
-  return { channelId };
 }
 
 // Create a class channel
 export async function createClassChannel(classId: string) {
-  if (!apiKey || !apiSecret) {
-    throw new Error("Stream API keys not configured");
-  }
-
   // Get class details
   const classData = await prisma.class.findUnique({
     where: { id: classId },
@@ -120,33 +130,21 @@ export async function createClassChannel(classId: string) {
     throw new Error("Consultant not found for class");
   }
 
-  const serverClient = StreamChat.getInstance(apiKey, apiSecret);
-
-  // Create a channel for the class
-  const channelId = `class-${classId}`;
-
   // Get all participant IDs
   const participantIds = classData.waitlist.map((entry) => entry.userId);
 
-  // Create the channel
-  const channel = serverClient.channel("team", channelId, {
-    name: classData.classPlan.title,
+  return createChannel({
+    channelType: 'team',
+    channelId: `class-${classId}`,
+    channelName: classData.classPlan.title,
     members: [consultantId, ...participantIds],
-    created_by_id: consultantId,
-    class_id: classId,
+    createdById: consultantId,
+    additionalData: { class_id: classId },
   });
-
-  await channel.create();
-
-  return { channelId };
 }
 
 // Create a consultation channel
 export async function createConsultationChannel(consultationId: string) {
-  if (!apiKey || !apiSecret) {
-    throw new Error("Stream API keys not configured");
-  }
-
   // Get consultation details
   const consultation = await prisma.consultation.findUnique({
     where: { id: consultationId },
@@ -179,29 +177,17 @@ export async function createConsultationChannel(consultationId: string) {
     throw new Error("Consultant or consultee not found for consultation");
   }
 
-  const serverClient = StreamChat.getInstance(apiKey, apiSecret);
-
-  // Create a direct message channel for the consultation
-  const channelId = `consultation-${consultationId}`;
-
-  // Create the channel
-  const channel = serverClient.channel("messaging", channelId, {
+  return createChannel({
+    channelType: 'messaging',
+    channelId: `consultation-${consultationId}`,
     members: [consultantId, consulteeId],
-    created_by_id: consultantId,
-    consultation_id: consultationId,
+    createdById: consultantId,
+    additionalData: { consultation_id: consultationId },
   });
-
-  await channel.create();
-
-  return { channelId };
 }
 
 // Create a subscription channel
 export async function createSubscriptionChannel(subscriptionId: string) {
-  if (!apiKey || !apiSecret) {
-    throw new Error("Stream API keys not configured");
-  }
-
   // Get subscription details
   const subscription = await prisma.subscription.findUnique({
     where: { id: subscriptionId },
@@ -234,21 +220,13 @@ export async function createSubscriptionChannel(subscriptionId: string) {
     throw new Error("Consultant or consultee not found for subscription");
   }
 
-  const serverClient = StreamChat.getInstance(apiKey, apiSecret);
-
-  // Create a direct message channel for the subscription
-  const channelId = `subscription-${subscriptionId}`;
-
-  // Create the channel
-  const channel = serverClient.channel("messaging", channelId, {
+  return createChannel({
+    channelType: 'messaging',
+    channelId: `subscription-${subscriptionId}`,
     members: [consultantId, consulteeId],
-    created_by_id: consultantId,
-    subscription_id: subscriptionId,
+    createdById: consultantId,
+    additionalData: { subscription_id: subscriptionId },
   });
-
-  await channel.create();
-
-  return { channelId };
 }
 
 import { upsertUsersToStream } from "./user.action";
@@ -415,12 +393,12 @@ export async function initializeAllChannels() {
   // Now create channels for all entities
 
   // Create channels for all webinars
-  for (const webinar of webinars) {
+  for (const webinarData of webinars) {
     try {
-      await createWebinarChannel(webinar.id);
-      console.log(`Created channel for webinar ${webinar.id}`);
+      await createWebinarChannel(webinarData.id);
+      console.log(`Created channel for webinar ${webinarData.id}`);
     } catch (error) {
-      console.error(`Error creating channel for webinar ${webinar.id}:`, error);
+      console.error(`Error creating channel for webinar ${webinarData.id}:`, error);
     }
   }
 
@@ -435,26 +413,26 @@ export async function initializeAllChannels() {
   }
 
   // Create channels for all consultations
-  for (const consultation of consultations) {
+  for (const consultationData of consultations) {
     try {
-      await createConsultationChannel(consultation.id);
-      console.log(`Created channel for consultation ${consultation.id}`);
+      await createConsultationChannel(consultationData.id);
+      console.log(`Created channel for consultation ${consultationData.id}`);
     } catch (error) {
       console.error(
-        `Error creating channel for consultation ${consultation.id}:`,
+        `Error creating channel for consultation ${consultationData.id}:`,
         error,
       );
     }
   }
 
   // Create channels for all subscriptions
-  for (const subscription of subscriptions) {
+  for (const subscriptionData of subscriptions) {
     try {
-      await createSubscriptionChannel(subscription.id);
-      console.log(`Created channel for subscription ${subscription.id}`);
+      await createSubscriptionChannel(subscriptionData.id);
+      console.log(`Created channel for subscription ${subscriptionData.id}`);
     } catch (error) {
       console.error(
-        `Error creating channel for subscription ${subscription.id}:`,
+        `Error creating channel for subscription ${subscriptionData.id}:`,
         error,
       );
     }
