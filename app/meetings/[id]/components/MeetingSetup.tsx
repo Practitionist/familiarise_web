@@ -1,18 +1,48 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/use-toast";
 import {
+  CallingState,
+  DeviceSettings,
   useCall,
   useCallStateHooks,
-  DeviceSettings,
   VideoPreview,
 } from "@stream-io/video-react-sdk";
 import { Mic, MicOff, Video, VideoOff } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
 interface MeetingSetupProps {
   setIsSetupComplete: (value: boolean) => void;
 }
+
+// Audio analyzer helper functions moved outside component
+const createAudioAnalyzer = async () => {
+  try {
+    // Get user media for audio
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+    });
+
+    // Create audio context and analyzer
+    const audioContext = new AudioContext();
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+
+    // Connect microphone to analyzer
+    const microphone = audioContext.createMediaStreamSource(stream);
+    microphone.connect(analyser);
+
+    // Create data array for frequency data
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    return { audioContext, analyser, dataArray, bufferLength };
+  } catch (error) {
+    console.error("Error accessing microphone:", error);
+    return null;
+  }
+};
 
 const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   const call = useCall();
@@ -25,84 +55,80 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   const [isMicOn, setIsMicOn] = useState(true);
   const [micLevel, setMicLevel] = useState(0);
 
+  // Extracted device initialization function
+  const initDevices = useCallback(async () => {
+    try {
+      // Start with camera off
+      await camState.camera.disable();
+      setIsCameraOn(false);
+
+      // Start with mic on
+      await micState.microphone.enable();
+      setIsMicOn(true);
+    } catch (error) {
+      console.error("Error initializing devices:", error);
+    }
+  }, [camState.camera, micState.microphone]);
+
   // Initialize devices on component mount
   useEffect(() => {
-    const initDevices = async () => {
-      try {
-        // Start with camera off
-        await camState.camera.disable();
-        setIsCameraOn(false);
-
-        // Start with mic on
-        await micState.microphone.enable();
-        setIsMicOn(true);
-      } catch (error) {
-        console.error("Error initializing devices:", error);
-      }
-    };
-
     if (call) {
       initDevices();
     }
-  }, [call, camState.camera, micState.microphone]);
+  }, [call, initDevices]);
+
+  // Extracted audio level calculation function
+  const calculateAudioLevel = (analyser: AnalyserNode, dataArray: Uint8Array, bufferLength: number) => {
+    analyser.getByteFrequencyData(dataArray);
+    // Calculate average volume level
+    const average = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
+    return Math.min(average / 128, 1); // Normalize to 0-1
+  };
 
   // Monitor microphone level for visual feedback using real mic input
   useEffect(() => {
     let animationFrame: number;
     let audioContext: AudioContext | null = null;
     let analyser: AnalyserNode | null = null;
-    let microphone: MediaStreamAudioSourceNode | null = null;
-    let dataArray: Uint8Array | null = null;
 
     // Reset mic level when toggled
     setMicLevel(0);
 
-    const setupAudioAnalyzer = async () => {
-      try {
-        // Get user media for audio
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        });
+    // Extracted update level function
+    const updateLevel = (
+      analyser: AnalyserNode, 
+      dataArray: Uint8Array, 
+      bufferLength: number
+    ) => {
+      const normalizedLevel = calculateAudioLevel(analyser, dataArray, bufferLength);
+      setMicLevel(normalizedLevel);
+      animationFrame = requestAnimationFrame(() => 
+        updateLevel(analyser, dataArray, bufferLength)
+      );
+    };
 
-        // Create audio context and analyzer
-        audioContext = new AudioContext();
-        analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
-
-        // Connect microphone to analyzer
-        microphone = audioContext.createMediaStreamSource(stream);
-        microphone.connect(analyser);
-
-        // Create data array for frequency data
-        const bufferLength = analyser.frequencyBinCount;
-        dataArray = new Uint8Array(bufferLength);
-
-        // Start analyzing audio levels
-        const updateLevel = () => {
-          if (analyser && dataArray) {
-            analyser.getByteFrequencyData(dataArray);
-
-            // Calculate average volume level
-            const average = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
-            const normalizedLevel = Math.min(average / 128, 1); // Normalize to 0-1
-
-            setMicLevel(normalizedLevel);
-          }
-
-          animationFrame = requestAnimationFrame(updateLevel);
-        };
-
-        updateLevel();
-      } catch (error) {
-        console.error("Error accessing microphone:", error);
-      }
+    const setupAnalyzer = async () => {
+      const analyzerData = await createAudioAnalyzer();
+      if (!analyzerData) return;
+      
+      // Destructure the analyzer components
+      const { 
+        audioContext: context, 
+        analyser: analyzer, 
+        dataArray, 
+        bufferLength 
+      } = analyzerData;
+      
+      // Store references for cleanup
+      audioContext = context;
+      
+      // Start analyzing audio levels
+      updateLevel(analyzer, dataArray, bufferLength);
     };
 
     if (isMicOn) {
       // Small delay to ensure the mic is initialized
-      const timer = setTimeout(() => {
-        setupAudioAnalyzer();
-      }, 100);
+      const timer = setTimeout(setupAnalyzer, 100);
 
       return () => {
         clearTimeout(timer);
@@ -127,13 +153,58 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
 
   const handleJoinMeeting = async () => {
     try {
-      // Join the call with current device states
+      // Check if call exists
       if (call) {
-        await call.join();
-        setIsSetupComplete(true);
+        // Use switch case for better readability
+        switch (call.state.callingState) {
+          case CallingState.JOINED:
+            console.log("Call is already joined");
+            toast({
+              title: "Already joined meeting",
+              description: "You are already connected to this meeting.",
+            });
+            setIsSetupComplete(true);
+            return;
+            
+          case CallingState.JOINING:
+            console.log("Call is currently joining");
+            toast({
+              title: "Joining in progress",
+              description: "Please wait while we connect you to the meeting.",
+            });
+            return;
+            
+          case CallingState.RECONNECTING:
+            console.log("Call is reconnecting");
+            toast({
+              title: "Reconnecting to meeting",
+              description: "Please wait while we reconnect you to the meeting.",
+            });
+            return;
+            
+          case CallingState.IDLE:
+            console.log("Call is in idle state, attempting to join");
+            await call.join();
+            setIsSetupComplete(true);
+            return;
+            
+          default:
+            // For any other state, attempt to join
+            console.log(`Call is in ${call.state.callingState} state, attempting to join`);
+            await call.join();
+            setIsSetupComplete(true);
+            return;
+        }
       }
     } catch (error) {
       console.error("Error joining meeting:", error);
+      
+      // Show error toast
+      toast({
+        title: "Failed to join meeting",
+        description: "There was an error joining the meeting. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
