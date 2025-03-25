@@ -70,10 +70,10 @@ export function EventCarousel({
 
   const getEventDescription = (event: Event) => {
     if (isWebinarEvent(event)) {
-      return event.webinarPlan.description || "";
+      return event.webinarPlan.description ?? "";
     }
     if (isClassEvent(event)) {
-      return event.classPlan.description || "";
+      return event.classPlan.description ?? "";
     }
     return "";
   };
@@ -109,9 +109,12 @@ export function EventCarousel({
       try {
         for (const event of events) {
           try {
-            const endpoint = isWebinarEvent(event)
-              ? `/api/participants/webinar/${event.id}`
-              : `/api/participants/class/${event.id}`;
+            let endpoint: string;
+            if (isWebinarEvent(event)) {
+              endpoint = `/api/participants/webinar/${event.id}`;
+            } else {
+              endpoint = `/api/participants/class/${event.id}`;
+            }
               
             const response = await fetch(endpoint);
             if (response.ok) {
@@ -136,11 +139,13 @@ export function EventCarousel({
   }, [events]);
 
   const getParticipantsCount = (event: Event) => {
-    const maxParticipants = isWebinarEvent(event)
-      ? event.webinarPlan.maxParticipants
-      : isClassEvent(event)
-      ? event.classPlan.maxParticipants
-      : 0;
+    let maxParticipants = 0;
+    
+    if (isWebinarEvent(event)) {
+      maxParticipants = event.webinarPlan.maxParticipants;
+    } else if (isClassEvent(event)) {
+      maxParticipants = event.classPlan.maxParticipants;
+    }
       
     return {
       currentParticipants: participantCounts[event.id] ?? 0,
@@ -165,6 +170,14 @@ export function EventCarousel({
       return `/dashboard/consultant/${event.classPlan.consultantProfileId}/planner/participants/classes/${event.id}`;
     }
     return "#";
+  };
+
+  // Helper function for participant display text
+  const getParticipantsDisplayText = (isLoading: boolean, current: number, max: number) => {
+    if (isLoading) {
+      return "Loading participants...";
+    }
+    return `${current}/${max} participants`;
   };
 
   return (
@@ -202,9 +215,11 @@ export function EventCarousel({
                   {getEventTitle(event)}
                 </CardTitle>
                 <CardDescription className="text-sm text-gray-600">
-                  {isLoadingCounts
-                    ? "Loading participants..."
-                    : `${currentParticipants}/${maxParticipants} participants`}
+                  {getParticipantsDisplayText(
+                    isLoadingCounts,
+                    currentParticipants,
+                    maxParticipants
+                  )}
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-4 flex-grow">
