@@ -12,8 +12,13 @@ type ConsultantProfile = {
   };
 };
 
-export type WebinarEvent = {
+export interface Event {
   id: string;
+  type: "webinar" | "class";
+  // Common properties across all event types
+}
+
+export interface WebinarEvent extends Event {
   type: "webinar";
   webinarPlan: {
     id: string;
@@ -36,10 +41,9 @@ export type WebinarEvent = {
   appointment: TWebinar["appointment"];
   waitlist: TWebinar["waitlist"];
   meetingRoom: TWebinar["meetingRoom"];
-};
+}
 
-export type ClassEvent = {
-  id: string;
+export interface ClassEvent extends Event {
   type: "class";
   classPlan: {
     id: string;
@@ -78,29 +82,16 @@ export type ClassEvent = {
   appointments: TClass["appointments"];
   waitlist: TClass["waitlist"];
   meetingRoom: TClass["meetingRoom"];
+}
+
+export type EventPlannerProps = {
+  isOpen: boolean;
+  onClose: () => void;
+  eventType: "webinar" | "class";
+  initialData?: Event;
+  onSave?: (event: Partial<WebinarEvent> | Partial<ClassEvent>) => void;
+  isSaving?: boolean;
 };
-
-export type Event = WebinarEvent | ClassEvent;
-
-export interface WebinarPlannerProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSave: (event: Partial<WebinarEvent>) => void;
-  eventType: "webinar";
-  initialData?: WebinarEvent | null;
-  isSaving?: boolean;
-}
-
-export interface ClassPlannerProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSave: (event: Partial<ClassEvent>) => void;
-  eventType: "class";
-  initialData?: ClassEvent | null;
-  isSaving?: boolean;
-}
-
-export type EventPlannerProps = WebinarPlannerProps | ClassPlannerProps;
 
 export type FormData = {
   title: string;

@@ -59,103 +59,48 @@ export const SubscriptionPlanSchema = z.object({
   learningOutcomes: z.array(z.string()),
 });
 
-export const WebinarPlanSchema = z.object({
-  id: z.string().optional(),
+// Base schema for common fields
+const BaseEventPlanSchema = z.object({
   title: z.string().min(1, "Title is required"),
-  description: z.string().min(1, "Description is required"),
-  price: z.number().nonnegative("Price must be non-negative"),
-  durationInHours: z.number().positive("Duration must be positive"),
-  maxParticipants: z
-    .number()
-    .int()
-    .positive("Max participants must be a positive integer"),
-  language: z.string().min(1, "Language is required"),
-  level: z.string().min(1, "Level is required"),
-  prerequisites: z.string().nullable(),
-  materialProvided: z.string().nullable(),
-  learningOutcomes: z
-    .array(z.string())
-    .min(1, "At least one learning outcome is required"),
-  topics: z.array(z.string()).min(1, "At least one topic is required"),
-  createdAt: z.date().optional(),
-  updatedAt: z.date().optional(),
-  consultantProfileId: z.string().nullable(),
-  consultantProfile: z
-    .object({
-      user: z.object({
-        id: z.string(),
-        name: z.string().nullable(),
-        consultantProfileId: z.string().nullable(),
-        address: z.string().nullable(),
-        image: z.string().nullable(),
-        email: z.string().nullable(),
-        staffProfileId: z.string().nullable(),
-      }),
-    })
-    .nullable(),
+  description: z.string().optional(),
+  price: z.number().min(0, "Price must be non-negative"),
+  maxParticipants: z.number().min(1, "At least one participant is required"),
+  language: z.string().default("English"),
+  level: z.string().default("Beginner"),
+  prerequisites: z.string().optional().nullable(),
+  materialProvided: z.string().optional().nullable(),
+  learningOutcomes: z.array(z.string()),
+  topics: z.array(z.string()),
+  
+  // Make consultant fields optional and nullable
+  consultantProfileId: z.string().optional().nullable(),
+  consultantProfile: z.any().optional().nullable(),
 });
 
-export const ClassPlanSchema = z.object({
-  id: z.string().optional(),
-  title: z.string().min(1, "Title is required"),
-  description: z.string().min(1, "Description is required"),
-  price: z.number().nonnegative("Price must be non-negative"),
-  certificateProvided: z.boolean(),
-  durationInMonths: z
-    .number()
-    .int()
-    .positive("Duration in months must be a positive integer"),
-  callsPerWeek: z
-    .number()
-    .int()
-    .nonnegative("Calls per week must be non-negative"),
-  videoMeetings: z
-    .number()
-    .int()
-    .nonnegative("Video meetings must be non-negative"),
-  emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]),
-  maxParticipants: z
-    .number()
-    .int()
-    .positive("Max participants must be a positive integer"),
-  language: z.string().min(1, "Language is required"),
-  level: z.string().min(1, "Level is required"),
-  prerequisites: z.string().nullable(),
-  materialProvided: z.string().nullable(),
-  learningOutcomes: z
-    .array(z.string())
-    .min(1, "At least one learning outcome is required"),
-  topics: z.array(z.string()).min(1, "At least one topic is required"),
+// Webinar specific schema
+export const WebinarPlanSchema = BaseEventPlanSchema.extend({
+  planType: z.literal("webinar"),
+  durationInHours: z.number().min(0.25, "Duration must be at least 15 minutes"),
+});
+
+// Class specific schema
+export const ClassPlanSchema = BaseEventPlanSchema.extend({
+  planType: z.literal("class"),
+  durationInMonths: z.number().min(0.25, "Duration must be at least 1 week"),
+  certificateProvided: z.boolean().default(false),
+  callsPerWeek: z.number().min(0, "Calls per week must be non-negative"),
+  videoMeetings: z.number().min(0, "Video meetings must be non-negative"),
+  emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
   classContents: z.array(
     z.object({
-      id: z.string(),
-      title: z.string(),
-      description: z.string(),
-      contentType: z.string().nullable(),
-      contentUrl: z.string().nullable(),
-      order: z.number(),
-      hoursAllotted: z.number(),
-      createdAt: z.date(),
-      updatedAt: z.date(),
-      classPlanId: z.string(),
-    }),
-  ),
-  createdAt: z.date().optional(),
-  updatedAt: z.date().optional(),
-  consultantProfileId: z.string().nullable(),
-  consultantProfile: z
-    .object({
-      user: z.object({
-        id: z.string(),
-        name: z.string().nullable(),
-        consultantProfileId: z.string().nullable(),
-        address: z.string().nullable(),
-        image: z.string().nullable(),
-        email: z.string().nullable(),
-        staffProfileId: z.string().nullable(),
-      }),
+      title: z.string().min(1, "Title is required"),
+      description: z.string().min(1, "Description is required"),
+      contentType: z.string().optional().nullable(),
+      contentUrl: z.string().optional().nullable(),
+      order: z.number().min(1, "Order must be a positive number"),
+      hoursAllotted: z.number().min(0.5, "Hours allotted must be at least 30 minutes"),
     })
-    .nullable(),
+  ).optional().default([]),
 });
 
 export const ClassContentSchema = z.object({
