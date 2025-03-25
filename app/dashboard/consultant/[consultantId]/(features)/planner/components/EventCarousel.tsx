@@ -59,27 +59,43 @@ export function EventCarousel({
   };
 
   const getEventTitle = (event: Event) => {
-    return isWebinarEvent(event)
-      ? event.webinarPlan.title
-      : event.classPlan.title;
+    if (isWebinarEvent(event)) {
+      return event.webinarPlan.title;
+    }
+    if (isClassEvent(event)) {
+      return event.classPlan.title;
+    }
+    return "Unknown Event";
   };
 
   const getEventDescription = (event: Event) => {
-    return isWebinarEvent(event)
-      ? event.webinarPlan.description || ""
-      : event.classPlan.description || "";
+    if (isWebinarEvent(event)) {
+      return event.webinarPlan.description || "";
+    }
+    if (isClassEvent(event)) {
+      return event.classPlan.description || "";
+    }
+    return "";
   };
 
   const getEventPrice = (event: Event) => {
-    return isWebinarEvent(event)
-      ? event.webinarPlan.price
-      : event.classPlan.price;
+    if (isWebinarEvent(event)) {
+      return event.webinarPlan.price;
+    }
+    if (isClassEvent(event)) {
+      return event.classPlan.price;
+    }
+    return 0;
   };
 
   const getEventDuration = (event: Event) => {
-    return isWebinarEvent(event)
-      ? `${event.webinarPlan.durationInHours} hours`
-      : `${event.classPlan.durationInMonths} months`;
+    if (isWebinarEvent(event)) {
+      return `${event.webinarPlan.durationInHours} hours`;
+    }
+    if (isClassEvent(event)) {
+      return `${event.classPlan.durationInMonths} months`;
+    }
+    return "Unknown duration";
   };
 
   const [participantCounts, setParticipantCounts] = React.useState<
@@ -93,11 +109,11 @@ export function EventCarousel({
       try {
         for (const event of events) {
           try {
-            const response = await fetch(
-              isWebinarEvent(event)
-                ? `/api/participants/webinar/${event.id}`
-                : `/api/participants/class/${event.id}`,
-            );
+            const endpoint = isWebinarEvent(event)
+              ? `/api/participants/webinar/${event.id}`
+              : `/api/participants/class/${event.id}`;
+              
+            const response = await fetch(endpoint);
             if (response.ok) {
               const data = await response.json();
               setParticipantCounts((prev) => ({
@@ -120,11 +136,15 @@ export function EventCarousel({
   }, [events]);
 
   const getParticipantsCount = (event: Event) => {
+    const maxParticipants = isWebinarEvent(event)
+      ? event.webinarPlan.maxParticipants
+      : isClassEvent(event)
+      ? event.classPlan.maxParticipants
+      : 0;
+      
     return {
-      currentParticipants: participantCounts[event.id] || 0,
-      maxParticipants: isWebinarEvent(event)
-        ? event.webinarPlan.maxParticipants
-        : event.classPlan.maxParticipants,
+      currentParticipants: participantCounts[event.id] ?? 0,
+      maxParticipants,
     };
   };
 
@@ -134,6 +154,17 @@ export function EventCarousel({
     } else if (eventType === "class" && isClassEvent(event)) {
       onEdit(event);
     }
+  };
+
+  // Helper function to get profile URL
+  const getProfileUrl = (event: Event) => {
+    if (isWebinarEvent(event)) {
+      return `/dashboard/consultant/${event.webinarPlan.consultantProfileId}/planner/participants/webinars/${event.id}`;
+    }
+    if (isClassEvent(event)) {
+      return `/dashboard/consultant/${event.classPlan.consultantProfileId}/planner/participants/classes/${event.id}`;
+    }
+    return "#";
   };
 
   return (
@@ -189,15 +220,7 @@ export function EventCarousel({
               </CardContent>
               <CardFooter className="bg-gray-50 border-t p-4 flex justify-between flex-shrink-0">
                 <Button variant="outline" size="sm" asChild>
-                  <Link
-                    href={
-                      eventType === "webinar" && isWebinarEvent(event)
-                        ? `/dashboard/consultant/${event.webinarPlan.consultantProfileId}/planner/participants/webinars/${event.id}`
-                        : isClassEvent(event)
-                          ? `/dashboard/consultant/${event.classPlan.consultantProfileId}/planner/participants/classes/${event.id}`
-                          : "#"
-                    }
-                  >
+                  <Link href={getProfileUrl(event)}>
                     <Users className="w-4 h-4 mr-2" />
                     Manage Participants
                   </Link>
@@ -219,7 +242,7 @@ export function EventCarousel({
         isOpen={!!selectedEventId}
         onClose={() => setSelectedEventId(null)}
         eventType={eventType}
-        eventId={selectedEventId || ""}
+        eventId={selectedEventId ?? ""}
       />
       {events.length > 3 && (
         <Button
