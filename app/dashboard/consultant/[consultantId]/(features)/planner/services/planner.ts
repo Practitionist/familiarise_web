@@ -131,6 +131,29 @@ export class PlannerService {
   }
   
   /**
+   * Get all available topics
+   */
+  static async getTopics(query?: string): Promise<Array<{ id: string; name: string; createdAt: Date; updatedAt: Date }>> {
+    try {
+      const url = new URL('/api/user/content/topics', window.location.origin);
+      if (query) {
+        url.searchParams.set('query', query);
+      }
+      
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error('Failed to fetch topics');
+      }
+      
+      const { data } = await response.json();
+      return data;
+    } catch (error) {
+      console.error('Error fetching topics:', error);
+      return [];
+    }
+  }
+  
+  /**
    * Create topics by name
    */
   static async createTopics(topicNames: string[]): Promise<string[]> {
@@ -259,9 +282,28 @@ export class PlannerService {
       return topics;
     }
     
-    // Otherwise, create new topics from the text entries
-    const topicNames = topics;
-    const newIds = await this.createTopics(topicNames);
+    // Process each topic name before creating
+    const processedTopics = topics.map(topic => {
+      // Remove extra whitespace and trim
+      let processed = topic.trim().replace(/\s+/g, ' ');
+      
+      // Convert to sentence case (first letter uppercase, rest lowercase)
+      processed = processed.toLowerCase();
+      processed = processed.charAt(0).toUpperCase() + processed.slice(1);
+      
+      // Remove any special characters except spaces and alphanumeric
+      processed = processed.replace(/[^a-zA-Z0-9\s]/g, '');
+      
+      return processed;
+    }).filter(topic => 
+      // Filter out empty topics and those less than 2 characters
+      topic.length >= 2 &&
+      // Filter out duplicates
+      !topics.find(t => t !== topic && t.toLowerCase() === topic.toLowerCase())
+    );
+    
+    // Create new topics with processed names
+    const newIds = await this.createTopics(processedTopics);
     return newIds.length > 0 ? newIds : topics;
   }
   

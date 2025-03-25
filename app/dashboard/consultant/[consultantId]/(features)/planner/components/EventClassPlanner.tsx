@@ -33,6 +33,7 @@ import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { PlannerService } from "../services/planner";
 import { ClassPlannerProps } from "../types/planner";
+import { TopicsAndOutcomesForm } from "./TopicsAndOutcomesForm";
 
 export function EventClassPlanner({
   isOpen,
@@ -41,7 +42,7 @@ export function EventClassPlanner({
   initialData,
   isSaving: externalIsSaving,
   consultantId,
-}: ClassPlannerProps) {
+}: Readonly<ClassPlannerProps>) {
   // State to track form errors
   const [contentErrors, setContentErrors] = useState<{[key: string]: string}>({});
   const [internalIsSaving, setInternalIsSaving] = useState(false);
@@ -420,19 +421,12 @@ export function EventClassPlanner({
               name="learningOutcomes"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Learning Outcomes (one per line)</FormLabel>
                   <FormControl>
-                    <textarea
-                      value={(field.value || []).join("\n")}
-                      onChange={(e) => {
-                        const outcomes = e.target.value
-                          .split("\n")
-                          .filter(Boolean);
-                        field.onChange(outcomes);
-                      }}
-                      rows={5}
-                      placeholder="Enter each learning outcome on a new line"
-                      className="flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 resize-y"
+                    <TopicsAndOutcomesForm
+                      selectedTopics={form.getValues("topics") || []}
+                      onTopicsChange={(topics) => form.setValue("topics", topics)}
+                      learningOutcomes={field.value || []}
+                      onOutcomesChange={(outcomes) => field.onChange(outcomes)}
                     />
                   </FormControl>
                   <FormMessage />
@@ -440,7 +434,7 @@ export function EventClassPlanner({
               )}
             />
 
-            <FormField
+            {/* <FormField
               control={form.control}
               name="topics"
               render={({ field }) => (
@@ -465,7 +459,7 @@ export function EventClassPlanner({
                   <FormMessage />
                 </FormItem>
               )}
-            />
+            /> */}
 
             <FormField
               control={form.control}

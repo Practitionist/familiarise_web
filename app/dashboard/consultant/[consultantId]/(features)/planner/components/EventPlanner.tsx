@@ -61,8 +61,8 @@ export function EventPlanner({
     
     // Use the type guard to properly narrow the type
     const classInitialData = isClassEvent(initialData) ? initialData : undefined;
-    
-    return (
+
+  return (
       <EventClassPlanner
         isOpen={isOpen}
         onClose={onClose}
