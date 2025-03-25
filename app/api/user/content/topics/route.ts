@@ -5,14 +5,16 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const query = searchParams.get("query") || "";
-    
+
     const topics = await prisma.topic.findMany({
-      where: query ? {
-        name: {
-          contains: query,
-          mode: 'insensitive',
-        }
-      } : undefined,
+      where: query
+        ? {
+            name: {
+              contains: query,
+              mode: "insensitive",
+            },
+          }
+        : undefined,
     });
 
     return NextResponse.json(
@@ -52,10 +54,7 @@ export async function POST(req: NextRequest) {
 
     // If topic exists, return it
     if (existingTopic) {
-      return NextResponse.json(
-        { data: existingTopic },
-        { status: 200 },
-      );
+      return NextResponse.json({ data: existingTopic }, { status: 200 });
     }
 
     // Create new topic
@@ -65,10 +64,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    return NextResponse.json(
-      { data: topic },
-      { status: 201 },
-    );
+    return NextResponse.json({ data: topic }, { status: 201 });
   } catch (error) {
     console.error("Error creating topic:", error);
     return NextResponse.json(

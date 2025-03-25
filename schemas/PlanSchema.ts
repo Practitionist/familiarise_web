@@ -71,7 +71,7 @@ const BaseEventPlanSchema = z.object({
   materialProvided: z.string().optional().nullable(),
   learningOutcomes: z.array(z.string()),
   topics: z.array(z.string()),
-  
+
   // Make consultant fields optional and nullable
   consultantProfileId: z.string().optional().nullable(),
   consultantProfile: z.any().optional().nullable(),
@@ -91,16 +91,21 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
   callsPerWeek: z.number().min(0, "Calls per week must be non-negative"),
   videoMeetings: z.number().min(0, "Video meetings must be non-negative"),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
-  classContents: z.array(
-    z.object({
-      title: z.string().min(1, "Title is required"),
-      description: z.string().min(1, "Description is required"),
-      contentType: z.string().optional().nullable(),
-      contentUrl: z.string().optional().nullable(),
-      order: z.number().min(1, "Order must be a positive number"),
-      hoursAllotted: z.number().min(0.5, "Hours allotted must be at least 30 minutes"),
-    })
-  ).optional().default([]),
+  classContents: z
+    .array(
+      z.object({
+        title: z.string().min(1, "Title is required"),
+        description: z.string().min(1, "Description is required"),
+        contentType: z.string().optional().nullable(),
+        contentUrl: z.string().optional().nullable(),
+        order: z.number().min(1, "Order must be a positive number"),
+        hoursAllotted: z
+          .number()
+          .min(0.5, "Hours allotted must be at least 30 minutes"),
+      }),
+    )
+    .optional()
+    .default([]),
 });
 
 export const ClassContentSchema = z.object({

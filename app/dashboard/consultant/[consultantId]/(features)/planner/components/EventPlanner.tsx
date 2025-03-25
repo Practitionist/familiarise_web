@@ -1,6 +1,11 @@
 "use client";
 
-import { EventPlannerProps, WebinarEvent, ClassEvent, Event } from "../types/event";
+import {
+  EventPlannerProps,
+  WebinarEvent,
+  ClassEvent,
+  Event,
+} from "../types/event";
 import { EventWebinarPlanner } from "./EventWebinarPlanner";
 import { EventClassPlanner } from "./EventClassPlanner";
 
@@ -25,7 +30,7 @@ export function EventPlanner({
   onSaved,
   isSaving,
   consultantId,
-}: EventPlannerProps & { 
+}: EventPlannerProps & {
   consultantId: string;
   onSaved?: WebinarCallback | ClassCallback;
 }) {
@@ -33,14 +38,16 @@ export function EventPlanner({
   if (eventType === "webinar") {
     // Use type assertion to ensure type safety
     const webinarSaveCallback = (onSave || onSaved) as WebinarCallback;
-    
+
     if (!webinarSaveCallback) {
       console.error("No save callback provided to EventPlanner for webinar");
     }
-    
+
     // Use the type guard to properly narrow the type
-    const webinarInitialData = isWebinarEvent(initialData) ? initialData : undefined;
-    
+    const webinarInitialData = isWebinarEvent(initialData)
+      ? initialData
+      : undefined;
+
     return (
       <EventWebinarPlanner
         isOpen={isOpen}
@@ -54,15 +61,17 @@ export function EventPlanner({
   } else {
     // Use type assertion to ensure type safety
     const classSaveCallback = (onSave || onSaved) as ClassCallback;
-    
+
     if (!classSaveCallback) {
       console.error("No save callback provided to EventPlanner for class");
     }
-    
-    // Use the type guard to properly narrow the type
-    const classInitialData = isClassEvent(initialData) ? initialData : undefined;
 
-  return (
+    // Use the type guard to properly narrow the type
+    const classInitialData = isClassEvent(initialData)
+      ? initialData
+      : undefined;
+
+    return (
       <EventClassPlanner
         isOpen={isOpen}
         onClose={onClose}

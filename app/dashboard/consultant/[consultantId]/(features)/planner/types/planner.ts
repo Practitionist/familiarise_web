@@ -1,4 +1,4 @@
-import { ClassEvent, WebinarEvent } from './event';
+import { ClassEvent, WebinarEvent } from "./event";
 
 export interface BasePlannerProps {
   isOpen: boolean;
@@ -15,4 +15,4 @@ export interface WebinarPlannerProps extends BasePlannerProps {
 export interface ClassPlannerProps extends BasePlannerProps {
   initialData?: ClassEvent;
   onSave: (data: Partial<ClassEvent>) => void;
-} 
+}

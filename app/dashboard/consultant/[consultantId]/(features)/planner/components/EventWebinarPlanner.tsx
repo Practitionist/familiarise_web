@@ -38,10 +38,10 @@ export function EventWebinarPlanner({
 }: Readonly<WebinarPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const { toast } = useToast();
-  
+
   // Use either external or internal saving state
   const isSaving = externalIsSaving ?? internalIsSaving;
-  
+
   // Define form with WebinarPlanSchema
   const form = useForm({
     resolver: zodResolver(WebinarPlanSchema),
@@ -79,101 +79,120 @@ export function EventWebinarPlanner({
   // Initialize planType in a type-safe way
   useEffect(() => {
     // Use setValue with type casting for safety
-    (form as any).setValue('planType', 'webinar');
+    (form as any).setValue("planType", "webinar");
   }, [form]);
 
   // Form submission handler
-  const handleFormSubmit = form.handleSubmit(async (formData) => {
-    try {
-      setInternalIsSaving(true);
-      console.log("Webinar form submission data:", JSON.stringify(formData, null, 2));
-      
-      // Process topics if they are entered as text
-      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      const isFirstTopicString = Array.isArray(formData.topics) && formData.topics.length > 0 && 
-        typeof formData.topics[0] === 'string' && 
-        formData.topics[0]?.length > 0;
-      const isFirstTopicUuid = isFirstTopicString && uuidPattern.test(formData.topics[0]);
-      
-      const topicNames = (!isFirstTopicString || isFirstTopicUuid)
-        ? []
-        : formData.topics as string[];
-      
-      // If we have new topic names, create them and get their IDs
-      let finalTopicIds = formData.topics as string[];
-      if (topicNames.length > 0) {
-        const newIds = await PlannerService.createTopics(topicNames);
-        finalTopicIds = newIds.length > 0 ? newIds : finalTopicIds;
+  const handleFormSubmit = form.handleSubmit(
+    async (formData) => {
+      try {
+        setInternalIsSaving(true);
+        console.log(
+          "Webinar form submission data:",
+          JSON.stringify(formData, null, 2),
+        );
+
+        // Process topics if they are entered as text
+        const uuidPattern =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const isFirstTopicString =
+          Array.isArray(formData.topics) &&
+          formData.topics.length > 0 &&
+          typeof formData.topics[0] === "string" &&
+          formData.topics[0]?.length > 0;
+        const isFirstTopicUuid =
+          isFirstTopicString && uuidPattern.test(formData.topics[0]);
+
+        const topicNames =
+          !isFirstTopicString || isFirstTopicUuid
+            ? []
+            : (formData.topics as string[]);
+
+        // If we have new topic names, create them and get their IDs
+        let finalTopicIds = formData.topics as string[];
+        if (topicNames.length > 0) {
+          const newIds = await PlannerService.createTopics(topicNames);
+          finalTopicIds = newIds.length > 0 ? newIds : finalTopicIds;
+        }
+
+        const now = new Date();
+
+        const webinarData = {
+          type: "webinar" as const,
+          webinarPlan: {
+            id: initialData?.webinarPlan?.id ?? "",
+            title: formData.title,
+            description: formData.description,
+            price: formData.price,
+            durationInHours: formData.durationInHours,
+            maxParticipants: formData.maxParticipants,
+            language: formData.language,
+            level: formData.level,
+            prerequisites: formData.prerequisites || null,
+            materialProvided: formData.materialProvided || null,
+            learningOutcomes: formData.learningOutcomes,
+            topics: finalTopicIds.map((id) => ({
+              id,
+              name: "",
+              createdAt: now,
+              updatedAt: now,
+            })),
+            topicIds: finalTopicIds,
+            consultantProfileId: consultantId,
+            consultantProfile: null,
+            createdAt: initialData?.webinarPlan?.createdAt || now,
+            updatedAt: now,
+          },
+        };
+
+        onSave(webinarData);
+
+        toast({
+          title: "Success",
+          description: `${initialData ? "Updated" : "Created"} webinar "${formData.title}" successfully`,
+        });
+
+        onClose();
+      } catch (error) {
+        console.error("Error saving webinar:", error);
+        toast({
+          title: "Error",
+          description:
+            error instanceof Error
+              ? error.message
+              : "Failed to save webinar. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setInternalIsSaving(false);
       }
-      
-      const now = new Date();
-      
-      const webinarData = {
-        type: "webinar" as const,
-        webinarPlan: {
-          id: initialData?.webinarPlan?.id ?? "",
-          title: formData.title,
-          description: formData.description,
-          price: formData.price,
-          durationInHours: formData.durationInHours,
-          maxParticipants: formData.maxParticipants,
-          language: formData.language,
-          level: formData.level,
-          prerequisites: formData.prerequisites || null,
-          materialProvided: formData.materialProvided || null,
-          learningOutcomes: formData.learningOutcomes,
-          topics: finalTopicIds.map(id => ({
-            id,
-            name: "",
-            createdAt: now,
-            updatedAt: now
-          })),
-          topicIds: finalTopicIds,
-          consultantProfileId: consultantId,
-          consultantProfile: null,
-          createdAt: initialData?.webinarPlan?.createdAt || now,
-          updatedAt: now,
-        },
-      };
-      
-      onSave(webinarData);
-      
+    },
+    (errors) => {
+      console.log("Form validation failed with errors:", errors);
       toast({
-        title: "Success",
-        description: `${initialData ? "Updated" : "Created"} webinar "${formData.title}" successfully`,
-      });
-      
-      onClose();
-    } catch (error) {
-      console.error("Error saving webinar:", error);
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to save webinar. Please try again.",
+        title: "Validation Error",
+        description: "Please check the form for errors",
         variant: "destructive",
       });
-    } finally {
-      setInternalIsSaving(false);
-    }
-  }, (errors) => {
-    console.log("Form validation failed with errors:", errors);
-    toast({
-      title: "Validation Error",
-      description: "Please check the form for errors",
-      variant: "destructive",
-    });
-  });
+    },
+  );
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => {
-      if (!open) onClose();
-    }}>
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
       <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {initialData ? "Edit" : "Create New"} Webinar
           </DialogTitle>
           <DialogDescription>
-            {initialData ? "Update the details of your webinar." : "Fill in the details to create a new webinar."}
+            {initialData
+              ? "Update the details of your webinar."
+              : "Fill in the details to create a new webinar."}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -235,9 +254,7 @@ export function EventWebinarPlanner({
                       <Input
                         type="number"
                         {...field}
-                        onChange={(e) =>
-                          field.onChange(Number(e.target.value))
-                        }
+                        onChange={(e) => field.onChange(Number(e.target.value))}
                       />
                     </FormControl>
                     <FormMessage />
@@ -328,7 +345,9 @@ export function EventWebinarPlanner({
                   <FormControl>
                     <TopicsAndOutcomesForm
                       selectedTopics={form.getValues("topics") || []}
-                      onTopicsChange={(topics) => form.setValue("topics", topics)}
+                      onTopicsChange={(topics) =>
+                        form.setValue("topics", topics)
+                      }
                       learningOutcomes={field.value || []}
                       onOutcomesChange={(outcomes) => field.onChange(outcomes)}
                     />
@@ -366,8 +385,8 @@ export function EventWebinarPlanner({
             /> */}
 
             <DialogFooter className="mt-6 pt-4 border-t">
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 disabled={isSaving}
                 className="min-w-[100px]"
               >
@@ -379,4 +398,4 @@ export function EventWebinarPlanner({
       </DialogContent>
     </Dialog>
   );
-} 
+}

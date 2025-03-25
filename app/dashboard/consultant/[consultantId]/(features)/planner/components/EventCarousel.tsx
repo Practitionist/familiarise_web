@@ -115,7 +115,7 @@ export function EventCarousel({
             } else {
               endpoint = `/api/participants/class/${event.id}`;
             }
-              
+
             const response = await fetch(endpoint);
             if (response.ok) {
               const data = await response.json();
@@ -140,13 +140,13 @@ export function EventCarousel({
 
   const getParticipantsCount = (event: Event) => {
     let maxParticipants = 0;
-    
+
     if (isWebinarEvent(event)) {
       maxParticipants = event.webinarPlan.maxParticipants;
     } else if (isClassEvent(event)) {
       maxParticipants = event.classPlan.maxParticipants;
     }
-      
+
     return {
       currentParticipants: participantCounts[event.id] ?? 0,
       maxParticipants,
@@ -173,7 +173,11 @@ export function EventCarousel({
   };
 
   // Helper function for participant display text
-  const getParticipantsDisplayText = (isLoading: boolean, current: number, max: number) => {
+  const getParticipantsDisplayText = (
+    isLoading: boolean,
+    current: number,
+    max: number,
+  ) => {
     if (isLoading) {
       return "Loading participants...";
     }
@@ -218,7 +222,7 @@ export function EventCarousel({
                   {getParticipantsDisplayText(
                     isLoadingCounts,
                     currentParticipants,
-                    maxParticipants
+                    maxParticipants,
                   )}
                 </CardDescription>
               </CardHeader>

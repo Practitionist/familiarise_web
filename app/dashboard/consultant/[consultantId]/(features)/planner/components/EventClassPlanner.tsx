@@ -44,13 +44,16 @@ export function EventClassPlanner({
   consultantId,
 }: Readonly<ClassPlannerProps>) {
   // State to track form errors
-  const [contentErrors, setContentErrors] = useState<{[key: string]: string}>({});
+  const [contentErrors, setContentErrors] = useState<{ [key: string]: string }>(
+    {},
+  );
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const { toast } = useToast();
-  
+
   // Use either external or internal saving state
-  const isSaving = externalIsSaving !== undefined ? externalIsSaving : internalIsSaving;
-  
+  const isSaving =
+    externalIsSaving !== undefined ? externalIsSaving : internalIsSaving;
+
   // Define form for class plan
   const form = useForm({
     resolver: zodResolver(ClassPlanSchema),
@@ -105,10 +108,12 @@ export function EventClassPlanner({
     if (form.formState.isSubmitted) {
       const formValues = form.getValues();
       if (isClassFormData(formValues)) {
-        setContentErrors(PlannerService.validateClassContents(formValues.classContents));
+        setContentErrors(
+          PlannerService.validateClassContents(formValues.classContents),
+        );
       }
     }
-  }, [form.watch('classContents'), form]);
+  }, [form.watch("classContents"), form]);
 
   // Validate class contents when dialog opens
   useEffect(() => {
@@ -116,7 +121,9 @@ export function EventClassPlanner({
       // Check and validate class contents
       const formValues = form.getValues();
       if (isClassFormData(formValues)) {
-        setContentErrors(PlannerService.validateClassContents(formValues.classContents));
+        setContentErrors(
+          PlannerService.validateClassContents(formValues.classContents),
+        );
       }
     }
   }, [isOpen, form]);
@@ -131,145 +138,166 @@ export function EventClassPlanner({
   // Initialize planType in a type-safe way
   useEffect(() => {
     // Use setValue with type casting for safety
-    (form as any).setValue('planType', 'class');
+    (form as any).setValue("planType", "class");
   }, [form]);
 
   // Form submission handler
-  const handleFormSubmit = form.handleSubmit(async (formData) => {
-    try {
-      console.log("Class form submission data:", JSON.stringify(formData, null, 2));
-      console.log("Form validation errors:", form.formState.errors);
-      
-      // Check if classContents exists
-      if (!Array.isArray(formData.classContents) || formData.classContents.length === 0) {
+  const handleFormSubmit = form.handleSubmit(
+    async (formData) => {
+      try {
+        console.log(
+          "Class form submission data:",
+          JSON.stringify(formData, null, 2),
+        );
+        console.log("Form validation errors:", form.formState.errors);
+
+        // Check if classContents exists
+        if (
+          !Array.isArray(formData.classContents) ||
+          formData.classContents.length === 0
+        ) {
+          toast({
+            title: "Error",
+            description: "Please add at least one class content item",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Validate all class contents
+        const errors = PlannerService.validateClassContents(
+          formData.classContents,
+        );
+        if (Object.keys(errors).length > 0) {
+          setContentErrors(errors);
+          toast({
+            title: "Validation Error",
+            description: "Please fix errors in Class Contents before saving",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // If we reach here, proceed with submission
+        setInternalIsSaving(true);
+
+        // Process topics if they are entered as text
+        const topicNames =
+          Array.isArray(formData.topics) &&
+          formData.topics.length > 0 &&
+          typeof formData.topics[0] === "string" &&
+          formData.topics[0]?.length > 0 &&
+          !formData.topics[0].match(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+          )
+            ? (formData.topics as string[])
+            : [];
+
+        // If we have new topic names, create them and get their IDs
+        let finalTopicIds = formData.topics as string[];
+        if (topicNames.length > 0) {
+          const newIds = await PlannerService.createTopics(topicNames);
+          finalTopicIds = newIds.length > 0 ? newIds : finalTopicIds;
+        }
+
+        const now = new Date();
+        const classContents = formData.classContents || [];
+
+        const classEventData = {
+          type: "class" as const,
+          classPlan: {
+            id: initialData?.classPlan?.id || "",
+            title: formData.title,
+            description: formData.description,
+            price: formData.price,
+            durationInMonths: formData.durationInMonths,
+            maxParticipants: formData.maxParticipants,
+            language: formData.language,
+            level: formData.level,
+            prerequisites: formData.prerequisites || null,
+            materialProvided: formData.materialProvided || null,
+            learningOutcomes: formData.learningOutcomes,
+            topics: finalTopicIds.map((id) => ({
+              id,
+              name: "",
+              createdAt: now,
+              updatedAt: now,
+            })),
+            topicIds: finalTopicIds,
+            consultantProfileId: consultantId,
+            consultantProfile: null,
+            certificateProvided: formData.certificateProvided,
+            callsPerWeek: formData.callsPerWeek,
+            videoMeetings: formData.videoMeetings,
+            emailSupport: formData.emailSupport,
+            classContents: classContents.map((content: any, index: number) => ({
+              id: content.id || `temp-${index}`,
+              title: content.title,
+              description: content.description,
+              contentType: content.contentType || null,
+              contentUrl: content.contentUrl || null,
+              order: content.order,
+              hoursAllotted: content.hoursAllotted,
+              createdAt: now,
+              updatedAt: now,
+              classPlanId: initialData?.classPlan?.id || "",
+            })),
+            createdAt: initialData?.classPlan?.createdAt || now,
+            updatedAt: now,
+          },
+        };
+
+        onSave(classEventData);
+
+        toast({
+          title: "Success",
+          description: `${initialData ? "Updated" : "Created"} class "${formData.title}" successfully`,
+        });
+
+        onClose();
+      } catch (error) {
+        console.error("Error saving class:", error);
         toast({
           title: "Error",
-          description: "Please add at least one class content item",
+          description:
+            error instanceof Error
+              ? error.message
+              : "Failed to save class. Please try again.",
           variant: "destructive",
         });
-        return;
+      } finally {
+        setInternalIsSaving(false);
       }
-      
-      // Validate all class contents
-      const errors = PlannerService.validateClassContents(formData.classContents);
-      if (Object.keys(errors).length > 0) {
-        setContentErrors(errors);
-        toast({
-          title: "Validation Error",
-          description: "Please fix errors in Class Contents before saving",
-          variant: "destructive",
-        });
-        return;
-      }
-      
-      // If we reach here, proceed with submission
-      setInternalIsSaving(true);
-      
-      // Process topics if they are entered as text
-      const topicNames = (Array.isArray(formData.topics) && formData.topics.length > 0 && 
-        typeof formData.topics[0] === 'string' && 
-        formData.topics[0]?.length > 0 && 
-        !formData.topics[0].match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i))
-        ? formData.topics as string[]
-        : [];
-      
-      // If we have new topic names, create them and get their IDs
-      let finalTopicIds = formData.topics as string[];
-      if (topicNames.length > 0) {
-        const newIds = await PlannerService.createTopics(topicNames);
-        finalTopicIds = newIds.length > 0 ? newIds : finalTopicIds;
-      }
-      
-      const now = new Date();
-      const classContents = formData.classContents || [];
-      
-      const classEventData = {
-        type: "class" as const,
-        classPlan: {
-          id: initialData?.classPlan?.id || "",
-          title: formData.title,
-          description: formData.description,
-          price: formData.price,
-          durationInMonths: formData.durationInMonths,
-          maxParticipants: formData.maxParticipants,
-          language: formData.language,
-          level: formData.level,
-          prerequisites: formData.prerequisites || null,
-          materialProvided: formData.materialProvided || null,
-          learningOutcomes: formData.learningOutcomes,
-          topics: finalTopicIds.map(id => ({
-            id,
-            name: "",
-            createdAt: now,
-            updatedAt: now
-          })),
-          topicIds: finalTopicIds,
-          consultantProfileId: consultantId,
-          consultantProfile: null,
-          certificateProvided: formData.certificateProvided,
-          callsPerWeek: formData.callsPerWeek,
-          videoMeetings: formData.videoMeetings,
-          emailSupport: formData.emailSupport,
-          classContents: classContents.map((content: any, index: number) => ({
-            id: content.id || `temp-${index}`,
-            title: content.title,
-            description: content.description,
-            contentType: content.contentType || null,
-            contentUrl: content.contentUrl || null,
-            order: content.order,
-            hoursAllotted: content.hoursAllotted,
-            createdAt: now,
-            updatedAt: now,
-            classPlanId: initialData?.classPlan?.id || "",
-          })),
-          createdAt: initialData?.classPlan?.createdAt || now,
-          updatedAt: now,
-        },
-      };
-      
-      onSave(classEventData);
-      
+    },
+    (errors) => {
+      // This function runs if validation fails
+      console.log("Form validation failed with errors:", errors);
       toast({
-        title: "Success",
-        description: `${initialData ? "Updated" : "Created"} class "${formData.title}" successfully`,
-      });
-      
-      onClose();
-    } catch (error) {
-      console.error("Error saving class:", error);
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to save class. Please try again.",
+        title: "Validation Error",
+        description: "Please check the form for errors",
         variant: "destructive",
       });
-    } finally {
-      setInternalIsSaving(false);
-    }
-  }, (errors) => {
-    // This function runs if validation fails
-    console.log("Form validation failed with errors:", errors);
-    toast({
-      title: "Validation Error",
-      description: "Please check the form for errors",
-      variant: "destructive",
-    });
-  });
+    },
+  );
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => {
-      // Clear errors when dialog is closed
-      if (!open) {
-        setContentErrors({});
-        onClose();
-      }
-    }}>
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        // Clear errors when dialog is closed
+        if (!open) {
+          setContentErrors({});
+          onClose();
+        }
+      }}
+    >
       <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>
-            {initialData ? "Edit" : "Create New"} Class
-          </DialogTitle>
+          <DialogTitle>{initialData ? "Edit" : "Create New"} Class</DialogTitle>
           <DialogDescription>
-            {initialData ? "Update the details of your class." : "Fill in the details to create a new class."}
+            {initialData
+              ? "Update the details of your class."
+              : "Fill in the details to create a new class."}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -331,9 +359,7 @@ export function EventClassPlanner({
                       <Input
                         type="number"
                         {...field}
-                        onChange={(e) =>
-                          field.onChange(Number(e.target.value))
-                        }
+                        onChange={(e) => field.onChange(Number(e.target.value))}
                       />
                     </FormControl>
                     <FormMessage />
@@ -424,7 +450,9 @@ export function EventClassPlanner({
                   <FormControl>
                     <TopicsAndOutcomesForm
                       selectedTopics={form.getValues("topics") || []}
-                      onTopicsChange={(topics) => form.setValue("topics", topics)}
+                      onTopicsChange={(topics) =>
+                        form.setValue("topics", topics)
+                      }
                       learningOutcomes={field.value || []}
                       onOutcomesChange={(outcomes) => field.onChange(outcomes)}
                     />
@@ -468,9 +496,7 @@ export function EventClassPlanner({
                 <FormItem>
                   <FormLabel>Certificate Provided</FormLabel>
                   <Select
-                    onValueChange={(value) =>
-                      field.onChange(value === "true")
-                    }
+                    onValueChange={(value) => field.onChange(value === "true")}
                     defaultValue={field.value ? "true" : "false"}
                   >
                     <FormControl>
@@ -499,9 +525,7 @@ export function EventClassPlanner({
                       <Input
                         type="number"
                         {...field}
-                        onChange={(e) =>
-                          field.onChange(Number(e.target.value))
-                        }
+                        onChange={(e) => field.onChange(Number(e.target.value))}
                       />
                     </FormControl>
                     <FormMessage />
@@ -519,9 +543,7 @@ export function EventClassPlanner({
                       <Input
                         type="number"
                         {...field}
-                        onChange={(e) =>
-                          field.onChange(Number(e.target.value))
-                        }
+                        onChange={(e) => field.onChange(Number(e.target.value))}
                       />
                     </FormControl>
                     <FormMessage />
@@ -573,32 +595,53 @@ export function EventClassPlanner({
                           name={`classContents.${index}.title`}
                           render={({ field: contentField }) => (
                             <FormItem>
-                              <FormLabel>Title <span className="text-red-500">*</span></FormLabel>
+                              <FormLabel>
+                                Title <span className="text-red-500">*</span>
+                              </FormLabel>
                               <FormControl>
-                                <Input 
-                                  {...contentField} 
-                                  className={contentErrors[`classContents.${index}.title`] ? "border-red-500" : ""}
+                                <Input
+                                  {...contentField}
+                                  className={
+                                    contentErrors[
+                                      `classContents.${index}.title`
+                                    ]
+                                      ? "border-red-500"
+                                      : ""
+                                  }
                                   onBlur={() => {
                                     // Validate this specific field on blur
                                     const formValues = form.getValues();
-                                    if (isClassFormData(formValues) && formValues.classContents[index] && !formValues.classContents[index].title) {
-                                      setContentErrors(prev => ({
+                                    if (
+                                      isClassFormData(formValues) &&
+                                      formValues.classContents[index] &&
+                                      !formValues.classContents[index].title
+                                    ) {
+                                      setContentErrors((prev) => ({
                                         ...prev,
-                                        [`classContents.${index}.title`]: "Title is required"
+                                        [`classContents.${index}.title`]:
+                                          "Title is required",
                                       }));
                                     } else {
-                                      setContentErrors(prev => {
-                                        const newErrors = {...prev};
-                                        delete newErrors[`classContents.${index}.title`];
+                                      setContentErrors((prev) => {
+                                        const newErrors = { ...prev };
+                                        delete newErrors[
+                                          `classContents.${index}.title`
+                                        ];
                                         return newErrors;
                                       });
                                     }
                                   }}
                                 />
                               </FormControl>
-                              {contentErrors[`classContents.${index}.title`] && (
+                              {contentErrors[
+                                `classContents.${index}.title`
+                              ] && (
                                 <p className="text-sm font-medium text-red-500">
-                                  {contentErrors[`classContents.${index}.title`]}
+                                  {
+                                    contentErrors[
+                                      `classContents.${index}.title`
+                                    ]
+                                  }
                                 </p>
                               )}
                             </FormItem>
@@ -609,33 +652,51 @@ export function EventClassPlanner({
                           name={`classContents.${index}.description`}
                           render={({ field: contentField }) => (
                             <FormItem>
-                              <FormLabel>Description <span className="text-red-500">*</span></FormLabel>
+                              <FormLabel>
+                                Description{" "}
+                                <span className="text-red-500">*</span>
+                              </FormLabel>
                               <FormControl>
-                                <Textarea 
-                                  {...contentField} 
+                                <Textarea
+                                  {...contentField}
                                   placeholder="Enter a description (required)"
-                                  className={contentErrors[`classContents.${index}.description`] ? "border-red-500" : ""}
+                                  className={
+                                    contentErrors[
+                                      `classContents.${index}.description`
+                                    ]
+                                      ? "border-red-500"
+                                      : ""
+                                  }
                                   onChange={(e) => {
                                     contentField.onChange(e.target.value);
                                     // Validate as user types
                                     if (!e.target.value.trim()) {
-                                      setContentErrors(prev => ({
+                                      setContentErrors((prev) => ({
                                         ...prev,
-                                        [`classContents.${index}.description`]: "Description is required"
+                                        [`classContents.${index}.description`]:
+                                          "Description is required",
                                       }));
                                     } else {
-                                      setContentErrors(prev => {
-                                        const newErrors = {...prev};
-                                        delete newErrors[`classContents.${index}.description`];
+                                      setContentErrors((prev) => {
+                                        const newErrors = { ...prev };
+                                        delete newErrors[
+                                          `classContents.${index}.description`
+                                        ];
                                         return newErrors;
                                       });
                                     }
                                   }}
                                 />
                               </FormControl>
-                              {contentErrors[`classContents.${index}.description`] ? (
+                              {contentErrors[
+                                `classContents.${index}.description`
+                              ] ? (
                                 <p className="text-sm font-medium text-red-500">
-                                  {contentErrors[`classContents.${index}.description`]}
+                                  {
+                                    contentErrors[
+                                      `classContents.${index}.description`
+                                    ]
+                                  }
                                 </p>
                               ) : (
                                 <p className="text-sm text-muted-foreground">
@@ -652,8 +713,8 @@ export function EventClassPlanner({
                             <FormItem>
                               <FormLabel>Content Type</FormLabel>
                               <FormControl>
-                                <Input 
-                                  {...contentField} 
+                                <Input
+                                  {...contentField}
                                   value={contentField.value || ""}
                                 />
                               </FormControl>
@@ -668,8 +729,8 @@ export function EventClassPlanner({
                             <FormItem>
                               <FormLabel>Content URL</FormLabel>
                               <FormControl>
-                                <Input 
-                                  {...contentField} 
+                                <Input
+                                  {...contentField}
                                   value={contentField.value || ""}
                                 />
                               </FormControl>
@@ -682,34 +743,51 @@ export function EventClassPlanner({
                           name={`classContents.${index}.order`}
                           render={({ field: contentField }) => (
                             <FormItem>
-                              <FormLabel>Order <span className="text-red-500">*</span></FormLabel>
+                              <FormLabel>
+                                Order <span className="text-red-500">*</span>
+                              </FormLabel>
                               <FormControl>
                                 <Input
                                   type="number"
                                   {...contentField}
-                                  className={contentErrors[`classContents.${index}.order`] ? "border-red-500" : ""}
+                                  className={
+                                    contentErrors[
+                                      `classContents.${index}.order`
+                                    ]
+                                      ? "border-red-500"
+                                      : ""
+                                  }
                                   onChange={(e) => {
                                     const value = Number(e.target.value);
                                     contentField.onChange(value);
                                     // Validate as user types
                                     if (value <= 0 || isNaN(value)) {
-                                      setContentErrors(prev => ({
+                                      setContentErrors((prev) => ({
                                         ...prev,
-                                        [`classContents.${index}.order`]: "Order must be a positive number"
+                                        [`classContents.${index}.order`]:
+                                          "Order must be a positive number",
                                       }));
                                     } else {
-                                      setContentErrors(prev => {
-                                        const newErrors = {...prev};
-                                        delete newErrors[`classContents.${index}.order`];
+                                      setContentErrors((prev) => {
+                                        const newErrors = { ...prev };
+                                        delete newErrors[
+                                          `classContents.${index}.order`
+                                        ];
                                         return newErrors;
                                       });
                                     }
                                   }}
                                 />
                               </FormControl>
-                              {contentErrors[`classContents.${index}.order`] && (
+                              {contentErrors[
+                                `classContents.${index}.order`
+                              ] && (
                                 <p className="text-sm font-medium text-red-500">
-                                  {contentErrors[`classContents.${index}.order`]}
+                                  {
+                                    contentErrors[
+                                      `classContents.${index}.order`
+                                    ]
+                                  }
                                 </p>
                               )}
                             </FormItem>
@@ -720,34 +798,52 @@ export function EventClassPlanner({
                           name={`classContents.${index}.hoursAllotted`}
                           render={({ field: contentField }) => (
                             <FormItem>
-                              <FormLabel>Hours Allotted <span className="text-red-500">*</span></FormLabel>
+                              <FormLabel>
+                                Hours Allotted{" "}
+                                <span className="text-red-500">*</span>
+                              </FormLabel>
                               <FormControl>
                                 <Input
                                   type="number"
                                   {...contentField}
-                                  className={contentErrors[`classContents.${index}.hoursAllotted`] ? "border-red-500" : ""}
+                                  className={
+                                    contentErrors[
+                                      `classContents.${index}.hoursAllotted`
+                                    ]
+                                      ? "border-red-500"
+                                      : ""
+                                  }
                                   onChange={(e) => {
                                     const value = Number(e.target.value);
                                     contentField.onChange(value);
                                     // Validate as user types
                                     if (value <= 0 || isNaN(value)) {
-                                      setContentErrors(prev => ({
+                                      setContentErrors((prev) => ({
                                         ...prev,
-                                        [`classContents.${index}.hoursAllotted`]: "Hours must be a positive number"
+                                        [`classContents.${index}.hoursAllotted`]:
+                                          "Hours must be a positive number",
                                       }));
                                     } else {
-                                      setContentErrors(prev => {
-                                        const newErrors = {...prev};
-                                        delete newErrors[`classContents.${index}.hoursAllotted`];
+                                      setContentErrors((prev) => {
+                                        const newErrors = { ...prev };
+                                        delete newErrors[
+                                          `classContents.${index}.hoursAllotted`
+                                        ];
                                         return newErrors;
                                       });
                                     }
                                   }}
                                 />
                               </FormControl>
-                              {contentErrors[`classContents.${index}.hoursAllotted`] && (
+                              {contentErrors[
+                                `classContents.${index}.hoursAllotted`
+                              ] && (
                                 <p className="text-sm font-medium text-red-500">
-                                  {contentErrors[`classContents.${index}.hoursAllotted`]}
+                                  {
+                                    contentErrors[
+                                      `classContents.${index}.hoursAllotted`
+                                    ]
+                                  }
                                 </p>
                               )}
                             </FormItem>
@@ -760,10 +856,10 @@ export function EventClassPlanner({
                             const newContents = [...(field.value || [])];
                             newContents.splice(index, 1);
                             field.onChange(newContents);
-                            
+
                             // Clear any errors for this content
                             const newErrors = { ...contentErrors };
-                            Object.keys(newErrors).forEach(key => {
+                            Object.keys(newErrors).forEach((key) => {
                               if (key.startsWith(`classContents.${index}`)) {
                                 delete newErrors[key];
                               }
@@ -788,10 +884,15 @@ export function EventClassPlanner({
                           hoursAllotted: 1,
                         };
                         field.onChange([...currentContents, newContent]);
-                        
+
                         // Immediately validate the new content
                         setTimeout(() => {
-                          setContentErrors(PlannerService.validateClassContents([...currentContents, newContent]));
+                          setContentErrors(
+                            PlannerService.validateClassContents([
+                              ...currentContents,
+                              newContent,
+                            ]),
+                          );
                         }, 100);
                       }}
                     >
@@ -800,7 +901,8 @@ export function EventClassPlanner({
                   </div>
                   {field.value && field.value.length === 0 && (
                     <p className="text-sm text-muted-foreground mt-2">
-                      Add at least one class content to define the structure of your class.
+                      Add at least one class content to define the structure of
+                      your class.
                     </p>
                   )}
                 </FormItem>
@@ -808,8 +910,8 @@ export function EventClassPlanner({
             />
 
             <DialogFooter className="mt-6 pt-4 border-t">
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 disabled={isSaving || Object.keys(contentErrors).length > 0}
                 className="min-w-[100px]"
               >
@@ -821,4 +923,4 @@ export function EventClassPlanner({
       </DialogContent>
     </Dialog>
   );
-} 
+}

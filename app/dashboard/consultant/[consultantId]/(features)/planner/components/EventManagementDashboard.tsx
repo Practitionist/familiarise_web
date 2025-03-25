@@ -31,7 +31,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
         // Use the service to fetch data
         const [fetchedWebinars, fetchedClasses] = await Promise.all([
           PlannerService.fetchWebinars(consultantId),
-          PlannerService.fetchClasses(consultantId)
+          PlannerService.fetchClasses(consultantId),
         ]);
 
         setWebinars(fetchedWebinars);
@@ -50,10 +50,16 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   // Handle webinar saved event
   const handleWebinarSaved = (newWebinar: Partial<WebinarEvent>) => {
     if (!newWebinar.id) return; // Guard against missing ID
-    
+
     if (editingEvent && editingEvent.type === "webinar") {
       // Update existing webinar
-      setWebinars(webinars.map(w => w.id === newWebinar.id ? {...w, ...newWebinar} as WebinarEvent : w));
+      setWebinars(
+        webinars.map((w) =>
+          w.id === newWebinar.id
+            ? ({ ...w, ...newWebinar } as WebinarEvent)
+            : w,
+        ),
+      );
     } else {
       // Add new webinar
       setWebinars([...webinars, newWebinar as WebinarEvent]);
@@ -65,10 +71,14 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   // Handle class saved event
   const handleClassSaved = (newClass: Partial<ClassEvent>) => {
     if (!newClass.id) return; // Guard against missing ID
-    
+
     if (editingEvent && editingEvent.type === "class") {
       // Update existing class
-      setClasses(classes.map(c => c.id === newClass.id ? {...c, ...newClass} as ClassEvent : c));
+      setClasses(
+        classes.map((c) =>
+          c.id === newClass.id ? ({ ...c, ...newClass } as ClassEvent) : c,
+        ),
+      );
     } else {
       // Add new class
       setClasses([...classes, newClass as ClassEvent]);
