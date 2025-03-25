@@ -228,145 +228,199 @@ export class PlannerService {
     try {
       console.log("Starting form submission with data:", JSON.stringify(data, null, 2));
       
-      // Process topics if they are entered as text
-      const topicNames = (Array.isArray(data.topics) && data.topics.length > 0 && 
-          typeof data.topics[0] === 'string' && 
-          data.topics[0]?.length > 0 && 
-          !data.topics[0].match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i))
-        ? data.topics as string[]
-        : [];
+      const finalTopicIds = await this.processTopics(data.topics);
       
-      // If we have new topic names, create them and get their IDs
-      let finalTopicIds = data.topics as string[];
-      if (topicNames.length > 0) {
-        const newIds = await this.createTopics(topicNames);
-        finalTopicIds = newIds.length > 0 ? newIds : finalTopicIds;
-      }
-      
-      const now = new Date();
-      
-      // Create event data object based on type
       if (eventType === "webinar") {
-        const webinarData = {
-          type: "webinar" as const,
-          webinarPlan: {
-            id: initialData && this.isWebinarEvent(initialData) ? initialData.webinarPlan.id : "",
-            title: data.title,
-            description: data.description,
-            price: data.price,
-            durationInHours:
-              "durationInHours" in data ? data.durationInHours : 0,
-            maxParticipants: data.maxParticipants,
-            language: data.language,
-            level: data.level,
-            prerequisites: data.prerequisites || null,
-            materialProvided: data.materialProvided || null,
-            learningOutcomes: data.learningOutcomes,
-            topics: finalTopicIds.map(id => ({
-              id,
-              name: "",
-              createdAt: now,
-              updatedAt: now
-            })),
-            topicIds: finalTopicIds,
-            consultantProfileId: consultantId,
-            consultantProfile: null,
-            createdAt: initialData && this.isWebinarEvent(initialData) ? initialData.webinarPlan.createdAt : now,
-            updatedAt: now,
-          },
-        };
-        
-        console.log("Saving webinar data:", webinarData);
-        const savedWebinar = await this.saveWebinar(webinarData, consultantId);
-        
-        toast({
-          title: "Success",
-          description: `${initialData ? "Updated" : "Created"} webinar "${data.title}" successfully`,
-        });
-        
-        return savedWebinar;
+        return await this.processWebinarData(data, initialData, consultantId, finalTopicIds);
       } else {
-        // For class events, access classContents with type casting
-        const classData = data as any;
-        const classContents = classData.classContents || [];
-        
-        const classEventData = {
-          type: "class" as const,
-          classPlan: {
-            id: initialData && this.isClassEvent(initialData) ? initialData.classPlan.id : "",
-            title: data.title,
-            description: data.description,
-            price: data.price,
-            durationInMonths:
-              "durationInMonths" in data ? data.durationInMonths : 0,
-            maxParticipants: data.maxParticipants,
-            language: data.language,
-            level: data.level,
-            prerequisites: data.prerequisites || null,
-            materialProvided: data.materialProvided || null,
-            learningOutcomes: data.learningOutcomes,
-            topics: finalTopicIds.map(id => ({
-              id,
-              name: "",
-              createdAt: now,
-              updatedAt: now
-            })),
-            topicIds: finalTopicIds,
-            consultantProfileId: consultantId,
-            consultantProfile: null,
-            certificateProvided:
-              "certificateProvided" in data ? data.certificateProvided : false,
-            callsPerWeek: "callsPerWeek" in data ? data.callsPerWeek : 0,
-            videoMeetings: "videoMeetings" in data ? data.videoMeetings : 0,
-            emailSupport:
-              "emailSupport" in data ? data.emailSupport : "GENERAL",
-            classContents: classContents.map((content: any, index: number) => ({
-              id: content.id || `temp-${index}`,
-              title: content.title,
-              description: content.description,
-              contentType: content.contentType || null,
-              contentUrl: content.contentUrl || null,
-              order: content.order,
-              hoursAllotted: content.hoursAllotted,
-              createdAt: now,
-              updatedAt: now,
-              classPlanId: initialData && this.isClassEvent(initialData) ? initialData.classPlan.id : "",
-            })),
-            createdAt: initialData && this.isClassEvent(initialData) ? initialData.classPlan.createdAt : now,
-            updatedAt: now,
-          },
-        };
-        
-        console.log("Saving class data:", classEventData);
-        try {
-          const savedClass = await this.saveClass(classEventData, consultantId);
-          
-          toast({
-            title: "Success",
-            description: `${initialData ? "Updated" : "Created"} class "${data.title}" successfully`,
-          });
-          
-          return savedClass;
-        } catch (saveError) {
-          console.error("Error in saveClass:", saveError);
-          throw saveError;
-        }
+        return await this.processClassData(data, initialData, consultantId, finalTopicIds);
       }
     } catch (error) {
-      console.error("Error saving plan:", error);
-      // Show detailed error info
-      const errorMessage = error instanceof Error ? 
-        `${error.message}\n${error.stack}` : 
-        "Unknown error occurred";
-      console.error(errorMessage);
-        
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to save. Please try again.",
-        variant: "destructive",
-      });
-      
+      this.handleSaveError(error);
       throw error;
     }
+  }
+  
+  /**
+   * Process topics from form data
+   */
+  private static async processTopics(topics: string[]): Promise<string[]> {
+    if (!Array.isArray(topics) || topics.length === 0) {
+      return [];
+    }
+    
+    // Check if topics are entered as text or existing IDs
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const isFirstTopicString = typeof topics[0] === 'string' && topics[0]?.length > 0;
+    const isFirstTopicUuid = isFirstTopicString && uuidPattern.test(topics[0]);
+    
+    // If topics are UUIDs, return them as is
+    if (!isFirstTopicString || isFirstTopicUuid) {
+      return topics;
+    }
+    
+    // Otherwise, create new topics from the text entries
+    const topicNames = topics;
+    const newIds = await this.createTopics(topicNames);
+    return newIds.length > 0 ? newIds : topics;
+  }
+  
+  /**
+   * Process and save webinar data
+   */
+  private static async processWebinarData(
+    data: FormData, 
+    initialData: Event | null, 
+    consultantId: string, 
+    topicIds: string[]
+  ): Promise<WebinarEvent> {
+    const now = new Date();
+    const webinarId = initialData && this.isWebinarEvent(initialData) ? initialData.webinarPlan.id : "";
+    const createdAt = initialData && this.isWebinarEvent(initialData) ? initialData.webinarPlan.createdAt : now;
+    
+    const webinarData = {
+      type: "webinar" as const,
+      webinarPlan: {
+        id: webinarId,
+        title: data.title,
+        description: data.description,
+        price: data.price,
+        durationInHours: "durationInHours" in data ? data.durationInHours : 0,
+        maxParticipants: data.maxParticipants,
+        language: data.language,
+        level: data.level,
+        prerequisites: data.prerequisites ?? null,
+        materialProvided: data.materialProvided ?? null,
+        learningOutcomes: data.learningOutcomes,
+        topics: this.formatTopics(topicIds, now),
+        topicIds: topicIds,
+        consultantProfileId: consultantId,
+        consultantProfile: null,
+        createdAt: createdAt,
+        updatedAt: now,
+      },
+    };
+    
+    console.log("Saving webinar data:", webinarData);
+    const savedWebinar = await this.saveWebinar(webinarData, consultantId);
+    
+    this.showSuccessToast(data.title, initialData, "webinar");
+    return savedWebinar;
+  }
+  
+  /**
+   * Process and save class data
+   */
+  private static async processClassData(
+    data: FormData, 
+    initialData: Event | null, 
+    consultantId: string, 
+    topicIds: string[]
+  ): Promise<ClassEvent> {
+    const now = new Date();
+    const classData = data as any;
+    const classContents = classData.classContents || [];
+    
+    const classId = initialData && this.isClassEvent(initialData) ? initialData.classPlan.id : "";
+    const createdAt = initialData && this.isClassEvent(initialData) ? initialData.classPlan.createdAt : now;
+    
+    const classEventData = {
+      type: "class" as const,
+      classPlan: {
+        id: classId,
+        title: data.title,
+        description: data.description,
+        price: data.price,
+        durationInMonths: "durationInMonths" in data ? data.durationInMonths : 0,
+        maxParticipants: data.maxParticipants,
+        language: data.language,
+        level: data.level,
+        prerequisites: data.prerequisites ?? null,
+        materialProvided: data.materialProvided ?? null,
+        learningOutcomes: data.learningOutcomes,
+        topics: this.formatTopics(topicIds, now),
+        topicIds: topicIds,
+        consultantProfileId: consultantId,
+        consultantProfile: null,
+        certificateProvided: "certificateProvided" in data ? data.certificateProvided : false,
+        callsPerWeek: "callsPerWeek" in data ? data.callsPerWeek : 0,
+        videoMeetings: "videoMeetings" in data ? data.videoMeetings : 0,
+        emailSupport: "emailSupport" in data ? data.emailSupport : "GENERAL",
+        classContents: this.formatClassContents(classContents, classId, now),
+        createdAt: createdAt,
+        updatedAt: now,
+      },
+    };
+    
+    console.log("Saving class data:", classEventData);
+    
+    try {
+      const savedClass = await this.saveClass(classEventData, consultantId);
+      this.showSuccessToast(data.title, initialData, "class");
+      return savedClass;
+    } catch (saveError) {
+      console.error("Error in saveClass:", saveError);
+      throw saveError;
+    }
+  }
+  
+  /**
+   * Format topics for API submission
+   */
+  private static formatTopics(topicIds: string[], now: Date) {
+    return topicIds.map(id => ({
+      id,
+      name: "",
+      createdAt: now,
+      updatedAt: now
+    }));
+  }
+  
+  /**
+   * Format class contents for API submission
+   */
+  private static formatClassContents(classContents: any[], classId: string, now: Date) {
+    return classContents.map((content: any, index: number) => ({
+      id: content.id || `temp-${index}`,
+      title: content.title,
+      description: content.description,
+      contentType: content.contentType || null,
+      contentUrl: content.contentUrl || null,
+      order: content.order,
+      hoursAllotted: content.hoursAllotted,
+      createdAt: now,
+      updatedAt: now,
+      classPlanId: classId,
+    }));
+  }
+  
+  /**
+   * Display a success toast notification
+   */
+  private static showSuccessToast(title: string, initialData: Event | null, eventType: string) {
+    const action = initialData ? "Updated" : "Created";
+    toast({
+      title: "Success",
+      description: `${action} ${eventType} "${title}" successfully`,
+    });
+  }
+  
+  /**
+   * Handle errors during save operation
+   */
+  private static handleSaveError(error: unknown) {
+    console.error("Error saving plan:", error);
+    
+    // Show detailed error info
+    const errorMessage = error instanceof Error ? 
+      `${error.message}\n${error.stack}` : 
+      "Unknown error occurred";
+    console.error(errorMessage);
+      
+    toast({
+      title: "Error",
+      description: error instanceof Error ? error.message : "Failed to save. Please try again.",
+      variant: "destructive",
+    });
   }
 } 

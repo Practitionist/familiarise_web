@@ -11,7 +11,7 @@ interface Props {
   consultantId: string;
 }
 
-export function EventManagementDashboard({ consultantId }: Props) {
+export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   const [webinars, setWebinars] = useState<WebinarEvent[]>([]);
   const [classes, setClasses] = useState<ClassEvent[]>([]);
   const [isWebinarDialogOpen, setIsWebinarDialogOpen] = useState(false);

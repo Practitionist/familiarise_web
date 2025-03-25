@@ -34,12 +34,12 @@ export function EventWebinarPlanner({
   initialData,
   isSaving: externalIsSaving,
   consultantId,
-}: WebinarPlannerProps) {
+}: Readonly<WebinarPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const { toast } = useToast();
   
   // Use either external or internal saving state
-  const isSaving = externalIsSaving !== undefined ? externalIsSaving : internalIsSaving;
+  const isSaving = externalIsSaving ?? internalIsSaving;
   
   // Define form with WebinarPlanSchema
   const form = useForm({
@@ -53,8 +53,8 @@ export function EventWebinarPlanner({
           maxParticipants: initialData.webinarPlan.maxParticipants,
           language: initialData.webinarPlan.language || "English",
           level: initialData.webinarPlan.level || "Beginner",
-          prerequisites: initialData.webinarPlan.prerequisites || "",
-          materialProvided: initialData.webinarPlan.materialProvided || "",
+          prerequisites: initialData.webinarPlan.prerequisites ?? "",
+          materialProvided: initialData.webinarPlan.materialProvided ?? "",
           learningOutcomes: initialData.webinarPlan.learningOutcomes,
           topics: initialData.webinarPlan.topics.map((topic) => topic.id),
           consultantProfileId: initialData.webinarPlan.consultantProfileId,
@@ -88,12 +88,15 @@ export function EventWebinarPlanner({
       console.log("Webinar form submission data:", JSON.stringify(formData, null, 2));
       
       // Process topics if they are entered as text
-      const topicNames = (Array.isArray(formData.topics) && formData.topics.length > 0 && 
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const isFirstTopicString = Array.isArray(formData.topics) && formData.topics.length > 0 && 
         typeof formData.topics[0] === 'string' && 
-        formData.topics[0]?.length > 0 && 
-        !formData.topics[0].match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i))
-        ? formData.topics as string[]
-        : [];
+        formData.topics[0]?.length > 0;
+      const isFirstTopicUuid = isFirstTopicString && uuidPattern.test(formData.topics[0]);
+      
+      const topicNames = (!isFirstTopicString || isFirstTopicUuid)
+        ? []
+        : formData.topics as string[];
       
       // If we have new topic names, create them and get their IDs
       let finalTopicIds = formData.topics as string[];
@@ -107,7 +110,7 @@ export function EventWebinarPlanner({
       const webinarData = {
         type: "webinar" as const,
         webinarPlan: {
-          id: initialData?.webinarPlan?.id || "",
+          id: initialData?.webinarPlan?.id ?? "",
           title: formData.title,
           description: formData.description,
           price: formData.price,
