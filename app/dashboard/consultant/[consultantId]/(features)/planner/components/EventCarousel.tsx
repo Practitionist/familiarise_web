@@ -192,9 +192,9 @@ export function EventCarousel({
                   <Link
                     href={
                       eventType === "webinar" && isWebinarEvent(event)
-                        ? `/dashboard/consultant/${event.webinarPlan.consultantProfileId}/planner/webinars/${event.id}/participants`
+                        ? `/dashboard/consultant/${event.webinarPlan.consultantProfileId}/planner/participants/webinars/${event.id}`
                         : isClassEvent(event)
-                          ? `/dashboard/consultant/${event.classPlan.consultantProfileId}/planner/classes/${event.id}/participants`
+                          ? `/dashboard/consultant/${event.classPlan.consultantProfileId}/planner/participants/classes/${event.id}`
                           : "#"
                     }
                   >

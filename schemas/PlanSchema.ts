@@ -76,7 +76,7 @@ export const WebinarPlanSchema = z.object({
   learningOutcomes: z
     .array(z.string())
     .min(1, "At least one learning outcome is required"),
-  topics: z.array(TagSchema).min(1, "At least one topic is required"),
+  topics: z.array(z.string()).min(1, "At least one topic is required"),
   createdAt: z.date().optional(),
   updatedAt: z.date().optional(),
   consultantProfileId: z.string().nullable(),
@@ -125,7 +125,7 @@ export const ClassPlanSchema = z.object({
   learningOutcomes: z
     .array(z.string())
     .min(1, "At least one learning outcome is required"),
-  topics: z.array(TagSchema).min(1, "At least one topic is required"),
+  topics: z.array(z.string()).min(1, "At least one topic is required"),
   classContents: z.array(
     z.object({
       id: z.string(),
