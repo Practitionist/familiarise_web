@@ -204,11 +204,32 @@ export function EventPlannerForClass({
             ? (formData.topics as string[])
             : [];
 
-        // If we have new topic names, create them and get their IDs
+        console.log("Processing topics:", {
+          originalTopics: formData.topics,
+          extractedTopicNames: topicNames
+        });
+
+        // Get topic IDs - either create new ones or use existing ones
         let finalTopicIds = formData.topics as string[];
-        if (topicNames.length > 0) {
-          const newIds = await PlannerService.createTopics(topicNames);
-          finalTopicIds = newIds.length > 0 ? newIds : finalTopicIds;
+        try {
+          if (topicNames.length > 0) {
+            console.log("Creating topics in batch:", topicNames);
+            const newIds = await PlannerService.createTopics(topicNames);
+            if (newIds.length === 0) {
+              console.warn("No topics were created - using original IDs");
+            } else {
+              finalTopicIds = newIds;
+              console.log("Topics created with IDs:", newIds);
+            }
+          }
+        } catch (error) {
+          console.error("Error creating topics:", error);
+          toast({
+            title: "Warning",
+            description: "Some topics could not be created. Proceeding with available topics.",
+            variant: "destructive",
+          });
+          // Continue with whatever topic IDs we have
         }
 
         const now = new Date();
@@ -219,14 +240,14 @@ export function EventPlannerForClass({
           classPlan: {
             id: initialData?.classPlan?.id ?? "",
             title: formData.title,
-            description: formData.description,
+            description: formData.description || "",
             price: formData.price,
             durationInMonths: formData.durationInMonths,
             maxParticipants: formData.maxParticipants,
             language: formData.language,
             level: formData.level,
-            prerequisites: formData.prerequisites || null,
-            materialProvided: formData.materialProvided || null,
+            prerequisites: formData.prerequisites ?? null,
+            materialProvided: formData.materialProvided ?? null,
             learningOutcomes: formData.learningOutcomes,
             topics: finalTopicIds.map((id) => ({
               id,
@@ -253,19 +274,32 @@ export function EventPlannerForClass({
               updatedAt: now,
               classPlanId: initialData?.classPlan?.id ?? "",
             })),
-            createdAt: initialData?.classPlan?.createdAt || now,
+            createdAt: initialData?.classPlan?.createdAt ?? now,
             updatedAt: now,
           },
         };
 
-        onSave(classEventData);
-
-        toast({
-          title: "Success",
-          description: `${initialData ? "Updated" : "Created"} class "${formData.title}" successfully`,
-        });
-
-        onClose();
+        console.log("Calling onSave with class data:", JSON.stringify(classEventData, null, 2));
+        
+        try {
+          // Call onSave and wait for it to complete
+          onSave(classEventData);
+          
+          // If we get here, the save was successful
+          toast({
+            title: "Success",
+            description: `${initialData ? "Updated" : "Created"} class "${formData.title}" successfully`,
+          });
+          onClose();
+        } catch (error) {
+          console.error("Error saving class:", error);
+          toast({
+            title: "Error",
+            description: error instanceof Error ? error.message : "Failed to save class. Please try again.",
+            variant: "destructive",
+          });
+          throw error; // Re-throw to prevent form from closing
+        }
       } catch (error) {
         console.error("Error saving class:", error);
         toast({

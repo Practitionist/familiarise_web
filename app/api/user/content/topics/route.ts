@@ -35,40 +35,72 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { name } = body;
+    const { names } = body;
+    console.log("Received topic creation request:", { names });
 
     // Validate request
-    if (!name) {
+    if (!Array.isArray(names) || names.length === 0) {
       return NextResponse.json(
-        { error: "Topic name is required" },
+        { error: "Topics array is required" },
         { status: 400 },
       );
     }
 
-    // Check if topic already exists
-    const existingTopic = await prisma.topic.findFirst({
-      where: {
-        name,
-      },
-    });
+    // Process each name to ensure it's a string and not empty
+    const validNames = names.filter((name): name is string => 
+      typeof name === "string" && name.trim().length > 0
+    );
 
-    // If topic exists, return it
-    if (existingTopic) {
-      return NextResponse.json({ data: existingTopic }, { status: 200 });
+    if (validNames.length === 0) {
+      return NextResponse.json(
+        { error: "No valid topic names provided" },
+        { status: 400 },
+      );
     }
 
-    // Create new topic
-    const topic = await prisma.topic.create({
-      data: {
-        name,
+    // Find existing topics
+    const existingTopics = await prisma.topic.findMany({
+      where: {
+        name: {
+          in: validNames,
+          mode: "insensitive",
+        },
       },
     });
 
-    return NextResponse.json({ data: topic }, { status: 201 });
+    // Filter out names that already exist
+    const existingNames = new Set(existingTopics.map(t => t.name.toLowerCase()));
+    const newNames = validNames.filter(
+      name => !existingNames.has(name.toLowerCase())
+    );
+
+    // Create new topics in a single transaction
+    const newTopics = newNames.length > 0 
+      ? await prisma.topic.createMany({
+          data: newNames.map(name => ({ name })),
+          skipDuplicates: true,
+        })
+      : { count: 0 };
+
+    // Fetch all topics (both existing and newly created)
+    const allTopics = await prisma.topic.findMany({
+      where: {
+        name: {
+          in: validNames,
+          mode: "insensitive",
+        },
+      },
+    });
+
+    return NextResponse.json({ 
+      data: allTopics,
+      created: newTopics.count,
+      existing: existingTopics.length,
+    }, { status: 201 });
   } catch (error) {
-    console.error("Error creating topic:", error);
+    console.error("Error creating topics:", error);
     return NextResponse.json(
-      { error: "An error occurred while creating the topic" },
+      { error: "An error occurred while creating the topics" },
       { status: 500 },
     );
   }

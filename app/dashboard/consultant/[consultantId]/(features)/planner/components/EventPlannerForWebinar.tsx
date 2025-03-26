@@ -94,7 +94,7 @@ export function EventPlannerForWebinar({
       try {
         setInternalIsSaving(true);
         console.log(
-          "Webinar form submission data:",
+          "EventPlannerForWebinar - Form submission data:",
           JSON.stringify(formData, null, 2),
         );
 
@@ -127,24 +127,32 @@ export function EventPlannerForWebinar({
             ? (formData.topics as string[])
             : [];
 
-        // If we have new topic names, create them and get their IDs
+        console.log("Processing topics:", {
+          originalTopics: formData.topics,
+          extractedTopicNames: topicNames
+        });
+
+        // Get topic IDs - either create new ones or use existing ones
         let finalTopicIds = formData.topics as string[];
         try {
           if (topicNames.length > 0) {
+            console.log("Creating topics in batch:", topicNames);
             const newIds = await PlannerService.createTopics(topicNames);
             if (newIds.length === 0) {
-              throw new Error("Failed to create topics");
+              console.warn("No topics were created - using original IDs");
+            } else {
+              finalTopicIds = newIds;
+              console.log("Topics created with IDs:", newIds);
             }
-            finalTopicIds = newIds;
           }
         } catch (error) {
           console.error("Error creating topics:", error);
           toast({
-            title: "Error",
-            description: "Failed to create topics. Please try again.",
+            title: "Warning",
+            description: "Some topics could not be created. Proceeding with available topics.",
             variant: "destructive",
           });
-          return;
+          // Continue with whatever topic IDs we have
         }
 
         const now = new Date();
@@ -178,16 +186,29 @@ export function EventPlannerForWebinar({
           },
         };
 
-        onSave(webinarData);
-
-        toast({
-          title: "Success",
-          description: `${initialData ? "Updated" : "Created"} webinar "${formData.title}" successfully`,
-        });
-
-        onClose();
+        console.log("Calling onSave with webinar data:", JSON.stringify(webinarData, null, 2));
+        
+        try {
+          // Call onSave and wait for it to complete
+          onSave(webinarData);
+          
+          // If we get here, the save was successful
+          toast({
+            title: "Success",
+            description: `${initialData ? "Updated" : "Created"} webinar "${formData.title}" successfully`,
+          });
+          onClose();
+        } catch (error) {
+          console.error("Error saving webinar:", error);
+          toast({
+            title: "Error",
+            description: error instanceof Error ? error.message : "Failed to save webinar. Please try again.",
+            variant: "destructive",
+          });
+          throw error; // Re-throw to prevent form from closing
+        }
       } catch (error) {
-        console.error("Error saving webinar:", error);
+        console.error("Error in handleFormSubmit:", error);
         toast({
           title: "Error",
           description:

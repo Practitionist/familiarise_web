@@ -179,7 +179,7 @@ export class PlannerService {
   static async createTopics(topicNames: string[]): Promise<string[]> {
     try {
       if (!Array.isArray(topicNames) || topicNames.length === 0) {
-        throw new Error("No valid topics provided");
+        return [];
       }
 
       // Process each topic name before creating
@@ -201,54 +201,40 @@ export class PlannerService {
         .filter((topic): topic is string => 
           topic !== null && 
           topic.length >= 2 &&
-          // Filter out duplicates
+          // Filter out duplicates (case-insensitive)
           !topicNames.find(
-            (t) => t !== topic && t.toLowerCase() === topic.toLowerCase()
+            (t, i) => topicNames.indexOf(topic) !== i && t.toLowerCase() === topic.toLowerCase()
           )
         );
 
       if (processedTopics.length === 0) {
-        throw new Error("No valid topics after processing");
+        console.log("No valid topics after processing");
+        return [];
       }
 
-      // Create an array of promises for creating each topic
-      const promises = processedTopics.map(async (name) => {
-        try {
-          // Create a new topic
-          const topicResponse = await fetch("/api/user/content/topics", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ name }),
-          });
+      console.log("Creating topics in batch:", processedTopics);
 
-          if (!topicResponse.ok) {
-            const errorData = await topicResponse.json();
-            throw new Error(
-              errorData.error || `Failed to create topic "${name}"`,
-            );
-          }
-
-          const topicData = await topicResponse.json();
-          if (!topicData.data?.id) {
-            throw new Error(`Invalid response for topic "${name}"`);
-          }
-          return topicData.data.id;
-        } catch (error) {
-          console.error(`Error creating topic "${name}":`, error);
-          throw error;
-        }
+      // Create all topics in a single request
+      const response = await fetch("/api/user/content/topics", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ names: processedTopics }),
       });
 
-      // Wait for all topics to be created
-      const ids = await Promise.all(promises);
-
-      if (ids.length === 0) {
-        throw new Error("No topics were created");
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to create topics");
       }
 
-      return ids;
+      const { data: topics } = await response.json();
+      if (!Array.isArray(topics) || topics.length === 0) {
+        throw new Error("Invalid response - no topics returned");
+      }
+
+      console.log("Topics created/retrieved:", topics);
+      return topics.map(topic => topic.id);
     } catch (error) {
       console.error("Error creating topics:", error);
       throw error;

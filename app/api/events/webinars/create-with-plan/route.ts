@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    console.log('Received webinar creation request body:', JSON.stringify(body, null, 2));
+
     const {
       // Webinar Plan data
       title,
@@ -23,6 +25,17 @@ export async function POST(request: NextRequest) {
       status = "SCHEDULED",
     } = body;
 
+    // Log extracted fields
+    console.log('Extracted fields:', {
+      title,
+      durationInHours,
+      price,
+      maxParticipants,
+      consultantProfileId,
+      scheduledAt,
+      topicIds
+    });
+
     // Input validation
     if (
       !title ||
@@ -32,6 +45,14 @@ export async function POST(request: NextRequest) {
       !consultantProfileId ||
       !scheduledAt
     ) {
+      console.log('Validation failed. Missing required fields:', {
+        hasTitle: !!title,
+        hasDuration: !!durationInHours,
+        hasPrice: !!price,
+        hasMaxParticipants: !!maxParticipants,
+        hasConsultantId: !!consultantProfileId,
+        hasScheduledAt: !!scheduledAt
+      });
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },
@@ -42,10 +63,26 @@ export async function POST(request: NextRequest) {
     const startTime = new Date(scheduledAt);
     const endTime = new Date(startTime);
     endTime.setHours(endTime.getHours() + durationInHours);
+    
+    console.log('Calculated times:', {
+      startTime: startTime.toISOString(),
+      endTime: endTime.toISOString(),
+      durationInHours
+    });
 
     // Create webinar plan, instance, and appointment in a transaction
     const result = await prisma.$transaction(async (tx) => {
       // 1. Create the webinar plan
+      console.log('Creating webinar plan with data:', {
+        title,
+        description,
+        durationInHours,
+        price,
+        maxParticipants,
+        consultantProfileId,
+        topicIds
+      });
+
       const webinarPlan = await tx.webinarPlan.create({
         data: {
           title,
@@ -69,7 +106,15 @@ export async function POST(request: NextRequest) {
         },
       });
 
+      console.log('Created webinar plan:', {
+        id: webinarPlan.id,
+        title: webinarPlan.title,
+        topicsCount: webinarPlan.topics.length
+      });
+
       // 2. Create the webinar instance
+      console.log('Creating webinar instance with plan ID:', webinarPlan.id);
+
       const webinar = await tx.webinar.create({
         data: {
           status,
@@ -109,9 +154,17 @@ export async function POST(request: NextRequest) {
         },
       });
 
+      console.log('Created webinar instance:', {
+        id: webinar.id,
+        planId: webinar.webinarPlan.id,
+        appointmentId: webinar.appointment?.id,
+        hasSlots: webinar.appointment?.slotsOfAppointment?.length ?? 0 > 0
+      });
+
       return { webinarPlan, webinar };
     });
 
+    console.log('Transaction completed successfully. Returning webinar data.');
     return NextResponse.json({ data: result.webinar }, { status: 201 });
   } catch (error) {
     console.error("Error creating webinar with plan:", error);

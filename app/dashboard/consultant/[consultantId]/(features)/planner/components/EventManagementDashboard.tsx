@@ -51,13 +51,19 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   const handleWebinarSaved = async (data: Partial<WebinarEvent>) => {
     try {
       setIsSaving(true);
-      // Fetch updated webinars list
+      console.log('EventManagementDashboard - Saving webinar:', data);
+      
+      // First save the webinar
+      await PlannerService.saveWebinar(data, consultantId);
+      
+      // Then fetch updated webinars list
       const updatedWebinars = await PlannerService.fetchWebinars(consultantId);
       setWebinars(updatedWebinars);
       setIsWebinarDialogOpen(false);
       setEditingEvent(null);
     } catch (error) {
-      console.error("Error refreshing webinars:", error);
+      console.error("Error saving/refreshing webinar:", error);
+      throw error; // Propagate error to form handler
     } finally {
       setIsSaving(false);
     }
@@ -67,13 +73,19 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   const handleClassSaved = async (data: Partial<ClassEvent>) => {
     try {
       setIsSaving(true);
-      // Fetch updated classes list
+      console.log('EventManagementDashboard - Saving class:', data);
+      
+      // First save the class
+      await PlannerService.saveClass(data, consultantId);
+      
+      // Then fetch updated classes list
       const updatedClasses = await PlannerService.fetchClasses(consultantId);
       setClasses(updatedClasses);
       setIsClassDialogOpen(false);
       setEditingEvent(null);
     } catch (error) {
-      console.error("Error refreshing classes:", error);
+      console.error("Error saving/refreshing class:", error);
+      throw error; // Propagate error to form handler
     } finally {
       setIsSaving(false);
     }
