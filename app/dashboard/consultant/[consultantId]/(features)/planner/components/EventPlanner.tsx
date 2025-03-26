@@ -6,8 +6,8 @@ import {
   ClassEvent,
   Event,
 } from "../types/event";
-import { EventWebinarPlanner } from "./EventWebinarPlanner";
-import { EventClassPlanner } from "./EventClassPlanner";
+import { EventPlannerForWebinar } from "./EventPlannerForWebinar";
+import { EventPlannerForClass } from "./EventPlannerForClass";
 
 type WebinarCallback = (data: Partial<WebinarEvent>) => void;
 type ClassCallback = (data: Partial<ClassEvent>) => void;
@@ -49,7 +49,7 @@ export function EventPlanner({
       : undefined;
 
     return (
-      <EventWebinarPlanner
+      <EventPlannerForWebinar
         isOpen={isOpen}
         onClose={onClose}
         onSave={webinarSaveCallback}
@@ -72,7 +72,7 @@ export function EventPlanner({
       : undefined;
 
     return (
-      <EventClassPlanner
+      <EventPlannerForClass
         isOpen={isOpen}
         onClose={onClose}
         onSave={classSaveCallback}

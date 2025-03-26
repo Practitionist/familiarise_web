@@ -28,7 +28,7 @@ import { PlannerService } from "../services/planner";
 import { WebinarPlannerProps } from "../types/planner";
 import { TopicsAndOutcomesForm } from "./TopicsAndOutcomesForm";
 
-export function EventWebinarPlanner({
+export function EventPlannerForWebinar({
   isOpen,
   onClose,
   onSave,

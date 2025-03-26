@@ -35,7 +35,7 @@ import { PlannerService } from "../services/planner";
 import { ClassPlannerProps } from "../types/planner";
 import { TopicsAndOutcomesForm } from "./TopicsAndOutcomesForm";
 
-export function EventClassPlanner({
+export function EventPlannerForClass({
   isOpen,
   onClose,
   onSave,
