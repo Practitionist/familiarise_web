@@ -55,37 +55,31 @@ export function EventPlannerForWebinar({
   }, [initialData]);
 
   // Define form with WebinarPlanSchema
-  const form = useForm({
+  const form = useForm<z.infer<typeof WebinarPlanSchema>>({
     resolver: zodResolver(WebinarPlanSchema),
-    defaultValues: initialData
-      ? {
-          title: initialData.webinarPlan.title,
-          description: initialData.webinarPlan.description ?? "",
-          price: initialData.webinarPlan.price,
-          durationInHours: initialData.webinarPlan.durationInHours,
-          maxParticipants: initialData.webinarPlan.maxParticipants,
-          language: initialData.webinarPlan.language ?? "English",
-          level: initialData.webinarPlan.level ?? "Beginner",
-          prerequisites: initialData.webinarPlan.prerequisites ?? "",
-          materialProvided: initialData.webinarPlan.materialProvided ?? "",
-          learningOutcomes: initialData.webinarPlan.learningOutcomes,
-          topics: initialData.webinarPlan.topics.map(topic => topic.name),
-          consultantProfileId: initialData.webinarPlan.consultantProfileId,
-        }
-      : {
-          title: "",
-          description: "",
-          price: 0,
-          durationInHours: 1,
-          maxParticipants: 100,
-          language: "English",
-          level: "Beginner",
-          prerequisites: "",
-          materialProvided: "",
-          learningOutcomes: [],
-          topics: [],
-        },
-    mode: "onChange",
+    defaultValues: {
+      title: initialData?.webinarPlan?.title || "",
+      description: initialData?.webinarPlan?.description || "",
+      price: initialData?.webinarPlan?.price || 0,
+      durationInHours: initialData?.webinarPlan?.durationInHours || 1,
+      maxParticipants: initialData?.webinarPlan?.maxParticipants || 100,
+      language: initialData?.webinarPlan?.language || "English",
+      level: initialData?.webinarPlan?.level || "Beginner",
+      prerequisites: initialData?.webinarPlan?.prerequisites || "",
+      materialProvided: initialData?.webinarPlan?.materialProvided || "",
+      learningOutcomes: initialData?.webinarPlan?.learningOutcomes || [],
+      topics: initialData?.webinarPlan?.topics?.map((topic) => topic.name) || [],
+      scheduledAt: initialData?.webinarPlan?.scheduledAt || (() => {
+        const now = new Date();
+        // Set to 1 hour from now
+        now.setHours(now.getHours() + 1);
+        // Round up to next 30 minutes
+        now.setMinutes(now.getMinutes() + (30 - (now.getMinutes() % 30)));
+        now.setSeconds(0);
+        now.setMilliseconds(0);
+        return now.toISOString().slice(0, 16);
+      })(),
+    },
   });
 
   // Initialize planType in a type-safe way
@@ -160,7 +154,7 @@ export function EventPlannerForWebinar({
           webinarPlan: {
             id: initialData?.webinarPlan?.id ?? "",
             title: formData.title,
-            description: formData.description,
+            description: formData.description || "",
             price: formData.price,
             durationInHours: formData.durationInHours,
             maxParticipants: formData.maxParticipants,
@@ -180,6 +174,7 @@ export function EventPlannerForWebinar({
             consultantProfile: null,
             createdAt: initialData?.webinarPlan?.createdAt ?? now,
             updatedAt: now,
+            scheduledAt: formData.scheduledAt,
           },
         };
 
@@ -291,10 +286,20 @@ export function EventPlannerForWebinar({
                     <FormControl>
                       <Input
                         type="number"
+                        step="0.5"
+                        min="0.5"
                         {...field}
-                        onChange={(e) => field.onChange(Number(e.target.value))}
+                        onChange={(e) => {
+                          const value = parseFloat(e.target.value);
+                          // Round to nearest 30 minutes
+                          const roundedValue = Math.round(value * 2) / 2;
+                          field.onChange(roundedValue);
+                        }}
                       />
                     </FormControl>
+                    <p className="text-sm text-muted-foreground">
+                      Enter duration in 30-minute increments (e.g., 0.5, 1, 1.5, 2)
+                    </p>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -394,6 +399,33 @@ export function EventPlannerForWebinar({
                   <FormMessage />
                 </FormItem>
               )}
+            />
+
+            <FormField
+              control={form.control}
+              name="scheduledAt"
+              render={({ field }) => {
+                // Calculate minimum allowed time (1 hour from now)
+                const minDate = new Date();
+                minDate.setHours(minDate.getHours() + 1);
+                
+                return (
+                  <FormItem>
+                    <FormLabel>Start Time</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="datetime-local"
+                        {...field}
+                        min={minDate.toISOString().slice(0, 16)}
+                      />
+                    </FormControl>
+                    <p className="text-sm text-muted-foreground">
+                      Start time must be in 30-minute increments (e.g., 9:00, 9:30, 10:00) and at least 1 hour in the future
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }}
             />
 
             <DialogFooter className="mt-6 pt-4 border-t">

@@ -37,6 +37,7 @@ export interface WebinarEvent extends Event {
     consultantProfile: ConsultantProfile | null;
     createdAt: Date;
     updatedAt: Date;
+    scheduledAt: string;
   };
   appointment: TWebinar["appointment"];
   waitlist: TWebinar["waitlist"];

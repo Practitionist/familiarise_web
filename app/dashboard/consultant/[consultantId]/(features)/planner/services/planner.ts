@@ -92,8 +92,8 @@ export class PlannerService {
 
       const { data: webinarPlan } = await planResponse.json();
 
-      // Calculate scheduledAt and endAt based on duration
-      const scheduledAt = new Date();
+      // Get the scheduled time from webinarData or use current time as fallback
+      const scheduledAt = new Date(webinarData.webinarPlan?.scheduledAt || new Date());
       const endAt = new Date(scheduledAt);
       endAt.setHours(endAt.getHours() + (webinarPlan.durationInHours || 1));
 
@@ -489,6 +489,7 @@ export class PlannerService {
         consultantProfile: null,
         createdAt: createdAt,
         updatedAt: now,
+        scheduledAt: (data as any).scheduledAt,
       },
     };
 

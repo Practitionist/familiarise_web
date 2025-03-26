@@ -79,8 +79,30 @@ const BaseEventPlanSchema = z.object({
 
 // Webinar specific schema
 export const WebinarPlanSchema = BaseEventPlanSchema.extend({
-  planType: z.literal("webinar"),
-  durationInHours: z.number().min(0.25, "Duration must be at least 15 minutes"),
+  durationInHours: z.number()
+    .min(0.5, "Duration must be at least 30 minutes")
+    .refine(
+      (val) => val * 60 % 30 === 0,
+      "Duration must be in 30-minute increments"
+    ),
+  scheduledAt: z.string()
+    .min(1, "Start time is required")
+    .refine(
+      (val) => {
+        const date = new Date(val);
+        return date.getMinutes() % 30 === 0;
+      },
+      "Please select either :00 or :30 for the minutes (e.g., 9:00 or 9:30)"
+    )
+    .refine(
+      (val) => {
+        const selectedDate = new Date(val);
+        const minAllowedDate = new Date();
+        minAllowedDate.setHours(minAllowedDate.getHours() + 1); // At least 1 hour in future
+        return selectedDate > minAllowedDate;
+      },
+      "Start time must be at least 1 hour in the future"
+    ),
 });
 
 // Class specific schema
