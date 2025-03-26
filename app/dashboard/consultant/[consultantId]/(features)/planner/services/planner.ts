@@ -71,29 +71,61 @@ export class PlannerService {
     consultantId: string,
   ): Promise<WebinarEvent> {
     try {
-      const response = await fetch("/api/events/webinars", {
+      // First create the webinar plan
+      const planResponse = await fetch("/api/plans/webinars", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          ...webinarData,
+          ...webinarData.webinarPlan,
           consultantProfileId: consultantId,
         }),
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to save webinar");
+      if (!planResponse.ok) {
+        const errorData = await planResponse.json();
+        throw new Error(
+          errorData.error || "Failed to create webinar plan"
+        );
       }
 
-      const { data } = await response.json();
+      const { data: webinarPlan } = await planResponse.json();
+
+      // Calculate scheduledAt and endAt based on duration
+      const scheduledAt = new Date();
+      const endAt = new Date(scheduledAt);
+      endAt.setHours(endAt.getHours() + (webinarPlan.durationInHours || 1));
+
+      // Then create the webinar instance
+      const webinarResponse = await fetch("/api/events/webinars", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          webinarPlanId: webinarPlan.id,
+          status: "SCHEDULED",
+          scheduledAt: scheduledAt.toISOString(),
+          endAt: endAt.toISOString(),
+        }),
+      });
+
+      if (!webinarResponse.ok) {
+        const errorData = await webinarResponse.json();
+        throw new Error(
+          errorData.error || "Failed to create webinar"
+        );
+      }
+
+      const { data: webinar } = await webinarResponse.json();
       return {
-        id: data.id,
+        id: webinar.id,
         type: "webinar",
-        webinarPlan: data.webinarPlan,
-        appointment: data.appointment,
-        waitlist: data.waitlist,
-        meetingRoom: data.meetingRoom,
+        webinarPlan,
+        appointment: webinar.appointment,
+        waitlist: webinar.waitlist,
+        meetingRoom: webinar.meetingRoom,
       };
     } catch (error) {
       console.error("Error saving webinar:", error);
@@ -109,29 +141,54 @@ export class PlannerService {
     consultantId: string,
   ): Promise<ClassEvent> {
     try {
-      const response = await fetch("/api/events/classes", {
+      // First create the class plan
+      const planResponse = await fetch("/api/plans/classes", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          ...classData,
+          ...classData.classPlan,
           consultantProfileId: consultantId,
         }),
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to save class");
+      if (!planResponse.ok) {
+        const errorData = await planResponse.json();
+        throw new Error(
+          errorData.error || "Failed to create class plan"
+        );
       }
 
-      const { data } = await response.json();
+      const { data: classPlan } = await planResponse.json();
+
+      // Then create the class instance
+      const classResponse = await fetch("/api/events/classes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          classPlanId: classPlan.id,
+          status: "SCHEDULED",
+        }),
+      });
+
+      if (!classResponse.ok) {
+        const errorData = await classResponse.json();
+        throw new Error(
+          errorData.error || "Failed to create class"
+        );
+      }
+
+      const { data: classEvent } = await classResponse.json();
       return {
-        id: data.id,
+        id: classEvent.id,
         type: "class",
-        classPlan: data.classPlan,
-        appointments: data.appointments,
-        waitlist: data.waitlist,
-        meetingRoom: data.meetingRoom,
+        classPlan,
+        appointments: classEvent.appointments,
+        waitlist: classEvent.waitlist,
+        meetingRoom: classEvent.meetingRoom,
       };
     } catch (error) {
       console.error("Error saving class:", error);
@@ -171,48 +228,80 @@ export class PlannerService {
    */
   static async createTopics(topicNames: string[]): Promise<string[]> {
     try {
+      if (!Array.isArray(topicNames) || topicNames.length === 0) {
+        throw new Error("No valid topics provided");
+      }
+
+      // Process each topic name before creating
+      const processedTopics = topicNames
+        .map((topic) => {
+          // Remove extra whitespace and trim
+          let processed = topic.trim().replace(/\s+/g, " ");
+          if (processed.length < 2) return null;
+
+          // Convert to sentence case (first letter uppercase, rest lowercase)
+          processed = processed.toLowerCase();
+          processed = processed.charAt(0).toUpperCase() + processed.slice(1);
+
+          // Remove any special characters except spaces and alphanumeric
+          processed = processed.replace(/[^a-zA-Z0-9\s]/g, "");
+
+          return processed;
+        })
+        .filter((topic): topic is string => 
+          topic !== null && 
+          topic.length >= 2 &&
+          // Filter out duplicates
+          !topicNames.find(
+            (t) => t !== topic && t.toLowerCase() === topic.toLowerCase()
+          )
+        );
+
+      if (processedTopics.length === 0) {
+        throw new Error("No valid topics after processing");
+      }
+
       // Create an array of promises for creating each topic
-      const promises = topicNames.map(async (name) => {
-        // Create a new topic
-        const topicResponse = await fetch("/api/user/content/topics", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ name }),
-        });
+      const promises = processedTopics.map(async (name) => {
+        try {
+          // Create a new topic
+          const topicResponse = await fetch("/api/user/content/topics", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ name }),
+          });
 
-        if (!topicResponse.ok) {
-          const errorData = await topicResponse.json();
-          throw new Error(
-            errorData.error || `Failed to create topic "${name}"`,
-          );
+          if (!topicResponse.ok) {
+            const errorData = await topicResponse.json();
+            throw new Error(
+              errorData.error || `Failed to create topic "${name}"`,
+            );
+          }
+
+          const topicData = await topicResponse.json();
+          if (!topicData.data?.id) {
+            throw new Error(`Invalid response for topic "${name}"`);
+          }
+          return topicData.data.id;
+        } catch (error) {
+          console.error(`Error creating topic "${name}":`, error);
+          throw error;
         }
-
-        const topicData = await topicResponse.json();
-        return topicData.data.id;
       });
 
       // Wait for all topics to be created
       const ids = await Promise.all(promises);
 
-      if (ids.length > 0) {
-        toast({
-          title: "Topics created",
-          description: `Successfully created ${ids.length} topics`,
-        });
+      if (ids.length === 0) {
+        throw new Error("No topics were created");
       }
 
       return ids;
     } catch (error) {
       console.error("Error creating topics:", error);
-      toast({
-        title: "Error creating topics",
-        description:
-          error instanceof Error ? error.message : "Unknown error occurred",
-        variant: "destructive",
-      });
-      return [];
+      throw error;
     }
   }
 

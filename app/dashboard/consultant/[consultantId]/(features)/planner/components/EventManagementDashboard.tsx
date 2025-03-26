@@ -48,43 +48,35 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   }, [consultantId]);
 
   // Handle webinar saved event
-  const handleWebinarSaved = (newWebinar: Partial<WebinarEvent>) => {
-    if (!newWebinar.id) return; // Guard against missing ID
-
-    if (editingEvent && editingEvent.type === "webinar") {
-      // Update existing webinar
-      setWebinars(
-        webinars.map((w) =>
-          w.id === newWebinar.id
-            ? ({ ...w, ...newWebinar } as WebinarEvent)
-            : w,
-        ),
-      );
-    } else {
-      // Add new webinar
-      setWebinars([...webinars, newWebinar as WebinarEvent]);
+  const handleWebinarSaved = async (data: Partial<WebinarEvent>) => {
+    try {
+      setIsSaving(true);
+      // Fetch updated webinars list
+      const updatedWebinars = await PlannerService.fetchWebinars(consultantId);
+      setWebinars(updatedWebinars);
+      setIsWebinarDialogOpen(false);
+      setEditingEvent(null);
+    } catch (error) {
+      console.error("Error refreshing webinars:", error);
+    } finally {
+      setIsSaving(false);
     }
-    setIsWebinarDialogOpen(false);
-    setEditingEvent(null);
   };
 
   // Handle class saved event
-  const handleClassSaved = (newClass: Partial<ClassEvent>) => {
-    if (!newClass.id) return; // Guard against missing ID
-
-    if (editingEvent && editingEvent.type === "class") {
-      // Update existing class
-      setClasses(
-        classes.map((c) =>
-          c.id === newClass.id ? ({ ...c, ...newClass } as ClassEvent) : c,
-        ),
-      );
-    } else {
-      // Add new class
-      setClasses([...classes, newClass as ClassEvent]);
+  const handleClassSaved = async (data: Partial<ClassEvent>) => {
+    try {
+      setIsSaving(true);
+      // Fetch updated classes list
+      const updatedClasses = await PlannerService.fetchClasses(consultantId);
+      setClasses(updatedClasses);
+      setIsClassDialogOpen(false);
+      setEditingEvent(null);
+    } catch (error) {
+      console.error("Error refreshing classes:", error);
+    } finally {
+      setIsSaving(false);
     }
-    setIsClassDialogOpen(false);
-    setEditingEvent(null);
   };
 
   const handleEditWebinar = (webinar: WebinarEvent) => {

@@ -19,14 +19,15 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
 import { WebinarPlanSchema } from "@/schemas/PlanSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
 import { useEffect, useState } from "react";
-import { useToast } from "@/hooks/use-toast";
+import { useForm } from "react-hook-form";
 import { PlannerService } from "../services/planner";
 import { WebinarPlannerProps } from "../types/planner";
 import { TopicsAndOutcomesForm } from "./TopicsAndOutcomesForm";
+import { z } from "zod";
 
 export function EventPlannerForWebinar({
   isOpen,
@@ -37,10 +38,21 @@ export function EventPlannerForWebinar({
   consultantId,
 }: Readonly<WebinarPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
+  const [topicNames, setTopicNames] = useState<string[]>([]);
   const { toast } = useToast();
 
   // Use either external or internal saving state
   const isSaving = externalIsSaving ?? internalIsSaving;
+
+  // Load topic names when component mounts or initialData changes
+  useEffect(() => {
+    const loadTopicNames = async () => {
+      if (initialData?.webinarPlan.topics) {
+        setTopicNames(initialData.webinarPlan.topics.map(topic => topic.name));
+      }
+    };
+    loadTopicNames();
+  }, [initialData]);
 
   // Define form with WebinarPlanSchema
   const form = useForm({
@@ -48,16 +60,16 @@ export function EventPlannerForWebinar({
     defaultValues: initialData
       ? {
           title: initialData.webinarPlan.title,
-          description: initialData.webinarPlan.description || "",
+          description: initialData.webinarPlan.description ?? "",
           price: initialData.webinarPlan.price,
           durationInHours: initialData.webinarPlan.durationInHours,
           maxParticipants: initialData.webinarPlan.maxParticipants,
-          language: initialData.webinarPlan.language || "English",
-          level: initialData.webinarPlan.level || "Beginner",
+          language: initialData.webinarPlan.language ?? "English",
+          level: initialData.webinarPlan.level ?? "Beginner",
           prerequisites: initialData.webinarPlan.prerequisites ?? "",
           materialProvided: initialData.webinarPlan.materialProvided ?? "",
           learningOutcomes: initialData.webinarPlan.learningOutcomes,
-          topics: initialData.webinarPlan.topics.map((topic) => topic.id),
+          topics: initialData.webinarPlan.topics.map(topic => topic.name),
           consultantProfileId: initialData.webinarPlan.consultantProfileId,
         }
       : {
@@ -92,27 +104,53 @@ export function EventPlannerForWebinar({
           JSON.stringify(formData, null, 2),
         );
 
+        // Validate form data using Zod
+        const validation = WebinarPlanSchema.safeParse(formData);
+        
+        if (!validation.success) {
+          const errors = validation.error.errors.reduce((acc, error) => {
+            const path = error.path.join('.');
+            acc[path] = error.message;
+            return acc;
+          }, {} as Record<string, string>);
+          
+          console.error("Validation errors:", errors);
+          toast({
+            title: "Validation Error",
+            description: "Please fix the form errors before submitting",
+            variant: "destructive",
+          });
+          return;
+        }
+
         // Process topics if they are entered as text
-        const uuidPattern =
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        const isFirstTopicString =
+        const topicNames =
           Array.isArray(formData.topics) &&
           formData.topics.length > 0 &&
           typeof formData.topics[0] === "string" &&
-          formData.topics[0]?.length > 0;
-        const isFirstTopicUuid =
-          isFirstTopicString && uuidPattern.test(formData.topics[0]);
-
-        const topicNames =
-          !isFirstTopicString || isFirstTopicUuid
-            ? []
-            : (formData.topics as string[]);
+          formData.topics[0]?.length > 0 &&
+          !RegExp(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).exec(formData.topics[0])
+            ? (formData.topics as string[])
+            : [];
 
         // If we have new topic names, create them and get their IDs
         let finalTopicIds = formData.topics as string[];
-        if (topicNames.length > 0) {
-          const newIds = await PlannerService.createTopics(topicNames);
-          finalTopicIds = newIds.length > 0 ? newIds : finalTopicIds;
+        try {
+          if (topicNames.length > 0) {
+            const newIds = await PlannerService.createTopics(topicNames);
+            if (newIds.length === 0) {
+              throw new Error("Failed to create topics");
+            }
+            finalTopicIds = newIds;
+          }
+        } catch (error) {
+          console.error("Error creating topics:", error);
+          toast({
+            title: "Error",
+            description: "Failed to create topics. Please try again.",
+            variant: "destructive",
+          });
+          return;
         }
 
         const now = new Date();
@@ -128,8 +166,8 @@ export function EventPlannerForWebinar({
             maxParticipants: formData.maxParticipants,
             language: formData.language,
             level: formData.level,
-            prerequisites: formData.prerequisites || null,
-            materialProvided: formData.materialProvided || null,
+            prerequisites: formData.prerequisites ?? null,
+            materialProvided: formData.materialProvided ?? null,
             learningOutcomes: formData.learningOutcomes,
             topics: finalTopicIds.map((id) => ({
               id,
@@ -140,7 +178,7 @@ export function EventPlannerForWebinar({
             topicIds: finalTopicIds,
             consultantProfileId: consultantId,
             consultantProfile: null,
-            createdAt: initialData?.webinarPlan?.createdAt || now,
+            createdAt: initialData?.webinarPlan?.createdAt ?? now,
             updatedAt: now,
           },
         };
@@ -316,7 +354,7 @@ export function EventPlannerForWebinar({
                 <FormItem>
                   <FormLabel>Prerequisites</FormLabel>
                   <FormControl>
-                    <Input {...field} value={field.value || ""} />
+                    <Input {...field} value={field.value ?? ""} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -330,7 +368,7 @@ export function EventPlannerForWebinar({
                 <FormItem>
                   <FormLabel>Material Provided</FormLabel>
                   <FormControl>
-                    <Input {...field} value={field.value || ""} />
+                    <Input {...field} value={field.value ?? ""} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -344,11 +382,12 @@ export function EventPlannerForWebinar({
                 <FormItem>
                   <FormControl>
                     <TopicsAndOutcomesForm
-                      selectedTopics={form.getValues("topics") || []}
-                      onTopicsChange={(topics) =>
-                        form.setValue("topics", topics)
-                      }
-                      learningOutcomes={field.value || []}
+                      selectedTopics={form.getValues("topics")}
+                      onTopicsChange={(topics) => {
+                        form.setValue("topics", topics);
+                        setTopicNames(topics);
+                      }}
+                      learningOutcomes={field.value ?? []}
                       onOutcomesChange={(outcomes) => field.onChange(outcomes)}
                     />
                   </FormControl>
@@ -356,33 +395,6 @@ export function EventPlannerForWebinar({
                 </FormItem>
               )}
             />
-
-            {/* <FormField
-              control={form.control}
-              name="topics"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Topics (one per line)</FormLabel>
-                  <FormControl>
-                    <Textarea
-                      {...field}
-                      value={(field.value || []).join("\n")}
-                      onChange={(e) => {
-                        const topics = e.target.value
-                          .split("\n")
-                          .map((topic) => topic.trim())
-                          .filter(Boolean);
-                        field.onChange(topics);
-                      }}
-                      rows={5}
-                      placeholder="Enter each topic on a new line"
-                      className="min-h-[100px]"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            /> */}
 
             <DialogFooter className="mt-6 pt-4 border-t">
               <Button
