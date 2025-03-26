@@ -71,8 +71,7 @@ export class PlannerService {
     consultantId: string,
   ): Promise<WebinarEvent> {
     try {
-      // First create the webinar plan
-      const planResponse = await fetch("/api/plans/webinars", {
+      const response = await fetch("/api/events/webinars/create-with-plan", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -80,49 +79,22 @@ export class PlannerService {
         body: JSON.stringify({
           ...webinarData.webinarPlan,
           consultantProfileId: consultantId,
+          scheduledAt: webinarData.webinarPlan?.scheduledAt,
         }),
       });
 
-      if (!planResponse.ok) {
-        const errorData = await planResponse.json();
-        throw new Error(
-          errorData.error || "Failed to create webinar plan"
-        );
-      }
-
-      const { data: webinarPlan } = await planResponse.json();
-
-      // Get the scheduled time from webinarData or use current time as fallback
-      const scheduledAt = new Date(webinarData.webinarPlan?.scheduledAt || new Date());
-      const endAt = new Date(scheduledAt);
-      endAt.setHours(endAt.getHours() + (webinarPlan.durationInHours || 1));
-
-      // Then create the webinar instance
-      const webinarResponse = await fetch("/api/events/webinars", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          webinarPlanId: webinarPlan.id,
-          status: "SCHEDULED",
-          scheduledAt: scheduledAt.toISOString(),
-          endAt: endAt.toISOString(),
-        }),
-      });
-
-      if (!webinarResponse.ok) {
-        const errorData = await webinarResponse.json();
+      if (!response.ok) {
+        const errorData = await response.json();
         throw new Error(
           errorData.error || "Failed to create webinar"
         );
       }
 
-      const { data: webinar } = await webinarResponse.json();
+      const { data: webinar } = await response.json();
       return {
         id: webinar.id,
         type: "webinar",
-        webinarPlan,
+        webinarPlan: webinar.webinarPlan,
         appointment: webinar.appointment,
         waitlist: webinar.waitlist,
         meetingRoom: webinar.meetingRoom,
@@ -141,8 +113,7 @@ export class PlannerService {
     consultantId: string,
   ): Promise<ClassEvent> {
     try {
-      // First create the class plan
-      const planResponse = await fetch("/api/plans/classes", {
+      const response = await fetch("/api/events/classes/create-with-plan", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -153,39 +124,18 @@ export class PlannerService {
         }),
       });
 
-      if (!planResponse.ok) {
-        const errorData = await planResponse.json();
-        throw new Error(
-          errorData.error || "Failed to create class plan"
-        );
-      }
-
-      const { data: classPlan } = await planResponse.json();
-
-      // Then create the class instance
-      const classResponse = await fetch("/api/events/classes", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          classPlanId: classPlan.id,
-          status: "SCHEDULED",
-        }),
-      });
-
-      if (!classResponse.ok) {
-        const errorData = await classResponse.json();
+      if (!response.ok) {
+        const errorData = await response.json();
         throw new Error(
           errorData.error || "Failed to create class"
         );
       }
 
-      const { data: classEvent } = await classResponse.json();
+      const { data: classEvent } = await response.json();
       return {
         id: classEvent.id,
         type: "class",
-        classPlan,
+        classPlan: classEvent.classPlan,
         appointments: classEvent.appointments,
         waitlist: classEvent.waitlist,
         meetingRoom: classEvent.meetingRoom,
