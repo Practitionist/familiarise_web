@@ -105,3 +105,54 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+// Add DELETE endpoint for rolling back newly created topics
+export async function DELETE(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { ids } = body;
+    
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return NextResponse.json(
+        { error: "Topic IDs array is required" },
+        { status: 400 },
+      );
+    }
+
+    console.log("Request to delete topics with IDs:", ids);
+
+    // Find topics to be deleted so we can log what was removed
+    const topicsToDelete = await prisma.topic.findMany({
+      where: {
+        id: {
+          in: ids,
+        },
+      },
+    });
+
+    // Only delete newly created topics
+    const deleteResult = await prisma.topic.deleteMany({
+      where: {
+        id: {
+          in: ids,
+        },
+        // Optional: Add a timestamp check to ensure we only delete recently created topics
+        // This adds an extra safety measure
+        createdAt: {
+          gte: new Date(Date.now() - 1000 * 60 * 60), // Topics created in the last hour
+        },
+      },
+    });
+
+    return NextResponse.json({
+      deleted: deleteResult.count,
+      topicsDeleted: topicsToDelete.map(t => t.name),
+    }, { status: 200 });
+  } catch (error) {
+    console.error("Error deleting topics:", error);
+    return NextResponse.json(
+      { error: "An error occurred while deleting topics" },
+      { status: 500 },
+    );
+  }
+}

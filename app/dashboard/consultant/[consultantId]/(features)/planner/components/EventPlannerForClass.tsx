@@ -190,6 +190,36 @@ export function EventPlannerForClass({
         );
         console.log("Form validation errors:", form.formState.errors);
 
+        // Check for duplicate title
+        const title = formData.title;
+        const planId = initialData?.classPlan?.id || '';
+        
+        try {
+          const isDuplicate = await PlannerService.checkDuplicateTitle(
+            title,
+            consultantId,
+            'class',
+            planId
+          );
+          
+          if (isDuplicate) {
+            toast({
+              title: "Duplicate Title",
+              description: `A class with title "${title}" already exists. Please use a different title.`,
+              variant: "destructive",
+            });
+            // Set field error directly in the form
+            form.setError("title", {
+              type: "manual",
+              message: "This title is already in use. Please choose a different title."
+            });
+            return;
+          }
+        } catch (error) {
+          console.error("Error checking for duplicate title:", error);
+          // Continue with validation - the service layer will also check for duplicates
+        }
+
         // Check if classContents exists and validate using Zod
         if (!Array.isArray(formData.classContents) || formData.classContents.length === 0) {
           toast({

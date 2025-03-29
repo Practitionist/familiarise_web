@@ -227,6 +227,37 @@ export function EventPlannerForWebinar({
         setInternalIsSaving(true);
         console.log("EventPlannerForWebinar - Form data:", JSON.stringify(formData, null, 2));
 
+        // Check for duplicate title
+        const title = formData.title;
+        const planId = initialData?.webinarPlan?.id || '';
+        
+        try {
+          const isDuplicate = await PlannerService.checkDuplicateTitle(
+            title,
+            consultantId,
+            'webinar',
+            planId
+          );
+          
+          if (isDuplicate) {
+            toast({
+              title: "Duplicate Title",
+              description: `A webinar with title "${title}" already exists. Please use a different title.`,
+              variant: "destructive",
+            });
+            // Set field error directly in the form
+            form.setError("title", {
+              type: "manual",
+              message: "This title is already in use. Please choose a different title."
+            });
+            setInternalIsSaving(false);
+            return;
+          }
+        } catch (error) {
+          console.error("Error checking for duplicate title:", error);
+          // Continue with validation - the service layer will also check for duplicates
+        }
+
         // Validate form data using Zod
         const validation = WebinarPlanSchema.safeParse(formData);
         

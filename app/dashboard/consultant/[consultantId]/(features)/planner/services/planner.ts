@@ -12,6 +12,69 @@ export class PlannerService {
   private static newlyCreatedEventType: 'webinar' | 'class' | null = null;
 
   /**
+   * Check if a title already exists for a consultant
+   */
+  static async checkDuplicateTitle(
+    title: string,
+    consultantId: string,
+    eventType: 'webinar' | 'class' | 'consultation' | 'subscription' | 'both' = 'both',
+    excludeId: string = ''
+  ): Promise<boolean> {
+    try {
+      // For 'both' option, check webinars first, then classes
+      if (eventType === 'both') {
+        const isWebinarDuplicate = await this.checkDuplicateTitle(title, consultantId, 'webinar', excludeId);
+        if (isWebinarDuplicate) return true;
+        
+        const isClassDuplicate = await this.checkDuplicateTitle(title, consultantId, 'class', excludeId);
+        return isClassDuplicate;
+      }
+      
+      // Determine the appropriate endpoint based on event type
+      let endpoint: string;
+      
+      switch (eventType) {
+        case 'webinar':
+          endpoint = '/api/events/webinars/check-duplicate-title';
+          break;
+        case 'class':
+          endpoint = '/api/events/classes/check-duplicate-title';
+          break;
+        case 'consultation':
+          endpoint = '/api/events/consultations/check-duplicate-title';
+          break;
+        case 'subscription':
+          endpoint = '/api/events/subscriptions/check-duplicate-title';
+          break;
+        default:
+          throw new Error(`Unsupported event type: ${eventType}`);
+      }
+
+      const params = new URLSearchParams({
+        title,
+        consultantProfileId: consultantId,
+      });
+
+      if (excludeId) {
+        params.append('excludeId', excludeId);
+      }
+
+      const response = await fetch(`${endpoint}?${params}`);
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Failed to check for duplicate ${eventType} titles`);
+      }
+
+      const { isDuplicate } = await response.json();
+      return isDuplicate;
+    } catch (error) {
+      console.error(`Error checking for duplicate ${eventType} title:`, error);
+      return false; // In case of error, allow the save to proceed
+    }
+  }
+
+  /**
    * Fetch webinars for a consultant
    */
   static async fetchWebinars(consultantId: string): Promise<WebinarEvent[]> {
@@ -81,6 +144,23 @@ export class PlannerService {
       this.newlyCreatedTopicIds = [];
       this.newlyCreatedEventId = null;
       this.newlyCreatedEventType = null;
+      
+      // First check for duplicate title
+      const title = webinarData.webinarPlan?.title;
+      const planId = webinarData.webinarPlan?.id || '';
+      
+      if (title) {
+        const isDuplicate = await this.checkDuplicateTitle(
+          title, 
+          consultantId, 
+          'webinar',
+          planId
+        );
+        
+        if (isDuplicate) {
+          throw new Error(`A webinar with title "${title}" already exists. Please use a different title.`);
+        }
+      }
       
       // Extract topic names from webinarData
       let topicNames: string[] = [];
@@ -216,6 +296,23 @@ export class PlannerService {
       this.newlyCreatedTopicIds = [];
       this.newlyCreatedEventId = null;
       this.newlyCreatedEventType = null;
+      
+      // First check for duplicate title
+      const title = classData.classPlan?.title;
+      const planId = classData.classPlan?.id || '';
+      
+      if (title) {
+        const isDuplicate = await this.checkDuplicateTitle(
+          title, 
+          consultantId, 
+          'class',
+          planId
+        );
+        
+        if (isDuplicate) {
+          throw new Error(`A class with title "${title}" already exists. Please use a different title.`);
+        }
+      }
       
       // Extract topic names from classData
       let topicNames: string[] = [];

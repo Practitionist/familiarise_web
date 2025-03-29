@@ -146,6 +146,26 @@ const BaseEventPlanSchema = z.object({
   consultantProfile: z.any().optional().nullable(),
 });
 
+// Create a factory function for unique title validator
+export const createUniqueTitleValidator = (
+  checkFunction: (title: string) => Promise<boolean>,
+  eventType: string
+) => {
+  return z.object({
+    title: z.string().refine(
+      async (title) => {
+        // Only run this check when submitted (during client validation this will return true)
+        // Actual DB check will happen in the service layer
+        const isDuplicate = await checkFunction(title);
+        return !isDuplicate;
+      },
+      {
+        message: `A ${eventType} with this title already exists`,
+      }
+    ),
+  }).partial();
+};
+
 // Webinar specific schema
 export const WebinarPlanSchema = BaseEventPlanSchema.extend({
   durationInHours: z.number()
