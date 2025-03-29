@@ -327,6 +327,7 @@ export function EventPlannerForWebinar({
 
         const webinarData: Partial<WebinarEvent> = {
           type: "webinar" as const,
+          id: initialData?.id, // Include the webinar instance ID if we're editing
           webinarPlan: {
             id: initialData?.webinarPlan?.id ?? "",
             title: formData.title,

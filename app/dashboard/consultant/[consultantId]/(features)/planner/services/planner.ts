@@ -166,6 +166,10 @@ export class PlannerService {
       // First check for duplicate title
       const title = webinarData.webinarPlan?.title;
       const planId = webinarData.webinarPlan?.id || "";
+      const isUpdate = !!planId;
+      const webinarId = webinarData.id || ""; // Get the webinar instance ID
+
+      console.log(`${isUpdate ? "Updating" : "Creating"} webinar${isUpdate ? ` with plan ID ${planId}` : ""}${webinarId ? ` and instance ID ${webinarId}` : ""}...`);
 
       if (title) {
         const isDuplicate = await this.checkDuplicateTitle(
@@ -209,33 +213,46 @@ export class PlannerService {
               (error instanceof Error ? error.message : String(error)),
           );
         }
+      } else if (isUpdate) {
+        // If no new topics are provided but we're updating, log this to avoid wiping out existing topics
+        console.log("No new topics provided for update. Existing topics will be preserved.");
       }
 
       try {
-        // Now create the webinar with all topic IDs
-        const response = await fetch("/api/events/webinars/create-with-plan", {
-          method: "POST",
+        // Determine the endpoint and HTTP method based on whether this is an update or create
+        const endpoint = "/api/events/webinars/create-with-plan";
+        const method = isUpdate ? "PATCH" : "POST";
+
+        console.log(`Using ${method} request to ${endpoint} for ${isUpdate ? "update" : "create"}`);
+
+        // Now create or update the webinar with all topic IDs
+        const response = await fetch(endpoint, {
+          method,
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
             ...webinarData.webinarPlan,
+            id: planId, // Include the plan ID for PATCH requests
+            webinarId: webinarId, // Include the webinar instance ID for PATCH requests
             consultantProfileId: consultantId,
             scheduledAt: webinarData.webinarPlan?.scheduledAt,
-            topicIds: allTopicIds,
+            topicIds: allTopicIds.length > 0 ? allTopicIds : undefined,
           }),
         });
 
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to create webinar");
+          throw new Error(errorData.error || `Failed to ${isUpdate ? "update" : "create"} webinar`);
         }
 
         const { data: webinar } = await response.json();
 
-        // Track the newly created webinar
-        this.newlyCreatedEventId = webinar.id;
-        this.newlyCreatedEventType = "webinar";
+        // Track the newly created webinar (for create operations only)
+        if (!isUpdate) {
+          this.newlyCreatedEventId = webinar.id;
+          this.newlyCreatedEventType = "webinar";
+        }
 
         // Additional processing for webinar if needed
         try {
@@ -324,6 +341,10 @@ export class PlannerService {
       // First check for duplicate title
       const title = classData.classPlan?.title;
       const planId = classData.classPlan?.id || "";
+      const isUpdate = !!planId;
+      const classId = classData.id || ""; // Get the class instance ID
+
+      console.log(`${isUpdate ? "Updating" : "Creating"} class${isUpdate ? ` with plan ID ${planId}` : ""}${classId ? ` and instance ID ${classId}` : ""}...`);
 
       if (title) {
         const isDuplicate = await this.checkDuplicateTitle(
@@ -355,9 +376,11 @@ export class PlannerService {
 
       if (topicNames.length > 0) {
         try {
+          console.log("Creating topics first:", topicNames);
           const newTopicIds = await this.createTopics(topicNames);
           this.newlyCreatedTopicIds = newTopicIds;
           allTopicIds = [...newTopicIds];
+          console.log("Topics created with IDs:", newTopicIds);
         } catch (error) {
           console.error("Error creating topics:", error);
           throw new Error(
@@ -365,31 +388,44 @@ export class PlannerService {
               (error instanceof Error ? error.message : String(error)),
           );
         }
+      } else if (isUpdate) {
+        // If no new topics are provided but we're updating, log this to avoid wiping out existing topics
+        console.log("No new topics provided for update. Existing topics will be preserved.");
       }
 
       try {
-        const response = await fetch("/api/events/classes/create-with-plan", {
-          method: "POST",
+        // Determine the endpoint and HTTP method based on whether this is an update or create
+        const endpoint = "/api/events/classes/create-with-plan";
+        const method = isUpdate ? "PATCH" : "POST";
+
+        console.log(`Using ${method} request to ${endpoint} for ${isUpdate ? "update" : "create"}`);
+
+        const response = await fetch(endpoint, {
+          method,
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
             ...classData.classPlan,
+            id: planId, // Include the plan ID for PATCH requests
+            classId: classId, // Include the class instance ID for PATCH requests
             consultantProfileId: consultantId,
-            topicIds: allTopicIds,
+            topicIds: allTopicIds.length > 0 ? allTopicIds : undefined,
           }),
         });
 
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to create class");
+          throw new Error(errorData.error || `Failed to ${isUpdate ? "update" : "create"} class`);
         }
 
         const { data: classEvent } = await response.json();
 
-        // Track the newly created class
-        this.newlyCreatedEventId = classEvent.id;
-        this.newlyCreatedEventType = "class";
+        // Track the newly created class (for create operations only)
+        if (!isUpdate) {
+          this.newlyCreatedEventId = classEvent.id;
+          this.newlyCreatedEventType = "class";
+        }
 
         // Additional processing for class if needed
         try {
@@ -692,9 +728,13 @@ export class PlannerService {
     this.newlyCreatedEventType = null;
 
     const now = new Date();
-    const webinarId =
+    const webinarPlanId =
       initialData && this.isWebinarEvent(initialData)
         ? initialData.webinarPlan.id
+        : "";
+    const webinarInstanceId =
+      initialData && this.isWebinarEvent(initialData)
+        ? initialData.id
         : "";
     const createdAt =
       initialData && this.isWebinarEvent(initialData)
@@ -703,8 +743,9 @@ export class PlannerService {
 
     const webinarData = {
       type: "webinar" as const,
+      id: webinarInstanceId, // Include the webinar instance ID for updates
       webinarPlan: {
-        id: webinarId,
+        id: webinarPlanId,
         title: data.title,
         description: data.description,
         price: data.price,
@@ -759,9 +800,13 @@ export class PlannerService {
     const classData = data as any;
     const classContents = classData.classContents || [];
 
-    const classId =
+    const classPlanId =
       initialData && this.isClassEvent(initialData)
         ? initialData.classPlan.id
+        : "";
+    const classInstanceId =
+      initialData && this.isClassEvent(initialData)
+        ? initialData.id
         : "";
     const createdAt =
       initialData && this.isClassEvent(initialData)
@@ -770,8 +815,9 @@ export class PlannerService {
 
     const classEventData = {
       type: "class" as const,
+      id: classInstanceId, // Include the class instance ID for updates
       classPlan: {
-        id: classId,
+        id: classPlanId,
         title: data.title,
         description: data.description,
         price: data.price,
@@ -800,7 +846,7 @@ export class PlannerService {
         callsPerWeek: "callsPerWeek" in data ? data.callsPerWeek : 0,
         videoMeetings: "videoMeetings" in data ? data.videoMeetings : 0,
         emailSupport: "emailSupport" in data ? data.emailSupport : "GENERAL",
-        classContents: this.formatClassContents(classContents, classId, now),
+        classContents: this.formatClassContents(classContents, classPlanId, now),
         createdAt: createdAt,
         updatedAt: now,
       },

@@ -305,8 +305,9 @@ export function EventPlannerForClass({
           updatedAt: now,
         }));
 
-        const classEventData: Partial<ClassEvent> = {
+        const classData: Partial<ClassEvent> = {
           type: "class" as const,
+          id: initialData?.id,
           classPlan: {
             id: initialData?.classPlan?.id ?? "",
             title: formData.title,
@@ -345,12 +346,12 @@ export function EventPlannerForClass({
 
         console.log(
           "Calling onSave with class data:",
-          JSON.stringify(classEventData, null, 2),
+          JSON.stringify(classData, null, 2),
         );
 
         try {
           // Call onSave and wait for it to complete
-          onSave(classEventData);
+          onSave(classData);
 
           // If we get here, the save was successful
           toast({
@@ -616,7 +617,7 @@ export function EventPlannerForClass({
                   <div className="space-y-2 mt-2">
                     {field.value?.map((outcome, index) => (
                       <div
-                        key={index}
+                        key={`learning-outcome-${outcome}-${index}`}
                         className="flex items-center gap-2 p-2 border rounded-md"
                       >
                         <span className="flex-1">{outcome}</span>
