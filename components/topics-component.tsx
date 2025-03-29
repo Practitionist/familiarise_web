@@ -1,29 +1,34 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
 
-import { useState, useEffect, useRef } from "react"
-import { X, Plus, Loader2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { FormLabel, FormMessage, FormDescription } from "@/components/ui/form"
+import { useState, useEffect, useRef } from "react";
+import { X, Plus, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 
 interface TopicsComponentProps {
-  initialTopics?: string[]
-  onTopicsChange?: (topics: string[]) => void
-  availableTopics?: { id: string; name: string, createdAt?: Date, updatedAt?: Date }[]
-  isLoading?: boolean
-  label?: string
-  error?: string
-  helpText?: string
-  className?: string
-  showCard?: boolean
+  initialTopics?: string[];
+  onTopicsChange?: (topics: string[]) => void;
+  availableTopics?: {
+    id: string;
+    name: string;
+    createdAt?: Date;
+    updatedAt?: Date;
+  }[];
+  isLoading?: boolean;
+  label?: string;
+  error?: string;
+  helpText?: string;
+  className?: string;
+  showCard?: boolean;
 }
 
-export function TopicsComponent({ 
-  initialTopics = [], 
+export function TopicsComponent({
+  initialTopics = [],
   onTopicsChange,
   availableTopics = [],
   isLoading = false,
@@ -31,19 +36,21 @@ export function TopicsComponent({
   error,
   helpText = "Select from existing topics or create new ones",
   className = "",
-  showCard = false
+  showCard = false,
 }: Readonly<TopicsComponentProps>) {
-  const [topics, setTopics] = useState<string[]>(initialTopics)
-  const [inputValue, setInputValue] = useState("")
-  const [suggestions, setSuggestions] = useState<{ id: string; name: string }[]>([])
-  const [showSuggestions, setShowSuggestions] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const suggestionsRef = useRef<HTMLDivElement>(null)
-  
+  const [topics, setTopics] = useState<string[]>(initialTopics);
+  const [inputValue, setInputValue] = useState("");
+  const [suggestions, setSuggestions] = useState<
+    { id: string; name: string }[]
+  >([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+
   // Initialize with initial topics only once on mount or when initialTopics reference changes
   useEffect(() => {
-    setTopics(initialTopics)
-  }, [JSON.stringify(initialTopics)])
+    setTopics(initialTopics);
+  }, [JSON.stringify(initialTopics)]);
 
   // Handle outside clicks to close suggestions dropdown
   useEffect(() => {
@@ -53,97 +60,99 @@ export function TopicsComponent({
         !suggestionsRef.current.contains(event.target as Node) &&
         !inputRef.current?.contains(event.target as Node)
       ) {
-        setShowSuggestions(false)
+        setShowSuggestions(false);
       }
-    }
+    };
 
-    document.addEventListener("mousedown", handleClickOutside)
+    document.addEventListener("mousedown", handleClickOutside);
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside)
-    }
-  }, [])
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
 
   // Update parent component when topics change - but avoid the loop
   useEffect(() => {
     // Skip the initial render to avoid loops
     const handler = setTimeout(() => {
-      onTopicsChange?.(topics)
-    }, 0)
-    
-    return () => clearTimeout(handler)
-  }, [JSON.stringify(topics), onTopicsChange])
+      onTopicsChange?.(topics);
+    }, 0);
+
+    return () => clearTimeout(handler);
+  }, [JSON.stringify(topics), onTopicsChange]);
 
   // Update suggestions when input changes
   useEffect(() => {
     if (inputValue.trim() === "") {
-      setSuggestions([])
-      return
+      setSuggestions([]);
+      return;
     }
 
     // Filter topics that include the input (case insensitive)
     // and are not already in the selected topics
     const filteredSuggestions = availableTopics
-      .filter(topic => 
-        topic.name.toLowerCase().includes(inputValue.toLowerCase()) && 
-        !topics.includes(topic.name)
+      .filter(
+        (topic) =>
+          topic.name.toLowerCase().includes(inputValue.toLowerCase()) &&
+          !topics.includes(topic.name),
       )
-      .slice(0, 5) // Limit to 5 suggestions
+      .slice(0, 5); // Limit to 5 suggestions
 
-    setSuggestions(filteredSuggestions)
-  }, [inputValue, JSON.stringify(availableTopics), JSON.stringify(topics)])
+    setSuggestions(filteredSuggestions);
+  }, [inputValue, JSON.stringify(availableTopics), JSON.stringify(topics)]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value
-    setInputValue(value)
-    setShowSuggestions(true)
-  }
+    const value = e.target.value;
+    setInputValue(value);
+    setShowSuggestions(true);
+  };
 
   const addTopic = (topic: string = inputValue) => {
-    if (topic.trim() === "") return
-    
+    if (topic.trim() === "") return;
+
     // Check for duplicates (case-insensitive)
     const isDuplicate = topics.some(
-      existingTopic => existingTopic.trim().toLowerCase() === topic.trim().toLowerCase()
-    )
+      (existingTopic) =>
+        existingTopic.trim().toLowerCase() === topic.trim().toLowerCase(),
+    );
 
-    if (isDuplicate) return
+    if (isDuplicate) return;
 
-    setTopics(prevTopics => [...prevTopics, topic])
-    setInputValue("")
-    setSuggestions([])
-    inputRef.current?.focus()
-  }
+    setTopics((prevTopics) => [...prevTopics, topic]);
+    setInputValue("");
+    setSuggestions([]);
+    inputRef.current?.focus();
+  };
 
   const removeTopic = (index: number) => {
-    setTopics(prevTopics => prevTopics.filter((_, i) => i !== index))
-  }
+    setTopics((prevTopics) => prevTopics.filter((_, i) => i !== index));
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
-      e.preventDefault()
-      addTopic()
+      e.preventDefault();
+      addTopic();
     } else if (e.key === "ArrowDown" && suggestions.length > 0) {
-      e.preventDefault()
+      e.preventDefault();
       // Focus the first suggestion if possible
-      const suggestionsElement = suggestionsRef.current
+      const suggestionsElement = suggestionsRef.current;
       if (suggestionsElement) {
-        const firstSuggestion = suggestionsElement.querySelector('li')
+        const firstSuggestion = suggestionsElement.querySelector("li");
         if (firstSuggestion) {
-          (firstSuggestion as HTMLElement).focus()
+          (firstSuggestion as HTMLElement).focus();
         }
       }
     }
-  }
+  };
 
   const handleSuggestionClick = (suggestion: string) => {
-    addTopic(suggestion)
-    setShowSuggestions(false)
-  }
+    addTopic(suggestion);
+    setShowSuggestions(false);
+  };
 
   const content = (
     <div className={`space-y-4 ${className}`}>
       {label && <FormLabel>{label}</FormLabel>}
-      
+
       <div className="relative">
         <div className="flex gap-2">
           <div className="relative flex-1">
@@ -164,9 +173,11 @@ export function TopicsComponent({
               </div>
             )}
           </div>
-          <Button 
-            onClick={() => addTopic()} 
-            disabled={!inputValue.trim() || isLoading || topics.includes(inputValue)}
+          <Button
+            onClick={() => addTopic()}
+            disabled={
+              !inputValue.trim() || isLoading || topics.includes(inputValue)
+            }
             type="button"
           >
             <Plus className="h-4 w-4 mr-2" />
@@ -176,8 +187,8 @@ export function TopicsComponent({
 
         {/* Suggestions dropdown */}
         {showSuggestions && suggestions.length > 0 && (
-          <div 
-            ref={suggestionsRef} 
+          <div
+            ref={suggestionsRef}
             className="absolute z-10 mt-1 w-full bg-background border rounded-md shadow-lg max-h-60 overflow-auto"
           >
             <ul className="py-1">
@@ -188,8 +199,8 @@ export function TopicsComponent({
                   onClick={() => handleSuggestionClick(suggestion.name)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
-                      e.preventDefault()
-                      handleSuggestionClick(suggestion.name)
+                      e.preventDefault();
+                      handleSuggestionClick(suggestion.name);
                     }
                   }}
                   type="button"
@@ -208,7 +219,11 @@ export function TopicsComponent({
           <p className="text-muted-foreground text-sm">No topics added yet.</p>
         ) : (
           topics.map((topic) => (
-            <Badge key={`topic-${topic}`} variant="secondary" className="px-3 py-1 text-sm flex items-center gap-1">
+            <Badge
+              key={`topic-${topic}`}
+              variant="secondary"
+              className="px-3 py-1 text-sm flex items-center gap-1"
+            >
               {topic}
               <button
                 onClick={() => removeTopic(topics.indexOf(topic))}
@@ -225,7 +240,7 @@ export function TopicsComponent({
       {error && <FormMessage>{error}</FormMessage>}
       {helpText && !error && <FormDescription>{helpText}</FormDescription>}
     </div>
-  )
+  );
 
   if (showCard) {
     return (
@@ -233,12 +248,10 @@ export function TopicsComponent({
         <CardHeader>
           <CardTitle>{label}</CardTitle>
         </CardHeader>
-        <CardContent>
-          {content}
-        </CardContent>
+        <CardContent>{content}</CardContent>
       </Card>
-    )
+    );
   }
 
-  return content
-} 
+  return content;
+}

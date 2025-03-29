@@ -1,20 +1,14 @@
 // Use ESM import for bad-words as shown in the documentation
-import { Filter } from 'bad-words';
+import { Filter } from "bad-words";
 
 // Initialize with custom configuration
 const wordFilter = new Filter({
-  placeHolder: '*', // Use asterisks as placeholder
+  placeHolder: "*", // Use asterisks as placeholder
   // You can add more options like regex, replaceRegex if needed
 });
 
 // Add additional words to the blacklist
-wordFilter.addWords(
-  'motherfu',
-  'nsfw',
-  'inappropriate',
-  'wtf',
-  'garbage'
-);
+wordFilter.addWords("motherfu", "nsfw", "inappropriate", "wtf", "garbage");
 
 // Optionally remove some words to avoid false positives
 // wordFilter.removeWords('hell', 'damn', 'god');
@@ -26,26 +20,29 @@ wordFilter.addWords(
 // Checks if an array has duplicate values (case-insensitive for strings)
 export function hasDuplicates(values: string[]): boolean {
   if (!values || !Array.isArray(values)) return false;
-  
-  const lowerCaseValues = values.map(val => val.toLowerCase().trim());
+
+  const lowerCaseValues = values.map((val) => val.toLowerCase().trim());
   return new Set(lowerCaseValues).size !== lowerCaseValues.length;
 }
 
 // Validate a form field for profanity and other quality issues
-export function validateField(fieldName: string, value: string): { isValid: boolean; message?: string } {
+export function validateField(
+  fieldName: string,
+  value: string,
+): { isValid: boolean; message?: string } {
   if (!validateSensibleContent(value)) {
     return {
       isValid: false,
-      message: `The ${fieldName} contains inappropriate content`
+      message: `The ${fieldName} contains inappropriate content`,
     };
   }
-  
+
   return { isValid: true };
 }
 
 // Check if a string contains gibberish
 export function containsGibberish(text: string): boolean {
-  if (!text) return false
+  if (!text) return false;
 
   // Check for random character sequences
   const gibberishPatterns = [
@@ -53,24 +50,28 @@ export function containsGibberish(text: string): boolean {
     /[^a-z0-9\s.,!?:;'"()[\]{}#@&*\-_+=<>/\\|~`^%$€£¥₹₽₩₱₿]{3,}/i, // 3+ special chars in a row
     /[a-z]{8,}(?![aeiou])/i, // Long consonant sequences
     /(?:(?![aeiou])[a-z]){6,}/i, // 6+ consonants in a row
-  ]
+  ];
 
   // Check for random keyboard smashing
-  const keyboardRows = [/[qwertyuiop]{5,}/i, /[asdfghjkl]{5,}/i, /[zxcvbnm]{5,}/i]
+  const keyboardRows = [
+    /[qwertyuiop]{5,}/i,
+    /[asdfghjkl]{5,}/i,
+    /[zxcvbnm]{5,}/i,
+  ];
 
   // Check for random numbers and letters
-  const randomAlphanumeric = /(?:[a-z][0-9]|[0-9][a-z]){3,}/i
+  const randomAlphanumeric = /(?:[a-z][0-9]|[0-9][a-z]){3,}/i;
 
   return (
     gibberishPatterns.some((pattern) => pattern.test(text)) ||
     keyboardRows.some((pattern) => pattern.test(text)) ||
     randomAlphanumeric.test(text)
-  )
+  );
 }
 
 // Check for profanity
 export function containsProfanity(text: string): boolean {
-  if (!text) return false
+  if (!text) return false;
 
   // Basic list of profane words to check against
   // In a real application, you would use a more comprehensive list or a service
@@ -92,16 +93,16 @@ export function containsProfanity(text: string): boolean {
     "crap",
     "asshole",
     "motherfucker",
-  ]
+  ];
 
-  const normalizedText = text.toLowerCase()
+  const normalizedText = text.toLowerCase();
 
   // Check if any profane word is in the text
   return profanityList.some((word) => {
     // Use word boundary to match whole words only
-    const regex = new RegExp(`\\b${word}\\b`, "i")
-    return regex.test(normalizedText)
-  })
+    const regex = new RegExp(`\\b${word}\\b`, "i");
+    return regex.test(normalizedText);
+  });
 }
 
 /**
@@ -121,13 +122,13 @@ export function isProfanityFree(text: string): boolean {
  */
 export function isMeaningfulText(text: string): boolean {
   if (!text) return true;
-  
+
   // 1. Check for repeated characters (more than 3 in a row)
   const repeatingCharsPattern = /(.)\1{3,}/;
   if (repeatingCharsPattern.test(text)) {
     return false;
   }
-  
+
   // 2. Check for text that's too short to be meaningful
   // (allow short values for specific cases like levels: "A1", "B2", etc.)
   if (text.length < 2) {
@@ -135,8 +136,8 @@ export function isMeaningfulText(text: string): boolean {
   }
 
   // 3. Check for random character sequences (no vowels or too many consecutive consonants)
-  const vowels = ['a', 'e', 'i', 'o', 'u', 'y'];
-  const hasVowels = vowels.some(v => text.toLowerCase().includes(v));
+  const vowels = ["a", "e", "i", "o", "u", "y"];
+  const hasVowels = vowels.some((v) => text.toLowerCase().includes(v));
   if (!hasVowels && text.length > 3) {
     return false;
   }
@@ -146,9 +147,13 @@ export function isMeaningfulText(text: string): boolean {
   const consonantMatches = text.match(consonantPattern) || [];
   const vowelPattern = /[aeiouy]/gi;
   const vowelMatches = text.match(vowelPattern) || [];
-  
+
   // If text has more than 5 characters and has a consonant-to-vowel ratio > 5:1
-  if (text.length > 5 && consonantMatches.length > 0 && vowelMatches.length > 0) {
+  if (
+    text.length > 5 &&
+    consonantMatches.length > 0 &&
+    vowelMatches.length > 0
+  ) {
     const ratio = consonantMatches.length / vowelMatches.length;
     if (ratio > 5) {
       return false;
@@ -165,11 +170,11 @@ export function isMeaningfulText(text: string): boolean {
  */
 export function validateSensibleContent(text: string): boolean {
   if (!text) return true;
-  
+
   // Run both checks separately
   const meaningful = isMeaningfulText(text);
   const noProfanity = isProfanityFree(text);
-  
+
   return meaningful && noProfanity;
 }
 
@@ -179,7 +184,7 @@ export function validateSensibleContent(text: string): boolean {
  * @returns The cleaned text with profanity replaced by asterisks
  */
 export function cleanProfanity(text: string): string {
-  if (!text) return '';
+  if (!text) return "";
   return wordFilter.clean(text);
 }
 
@@ -189,27 +194,30 @@ export function cleanProfanity(text: string): string {
  * @param autoClean If true, cleans profanity instead of rejecting
  * @returns Object with validation result and cleaned text if applicable
  */
-export function validateAndCleanProfanity(text: string, autoClean = false): { 
+export function validateAndCleanProfanity(
+  text: string,
+  autoClean = false,
+): {
   isValid: boolean;
   cleanedText?: string;
 } {
   if (!text) return { isValid: true };
-  
+
   const hasProfanity = wordFilter.isProfane(text);
-  
+
   // If no profanity or auto-clean is disabled, just return validity
   if (!hasProfanity) {
     return { isValid: true };
   }
-  
+
   // If auto-clean is enabled, clean the text and return it
   if (autoClean) {
     return {
       isValid: true,
-      cleanedText: wordFilter.clean(text)
+      cleanedText: wordFilter.clean(text),
     };
   }
-  
+
   // Otherwise, return that validation failed
   return { isValid: false };
 }

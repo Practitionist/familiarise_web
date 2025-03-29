@@ -51,12 +51,12 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   const handleWebinarSaved = async (data: Partial<WebinarEvent>) => {
     try {
       setIsSaving(true);
-      console.log('EventManagementDashboard - Saving webinar:', data);
-      
+      console.log("EventManagementDashboard - Saving webinar:", data);
+
       // First save the webinar
       const savedWebinar = await PlannerService.saveWebinar(data, consultantId);
-      console.log('Webinar saved successfully:', savedWebinar);
-      
+      console.log("Webinar saved successfully:", savedWebinar);
+
       // Then fetch updated webinars list
       const updatedWebinars = await PlannerService.fetchWebinars(consultantId);
       setWebinars(updatedWebinars);
@@ -75,12 +75,12 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   const handleClassSaved = async (data: Partial<ClassEvent>) => {
     try {
       setIsSaving(true);
-      console.log('EventManagementDashboard - Saving class:', data);
-      
+      console.log("EventManagementDashboard - Saving class:", data);
+
       // First save the class
       const savedClass = await PlannerService.saveClass(data, consultantId);
-      console.log('Class saved successfully:', savedClass);
-      
+      console.log("Class saved successfully:", savedClass);
+
       // Then fetch updated classes list
       const updatedClasses = await PlannerService.fetchClasses(consultantId);
       setClasses(updatedClasses);

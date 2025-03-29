@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { hasDuplicates, isMeaningfulText, isProfanityFree } from "@/lib/validation-utils";
+import {
+  hasDuplicates,
+  isMeaningfulText,
+  isProfanityFree,
+} from "@/lib/validation-utils";
 
 // Separate refine functions for different validation types
 const profanityFreeRefinement = (value: string) => {
@@ -31,7 +35,6 @@ const meaningfulArrayContentRefinement = (values: string[]) => {
 const noDuplicatesRefinement = (values: string[]) => {
   return !hasDuplicates(values);
 };
-
 
 export const DomainSchema = z.object({
   id: z.string().optional(),
@@ -97,49 +100,94 @@ const BaseEventPlanSchema = z.object({
   title: z
     .string()
     .min(1, "Title is required")
-    .refine(meaningfulContentRefinement, "Title contains nonsensical text or gibberish")
+    .refine(
+      meaningfulContentRefinement,
+      "Title contains nonsensical text or gibberish",
+    )
     .refine(profanityFreeRefinement, "Title contains inappropriate language"),
   description: z
     .string()
     .min(1, "Description is required")
-    .refine(meaningfulContentRefinement, "Description contains nonsensical text or gibberish")
-    .refine(profanityFreeRefinement, "Description contains inappropriate language"),
+    .refine(
+      meaningfulContentRefinement,
+      "Description contains nonsensical text or gibberish",
+    )
+    .refine(
+      profanityFreeRefinement,
+      "Description contains inappropriate language",
+    ),
   price: z.number().min(0, "Price must be non-negative"),
   maxParticipants: z.number().min(1, "At least one participant is required"),
   language: z
     .string()
     .default("English")
-    .refine(meaningfulContentRefinement, "Language contains nonsensical text or gibberish")
-    .refine(profanityFreeRefinement, "Language contains inappropriate language"),
+    .refine(
+      meaningfulContentRefinement,
+      "Language contains nonsensical text or gibberish",
+    )
+    .refine(
+      profanityFreeRefinement,
+      "Language contains inappropriate language",
+    ),
   level: z
     .string()
     .default("Beginner")
-    .refine(meaningfulContentRefinement, "Level contains nonsensical text or gibberish")
+    .refine(
+      meaningfulContentRefinement,
+      "Level contains nonsensical text or gibberish",
+    )
     .refine(profanityFreeRefinement, "Level contains inappropriate language"),
   prerequisites: z
     .string()
     .optional()
     .nullable()
-    .refine((val) => !val || meaningfulContentRefinement(val), "Prerequisites contain nonsensical text or gibberish")
-    .refine((val) => !val || profanityFreeRefinement(val), "Prerequisites contain inappropriate language"),
+    .refine(
+      (val) => !val || meaningfulContentRefinement(val),
+      "Prerequisites contain nonsensical text or gibberish",
+    )
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "Prerequisites contain inappropriate language",
+    ),
   materialProvided: z
     .string()
     .optional()
     .nullable()
-    .refine((val) => !val || meaningfulContentRefinement(val), "Materials contain nonsensical text or gibberish")
-    .refine((val) => !val || profanityFreeRefinement(val), "Materials contain inappropriate language"),
+    .refine(
+      (val) => !val || meaningfulContentRefinement(val),
+      "Materials contain nonsensical text or gibberish",
+    )
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "Materials contain inappropriate language",
+    ),
   learningOutcomes: z
     .array(z.string().min(1, "Learning outcome cannot be empty"))
     .min(1, "At least one learning outcome is required")
-    .refine(noDuplicatesRefinement, "Duplicate learning outcomes are not allowed")
-    .refine(meaningfulArrayContentRefinement, "Learning outcomes contain nonsensical text or gibberish")
-    .refine(profanityFreeArrayRefinement, "Learning outcomes contain inappropriate language"),
+    .refine(
+      noDuplicatesRefinement,
+      "Duplicate learning outcomes are not allowed",
+    )
+    .refine(
+      meaningfulArrayContentRefinement,
+      "Learning outcomes contain nonsensical text or gibberish",
+    )
+    .refine(
+      profanityFreeArrayRefinement,
+      "Learning outcomes contain inappropriate language",
+    ),
   topics: z
     .array(z.string().min(1, "Topic cannot be empty"))
     .min(1, "At least one topic is required")
     .refine(noDuplicatesRefinement, "Duplicate topics are not allowed")
-    .refine(meaningfulArrayContentRefinement, "Topics contain nonsensical text or gibberish")
-    .refine(profanityFreeArrayRefinement, "Topics contain inappropriate language"),
+    .refine(
+      meaningfulArrayContentRefinement,
+      "Topics contain nonsensical text or gibberish",
+    )
+    .refine(
+      profanityFreeArrayRefinement,
+      "Topics contain inappropriate language",
+    ),
 
   // Make consultant fields optional and nullable
   consultantProfileId: z.string().optional().nullable(),
@@ -149,49 +197,47 @@ const BaseEventPlanSchema = z.object({
 // Create a factory function for unique title validator
 export const createUniqueTitleValidator = (
   checkFunction: (title: string) => Promise<boolean>,
-  eventType: string
+  eventType: string,
 ) => {
-  return z.object({
-    title: z.string().refine(
-      async (title) => {
-        // Only run this check when submitted (during client validation this will return true)
-        // Actual DB check will happen in the service layer
-        const isDuplicate = await checkFunction(title);
-        return !isDuplicate;
-      },
-      {
-        message: `A ${eventType} with this title already exists`,
-      }
-    ),
-  }).partial();
+  return z
+    .object({
+      title: z.string().refine(
+        async (title) => {
+          // Only run this check when submitted (during client validation this will return true)
+          // Actual DB check will happen in the service layer
+          const isDuplicate = await checkFunction(title);
+          return !isDuplicate;
+        },
+        {
+          message: `A ${eventType} with this title already exists`,
+        },
+      ),
+    })
+    .partial();
 };
 
 // Webinar specific schema
 export const WebinarPlanSchema = BaseEventPlanSchema.extend({
-  durationInHours: z.number()
+  durationInHours: z
+    .number()
     .min(0.5, "Duration must be at least 30 minutes")
     .refine(
-      (val) => val * 60 % 30 === 0,
-      "Duration must be in 30-minute increments"
+      (val) => (val * 60) % 30 === 0,
+      "Duration must be in 30-minute increments",
     ),
-  scheduledAt: z.string()
+  scheduledAt: z
+    .string()
     .min(1, "Start time is required")
-    .refine(
-      (val) => {
-        const date = new Date(val);
-        return date.getMinutes() % 30 === 0;
-      },
-      "Please select either :00 or :30 for the minutes (e.g., 9:00 or 9:30)"
-    )
-    .refine(
-      (val) => {
-        const selectedDate = new Date(val);
-        const minAllowedDate = new Date();
-        minAllowedDate.setHours(minAllowedDate.getHours() + 1); // At least 1 hour in future
-        return selectedDate > minAllowedDate;
-      },
-      "Start time must be at least 1 hour in the future"
-    ),
+    .refine((val) => {
+      const date = new Date(val);
+      return date.getMinutes() % 30 === 0;
+    }, "Please select either :00 or :30 for the minutes (e.g., 9:00 or 9:30)")
+    .refine((val) => {
+      const selectedDate = new Date(val);
+      const minAllowedDate = new Date();
+      minAllowedDate.setHours(minAllowedDate.getHours() + 1); // At least 1 hour in future
+      return selectedDate > minAllowedDate;
+    }, "Start time must be at least 1 hour in the future"),
 });
 
 // Class specific schema
@@ -200,27 +246,50 @@ export const ClassContentSchema = z.object({
   title: z
     .string()
     .min(1, "Title is required")
-    .refine(meaningfulContentRefinement, "Title contains nonsensical text or gibberish")
+    .refine(
+      meaningfulContentRefinement,
+      "Title contains nonsensical text or gibberish",
+    )
     .refine(profanityFreeRefinement, "Title contains inappropriate language"),
   description: z
     .string()
     .min(1, "Description is required")
-    .refine(meaningfulContentRefinement, "Description contains nonsensical text or gibberish")
-    .refine(profanityFreeRefinement, "Description contains inappropriate language"),
+    .refine(
+      meaningfulContentRefinement,
+      "Description contains nonsensical text or gibberish",
+    )
+    .refine(
+      profanityFreeRefinement,
+      "Description contains inappropriate language",
+    ),
   contentType: z
     .string()
     .optional()
     .nullable()
-    .refine((val) => !val || meaningfulContentRefinement(val), "Content type contains nonsensical text or gibberish")
-    .refine((val) => !val || profanityFreeRefinement(val), "Content type contains inappropriate language"),
+    .refine(
+      (val) => !val || meaningfulContentRefinement(val),
+      "Content type contains nonsensical text or gibberish",
+    )
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "Content type contains inappropriate language",
+    ),
   contentUrl: z
     .string()
     .optional()
     .nullable()
-    .refine((val) => !val || meaningfulContentRefinement(val), "URL contains nonsensical text or gibberish")
-    .refine((val) => !val || profanityFreeRefinement(val), "URL contains inappropriate language"),
+    .refine(
+      (val) => !val || meaningfulContentRefinement(val),
+      "URL contains nonsensical text or gibberish",
+    )
+    .refine(
+      (val) => !val || profanityFreeRefinement(val),
+      "URL contains inappropriate language",
+    ),
   order: z.number().min(1, "Order must be a positive number"),
-  hoursAllotted: z.number().min(0.5, "Hours allotted must be at least 30 minutes"),
+  hoursAllotted: z
+    .number()
+    .min(0.5, "Hours allotted must be at least 30 minutes"),
 });
 
 export const ClassPlanSchema = BaseEventPlanSchema.extend({
@@ -235,8 +304,8 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
     .default([])
     .refine((contents) => {
       // Check for duplicate titles
-      const titles = contents.map((c) => c.title.trim().toLowerCase())
-      return new Set(titles).size === titles.length
+      const titles = contents.map((c) => c.title.trim().toLowerCase());
+      return new Set(titles).size === titles.length;
     }, "Class contents must have unique titles"),
 });
 

@@ -47,8 +47,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Process each name to ensure it's a string and not empty
-    const validNames = names.filter((name): name is string => 
-      typeof name === "string" && name.trim().length > 0
+    const validNames = names.filter(
+      (name): name is string =>
+        typeof name === "string" && name.trim().length > 0,
     );
 
     if (validNames.length === 0) {
@@ -69,18 +70,21 @@ export async function POST(req: NextRequest) {
     });
 
     // Filter out names that already exist
-    const existingNames = new Set(existingTopics.map(t => t.name.toLowerCase()));
+    const existingNames = new Set(
+      existingTopics.map((t) => t.name.toLowerCase()),
+    );
     const newNames = validNames.filter(
-      name => !existingNames.has(name.toLowerCase())
+      (name) => !existingNames.has(name.toLowerCase()),
     );
 
     // Create new topics in a single transaction
-    const newTopics = newNames.length > 0 
-      ? await prisma.topic.createMany({
-          data: newNames.map(name => ({ name })),
-          skipDuplicates: true,
-        })
-      : { count: 0 };
+    const newTopics =
+      newNames.length > 0
+        ? await prisma.topic.createMany({
+            data: newNames.map((name) => ({ name })),
+            skipDuplicates: true,
+          })
+        : { count: 0 };
 
     // Fetch all topics (both existing and newly created)
     const allTopics = await prisma.topic.findMany({
@@ -92,11 +96,14 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({ 
-      data: allTopics,
-      created: newTopics.count,
-      existing: existingTopics.length,
-    }, { status: 201 });
+    return NextResponse.json(
+      {
+        data: allTopics,
+        created: newTopics.count,
+        existing: existingTopics.length,
+      },
+      { status: 201 },
+    );
   } catch (error) {
     console.error("Error creating topics:", error);
     return NextResponse.json(
@@ -111,7 +118,7 @@ export async function DELETE(req: NextRequest) {
   try {
     const body = await req.json();
     const { ids } = body;
-    
+
     if (!Array.isArray(ids) || ids.length === 0) {
       return NextResponse.json(
         { error: "Topic IDs array is required" },
@@ -144,10 +151,13 @@ export async function DELETE(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({
-      deleted: deleteResult.count,
-      topicsDeleted: topicsToDelete.map(t => t.name),
-    }, { status: 200 });
+    return NextResponse.json(
+      {
+        deleted: deleteResult.count,
+        topicsDeleted: topicsToDelete.map((t) => t.name),
+      },
+      { status: 200 },
+    );
   } catch (error) {
     console.error("Error deleting topics:", error);
     return NextResponse.json(

@@ -4,7 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    console.log('Received webinar creation request body:', JSON.stringify(body, null, 2));
+    console.log(
+      "Received webinar creation request body:",
+      JSON.stringify(body, null, 2),
+    );
 
     const {
       // Webinar Plan data
@@ -26,14 +29,14 @@ export async function POST(request: NextRequest) {
     } = body;
 
     // Log extracted fields
-    console.log('Extracted fields:', {
+    console.log("Extracted fields:", {
       title,
       durationInHours,
       price,
       maxParticipants,
       consultantProfileId,
       scheduledAt,
-      topicIds
+      topicIds,
     });
 
     // Input validation
@@ -45,13 +48,13 @@ export async function POST(request: NextRequest) {
       !consultantProfileId ||
       !scheduledAt
     ) {
-      console.log('Validation failed. Missing required fields:', {
+      console.log("Validation failed. Missing required fields:", {
         hasTitle: !!title,
         hasDuration: !!durationInHours,
         hasPrice: !!price,
         hasMaxParticipants: !!maxParticipants,
         hasConsultantId: !!consultantProfileId,
-        hasScheduledAt: !!scheduledAt
+        hasScheduledAt: !!scheduledAt,
       });
       return NextResponse.json(
         { error: "Missing required fields" },
@@ -63,129 +66,135 @@ export async function POST(request: NextRequest) {
     const startTime = new Date(scheduledAt);
     const endTime = new Date(startTime);
     endTime.setHours(endTime.getHours() + durationInHours);
-    
-    console.log('Calculated times:', {
+
+    console.log("Calculated times:", {
       startTime: startTime.toISOString(),
       endTime: endTime.toISOString(),
-      durationInHours
+      durationInHours,
     });
 
     // Create webinar plan, instance, and appointment in a transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // Verify all topics exist
-      if (topicIds && topicIds.length > 0) {
-        const topics = await tx.topic.findMany({
-          where: { id: { in: topicIds } },
-        });
+    const result = await prisma.$transaction(
+      async (tx) => {
+        // Verify all topics exist
+        if (topicIds && topicIds.length > 0) {
+          const topics = await tx.topic.findMany({
+            where: { id: { in: topicIds } },
+          });
 
-        if (topics.length !== topicIds.length) {
-          throw new Error("Some topics do not exist");
+          if (topics.length !== topicIds.length) {
+            throw new Error("Some topics do not exist");
+          }
         }
-      }
 
-      // 1. Create the webinar plan
-      console.log('Creating webinar plan with data:', {
-        title,
-        description,
-        durationInHours,
-        price,
-        maxParticipants,
-        consultantProfileId,
-        topicIds
-      });
-
-      const webinarPlan = await tx.webinarPlan.create({
-        data: {
+        // 1. Create the webinar plan
+        console.log("Creating webinar plan with data:", {
           title,
           description,
           durationInHours,
           price,
           maxParticipants,
-          language,
-          level,
-          prerequisites,
-          materialProvided,
-          learningOutcomes,
-          consultantProfile: { connect: { id: consultantProfileId } },
-          topics: topicIds
-            ? { connect: topicIds.map((id: string) => ({ id })) }
-            : undefined,
-        },
-        include: {
-          consultantProfile: true,
-          topics: true,
-        },
-      });
+          consultantProfileId,
+          topicIds,
+        });
 
-      console.log('Created webinar plan:', {
-        id: webinarPlan.id,
-        title: webinarPlan.title,
-        topicsCount: webinarPlan.topics.length
-      });
+        const webinarPlan = await tx.webinarPlan.create({
+          data: {
+            title,
+            description,
+            durationInHours,
+            price,
+            maxParticipants,
+            language,
+            level,
+            prerequisites,
+            materialProvided,
+            learningOutcomes,
+            consultantProfile: { connect: { id: consultantProfileId } },
+            topics: topicIds
+              ? { connect: topicIds.map((id: string) => ({ id })) }
+              : undefined,
+          },
+          include: {
+            consultantProfile: true,
+            topics: true,
+          },
+        });
 
-      // 2. Create the webinar instance
-      console.log('Creating webinar instance with plan ID:', webinarPlan.id);
+        console.log("Created webinar plan:", {
+          id: webinarPlan.id,
+          title: webinarPlan.title,
+          topicsCount: webinarPlan.topics.length,
+        });
 
-      const webinar = await tx.webinar.create({
-        data: {
-          status,
-          webinarPlan: { connect: { id: webinarPlan.id } },
-          // Create the appointment at the same time
-          appointment: {
-            create: {
-              appointmentType: "WEBINAR",
-              slotsOfAppointment: {
-                create: {
-                  slotStartTimeInUTC: startTime,
-                  slotEndTimeInUTC: endTime,
-                  isTentative: false,
+        // 2. Create the webinar instance
+        console.log("Creating webinar instance with plan ID:", webinarPlan.id);
+
+        const webinar = await tx.webinar.create({
+          data: {
+            status,
+            webinarPlan: { connect: { id: webinarPlan.id } },
+            // Create the appointment at the same time
+            appointment: {
+              create: {
+                appointmentType: "WEBINAR",
+                slotsOfAppointment: {
+                  create: {
+                    slotStartTimeInUTC: startTime,
+                    slotEndTimeInUTC: endTime,
+                    isTentative: false,
+                  },
                 },
               },
             },
           },
-        },
-        include: {
-          webinarPlan: {
-            include: {
-              consultantProfile: true,
-              topics: true,
+          include: {
+            webinarPlan: {
+              include: {
+                consultantProfile: true,
+                topics: true,
+              },
             },
-          },
-          appointment: {
-            include: {
-              slotsOfAppointment: {
-                include: {
-                  user: true,
+            appointment: {
+              include: {
+                slotsOfAppointment: {
+                  include: {
+                    user: true,
+                  },
                 },
               },
             },
+            meetingRoom: true,
+            waitlist: true,
           },
-          meetingRoom: true,
-          waitlist: true,
-        },
-      });
+        });
 
-      console.log('Created webinar instance:', {
-        id: webinar.id,
-        planId: webinar.webinarPlan.id,
-        appointmentId: webinar.appointment?.id,
-        hasSlots: webinar.appointment?.slotsOfAppointment?.length ?? 0 > 0
-      });
+        console.log("Created webinar instance:", {
+          id: webinar.id,
+          planId: webinar.webinarPlan.id,
+          appointmentId: webinar.appointment?.id,
+          hasSlots: webinar.appointment?.slotsOfAppointment?.length ?? 0 > 0,
+        });
 
-      return { webinarPlan, webinar };
-    }, {
-      timeout: 10000, // 10 second timeout
-      maxWait: 5000,  // 5 second max wait
-      isolationLevel: 'Serializable' // Highest isolation level
-    });
+        return { webinarPlan, webinar };
+      },
+      {
+        timeout: 10000, // 10 second timeout
+        maxWait: 5000, // 5 second max wait
+        isolationLevel: "Serializable", // Highest isolation level
+      },
+    );
 
-    console.log('Transaction completed successfully. Returning webinar data.');
+    console.log("Transaction completed successfully. Returning webinar data.");
     return NextResponse.json({ data: result.webinar }, { status: 201 });
   } catch (error) {
     console.error("Error creating webinar with plan:", error);
 
     // If error indicates topics don't exist, we don't need to do cleanup
-    if (error instanceof Error && error.message === "Some topics do not exist") {
+    if (
+      error instanceof Error &&
+      error.message === "Some topics do not exist"
+    ) {
       return NextResponse.json(
         { error: "Invalid topics provided" },
         { status: 400 },
@@ -200,4 +209,4 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
-} 
+}

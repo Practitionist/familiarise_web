@@ -62,8 +62,7 @@ export default function Hackathon() {
             </h2>{" "}
             <p className="mx-auto max-w-3xl text-gray-500 md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed dark:text-gray-400">
               {" "}
-              Here's a breakdown of the hackathon schedule. Mark your
-              calendars!{" "}
+              Here's a breakdown of the hackathon schedule. Mark your calendars!{" "}
             </p>{" "}
           </div>{" "}
           <div className="mx-auto grid w-full max-w-3xl items-start gap-4">
@@ -210,8 +209,7 @@ export default function Hackathon() {
             </h2>{" "}
             <p className="mx-auto max-w-3xl text-gray-500 md:text-xl/relaxed lg:text-base/relaxed xl:text-xl/relaxed dark:text-gray-400">
               {" "}
-              Your project will be evaluated based on the following
-              criteria.{" "}
+              Your project will be evaluated based on the following criteria.{" "}
             </p>{" "}
           </div>{" "}
           <div className="mx-auto max-w-3xl grid w-full grid-cols-2 items-start gap-4 md:grid-cols-4 md:items-center md:gap-8 lg:max-w-5xl">

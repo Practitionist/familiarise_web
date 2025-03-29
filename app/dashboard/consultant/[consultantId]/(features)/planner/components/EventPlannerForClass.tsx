@@ -16,7 +16,7 @@ import {
   FormField,
   FormItem,
   FormLabel,
-  FormMessage
+  FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
@@ -51,7 +51,9 @@ export function EventPlannerForClass({
   );
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [newOutcome, setNewOutcome] = useState("");
-  const [availableTopics, setAvailableTopics] = useState<{ id: string; name: string, createdAt: Date, updatedAt: Date }[]>([]);
+  const [availableTopics, setAvailableTopics] = useState<
+    { id: string; name: string; createdAt: Date; updatedAt: Date }[]
+  >([]);
   const [isLoadingTopics, setIsLoadingTopics] = useState(false);
   const { toast } = useToast();
 
@@ -84,7 +86,7 @@ export function EventPlannerForClass({
           prerequisites: initialData.classPlan.prerequisites ?? "",
           materialProvided: initialData.classPlan.materialProvided ?? "",
           learningOutcomes: initialData.classPlan.learningOutcomes,
-          topics: initialData.classPlan.topics.map(topic => topic.name),
+          topics: initialData.classPlan.topics.map((topic) => topic.name),
           certificateProvided: initialData.classPlan.certificateProvided,
           callsPerWeek: initialData.classPlan.callsPerWeek,
           videoMeetings: initialData.classPlan.videoMeetings,
@@ -192,16 +194,16 @@ export function EventPlannerForClass({
 
         // Check for duplicate title
         const title = formData.title;
-        const planId = initialData?.classPlan?.id || '';
-        
+        const planId = initialData?.classPlan?.id || "";
+
         try {
           const isDuplicate = await PlannerService.checkDuplicateTitle(
             title,
             consultantId,
-            'class',
-            planId
+            "class",
+            planId,
           );
-          
+
           if (isDuplicate) {
             toast({
               title: "Duplicate Title",
@@ -211,7 +213,8 @@ export function EventPlannerForClass({
             // Set field error directly in the form
             form.setError("title", {
               type: "manual",
-              message: "This title is already in use. Please choose a different title."
+              message:
+                "This title is already in use. Please choose a different title.",
             });
             return;
           }
@@ -221,7 +224,10 @@ export function EventPlannerForClass({
         }
 
         // Check if classContents exists and validate using Zod
-        if (!Array.isArray(formData.classContents) || formData.classContents.length === 0) {
+        if (
+          !Array.isArray(formData.classContents) ||
+          formData.classContents.length === 0
+        ) {
           toast({
             title: "Error",
             description: "Please add at least one class content item",
@@ -231,15 +237,20 @@ export function EventPlannerForClass({
         }
 
         // Validate all class contents using Zod
-        const contentValidation = z.array(ClassContentSchema).safeParse(formData.classContents);
-        
+        const contentValidation = z
+          .array(ClassContentSchema)
+          .safeParse(formData.classContents);
+
         if (!contentValidation.success) {
-          const errors = contentValidation.error.errors.reduce((acc, error) => {
-            const path = error.path.join('.');
-            acc[path] = error.message;
-            return acc;
-          }, {} as Record<string, string>);
-          
+          const errors = contentValidation.error.errors.reduce(
+            (acc, error) => {
+              const path = error.path.join(".");
+              acc[path] = error.message;
+              return acc;
+            },
+            {} as Record<string, string>,
+          );
+
           setContentErrors(errors);
           toast({
             title: "Validation Error",
@@ -256,11 +267,11 @@ export function EventPlannerForClass({
         const classContents = formData.classContents || [];
 
         // Format the topics correctly
-        const formattedTopics = formData.topics.map(topicName => ({
+        const formattedTopics = formData.topics.map((topicName) => ({
           id: "", // The API/service will handle assigning actual IDs
           name: topicName,
           createdAt: now,
-          updatedAt: now
+          updatedAt: now,
         }));
 
         const classEventData = {
@@ -302,12 +313,15 @@ export function EventPlannerForClass({
           },
         };
 
-        console.log("Calling onSave with class data:", JSON.stringify(classEventData, null, 2));
-        
+        console.log(
+          "Calling onSave with class data:",
+          JSON.stringify(classEventData, null, 2),
+        );
+
         try {
           // Call onSave and wait for it to complete
           onSave(classEventData);
-          
+
           // If we get here, the save was successful
           toast({
             title: "Success",
@@ -318,7 +332,10 @@ export function EventPlannerForClass({
           console.error("Error saving class:", error);
           toast({
             title: "Error",
-            description: error instanceof Error ? error.message : "Failed to save class. Please try again.",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Failed to save class. Please try again.",
             variant: "destructive",
           });
           throw error; // Re-throw to prevent form from closing
@@ -354,7 +371,8 @@ export function EventPlannerForClass({
 
     // Check for duplicates (case-insensitive)
     const isDuplicate = currentOutcomes.some(
-      (outcome) => outcome.trim().toLowerCase() === newOutcome.trim().toLowerCase()
+      (outcome) =>
+        outcome.trim().toLowerCase() === newOutcome.trim().toLowerCase(),
     );
 
     if (isDuplicate) {
@@ -377,7 +395,7 @@ export function EventPlannerForClass({
     form.setValue(
       "learningOutcomes",
       currentOutcomes.filter((_, i) => i !== index),
-      { shouldValidate: true }
+      { shouldValidate: true },
     );
   };
 
@@ -567,9 +585,17 @@ export function EventPlannerForClass({
                   </div>
                   <div className="space-y-2 mt-2">
                     {field.value?.map((outcome, index) => (
-                      <div key={index} className="flex items-center gap-2 p-2 border rounded-md">
+                      <div
+                        key={index}
+                        className="flex items-center gap-2 p-2 border rounded-md"
+                      >
                         <span className="flex-1">{outcome}</span>
-                        <Button type="button" variant="ghost" size="icon" onClick={() => removeLearningOutcome(index)}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeLearningOutcome(index)}
+                        >
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
@@ -891,7 +917,9 @@ export function EventPlannerForClass({
                             // Clear any errors for this content
                             const newErrors = { ...contentErrors };
                             Object.keys(newErrors).forEach((key) => {
-                              if (key.startsWith(`classContents.${content.order}`)) {
+                              if (
+                                key.startsWith(`classContents.${content.order}`)
+                              ) {
                                 delete newErrors[key];
                               }
                             });

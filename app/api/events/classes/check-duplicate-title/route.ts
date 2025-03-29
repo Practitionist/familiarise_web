@@ -5,13 +5,13 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const title = searchParams.get("title");
-    const consultantProfileId = searchParams.get("consultantProfileId"); 
+    const consultantProfileId = searchParams.get("consultantProfileId");
     const excludeId = searchParams.get("excludeId") || "";
 
     if (!title || !consultantProfileId) {
       return NextResponse.json(
         { error: "Missing required parameters: title and consultantProfileId" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -26,17 +26,17 @@ export async function GET(req: NextRequest) {
         },
         consultantProfileId: consultantProfileId,
         id: {
-          not: excludeId || undefined
-        }
+          not: excludeId || undefined,
+        },
       },
     });
-    
+
     return NextResponse.json({ isDuplicate: !!existingClass }, { status: 200 });
   } catch (error) {
     console.error("Error checking duplicate class title:", error);
     return NextResponse.json(
       { error: "An error occurred while checking for duplicate class titles" },
-      { status: 500 }
+      { status: 500 },
     );
   }
-} 
+}

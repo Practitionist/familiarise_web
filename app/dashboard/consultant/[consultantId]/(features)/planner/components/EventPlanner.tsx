@@ -50,10 +50,13 @@ export function EventPlanner({
 
     // Create a wrapper around the save callback to handle topic formats if needed
     const handleWebinarSave = (data: Partial<WebinarEvent>) => {
-      console.log("EventPlanner - preparing to save webinar data:", JSON.stringify(data, null, 2));
-      
+      console.log(
+        "EventPlanner - preparing to save webinar data:",
+        JSON.stringify(data, null, 2),
+      );
+
       // No need for additional validation as we're now using string[] directly
-      
+
       // Call the original callback
       webinarSaveCallback(data);
     };
@@ -83,10 +86,13 @@ export function EventPlanner({
 
     // Create a wrapper around the save callback to handle topic formats if needed
     const handleClassSave = (data: Partial<ClassEvent>) => {
-      console.log("EventPlanner - preparing to save class data:", JSON.stringify(data, null, 2));
-      
+      console.log(
+        "EventPlanner - preparing to save class data:",
+        JSON.stringify(data, null, 2),
+      );
+
       // No need for additional validation as we're now using string[] directly
-      
+
       // Call the original callback
       classSaveCallback(data);
     };

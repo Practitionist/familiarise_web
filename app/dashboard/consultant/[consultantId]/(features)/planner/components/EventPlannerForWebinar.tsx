@@ -44,9 +44,13 @@ export function EventPlannerForWebinar({
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [newOutcome, setNewOutcome] = useState("");
   const [newTopic, setNewTopic] = useState("");
-  const [suggestedTopics, setSuggestedTopics] = useState<{ id: string; name: string }[]>([]);
+  const [suggestedTopics, setSuggestedTopics] = useState<
+    { id: string; name: string }[]
+  >([]);
   const [showTopicSuggestions, setShowTopicSuggestions] = useState(false);
-  const [availableTopics, setAvailableTopics] = useState<{ id: string; name: string, createdAt: Date, updatedAt: Date }[]>([]);
+  const [availableTopics, setAvailableTopics] = useState<
+    { id: string; name: string; createdAt: Date; updatedAt: Date }[]
+  >([]);
   const [isLoadingTopics, setIsLoadingTopics] = useState(false);
   const topicInputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
@@ -93,9 +97,9 @@ export function EventPlannerForWebinar({
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (
-        suggestionsRef.current && 
+        suggestionsRef.current &&
         !suggestionsRef.current.contains(event.target as Node) &&
-        topicInputRef.current && 
+        topicInputRef.current &&
         !topicInputRef.current.contains(event.target as Node)
       ) {
         setShowTopicSuggestions(false);
@@ -127,10 +131,12 @@ export function EventPlannerForWebinar({
       materialProvided: initialData?.webinarPlan?.materialProvided ?? "",
       learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
       // Convert topics from objects to strings for the form
-      topics: initialData?.webinarPlan?.topics?.map(topic => 
-        typeof topic === 'string' ? topic : topic.name
-      ) ?? [],
-      scheduledAt: initialData?.webinarPlan?.scheduledAt ?? formatDateTimeForInput(),
+      topics:
+        initialData?.webinarPlan?.topics?.map((topic) =>
+          typeof topic === "string" ? topic : topic.name,
+        ) ?? [],
+      scheduledAt:
+        initialData?.webinarPlan?.scheduledAt ?? formatDateTimeForInput(),
       consultantProfileId: consultantId,
     },
     mode: "onChange", // Validate on change for better UX
@@ -142,7 +148,8 @@ export function EventPlannerForWebinar({
 
     // Check for duplicates (case-insensitive)
     const isDuplicate = currentOutcomes.some(
-      (outcome) => outcome.trim().toLowerCase() === newOutcome.trim().toLowerCase(),
+      (outcome) =>
+        outcome.trim().toLowerCase() === newOutcome.trim().toLowerCase(),
     );
 
     if (isDuplicate) {
@@ -189,7 +196,7 @@ export function EventPlannerForWebinar({
     form.setValue("topics", [...currentTopics, topicName], {
       shouldValidate: true,
     });
-    
+
     // Clear input and hide suggestions
     setNewTopic("");
     setShowTopicSuggestions(false);
@@ -213,7 +220,7 @@ export function EventPlannerForWebinar({
       // Focus the first suggestion if possible
       const suggestionsElement = suggestionsRef.current;
       if (suggestionsElement) {
-        const firstSuggestion = suggestionsElement.querySelector('button');
+        const firstSuggestion = suggestionsElement.querySelector("button");
         if (firstSuggestion) {
           (firstSuggestion as HTMLButtonElement).focus();
         }
@@ -225,20 +232,23 @@ export function EventPlannerForWebinar({
     async (formData) => {
       try {
         setInternalIsSaving(true);
-        console.log("EventPlannerForWebinar - Form data:", JSON.stringify(formData, null, 2));
+        console.log(
+          "EventPlannerForWebinar - Form data:",
+          JSON.stringify(formData, null, 2),
+        );
 
         // Check for duplicate title
         const title = formData.title;
-        const planId = initialData?.webinarPlan?.id || '';
-        
+        const planId = initialData?.webinarPlan?.id || "";
+
         try {
           const isDuplicate = await PlannerService.checkDuplicateTitle(
             title,
             consultantId,
-            'webinar',
-            planId
+            "webinar",
+            planId,
           );
-          
+
           if (isDuplicate) {
             toast({
               title: "Duplicate Title",
@@ -248,7 +258,8 @@ export function EventPlannerForWebinar({
             // Set field error directly in the form
             form.setError("title", {
               type: "manual",
-              message: "This title is already in use. Please choose a different title."
+              message:
+                "This title is already in use. Please choose a different title.",
             });
             setInternalIsSaving(false);
             return;
@@ -260,14 +271,17 @@ export function EventPlannerForWebinar({
 
         // Validate form data using Zod
         const validation = WebinarPlanSchema.safeParse(formData);
-        
+
         if (!validation.success) {
-          const errors = validation.error.errors.reduce((acc, error) => {
-            const path = error.path.join('.');
-            acc[path] = error.message;
-            return acc;
-          }, {} as Record<string, string>);
-          
+          const errors = validation.error.errors.reduce(
+            (acc, error) => {
+              const path = error.path.join(".");
+              acc[path] = error.message;
+              return acc;
+            },
+            {} as Record<string, string>,
+          );
+
           console.error("Validation errors:", errors);
           toast({
             title: "Validation Error",
@@ -281,11 +295,11 @@ export function EventPlannerForWebinar({
 
         // Format the data for the API with correct topic structure
         // This will ensure topics are in the correct format
-        const formattedTopics = formData.topics.map(topicName => ({
+        const formattedTopics = formData.topics.map((topicName) => ({
           id: "", // The API/service will handle assigning actual IDs
           name: topicName,
           createdAt: now,
-          updatedAt: now
+          updatedAt: now,
         }));
 
         const webinarData: Partial<WebinarEvent> = {
@@ -311,12 +325,15 @@ export function EventPlannerForWebinar({
           },
         };
 
-        console.log("Calling onSave with webinar data:", JSON.stringify(webinarData, null, 2));
-        
+        console.log(
+          "Calling onSave with webinar data:",
+          JSON.stringify(webinarData, null, 2),
+        );
+
         try {
           // Call onSave and wait for it to complete
           onSave(webinarData);
-          
+
           // Show success toast
           toast({
             title: "Success",
@@ -327,7 +344,10 @@ export function EventPlannerForWebinar({
           console.error("Error saving webinar:", error);
           toast({
             title: "Error",
-            description: error instanceof Error ? error.message : "Failed to save webinar. Please try again.",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Failed to save webinar. Please try again.",
             variant: "destructive",
           });
           throw error; // Re-throw to prevent form from closing
@@ -336,7 +356,10 @@ export function EventPlannerForWebinar({
         console.error("Error in handleFormSubmit:", error);
         toast({
           title: "Error",
-          description: error instanceof Error ? error.message : "Failed to save webinar. Please try again.",
+          description:
+            error instanceof Error
+              ? error.message
+              : "Failed to save webinar. Please try again.",
           variant: "destructive",
         });
       } finally {
@@ -345,13 +368,13 @@ export function EventPlannerForWebinar({
     },
     (errors) => {
       console.log("Form validation failed with errors:", errors);
-      
+
       toast({
         title: "Validation Error",
         description: "Please check the form for errors",
         variant: "destructive",
       });
-    }
+    },
   );
 
   return (
@@ -412,7 +435,10 @@ export function EventPlannerForWebinar({
                       <FormItem>
                         <FormLabel>Level</FormLabel>
                         <FormControl>
-                          <Input placeholder="Beginner, Intermediate, Advanced" {...field} />
+                          <Input
+                            placeholder="Beginner, Intermediate, Advanced"
+                            {...field}
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -430,7 +456,9 @@ export function EventPlannerForWebinar({
                             type="number"
                             placeholder="0"
                             {...field}
-                            onChange={(e) => field.onChange(Number.parseFloat(e.target.value))}
+                            onChange={(e) =>
+                              field.onChange(Number.parseFloat(e.target.value))
+                            }
                           />
                         </FormControl>
                         <FormMessage />
@@ -449,7 +477,9 @@ export function EventPlannerForWebinar({
                             type="number"
                             placeholder="10"
                             {...field}
-                            onChange={(e) => field.onChange(Number.parseInt(e.target.value))}
+                            onChange={(e) =>
+                              field.onChange(Number.parseInt(e.target.value))
+                            }
                           />
                         </FormControl>
                         <FormMessage />
@@ -469,10 +499,14 @@ export function EventPlannerForWebinar({
                             placeholder="1"
                             step="0.5"
                             {...field}
-                            onChange={(e) => field.onChange(Number.parseFloat(e.target.value))}
+                            onChange={(e) =>
+                              field.onChange(Number.parseFloat(e.target.value))
+                            }
                           />
                         </FormControl>
-                        <FormDescription>Must be in 30-minute increments (0.5, 1, 1.5, etc.)</FormDescription>
+                        <FormDescription>
+                          Must be in 30-minute increments (0.5, 1, 1.5, etc.)
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -487,7 +521,10 @@ export function EventPlannerForWebinar({
                         <FormControl>
                           <Input type="datetime-local" {...field} />
                         </FormControl>
-                        <FormDescription>Must be at least 1 hour in the future and start at :00 or :30</FormDescription>
+                        <FormDescription>
+                          Must be at least 1 hour in the future and start at :00
+                          or :30
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -501,7 +538,11 @@ export function EventPlannerForWebinar({
                     <FormItem>
                       <FormLabel>Description</FormLabel>
                       <FormControl>
-                        <Textarea placeholder="Describe your webinar" className="min-h-[120px]" {...field} />
+                        <Textarea
+                          placeholder="Describe your webinar"
+                          className="min-h-[120px]"
+                          {...field}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -572,9 +613,17 @@ export function EventPlannerForWebinar({
                       </div>
                       <div className="space-y-2 mt-2">
                         {field.value?.map((outcome, index) => (
-                          <div key={index} className="flex items-center gap-2 p-2 border rounded-md">
+                          <div
+                            key={index}
+                            className="flex items-center gap-2 p-2 border rounded-md"
+                          >
                             <span className="flex-1">{outcome}</span>
-                            <Button type="button" variant="ghost" size="icon" onClick={() => removeLearningOutcome(index)}>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => removeLearningOutcome(index)}
+                            >
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>
@@ -608,8 +657,8 @@ export function EventPlannerForWebinar({
                 />
 
                 <DialogFooter className="mt-6 pt-4 border-t">
-                  <Button 
-                    type="submit" 
+                  <Button
+                    type="submit"
                     disabled={isSaving}
                     className="min-w-[100px]"
                   >

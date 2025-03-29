@@ -9,7 +9,7 @@ export class PlannerService {
   private static newlyCreatedTopicIds: string[] = [];
   // Track newly created events to handle rollback
   private static newlyCreatedEventId: string | null = null;
-  private static newlyCreatedEventType: 'webinar' | 'class' | null = null;
+  private static newlyCreatedEventType: "webinar" | "class" | null = null;
 
   /**
    * Check if a title already exists for a consultant
@@ -17,34 +17,49 @@ export class PlannerService {
   static async checkDuplicateTitle(
     title: string,
     consultantId: string,
-    eventType: 'webinar' | 'class' | 'consultation' | 'subscription' | 'both' = 'both',
-    excludeId: string = ''
+    eventType:
+      | "webinar"
+      | "class"
+      | "consultation"
+      | "subscription"
+      | "both" = "both",
+    excludeId: string = "",
   ): Promise<boolean> {
     try {
       // For 'both' option, check webinars first, then classes
-      if (eventType === 'both') {
-        const isWebinarDuplicate = await this.checkDuplicateTitle(title, consultantId, 'webinar', excludeId);
+      if (eventType === "both") {
+        const isWebinarDuplicate = await this.checkDuplicateTitle(
+          title,
+          consultantId,
+          "webinar",
+          excludeId,
+        );
         if (isWebinarDuplicate) return true;
-        
-        const isClassDuplicate = await this.checkDuplicateTitle(title, consultantId, 'class', excludeId);
+
+        const isClassDuplicate = await this.checkDuplicateTitle(
+          title,
+          consultantId,
+          "class",
+          excludeId,
+        );
         return isClassDuplicate;
       }
-      
+
       // Determine the appropriate endpoint based on event type
       let endpoint: string;
-      
+
       switch (eventType) {
-        case 'webinar':
-          endpoint = '/api/events/webinars/check-duplicate-title';
+        case "webinar":
+          endpoint = "/api/events/webinars/check-duplicate-title";
           break;
-        case 'class':
-          endpoint = '/api/events/classes/check-duplicate-title';
+        case "class":
+          endpoint = "/api/events/classes/check-duplicate-title";
           break;
-        case 'consultation':
-          endpoint = '/api/events/consultations/check-duplicate-title';
+        case "consultation":
+          endpoint = "/api/events/consultations/check-duplicate-title";
           break;
-        case 'subscription':
-          endpoint = '/api/events/subscriptions/check-duplicate-title';
+        case "subscription":
+          endpoint = "/api/events/subscriptions/check-duplicate-title";
           break;
         default:
           throw new Error(`Unsupported event type: ${eventType}`);
@@ -56,14 +71,17 @@ export class PlannerService {
       });
 
       if (excludeId) {
-        params.append('excludeId', excludeId);
+        params.append("excludeId", excludeId);
       }
 
       const response = await fetch(`${endpoint}?${params}`);
-      
+
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || `Failed to check for duplicate ${eventType} titles`);
+        throw new Error(
+          errorData.error ||
+            `Failed to check for duplicate ${eventType} titles`,
+        );
       }
 
       const { isDuplicate } = await response.json();
@@ -144,37 +162,39 @@ export class PlannerService {
       this.newlyCreatedTopicIds = [];
       this.newlyCreatedEventId = null;
       this.newlyCreatedEventType = null;
-      
+
       // First check for duplicate title
       const title = webinarData.webinarPlan?.title;
-      const planId = webinarData.webinarPlan?.id || '';
-      
+      const planId = webinarData.webinarPlan?.id || "";
+
       if (title) {
         const isDuplicate = await this.checkDuplicateTitle(
-          title, 
-          consultantId, 
-          'webinar',
-          planId
+          title,
+          consultantId,
+          "webinar",
+          planId,
         );
-        
+
         if (isDuplicate) {
-          throw new Error(`A webinar with title "${title}" already exists. Please use a different title.`);
+          throw new Error(
+            `A webinar with title "${title}" already exists. Please use a different title.`,
+          );
         }
       }
-      
+
       // Extract topic names from webinarData
       let topicNames: string[] = [];
-      
+
       if (webinarData.webinarPlan?.topics) {
         // Handle topics whether they are strings or objects
-        topicNames = webinarData.webinarPlan.topics.map(topic => 
-          typeof topic === 'string' ? topic : topic.name
-        ).filter(Boolean);
+        topicNames = webinarData.webinarPlan.topics
+          .map((topic) => (typeof topic === "string" ? topic : topic.name))
+          .filter(Boolean);
       }
-      
+
       // Prepare all topic ids list
       let allTopicIds: string[] = [];
-      
+
       if (topicNames.length > 0) {
         try {
           console.log("Creating topics first:", topicNames);
@@ -184,10 +204,13 @@ export class PlannerService {
           console.log("Topics created with IDs:", newTopicIds);
         } catch (error) {
           console.error("Error creating topics:", error);
-          throw new Error("Failed to create topics: " + (error instanceof Error ? error.message : String(error)));
+          throw new Error(
+            "Failed to create topics: " +
+              (error instanceof Error ? error.message : String(error)),
+          );
         }
       }
-      
+
       try {
         // Now create the webinar with all topic IDs
         const response = await fetch("/api/events/webinars/create-with-plan", {
@@ -205,27 +228,25 @@ export class PlannerService {
 
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(
-            errorData.error || "Failed to create webinar"
-          );
+          throw new Error(errorData.error || "Failed to create webinar");
         }
 
         const { data: webinar } = await response.json();
-        
+
         // Track the newly created webinar
         this.newlyCreatedEventId = webinar.id;
-        this.newlyCreatedEventType = 'webinar';
+        this.newlyCreatedEventType = "webinar";
 
         // Additional processing for webinar if needed
         try {
           // Theoretical additional processing step that could fail
           // e.g., creating notifications, setting up calendar events, etc.
-          
+
           // If all operations succeed, clear tracking
           this.newlyCreatedTopicIds = [];
           this.newlyCreatedEventId = null;
           this.newlyCreatedEventType = null;
-          
+
           return {
             id: webinar.id,
             type: "webinar",
@@ -258,10 +279,13 @@ export class PlannerService {
       console.log("No topics to roll back");
       return;
     }
-    
+
     try {
-      console.log("Rolling back newly created topics:", this.newlyCreatedTopicIds);
-      
+      console.log(
+        "Rolling back newly created topics:",
+        this.newlyCreatedTopicIds,
+      );
+
       const response = await fetch("/api/user/content/topics", {
         method: "DELETE",
         headers: {
@@ -269,7 +293,7 @@ export class PlannerService {
         },
         body: JSON.stringify({ ids: this.newlyCreatedTopicIds }),
       });
-      
+
       if (!response.ok) {
         console.error("Failed to rollback topics, status:", response.status);
         const errorData = await response.json();
@@ -296,37 +320,39 @@ export class PlannerService {
       this.newlyCreatedTopicIds = [];
       this.newlyCreatedEventId = null;
       this.newlyCreatedEventType = null;
-      
+
       // First check for duplicate title
       const title = classData.classPlan?.title;
-      const planId = classData.classPlan?.id || '';
-      
+      const planId = classData.classPlan?.id || "";
+
       if (title) {
         const isDuplicate = await this.checkDuplicateTitle(
-          title, 
-          consultantId, 
-          'class',
-          planId
+          title,
+          consultantId,
+          "class",
+          planId,
         );
-        
+
         if (isDuplicate) {
-          throw new Error(`A class with title "${title}" already exists. Please use a different title.`);
+          throw new Error(
+            `A class with title "${title}" already exists. Please use a different title.`,
+          );
         }
       }
-      
+
       // Extract topic names from classData
       let topicNames: string[] = [];
-      
+
       if (classData.classPlan?.topics) {
         // Handle topics whether they are strings or objects
-        topicNames = classData.classPlan.topics.map(topic => 
-          typeof topic === 'string' ? topic : topic.name
-        ).filter(Boolean);
+        topicNames = classData.classPlan.topics
+          .map((topic) => (typeof topic === "string" ? topic : topic.name))
+          .filter(Boolean);
       }
-         
+
       // Prepare all topic ids list
       let allTopicIds: string[] = [];
-      
+
       if (topicNames.length > 0) {
         try {
           const newTopicIds = await this.createTopics(topicNames);
@@ -334,10 +360,13 @@ export class PlannerService {
           allTopicIds = [...newTopicIds];
         } catch (error) {
           console.error("Error creating topics:", error);
-          throw new Error("Failed to create topics: " + (error instanceof Error ? error.message : String(error)));
+          throw new Error(
+            "Failed to create topics: " +
+              (error instanceof Error ? error.message : String(error)),
+          );
         }
       }
-      
+
       try {
         const response = await fetch("/api/events/classes/create-with-plan", {
           method: "POST",
@@ -353,27 +382,25 @@ export class PlannerService {
 
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(
-            errorData.error || "Failed to create class"
-          );
+          throw new Error(errorData.error || "Failed to create class");
         }
 
         const { data: classEvent } = await response.json();
-        
+
         // Track the newly created class
         this.newlyCreatedEventId = classEvent.id;
-        this.newlyCreatedEventType = 'class';
-        
+        this.newlyCreatedEventType = "class";
+
         // Additional processing for class if needed
         try {
           // Theoretical additional processing step that could fail
           // e.g., creating notifications, setting up calendar events, etc.
-          
+
           // If all operations succeed, clear tracking
           this.newlyCreatedTopicIds = [];
           this.newlyCreatedEventId = null;
           this.newlyCreatedEventType = null;
-          
+
           return {
             id: classEvent.id,
             type: "class",
@@ -450,13 +477,16 @@ export class PlannerService {
 
           return processed;
         })
-        .filter((topic): topic is string => 
-          topic !== null && 
-          topic.length >= 2 &&
-          // Filter out duplicates (case-insensitive)
-          !topicNames.find(
-            (t, i) => topicNames.indexOf(topic) !== i && t.toLowerCase() === topic.toLowerCase()
-          )
+        .filter(
+          (topic): topic is string =>
+            topic !== null &&
+            topic.length >= 2 &&
+            // Filter out duplicates (case-insensitive)
+            !topicNames.find(
+              (t, i) =>
+                topicNames.indexOf(topic) !== i &&
+                t.toLowerCase() === topic.toLowerCase(),
+            ),
         );
 
       if (processedTopics.length === 0) {
@@ -486,7 +516,7 @@ export class PlannerService {
       }
 
       console.log("Topics created/retrieved:", topics);
-      return topics.map(topic => topic.id);
+      return topics.map((topic) => topic.id);
     } catch (error) {
       console.error("Error creating topics:", error);
       throw error;
@@ -685,13 +715,14 @@ export class PlannerService {
         prerequisites: data.prerequisites ?? null,
         materialProvided: data.materialProvided ?? null,
         learningOutcomes: data.learningOutcomes,
-        topics: topicIds.map(id => ({
+        topics: topicIds.map((id) => ({
           id,
-          name: Array.isArray(data.topics) 
-            ? data.topics.find((_, index) => index === topicIds.indexOf(id)) || "" 
+          name: Array.isArray(data.topics)
+            ? data.topics.find((_, index) => index === topicIds.indexOf(id)) ||
+              ""
             : "",
           createdAt: now,
-          updatedAt: now
+          updatedAt: now,
         })),
         topicIds: topicIds,
         consultantProfileId: consultantId,
@@ -703,11 +734,11 @@ export class PlannerService {
     };
 
     console.log("Saving webinar data:", webinarData);
-    
+
     const savedWebinar = await this.saveWebinar(webinarData, consultantId);
     this.showSuccessToast(data.title, initialData, "webinar");
     return savedWebinar;
-    
+
     // Note: All rollbacks are handled in saveWebinar if an error occurs
   }
 
@@ -752,13 +783,14 @@ export class PlannerService {
         prerequisites: data.prerequisites ?? null,
         materialProvided: data.materialProvided ?? null,
         learningOutcomes: data.learningOutcomes,
-        topics: topicIds.map(id => ({
+        topics: topicIds.map((id) => ({
           id,
-          name: Array.isArray(data.topics) 
-            ? data.topics.find((_, index) => index === topicIds.indexOf(id)) || "" 
+          name: Array.isArray(data.topics)
+            ? data.topics.find((_, index) => index === topicIds.indexOf(id)) ||
+              ""
             : "",
           createdAt: now,
-          updatedAt: now
+          updatedAt: now,
         })),
         topicIds: topicIds,
         consultantProfileId: consultantId,
@@ -779,7 +811,7 @@ export class PlannerService {
     const savedClass = await this.saveClass(classEventData, consultantId);
     this.showSuccessToast(data.title, initialData, "class");
     return savedClass;
-    
+
     // Note: All rollbacks are handled in saveClass if an error occurs
   }
 
@@ -863,33 +895,46 @@ export class PlannerService {
       console.log("No event to roll back");
       return;
     }
-    
+
     try {
-      console.log(`Rolling back newly created ${this.newlyCreatedEventType}:`, this.newlyCreatedEventId);
-      
-      const endpoint = this.newlyCreatedEventType === 'webinar' 
-        ? "/api/events/webinars" 
-        : "/api/events/classes";
-      
+      console.log(
+        `Rolling back newly created ${this.newlyCreatedEventType}:`,
+        this.newlyCreatedEventId,
+      );
+
+      const endpoint =
+        this.newlyCreatedEventType === "webinar"
+          ? "/api/events/webinars"
+          : "/api/events/classes";
+
       const response = await fetch(`${endpoint}/${this.newlyCreatedEventId}`, {
         method: "DELETE",
         headers: {
           "Content-Type": "application/json",
-        }
+        },
       });
-      
+
       if (!response.ok) {
-        console.error(`Failed to rollback ${this.newlyCreatedEventType}, status:`, response.status);
+        console.error(
+          `Failed to rollback ${this.newlyCreatedEventType}, status:`,
+          response.status,
+        );
         const errorData = await response.json();
         console.error("Rollback error:", errorData);
       } else {
         const result = await response.json();
-        console.log(`${this.newlyCreatedEventType} rolled back successfully:`, result);
+        console.log(
+          `${this.newlyCreatedEventType} rolled back successfully:`,
+          result,
+        );
         this.newlyCreatedEventId = null;
         this.newlyCreatedEventType = null;
       }
     } catch (error) {
-      console.error(`Error during ${this.newlyCreatedEventType} rollback:`, error);
+      console.error(
+        `Error during ${this.newlyCreatedEventType} rollback:`,
+        error,
+      );
     }
   }
 

@@ -102,7 +102,10 @@ export async function POST(request: NextRequest) {
           appointments: {
             create: Array.from({ length: callsPerWeek * 4 }).map((_, index) => {
               const appointmentDate = new Date(start);
-              appointmentDate.setDate(appointmentDate.getDate() + Math.floor(index / callsPerWeek) * 7);
+              appointmentDate.setDate(
+                appointmentDate.getDate() +
+                  Math.floor(index / callsPerWeek) * 7,
+              );
               const slotStart = new Date(appointmentDate);
               const slotEnd = new Date(appointmentDate);
               slotEnd.setHours(slotEnd.getHours() + 1); // Default 1-hour slots
@@ -153,4 +156,4 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
-} 
+}
