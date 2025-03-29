@@ -141,6 +141,30 @@ export function EventPlannerForWebinar({
     mode: "onChange", // Validate on change for better UX
   });
 
+  // Reset form values when initialData changes
+  useEffect(() => {
+    if (initialData && initialData.webinarPlan) {
+      // Reset the form with values from initialData
+      form.reset({
+        title: initialData.webinarPlan.title,
+        description: initialData.webinarPlan.description || "",
+        price: initialData.webinarPlan.price,
+        durationInHours: initialData.webinarPlan.durationInHours,
+        maxParticipants: initialData.webinarPlan.maxParticipants,
+        language: initialData.webinarPlan.language || "English",
+        level: initialData.webinarPlan.level || "Beginner",
+        prerequisites: initialData.webinarPlan.prerequisites || "",
+        materialProvided: initialData.webinarPlan.materialProvided || "",
+        learningOutcomes: initialData.webinarPlan.learningOutcomes || [],
+        topics: initialData.webinarPlan.topics?.map(topic => 
+          typeof topic === "string" ? topic : topic.name
+        ) || [],
+        scheduledAt: initialData.webinarPlan.scheduledAt || formatDateTimeForInput(),
+        consultantProfileId: consultantId,
+      });
+    }
+  }, [initialData, form, consultantId]);
+
   const addLearningOutcome = () => {
     if (newOutcome.trim() === "") return;
     const currentOutcomes = form.getValues("learningOutcomes") || [];

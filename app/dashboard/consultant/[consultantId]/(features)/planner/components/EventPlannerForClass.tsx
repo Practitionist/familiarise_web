@@ -87,7 +87,9 @@ export function EventPlannerForClass({
           prerequisites: initialData.classPlan.prerequisites ?? "",
           materialProvided: initialData.classPlan.materialProvided ?? "",
           learningOutcomes: initialData.classPlan.learningOutcomes,
-          topics: initialData.classPlan.topics.map((topic) => topic.name),
+          topics: initialData.classPlan.topics?.map((topic) => 
+            typeof topic === "string" ? topic : topic.name
+          ) || [],
           certificateProvided: initialData.classPlan.certificateProvided,
           callsPerWeek: initialData.classPlan.callsPerWeek,
           videoMeetings: initialData.classPlan.videoMeetings,
@@ -115,6 +117,34 @@ export function EventPlannerForClass({
         },
     mode: "onChange",
   });
+
+  // Reset form values when initialData changes
+  useEffect(() => {
+    if (initialData && initialData.classPlan) {
+      // Reset the form with values from initialData
+      form.reset({
+        title: initialData.classPlan.title,
+        description: initialData.classPlan.description ?? "",
+        price: initialData.classPlan.price,
+        durationInMonths: initialData.classPlan.durationInMonths,
+        maxParticipants: initialData.classPlan.maxParticipants,
+        language: initialData.classPlan.language ?? "English",
+        level: initialData.classPlan.level ?? "Beginner",
+        prerequisites: initialData.classPlan.prerequisites ?? "",
+        materialProvided: initialData.classPlan.materialProvided ?? "",
+        learningOutcomes: initialData.classPlan.learningOutcomes,
+        topics: initialData.classPlan.topics?.map((topic) => 
+          typeof topic === "string" ? topic : topic.name
+        ) || [],
+        certificateProvided: initialData.classPlan.certificateProvided,
+        callsPerWeek: initialData.classPlan.callsPerWeek,
+        videoMeetings: initialData.classPlan.videoMeetings,
+        emailSupport: initialData.classPlan.emailSupport,
+        consultantProfileId: initialData.classPlan.consultantProfileId,
+        classContents: initialData.classPlan.classContents,
+      });
+    }
+  }, [initialData, form, consultantId]);
 
   // Type guard to check if form data has classContents
   function isClassFormData(data: any): data is { classContents: any[] } {
