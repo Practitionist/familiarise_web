@@ -234,9 +234,9 @@ export async function PATCH(request: NextRequest) {
       learningOutcomes,
       consultantProfileId,
       topicIds,
-      scheduledAt,
       // Additional fields for webinar instance
       status,
+      scheduledAt, // This is the date and time for the appointment
       webinarId, // The actual webinar instance ID
     } = body;
 
@@ -249,9 +249,9 @@ export async function PATCH(request: NextRequest) {
       price,
       maxParticipants,
       consultantProfileId,
-      scheduledAt,
-      topicIds,
+      topicIds: topicIds ? `[${topicIds.length} topics]` : 'undefined',
       status,
+      scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
     });
 
     // Input validation
@@ -291,11 +291,11 @@ export async function PATCH(request: NextRequest) {
           include: {
             appointment: {
               include: {
-                slotsOfAppointment: true,
-              },
-            },
-          },
-        },
+                slotsOfAppointment: true
+              }
+            }
+          }
+        }
       },
     });
 
@@ -306,22 +306,6 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    // Calculate end time if scheduledAt is provided
-    let startTime: Date | undefined;
-    let endTime: Date | undefined;
-    
-    if (scheduledAt) {
-      startTime = new Date(scheduledAt);
-      endTime = new Date(startTime);
-      endTime.setHours(endTime.getHours() + durationInHours);
-      
-      console.log("Calculated times for update:", {
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
-        durationInHours,
-      });
-    }
-
     // Get the webinar instance - use the provided webinarId or the first one associated with the plan
     const webinarToUpdate = webinarId 
       ? await prisma.webinar.findUnique({
@@ -329,10 +313,10 @@ export async function PATCH(request: NextRequest) {
           include: {
             appointment: {
               include: {
-                slotsOfAppointment: true,
-              },
-            },
-          },
+                slotsOfAppointment: true
+              }
+            }
+          }
         })
       : existingPlan.webinars.length > 0 
         ? existingPlan.webinars[0] 
@@ -340,9 +324,37 @@ export async function PATCH(request: NextRequest) {
 
     if (!webinarToUpdate && (status || scheduledAt)) {
       return NextResponse.json(
-        { error: "Cannot update status or schedule: no webinar instance found" },
+        { error: "Cannot update status or scheduling: no webinar instance found" },
         { status: 400 },
       );
+    }
+
+    // Calculate startTime and endTime if scheduledAt is provided
+    let startTime = undefined;
+    let endTime = undefined;
+
+    if (scheduledAt) {
+      // Parse the scheduledAt date (already in UTC from frontend)
+      const scheduledDate = new Date(scheduledAt);
+      
+      // Log the received and parsed date
+      console.log("Processing scheduledAt:", {
+        received: scheduledAt,
+        parsedDate: scheduledDate.toISOString(),
+      });
+      
+      startTime = scheduledDate;
+      
+      // Calculate endTime based on duration
+      const endTimeDate = new Date(scheduledDate);
+      endTimeDate.setHours(endTimeDate.getHours() + durationInHours);
+      endTime = endTimeDate;
+      
+      console.log("Calculated slot times:", {
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+        durationInHours
+      });
     }
 
     // Update webinar plan and related data in a transaction
@@ -357,18 +369,8 @@ export async function PATCH(request: NextRequest) {
           if (topics.length !== topicIds.length) {
             throw new Error("Some topics do not exist");
           }
-        }
 
-        // 1. Update the webinar plan
-        console.log("Updating webinar plan with data:", {
-          id,
-          title,
-          description,
-          topicIds,
-        });
-
-        // First disconnect existing topics if new topicIds are provided
-        if (topicIds && topicIds.length > 0) {
+          // 1. First disconnect existing topics if new ones are provided
           await tx.webinarPlan.update({
             where: { id },
             data: {
@@ -377,9 +379,23 @@ export async function PATCH(request: NextRequest) {
               },
             },
           });
+
+          // 2. Connect the new topics
+          await tx.webinarPlan.update({
+            where: { id },
+            data: {
+              topics: {
+                connect: topicIds.map((topicId: string) => ({ id: topicId })),
+              },
+            },
+          });
+          
+          console.log(`Updated topics: Connected ${topicIds.length} topics`);
+        } else {
+          console.log("No new topics provided, preserving existing topics");
         }
 
-        // Then update the plan with all new data
+        // 3. Update the webinar plan with all other data
         const updatedWebinarPlan = await tx.webinarPlan.update({
           where: { id },
           data: {
@@ -394,9 +410,6 @@ export async function PATCH(request: NextRequest) {
             materialProvided,
             learningOutcomes,
             consultantProfile: { connect: { id: consultantProfileId } },
-            topics: topicIds && topicIds.length > 0
-              ? { connect: topicIds.map((topicId: string) => ({ id: topicId })) }
-              : undefined,
           },
           include: {
             consultantProfile: true,
@@ -404,68 +417,106 @@ export async function PATCH(request: NextRequest) {
           },
         });
 
-        console.log("Updated webinar plan:", {
-          id: updatedWebinarPlan.id,
-          title: updatedWebinarPlan.title,
-          topicsCount: updatedWebinarPlan.topics.length,
-        });
-
-        // 2. Update the webinar instance if it exists and status is provided
+        // 4. Update the webinar instance if it exists
         let updatedWebinar = webinarToUpdate;
-        if (updatedWebinar && status) {
-          updatedWebinar = await tx.webinar.update({
-            where: { id: updatedWebinar.id },
-            data: {
-              status,
-            },
-            include: {
-              webinarPlan: {
-                include: {
-                  consultantProfile: true,
-                  topics: true,
+        if (updatedWebinar) {
+          const webinarUpdateData: any = {};
+          
+          if (status) {
+            webinarUpdateData.status = status;
+          }
+          
+          if (Object.keys(webinarUpdateData).length > 0) {
+            updatedWebinar = await tx.webinar.update({
+              where: { id: updatedWebinar.id },
+              data: webinarUpdateData,
+              include: {
+                webinarPlan: {
+                  include: {
+                    consultantProfile: true,
+                    topics: true,
+                  },
                 },
-              },
-              appointment: {
-                include: {
-                  slotsOfAppointment: {
-                    include: {
-                      user: true,
+                appointment: {
+                  include: {
+                    slotsOfAppointment: {
+                      include: {
+                        user: true,
+                      },
                     },
                   },
                 },
-              },
-              meetingRoom: true,
-              waitlist: true,
-            },
-          });
-        }
-
-        // 3. Update appointment slot timing if scheduledAt is provided and we have an appointment
-        if (startTime && endTime && updatedWebinar?.appointment) {
-          // Update the first slot (or create if none exists)
-          if (updatedWebinar.appointment.slotsOfAppointment.length > 0) {
-            await tx.slotOfAppointment.update({
-              where: { id: updatedWebinar.appointment.slotsOfAppointment[0].id },
-              data: {
-                slotStartTimeInUTC: startTime,
-                slotEndTimeInUTC: endTime,
-              },
-            });
-          } else {
-            await tx.slotOfAppointment.create({
-              data: {
-                appointmentId: updatedWebinar.appointment.id,
-                slotStartTimeInUTC: startTime,
-                slotEndTimeInUTC: endTime,
-                isTentative: false,
+                meetingRoom: true,
+                waitlist: true,
               },
             });
           }
-        }
 
-        // Fetch the fully updated webinar if it exists
-        if (updatedWebinar) {
-          const finalWebinar = await tx.webinar.findUnique({
+          // 5. Update appointment slot if scheduledAt is provided
+          if (scheduledAt && startTime && endTime) {
+            const appointment = updatedWebinar.appointment;
+            
+            if (appointment) {
+              // Update existing appointment slots
+              if (appointment.slotsOfAppointment && appointment.slotsOfAppointment.length > 0) {
+                const slot = appointment.slotsOfAppointment[0];
+                
+                console.log("Updating existing slot:", {
+                  slotId: slot.id,
+                  oldStartTime: slot.slotStartTimeInUTC,
+                  oldEndTime: slot.slotEndTimeInUTC,
+                  newStartTime: startTime,
+                  newEndTime: endTime,
+                });
+                
+                await tx.slotOfAppointment.update({
+                  where: { id: slot.id },
+                  data: {
+                    slotStartTimeInUTC: startTime,
+                    slotEndTimeInUTC: endTime,
+                  },
+                });
+              } else {
+                // Create a new slot if none exists
+                console.log("Creating new slot for appointment:", {
+                  appointmentId: appointment.id,
+                  startTime: startTime.toISOString(),
+                  endTime: endTime.toISOString(),
+                });
+                
+                await tx.slotOfAppointment.create({
+                  data: {
+                    appointmentId: appointment.id,
+                    slotStartTimeInUTC: startTime,
+                    slotEndTimeInUTC: endTime,
+                    isTentative: false,
+                  },
+                });
+              }
+            } else {
+              // Create a new appointment and slot if no appointment exists
+              console.log("Creating new appointment and slot for webinar");
+              
+              const newAppointment = await tx.appointment.create({
+                data: {
+                  webinar: { connect: { id: updatedWebinar.id } },
+                  appointmentType: "WEBINAR",
+                  slotsOfAppointment: {
+                    create: {
+                      slotStartTimeInUTC: startTime,
+                      slotEndTimeInUTC: endTime,
+                      isTentative: false,
+                    },
+                  },
+                },
+              });
+              
+              console.log("Created new appointment:", newAppointment.id);
+            }
+          }
+          
+          // Retrieve the fully updated webinar after all changes
+          updatedWebinar = await tx.webinar.findUnique({
             where: { id: updatedWebinar.id },
             include: {
               webinarPlan: {
@@ -487,17 +538,12 @@ export async function PATCH(request: NextRequest) {
               waitlist: true,
             },
           });
-          
-          return { 
-            webinarPlan: updatedWebinarPlan, 
-            webinar: finalWebinar 
-          };
         }
 
-        // Return just the plan if no webinar instance exists
+        // Return the results
         return { 
           webinarPlan: updatedWebinarPlan,
-          webinar: null
+          webinar: updatedWebinar 
         };
       },
       {

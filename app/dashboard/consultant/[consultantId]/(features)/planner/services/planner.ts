@@ -225,6 +225,24 @@ export class PlannerService {
 
         console.log(`Using ${method} request to ${endpoint} for ${isUpdate ? "update" : "create"}`);
 
+        // Prepare the scheduled date if provided
+        const scheduledAt = webinarData.webinarPlan?.scheduledAt;
+        let scheduledAtDate = null;
+        
+        if (scheduledAt) {
+          // Convert to Date object if it's a string
+          scheduledAtDate = typeof scheduledAt === 'string' 
+            ? new Date(scheduledAt) 
+            : (scheduledAt as unknown) instanceof Date 
+              ? scheduledAt 
+              : null;
+              
+          if (scheduledAtDate) {
+            console.log(`Converting scheduledAt from local (${scheduledAtDate.toString()}) to UTC...`);
+            // Don't need to convert since the date object inherently handles the UTC conversion when sent as JSON
+          }
+        }
+        
         // Now create or update the webinar with all topic IDs
         const response = await fetch(endpoint, {
           method,
@@ -236,8 +254,8 @@ export class PlannerService {
             id: planId, // Include the plan ID for PATCH requests
             webinarId: webinarId, // Include the webinar instance ID for PATCH requests
             consultantProfileId: consultantId,
-            scheduledAt: webinarData.webinarPlan?.scheduledAt,
-            topicIds: allTopicIds.length > 0 ? allTopicIds : undefined,
+            scheduledAt: scheduledAtDate, // Pass the Date object
+            topicIds: allTopicIds.length > 0 ? allTopicIds : undefined, // Only include topicIds if we have new ones
           }),
         });
 

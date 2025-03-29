@@ -59,13 +59,20 @@ export function EventPlannerForWebinar({
   const isSaving = externalIsSaving ?? internalIsSaving;
 
   // Helper function to format datetime-local input
-  const formatDateTimeForInput = () => {
-    const now = new Date();
-    now.setHours(now.getHours() + 1);
-    now.setMinutes(Math.ceil(now.getMinutes() / 30) * 30);
-    now.setSeconds(0);
-    now.setMilliseconds(0);
-    return now.toISOString().slice(0, 16);
+  const formatDateTimeForInput = (date?: Date | string | null) => {
+    if (!date) {
+      // Default to current time + 1 hour, rounded to nearest 30 min
+      const now = new Date();
+      now.setHours(now.getHours() + 1);
+      now.setMinutes(Math.ceil(now.getMinutes() / 30) * 30);
+      now.setSeconds(0);
+      now.setMilliseconds(0);
+      return now.toISOString().slice(0, 16);
+    } 
+    
+    // Convert to date object if it's a string
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    return dateObj.toISOString().slice(0, 16);
   };
 
   // Fetch available topics from API
@@ -116,6 +123,22 @@ export function EventPlannerForWebinar({
     // This effect is no longer needed as we're using the TopicsComponent
   }, []);
 
+  // Extract scheduledAt from appointment slots if available
+  const getInitialScheduledAt = (): string => {
+    if (initialData?.appointment && 
+        initialData.appointment.slotsOfAppointment && 
+        initialData.appointment.slotsOfAppointment.length > 0) {
+      const slot = initialData.appointment.slotsOfAppointment[0];
+      console.log("Found existing slot for appointment:", {
+        slotId: slot.id,
+        startTime: slot.slotStartTimeInUTC,
+        endTime: slot.slotEndTimeInUTC
+      });
+      return formatDateTimeForInput(slot.slotStartTimeInUTC);
+    }
+    return formatDateTimeForInput();
+  };
+
   const form = useForm<z.infer<typeof WebinarPlanSchema>>({
     resolver: zodResolver(WebinarPlanSchema),
     defaultValues: {
@@ -134,8 +157,7 @@ export function EventPlannerForWebinar({
         initialData?.webinarPlan?.topics?.map((topic) =>
           typeof topic === "string" ? topic : topic.name,
         ) ?? [],
-      scheduledAt:
-        initialData?.webinarPlan?.scheduledAt ?? formatDateTimeForInput(),
+      scheduledAt: getInitialScheduledAt(),
       consultantProfileId: consultantId,
     },
     mode: "onChange", // Validate on change for better UX
@@ -143,7 +165,7 @@ export function EventPlannerForWebinar({
 
   // Reset form values when initialData changes
   useEffect(() => {
-    if (initialData && initialData.webinarPlan) {
+    if (initialData?.webinarPlan) {
       // Reset the form with values from initialData
       form.reset({
         title: initialData.webinarPlan.title,
@@ -159,7 +181,7 @@ export function EventPlannerForWebinar({
         topics: initialData.webinarPlan.topics?.map(topic => 
           typeof topic === "string" ? topic : topic.name
         ) || [],
-        scheduledAt: initialData.webinarPlan.scheduledAt || formatDateTimeForInput(),
+        scheduledAt: getInitialScheduledAt(),
         consultantProfileId: consultantId,
       });
     }
@@ -245,7 +267,7 @@ export function EventPlannerForWebinar({
       if (suggestionsElement) {
         const firstSuggestion = suggestionsElement.querySelector("button");
         if (firstSuggestion) {
-          (firstSuggestion as HTMLButtonElement).focus();
+          (firstSuggestion).focus();
         }
       }
     }
