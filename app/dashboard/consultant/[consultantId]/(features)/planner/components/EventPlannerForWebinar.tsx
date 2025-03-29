@@ -30,8 +30,7 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { PlannerService } from "../services/planner";
-import { WebinarEvent } from "../types/event";
-import { WebinarPlannerProps } from "../types/planner";
+import { WebinarEvent, WebinarPlannerProps } from "../types/event";
 
 export function EventPlannerForWebinar({
   isOpen,

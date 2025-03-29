@@ -35,7 +35,8 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { PlannerService } from "../services/planner";
-import { ClassPlannerProps } from "../types/planner";
+import { ClassEvent, ClassPlannerProps } from "../types/event";
+
 
 export function EventPlannerForClass({
   isOpen,
@@ -274,7 +275,7 @@ export function EventPlannerForClass({
           updatedAt: now,
         }));
 
-        const classEventData = {
+        const classEventData: Partial<ClassEvent> = {
           type: "class" as const,
           classPlan: {
             id: initialData?.classPlan?.id ?? "",
@@ -289,7 +290,6 @@ export function EventPlannerForClass({
             materialProvided: formData.materialProvided ?? null,
             learningOutcomes: formData.learningOutcomes,
             topics: formattedTopics,
-            topicIds: [], // The service will handle this
             consultantProfileId: consultantId,
             consultantProfile: null,
             certificateProvided: formData.certificateProvided,
