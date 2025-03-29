@@ -1,6 +1,8 @@
 "use client";
 
+import { TopicsComponent } from "@/components/topics-component";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +14,7 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -22,12 +25,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { WebinarPlanSchema } from "@/schemas/PlanSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useState } from "react";
+import { Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
-import { PlannerService } from "../services/planner";
-import { WebinarPlannerProps } from "../types/planner";
-import { TopicsAndOutcomesForm } from "./TopicsAndOutcomesForm";
 import { z } from "zod";
+import { PlannerService } from "../services/planner";
+import { WebinarEvent } from "../types/event";
+import { WebinarPlannerProps } from "../types/planner";
 
 export function EventPlannerForWebinar({
   isOpen,
@@ -38,65 +42,190 @@ export function EventPlannerForWebinar({
   consultantId,
 }: Readonly<WebinarPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
-  const [topicNames, setTopicNames] = useState<string[]>([]);
+  const [newOutcome, setNewOutcome] = useState("");
+  const [newTopic, setNewTopic] = useState("");
+  const [suggestedTopics, setSuggestedTopics] = useState<{ id: string; name: string }[]>([]);
+  const [showTopicSuggestions, setShowTopicSuggestions] = useState(false);
+  const [availableTopics, setAvailableTopics] = useState<{ id: string; name: string, createdAt: Date, updatedAt: Date }[]>([]);
+  const [isLoadingTopics, setIsLoadingTopics] = useState(false);
+  const topicInputRef = useRef<HTMLInputElement>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   // Use either external or internal saving state
   const isSaving = externalIsSaving ?? internalIsSaving;
 
-  // Load topic names when component mounts or initialData changes
+  // Helper function to format datetime-local input
+  const formatDateTimeForInput = () => {
+    const now = new Date();
+    now.setHours(now.getHours() + 1);
+    now.setMinutes(Math.ceil(now.getMinutes() / 30) * 30);
+    now.setSeconds(0);
+    now.setMilliseconds(0);
+    return now.toISOString().slice(0, 16);
+  };
+
+  // Fetch available topics from API
   useEffect(() => {
-    const loadTopicNames = async () => {
-      if (initialData?.webinarPlan.topics) {
-        setTopicNames(initialData.webinarPlan.topics.map(topic => topic.name));
+    const fetchTopics = async () => {
+      try {
+        setIsLoadingTopics(true);
+        const fetchedTopics = await PlannerService.getTopics("");
+        setAvailableTopics(fetchedTopics);
+      } catch (error) {
+        console.error("Failed to fetch topics:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load topics. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsLoadingTopics(false);
       }
     };
-    loadTopicNames();
-  }, [initialData]);
 
-  // Define form with WebinarPlanSchema
+    if (isOpen) {
+      fetchTopics();
+    }
+  }, [isOpen, toast]);
+
+  // Close topic suggestions when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        suggestionsRef.current && 
+        !suggestionsRef.current.contains(event.target as Node) &&
+        topicInputRef.current && 
+        !topicInputRef.current.contains(event.target as Node)
+      ) {
+        setShowTopicSuggestions(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  // Filter suggestions based on input
+  useEffect(() => {
+    // This effect is no longer needed as we're using the TopicsComponent
+  }, []);
+
   const form = useForm<z.infer<typeof WebinarPlanSchema>>({
     resolver: zodResolver(WebinarPlanSchema),
     defaultValues: {
-      title: initialData?.webinarPlan?.title || "",
-      description: initialData?.webinarPlan?.description || "",
-      price: initialData?.webinarPlan?.price || 0,
-      durationInHours: initialData?.webinarPlan?.durationInHours || 1,
-      maxParticipants: initialData?.webinarPlan?.maxParticipants || 100,
-      language: initialData?.webinarPlan?.language || "English",
-      level: initialData?.webinarPlan?.level || "Beginner",
-      prerequisites: initialData?.webinarPlan?.prerequisites || "",
-      materialProvided: initialData?.webinarPlan?.materialProvided || "",
-      learningOutcomes: initialData?.webinarPlan?.learningOutcomes || [],
-      topics: initialData?.webinarPlan?.topics?.map((topic) => topic.name) || [],
-      scheduledAt: initialData?.webinarPlan?.scheduledAt || (() => {
-        const now = new Date();
-        // Set to 1 hour from now
-        now.setHours(now.getHours() + 1);
-        // Round up to next 30 minutes
-        now.setMinutes(now.getMinutes() + (30 - (now.getMinutes() % 30)));
-        now.setSeconds(0);
-        now.setMilliseconds(0);
-        return now.toISOString().slice(0, 16);
-      })(),
+      title: initialData?.webinarPlan?.title ?? "",
+      description: initialData?.webinarPlan?.description ?? "",
+      price: initialData?.webinarPlan?.price ?? 0,
+      durationInHours: initialData?.webinarPlan?.durationInHours ?? 1,
+      maxParticipants: initialData?.webinarPlan?.maxParticipants ?? 100,
+      language: initialData?.webinarPlan?.language ?? "English",
+      level: initialData?.webinarPlan?.level ?? "Beginner",
+      prerequisites: initialData?.webinarPlan?.prerequisites ?? "",
+      materialProvided: initialData?.webinarPlan?.materialProvided ?? "",
+      learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
+      // Convert topics from objects to strings for the form
+      topics: initialData?.webinarPlan?.topics?.map(topic => 
+        typeof topic === 'string' ? topic : topic.name
+      ) ?? [],
+      scheduledAt: initialData?.webinarPlan?.scheduledAt ?? formatDateTimeForInput(),
+      consultantProfileId: consultantId,
     },
+    mode: "onChange", // Validate on change for better UX
   });
 
-  // Initialize planType in a type-safe way
-  useEffect(() => {
-    // Use setValue with type casting for safety
-    (form as any).setValue("planType", "webinar");
-  }, [form]);
+  const addLearningOutcome = () => {
+    if (newOutcome.trim() === "") return;
+    const currentOutcomes = form.getValues("learningOutcomes") || [];
 
-  // Form submission handler
+    // Check for duplicates (case-insensitive)
+    const isDuplicate = currentOutcomes.some(
+      (outcome) => outcome.trim().toLowerCase() === newOutcome.trim().toLowerCase(),
+    );
+
+    if (isDuplicate) {
+      form.setError("learningOutcomes", {
+        type: "manual",
+        message: "This learning outcome already exists",
+      });
+      return;
+    }
+
+    form.setValue("learningOutcomes", [...currentOutcomes, newOutcome], {
+      shouldValidate: true,
+    });
+    setNewOutcome("");
+  };
+
+  const removeLearningOutcome = (index: number) => {
+    const currentOutcomes = form.getValues("learningOutcomes") || [];
+    form.setValue(
+      "learningOutcomes",
+      currentOutcomes.filter((_, i) => i !== index),
+      { shouldValidate: true },
+    );
+  };
+
+  const addTopic = (topicName: string = newTopic) => {
+    if (topicName.trim() === "") return;
+    const currentTopics = form.getValues("topics") || [];
+
+    // Check for duplicates (case-insensitive)
+    const isDuplicate = currentTopics.some(
+      (topic) => topic.trim().toLowerCase() === topicName.trim().toLowerCase(),
+    );
+
+    if (isDuplicate) {
+      form.setError("topics", {
+        type: "manual",
+        message: "This topic already exists",
+      });
+      return;
+    }
+
+    // Add the new topic
+    form.setValue("topics", [...currentTopics, topicName], {
+      shouldValidate: true,
+    });
+    
+    // Clear input and hide suggestions
+    setNewTopic("");
+    setShowTopicSuggestions(false);
+  };
+
+  const removeTopic = (index: number) => {
+    const currentTopics = form.getValues("topics") || [];
+    form.setValue(
+      "topics",
+      currentTopics.filter((_, i) => i !== index),
+      { shouldValidate: true },
+    );
+  };
+
+  const handleTopicKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addTopic();
+    } else if (e.key === "ArrowDown" && suggestedTopics.length > 0) {
+      e.preventDefault();
+      // Focus the first suggestion if possible
+      const suggestionsElement = suggestionsRef.current;
+      if (suggestionsElement) {
+        const firstSuggestion = suggestionsElement.querySelector('button');
+        if (firstSuggestion) {
+          (firstSuggestion as HTMLButtonElement).focus();
+        }
+      }
+    }
+  };
+
   const handleFormSubmit = form.handleSubmit(
     async (formData) => {
       try {
         setInternalIsSaving(true);
-        console.log(
-          "EventPlannerForWebinar - Form submission data:",
-          JSON.stringify(formData, null, 2),
-        );
+        console.log("EventPlannerForWebinar - Form data:", JSON.stringify(formData, null, 2));
 
         // Validate form data using Zod
         const validation = WebinarPlanSchema.safeParse(formData);
@@ -117,47 +246,18 @@ export function EventPlannerForWebinar({
           return;
         }
 
-        // Process topics if they are entered as text
-        const topicNames =
-          Array.isArray(formData.topics) &&
-          formData.topics.length > 0 &&
-          typeof formData.topics[0] === "string" &&
-          formData.topics[0]?.length > 0 &&
-          !RegExp(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).exec(formData.topics[0])
-            ? (formData.topics as string[])
-            : [];
-
-        console.log("Processing topics:", {
-          originalTopics: formData.topics,
-          extractedTopicNames: topicNames
-        });
-
-        // Get topic IDs - either create new ones or use existing ones
-        let finalTopicIds = formData.topics as string[];
-        try {
-          if (topicNames.length > 0) {
-            console.log("Creating topics in batch:", topicNames);
-            const newIds = await PlannerService.createTopics(topicNames);
-            if (newIds.length === 0) {
-              console.warn("No topics were created - using original IDs");
-            } else {
-              finalTopicIds = newIds;
-              console.log("Topics created with IDs:", newIds);
-            }
-          }
-        } catch (error) {
-          console.error("Error creating topics:", error);
-          toast({
-            title: "Warning",
-            description: "Some topics could not be created. Proceeding with available topics.",
-            variant: "destructive",
-          });
-          // Continue with whatever topic IDs we have
-        }
-
         const now = new Date();
 
-        const webinarData = {
+        // Format the data for the API with correct topic structure
+        // This will ensure topics are in the correct format
+        const formattedTopics = formData.topics.map(topicName => ({
+          id: "", // The API/service will handle assigning actual IDs
+          name: topicName,
+          createdAt: now,
+          updatedAt: now
+        }));
+
+        const webinarData: Partial<WebinarEvent> = {
           type: "webinar" as const,
           webinarPlan: {
             id: initialData?.webinarPlan?.id ?? "",
@@ -171,13 +271,7 @@ export function EventPlannerForWebinar({
             prerequisites: formData.prerequisites ?? null,
             materialProvided: formData.materialProvided ?? null,
             learningOutcomes: formData.learningOutcomes,
-            topics: finalTopicIds.map((id) => ({
-              id,
-              name: "",
-              createdAt: now,
-              updatedAt: now,
-            })),
-            topicIds: finalTopicIds,
+            topics: formattedTopics, // Use the properly formatted topics
             consultantProfileId: consultantId,
             consultantProfile: null,
             createdAt: initialData?.webinarPlan?.createdAt ?? now,
@@ -192,7 +286,7 @@ export function EventPlannerForWebinar({
           // Call onSave and wait for it to complete
           onSave(webinarData);
           
-          // If we get here, the save was successful
+          // Show success toast
           toast({
             title: "Success",
             description: `${initialData ? "Updated" : "Created"} webinar "${formData.title}" successfully`,
@@ -211,10 +305,7 @@ export function EventPlannerForWebinar({
         console.error("Error in handleFormSubmit:", error);
         toast({
           title: "Error",
-          description:
-            error instanceof Error
-              ? error.message
-              : "Failed to save webinar. Please try again.",
+          description: error instanceof Error ? error.message : "Failed to save webinar. Please try again.",
           variant: "destructive",
         });
       } finally {
@@ -223,12 +314,13 @@ export function EventPlannerForWebinar({
     },
     (errors) => {
       console.log("Form validation failed with errors:", errors);
+      
       toast({
         title: "Validation Error",
         description: "Please check the form for errors",
         variant: "destructive",
       });
-    },
+    }
   );
 
   return (
@@ -249,217 +341,254 @@ export function EventPlannerForWebinar({
               : "Fill in the details to create a new webinar."}
           </DialogDescription>
         </DialogHeader>
-        <Form {...form}>
-          <form onSubmit={handleFormSubmit} className="space-y-8">
-            <FormField
-              control={form.control}
-              name="title"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Title</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+        <Card className="border-0 shadow-none">
+          <CardContent className="p-0">
+            <Form {...form}>
+              <form onSubmit={handleFormSubmit} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <FormField
+                    control={form.control}
+                    name="title"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Title</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Webinar title" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-            <FormField
-              control={form.control}
-              name="description"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Description</FormLabel>
-                  <FormControl>
-                    <Textarea {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                  <FormField
+                    control={form.control}
+                    name="language"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Language</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Language" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="price"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Price</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        {...field}
-                        onChange={(e) => field.onChange(Number(e.target.value))}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                  <FormField
+                    control={form.control}
+                    name="level"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Level</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Beginner, Intermediate, Advanced" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-              <FormField
-                control={form.control}
-                name="durationInHours"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Duration (hours)</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        step="0.5"
-                        min="0.5"
-                        {...field}
-                        onChange={(e) => {
-                          const value = parseFloat(e.target.value);
-                          // Round to nearest 30 minutes
-                          const roundedValue = Math.round(value * 2) / 2;
-                          field.onChange(roundedValue);
-                        }}
-                      />
-                    </FormControl>
-                    <p className="text-sm text-muted-foreground">
-                      Enter duration in 30-minute increments (e.g., 0.5, 1, 1.5, 2)
-                    </p>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+                  <FormField
+                    control={form.control}
+                    name="price"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Price</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            placeholder="0"
+                            {...field}
+                            onChange={(e) => field.onChange(Number.parseFloat(e.target.value))}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-            <FormField
-              control={form.control}
-              name="maxParticipants"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Max Participants</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number"
-                      {...field}
-                      onChange={(e) => field.onChange(Number(e.target.value))}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                  <FormField
+                    control={form.control}
+                    name="maxParticipants"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Maximum Participants</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            placeholder="10"
+                            {...field}
+                            onChange={(e) => field.onChange(Number.parseInt(e.target.value))}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-            <FormField
-              control={form.control}
-              name="language"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Language</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                  <FormField
+                    control={form.control}
+                    name="durationInHours"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Duration (hours)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            placeholder="1"
+                            step="0.5"
+                            {...field}
+                            onChange={(e) => field.onChange(Number.parseFloat(e.target.value))}
+                          />
+                        </FormControl>
+                        <FormDescription>Must be in 30-minute increments (0.5, 1, 1.5, etc.)</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-            <FormField
-              control={form.control}
-              name="level"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Level</FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                  <FormField
+                    control={form.control}
+                    name="scheduledAt"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Scheduled Date & Time</FormLabel>
+                        <FormControl>
+                          <Input type="datetime-local" {...field} />
+                        </FormControl>
+                        <FormDescription>Must be at least 1 hour in the future and start at :00 or :30</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
-            <FormField
-              control={form.control}
-              name="prerequisites"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Prerequisites</FormLabel>
-                  <FormControl>
-                    <Input {...field} value={field.value ?? ""} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                <FormField
+                  control={form.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description</FormLabel>
+                      <FormControl>
+                        <Textarea placeholder="Describe your webinar" className="min-h-[120px]" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-            <FormField
-              control={form.control}
-              name="materialProvided"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Material Provided</FormLabel>
-                  <FormControl>
-                    <Input {...field} value={field.value ?? ""} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <FormField
+                    control={form.control}
+                    name="prerequisites"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Prerequisites</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            placeholder="Any prerequisites for attendees"
+                            className="min-h-[100px]"
+                            {...field}
+                            value={field.value || ""}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-            <FormField
-              control={form.control}
-              name="learningOutcomes"
-              render={({ field }) => (
-                <FormItem>
-                  <FormControl>
-                    <TopicsAndOutcomesForm
-                      selectedTopics={form.getValues("topics")}
-                      onTopicsChange={(topics) => {
-                        form.setValue("topics", topics);
-                        setTopicNames(topics);
-                      }}
-                      learningOutcomes={field.value ?? []}
-                      onOutcomesChange={(outcomes) => field.onChange(outcomes)}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                  <FormField
+                    control={form.control}
+                    name="materialProvided"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Materials Provided</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            placeholder="Materials that will be provided"
+                            className="min-h-[100px]"
+                            {...field}
+                            value={field.value || ""}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
-            <FormField
-              control={form.control}
-              name="scheduledAt"
-              render={({ field }) => {
-                // Calculate minimum allowed time (1 hour from now)
-                const minDate = new Date();
-                minDate.setHours(minDate.getHours() + 1);
-                
-                return (
-                  <FormItem>
-                    <FormLabel>Start Time</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="datetime-local"
-                        {...field}
-                        min={minDate.toISOString().slice(0, 16)}
-                      />
-                    </FormControl>
-                    <p className="text-sm text-muted-foreground">
-                      Start time must be in 30-minute increments (e.g., 9:00, 9:30, 10:00) and at least 1 hour in the future
-                    </p>
-                    <FormMessage />
-                  </FormItem>
-                );
-              }}
-            />
+                <FormField
+                  control={form.control}
+                  name="learningOutcomes"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Learning Outcomes</FormLabel>
+                      <div className="flex gap-2 mb-2">
+                        <Input
+                          placeholder="Add a learning outcome"
+                          value={newOutcome}
+                          onChange={(e) => setNewOutcome(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              addLearningOutcome();
+                            }
+                          }}
+                        />
+                        <Button type="button" onClick={addLearningOutcome}>
+                          Add
+                        </Button>
+                      </div>
+                      <div className="space-y-2 mt-2">
+                        {field.value?.map((outcome, index) => (
+                          <div key={index} className="flex items-center gap-2 p-2 border rounded-md">
+                            <span className="flex-1">{outcome}</span>
+                            <Button type="button" variant="ghost" size="icon" onClick={() => removeLearningOutcome(index)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-            <DialogFooter className="mt-6 pt-4 border-t">
-              <Button
-                type="submit"
-                disabled={isSaving}
-                className="min-w-[100px]"
-              >
-                {isSaving ? "Saving..." : "Save"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
+                <FormField
+                  control={form.control}
+                  name="topics"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormControl>
+                        <TopicsComponent
+                          initialTopics={field.value}
+                          onTopicsChange={(topics) => {
+                            field.onChange(topics);
+                          }}
+                          availableTopics={availableTopics}
+                          isLoading={isLoadingTopics}
+                          label="Topics"
+                          error={form.formState.errors.topics?.message}
+                          helpText="Select from existing topics or create new ones"
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+
+                <DialogFooter className="mt-6 pt-4 border-t">
+                  <Button 
+                    type="submit" 
+                    disabled={isSaving}
+                    className="min-w-[100px]"
+                  >
+                    {isSaving ? "Saving..." : "Save"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </Form>
+          </CardContent>
+        </Card>
       </DialogContent>
     </Dialog>
   );

@@ -72,6 +72,17 @@ export async function POST(request: NextRequest) {
 
     // Create webinar plan, instance, and appointment in a transaction
     const result = await prisma.$transaction(async (tx) => {
+      // Verify all topics exist
+      if (topicIds && topicIds.length > 0) {
+        const topics = await tx.topic.findMany({
+          where: { id: { in: topicIds } },
+        });
+
+        if (topics.length !== topicIds.length) {
+          throw new Error("Some topics do not exist");
+        }
+      }
+
       // 1. Create the webinar plan
       console.log('Creating webinar plan with data:', {
         title,
@@ -162,12 +173,28 @@ export async function POST(request: NextRequest) {
       });
 
       return { webinarPlan, webinar };
+    }, {
+      timeout: 10000, // 10 second timeout
+      maxWait: 5000,  // 5 second max wait
+      isolationLevel: 'Serializable' // Highest isolation level
     });
 
     console.log('Transaction completed successfully. Returning webinar data.');
     return NextResponse.json({ data: result.webinar }, { status: 201 });
   } catch (error) {
     console.error("Error creating webinar with plan:", error);
+
+    // If error indicates topics don't exist, we don't need to do cleanup
+    if (error instanceof Error && error.message === "Some topics do not exist") {
+      return NextResponse.json(
+        { error: "Invalid topics provided" },
+        { status: 400 },
+      );
+    }
+
+    // For other errors, attempt to clean up any created topics if needed
+    // This would be handled by the calling service if topics were created in the same transaction
+
     return NextResponse.json(
       { error: "An error occurred while creating the webinar" },
       { status: 500 },

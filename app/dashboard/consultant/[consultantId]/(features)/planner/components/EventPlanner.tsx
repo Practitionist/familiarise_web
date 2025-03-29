@@ -48,11 +48,21 @@ export function EventPlanner({
       ? initialData
       : undefined;
 
+    // Create a wrapper around the save callback to handle topic formats if needed
+    const handleWebinarSave = (data: Partial<WebinarEvent>) => {
+      console.log("EventPlanner - preparing to save webinar data:", JSON.stringify(data, null, 2));
+      
+      // No need for additional validation as we're now using string[] directly
+      
+      // Call the original callback
+      webinarSaveCallback(data);
+    };
+
     return (
       <EventPlannerForWebinar
         isOpen={isOpen}
         onClose={onClose}
-        onSave={webinarSaveCallback}
+        onSave={handleWebinarSave}
         initialData={webinarInitialData}
         isSaving={isSaving}
         consultantId={consultantId}
@@ -71,11 +81,21 @@ export function EventPlanner({
       ? initialData
       : undefined;
 
+    // Create a wrapper around the save callback to handle topic formats if needed
+    const handleClassSave = (data: Partial<ClassEvent>) => {
+      console.log("EventPlanner - preparing to save class data:", JSON.stringify(data, null, 2));
+      
+      // No need for additional validation as we're now using string[] directly
+      
+      // Call the original callback
+      classSaveCallback(data);
+    };
+
     return (
       <EventPlannerForClass
         isOpen={isOpen}
         onClose={onClose}
-        onSave={classSaveCallback}
+        onSave={handleClassSave}
         initialData={classInitialData}
         isSaving={isSaving}
         consultantId={consultantId}

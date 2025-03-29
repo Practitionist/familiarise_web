@@ -5,6 +5,12 @@ import { toast } from "@/hooks/use-toast";
  * Service to manage events (webinars and classes)
  */
 export class PlannerService {
+  // Track newly created topics to handle rollback
+  private static newlyCreatedTopicIds: string[] = [];
+  // Track newly created events to handle rollback
+  private static newlyCreatedEventId: string | null = null;
+  private static newlyCreatedEventType: 'webinar' | 'class' | null = null;
+
   /**
    * Fetch webinars for a consultant
    */
@@ -64,44 +70,137 @@ export class PlannerService {
   }
 
   /**
-   * Save webinar data
+   * Save webinar data with transaction handling
    */
   static async saveWebinar(
     webinarData: Partial<WebinarEvent>,
     consultantId: string,
   ): Promise<WebinarEvent> {
     try {
-      const response = await fetch("/api/events/webinars/create-with-plan", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...webinarData.webinarPlan,
-          consultantProfileId: consultantId,
-          scheduledAt: webinarData.webinarPlan?.scheduledAt,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error || "Failed to create webinar"
-        );
+      // Reset tracking
+      this.newlyCreatedTopicIds = [];
+      this.newlyCreatedEventId = null;
+      this.newlyCreatedEventType = null;
+      
+      // Extract topic names from webinarData
+      let topicNames: string[] = [];
+      
+      if (webinarData.webinarPlan?.topics) {
+        // Handle topics whether they are strings or objects
+        topicNames = webinarData.webinarPlan.topics.map(topic => 
+          typeof topic === 'string' ? topic : topic.name
+        ).filter(Boolean);
       }
+      
+      // Prepare all topic ids list
+      let allTopicIds: string[] = [];
+      
+      if (topicNames.length > 0) {
+        try {
+          console.log("Creating topics first:", topicNames);
+          const newTopicIds = await this.createTopics(topicNames);
+          this.newlyCreatedTopicIds = newTopicIds;
+          allTopicIds = [...newTopicIds];
+          console.log("Topics created with IDs:", newTopicIds);
+        } catch (error) {
+          console.error("Error creating topics:", error);
+          throw new Error("Failed to create topics: " + (error instanceof Error ? error.message : String(error)));
+        }
+      }
+      
+      try {
+        // Now create the webinar with all topic IDs
+        const response = await fetch("/api/events/webinars/create-with-plan", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            ...webinarData.webinarPlan,
+            consultantProfileId: consultantId,
+            scheduledAt: webinarData.webinarPlan?.scheduledAt,
+            topicIds: allTopicIds,
+          }),
+        });
 
-      const { data: webinar } = await response.json();
-      return {
-        id: webinar.id,
-        type: "webinar",
-        webinarPlan: webinar.webinarPlan,
-        appointment: webinar.appointment,
-        waitlist: webinar.waitlist,
-        meetingRoom: webinar.meetingRoom,
-      };
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(
+            errorData.error || "Failed to create webinar"
+          );
+        }
+
+        const { data: webinar } = await response.json();
+        
+        // Track the newly created webinar
+        this.newlyCreatedEventId = webinar.id;
+        this.newlyCreatedEventType = 'webinar';
+
+        // Additional processing for webinar if needed
+        try {
+          // Theoretical additional processing step that could fail
+          // e.g., creating notifications, setting up calendar events, etc.
+          
+          // If all operations succeed, clear tracking
+          this.newlyCreatedTopicIds = [];
+          this.newlyCreatedEventId = null;
+          this.newlyCreatedEventType = null;
+          
+          return {
+            id: webinar.id,
+            type: "webinar",
+            webinarPlan: webinar.webinarPlan,
+            appointment: webinar.appointment,
+            waitlist: webinar.waitlist,
+            meetingRoom: webinar.meetingRoom,
+          };
+        } catch (postProcessError) {
+          // If additional processing fails, rollback everything
+          await this.rollbackTransaction();
+          throw postProcessError;
+        }
+      } catch (error) {
+        // If webinar creation failed, clean up any newly created topics
+        await this.rollbackNewlyCreatedTopics();
+        throw error;
+      }
     } catch (error) {
       console.error("Error saving webinar:", error);
       throw error;
+    }
+  }
+
+  /**
+   * Delete newly created topics if main operation fails
+   */
+  private static async rollbackNewlyCreatedTopics(): Promise<void> {
+    if (this.newlyCreatedTopicIds.length === 0) {
+      console.log("No topics to roll back");
+      return;
+    }
+    
+    try {
+      console.log("Rolling back newly created topics:", this.newlyCreatedTopicIds);
+      
+      const response = await fetch("/api/user/content/topics", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ids: this.newlyCreatedTopicIds }),
+      });
+      
+      if (!response.ok) {
+        console.error("Failed to rollback topics, status:", response.status);
+        const errorData = await response.json();
+        console.error("Rollback error:", errorData);
+      } else {
+        const result = await response.json();
+        console.log("Topics rolled back successfully:", result);
+        this.newlyCreatedTopicIds = [];
+      }
+    } catch (error) {
+      console.error("Error during topic rollback:", error);
     }
   }
 
@@ -113,33 +212,89 @@ export class PlannerService {
     consultantId: string,
   ): Promise<ClassEvent> {
     try {
-      const response = await fetch("/api/events/classes/create-with-plan", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...classData.classPlan,
-          consultantProfileId: consultantId,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error || "Failed to create class"
-        );
+      // Reset tracking
+      this.newlyCreatedTopicIds = [];
+      this.newlyCreatedEventId = null;
+      this.newlyCreatedEventType = null;
+      
+      // Extract topic names from classData
+      let topicNames: string[] = [];
+      
+      if (classData.classPlan?.topics) {
+        // Handle topics whether they are strings or objects
+        topicNames = classData.classPlan.topics.map(topic => 
+          typeof topic === 'string' ? topic : topic.name
+        ).filter(Boolean);
       }
+         
+      // Prepare all topic ids list
+      let allTopicIds: string[] = [];
+      
+      if (topicNames.length > 0) {
+        try {
+          const newTopicIds = await this.createTopics(topicNames);
+          this.newlyCreatedTopicIds = newTopicIds;
+          allTopicIds = [...newTopicIds];
+        } catch (error) {
+          console.error("Error creating topics:", error);
+          throw new Error("Failed to create topics: " + (error instanceof Error ? error.message : String(error)));
+        }
+      }
+      
+      try {
+        const response = await fetch("/api/events/classes/create-with-plan", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            ...classData.classPlan,
+            consultantProfileId: consultantId,
+            topicIds: allTopicIds,
+          }),
+        });
 
-      const { data: classEvent } = await response.json();
-      return {
-        id: classEvent.id,
-        type: "class",
-        classPlan: classEvent.classPlan,
-        appointments: classEvent.appointments,
-        waitlist: classEvent.waitlist,
-        meetingRoom: classEvent.meetingRoom,
-      };
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(
+            errorData.error || "Failed to create class"
+          );
+        }
+
+        const { data: classEvent } = await response.json();
+        
+        // Track the newly created class
+        this.newlyCreatedEventId = classEvent.id;
+        this.newlyCreatedEventType = 'class';
+        
+        // Additional processing for class if needed
+        try {
+          // Theoretical additional processing step that could fail
+          // e.g., creating notifications, setting up calendar events, etc.
+          
+          // If all operations succeed, clear tracking
+          this.newlyCreatedTopicIds = [];
+          this.newlyCreatedEventId = null;
+          this.newlyCreatedEventType = null;
+          
+          return {
+            id: classEvent.id,
+            type: "class",
+            classPlan: classEvent.classPlan,
+            appointments: classEvent.appointments,
+            waitlist: classEvent.waitlist,
+            meetingRoom: classEvent.meetingRoom,
+          };
+        } catch (postProcessError) {
+          // If additional processing fails, rollback everything
+          await this.rollbackTransaction();
+          throw postProcessError;
+        }
+      } catch (error) {
+        // If class creation failed, clean up any newly created topics
+        await this.rollbackNewlyCreatedTopics();
+        throw error;
+      }
     } catch (error) {
       console.error("Error saving class:", error);
       throw error;
@@ -307,30 +462,52 @@ export class PlannerService {
     initialData: Event | null,
     consultantId: string,
   ): Promise<Event> {
+    // Reset all tracking at the start of a transaction
+    this.newlyCreatedTopicIds = [];
+    this.newlyCreatedEventId = null;
+    this.newlyCreatedEventType = null;
+
     try {
       console.log(
         "Starting form submission with data:",
         JSON.stringify(data, null, 2),
       );
 
-      const finalTopicIds = await this.processTopics(data.topics);
+      // Step 1: Process topics
+      let finalTopicIds: string[] = [];
+      try {
+        finalTopicIds = await this.processTopics(data.topics);
+      } catch (topicError) {
+        console.error("Error processing topics:", topicError);
+        this.handleSaveError(topicError);
+        throw topicError;
+      }
 
-      if (eventType === "webinar") {
-        return await this.processWebinarData(
-          data,
-          initialData,
-          consultantId,
-          finalTopicIds,
-        );
-      } else {
-        return await this.processClassData(
-          data,
-          initialData,
-          consultantId,
-          finalTopicIds,
-        );
+      // Step 2: Process and save the event
+      try {
+        if (eventType === "webinar") {
+          return await this.processWebinarData(
+            data,
+            initialData,
+            consultantId,
+            finalTopicIds,
+          );
+        } else {
+          return await this.processClassData(
+            data,
+            initialData,
+            consultantId,
+            finalTopicIds,
+          );
+        }
+      } catch (eventError) {
+        // Ensure we rollback any created resources
+        await this.rollbackTransaction();
+        this.handleSaveError(eventError);
+        throw eventError;
       }
     } catch (error) {
+      // This is the final catch-all error handler
       this.handleSaveError(error);
       throw error;
     }
@@ -342,18 +519,6 @@ export class PlannerService {
   private static async processTopics(topics: string[]): Promise<string[]> {
     if (!Array.isArray(topics) || topics.length === 0) {
       return [];
-    }
-
-    // Check if topics are entered as text or existing IDs
-    const uuidPattern =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const isFirstTopicString =
-      typeof topics[0] === "string" && topics[0]?.length > 0;
-    const isFirstTopicUuid = isFirstTopicString && uuidPattern.test(topics[0]);
-
-    // If topics are UUIDs, return them as is
-    if (!isFirstTopicString || isFirstTopicUuid) {
-      return topics;
     }
 
     // Process each topic name before creating
@@ -383,7 +548,7 @@ export class PlannerService {
 
     // Create new topics with processed names
     const newIds = await this.createTopics(processedTopics);
-    return newIds.length > 0 ? newIds : topics;
+    return newIds.length > 0 ? newIds : [];
   }
 
   /**
@@ -395,6 +560,10 @@ export class PlannerService {
     consultantId: string,
     topicIds: string[],
   ): Promise<WebinarEvent> {
+    // Reset tracking for new transaction
+    this.newlyCreatedEventId = null;
+    this.newlyCreatedEventType = null;
+
     const now = new Date();
     const webinarId =
       initialData && this.isWebinarEvent(initialData)
@@ -419,7 +588,14 @@ export class PlannerService {
         prerequisites: data.prerequisites ?? null,
         materialProvided: data.materialProvided ?? null,
         learningOutcomes: data.learningOutcomes,
-        topics: this.formatTopics(topicIds, now),
+        topics: topicIds.map(id => ({
+          id,
+          name: Array.isArray(data.topics) 
+            ? data.topics.find((_, index) => index === topicIds.indexOf(id)) || "" 
+            : "",
+          createdAt: now,
+          updatedAt: now
+        })),
         topicIds: topicIds,
         consultantProfileId: consultantId,
         consultantProfile: null,
@@ -430,10 +606,12 @@ export class PlannerService {
     };
 
     console.log("Saving webinar data:", webinarData);
+    
     const savedWebinar = await this.saveWebinar(webinarData, consultantId);
-
     this.showSuccessToast(data.title, initialData, "webinar");
     return savedWebinar;
+    
+    // Note: All rollbacks are handled in saveWebinar if an error occurs
   }
 
   /**
@@ -445,6 +623,10 @@ export class PlannerService {
     consultantId: string,
     topicIds: string[],
   ): Promise<ClassEvent> {
+    // Reset tracking for new transaction
+    this.newlyCreatedEventId = null;
+    this.newlyCreatedEventType = null;
+
     const now = new Date();
     const classData = data as any;
     const classContents = classData.classContents || [];
@@ -473,7 +655,14 @@ export class PlannerService {
         prerequisites: data.prerequisites ?? null,
         materialProvided: data.materialProvided ?? null,
         learningOutcomes: data.learningOutcomes,
-        topics: this.formatTopics(topicIds, now),
+        topics: topicIds.map(id => ({
+          id,
+          name: Array.isArray(data.topics) 
+            ? data.topics.find((_, index) => index === topicIds.indexOf(id)) || "" 
+            : "",
+          createdAt: now,
+          updatedAt: now
+        })),
         topicIds: topicIds,
         consultantProfileId: consultantId,
         consultantProfile: null,
@@ -490,14 +679,11 @@ export class PlannerService {
 
     console.log("Saving class data:", classEventData);
 
-    try {
-      const savedClass = await this.saveClass(classEventData, consultantId);
-      this.showSuccessToast(data.title, initialData, "class");
-      return savedClass;
-    } catch (saveError) {
-      console.error("Error in saveClass:", saveError);
-      throw saveError;
-    }
+    const savedClass = await this.saveClass(classEventData, consultantId);
+    this.showSuccessToast(data.title, initialData, "class");
+    return savedClass;
+    
+    // Note: All rollbacks are handled in saveClass if an error occurs
   }
 
   /**
@@ -570,5 +756,53 @@ export class PlannerService {
           : "Failed to save. Please try again.",
       variant: "destructive",
     });
+  }
+
+  /**
+   * Delete newly created event if a later operation fails
+   */
+  private static async rollbackNewlyCreatedEvent(): Promise<void> {
+    if (!this.newlyCreatedEventId || !this.newlyCreatedEventType) {
+      console.log("No event to roll back");
+      return;
+    }
+    
+    try {
+      console.log(`Rolling back newly created ${this.newlyCreatedEventType}:`, this.newlyCreatedEventId);
+      
+      const endpoint = this.newlyCreatedEventType === 'webinar' 
+        ? "/api/events/webinars" 
+        : "/api/events/classes";
+      
+      const response = await fetch(`${endpoint}/${this.newlyCreatedEventId}`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        }
+      });
+      
+      if (!response.ok) {
+        console.error(`Failed to rollback ${this.newlyCreatedEventType}, status:`, response.status);
+        const errorData = await response.json();
+        console.error("Rollback error:", errorData);
+      } else {
+        const result = await response.json();
+        console.log(`${this.newlyCreatedEventType} rolled back successfully:`, result);
+        this.newlyCreatedEventId = null;
+        this.newlyCreatedEventType = null;
+      }
+    } catch (error) {
+      console.error(`Error during ${this.newlyCreatedEventType} rollback:`, error);
+    }
+  }
+
+  /**
+   * Rollback all created resources in reverse order
+   */
+  private static async rollbackTransaction(): Promise<void> {
+    // First rollback event (if created)
+    await this.rollbackNewlyCreatedEvent();
+    // Then rollback topics (if created)
+    await this.rollbackNewlyCreatedTopics();
   }
 }

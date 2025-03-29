@@ -1,4 +1,37 @@
 import { z } from "zod";
+import { hasDuplicates, isMeaningfulText, isProfanityFree } from "@/lib/validation-utils";
+
+// Separate refine functions for different validation types
+const profanityFreeRefinement = (value: string) => {
+  return isProfanityFree(value);
+};
+
+const meaningfulContentRefinement = (value: string) => {
+  return isMeaningfulText(value);
+};
+
+const profanityFreeArrayRefinement = (values: string[]) => {
+  for (const value of values) {
+    if (!isProfanityFree(value)) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const meaningfulArrayContentRefinement = (values: string[]) => {
+  for (const value of values) {
+    if (!isMeaningfulText(value)) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const noDuplicatesRefinement = (values: string[]) => {
+  return !hasDuplicates(values);
+};
+
 
 export const DomainSchema = z.object({
   id: z.string().optional(),
@@ -61,16 +94,52 @@ export const SubscriptionPlanSchema = z.object({
 
 // Base schema for common fields
 const BaseEventPlanSchema = z.object({
-  title: z.string().min(1, "Title is required"),
-  description: z.string().optional(),
+  title: z
+    .string()
+    .min(1, "Title is required")
+    .refine(meaningfulContentRefinement, "Title contains nonsensical text or gibberish")
+    .refine(profanityFreeRefinement, "Title contains inappropriate language"),
+  description: z
+    .string()
+    .min(1, "Description is required")
+    .refine(meaningfulContentRefinement, "Description contains nonsensical text or gibberish")
+    .refine(profanityFreeRefinement, "Description contains inappropriate language"),
   price: z.number().min(0, "Price must be non-negative"),
   maxParticipants: z.number().min(1, "At least one participant is required"),
-  language: z.string().default("English"),
-  level: z.string().default("Beginner"),
-  prerequisites: z.string().optional().nullable(),
-  materialProvided: z.string().optional().nullable(),
-  learningOutcomes: z.array(z.string()),
-  topics: z.array(z.string()),
+  language: z
+    .string()
+    .default("English")
+    .refine(meaningfulContentRefinement, "Language contains nonsensical text or gibberish")
+    .refine(profanityFreeRefinement, "Language contains inappropriate language"),
+  level: z
+    .string()
+    .default("Beginner")
+    .refine(meaningfulContentRefinement, "Level contains nonsensical text or gibberish")
+    .refine(profanityFreeRefinement, "Level contains inappropriate language"),
+  prerequisites: z
+    .string()
+    .optional()
+    .nullable()
+    .refine((val) => !val || meaningfulContentRefinement(val), "Prerequisites contain nonsensical text or gibberish")
+    .refine((val) => !val || profanityFreeRefinement(val), "Prerequisites contain inappropriate language"),
+  materialProvided: z
+    .string()
+    .optional()
+    .nullable()
+    .refine((val) => !val || meaningfulContentRefinement(val), "Materials contain nonsensical text or gibberish")
+    .refine((val) => !val || profanityFreeRefinement(val), "Materials contain inappropriate language"),
+  learningOutcomes: z
+    .array(z.string().min(1, "Learning outcome cannot be empty"))
+    .min(1, "At least one learning outcome is required")
+    .refine(noDuplicatesRefinement, "Duplicate learning outcomes are not allowed")
+    .refine(meaningfulArrayContentRefinement, "Learning outcomes contain nonsensical text or gibberish")
+    .refine(profanityFreeArrayRefinement, "Learning outcomes contain inappropriate language"),
+  topics: z
+    .array(z.string().min(1, "Topic cannot be empty"))
+    .min(1, "At least one topic is required")
+    .refine(noDuplicatesRefinement, "Duplicate topics are not allowed")
+    .refine(meaningfulArrayContentRefinement, "Topics contain nonsensical text or gibberish")
+    .refine(profanityFreeArrayRefinement, "Topics contain inappropriate language"),
 
   // Make consultant fields optional and nullable
   consultantProfileId: z.string().optional().nullable(),
@@ -106,6 +175,34 @@ export const WebinarPlanSchema = BaseEventPlanSchema.extend({
 });
 
 // Class specific schema
+export const ClassContentSchema = z.object({
+  id: z.string().optional(),
+  title: z
+    .string()
+    .min(1, "Title is required")
+    .refine(meaningfulContentRefinement, "Title contains nonsensical text or gibberish")
+    .refine(profanityFreeRefinement, "Title contains inappropriate language"),
+  description: z
+    .string()
+    .min(1, "Description is required")
+    .refine(meaningfulContentRefinement, "Description contains nonsensical text or gibberish")
+    .refine(profanityFreeRefinement, "Description contains inappropriate language"),
+  contentType: z
+    .string()
+    .optional()
+    .nullable()
+    .refine((val) => !val || meaningfulContentRefinement(val), "Content type contains nonsensical text or gibberish")
+    .refine((val) => !val || profanityFreeRefinement(val), "Content type contains inappropriate language"),
+  contentUrl: z
+    .string()
+    .optional()
+    .nullable()
+    .refine((val) => !val || meaningfulContentRefinement(val), "URL contains nonsensical text or gibberish")
+    .refine((val) => !val || profanityFreeRefinement(val), "URL contains inappropriate language"),
+  order: z.number().min(1, "Order must be a positive number"),
+  hoursAllotted: z.number().min(0.5, "Hours allotted must be at least 30 minutes"),
+});
+
 export const ClassPlanSchema = BaseEventPlanSchema.extend({
   planType: z.literal("class"),
   durationInMonths: z.number().min(0.25, "Duration must be at least 1 week"),
@@ -114,30 +211,13 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
   videoMeetings: z.number().min(0, "Video meetings must be non-negative"),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
   classContents: z
-    .array(
-      z.object({
-        title: z.string().min(1, "Title is required"),
-        description: z.string().min(1, "Description is required"),
-        contentType: z.string().optional().nullable(),
-        contentUrl: z.string().optional().nullable(),
-        order: z.number().min(1, "Order must be a positive number"),
-        hoursAllotted: z
-          .number()
-          .min(0.5, "Hours allotted must be at least 30 minutes"),
-      }),
-    )
-    .optional()
-    .default([]),
-});
-
-export const ClassContentSchema = z.object({
-  id: z.string().optional(),
-  title: z.string(),
-  description: z.string(),
-  contentType: z.string().optional(),
-  contentUrl: z.string().optional(),
-  order: z.number(),
-  hoursAllotted: z.number(),
+    .array(ClassContentSchema)
+    .default([])
+    .refine((contents) => {
+      // Check for duplicate titles
+      const titles = contents.map((c) => c.title.trim().toLowerCase())
+      return new Set(titles).size === titles.length
+    }, "Class contents must have unique titles"),
 });
 
 // Add ConsultantPlans schema

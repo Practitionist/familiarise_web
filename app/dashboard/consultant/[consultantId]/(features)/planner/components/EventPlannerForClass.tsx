@@ -1,5 +1,6 @@
 "use client";
 
+import { TopicsComponent } from "@/components/topics-component";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,7 +16,7 @@ import {
   FormField,
   FormItem,
   FormLabel,
-  FormMessage,
+  FormMessage
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
@@ -26,15 +27,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ClassPlanSchema, ClassContentSchema } from "@/schemas/PlanSchema";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
-import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { ClassContentSchema, ClassPlanSchema } from "@/schemas/PlanSchema";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 import { PlannerService } from "../services/planner";
 import { ClassPlannerProps } from "../types/planner";
-import { TopicsAndOutcomesForm } from "./TopicsAndOutcomesForm";
-import { z } from "zod";
 
 export function EventPlannerForClass({
   isOpen,
@@ -49,7 +50,9 @@ export function EventPlannerForClass({
     {},
   );
   const [internalIsSaving, setInternalIsSaving] = useState(false);
-  const [topicNames, setTopicNames] = useState<string[]>([]);
+  const [newOutcome, setNewOutcome] = useState("");
+  const [availableTopics, setAvailableTopics] = useState<{ id: string; name: string, createdAt: Date, updatedAt: Date }[]>([]);
+  const [isLoadingTopics, setIsLoadingTopics] = useState(false);
   const { toast } = useToast();
 
   // Use either external or internal saving state
@@ -59,7 +62,8 @@ export function EventPlannerForClass({
   useEffect(() => {
     const loadTopicNames = async () => {
       if (initialData?.classPlan.topics) {
-        setTopicNames(initialData.classPlan.topics.map(topic => topic.name));
+        // Assuming topics is an array of topic names
+        // You might want to fetch topic details from the API
       }
     };
     loadTopicNames();
@@ -152,6 +156,30 @@ export function EventPlannerForClass({
     (form as any).setValue("planType", "class");
   }, [form]);
 
+  // Fetch available topics from API
+  useEffect(() => {
+    const fetchTopics = async () => {
+      try {
+        setIsLoadingTopics(true);
+        const fetchedTopics = await PlannerService.getTopics("");
+        setAvailableTopics(fetchedTopics);
+      } catch (error) {
+        console.error("Failed to fetch topics:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load topics. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsLoadingTopics(false);
+      }
+    };
+
+    if (isOpen) {
+      fetchTopics();
+    }
+  }, [isOpen, toast]);
+
   // Form submission handler
   const handleFormSubmit = form.handleSubmit(
     async (formData) => {
@@ -194,46 +222,16 @@ export function EventPlannerForClass({
         // If we reach here, proceed with submission
         setInternalIsSaving(true);
 
-        // Process topics if they are entered as text
-        const topicNames =
-          Array.isArray(formData.topics) &&
-          formData.topics.length > 0 &&
-          typeof formData.topics[0] === "string" &&
-          formData.topics[0]?.length > 0 &&
-          !RegExp(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).exec(formData.topics[0])
-            ? (formData.topics as string[])
-            : [];
-
-        console.log("Processing topics:", {
-          originalTopics: formData.topics,
-          extractedTopicNames: topicNames
-        });
-
-        // Get topic IDs - either create new ones or use existing ones
-        let finalTopicIds = formData.topics as string[];
-        try {
-          if (topicNames.length > 0) {
-            console.log("Creating topics in batch:", topicNames);
-            const newIds = await PlannerService.createTopics(topicNames);
-            if (newIds.length === 0) {
-              console.warn("No topics were created - using original IDs");
-            } else {
-              finalTopicIds = newIds;
-              console.log("Topics created with IDs:", newIds);
-            }
-          }
-        } catch (error) {
-          console.error("Error creating topics:", error);
-          toast({
-            title: "Warning",
-            description: "Some topics could not be created. Proceeding with available topics.",
-            variant: "destructive",
-          });
-          // Continue with whatever topic IDs we have
-        }
-
         const now = new Date();
         const classContents = formData.classContents || [];
+
+        // Format the topics correctly
+        const formattedTopics = formData.topics.map(topicName => ({
+          id: "", // The API/service will handle assigning actual IDs
+          name: topicName,
+          createdAt: now,
+          updatedAt: now
+        }));
 
         const classEventData = {
           type: "class" as const,
@@ -249,13 +247,8 @@ export function EventPlannerForClass({
             prerequisites: formData.prerequisites ?? null,
             materialProvided: formData.materialProvided ?? null,
             learningOutcomes: formData.learningOutcomes,
-            topics: finalTopicIds.map((id) => ({
-              id,
-              name: "",
-              createdAt: now,
-              updatedAt: now,
-            })),
-            topicIds: finalTopicIds,
+            topics: formattedTopics,
+            topicIds: [], // The service will handle this
             consultantProfileId: consultantId,
             consultantProfile: null,
             certificateProvided: formData.certificateProvided,
@@ -324,6 +317,39 @@ export function EventPlannerForClass({
       });
     },
   );
+
+  const addLearningOutcome = () => {
+    if (newOutcome.trim() === "") return;
+    const currentOutcomes = form.getValues("learningOutcomes") || [];
+
+    // Check for duplicates (case-insensitive)
+    const isDuplicate = currentOutcomes.some(
+      (outcome) => outcome.trim().toLowerCase() === newOutcome.trim().toLowerCase()
+    );
+
+    if (isDuplicate) {
+      toast({
+        title: "Duplicate",
+        description: "This learning outcome already exists",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    form.setValue("learningOutcomes", [...currentOutcomes, newOutcome], {
+      shouldValidate: true,
+    });
+    setNewOutcome("");
+  };
+
+  const removeLearningOutcome = (index: number) => {
+    const currentOutcomes = form.getValues("learningOutcomes") || [];
+    form.setValue(
+      "learningOutcomes",
+      currentOutcomes.filter((_, i) => i !== index),
+      { shouldValidate: true }
+    );
+  };
 
   return (
     <Dialog
@@ -492,48 +518,37 @@ export function EventPlannerForClass({
               name="learningOutcomes"
               render={({ field }) => (
                 <FormItem>
-                  <FormControl>
-                    <TopicsAndOutcomesForm
-                      selectedTopics={form.getValues("topics")}
-                      onTopicsChange={(topics) => {
-                        form.setValue("topics", topics);
-                        setTopicNames(topics);
+                  <FormLabel>Learning Outcomes</FormLabel>
+                  <div className="flex gap-2 mb-2">
+                    <Input
+                      placeholder="Add a learning outcome"
+                      value={newOutcome}
+                      onChange={(e) => setNewOutcome(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addLearningOutcome();
+                        }
                       }}
-                      learningOutcomes={field.value ?? []}
-                      onOutcomesChange={(outcomes) => field.onChange(outcomes)}
                     />
-                  </FormControl>
+                    <Button type="button" onClick={addLearningOutcome}>
+                      Add
+                    </Button>
+                  </div>
+                  <div className="space-y-2 mt-2">
+                    {field.value?.map((outcome, index) => (
+                      <div key={index} className="flex items-center gap-2 p-2 border rounded-md">
+                        <span className="flex-1">{outcome}</span>
+                        <Button type="button" variant="ghost" size="icon" onClick={() => removeLearningOutcome(index)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
                   <FormMessage />
                 </FormItem>
               )}
             />
-
-            {/* <FormField
-              control={form.control}
-              name="topics"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Topics (one per line)</FormLabel>
-                  <FormControl>
-                    <Textarea
-                      {...field}
-                      value={(field.value || []).join("\n")}
-                      onChange={(e) => {
-                        const topics = e.target.value
-                          .split("\n")
-                          .map((topic) => topic.trim())
-                          .filter(Boolean);
-                        field.onChange(topics);
-                      }}
-                      rows={5}
-                      placeholder="Enter each topic on a new line"
-                      className="min-h-[100px]"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            /> */}
 
             <FormField
               control={form.control}
@@ -620,6 +635,28 @@ export function EventPlannerForClass({
                     </SelectContent>
                   </Select>
                   <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="topics"
+              render={({ field }) => (
+                <FormItem>
+                  <FormControl>
+                    <TopicsComponent
+                      initialTopics={field.value}
+                      onTopicsChange={(topics) => {
+                        field.onChange(topics);
+                      }}
+                      availableTopics={availableTopics}
+                      isLoading={isLoadingTopics}
+                      label="Topics"
+                      error={form.formState.errors.topics?.message}
+                      helpText="Select from existing topics or create new ones"
+                    />
+                  </FormControl>
                 </FormItem>
               )}
             />

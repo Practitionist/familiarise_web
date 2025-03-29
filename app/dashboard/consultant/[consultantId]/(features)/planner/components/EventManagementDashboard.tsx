@@ -54,7 +54,8 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
       console.log('EventManagementDashboard - Saving webinar:', data);
       
       // First save the webinar
-      await PlannerService.saveWebinar(data, consultantId);
+      const savedWebinar = await PlannerService.saveWebinar(data, consultantId);
+      console.log('Webinar saved successfully:', savedWebinar);
       
       // Then fetch updated webinars list
       const updatedWebinars = await PlannerService.fetchWebinars(consultantId);
@@ -63,7 +64,8 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
       setEditingEvent(null);
     } catch (error) {
       console.error("Error saving/refreshing webinar:", error);
-      throw error; // Propagate error to form handler
+      // Re-throw the error so it can be handled by the form
+      throw error;
     } finally {
       setIsSaving(false);
     }
@@ -76,7 +78,8 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
       console.log('EventManagementDashboard - Saving class:', data);
       
       // First save the class
-      await PlannerService.saveClass(data, consultantId);
+      const savedClass = await PlannerService.saveClass(data, consultantId);
+      console.log('Class saved successfully:', savedClass);
       
       // Then fetch updated classes list
       const updatedClasses = await PlannerService.fetchClasses(consultantId);
