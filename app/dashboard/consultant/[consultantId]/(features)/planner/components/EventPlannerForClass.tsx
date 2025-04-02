@@ -297,14 +297,6 @@ export function EventPlannerForClass({
         const now = new Date();
         const classContents = formData.classContents || [];
 
-        // Format the topics correctly
-        const formattedTopics = formData.topics.map((topicName) => ({
-          id: "", // The API/service will handle assigning actual IDs
-          name: topicName,
-          createdAt: now,
-          updatedAt: now,
-        }));
-
         const classData: Partial<ClassEvent> = {
           type: "class" as const,
           id: initialData?.id,
@@ -320,7 +312,7 @@ export function EventPlannerForClass({
             prerequisites: formData.prerequisites ?? null,
             materialProvided: formData.materialProvided ?? null,
             learningOutcomes: formData.learningOutcomes,
-            topics: formattedTopics,
+            topics: formData.topics as any,
             consultantProfileId: consultantId,
             consultantProfile: null,
             certificateProvided: formData.certificateProvided,

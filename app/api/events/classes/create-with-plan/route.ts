@@ -1,5 +1,7 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { ClassContentSchema } from "@/schemas/PlanSchema";
 
 export async function POST(request: NextRequest) {
   try {
@@ -270,45 +272,23 @@ export async function PATCH(request: NextRequest) {
     // Update class plan and related data in a transaction
     const result = await prisma.$transaction(
       async (tx) => {
-        // Verify all topics exist if topicIds is provided
-        if (topicIds && topicIds.length > 0) {
-          const topics = await tx.topic.findMany({
-            where: { id: { in: topicIds } },
-          });
+        // Use topics from existingPlan fetched *before* the transaction
+        const currentTopicIdsFromOuterScope = existingPlan.topics.map(t => t.id);
+        console.log(`[Before Transaction Update] Topics from initial fetch for class plan ${id}:`, currentTopicIdsFromOuterScope);
 
-          if (topics.length !== topicIds.length) {
-            throw new Error("Some topics do not exist");
-          }
-        }
-
-        // 1. Update the class plan
-        console.log("Updating class plan with data:", {
-          id,
-          title,
-          description,
-          topicIds,
-        });
-
-        // First disconnect existing topics if new topicIds are provided
-        if (topicIds && topicIds.length > 0) {
-          await tx.classPlan.update({
-            where: { id },
-            data: {
-              topics: {
-                set: [], // Disconnect all existing topics
-              },
-            },
-          });
-        }
-
-        // Handle class contents if provided
+        // Handle class contents update logic (as before)
         let classContentsUpdateData = {};
         if (classContents && Array.isArray(classContents)) {
+          // Validate contents before deleting/creating
+          const contentValidation = z.array(ClassContentSchema).safeParse(classContents);
+          if (!contentValidation.success) {
+             console.error("Invalid class contents provided:", contentValidation.error);
+             throw new Error("Invalid data provided for class contents.");
+          }
           // Delete existing class contents first
           await tx.classContent.deleteMany({
             where: { classPlanId: id },
           });
-
           // Prepare new class contents for creation
           classContentsUpdateData = {
             classContents: {
@@ -322,32 +302,65 @@ export async function PATCH(request: NextRequest) {
               })),
             },
           };
+          console.log(`Updating class contents for plan ${id}. Creating ${classContents.length} new entries.`);
+        } else {
+          console.log(`No class contents provided for update on plan ${id}.`);
         }
 
-        // Then update the plan with all new data
+        // Prepare the main update data
+        const updateData: any = {
+          title,
+          description,
+          durationInMonths,
+          price,
+          certificateProvided,
+          callsPerWeek,
+          videoMeetings,
+          emailSupport,
+          maxParticipants,
+          language,
+          level,
+          prerequisites,
+          materialProvided,
+          learningOutcomes,
+          consultantProfile: { connect: { id: consultantProfileId } },
+          ...classContentsUpdateData, // Spread the contents update if any
+        };
+
+        // Determine how to handle topics
+        if (topicIds !== undefined) {
+          // If topicIds are provided, use set to sync
+          if (!Array.isArray(topicIds)) {
+            console.error("topicIds was provided but is not an array:", topicIds);
+            throw new Error("Invalid format for topicIds");
+          }
+          // Verify provided topicIds actually exist
+          const topics = await tx.topic.findMany({
+            where: { id: { in: topicIds } },
+            select: { id: true }
+          });
+          if (topics.length !== topicIds.length) {
+            const missingIds = topicIds.filter(reqId => !topics.some(dbTopic => dbTopic.id === reqId));
+            console.error("Attempted to set non-existent topic IDs:", missingIds);
+            throw new Error(`The following topic IDs do not exist: ${missingIds.join(', ')}`);
+          }
+          
+          updateData.topics = {
+            set: topicIds.map((topicId: string) => ({ id: topicId }))
+          };
+          console.log(`Syncing class topics with provided IDs: [${topicIds.join(', ')}]`);
+        } else {
+          // If topicIds is undefined, explicitly set topics to the list fetched *before* the transaction
+          console.log("Class topicIds is undefined. Explicitly setting topics to list fetched before transaction.");
+          updateData.topics = { 
+            set: currentTopicIdsFromOuterScope.map(id => ({ id })) 
+          };
+        }
+
+        // Execute the plan update
         const updatedClassPlan = await tx.classPlan.update({
           where: { id },
-          data: {
-            title,
-            description,
-            durationInMonths,
-            price,
-            certificateProvided,
-            callsPerWeek,
-            videoMeetings,
-            emailSupport,
-            maxParticipants,
-            language,
-            level,
-            prerequisites,
-            materialProvided,
-            learningOutcomes,
-            consultantProfile: { connect: { id: consultantProfileId } },
-            topics: topicIds && topicIds.length > 0
-              ? { connect: topicIds.map((topicId: string) => ({ id: topicId })) }
-              : undefined,
-            ...classContentsUpdateData,
-          },
+          data: updateData,
           include: {
             consultantProfile: true,
             topics: true,

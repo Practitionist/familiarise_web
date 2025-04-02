@@ -153,10 +153,8 @@ export function EventPlannerForWebinar({
       materialProvided: initialData?.webinarPlan?.materialProvided ?? "",
       learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
       // Convert topics from objects to strings for the form
-      topics:
-        initialData?.webinarPlan?.topics?.map((topic) =>
-          typeof topic === "string" ? topic : topic.name,
-        ) ?? [],
+      // Simplify mapping: Assume topics are always objects from Prisma include
+      topics: initialData?.webinarPlan?.topics?.map(topic => topic.name) ?? [],
       scheduledAt: getInitialScheduledAt(),
       consultantProfileId: consultantId,
     },
@@ -178,9 +176,7 @@ export function EventPlannerForWebinar({
         prerequisites: initialData.webinarPlan.prerequisites || "",
         materialProvided: initialData.webinarPlan.materialProvided || "",
         learningOutcomes: initialData.webinarPlan.learningOutcomes || [],
-        topics: initialData.webinarPlan.topics?.map(topic => 
-          typeof topic === "string" ? topic : topic.name
-        ) || [],
+        topics: initialData.webinarPlan.topics?.map(topic => topic.name) || [],
         scheduledAt: getInitialScheduledAt(),
         consultantProfileId: consultantId,
       });
@@ -338,15 +334,6 @@ export function EventPlannerForWebinar({
 
         const now = new Date();
 
-        // Format the data for the API with correct topic structure
-        // This will ensure topics are in the correct format
-        const formattedTopics = formData.topics.map((topicName) => ({
-          id: "", // The API/service will handle assigning actual IDs
-          name: topicName,
-          createdAt: now,
-          updatedAt: now,
-        }));
-
         const webinarData: Partial<WebinarEvent> = {
           type: "webinar" as const,
           id: initialData?.id, // Include the webinar instance ID if we're editing
@@ -362,7 +349,7 @@ export function EventPlannerForWebinar({
             prerequisites: formData.prerequisites ?? null,
             materialProvided: formData.materialProvided ?? null,
             learningOutcomes: formData.learningOutcomes,
-            topics: formattedTopics, // Use the properly formatted topics
+            topics: formData.topics as any,
             consultantProfileId: consultantId,
             consultantProfile: null,
             createdAt: initialData?.webinarPlan?.createdAt ?? now,

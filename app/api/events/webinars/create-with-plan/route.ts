@@ -360,64 +360,77 @@ export async function PATCH(request: NextRequest) {
     // Update webinar plan and related data in a transaction
     const result = await prisma.$transaction(
       async (tx) => {
-        // Verify all topics exist if topicIds is provided
-        if (topicIds && topicIds.length > 0) {
+        // -> Use topics from existingPlan fetched *before* the transaction
+        const currentTopicIdsFromOuterScope = existingPlan.topics.map(t => t.id);
+        console.log(`[Before Transaction Update] Topics from initial fetch for plan ${id}:`, currentTopicIdsFromOuterScope);
+
+        // -> Remove the fetch inside the transaction
+        // const existingPlanWithTopics = await tx.webinarPlan.findUnique({
+        //   where: { id },
+        //   select: { topics: { select: { id: true } } }, // Select only topic IDs
+        // });
+        // const currentTopicIds = 
+        //   existingPlanWithTopics?.topics.map(t => t.id) ?? [];
+        // console.log(`[Transaction] Fetched current topic IDs for plan ${id}:`, currentTopicIds);
+
+        // 4. Prepare base update data (excluding topics for now)
+        const updateData: any = {
+          title,
+          description,
+          durationInHours,
+          price,
+          maxParticipants,
+          language,
+          level,
+          prerequisites,
+          materialProvided,
+          learningOutcomes,
+          consultantProfile: { connect: { id: consultantProfileId } },
+        };
+
+        // 5. Determine how to handle topics
+        if (topicIds !== undefined) {
+          // If topicIds are provided, use set to sync
+          if (!Array.isArray(topicIds)) {
+            console.error("topicIds was provided but is not an array:", topicIds);
+            throw new Error("Invalid format for topicIds");
+          }
+          // Verify provided topicIds actually exist (important!)
           const topics = await tx.topic.findMany({
             where: { id: { in: topicIds } },
+            select: { id: true } // Only need IDs
           });
-
           if (topics.length !== topicIds.length) {
-            throw new Error("Some topics do not exist");
+            const missingIds = topicIds.filter(reqId => !topics.some(dbTopic => dbTopic.id === reqId));
+            console.error("Attempted to set non-existent topic IDs:", missingIds);
+            throw new Error(`The following topic IDs do not exist: ${missingIds.join(', ')}`);
           }
-
-          // 1. First disconnect existing topics if new ones are provided
-          await tx.webinarPlan.update({
-            where: { id },
-            data: {
-              topics: {
-                set: [], // Disconnect all existing topics
-              },
-            },
-          });
-
-          // 2. Connect the new topics
-          await tx.webinarPlan.update({
-            where: { id },
-            data: {
-              topics: {
-                connect: topicIds.map((topicId: string) => ({ id: topicId })),
-              },
-            },
-          });
           
-          console.log(`Updated topics: Connected ${topicIds.length} topics`);
+          updateData.topics = {
+            set: topicIds.map((topicId: string) => ({ id: topicId }))
+          };
+          console.log(`Syncing topics with provided IDs: [${topicIds.join(', ')}]`);
         } else {
-          console.log("No new topics provided, preserving existing topics");
+          // If topicIds is undefined, explicitly set topics to the list fetched *before* the transaction
+          console.log("topicIds is undefined. Explicitly setting topics to list fetched before transaction.");
+          updateData.topics = { 
+            set: currentTopicIdsFromOuterScope.map(id => ({ id })) 
+          };
         }
 
-        // 3. Update the webinar plan with all other data
+        // 6. Execute the update
         const updatedWebinarPlan = await tx.webinarPlan.update({
           where: { id },
-          data: {
-            title,
-            description,
-            durationInHours,
-            price,
-            maxParticipants,
-            language,
-            level,
-            prerequisites,
-            materialProvided,
-            learningOutcomes,
-            consultantProfile: { connect: { id: consultantProfileId } },
-          },
+          data: updateData,
           include: {
             consultantProfile: true,
             topics: true,
           },
         });
 
-        // 4. Update the webinar instance if it exists
+        console.log(`Updated webinar plan ${updatedWebinarPlan.id}. Now has ${updatedWebinarPlan.topics.length} topics.`);
+
+        // 7. Update the webinar instance if it exists
         let updatedWebinar = webinarToUpdate;
         if (updatedWebinar) {
           const webinarUpdateData: any = {};
@@ -452,7 +465,7 @@ export async function PATCH(request: NextRequest) {
             });
           }
 
-          // 5. Update appointment slot if scheduledAt is provided
+          // 8. Update appointment slot if scheduledAt is provided
           if (scheduledAt && startTime && endTime) {
             const appointment = updatedWebinar.appointment;
             

@@ -243,20 +243,56 @@ export class PlannerService {
           }
         }
         
-        // Now create or update the webinar with all topic IDs
+        // Construct payload carefully based on POST vs PATCH
+        let requestBody: any = {};
+
+        if (isUpdate) {
+          // For PATCH, send only necessary fields + topicIds if available
+          requestBody = {
+            id: planId, // Plan ID
+            webinarId: webinarId, // Instance ID
+            title: webinarData.webinarPlan?.title,
+            description: webinarData.webinarPlan?.description,
+            durationInHours: webinarData.webinarPlan?.durationInHours,
+            price: webinarData.webinarPlan?.price,
+            maxParticipants: webinarData.webinarPlan?.maxParticipants,
+            language: webinarData.webinarPlan?.language,
+            level: webinarData.webinarPlan?.level,
+            prerequisites: webinarData.webinarPlan?.prerequisites,
+            materialProvided: webinarData.webinarPlan?.materialProvided,
+            learningOutcomes: webinarData.webinarPlan?.learningOutcomes,
+            consultantProfileId: consultantId,
+            scheduledAt: scheduledAtDate,
+            // Determine topicIds value:
+            // - If new topics were created/added (allTopicIds has content): send them.
+            // - If no new topics were added AND the form's topics list was empty: send [].
+            // - Otherwise (no new topics added, form had topics initially or wasn't touched): send undefined.
+            topicIds: allTopicIds.length > 0
+                        ? allTopicIds
+                        : (webinarData.webinarPlan?.topics?.length === 0 ? [] : undefined)
+          };
+          console.log("Constructed PATCH request body:", JSON.stringify(requestBody, null, 2));
+        } else {
+          // For POST, send all plan data + topicIds
+          const postPlanData = { ...webinarData.webinarPlan };
+          // Ensure nested topics array is removed before spreading
+          delete postPlanData.topics;
+          requestBody = {
+            ...postPlanData,
+            consultantProfileId: consultantId,
+            scheduledAt: scheduledAtDate,
+            topicIds: allTopicIds // Send newly created/found topic IDs
+          };
+          console.log("Constructed POST request body:", JSON.stringify(requestBody, null, 2));
+        }
+
+        // Now create or update the webinar using the constructed body
         const response = await fetch(endpoint, {
           method,
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            ...webinarData.webinarPlan,
-            id: planId, // Include the plan ID for PATCH requests
-            webinarId: webinarId, // Include the webinar instance ID for PATCH requests
-            consultantProfileId: consultantId,
-            scheduledAt: scheduledAtDate, // Pass the Date object
-            topicIds: allTopicIds.length > 0 ? allTopicIds : undefined, // Only include topicIds if we have new ones
-          }),
+          body: JSON.stringify(requestBody),
         });
 
         if (!response.ok) {
@@ -417,19 +453,56 @@ export class PlannerService {
         const method = isUpdate ? "PATCH" : "POST";
 
         console.log(`Using ${method} request to ${endpoint} for ${isUpdate ? "update" : "create"}`);
+        
+        // Construct payload carefully based on POST vs PATCH
+        let requestBody: any = {};
+
+        if (isUpdate) {
+          // For PATCH, send only necessary fields + topicIds if available
+          requestBody = {
+            id: planId, // Plan ID
+            classId: classId, // Instance ID
+            title: classData.classPlan?.title,
+            description: classData.classPlan?.description,
+            durationInMonths: classData.classPlan?.durationInMonths,
+            price: classData.classPlan?.price,
+            maxParticipants: classData.classPlan?.maxParticipants,
+            language: classData.classPlan?.language,
+            level: classData.classPlan?.level,
+            prerequisites: classData.classPlan?.prerequisites,
+            materialProvided: classData.classPlan?.materialProvided,
+            learningOutcomes: classData.classPlan?.learningOutcomes,
+            certificateProvided: classData.classPlan?.certificateProvided,
+            callsPerWeek: classData.classPlan?.callsPerWeek,
+            videoMeetings: classData.classPlan?.videoMeetings,
+            emailSupport: classData.classPlan?.emailSupport,
+            classContents: classData.classPlan?.classContents, // Send updated contents
+            consultantProfileId: consultantId,
+            topicIds: allTopicIds.length > 0 
+                        ? allTopicIds 
+                        : (classData.classPlan?.topics?.length === 0 ? [] : undefined)
+          };
+          console.log("Constructed PATCH request body for Class:", JSON.stringify(requestBody, null, 2));
+        } else {
+           // For POST, send all plan data + topicIds
+          const postPlanData = { ...classData.classPlan };
+          // Ensure nested topics array is removed before spreading
+          delete postPlanData.topics;
+          requestBody = {
+            ...postPlanData,
+            consultantProfileId: consultantId,
+            topicIds: allTopicIds // Send newly created/found topic IDs
+            // Include startDate etc. for POST as needed from classData
+          };
+          console.log("Constructed POST request body for Class:", JSON.stringify(requestBody, null, 2));
+        }
 
         const response = await fetch(endpoint, {
           method,
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            ...classData.classPlan,
-            id: planId, // Include the plan ID for PATCH requests
-            classId: classId, // Include the class instance ID for PATCH requests
-            consultantProfileId: consultantId,
-            topicIds: allTopicIds.length > 0 ? allTopicIds : undefined,
-          }),
+          body: JSON.stringify(requestBody),
         });
 
         if (!response.ok) {
@@ -515,48 +588,35 @@ export class PlannerService {
         return [];
       }
 
-      // Process each topic name before creating
+      // Simplify topic processing: Trim whitespace and filter out empty/short strings.
+      // Let the backend handle existence checks, creation, and case sensitivity.
       const processedTopics = topicNames
-        .map((topic) => {
-          // Remove extra whitespace and trim
-          let processed = topic.trim().replace(/\s+/g, " ");
-          if (processed.length < 2) return null;
+        .map(topic => topic.trim()) // Trim whitespace
+        .filter(topic => topic && topic.length >= 2); // Filter empty and short strings
 
-          // Convert to sentence case (first letter uppercase, rest lowercase)
-          processed = processed.toLowerCase();
-          processed = processed.charAt(0).toUpperCase() + processed.slice(1);
+      // Deduplicate names before sending to backend (case-insensitive)
+      const uniqueTopicNames = processedTopics.reduce((acc, current) => {
+        const lowerCaseName = current.toLowerCase();
+        if (!acc.some(item => item.toLowerCase() === lowerCaseName)) {
+          acc.push(current);
+        }
+        return acc;
+      }, [] as string[]);
 
-          // Remove any special characters except spaces and alphanumeric
-          processed = processed.replace(/[^a-zA-Z0-9\s]/g, "");
-
-          return processed;
-        })
-        .filter(
-          (topic): topic is string =>
-            topic !== null &&
-            topic.length >= 2 &&
-            // Filter out duplicates (case-insensitive)
-            !topicNames.find(
-              (t, i) =>
-                topicNames.indexOf(topic) !== i &&
-                t.toLowerCase() === topic.toLowerCase(),
-            ),
-        );
-
-      if (processedTopics.length === 0) {
-        console.log("No valid topics after processing");
-        return [];
+      if (uniqueTopicNames.length === 0) {
+        console.log("No valid topics after simplified processing and deduplication");
+        return []; // Return empty array if no valid topics remain
       }
 
-      console.log("Creating topics in batch:", processedTopics);
+      console.log("Requesting topics from backend:", uniqueTopicNames);
 
-      // Create all topics in a single request
+      // Create/retrieve all topics in a single request
       const response = await fetch("/api/user/content/topics", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ names: processedTopics }),
+        body: JSON.stringify({ names: uniqueTopicNames }),
       });
 
       if (!response.ok) {
