@@ -492,7 +492,6 @@ export class PlannerService {
             ...postPlanData,
             consultantProfileId: consultantId,
             topicIds: allTopicIds // Send newly created/found topic IDs
-            // Include startDate etc. for POST as needed from classData
           };
           console.log("Constructed POST request body for Class:", JSON.stringify(requestBody, null, 2));
         }
@@ -542,6 +541,7 @@ export class PlannerService {
           throw postProcessError;
         }
       } catch (error) {
+        console.log("Error saving class:", error);
         // If class creation failed, clean up any newly created topics
         await this.rollbackNewlyCreatedTopics();
         throw error;
@@ -635,49 +635,6 @@ export class PlannerService {
       console.error("Error creating topics:", error);
       throw error;
     }
-  }
-
-  /**
-   * Validate class contents
-   */
-  static validateClassContents(
-    contents: any[] | undefined,
-  ): Record<string, string> {
-    const errors: Record<string, string> = {};
-
-    if (!contents || contents.length === 0) {
-      return errors;
-    }
-
-    contents.forEach((content, index) => {
-      if (!content.title) {
-        errors[`classContents.${index}.title`] = "Title is required";
-      }
-
-      if (!content.description) {
-        errors[`classContents.${index}.description`] =
-          "Description is required";
-      }
-
-      if (
-        !content.order ||
-        isNaN(Number(content.order)) ||
-        Number(content.order) <= 0
-      ) {
-        errors[`classContents.${index}.order`] =
-          "Order must be a positive number";
-      }
-
-      if (
-        !content.hoursAllotted ||
-        isNaN(Number(content.hoursAllotted)) ||
-        Number(content.hoursAllotted) <= 0
-      ) {
-        errors[`classContents.${index}.hoursAllotted`] =
-          "Hours must be a positive number";
-      }
-    });
-    return errors;
   }
 
   /**

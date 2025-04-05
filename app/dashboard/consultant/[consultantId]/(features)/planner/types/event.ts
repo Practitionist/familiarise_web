@@ -80,6 +80,8 @@ export interface ClassEvent extends Event {
     createdAt: Date;
     updatedAt: Date;
   };
+  startDate?: Date;
+  endDate?: Date;
   appointments: TClass["appointments"];
   waitlist: TClass["waitlist"];
   meetingRoom: TClass["meetingRoom"];

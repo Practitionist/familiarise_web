@@ -301,12 +301,14 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
   classContents: z
     .array(ClassContentSchema)
+    .min(1, "At least one class content item is required")
     .default([])
-    .refine((contents) => {
-      // Check for duplicate titles
-      const titles = contents.map((c) => c.title.trim().toLowerCase());
+    .refine((contents: z.infer<typeof ClassContentSchema>[]) => {
+      const titles = contents.map((c: z.infer<typeof ClassContentSchema>) => c.title.trim().toLowerCase());
       return new Set(titles).size === titles.length;
     }, "Class contents must have unique titles"),
+  startDate: z.date().optional().nullable(),
+  endDate: z.date().optional().nullable(),
 });
 
 // Add ConsultantPlans schema

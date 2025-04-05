@@ -28,12 +28,11 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { ClassContentSchema, ClassPlanSchema } from "@/schemas/PlanSchema";
+import { ClassPlanSchema } from "@/schemas/PlanSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import { z } from "zod";
 import { PlannerService } from "../services/planner";
 import { ClassEvent, ClassPlannerProps } from "../types/event";
 
@@ -47,9 +46,6 @@ export function EventPlannerForClass({
   consultantId,
 }: Readonly<ClassPlannerProps>) {
   // State to track form errors
-  const [contentErrors, setContentErrors] = useState<{ [key: string]: string }>(
-    {},
-  );
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [newOutcome, setNewOutcome] = useState("");
   const [availableTopics, setAvailableTopics] = useState<
@@ -146,43 +142,6 @@ export function EventPlannerForClass({
     }
   }, [initialData, form, consultantId]);
 
-  // Type guard to check if form data has classContents
-  function isClassFormData(data: any): data is { classContents: any[] } {
-    return data && Array.isArray(data.classContents);
-  }
-
-  // Run validation on form values whenever they change
-  useEffect(() => {
-    if (form.formState.isSubmitted) {
-      const formValues = form.getValues();
-      if (isClassFormData(formValues)) {
-        setContentErrors(
-          PlannerService.validateClassContents(formValues.classContents),
-        );
-      }
-    }
-  }, [form.watch("classContents"), form]);
-
-  // Validate class contents when dialog opens
-  useEffect(() => {
-    if (isOpen) {
-      // Check and validate class contents
-      const formValues = form.getValues();
-      if (isClassFormData(formValues)) {
-        setContentErrors(
-          PlannerService.validateClassContents(formValues.classContents),
-        );
-      }
-    }
-  }, [isOpen, form]);
-
-  // Clear errors when dialog closes
-  useEffect(() => {
-    if (!isOpen) {
-      setContentErrors({});
-    }
-  }, [isOpen]);
-
   // Initialize planType in a type-safe way
   useEffect(() => {
     // Use setValue with type casting for safety
@@ -254,48 +213,10 @@ export function EventPlannerForClass({
           // Continue with validation - the service layer will also check for duplicates
         }
 
-        // Check if classContents exists and validate using Zod
-        if (
-          !Array.isArray(formData.classContents) ||
-          formData.classContents.length === 0
-        ) {
-          toast({
-            title: "Error",
-            description: "Please add at least one class content item",
-            variant: "destructive",
-          });
-          return;
-        }
-
-        // Validate all class contents using Zod
-        const contentValidation = z
-          .array(ClassContentSchema)
-          .safeParse(formData.classContents);
-
-        if (!contentValidation.success) {
-          const errors = contentValidation.error.errors.reduce(
-            (acc, error) => {
-              const path = error.path.join(".");
-              acc[path] = error.message;
-              return acc;
-            },
-            {} as Record<string, string>,
-          );
-
-          setContentErrors(errors);
-          toast({
-            title: "Validation Error",
-            description: "Please fix errors in Class Contents before saving",
-            variant: "destructive",
-          });
-          return;
-        }
-
         // If we reach here, proceed with submission
         setInternalIsSaving(true);
 
         const now = new Date();
-        const classContents = formData.classContents || [];
 
         const classData: Partial<ClassEvent> = {
           type: "class" as const,
@@ -319,18 +240,7 @@ export function EventPlannerForClass({
             callsPerWeek: formData.callsPerWeek,
             videoMeetings: formData.videoMeetings,
             emailSupport: formData.emailSupport,
-            classContents: classContents.map((content: any, index: number) => ({
-              id: content.id || `temp-${index}`,
-              title: content.title,
-              description: content.description,
-              contentType: content.contentType || null,
-              contentUrl: content.contentUrl || null,
-              order: content.order,
-              hoursAllotted: content.hoursAllotted,
-              createdAt: now,
-              updatedAt: now,
-              classPlanId: initialData?.classPlan?.id ?? "",
-            })),
+            classContents: formData.classContents || [],
             createdAt: initialData?.classPlan?.createdAt ?? now,
             updatedAt: now,
           },
@@ -428,7 +338,6 @@ export function EventPlannerForClass({
       onOpenChange={(open) => {
         // Clear errors when dialog is closed
         if (!open) {
-          setContentErrors({});
           onClose();
         }
       }}
@@ -465,7 +374,7 @@ export function EventPlannerForClass({
                 <FormItem>
                   <FormLabel>Description</FormLabel>
                   <FormControl>
-                    <Textarea {...field} />
+                    <Textarea {...field} value={field.value ?? ""} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -747,14 +656,14 @@ export function EventPlannerForClass({
                 <FormItem>
                   <FormLabel>Class Contents</FormLabel>
                   <div className="space-y-4">
-                    {(field.value ?? []).map((content) => (
+                    {(field.value ?? []).map((content, index) => (
                       <div
-                        key={`content-${content.id || content.title}-${content.order}`}
+                        key={`content-${index}`}
                         className="grid grid-cols-2 gap-4 p-4 border rounded-lg"
                       >
                         <FormField
                           control={form.control}
-                          name={`classContents.${content.order}.title`}
+                          name={`classContents.${index}.title`}
                           render={({ field: contentField }) => (
                             <FormItem>
                               <FormLabel>
@@ -763,32 +672,15 @@ export function EventPlannerForClass({
                               <FormControl>
                                 <Input
                                   {...contentField}
-                                  className={
-                                    contentErrors[
-                                      `classContents.${content.order}.title`
-                                    ]
-                                      ? "border-red-500"
-                                      : ""
-                                  }
                                 />
                               </FormControl>
-                              {contentErrors[
-                                `classContents.${content.order}.title`
-                              ] && (
-                                <p className="text-sm font-medium text-red-500">
-                                  {
-                                    contentErrors[
-                                      `classContents.${content.order}.title`
-                                    ]
-                                  }
-                                </p>
-                              )}
+                              <FormMessage />
                             </FormItem>
                           )}
                         />
                         <FormField
                           control={form.control}
-                          name={`classContents.${content.order}.description`}
+                          name={`classContents.${index}.description`}
                           render={({ field: contentField }) => (
                             <FormItem>
                               <FormLabel>
@@ -799,36 +691,16 @@ export function EventPlannerForClass({
                                 <Textarea
                                   {...contentField}
                                   placeholder="Enter a description (required)"
-                                  className={
-                                    contentErrors[
-                                      `classContents.${content.order}.description`
-                                    ]
-                                      ? "border-red-500"
-                                      : ""
-                                  }
+                                  value={contentField.value ?? ""}
                                 />
                               </FormControl>
-                              {contentErrors[
-                                `classContents.${content.order}.description`
-                              ] ? (
-                                <p className="text-sm font-medium text-red-500">
-                                  {
-                                    contentErrors[
-                                      `classContents.${content.order}.description`
-                                    ]
-                                  }
-                                </p>
-                              ) : (
-                                <p className="text-sm text-muted-foreground">
-                                  This field is required
-                                </p>
-                              )}
+                              <FormMessage />
                             </FormItem>
                           )}
                         />
                         <FormField
                           control={form.control}
-                          name={`classContents.${content.order}.contentType`}
+                          name={`classContents.${index}.contentType`}
                           render={({ field: contentField }) => (
                             <FormItem>
                               <FormLabel>Content Type</FormLabel>
@@ -844,7 +716,7 @@ export function EventPlannerForClass({
                         />
                         <FormField
                           control={form.control}
-                          name={`classContents.${content.order}.contentUrl`}
+                          name={`classContents.${index}.contentUrl`}
                           render={({ field: contentField }) => (
                             <FormItem>
                               <FormLabel>Content URL</FormLabel>
@@ -860,7 +732,7 @@ export function EventPlannerForClass({
                         />
                         <FormField
                           control={form.control}
-                          name={`classContents.${content.order}.order`}
+                          name={`classContents.${index}.order`}
                           render={({ field: contentField }) => (
                             <FormItem>
                               <FormLabel>
@@ -870,32 +742,16 @@ export function EventPlannerForClass({
                                 <Input
                                   type="number"
                                   {...contentField}
-                                  className={
-                                    contentErrors[
-                                      `classContents.${content.order}.order`
-                                    ]
-                                      ? "border-red-500"
-                                      : ""
-                                  }
+                                  value={String(contentField.value ?? '')}
                                 />
                               </FormControl>
-                              {contentErrors[
-                                `classContents.${content.order}.order`
-                              ] && (
-                                <p className="text-sm font-medium text-red-500">
-                                  {
-                                    contentErrors[
-                                      `classContents.${content.order}.order`
-                                    ]
-                                  }
-                                </p>
-                              )}
+                              <FormMessage />
                             </FormItem>
                           )}
                         />
                         <FormField
                           control={form.control}
-                          name={`classContents.${content.order}.hoursAllotted`}
+                          name={`classContents.${index}.hoursAllotted`}
                           render={({ field: contentField }) => (
                             <FormItem>
                               <FormLabel>
@@ -906,26 +762,10 @@ export function EventPlannerForClass({
                                 <Input
                                   type="number"
                                   {...contentField}
-                                  className={
-                                    contentErrors[
-                                      `classContents.${content.order}.hoursAllotted`
-                                    ]
-                                      ? "border-red-500"
-                                      : ""
-                                  }
+                                  value={String(contentField.value ?? '')}
                                 />
                               </FormControl>
-                              {contentErrors[
-                                `classContents.${content.order}.hoursAllotted`
-                              ] && (
-                                <p className="text-sm font-medium text-red-500">
-                                  {
-                                    contentErrors[
-                                      `classContents.${content.order}.hoursAllotted`
-                                    ]
-                                  }
-                                </p>
-                              )}
+                              <FormMessage />
                             </FormItem>
                           )}
                         />
@@ -933,20 +773,14 @@ export function EventPlannerForClass({
                           type="button"
                           variant="destructive"
                           onClick={() => {
-                            const newContents = [...(field.value ?? [])];
-                            newContents.splice(content.order, 1);
-                            field.onChange(newContents);
-
-                            // Clear any errors for this content
-                            const newErrors = { ...contentErrors };
-                            Object.keys(newErrors).forEach((key) => {
-                              if (
-                                key.startsWith(`classContents.${content.order}`)
-                              ) {
-                                delete newErrors[key];
-                              }
-                            });
-                            setContentErrors(newErrors);
+                            const indexToRemove = index;
+                            if (indexToRemove !== -1) {
+                              const newContents = [
+                                ...(field.value ?? []).slice(0, indexToRemove),
+                                ...(field.value ?? []).slice(indexToRemove + 1)
+                              ];
+                              field.onChange(newContents);
+                            }
                           }}
                         >
                           Remove
@@ -960,31 +794,27 @@ export function EventPlannerForClass({
                         const newContent = {
                           title: "",
                           description: "",
-                          contentType: "",
-                          contentUrl: "",
-                          order: currentContents.length + 1,
+                          contentType: null,
+                          contentUrl: null,
+                          order: currentContents.length + 1, 
                           hoursAllotted: 1,
                         };
                         field.onChange([...currentContents, newContent]);
-
-                        // Immediately validate the new content
-                        setTimeout(() => {
-                          setContentErrors(
-                            PlannerService.validateClassContents([
-                              ...currentContents,
-                              newContent,
-                            ]),
-                          );
-                        }, 100);
                       }}
                     >
                       Add Class Content
                     </Button>
                   </div>
-                  {field.value && field.value.length === 0 && (
-                    <p className="text-sm text-muted-foreground mt-2">
-                      Add at least one class content to define the structure of
-                      your class.
+                  {/* Manually display array-level errors for classContents */}
+                  {form.formState.errors.classContents?.message && (
+                    <p className="text-sm font-medium text-destructive">
+                      {form.formState.errors.classContents.message}
+                    </p>
+                  )}
+                  {/* Also check for root errors if min validation message doesn't appear */}
+                  {form.formState.errors.classContents?.root?.message && (
+                    <p className="text-sm font-medium text-destructive">
+                      {form.formState.errors.classContents.root.message}
                     </p>
                   )}
                 </FormItem>
@@ -994,7 +824,7 @@ export function EventPlannerForClass({
             <DialogFooter className="mt-6 pt-4 border-t">
               <Button
                 type="submit"
-                disabled={isSaving || Object.keys(contentErrors).length > 0}
+                disabled={isSaving}
                 className="min-w-[100px]"
               >
                 {isSaving ? "Saving..." : "Save"}

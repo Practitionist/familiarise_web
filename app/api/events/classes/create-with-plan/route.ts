@@ -37,7 +37,6 @@ export async function POST(request: NextRequest) {
       !price ||
       !maxParticipants ||
       !consultantProfileId ||
-      !startDate ||
       !callsPerWeek ||
       !classContents?.length
     ) {
@@ -47,10 +46,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Calculate end date (startDate + durationInMonths)
-    const start = new Date(startDate);
-    const end = new Date(start);
-    end.setMonth(end.getMonth() + durationInMonths);
+    // Calculate end date only if startDate is provided
+    let start: Date | undefined = startDate ? new Date(startDate) : undefined;
+    let end: Date | undefined = undefined;
+    if (start) {
+      end = new Date(start);
+      end.setMonth(end.getMonth() + durationInMonths);
+    }
 
     // Create class plan, instance, and appointments in a transaction
     const result = await prisma.$transaction(async (tx) => {
@@ -97,32 +99,35 @@ export async function POST(request: NextRequest) {
       const classEvent = await tx.class.create({
         data: {
           status,
-          startDate: start,
-          endDate: end,
+          startDate: start, // Will be undefined if not provided
+          endDate: end,     // Will be undefined if start is not provided
           classPlan: { connect: { id: classPlan.id } },
           // Create initial appointments for the first month
           appointments: {
-            create: Array.from({ length: callsPerWeek * 4 }).map((_, index) => {
-              const appointmentDate = new Date(start);
-              appointmentDate.setDate(
-                appointmentDate.getDate() +
-                  Math.floor(index / callsPerWeek) * 7,
-              );
-              const slotStart = new Date(appointmentDate);
-              const slotEnd = new Date(appointmentDate);
-              slotEnd.setHours(slotEnd.getHours() + 1); // Default 1-hour slots
+            // Only create appointments if startDate is defined
+            create: start
+              ? Array.from({ length: callsPerWeek * 4 }).map((_, index) => {
+                  const appointmentDate = new Date(start!);
+                  appointmentDate.setDate(
+                    appointmentDate.getDate() +
+                      Math.floor(index / callsPerWeek) * 7,
+                  );
+                  const slotStart = new Date(appointmentDate);
+                  const slotEnd = new Date(appointmentDate);
+                  slotEnd.setHours(slotEnd.getHours() + 1); // Default 1-hour slots
 
-              return {
-                appointmentType: "CLASS",
-                slotsOfAppointment: {
-                  create: {
-                    slotStartTimeInUTC: slotStart,
-                    slotEndTimeInUTC: slotEnd,
-                    isTentative: true, // Mark as tentative until confirmed
-                  },
-                },
-              };
-            }),
+                  return {
+                    appointmentType: "CLASS",
+                    slotsOfAppointment: {
+                      create: {
+                        slotStartTimeInUTC: slotStart,
+                        slotEndTimeInUTC: slotEnd,
+                        isTentative: true, // Mark as tentative until confirmed
+                      },
+                    },
+                  };
+                })
+              : undefined,
           },
         },
         include: {
@@ -329,12 +334,12 @@ export async function PATCH(request: NextRequest) {
 
         // Determine how to handle topics
         if (topicIds !== undefined) {
-          // If topicIds are provided, use set to sync
+          // If topicIds are explicitly provided (even if empty array), use set to synchronize
           if (!Array.isArray(topicIds)) {
             console.error("topicIds was provided but is not an array:", topicIds);
             throw new Error("Invalid format for topicIds");
           }
-          // Verify provided topicIds actually exist
+          // Verify provided topicIds actually exist (optional but recommended for robustness)
           const topics = await tx.topic.findMany({
             where: { id: { in: topicIds } },
             select: { id: true }
@@ -350,11 +355,10 @@ export async function PATCH(request: NextRequest) {
           };
           console.log(`Syncing class topics with provided IDs: [${topicIds.join(', ')}]`);
         } else {
-          // If topicIds is undefined, explicitly set topics to the list fetched *before* the transaction
-          console.log("Class topicIds is undefined. Explicitly setting topics to list fetched before transaction.");
-          updateData.topics = { 
-            set: currentTopicIdsFromOuterScope.map(id => ({ id })) 
-          };
+          // If topicIds is undefined, do *not* include the topics key in the updateData.
+          // This leaves the existing topic relations untouched.
+          console.log("Class topicIds is undefined in the request. Existing topics will not be modified.");
+          // No `updateData.topics = ...` line here
         }
 
         // Execute the plan update
@@ -378,18 +382,26 @@ export async function PATCH(request: NextRequest) {
         // 2. Update the class instance if it exists
         let updatedClass = classToUpdate;
         if (updatedClass) {
-          const classUpdateData: any = {};
-          
-          if (status) {
-            classUpdateData.status = status;
+          // Prepare update data for the Class instance, handling optional fields
+          const classUpdateData: { 
+            status?: any; 
+            startDate?: Date | null; 
+            endDate?: Date | null 
+          } = {};
+
+          // Only include status if it's provided in the request body
+          if (status !== undefined) {
+            classUpdateData.status = status; 
+          }
+
+          // Handle startDate: update if provided, set to null if explicitly null, otherwise leave unchanged
+          if (startDate !== undefined) {
+            classUpdateData.startDate = startDate ? new Date(startDate) : null;
           }
           
-          if (startDate) {
-            classUpdateData.startDate = new Date(startDate);
-          }
-          
-          if (endDate) {
-            classUpdateData.endDate = new Date(endDate);
+          // Handle endDate: update if provided, set to null if explicitly null, otherwise leave unchanged
+          if (endDate !== undefined) {
+            classUpdateData.endDate = endDate ? new Date(endDate) : null;
           }
           
           if (Object.keys(classUpdateData).length > 0) {
