@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { WebinarPlanSchema } from "@/schemas/PlanSchema";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { PlannerService } from "../services/planner";
@@ -42,17 +42,10 @@ export function EventPlannerForWebinar({
 }: Readonly<WebinarPlannerProps>) {
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [newOutcome, setNewOutcome] = useState("");
-  const [newTopic, setNewTopic] = useState("");
-  const [suggestedTopics, setSuggestedTopics] = useState<
-    { id: string; name: string }[]
-  >([]);
-  const [showTopicSuggestions, setShowTopicSuggestions] = useState(false);
   const [availableTopics, setAvailableTopics] = useState<
     { id: string; name: string; createdAt: Date; updatedAt: Date }[]
   >([]);
   const [isLoadingTopics, setIsLoadingTopics] = useState(false);
-  const topicInputRef = useRef<HTMLInputElement>(null);
-  const suggestionsRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   // Use either external or internal saving state
@@ -98,30 +91,6 @@ export function EventPlannerForWebinar({
       fetchTopics();
     }
   }, [isOpen, toast]);
-
-  // Close topic suggestions when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        suggestionsRef.current &&
-        !suggestionsRef.current.contains(event.target as Node) &&
-        topicInputRef.current &&
-        !topicInputRef.current.contains(event.target as Node)
-      ) {
-        setShowTopicSuggestions(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
-
-  // Filter suggestions based on input
-  useEffect(() => {
-    // This effect is no longer needed as we're using the TopicsMultiSelect
-  }, []);
 
   // Extract scheduledAt from appointment slots if available
   const getInitialScheduledAt = (): string => {
@@ -170,14 +139,14 @@ export function EventPlannerForWebinar({
       // Reset the form with values from initialData
       form.reset({
         title: initialData.webinarPlan.title,
-        description: initialData.webinarPlan.description || "",
+        description: initialData.webinarPlan.description ?? "",
         price: initialData.webinarPlan.price,
         durationInHours: initialData.webinarPlan.durationInHours,
         maxParticipants: initialData.webinarPlan.maxParticipants,
         language: initialData.webinarPlan.language || "English",
         level: initialData.webinarPlan.level || "Beginner",
-        prerequisites: initialData.webinarPlan.prerequisites || "",
-        materialProvided: initialData.webinarPlan.materialProvided || "",
+        prerequisites: initialData.webinarPlan.prerequisites ?? "",
+        materialProvided: initialData.webinarPlan.materialProvided ?? "",
         learningOutcomes: initialData.webinarPlan.learningOutcomes || [],
         topics:
           initialData.webinarPlan.topics?.map((topic) => topic.name) || [],
@@ -220,59 +189,6 @@ export function EventPlannerForWebinar({
     );
   };
 
-  const addTopic = (topicName: string = newTopic) => {
-    if (topicName.trim() === "") return;
-    const currentTopics = form.getValues("topics") || [];
-
-    // Check for duplicates (case-insensitive)
-    const isDuplicate = currentTopics.some(
-      (topic) => topic.trim().toLowerCase() === topicName.trim().toLowerCase(),
-    );
-
-    if (isDuplicate) {
-      form.setError("topics", {
-        type: "manual",
-        message: "This topic already exists",
-      });
-      return;
-    }
-
-    // Add the new topic
-    form.setValue("topics", [...currentTopics, topicName], {
-      shouldValidate: true,
-    });
-
-    // Clear input and hide suggestions
-    setNewTopic("");
-    setShowTopicSuggestions(false);
-  };
-
-  const removeTopic = (index: number) => {
-    const currentTopics = form.getValues("topics") || [];
-    form.setValue(
-      "topics",
-      currentTopics.filter((_, i) => i !== index),
-      { shouldValidate: true },
-    );
-  };
-
-  const handleTopicKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      addTopic();
-    } else if (e.key === "ArrowDown" && suggestedTopics.length > 0) {
-      e.preventDefault();
-      // Focus the first suggestion if possible
-      const suggestionsElement = suggestionsRef.current;
-      if (suggestionsElement) {
-        const firstSuggestion = suggestionsElement.querySelector("button");
-        if (firstSuggestion) {
-          firstSuggestion.focus();
-        }
-      }
-    }
-  };
-
   const handleFormSubmit = form.handleSubmit(
     async (formData) => {
       try {
@@ -284,7 +200,7 @@ export function EventPlannerForWebinar({
 
         // Check for duplicate title
         const title = formData.title;
-        const planId = initialData?.webinarPlan?.id || "";
+        const planId = initialData?.webinarPlan?.id ?? "";
 
         try {
           const isDuplicate = await PlannerService.checkDuplicateTitle(
@@ -598,7 +514,7 @@ export function EventPlannerForWebinar({
                             placeholder="Any prerequisites for attendees"
                             className="min-h-[100px]"
                             {...field}
-                            value={field.value || ""}
+                            value={field.value ?? ""}
                           />
                         </FormControl>
                         <FormMessage />
@@ -617,7 +533,7 @@ export function EventPlannerForWebinar({
                             placeholder="Materials that will be provided"
                             className="min-h-[100px]"
                             {...field}
-                            value={field.value || ""}
+                            value={field.value ?? ""}
                           />
                         </FormControl>
                         <FormMessage />

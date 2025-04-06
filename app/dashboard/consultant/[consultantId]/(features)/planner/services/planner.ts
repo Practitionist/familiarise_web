@@ -165,9 +165,9 @@ export class PlannerService {
 
       // First check for duplicate title
       const title = webinarData.webinarPlan?.title;
-      const planId = webinarData.webinarPlan?.id || "";
+      const planId = webinarData.webinarPlan?.id ?? "";
       const isUpdate = !!planId;
-      const webinarId = webinarData.id || ""; // Get the webinar instance ID
+      const webinarId = webinarData.id ?? ""; // Get the webinar instance ID
 
       console.log(
         `${isUpdate ? "Updating" : "Creating"} webinar${isUpdate ? ` with plan ID ${planId}` : ""}${webinarId ? ` and instance ID ${webinarId}` : ""}...`,
@@ -237,12 +237,13 @@ export class PlannerService {
 
         if (scheduledAt) {
           // Convert to Date object if it's a string
-          scheduledAtDate =
-            typeof scheduledAt === "string"
-              ? new Date(scheduledAt)
-              : (scheduledAt as unknown) instanceof Date
-                ? scheduledAt
-                : null;
+          if (typeof scheduledAt === "string") {
+            scheduledAtDate = new Date(scheduledAt);
+          } else if ((scheduledAt as unknown) instanceof Date) {
+            scheduledAtDate = scheduledAt;
+          } else {
+            scheduledAtDate = null;
+          }
 
           if (scheduledAtDate) {
             console.log(
@@ -415,9 +416,9 @@ export class PlannerService {
 
       // First check for duplicate title
       const title = classData.classPlan?.title;
-      const planId = classData.classPlan?.id || "";
+      const planId = classData.classPlan?.id ?? "";
       const isUpdate = !!planId;
-      const classId = classData.id || ""; // Get the class instance ID
+      const classId = classData.id ?? ""; // Get the class instance ID
 
       console.log(
         `${isUpdate ? "Updating" : "Creating"} class${isUpdate ? ` with plan ID ${planId}` : ""}${classId ? ` and instance ID ${classId}` : ""}...`,
@@ -833,8 +834,8 @@ export class PlannerService {
         topics: topicIds.map((id) => ({
           id,
           name: Array.isArray(data.topics)
-            ? data.topics.find((_, index) => index === topicIds.indexOf(id)) ||
-              ""
+            ? (data.topics.find((_, index) => index === topicIds.indexOf(id)) ??
+              "")
             : "",
           createdAt: now,
           updatedAt: now,
@@ -872,7 +873,7 @@ export class PlannerService {
 
     const now = new Date();
     const classData = data as any;
-    const classContents = classData.classContents || [];
+    const classContents = classData.classContents ?? [];
 
     const classPlanId =
       initialData && this.isClassEvent(initialData)
@@ -904,8 +905,8 @@ export class PlannerService {
         topics: topicIds.map((id) => ({
           id,
           name: Array.isArray(data.topics)
-            ? data.topics.find((_, index) => index === topicIds.indexOf(id)) ||
-              ""
+            ? (data.topics.find((_, index) => index === topicIds.indexOf(id)) ??
+              "")
             : "",
           createdAt: now,
           updatedAt: now,
@@ -954,20 +955,20 @@ export class PlannerService {
    */
   private static formatClassContents(
     classContents: any[],
-    classId: string,
+    classPlanId: string,
     now: Date,
   ) {
     return classContents.map((content: any, index: number) => ({
-      id: content.id || `temp-${index}`,
+      id: content.id ?? `temp-${index}`,
       title: content.title,
       description: content.description,
-      contentType: content.contentType || null,
-      contentUrl: content.contentUrl || null,
+      contentType: content.contentType ?? null,
+      contentUrl: content.contentUrl ?? null,
       order: content.order,
       hoursAllotted: content.hoursAllotted,
       createdAt: now,
       updatedAt: now,
-      classPlanId: classId,
+      classPlanId: classPlanId,
     }));
   }
 
