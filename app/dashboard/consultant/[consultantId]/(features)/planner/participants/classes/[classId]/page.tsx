@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -93,13 +95,24 @@ export default function ClassParticipantsPage() {
     <div className="container mx-auto py-8">
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl font-bold">
-            {classEvent.classPlan.title} - Participants
-          </CardTitle>
-          <p className="text-sm text-gray-500">
-            {participants.length}/{classEvent.classPlan.maxParticipants}{" "}
-            participants
-          </p>
+          <Link
+            href={`/dashboard/consultant/${params.consultantId}/planner`}
+            passHref
+            className="mb-4"
+          >
+            <Button variant="outline" size="sm">
+              <ArrowLeft className="mr-2 h-4 w-4" /> Back to Planner
+            </Button>
+          </Link>
+          <div>
+            <CardTitle className="text-2xl font-bold">
+              {classEvent.classPlan.title} - Participants
+            </CardTitle>
+            <p className="text-sm text-gray-500">
+              {participants.length}/{classEvent.classPlan.maxParticipants}{" "}
+              participants
+            </p>
+          </div>
         </CardHeader>
         <CardContent>
           <Table>
