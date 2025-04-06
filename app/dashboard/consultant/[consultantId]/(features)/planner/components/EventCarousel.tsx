@@ -64,24 +64,24 @@ export function EventCarousel({
     setCurrentPage((prev) => Math.max(prev - 1, 1));
   };
 
-  const getEventTitle = (event: Event) => {
+  const getEventTitle = (event: Event): string => {
     if (isWebinarEvent(event)) {
       return event.webinarPlan.title;
     }
     if (isClassEvent(event)) {
       return event.classPlan.title;
     }
-    return "Unknown Event";
+    throw new Error(`Unknown event type: ${event.type}`);
   };
 
-  const getEventDescription = (event: Event) => {
+  const getEventDescription = (event: Event): string => {
     if (isWebinarEvent(event)) {
       return event.webinarPlan.description ?? "";
     }
     if (isClassEvent(event)) {
       return event.classPlan.description ?? "";
     }
-    return "";
+    throw new Error(`Unknown event type: ${event.type}`);
   };
 
   const getEventPrice = (event: Event) => {
@@ -91,7 +91,7 @@ export function EventCarousel({
     if (isClassEvent(event)) {
       return event.classPlan.price;
     }
-    return 0;
+    throw new Error(`Unknown event type: ${event.type}`);
   };
 
   const getEventDuration = (event: Event) => {
@@ -101,7 +101,7 @@ export function EventCarousel({
     if (isClassEvent(event)) {
       return `${event.classPlan.durationInMonths} months`;
     }
-    return "Unknown duration";
+    throw new Error(`Unknown event type: ${event.type}`);
   };
 
   const [participantCounts, setParticipantCounts] = React.useState<

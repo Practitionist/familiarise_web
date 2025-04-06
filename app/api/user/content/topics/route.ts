@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const query = searchParams.get("query") || "";
+    const query = searchParams.get("query") ?? "";
 
     const topics = await prisma.topic.findMany({
       where: query
@@ -150,6 +150,20 @@ export async function DELETE(req: NextRequest) {
         },
       },
     });
+
+    // Check if any topics were actually deleted (i.e., they met the criteria including createdAt)
+    if (deleteResult.count === 0 && topicsToDelete.length > 0) {
+      // If topics were found but not deleted, it means they weren't recent enough
+      return NextResponse.json(
+        {
+          error:
+            "No recently created topics found with the provided IDs. Rollback might not be necessary or topics are older than expected.",
+          deleted: 0,
+          topicsAttempted: topicsToDelete.map((t) => t.name),
+        },
+        { status: 404 }, // 404 Not Found or 400 Bad Request could be appropriate
+      );
+    }
 
     return NextResponse.json(
       {

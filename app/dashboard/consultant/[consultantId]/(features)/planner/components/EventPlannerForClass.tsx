@@ -688,7 +688,7 @@ export function EventPlannerForClass({
                   <div className="space-y-4">
                     {(field.value ?? []).map((content, index) => (
                       <div
-                        key={`content-${index}`}
+                        key={content.id || `content-${index}`}
                         className="grid grid-cols-2 gap-4 p-4 border rounded-lg"
                       >
                         <FormField

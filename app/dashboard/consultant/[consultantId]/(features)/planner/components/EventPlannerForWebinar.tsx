@@ -567,7 +567,7 @@ export function EventPlannerForWebinar({
                       <div className="space-y-2 mt-2">
                         {field.value?.map((outcome, index) => (
                           <div
-                            key={index}
+                            key={`learning-outcome-${outcome}-${index}`}
                             className="flex items-center gap-2 p-2 border rounded-md"
                           >
                             <span className="flex-1">{outcome}</span>
