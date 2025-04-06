@@ -3,9 +3,21 @@
 import * as React from "react"
 import { DayPicker } from "react-day-picker"
 
-import { cn } from "@/lib/utils"
 import { buttonVariants } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons"
+
+// Define IconLeft component outside
+function IconLeft({ className, children, ...props }: Readonly<React.SVGProps<SVGSVGElement>>) {
+  // Destructure children but don't pass it down
+  return <ChevronLeftIcon className={cn("h-4 w-4", className)} {...props} />;
+}
+
+// Define IconRight component outside
+function IconRight({ className, children, ...props }: Readonly<React.SVGProps<SVGSVGElement>>) {
+  // Destructure children but don't pass it down
+  return <ChevronRightIcon className={cn("h-4 w-4", className)} {...props} />;
+}
 
 export type CalendarProps = React.ComponentProps<typeof DayPicker>
 
@@ -60,12 +72,8 @@ function Calendar({
         ...classNames,
       }}
       components={{
-        IconLeft: ({ className, ...props }) => (
-          <ChevronLeftIcon className={cn("h-4 w-4", className)} {...props} />
-        ),
-        IconRight: ({ className, ...props }) => (
-          <ChevronRightIcon className={cn("h-4 w-4", className)} {...props} />
-        ),
+        IconLeft,
+        IconRight,
       }}
       {...props}
     />
