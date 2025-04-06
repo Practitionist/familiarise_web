@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 
-interface TopicsComponentProps {
+interface TopicsMultiSelectProps {
   initialTopics?: string[];
   onTopicsChange?: (topics: string[]) => void;
   availableTopics?: {
@@ -27,7 +27,7 @@ interface TopicsComponentProps {
   showCard?: boolean;
 }
 
-export function TopicsComponent({
+export function TopicsMultiSelect({
   initialTopics = [],
   onTopicsChange,
   availableTopics = [],
@@ -37,7 +37,7 @@ export function TopicsComponent({
   helpText = "Select from existing topics or create new ones",
   className = "",
   showCard = false,
-}: Readonly<TopicsComponentProps>) {
+}: Readonly<TopicsMultiSelectProps>) {
   const [topics, setTopics] = useState<string[]>(initialTopics);
   const [inputValue, setInputValue] = useState("");
   const [suggestions, setSuggestions] = useState<

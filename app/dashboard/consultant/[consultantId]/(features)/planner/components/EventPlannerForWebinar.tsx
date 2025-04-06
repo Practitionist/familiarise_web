@@ -1,6 +1,5 @@
 "use client";
 
-import { TopicsComponent } from "@/components/topics-component";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -31,6 +30,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { PlannerService } from "../services/planner";
 import { WebinarEvent, WebinarPlannerProps } from "../types/event";
+import { TopicsMultiSelect } from "./TopicsMultiSelect";
 
 export function EventPlannerForWebinar({
   isOpen,
@@ -120,7 +120,7 @@ export function EventPlannerForWebinar({
 
   // Filter suggestions based on input
   useEffect(() => {
-    // This effect is no longer needed as we're using the TopicsComponent
+    // This effect is no longer needed as we're using the TopicsMultiSelect
   }, []);
 
   // Extract scheduledAt from appointment slots if available
@@ -673,7 +673,7 @@ export function EventPlannerForWebinar({
                   render={({ field }) => (
                     <FormItem>
                       <FormControl>
-                        <TopicsComponent
+                        <TopicsMultiSelect
                           initialTopics={field.value}
                           onTopicsChange={(topics) => {
                             field.onChange(topics);

@@ -1,6 +1,5 @@
 "use client";
 
-import { TopicsComponent } from "@/components/topics-component";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -35,6 +34,7 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { PlannerService } from "../services/planner";
 import { ClassEvent, ClassPlannerProps } from "../types/event";
+import { TopicsMultiSelect } from "./TopicsMultiSelect";
 
 
 export function EventPlannerForClass({
@@ -652,7 +652,7 @@ export function EventPlannerForClass({
               render={({ field }) => (
                 <FormItem>
                   <FormControl>
-                    <TopicsComponent
+                    <TopicsMultiSelect
                       initialTopics={field.value}
                       onTopicsChange={(topics) => {
                         field.onChange(topics);
