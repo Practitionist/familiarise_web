@@ -100,7 +100,7 @@ export async function POST(request: NextRequest) {
         data: {
           status,
           startDate: start, // Will be undefined if not provided
-          endDate: end,     // Will be undefined if start is not provided
+          endDate: end, // Will be undefined if start is not provided
           classPlan: { connect: { id: classPlan.id } },
           // Create initial appointments for the first month
           appointments: {
@@ -259,12 +259,12 @@ export async function PATCH(request: NextRequest) {
     }
 
     // Get the class instance - use the provided classId or the first one associated with the plan
-    const classToUpdate = classId 
+    const classToUpdate = classId
       ? await prisma.class.findUnique({
           where: { id: classId },
         })
-      : existingPlan.classes.length > 0 
-        ? existingPlan.classes[0] 
+      : existingPlan.classes.length > 0
+        ? existingPlan.classes[0]
         : null;
 
     if (!classToUpdate && (status || startDate || endDate)) {
@@ -278,17 +278,27 @@ export async function PATCH(request: NextRequest) {
     const result = await prisma.$transaction(
       async (tx) => {
         // Use topics from existingPlan fetched *before* the transaction
-        const currentTopicIdsFromOuterScope = existingPlan.topics.map(t => t.id);
-        console.log(`[Before Transaction Update] Topics from initial fetch for class plan ${id}:`, currentTopicIdsFromOuterScope);
+        const currentTopicIdsFromOuterScope = existingPlan.topics.map(
+          (t) => t.id,
+        );
+        console.log(
+          `[Before Transaction Update] Topics from initial fetch for class plan ${id}:`,
+          currentTopicIdsFromOuterScope,
+        );
 
         // Handle class contents update logic (as before)
         let classContentsUpdateData = {};
         if (classContents && Array.isArray(classContents)) {
           // Validate contents before deleting/creating
-          const contentValidation = z.array(ClassContentSchema).safeParse(classContents);
+          const contentValidation = z
+            .array(ClassContentSchema)
+            .safeParse(classContents);
           if (!contentValidation.success) {
-             console.error("Invalid class contents provided:", contentValidation.error);
-             throw new Error("Invalid data provided for class contents.");
+            console.error(
+              "Invalid class contents provided:",
+              contentValidation.error,
+            );
+            throw new Error("Invalid data provided for class contents.");
           }
           // Delete existing class contents first
           await tx.classContent.deleteMany({
@@ -307,7 +317,9 @@ export async function PATCH(request: NextRequest) {
               })),
             },
           };
-          console.log(`Updating class contents for plan ${id}. Creating ${classContents.length} new entries.`);
+          console.log(
+            `Updating class contents for plan ${id}. Creating ${classContents.length} new entries.`,
+          );
         } else {
           console.log(`No class contents provided for update on plan ${id}.`);
         }
@@ -336,28 +348,42 @@ export async function PATCH(request: NextRequest) {
         if (topicIds !== undefined) {
           // If topicIds are explicitly provided (even if empty array), use set to synchronize
           if (!Array.isArray(topicIds)) {
-            console.error("topicIds was provided but is not an array:", topicIds);
+            console.error(
+              "topicIds was provided but is not an array:",
+              topicIds,
+            );
             throw new Error("Invalid format for topicIds");
           }
           // Verify provided topicIds actually exist (optional but recommended for robustness)
           const topics = await tx.topic.findMany({
             where: { id: { in: topicIds } },
-            select: { id: true }
+            select: { id: true },
           });
           if (topics.length !== topicIds.length) {
-            const missingIds = topicIds.filter(reqId => !topics.some(dbTopic => dbTopic.id === reqId));
-            console.error("Attempted to set non-existent topic IDs:", missingIds);
-            throw new Error(`The following topic IDs do not exist: ${missingIds.join(', ')}`);
+            const missingIds = topicIds.filter(
+              (reqId) => !topics.some((dbTopic) => dbTopic.id === reqId),
+            );
+            console.error(
+              "Attempted to set non-existent topic IDs:",
+              missingIds,
+            );
+            throw new Error(
+              `The following topic IDs do not exist: ${missingIds.join(", ")}`,
+            );
           }
-          
+
           updateData.topics = {
-            set: topicIds.map((topicId: string) => ({ id: topicId }))
+            set: topicIds.map((topicId: string) => ({ id: topicId })),
           };
-          console.log(`Syncing class topics with provided IDs: [${topicIds.join(', ')}]`);
+          console.log(
+            `Syncing class topics with provided IDs: [${topicIds.join(", ")}]`,
+          );
         } else {
           // If topicIds is undefined, do *not* include the topics key in the updateData.
           // This leaves the existing topic relations untouched.
-          console.log("Class topicIds is undefined in the request. Existing topics will not be modified.");
+          console.log(
+            "Class topicIds is undefined in the request. Existing topics will not be modified.",
+          );
           // No `updateData.topics = ...` line here
         }
 
@@ -383,27 +409,27 @@ export async function PATCH(request: NextRequest) {
         let updatedClass = classToUpdate;
         if (updatedClass) {
           // Prepare update data for the Class instance, handling optional fields
-          const classUpdateData: { 
-            status?: any; 
-            startDate?: Date | null; 
-            endDate?: Date | null 
+          const classUpdateData: {
+            status?: any;
+            startDate?: Date | null;
+            endDate?: Date | null;
           } = {};
 
           // Only include status if it's provided in the request body
           if (status !== undefined) {
-            classUpdateData.status = status; 
+            classUpdateData.status = status;
           }
 
           // Handle startDate: update if provided, set to null if explicitly null, otherwise leave unchanged
           if (startDate !== undefined) {
             classUpdateData.startDate = startDate ? new Date(startDate) : null;
           }
-          
+
           // Handle endDate: update if provided, set to null if explicitly null, otherwise leave unchanged
           if (endDate !== undefined) {
             classUpdateData.endDate = endDate ? new Date(endDate) : null;
           }
-          
+
           if (Object.keys(classUpdateData).length > 0) {
             updatedClass = await tx.class.update({
               where: { id: updatedClass.id },
@@ -458,9 +484,9 @@ export async function PATCH(request: NextRequest) {
         }
 
         // Return the results
-        return { 
+        return {
           classPlan: updatedClassPlan,
-          class: updatedClass 
+          class: updatedClass,
         };
       },
       {
@@ -470,13 +496,15 @@ export async function PATCH(request: NextRequest) {
       },
     );
 
-    console.log("Update transaction completed successfully. Returning updated class data.");
-    
+    console.log(
+      "Update transaction completed successfully. Returning updated class data.",
+    );
+
     // Return the appropriate response based on whether we had a class instance
-    const responseData = result.class 
+    const responseData = result.class
       ? result.class
       : { ...result.classPlan, topics: result.classPlan.topics };
-      
+
     return NextResponse.json({ data: responseData }, { status: 200 });
   } catch (error) {
     console.error("Error updating class with plan:", error);

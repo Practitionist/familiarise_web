@@ -68,10 +68,10 @@ export function EventPlannerForWebinar({
       now.setSeconds(0);
       now.setMilliseconds(0);
       return now.toISOString().slice(0, 16);
-    } 
-    
+    }
+
     // Convert to date object if it's a string
-    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    const dateObj = typeof date === "string" ? new Date(date) : date;
     return dateObj.toISOString().slice(0, 16);
   };
 
@@ -125,14 +125,16 @@ export function EventPlannerForWebinar({
 
   // Extract scheduledAt from appointment slots if available
   const getInitialScheduledAt = (): string => {
-    if (initialData?.appointment && 
-        initialData.appointment.slotsOfAppointment && 
-        initialData.appointment.slotsOfAppointment.length > 0) {
+    if (
+      initialData?.appointment &&
+      initialData.appointment.slotsOfAppointment &&
+      initialData.appointment.slotsOfAppointment.length > 0
+    ) {
       const slot = initialData.appointment.slotsOfAppointment[0];
       console.log("Found existing slot for appointment:", {
         slotId: slot.id,
         startTime: slot.slotStartTimeInUTC,
-        endTime: slot.slotEndTimeInUTC
+        endTime: slot.slotEndTimeInUTC,
       });
       return formatDateTimeForInput(slot.slotStartTimeInUTC);
     }
@@ -154,7 +156,8 @@ export function EventPlannerForWebinar({
       learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
       // Convert topics from objects to strings for the form
       // Simplify mapping: Assume topics are always objects from Prisma include
-      topics: initialData?.webinarPlan?.topics?.map(topic => topic.name) ?? [],
+      topics:
+        initialData?.webinarPlan?.topics?.map((topic) => topic.name) ?? [],
       scheduledAt: getInitialScheduledAt(),
       consultantProfileId: consultantId,
     },
@@ -176,7 +179,8 @@ export function EventPlannerForWebinar({
         prerequisites: initialData.webinarPlan.prerequisites || "",
         materialProvided: initialData.webinarPlan.materialProvided || "",
         learningOutcomes: initialData.webinarPlan.learningOutcomes || [],
-        topics: initialData.webinarPlan.topics?.map(topic => topic.name) || [],
+        topics:
+          initialData.webinarPlan.topics?.map((topic) => topic.name) || [],
         scheduledAt: getInitialScheduledAt(),
         consultantProfileId: consultantId,
       });
@@ -263,7 +267,7 @@ export function EventPlannerForWebinar({
       if (suggestionsElement) {
         const firstSuggestion = suggestionsElement.querySelector("button");
         if (firstSuggestion) {
-          (firstSuggestion).focus();
+          firstSuggestion.focus();
         }
       }
     }

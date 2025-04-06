@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const config = {
   // This tells Next.js to explicitly process these packages during the build, which should resolve the module format conflict.
-  transpilePackages: ['react-day-picker', 'date-fns'],
+  transpilePackages: ["react-day-picker", "date-fns"],
 
   images: {
     remotePatterns: [

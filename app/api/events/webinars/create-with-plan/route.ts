@@ -249,7 +249,7 @@ export async function PATCH(request: NextRequest) {
       price,
       maxParticipants,
       consultantProfileId,
-      topicIds: topicIds ? `[${topicIds.length} topics]` : 'undefined',
+      topicIds: topicIds ? `[${topicIds.length} topics]` : "undefined",
       status,
       scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
     });
@@ -291,11 +291,11 @@ export async function PATCH(request: NextRequest) {
           include: {
             appointment: {
               include: {
-                slotsOfAppointment: true
-              }
-            }
-          }
-        }
+                slotsOfAppointment: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -307,24 +307,27 @@ export async function PATCH(request: NextRequest) {
     }
 
     // Get the webinar instance - use the provided webinarId or the first one associated with the plan
-    const webinarToUpdate = webinarId 
+    const webinarToUpdate = webinarId
       ? await prisma.webinar.findUnique({
           where: { id: webinarId },
           include: {
             appointment: {
               include: {
-                slotsOfAppointment: true
-              }
-            }
-          }
+                slotsOfAppointment: true,
+              },
+            },
+          },
         })
-      : existingPlan.webinars.length > 0 
-        ? existingPlan.webinars[0] 
+      : existingPlan.webinars.length > 0
+        ? existingPlan.webinars[0]
         : null;
 
     if (!webinarToUpdate && (status || scheduledAt)) {
       return NextResponse.json(
-        { error: "Cannot update status or scheduling: no webinar instance found" },
+        {
+          error:
+            "Cannot update status or scheduling: no webinar instance found",
+        },
         { status: 400 },
       );
     }
@@ -336,24 +339,24 @@ export async function PATCH(request: NextRequest) {
     if (scheduledAt) {
       // Parse the scheduledAt date (already in UTC from frontend)
       const scheduledDate = new Date(scheduledAt);
-      
+
       // Log the received and parsed date
       console.log("Processing scheduledAt:", {
         received: scheduledAt,
         parsedDate: scheduledDate.toISOString(),
       });
-      
+
       startTime = scheduledDate;
-      
+
       // Calculate endTime based on duration
       const endTimeDate = new Date(scheduledDate);
       endTimeDate.setHours(endTimeDate.getHours() + durationInHours);
       endTime = endTimeDate;
-      
+
       console.log("Calculated slot times:", {
         startTime: startTime.toISOString(),
         endTime: endTime.toISOString(),
-        durationInHours
+        durationInHours,
       });
     }
 
@@ -361,15 +364,20 @@ export async function PATCH(request: NextRequest) {
     const result = await prisma.$transaction(
       async (tx) => {
         // -> Use topics from existingPlan fetched *before* the transaction
-        const currentTopicIdsFromOuterScope = existingPlan.topics.map(t => t.id);
-        console.log(`[Before Transaction Update] Topics from initial fetch for plan ${id}:`, currentTopicIdsFromOuterScope);
+        const currentTopicIdsFromOuterScope = existingPlan.topics.map(
+          (t) => t.id,
+        );
+        console.log(
+          `[Before Transaction Update] Topics from initial fetch for plan ${id}:`,
+          currentTopicIdsFromOuterScope,
+        );
 
         // -> Remove the fetch inside the transaction
         // const existingPlanWithTopics = await tx.webinarPlan.findUnique({
         //   where: { id },
         //   select: { topics: { select: { id: true } } }, // Select only topic IDs
         // });
-        // const currentTopicIds = 
+        // const currentTopicIds =
         //   existingPlanWithTopics?.topics.map(t => t.id) ?? [];
         // console.log(`[Transaction] Fetched current topic IDs for plan ${id}:`, currentTopicIds);
 
@@ -392,29 +400,43 @@ export async function PATCH(request: NextRequest) {
         if (topicIds !== undefined) {
           // If topicIds are provided, use set to sync
           if (!Array.isArray(topicIds)) {
-            console.error("topicIds was provided but is not an array:", topicIds);
+            console.error(
+              "topicIds was provided but is not an array:",
+              topicIds,
+            );
             throw new Error("Invalid format for topicIds");
           }
           // Verify provided topicIds actually exist (important!)
           const topics = await tx.topic.findMany({
             where: { id: { in: topicIds } },
-            select: { id: true } // Only need IDs
+            select: { id: true }, // Only need IDs
           });
           if (topics.length !== topicIds.length) {
-            const missingIds = topicIds.filter(reqId => !topics.some(dbTopic => dbTopic.id === reqId));
-            console.error("Attempted to set non-existent topic IDs:", missingIds);
-            throw new Error(`The following topic IDs do not exist: ${missingIds.join(', ')}`);
+            const missingIds = topicIds.filter(
+              (reqId) => !topics.some((dbTopic) => dbTopic.id === reqId),
+            );
+            console.error(
+              "Attempted to set non-existent topic IDs:",
+              missingIds,
+            );
+            throw new Error(
+              `The following topic IDs do not exist: ${missingIds.join(", ")}`,
+            );
           }
-          
+
           updateData.topics = {
-            set: topicIds.map((topicId: string) => ({ id: topicId }))
+            set: topicIds.map((topicId: string) => ({ id: topicId })),
           };
-          console.log(`Syncing topics with provided IDs: [${topicIds.join(', ')}]`);
+          console.log(
+            `Syncing topics with provided IDs: [${topicIds.join(", ")}]`,
+          );
         } else {
           // If topicIds is undefined, explicitly set topics to the list fetched *before* the transaction
-          console.log("topicIds is undefined. Explicitly setting topics to list fetched before transaction.");
-          updateData.topics = { 
-            set: currentTopicIdsFromOuterScope.map(id => ({ id })) 
+          console.log(
+            "topicIds is undefined. Explicitly setting topics to list fetched before transaction.",
+          );
+          updateData.topics = {
+            set: currentTopicIdsFromOuterScope.map((id) => ({ id })),
           };
         }
 
@@ -428,17 +450,19 @@ export async function PATCH(request: NextRequest) {
           },
         });
 
-        console.log(`Updated webinar plan ${updatedWebinarPlan.id}. Now has ${updatedWebinarPlan.topics.length} topics.`);
+        console.log(
+          `Updated webinar plan ${updatedWebinarPlan.id}. Now has ${updatedWebinarPlan.topics.length} topics.`,
+        );
 
         // 7. Update the webinar instance if it exists
         let updatedWebinar = webinarToUpdate;
         if (updatedWebinar) {
           const webinarUpdateData: any = {};
-          
+
           if (status) {
             webinarUpdateData.status = status;
           }
-          
+
           if (Object.keys(webinarUpdateData).length > 0) {
             updatedWebinar = await tx.webinar.update({
               where: { id: updatedWebinar.id },
@@ -468,12 +492,15 @@ export async function PATCH(request: NextRequest) {
           // 8. Update appointment slot if scheduledAt is provided
           if (scheduledAt && startTime && endTime) {
             const appointment = updatedWebinar.appointment;
-            
+
             if (appointment) {
               // Update existing appointment slots
-              if (appointment.slotsOfAppointment && appointment.slotsOfAppointment.length > 0) {
+              if (
+                appointment.slotsOfAppointment &&
+                appointment.slotsOfAppointment.length > 0
+              ) {
                 const slot = appointment.slotsOfAppointment[0];
-                
+
                 console.log("Updating existing slot:", {
                   slotId: slot.id,
                   oldStartTime: slot.slotStartTimeInUTC,
@@ -481,7 +508,7 @@ export async function PATCH(request: NextRequest) {
                   newStartTime: startTime,
                   newEndTime: endTime,
                 });
-                
+
                 await tx.slotOfAppointment.update({
                   where: { id: slot.id },
                   data: {
@@ -496,7 +523,7 @@ export async function PATCH(request: NextRequest) {
                   startTime: startTime.toISOString(),
                   endTime: endTime.toISOString(),
                 });
-                
+
                 await tx.slotOfAppointment.create({
                   data: {
                     appointmentId: appointment.id,
@@ -509,7 +536,7 @@ export async function PATCH(request: NextRequest) {
             } else {
               // Create a new appointment and slot if no appointment exists
               console.log("Creating new appointment and slot for webinar");
-              
+
               const newAppointment = await tx.appointment.create({
                 data: {
                   webinar: { connect: { id: updatedWebinar.id } },
@@ -523,11 +550,11 @@ export async function PATCH(request: NextRequest) {
                   },
                 },
               });
-              
+
               console.log("Created new appointment:", newAppointment.id);
             }
           }
-          
+
           // Retrieve the fully updated webinar after all changes
           updatedWebinar = await tx.webinar.findUnique({
             where: { id: updatedWebinar.id },
@@ -554,9 +581,9 @@ export async function PATCH(request: NextRequest) {
         }
 
         // Return the results
-        return { 
+        return {
           webinarPlan: updatedWebinarPlan,
-          webinar: updatedWebinar 
+          webinar: updatedWebinar,
         };
       },
       {
@@ -566,13 +593,15 @@ export async function PATCH(request: NextRequest) {
       },
     );
 
-    console.log("Update transaction completed successfully. Returning updated webinar data.");
-    
+    console.log(
+      "Update transaction completed successfully. Returning updated webinar data.",
+    );
+
     // Return the appropriate response based on whether we had a webinar instance
-    const responseData = result.webinar 
+    const responseData = result.webinar
       ? result.webinar
       : { ...result.webinarPlan, topics: result.webinarPlan.topics };
-      
+
     return NextResponse.json({ data: responseData }, { status: 200 });
   } catch (error) {
     console.error("Error updating webinar with plan:", error);

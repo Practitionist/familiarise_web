@@ -169,7 +169,9 @@ export class PlannerService {
       const isUpdate = !!planId;
       const webinarId = webinarData.id || ""; // Get the webinar instance ID
 
-      console.log(`${isUpdate ? "Updating" : "Creating"} webinar${isUpdate ? ` with plan ID ${planId}` : ""}${webinarId ? ` and instance ID ${webinarId}` : ""}...`);
+      console.log(
+        `${isUpdate ? "Updating" : "Creating"} webinar${isUpdate ? ` with plan ID ${planId}` : ""}${webinarId ? ` and instance ID ${webinarId}` : ""}...`,
+      );
 
       if (title) {
         const isDuplicate = await this.checkDuplicateTitle(
@@ -215,7 +217,9 @@ export class PlannerService {
         }
       } else if (isUpdate) {
         // If no new topics are provided but we're updating, log this to avoid wiping out existing topics
-        console.log("No new topics provided for update. Existing topics will be preserved.");
+        console.log(
+          "No new topics provided for update. Existing topics will be preserved.",
+        );
       }
 
       try {
@@ -223,26 +227,31 @@ export class PlannerService {
         const endpoint = "/api/events/webinars/create-with-plan";
         const method = isUpdate ? "PATCH" : "POST";
 
-        console.log(`Using ${method} request to ${endpoint} for ${isUpdate ? "update" : "create"}`);
+        console.log(
+          `Using ${method} request to ${endpoint} for ${isUpdate ? "update" : "create"}`,
+        );
 
         // Prepare the scheduled date if provided
         const scheduledAt = webinarData.webinarPlan?.scheduledAt;
         let scheduledAtDate = null;
-        
+
         if (scheduledAt) {
           // Convert to Date object if it's a string
-          scheduledAtDate = typeof scheduledAt === 'string' 
-            ? new Date(scheduledAt) 
-            : (scheduledAt as unknown) instanceof Date 
-              ? scheduledAt 
-              : null;
-              
+          scheduledAtDate =
+            typeof scheduledAt === "string"
+              ? new Date(scheduledAt)
+              : (scheduledAt as unknown) instanceof Date
+                ? scheduledAt
+                : null;
+
           if (scheduledAtDate) {
-            console.log(`Converting scheduledAt from local (${scheduledAtDate.toString()}) to UTC...`);
+            console.log(
+              `Converting scheduledAt from local (${scheduledAtDate.toString()}) to UTC...`,
+            );
             // Don't need to convert since the date object inherently handles the UTC conversion when sent as JSON
           }
         }
-        
+
         // Construct payload carefully based on POST vs PATCH
         let requestBody: any = {};
 
@@ -267,11 +276,17 @@ export class PlannerService {
             // - If new topics were created/added (allTopicIds has content): send them.
             // - If no new topics were added AND the form's topics list was empty: send [].
             // - Otherwise (no new topics added, form had topics initially or wasn't touched): send undefined.
-            topicIds: allTopicIds.length > 0
-                        ? allTopicIds
-                        : (webinarData.webinarPlan?.topics?.length === 0 ? [] : undefined)
+            topicIds:
+              allTopicIds.length > 0
+                ? allTopicIds
+                : webinarData.webinarPlan?.topics?.length === 0
+                  ? []
+                  : undefined,
           };
-          console.log("Constructed PATCH request body:", JSON.stringify(requestBody, null, 2));
+          console.log(
+            "Constructed PATCH request body:",
+            JSON.stringify(requestBody, null, 2),
+          );
         } else {
           // For POST, send all plan data + topicIds
           const postPlanData = { ...webinarData.webinarPlan };
@@ -281,9 +296,12 @@ export class PlannerService {
             ...postPlanData,
             consultantProfileId: consultantId,
             scheduledAt: scheduledAtDate,
-            topicIds: allTopicIds // Send newly created/found topic IDs
+            topicIds: allTopicIds, // Send newly created/found topic IDs
           };
-          console.log("Constructed POST request body:", JSON.stringify(requestBody, null, 2));
+          console.log(
+            "Constructed POST request body:",
+            JSON.stringify(requestBody, null, 2),
+          );
         }
 
         // Now create or update the webinar using the constructed body
@@ -297,7 +315,10 @@ export class PlannerService {
 
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.error || `Failed to ${isUpdate ? "update" : "create"} webinar`);
+          throw new Error(
+            errorData.error ||
+              `Failed to ${isUpdate ? "update" : "create"} webinar`,
+          );
         }
 
         const { data: webinar } = await response.json();
@@ -398,7 +419,9 @@ export class PlannerService {
       const isUpdate = !!planId;
       const classId = classData.id || ""; // Get the class instance ID
 
-      console.log(`${isUpdate ? "Updating" : "Creating"} class${isUpdate ? ` with plan ID ${planId}` : ""}${classId ? ` and instance ID ${classId}` : ""}...`);
+      console.log(
+        `${isUpdate ? "Updating" : "Creating"} class${isUpdate ? ` with plan ID ${planId}` : ""}${classId ? ` and instance ID ${classId}` : ""}...`,
+      );
 
       if (title) {
         const isDuplicate = await this.checkDuplicateTitle(
@@ -444,7 +467,9 @@ export class PlannerService {
         }
       } else if (isUpdate) {
         // If no new topics are provided but we're updating, log this to avoid wiping out existing topics
-        console.log("No new topics provided for update. Existing topics will be preserved.");
+        console.log(
+          "No new topics provided for update. Existing topics will be preserved.",
+        );
       }
 
       try {
@@ -452,8 +477,10 @@ export class PlannerService {
         const endpoint = "/api/events/classes/create-with-plan";
         const method = isUpdate ? "PATCH" : "POST";
 
-        console.log(`Using ${method} request to ${endpoint} for ${isUpdate ? "update" : "create"}`);
-        
+        console.log(
+          `Using ${method} request to ${endpoint} for ${isUpdate ? "update" : "create"}`,
+        );
+
         // Construct payload carefully based on POST vs PATCH
         let requestBody: any = {};
 
@@ -478,22 +505,31 @@ export class PlannerService {
             emailSupport: classData.classPlan?.emailSupport,
             classContents: classData.classPlan?.classContents, // Send updated contents
             consultantProfileId: consultantId,
-            topicIds: allTopicIds.length > 0 
-                        ? allTopicIds 
-                        : (classData.classPlan?.topics?.length === 0 ? [] : undefined)
+            topicIds:
+              allTopicIds.length > 0
+                ? allTopicIds
+                : classData.classPlan?.topics?.length === 0
+                  ? []
+                  : undefined,
           };
-          console.log("Constructed PATCH request body for Class:", JSON.stringify(requestBody, null, 2));
+          console.log(
+            "Constructed PATCH request body for Class:",
+            JSON.stringify(requestBody, null, 2),
+          );
         } else {
-           // For POST, send all plan data + topicIds
+          // For POST, send all plan data + topicIds
           const postPlanData = { ...classData.classPlan };
           // Ensure nested topics array is removed before spreading
           delete postPlanData.topics;
           requestBody = {
             ...postPlanData,
             consultantProfileId: consultantId,
-            topicIds: allTopicIds // Send newly created/found topic IDs
+            topicIds: allTopicIds, // Send newly created/found topic IDs
           };
-          console.log("Constructed POST request body for Class:", JSON.stringify(requestBody, null, 2));
+          console.log(
+            "Constructed POST request body for Class:",
+            JSON.stringify(requestBody, null, 2),
+          );
         }
 
         const response = await fetch(endpoint, {
@@ -506,7 +542,10 @@ export class PlannerService {
 
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.error || `Failed to ${isUpdate ? "update" : "create"} class`);
+          throw new Error(
+            errorData.error ||
+              `Failed to ${isUpdate ? "update" : "create"} class`,
+          );
         }
 
         const { data: classEvent } = await response.json();
@@ -591,20 +630,22 @@ export class PlannerService {
       // Simplify topic processing: Trim whitespace and filter out empty/short strings.
       // Let the backend handle existence checks, creation, and case sensitivity.
       const processedTopics = topicNames
-        .map(topic => topic.trim()) // Trim whitespace
-        .filter(topic => topic && topic.length >= 2); // Filter empty and short strings
+        .map((topic) => topic.trim()) // Trim whitespace
+        .filter((topic) => topic && topic.length >= 2); // Filter empty and short strings
 
       // Deduplicate names before sending to backend (case-insensitive)
       const uniqueTopicNames = processedTopics.reduce((acc, current) => {
         const lowerCaseName = current.toLowerCase();
-        if (!acc.some(item => item.toLowerCase() === lowerCaseName)) {
+        if (!acc.some((item) => item.toLowerCase() === lowerCaseName)) {
           acc.push(current);
         }
         return acc;
       }, [] as string[]);
 
       if (uniqueTopicNames.length === 0) {
-        console.log("No valid topics after simplified processing and deduplication");
+        console.log(
+          "No valid topics after simplified processing and deduplication",
+        );
         return []; // Return empty array if no valid topics remain
       }
 
@@ -768,9 +809,7 @@ export class PlannerService {
         ? initialData.webinarPlan.id
         : "";
     const webinarInstanceId =
-      initialData && this.isWebinarEvent(initialData)
-        ? initialData.id
-        : "";
+      initialData && this.isWebinarEvent(initialData) ? initialData.id : "";
     const createdAt =
       initialData && this.isWebinarEvent(initialData)
         ? initialData.webinarPlan.createdAt
@@ -840,9 +879,7 @@ export class PlannerService {
         ? initialData.classPlan.id
         : "";
     const classInstanceId =
-      initialData && this.isClassEvent(initialData)
-        ? initialData.id
-        : "";
+      initialData && this.isClassEvent(initialData) ? initialData.id : "";
     const createdAt =
       initialData && this.isClassEvent(initialData)
         ? initialData.classPlan.createdAt
@@ -881,7 +918,11 @@ export class PlannerService {
         callsPerWeek: "callsPerWeek" in data ? data.callsPerWeek : 0,
         videoMeetings: "videoMeetings" in data ? data.videoMeetings : 0,
         emailSupport: "emailSupport" in data ? data.emailSupport : "GENERAL",
-        classContents: this.formatClassContents(classContents, classPlanId, now),
+        classContents: this.formatClassContents(
+          classContents,
+          classPlanId,
+          now,
+        ),
         createdAt: createdAt,
         updatedAt: now,
       },

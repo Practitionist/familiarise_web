@@ -36,7 +36,6 @@ import { PlannerService } from "../services/planner";
 import { ClassEvent, ClassPlannerProps } from "../types/event";
 import { TopicsMultiSelect } from "./TopicsMultiSelect";
 
-
 export function EventPlannerForClass({
   isOpen,
   onClose,
@@ -83,9 +82,10 @@ export function EventPlannerForClass({
           prerequisites: initialData.classPlan.prerequisites ?? "",
           materialProvided: initialData.classPlan.materialProvided ?? "",
           learningOutcomes: initialData.classPlan.learningOutcomes,
-          topics: initialData.classPlan.topics?.map((topic) => 
-            typeof topic === "string" ? topic : topic.name
-          ) || [],
+          topics:
+            initialData.classPlan.topics?.map((topic) =>
+              typeof topic === "string" ? topic : topic.name,
+            ) || [],
           certificateProvided: initialData.classPlan.certificateProvided,
           callsPerWeek: initialData.classPlan.callsPerWeek,
           videoMeetings: initialData.classPlan.videoMeetings,
@@ -131,9 +131,10 @@ export function EventPlannerForClass({
         prerequisites: initialData.classPlan.prerequisites ?? "",
         materialProvided: initialData.classPlan.materialProvided ?? "",
         learningOutcomes: initialData.classPlan.learningOutcomes,
-        topics: initialData.classPlan.topics?.map((topic) => 
-          typeof topic === "string" ? topic : topic.name
-        ) || [],
+        topics:
+          initialData.classPlan.topics?.map((topic) =>
+            typeof topic === "string" ? topic : topic.name,
+          ) || [],
         certificateProvided: initialData.classPlan.certificateProvided,
         callsPerWeek: initialData.classPlan.callsPerWeek,
         videoMeetings: initialData.classPlan.videoMeetings,
@@ -428,7 +429,7 @@ export function EventPlannerForClass({
                         {...field}
                         onChange={(e) => {
                           const value = parseFloat(e.target.value);
-                          field.onChange(isNaN(value) ? '' : value);
+                          field.onChange(isNaN(value) ? "" : value);
                         }}
                       />
                     </FormControl>
@@ -663,15 +664,16 @@ export function EventPlannerForClass({
                       error={form.formState.errors.topics?.message}
                       helpText={
                         isFinite(maxTopics)
-                         ? `Select or create topics (up to ${maxTopics} based on duration). ${currentTopicCount}/${maxTopics} added.`
-                         : "Select or create topics."
+                          ? `Select or create topics (up to ${maxTopics} based on duration). ${currentTopicCount}/${maxTopics} added.`
+                          : "Select or create topics."
                       }
                     />
                   </FormControl>
                   {!canAddMoreTopics && isFinite(maxTopics) && (
-                     <p className="text-sm text-destructive">
-                       Topic limit ({maxTopics}) reached for the selected duration.
-                     </p>
+                    <p className="text-sm text-destructive">
+                      Topic limit ({maxTopics}) reached for the selected
+                      duration.
+                    </p>
                   )}
                 </FormItem>
               )}
@@ -698,9 +700,7 @@ export function EventPlannerForClass({
                                 Title <span className="text-red-500">*</span>
                               </FormLabel>
                               <FormControl>
-                                <Input
-                                  {...contentField}
-                                />
+                                <Input {...contentField} />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
@@ -770,7 +770,7 @@ export function EventPlannerForClass({
                                 <Input
                                   type="number"
                                   {...contentField}
-                                  value={String(contentField.value ?? '')}
+                                  value={String(contentField.value ?? "")}
                                 />
                               </FormControl>
                               <FormMessage />
@@ -790,7 +790,7 @@ export function EventPlannerForClass({
                                 <Input
                                   type="number"
                                   {...contentField}
-                                  value={String(contentField.value ?? '')}
+                                  value={String(contentField.value ?? "")}
                                 />
                               </FormControl>
                               <FormMessage />
@@ -805,7 +805,7 @@ export function EventPlannerForClass({
                             if (indexToRemove !== -1) {
                               const newContents = [
                                 ...(field.value ?? []).slice(0, indexToRemove),
-                                ...(field.value ?? []).slice(indexToRemove + 1)
+                                ...(field.value ?? []).slice(indexToRemove + 1),
                               ];
                               field.onChange(newContents);
                             }
@@ -824,7 +824,7 @@ export function EventPlannerForClass({
                           description: "",
                           contentType: null,
                           contentUrl: null,
-                          order: currentContents.length + 1, 
+                          order: currentContents.length + 1,
                           hoursAllotted: 1,
                         };
                         field.onChange([...currentContents, newContent]);

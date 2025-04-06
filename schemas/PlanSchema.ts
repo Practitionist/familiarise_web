@@ -304,7 +304,9 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
     .min(1, "At least one class content item is required")
     .default([])
     .refine((contents: z.infer<typeof ClassContentSchema>[]) => {
-      const titles = contents.map((c: z.infer<typeof ClassContentSchema>) => c.title.trim().toLowerCase());
+      const titles = contents.map((c: z.infer<typeof ClassContentSchema>) =>
+        c.title.trim().toLowerCase(),
+      );
       return new Set(titles).size === titles.length;
     }, "Class contents must have unique titles"),
   startDate: z.date().optional().nullable(),
