@@ -71,7 +71,7 @@ export function EventPlannerForClass({
   // Define form for class plan
   const form = useForm({
     resolver: zodResolver(ClassPlanSchema),
-    defaultValues: initialData
+    defaultValues: initialData?.classPlan
       ? {
           title: initialData.classPlan.title,
           description: initialData.classPlan.description ?? "",
@@ -91,7 +91,8 @@ export function EventPlannerForClass({
           videoMeetings: initialData.classPlan.videoMeetings,
           emailSupport: initialData.classPlan.emailSupport,
           consultantProfileId: initialData.classPlan.consultantProfileId,
-          classContents: initialData.classPlan.classContents,
+          classContents: initialData.classPlan.classContents ?? [],
+          planType: "class",
         }
       : {
           title: "",
@@ -110,13 +111,14 @@ export function EventPlannerForClass({
           videoMeetings: 1,
           emailSupport: "GENERAL" as const,
           classContents: [],
+          planType: "class",
         },
     mode: "onChange",
   });
 
   // Reset form values when initialData changes
   useEffect(() => {
-    if (initialData && initialData.classPlan) {
+    if (initialData?.classPlan) {
       // Reset the form with values from initialData
       form.reset({
         title: initialData.classPlan.title,
@@ -137,16 +139,11 @@ export function EventPlannerForClass({
         videoMeetings: initialData.classPlan.videoMeetings,
         emailSupport: initialData.classPlan.emailSupport,
         consultantProfileId: initialData.classPlan.consultantProfileId,
-        classContents: initialData.classPlan.classContents,
+        classContents: initialData.classPlan.classContents ?? [],
+        planType: "class",
       });
     }
   }, [initialData, form, consultantId]);
-
-  // Initialize planType in a type-safe way
-  useEffect(() => {
-    // Use setValue with type casting for safety
-    (form as any).setValue("planType", "class");
-  }, [form]);
 
   // Fetch available topics from API
   useEffect(() => {
@@ -172,6 +169,23 @@ export function EventPlannerForClass({
     }
   }, [isOpen, toast]);
 
+  // Watch relevant form fields
+  const durationInMonths = form.watch("durationInMonths");
+  const currentTopics = form.watch("topics"); // Watch topics to get current count
+
+  // Calculate max topics based on duration
+  let maxTopics: number;
+  if (durationInMonths <= 2) {
+    maxTopics = 5;
+  } else if (durationInMonths <= 6) {
+    maxTopics = 8;
+  } else {
+    maxTopics = Infinity; // Or a very large number like 100 if Infinity causes issues
+  }
+
+  const currentTopicCount = currentTopics?.length ?? 0;
+  const canAddMoreTopics = currentTopicCount < maxTopics;
+
   // Form submission handler
   const handleFormSubmit = form.handleSubmit(
     async (formData) => {
@@ -184,7 +198,7 @@ export function EventPlannerForClass({
 
         // Check for duplicate title
         const title = formData.title;
-        const planId = initialData?.classPlan?.id || "";
+        const planId = initialData?.classPlan?.id ?? "";
 
         try {
           const isDuplicate = await PlannerService.checkDuplicateTitle(
@@ -240,7 +254,7 @@ export function EventPlannerForClass({
             callsPerWeek: formData.callsPerWeek,
             videoMeetings: formData.videoMeetings,
             emailSupport: formData.emailSupport,
-            classContents: formData.classContents || [],
+            classContents: formData.classContents ?? [],
             createdAt: initialData?.classPlan?.createdAt ?? now,
             updatedAt: now,
           },
@@ -409,8 +423,13 @@ export function EventPlannerForClass({
                     <FormControl>
                       <Input
                         type="number"
+                        step="0.5"
+                        min="1"
                         {...field}
-                        onChange={(e) => field.onChange(Number(e.target.value))}
+                        onChange={(e) => {
+                          const value = parseFloat(e.target.value);
+                          field.onChange(isNaN(value) ? '' : value);
+                        }}
                       />
                     </FormControl>
                     <FormMessage />
@@ -642,9 +661,18 @@ export function EventPlannerForClass({
                       isLoading={isLoadingTopics}
                       label="Topics"
                       error={form.formState.errors.topics?.message}
-                      helpText="Select from existing topics or create new ones"
+                      helpText={
+                        isFinite(maxTopics)
+                         ? `Select or create topics (up to ${maxTopics} based on duration). ${currentTopicCount}/${maxTopics} added.`
+                         : "Select or create topics."
+                      }
                     />
                   </FormControl>
+                  {!canAddMoreTopics && isFinite(maxTopics) && (
+                     <p className="text-sm text-destructive">
+                       Topic limit ({maxTopics}) reached for the selected duration.
+                     </p>
+                  )}
                 </FormItem>
               )}
             />

@@ -46,16 +46,22 @@ export function EventCarousel({
   const [selectedEventId, setSelectedEventId] = React.useState<string | null>(
     null,
   );
-  const [startIndex, setStartIndex] = React.useState(0);
+  const [currentPage, setCurrentPage] = React.useState(1);
+  const itemsPerPage = 8; // Show 8 items per page (adjust as needed)
 
-  const nextSlide = () => {
-    setStartIndex((prevIndex) => (prevIndex + 3) % events.length);
+  // Calculate pagination variables
+  const totalPages = Math.ceil(events.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const currentEvents = events.slice(startIndex, endIndex);
+
+  // Pagination handlers
+  const goToNextPage = () => {
+    setCurrentPage((prev) => Math.min(prev + 1, totalPages));
   };
 
-  const prevSlide = () => {
-    setStartIndex(
-      (prevIndex) => (prevIndex - 3 + events.length) % events.length,
-    );
+  const goToPreviousPage = () => {
+    setCurrentPage((prev) => Math.max(prev - 1, 1));
   };
 
   const getEventTitle = (event: Event) => {
@@ -186,93 +192,103 @@ export function EventCarousel({
 
   return (
     <div className="flex items-center gap-4">
-      {events.length > 3 && (
-        <Button
-          variant="outline"
-          size="icon"
-          className="hidden md:flex bg-white shadow-md"
-          onClick={prevSlide}
-        >
-          <ChevronLeftIcon className="h-4 w-4" />
-        </Button>
-      )}
-      <div className="flex flex-col md:flex-row gap-4 overflow-x-auto md:overflow-hidden">
-        {events.slice(startIndex, startIndex + 3).map((event) => {
-          const { currentParticipants, maxParticipants } =
-            getParticipantsCount(event);
+      {/* Main container for grid and pagination */}
+      <div className="w-full">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
+          {/* Map over current page events */}
+          {currentEvents.map((event) => {
+            const { currentParticipants, maxParticipants } =
+              getParticipantsCount(event);
 
-          return (
-            <Card
-              key={event.id}
-              className="w-full md:w-1/3 flex-shrink-0 bg-white shadow-lg rounded-lg overflow-hidden flex flex-col"
+            return (
+              <Card
+                key={event.id}
+                className="w-full bg-white shadow-lg rounded-lg overflow-hidden flex flex-col"
+              >
+                <CardHeader className="bg-gray-50 border-b relative flex-shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-4 top-4"
+                    onClick={() => handleEdit(event)}
+                  >
+                    <Edit className="h-4 w-4" />
+                  </Button>
+                  <CardTitle className="text-lg font-semibold text-gray-800 pr-8">
+                    {getEventTitle(event)}
+                  </CardTitle>
+                  <CardDescription className="text-sm text-gray-600">
+                    {getParticipantsDisplayText(
+                      isLoadingCounts,
+                      currentParticipants,
+                      maxParticipants,
+                    )}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-4 flex-grow">
+                  <p className="text-sm text-gray-700 mb-2">
+                    {getEventDescription(event)}
+                  </p>
+                  <p className="text-sm font-medium text-gray-900">
+                    Price: ${getEventPrice(event)}
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    Duration: {getEventDuration(event)}
+                  </p>
+                </CardContent>
+                <CardFooter className="bg-gray-50 border-t p-4 flex justify-between flex-shrink-0">
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href={getProfileUrl(event)}>
+                      <Users className="w-4 h-4 mr-2" />
+                      Manage Participants
+                    </Link>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSelectedEventId(event.id)}
+                  >
+                    <Clock className="w-4 h-4 mr-2" />
+                    Manage Timings
+                  </Button>
+                </CardFooter>
+              </Card>
+            );
+          })}
+        </div>
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="flex justify-center items-center gap-4 mt-6">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={goToPreviousPage}
+              disabled={currentPage === 1}
             >
-              <CardHeader className="bg-gray-50 border-b relative flex-shrink-0">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-4 top-4"
-                  onClick={() => handleEdit(event)}
-                >
-                  <Edit className="h-4 w-4" />
-                </Button>
-                <CardTitle className="text-lg font-semibold text-gray-800 pr-8">
-                  {getEventTitle(event)}
-                </CardTitle>
-                <CardDescription className="text-sm text-gray-600">
-                  {getParticipantsDisplayText(
-                    isLoadingCounts,
-                    currentParticipants,
-                    maxParticipants,
-                  )}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="p-4 flex-grow">
-                <p className="text-sm text-gray-700 mb-2">
-                  {getEventDescription(event)}
-                </p>
-                <p className="text-sm font-medium text-gray-900">
-                  Price: ${getEventPrice(event)}
-                </p>
-                <p className="text-sm text-gray-600">
-                  Duration: {getEventDuration(event)}
-                </p>
-              </CardContent>
-              <CardFooter className="bg-gray-50 border-t p-4 flex justify-between flex-shrink-0">
-                <Button variant="outline" size="sm" asChild>
-                  <Link href={getProfileUrl(event)}>
-                    <Users className="w-4 h-4 mr-2" />
-                    Manage Participants
-                  </Link>
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setSelectedEventId(event.id)}
-                >
-                  <Clock className="w-4 h-4 mr-2" />
-                  Manage Timings
-                </Button>
-              </CardFooter>
-            </Card>
-          );
-        })}
+              <ChevronLeftIcon className="h-4 w-4" />
+            </Button>
+            <span className="text-sm text-gray-700">
+              Page {currentPage} of {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={goToNextPage}
+              disabled={currentPage === totalPages}
+            >
+              <ChevronRightIcon className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
       </div>
+
       <TimingsCalendar
         isOpen={!!selectedEventId}
         onClose={() => setSelectedEventId(null)}
         eventType={eventType}
         eventId={selectedEventId ?? ""}
       />
-      {events.length > 3 && (
-        <Button
-          variant="outline"
-          size="icon"
-          className="hidden md:flex bg-white shadow-md"
-          onClick={nextSlide}
-        >
-          <ChevronRightIcon className="h-4 w-4" />
-        </Button>
-      )}
     </div>
   );
 }
