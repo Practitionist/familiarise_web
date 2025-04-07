@@ -4,28 +4,41 @@ import { NextRequest, NextResponse } from "next/server";
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
-    // Calculate offset
-    const skip = (page - 1) * limit;
+    const idsOnly = searchParams.get("idsOnly") === "true";
 
-    const consultees = await prisma.consulteeProfile.findMany({
-      include: {
-        consultantReviews: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
+    if (idsOnly) {
+      // Fetch only IDs if idsOnly=true
+      const consulteeProfiles = await prisma.consulteeProfile.findMany({
+        select: {
+          id: true,
+        },
+      });
+      const consulteeIds = consulteeProfiles.map((profile) => profile.id);
+      return NextResponse.json({ consulteeIds }, { status: 200 });
+    } else {
+      // Default behavior: Fetch paginated full profiles
+      const page = parseInt(searchParams.get("page") || "1");
+      const limit = parseInt(searchParams.get("limit") || "10");
+      const skip = (page - 1) * limit;
+
+      const consultees = await prisma.consulteeProfile.findMany({
+        include: {
+          consultantReviews: true, // Include reviews if needed, or remove
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            },
           },
         },
-      },
-      skip,
-      take: limit,
-    });
+        skip,
+        take: limit,
+      });
 
-    return NextResponse.json(consultees, { status: 200 });
+      return NextResponse.json(consultees, { status: 200 });
+    }
   } catch (error) {
     console.error("Error getting consultees:", error);
     return NextResponse.json(

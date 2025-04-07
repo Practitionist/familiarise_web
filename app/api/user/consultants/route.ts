@@ -4,6 +4,21 @@ import prisma from "@/lib/prisma";
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
+    const idsOnly = searchParams.get("idsOnly") === "true";
+
+    // --- Return only IDs if requested --- 
+    if (idsOnly) {
+      const consultantProfiles = await prisma.consultantProfile.findMany({
+        select: {
+          id: true, // Select only the ID
+        },
+      });
+      const consultantIds = consultantProfiles.map((profile) => profile.id);
+      return NextResponse.json({ consultantIds }, { status: 200 });
+    }
+    // --- End of idsOnly logic ---
+
+    // --- Existing Logic for full fetch --- 
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
     const domain = searchParams.get("domain");
@@ -140,6 +155,8 @@ export async function GET(request: NextRequest) {
         totalPages: Math.ceil(total / limit),
       },
     });
+    // --- End of existing logic --- 
+
   } catch (error) {
     console.error("Error fetching consultants:", error);
     return NextResponse.json(

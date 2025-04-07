@@ -48,8 +48,12 @@ export default [
         describe: true,
         it: true,
         expect: true,
+        before: true,
+        after: true,
         beforeEach: true,
         afterEach: true,
+        assert: true,
+        should: true,
       },
     },
     plugins: {
