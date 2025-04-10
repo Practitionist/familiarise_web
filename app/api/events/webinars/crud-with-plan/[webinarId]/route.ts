@@ -1,13 +1,14 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+// Remove Zod import if no longer needed
+// import { z } from "zod";
 
-// Basic validation for UUID
-const uuidSchema = z.string().uuid();
+// Remove UUID schema
+// const uuidSchema = z.string().uuid();
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> }, // Use Promise for params
+  { params }: { params: Promise<{ webinarId: string }> },
 ) {
   try {
     // Add session check if needed
@@ -16,14 +17,13 @@ export async function DELETE(
     //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     // }
 
-    const awaitedParams = await params; // Await the promise
+    const awaitedParams = await params;
     const { webinarId } = awaitedParams;
 
-    // Validate the extracted ID
-    const validationResult = uuidSchema.safeParse(webinarId);
-    if (!validationResult.success) {
+    // Replace UUID validation with simple string check
+    if (!webinarId || typeof webinarId !== "string") {
       return NextResponse.json(
-        { error: "Invalid Webinar ID format" },
+        { error: "Invalid or missing Webinar ID" }, // Updated error message
         { status: 400 },
       );
     }
@@ -33,10 +33,14 @@ export async function DELETE(
     // Start transaction
     const result = await prisma.$transaction(
       async (tx) => {
-        // 1. Find the webinar instance to get the plan ID
+        // 1. Find the webinar instance, get plan ID AND plan title
         const webinarInstance = await tx.webinar.findUnique({
           where: { id: webinarId },
-          select: { webinarPlanId: true }, // Only need the plan ID
+          select: {
+            webinarPlanId: true,
+            // Include the related plan to get its title
+            webinarPlan: { select: { title: true } },
+          },
         });
 
         if (!webinarInstance) {
@@ -44,39 +48,36 @@ export async function DELETE(
         }
 
         const webinarPlanId = webinarInstance.webinarPlanId;
+        const eventTitle = webinarInstance.webinarPlan.title; // Store the title
         console.log(
-          `Found webinar plan ID: ${webinarPlanId} for instance ${webinarId}`,
+          `Found webinar plan ID: ${webinarPlanId} (Title: "${eventTitle}") for instance ${webinarId}`,
         );
 
         // 2. Delete the webinar instance
-        // Note: Prisma cascade delete should handle related appointment/slots/meetingRoom/waitlist
         console.log(`Deleting webinar instance: ${webinarId}`);
-        await tx.webinar.delete({
-          where: { id: webinarId },
-        });
+        await tx.webinar.delete({ where: { id: webinarId } });
 
-        // 3. Check if other webinar instances use the same plan
+        // 3. Check if other instances use the same plan
         const remainingInstancesCount = await tx.webinar.count({
           where: { webinarPlanId: webinarPlanId },
         });
 
-        let deletedPlan = null;
+        let planWasDeleted = false; // Flag to know if plan deletion happened
         if (remainingInstancesCount === 0) {
-          // 4. If no other instances use the plan, delete the plan
-          // Note: Prisma cascade delete should handle related topics
+          // 4. Delete the plan if needed
           console.log(
             `Deleting webinar plan: ${webinarPlanId} as no other instances exist`,
           );
-          deletedPlan = await tx.webinarPlan.delete({
-            where: { id: webinarPlanId },
-          });
+          await tx.webinarPlan.delete({ where: { id: webinarPlanId } });
+          planWasDeleted = true;
         } else {
           console.log(
             `Webinar plan ${webinarPlanId} is still used by ${remainingInstancesCount} other instance(s), not deleting plan.`,
           );
         }
 
-        return { deletedInstanceId: webinarId, deletedPlan };
+        // Return title and whether plan was deleted
+        return { eventTitle, planWasDeleted };
       },
       {
         maxWait: 15000,
@@ -86,24 +87,21 @@ export async function DELETE(
     );
 
     console.log("Webinar and potentially plan deleted successfully:", result);
+    // Use the fetched title in the response message
     return NextResponse.json(
       {
         message:
-          `Webinar ${result.deletedInstanceId} deleted successfully.` +
-          (result.deletedPlan
-            ? ` Plan ${result.deletedPlan.id} also deleted.`
-            : " Plan was kept as it is used by other instances."),
+          `Webinar "${result.eventTitle}" deleted successfully.` + // Use title
+          (result.planWasDeleted
+            ? ` The associated plan was also deleted.`
+            : " The associated plan was kept as it is used by other instances."),
       },
       { status: 200 },
     );
   } catch (error) {
     console.error("Error deleting webinar:", error);
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Invalid ID format", details: error.issues },
-        { status: 400 },
-      );
-    }
+    // Remove specific ZodError check if Zod is fully removed
+    // if (error instanceof z.ZodError) { ... }
     if (error instanceof Error && error.message.includes("not found")) {
       return NextResponse.json({ error: error.message }, { status: 404 });
     }

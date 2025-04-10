@@ -1,13 +1,14 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+// Remove Zod import if no longer needed, or keep if used elsewhere
+// import { z } from "zod";
 
-// Basic validation for UUID
-const uuidSchema = z.string().uuid();
+// Remove UUID schema
+// const uuidSchema = z.string().uuid();
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> }, // Use Promise for params
+  { params }: { params: Promise<{ classId: string }> },
 ) {
   try {
     // Add session check if needed
@@ -16,14 +17,13 @@ export async function DELETE(
     //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     // }
 
-    const awaitedParams = await params; // Await the promise
+    const awaitedParams = await params;
     const { classId } = awaitedParams;
 
-    // Validate the extracted ID
-    const validationResult = uuidSchema.safeParse(classId);
-    if (!validationResult.success) {
+    // Replace UUID validation with simple string check
+    if (!classId || typeof classId !== "string") {
       return NextResponse.json(
-        { error: "Invalid Class ID format" },
+        { error: "Invalid or missing Class ID" }, // Updated error message
         { status: 400 },
       );
     }
@@ -33,10 +33,14 @@ export async function DELETE(
     // Start transaction
     const result = await prisma.$transaction(
       async (tx) => {
-        // 1. Find the class instance to get the plan ID
+        // 1. Find the class instance, get plan ID AND plan title
         const classInstance = await tx.class.findUnique({
           where: { id: classId },
-          select: { classPlanId: true }, // Only need the plan ID
+          select: {
+            classPlanId: true,
+            // Include the related plan to get its title
+            classPlan: { select: { title: true } },
+          },
         });
 
         if (!classInstance) {
@@ -44,39 +48,36 @@ export async function DELETE(
         }
 
         const classPlanId = classInstance.classPlanId;
+        const eventTitle = classInstance.classPlan.title; // Store the title
         console.log(
-          `Found class plan ID: ${classPlanId} for instance ${classId}`,
+          `Found class plan ID: ${classPlanId} (Title: "${eventTitle}") for instance ${classId}`,
         );
 
         // 2. Delete the class instance
-        // Note: Prisma cascade delete should handle related appointments/slots/meetingRoom/waitlist
         console.log(`Deleting class instance: ${classId}`);
-        await tx.class.delete({
-          where: { id: classId },
-        });
+        await tx.class.delete({ where: { id: classId } });
 
-        // 3. Check if other class instances use the same plan
+        // 3. Check if other instances use the same plan
         const remainingInstancesCount = await tx.class.count({
           where: { classPlanId: classPlanId },
         });
 
-        let deletedPlan = null;
+        let planWasDeleted = false; // Flag to know if plan deletion happened
         if (remainingInstancesCount === 0) {
-          // 4. If no other instances use the plan, delete the plan
-          // Note: Prisma cascade delete should handle related classContents/topics
+          // 4. Delete the plan if needed
           console.log(
             `Deleting class plan: ${classPlanId} as no other instances exist`,
           );
-          deletedPlan = await tx.classPlan.delete({
-            where: { id: classPlanId },
-          });
+          await tx.classPlan.delete({ where: { id: classPlanId } });
+          planWasDeleted = true;
         } else {
           console.log(
             `Class plan ${classPlanId} is still used by ${remainingInstancesCount} other instance(s), not deleting plan.`,
           );
         }
 
-        return { deletedInstanceId: classId, deletedPlan };
+        // Return title and whether plan was deleted
+        return { eventTitle, planWasDeleted };
       },
       {
         maxWait: 15000, // Allow 15 seconds for connection acquisition
@@ -86,24 +87,21 @@ export async function DELETE(
     );
 
     console.log("Class and potentially plan deleted successfully:", result);
+    // Use the fetched title in the response message
     return NextResponse.json(
       {
         message:
-          `Class ${result.deletedInstanceId} deleted successfully.` +
-          (result.deletedPlan
-            ? ` Plan ${result.deletedPlan.id} also deleted.`
-            : " Plan was kept as it is used by other instances."),
+          `Class "${result.eventTitle}" deleted successfully.` + // Use title
+          (result.planWasDeleted
+            ? ` The associated plan was also deleted.`
+            : " The associated plan was kept as it is used by other instances."),
       },
       { status: 200 },
     );
   } catch (error) {
     console.error("Error deleting class:", error);
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Invalid ID format", details: error.issues },
-        { status: 400 },
-      );
-    }
+    // Remove specific ZodError check if Zod is fully removed
+    // if (error instanceof z.ZodError) { ... }
     if (error instanceof Error && error.message.includes("not found")) {
       return NextResponse.json({ error: error.message }, { status: 404 });
     }
