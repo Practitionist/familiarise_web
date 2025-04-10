@@ -117,6 +117,7 @@ const BaseEventPlanSchema = z.object({
       "Description contains inappropriate language",
     ),
   price: z.number().min(0, "Price must be non-negative"),
+  priceCurrency: z.string().min(1, "Currency is required").default("INR"),
   maxParticipants: z.number().min(1, "At least one participant is required"),
   language: z
     .string()
@@ -218,6 +219,7 @@ export const createUniqueTitleValidator = (
 
 // Webinar specific schema
 export const WebinarPlanSchema = BaseEventPlanSchema.extend({
+  certificateProvided: z.boolean().default(false),
   durationInHours: z
     .number()
     .min(0.5, "Duration must be at least 30 minutes")

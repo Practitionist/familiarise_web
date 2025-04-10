@@ -21,6 +21,7 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Beginner Class",
             description: faker.lorem.paragraph(),
+            priceCurrency: "INR",
             durationInMonths: 1,
             price: faker.number.int({ min: 19900, max: 39900 }), // $199 to $399
             callsPerWeek: 1,
@@ -80,6 +81,7 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Intermediate Class",
             description: faker.lorem.paragraph(),
+            priceCurrency: "INR",
             durationInMonths: 3,
             price: faker.number.int({ min: 34900, max: 69900 }), // $349 to $699
             callsPerWeek: 2,
@@ -139,6 +141,7 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Advanced Class",
             description: faker.lorem.paragraph(),
+            priceCurrency: "INR",
             durationInMonths: 6,
             price: faker.number.int({ min: 49900, max: 99900 }), // $499 to $999
             callsPerWeek: 3,

@@ -31,6 +31,20 @@ import { z } from "zod";
 import { PlannerService } from "../services/planner";
 import { WebinarEvent, WebinarPlannerProps } from "../types/event";
 import { TopicsMultiSelect } from "./TopicsMultiSelect";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import iso6391 from 'iso-639-1'; // Import the language library
+
+// Define the level options
+const levelOptions = ["Beginner", "Intermediate", "Advanced", "Expert"];
+
+// Define currency options
+const currencyOptions = ["INR", "USD", "EUR", "GBP"]; // Add more as needed
 
 export function EventPlannerForWebinar({
   isOpen,
@@ -53,6 +67,8 @@ export function EventPlannerForWebinar({
 
   // Helper function to format datetime-local input
   const formatDateTimeForInput = (date?: Date | string | null) => {
+    let dateObj: Date;
+
     if (!date) {
       // Default to current time + 1 hour, rounded to nearest 30 min
       const now = new Date();
@@ -60,12 +76,21 @@ export function EventPlannerForWebinar({
       now.setMinutes(Math.ceil(now.getMinutes() / 30) * 30);
       now.setSeconds(0);
       now.setMilliseconds(0);
-      return now.toISOString().slice(0, 16);
+      dateObj = now; // Use the calculated local date object
+    } else {
+      // Convert to date object if it's a string (assuming it's UTC from DB)
+      dateObj = typeof date === "string" ? new Date(date) : date;
     }
 
-    // Convert to date object if it's a string
-    const dateObj = typeof date === "string" ? new Date(date) : date;
-    return dateObj.toISOString().slice(0, 16);
+    // Get local time components using browser's interpretation of the Date object
+    const year = dateObj.getFullYear();
+    const month = (dateObj.getMonth() + 1).toString().padStart(2, '0'); // Months are 0-indexed
+    const day = dateObj.getDate().toString().padStart(2, '0');
+    const hours = dateObj.getHours().toString().padStart(2, '0');
+    const minutes = dateObj.getMinutes().toString().padStart(2, '0');
+
+    // Format as YYYY-MM-DDTHH:mm which is expected by datetime-local
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
   };
 
   // Fetch available topics from API
@@ -100,6 +125,7 @@ export function EventPlannerForWebinar({
       initialData.appointment.slotsOfAppointment.length > 0
     ) {
       const slot = initialData.appointment.slotsOfAppointment[0];
+      console.log("[EventPlannerForWebinar] Raw slotStartTimeInUTC from initialData:", slot.slotStartTimeInUTC);
       console.log("Found existing slot for appointment:", {
         slotId: slot.id,
         startTime: slot.slotStartTimeInUTC,
@@ -116,6 +142,7 @@ export function EventPlannerForWebinar({
       title: initialData?.webinarPlan?.title ?? "",
       description: initialData?.webinarPlan?.description ?? "",
       price: initialData?.webinarPlan?.price ?? 0,
+      priceCurrency: initialData?.webinarPlan?.priceCurrency ?? "INR",
       durationInHours: initialData?.webinarPlan?.durationInHours ?? 1,
       maxParticipants: initialData?.webinarPlan?.maxParticipants ?? 100,
       language: initialData?.webinarPlan?.language ?? "English",
@@ -123,6 +150,7 @@ export function EventPlannerForWebinar({
       prerequisites: initialData?.webinarPlan?.prerequisites ?? "",
       materialProvided: initialData?.webinarPlan?.materialProvided ?? "",
       learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
+      certificateProvided: initialData?.webinarPlan?.certificateProvided ?? false,
       // Convert topics from objects to strings for the form
       // Simplify mapping: Assume topics are always objects from Prisma include
       topics:
@@ -141,20 +169,29 @@ export function EventPlannerForWebinar({
         title: initialData.webinarPlan.title,
         description: initialData.webinarPlan.description ?? "",
         price: initialData.webinarPlan.price,
+        priceCurrency: initialData.webinarPlan.priceCurrency ?? "INR",
         durationInHours: initialData.webinarPlan.durationInHours,
         maxParticipants: initialData.webinarPlan.maxParticipants,
-        language: initialData.webinarPlan.language || "English",
-        level: initialData.webinarPlan.level || "Beginner",
+        language: initialData.webinarPlan.language ?? "English",
+        level: initialData.webinarPlan.level ?? "Beginner",
         prerequisites: initialData.webinarPlan.prerequisites ?? "",
         materialProvided: initialData.webinarPlan.materialProvided ?? "",
-        learningOutcomes: initialData.webinarPlan.learningOutcomes || [],
+        learningOutcomes: initialData.webinarPlan.learningOutcomes ?? [],
+        certificateProvided: initialData.webinarPlan.certificateProvided ?? false,
         topics:
-          initialData.webinarPlan.topics?.map((topic) => topic.name) || [],
+          initialData.webinarPlan.topics?.map((topic) => topic.name) ?? [],
         scheduledAt: getInitialScheduledAt(),
         consultantProfileId: consultantId,
       });
     }
   }, [initialData, form, consultantId]);
+
+  // Log initialData when it changes
+  useEffect(() => {
+    if (initialData) {
+      console.log("[EventPlannerForWebinar] Received initialData:", JSON.stringify(initialData, null, 2));
+    }
+  }, [initialData]);
 
   const addLearningOutcome = () => {
     if (newOutcome.trim() === "") return;
@@ -260,12 +297,14 @@ export function EventPlannerForWebinar({
           webinarPlan: {
             id: initialData?.webinarPlan?.id ?? "",
             title: formData.title,
-            description: formData.description || "",
+            description: formData.description ?? "",
             price: formData.price,
+            priceCurrency: formData.priceCurrency ?? "INR",
+            certificateProvided: formData.certificateProvided ?? false,
             durationInHours: formData.durationInHours,
             maxParticipants: formData.maxParticipants,
-            language: formData.language,
-            level: formData.level,
+            language: formData.language ?? "English",
+            level: formData.level ?? "Beginner",
             prerequisites: formData.prerequisites ?? null,
             materialProvided: formData.materialProvided ?? null,
             learningOutcomes: formData.learningOutcomes,
@@ -274,7 +313,6 @@ export function EventPlannerForWebinar({
             consultantProfile: null,
             createdAt: initialData?.webinarPlan?.createdAt ?? now,
             updatedAt: now,
-            scheduledAt: formData.scheduledAt,
           },
         };
 
@@ -285,12 +323,13 @@ export function EventPlannerForWebinar({
 
         try {
           // Call onSave and wait for it to complete
-          onSave(webinarData);
+          onSave(webinarData, formData.scheduledAt);
 
           // Show success toast
           toast({
             title: "Success",
             description: `${initialData ? "Updated" : "Created"} webinar "${formData.title}" successfully`,
+            variant: "success",
           });
           onClose();
         } catch (error) {
@@ -366,16 +405,29 @@ export function EventPlannerForWebinar({
                       </FormItem>
                     )}
                   />
-
                   <FormField
                     control={form.control}
                     name="language"
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Language</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Language" {...field} />
-                        </FormControl>
+                        <Select
+                          onValueChange={field.onChange}
+                          defaultValue={field.value || "English"}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select language" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent className="max-h-[200px]"> {/* Allow scrolling */}
+                            {iso6391.getAllNames().map((langName) => (
+                              <SelectItem key={langName} value={langName}>
+                                {langName}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -387,12 +439,23 @@ export function EventPlannerForWebinar({
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Level</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder="Beginner, Intermediate, Advanced"
-                            {...field}
-                          />
-                        </FormControl>
+                        <Select
+                          onValueChange={field.onChange}
+                          defaultValue={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select a level" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {levelOptions.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {option}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -401,20 +464,55 @@ export function EventPlannerForWebinar({
                   <FormField
                     control={form.control}
                     name="price"
-                    render={({ field }) => (
+                    render={() => (
                       <FormItem>
                         <FormLabel>Price</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            placeholder="0"
-                            {...field}
-                            onChange={(e) =>
-                              field.onChange(Number.parseFloat(e.target.value))
-                            }
+                        <div className="flex gap-2">
+                          <FormField
+                            control={form.control}
+                            name="priceCurrency"
+                            render={({ field: currencyField }) => (
+                              <Select
+                                onValueChange={currencyField.onChange}
+                                defaultValue={currencyField.value}
+                              >
+                                <FormControl>
+                                  <SelectTrigger className="w-[80px]">
+                                    <SelectValue placeholder="Currency" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {currencyOptions.map((currency) => (
+                                    <SelectItem key={currency} value={currency}>
+                                      {currency}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
                           />
-                        </FormControl>
-                        <FormMessage />
+                          <FormField
+                            control={form.control}
+                            name="price"
+                            render={({ field: priceField }) => (
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  placeholder="0"
+                                  className="flex-1"
+                                  {...priceField}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    priceField.onChange(value === '' ? 0 : Number.parseFloat(value));
+                                  }}
+                                />
+                              </FormControl>
+                            )}
+                          />
+                        </div>
+                        <FormMessage className="mt-1">
+                          {form.formState.errors.price?.message ?? form.formState.errors.priceCurrency?.message}
+                        </FormMessage>
                       </FormItem>
                     )}
                   />
@@ -452,9 +550,10 @@ export function EventPlannerForWebinar({
                             placeholder="1"
                             step="0.5"
                             {...field}
-                            onChange={(e) =>
-                              field.onChange(Number.parseFloat(e.target.value))
-                            }
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              field.onChange(value === '' ? 0 : Number.parseFloat(value));
+                            }}
                           />
                         </FormControl>
                         <FormDescription>

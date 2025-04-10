@@ -6,6 +6,7 @@ import { EventCarousel } from "./EventCarousel";
 import { EventPlanner } from "./EventPlanner";
 import { WebinarEvent, ClassEvent, Event } from "../types/event";
 import { PlannerService } from "../services/planner";
+import { useToast } from "@/hooks/use-toast";
 
 interface Props {
   consultantId: string;
@@ -20,6 +21,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const { toast } = useToast();
 
   // Fetch events on load
   useEffect(() => {
@@ -48,13 +50,22 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   }, [consultantId]);
 
   // Handle webinar saved event
-  const handleWebinarSaved = async (data: Partial<WebinarEvent>) => {
+  const handleWebinarSaved = async (
+    data: Partial<WebinarEvent>,
+    scheduledAt?: string | Date,
+  ) => {
     try {
       setIsSaving(true);
-      console.log("EventManagementDashboard - Saving webinar:", data);
+      console.log("EventManagementDashboard - Saving webinar:", {
+        data,
+        scheduledAt,
+      });
 
-      // First save the webinar
-      const savedWebinar = await PlannerService.saveWebinar(data, consultantId);
+      const savedWebinar = await PlannerService.saveWebinar(
+        data,
+        scheduledAt,
+        consultantId,
+      );
       console.log("Webinar saved successfully:", savedWebinar);
 
       // Then fetch updated webinars list
@@ -104,6 +115,74 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
     setIsClassDialogOpen(true);
   };
 
+  // Handle webinar delete event
+  const handleWebinarDelete = async (webinarId: string) => {
+    console.log(`EventManagementDashboard - Deleting webinar: ${webinarId}`);
+    try {
+      const response = await fetch(`/api/events/webinars/crud-with-plan/${webinarId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to delete webinar");
+      }
+
+      const result = await response.json();
+      toast({
+        title: "Success",
+        description: result.message || "Webinar deleted successfully.",
+      });
+
+      // Refresh the list
+      setWebinars((prev) => prev.filter((w) => w.id !== webinarId));
+
+    } catch (error) {
+      console.error("Error deleting webinar:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete webinar.",
+        variant: "destructive",
+      });
+      // Re-throw or handle as needed
+      throw error;
+    }
+  };
+
+  // Handle class delete event
+  const handleClassDelete = async (classId: string) => {
+    console.log(`EventManagementDashboard - Deleting class: ${classId}`);
+    try {
+      const response = await fetch(`/api/events/classes/crud-with-plan/${classId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to delete class");
+      }
+
+      const result = await response.json();
+      toast({
+        title: "Success",
+        description: result.message || "Class deleted successfully.",
+      });
+
+      // Refresh the list
+      setClasses((prev) => prev.filter((c) => c.id !== classId));
+
+    } catch (error) {
+      console.error("Error deleting class:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete class.",
+        variant: "destructive",
+      });
+      // Re-throw or handle as needed
+      throw error;
+    }
+  };
+
   if (error) {
     return (
       <div className="container mx-auto p-4">
@@ -146,6 +225,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
         <EventCarousel
           events={webinars}
           onEdit={handleEditWebinar}
+          onDelete={handleWebinarDelete}
           eventType="webinar"
         />
       </div>
@@ -160,6 +240,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
         <EventCarousel
           events={classes}
           onEdit={handleEditClass}
+          onDelete={handleClassDelete}
           eventType="class"
         />
       </div>

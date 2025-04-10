@@ -1,5 +1,6 @@
-import { ClassEvent, Event, FormData, WebinarEvent } from "../types/event";
 import { toast } from "@/hooks/use-toast";
+import { ClassStatus, WebinarStatus } from "@prisma/client";
+import { ClassEvent, Event, FormData, WebinarEvent } from "../types/event";
 
 /**
  * Service to manage events (webinars and classes)
@@ -107,14 +108,23 @@ export class PlannerService {
 
       const webinarsData = await response.json();
 
-      return webinarsData.data.map((webinar: any) => ({
-        id: webinar.id,
-        type: "webinar" as const,
-        webinarPlan: webinar.webinarPlan,
-        appointment: webinar.appointment,
-        waitlist: webinar.waitlist,
-        meetingRoom: webinar.meetingRoom,
-      }));
+      return webinarsData.data.map((webinar: any) => {
+        // Extract the start time from the first slot, if available
+        const startTimeString = webinar.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+        const scheduledAtDate = startTimeString ? new Date(startTimeString) : undefined;
+
+        return {
+          id: webinar.id,
+          type: "webinar" as const,
+          status: webinar.status,
+          webinarPlan: webinar.webinarPlan,
+          appointment: webinar.appointment,
+          waitlist: webinar.waitlist,
+          meetingRoom: webinar.meetingRoom,
+          scheduledAt: scheduledAtDate,
+          feedbackSummary: webinar.feedbackSummary,
+        };
+      });
     } catch (error) {
       console.error("Error fetching webinars:", error);
       throw error;
@@ -139,10 +149,15 @@ export class PlannerService {
       return classesData.data.map((classEvent: any) => ({
         id: classEvent.id,
         type: "class" as const,
+        status: classEvent.status,
+        startDate: classEvent.startDate,
+        endDate: classEvent.endDate,
         classPlan: classEvent.classPlan,
         appointments: classEvent.appointments,
         waitlist: classEvent.waitlist,
         meetingRoom: classEvent.meetingRoom,
+        recordingUrls: classEvent.recordingUrls,
+        feedbackSummary: classEvent.feedbackSummary,
       }));
     } catch (error) {
       console.error("Error fetching classes:", error);
@@ -155,6 +170,7 @@ export class PlannerService {
    */
   static async saveWebinar(
     webinarData: Partial<WebinarEvent>,
+    scheduledAt: string | Date | null | undefined,
     consultantId: string,
   ): Promise<WebinarEvent> {
     try {
@@ -170,7 +186,7 @@ export class PlannerService {
       const webinarId = webinarData.id ?? ""; // Get the webinar instance ID
 
       console.log(
-        `${isUpdate ? "Updating" : "Creating"} webinar${isUpdate ? ` with plan ID ${planId}` : ""}${webinarId ? ` and instance ID ${webinarId}` : ""}...`,
+        `[PlannerService.saveWebinar] ${isUpdate ? "Updating" : "Creating"} webinar${isUpdate ? ` with plan ID ${planId}` : ""}${webinarId ? ` and instance ID ${webinarId}` : ""}...`,
       );
 
       if (title) {
@@ -194,45 +210,53 @@ export class PlannerService {
       if (webinarData.webinarPlan?.topics) {
         // Handle topics whether they are strings or objects
         topicNames = webinarData.webinarPlan.topics
-          .map((topic) => (typeof topic === "string" ? topic : topic.name))
-          .filter(Boolean);
+          .map((topic) => (typeof topic === "string" ? topic : topic?.name)) // Safer access with optional chaining
+          .filter(Boolean); // Filter out null/undefined names
       }
+      console.log(
+        "[PlannerService.saveWebinar] Extracted topic names from input data:",
+        topicNames,
+      );
 
       // Prepare all topic ids list
       let allTopicIds: string[] = [];
 
       if (topicNames.length > 0) {
         try {
-          console.log("Creating topics first:", topicNames);
+          console.log(
+            "[PlannerService.saveWebinar] Calling createTopics with names:",
+            topicNames,
+          );
           const newTopicIds = await this.createTopics(topicNames);
-          this.newlyCreatedTopicIds = newTopicIds;
-          allTopicIds = [...newTopicIds];
-          console.log("Topics created with IDs:", newTopicIds);
+          this.newlyCreatedTopicIds = newTopicIds; // Track only newly created ones? createTopics might return existing ones too. Revisit if rollback logic needs adjustment.
+          allTopicIds = [...newTopicIds]; // Assuming createTopics returns all relevant IDs (new + existing)
+          console.log(
+            "[PlannerService.saveWebinar] Received topic IDs from createTopics:",
+            allTopicIds,
+          );
         } catch (error) {
-          console.error("Error creating topics:", error);
+          console.error("[PlannerService.saveWebinar] Error creating topics:", error);
           throw new Error(
             "Failed to create topics: " +
               (error instanceof Error ? error.message : String(error)),
           );
         }
       } else if (isUpdate) {
-        // If no new topics are provided but we're updating, log this to avoid wiping out existing topics
         console.log(
-          "No new topics provided for update. Existing topics will be preserved.",
+          "[PlannerService.saveWebinar] No topic names provided for update. Existing topics might be preserved or cleared depending on API logic.",
         );
       }
 
       try {
         // Determine the endpoint and HTTP method based on whether this is an update or create
-        const endpoint = "/api/events/webinars/create-with-plan";
+        const endpoint = "/api/events/webinars/crud-with-plan";
         const method = isUpdate ? "PATCH" : "POST";
 
         console.log(
-          `Using ${method} request to ${endpoint} for ${isUpdate ? "update" : "create"}`,
+          `[PlannerService.saveWebinar] Using ${method} request to ${endpoint}`,
         );
 
         // Prepare the scheduled date if provided
-        const scheduledAt = webinarData.webinarPlan?.scheduledAt;
         let scheduledAtDate = null;
 
         if (scheduledAt) {
@@ -260,32 +284,33 @@ export class PlannerService {
           // For PATCH, send only necessary fields + topicIds if available
           requestBody = {
             id: planId, // Plan ID
-            webinarId: webinarId, // Instance ID
+            webinarId: webinarId || undefined, // Instance ID or undefined
             title: webinarData.webinarPlan?.title,
             description: webinarData.webinarPlan?.description,
-            durationInHours: webinarData.webinarPlan?.durationInHours,
             price: webinarData.webinarPlan?.price,
+            priceCurrency: webinarData.webinarPlan?.priceCurrency,
+            certificateProvided: webinarData.webinarPlan?.certificateProvided,
+            durationInHours: ("durationInHours" in (webinarData.webinarPlan ?? {}) && typeof webinarData.webinarPlan?.durationInHours === 'number') ? webinarData.webinarPlan.durationInHours : undefined, // Only include if valid number
             maxParticipants: webinarData.webinarPlan?.maxParticipants,
             language: webinarData.webinarPlan?.language,
             level: webinarData.webinarPlan?.level,
             prerequisites: webinarData.webinarPlan?.prerequisites,
             materialProvided: webinarData.webinarPlan?.materialProvided,
             learningOutcomes: webinarData.webinarPlan?.learningOutcomes,
-            consultantProfileId: consultantId,
+            consultantProfileId: consultantId, // Should this be optional for PATCH? API expects it currently. Keep for now.
             scheduledAt: scheduledAtDate,
-            // Determine topicIds value:
-            // - If new topics were created/added (allTopicIds has content): send them.
-            // - If no new topics were added AND the form's topics list was empty: send [].
-            // - Otherwise (no new topics added, form had topics initially or wasn't touched): send undefined.
-            topicIds:
-              allTopicIds.length > 0
+            topicIds: // API expects 'topicIds' for PATCH (inherited from POST schema definition)
+              allTopicIds.length > 0 // If we got IDs back from createTopics
                 ? allTopicIds
-                : webinarData.webinarPlan?.topics?.length === 0
-                  ? []
-                  : undefined,
+                : topicNames.length === 0 // If input 'topicNames' was empty (explicit clear)
+                  ? [] // Send empty array to clear topics
+                  : undefined, // Otherwise (no change requested / error getting IDs?), send undefined
           };
+           // Remove undefined fields before sending
+          Object.keys(requestBody).forEach(key => requestBody[key] === undefined && delete requestBody[key]);
+
           console.log(
-            "Constructed PATCH request body:",
+            "[PlannerService.saveWebinar] Constructed PATCH request body:",
             JSON.stringify(requestBody, null, 2),
           );
         } else {
@@ -297,15 +322,20 @@ export class PlannerService {
             ...postPlanData,
             consultantProfileId: consultantId,
             scheduledAt: scheduledAtDate,
-            topicIds: allTopicIds, // Send newly created/found topic IDs
+            topicIds: allTopicIds, // Send newly created/found topic IDs (API expects topicIds)
           };
+           // Remove undefined fields before sending
+          Object.keys(requestBody).forEach(key => requestBody[key] === undefined && delete requestBody[key]);
           console.log(
-            "Constructed POST request body:",
+            "[PlannerService.saveWebinar] Constructed POST request body:",
             JSON.stringify(requestBody, null, 2),
           );
         }
 
         // Now create or update the webinar using the constructed body
+        console.log(
+          `[PlannerService.saveWebinar] Sending ${method} request to ${endpoint}...`,
+        );
         const response = await fetch(endpoint, {
           method,
           headers: {
@@ -313,6 +343,9 @@ export class PlannerService {
           },
           body: JSON.stringify(requestBody),
         });
+        console.log(
+          `[PlannerService.saveWebinar] Received response status: ${response.status}`,
+        );
 
         if (!response.ok) {
           const errorData = await response.json();
@@ -340,14 +373,9 @@ export class PlannerService {
           this.newlyCreatedEventId = null;
           this.newlyCreatedEventType = null;
 
-          return {
-            id: webinar.id,
-            type: "webinar",
-            webinarPlan: webinar.webinarPlan,
-            appointment: webinar.appointment,
-            waitlist: webinar.waitlist,
-            meetingRoom: webinar.meetingRoom,
-          };
+          // Spread the properties from the API response and add the type
+          // The API response (`webinar`) should conform to WebinarEventPayload
+          return { ...webinar, type: "webinar" as const };
         } catch (postProcessError) {
           // If additional processing fails, rollback everything
           await this.rollbackTransaction();
@@ -359,7 +387,7 @@ export class PlannerService {
         throw error;
       }
     } catch (error) {
-      console.error("Error saving webinar:", error);
+      console.error("[PlannerService.saveWebinar] Overall error:", error);
       throw error;
     }
   }
@@ -421,7 +449,7 @@ export class PlannerService {
       const classId = classData.id ?? ""; // Get the class instance ID
 
       console.log(
-        `${isUpdate ? "Updating" : "Creating"} class${isUpdate ? ` with plan ID ${planId}` : ""}${classId ? ` and instance ID ${classId}` : ""}...`,
+        `[PlannerService.saveClass] ${isUpdate ? "Updating" : "Creating"} class${isUpdate ? ` with plan ID ${planId}` : ""}${classId ? ` and instance ID ${classId}` : ""}...`,
       );
 
       if (title) {
@@ -445,94 +473,121 @@ export class PlannerService {
       if (classData.classPlan?.topics) {
         // Handle topics whether they are strings or objects
         topicNames = classData.classPlan.topics
-          .map((topic) => (typeof topic === "string" ? topic : topic.name))
-          .filter(Boolean);
+          .map((topic) => (typeof topic === "string" ? topic : topic?.name)) // Safer access
+          .filter(Boolean); // Filter out null/undefined names
       }
+       console.log(
+        "[PlannerService.saveClass] Extracted topic names from input data:",
+        topicNames,
+      );
 
       // Prepare all topic ids list
       let allTopicIds: string[] = [];
 
       if (topicNames.length > 0) {
         try {
-          console.log("Creating topics first:", topicNames);
+           console.log(
+            "[PlannerService.saveClass] Calling createTopics with names:",
+            topicNames,
+          );
           const newTopicIds = await this.createTopics(topicNames);
-          this.newlyCreatedTopicIds = newTopicIds;
+          this.newlyCreatedTopicIds = newTopicIds; // See comment in saveWebinar about rollback
           allTopicIds = [...newTopicIds];
-          console.log("Topics created with IDs:", newTopicIds);
+           console.log(
+            "[PlannerService.saveClass] Received topic IDs from createTopics:",
+            allTopicIds,
+          );
         } catch (error) {
-          console.error("Error creating topics:", error);
+          console.error("[PlannerService.saveClass] Error creating topics:", error);
           throw new Error(
             "Failed to create topics: " +
               (error instanceof Error ? error.message : String(error)),
           );
         }
       } else if (isUpdate) {
-        // If no new topics are provided but we're updating, log this to avoid wiping out existing topics
-        console.log(
-          "No new topics provided for update. Existing topics will be preserved.",
+         console.log(
+          "[PlannerService.saveClass] No topic names provided for update. Existing topics might be preserved or cleared.",
         );
       }
 
       try {
         // Determine the endpoint and HTTP method based on whether this is an update or create
-        const endpoint = "/api/events/classes/create-with-plan";
+        const endpoint = "/api/events/classes/crud-with-plan";
         const method = isUpdate ? "PATCH" : "POST";
 
         console.log(
-          `Using ${method} request to ${endpoint} for ${isUpdate ? "update" : "create"}`,
+          `[PlannerService.saveClass] Using ${method} request to ${endpoint}`,
         );
 
         // Construct payload carefully based on POST vs PATCH
         let requestBody: any = {};
 
         if (isUpdate) {
-          // For PATCH, send only necessary fields + topicIds if available
+          // --- Linter Fix: Ensure classData.classPlan exists ---
+          if (!classData.classPlan) {
+            // This shouldn't logically happen if isUpdate is true, but handle defensively
+            console.error("[PlannerService.saveClass] Error: classData.classPlan is undefined during PATCH operation.");
+            throw new Error("Internal error: Class plan data is missing during update.");
+          }
+          // --- End Linter Fix ---
+
           requestBody = {
-            id: planId, // Plan ID
-            classId: classId, // Instance ID
-            title: classData.classPlan?.title,
-            description: classData.classPlan?.description,
-            durationInMonths: classData.classPlan?.durationInMonths,
-            price: classData.classPlan?.price,
-            maxParticipants: classData.classPlan?.maxParticipants,
-            language: classData.classPlan?.language,
-            level: classData.classPlan?.level,
-            prerequisites: classData.classPlan?.prerequisites,
-            materialProvided: classData.classPlan?.materialProvided,
-            learningOutcomes: classData.classPlan?.learningOutcomes,
-            certificateProvided: classData.classPlan?.certificateProvided,
-            callsPerWeek: classData.classPlan?.callsPerWeek,
-            videoMeetings: classData.classPlan?.videoMeetings,
-            emailSupport: classData.classPlan?.emailSupport,
-            classContents: classData.classPlan?.classContents, // Send updated contents
-            consultantProfileId: consultantId,
-            topicIds:
-              allTopicIds.length > 0
+              id: planId, // Plan ID is guaranteed if isUpdate is true
+              classId: classId || undefined, // Instance ID or undefined
+              // Now safe to access classData.classPlan properties directly
+              title: classData.classPlan.title,
+              description: classData.classPlan.description,
+              price: classData.classPlan.price,
+              priceCurrency: classData.classPlan.priceCurrency,
+              certificateProvided: classData.classPlan.certificateProvided,
+              durationInMonths: ("durationInMonths" in classData.classPlan && typeof classData.classPlan.durationInMonths === 'number') ? classData.classPlan.durationInMonths : undefined,
+              maxParticipants: classData.classPlan.maxParticipants,
+              language: classData.classPlan.language,
+              level: classData.classPlan.level,
+              prerequisites: classData.classPlan.prerequisites,
+              materialProvided: classData.classPlan.materialProvided,
+              learningOutcomes: classData.classPlan.learningOutcomes,
+              emailSupport: classData.classPlan.emailSupport,
+              callsPerWeek: classData.classPlan.callsPerWeek,
+              videoMeetings: classData.classPlan.videoMeetings,
+              classContents: classData.classPlan.classContents, // Send updated contents if provided
+            consultantProfileId: consultantId, // Keep for now, API might require it
+            topics: // API expects 'topics' (containing IDs) for Class PATCH
+              allTopicIds.length > 0 // If we got IDs back
                 ? allTopicIds
-                : classData.classPlan?.topics?.length === 0
-                  ? []
-                  : undefined,
+                : topicNames.length === 0 // If input 'topicNames' was empty
+                  ? [] // Send empty array to clear topics
+                  : undefined, // Otherwise, send undefined
           };
+           // Remove undefined fields before sending
+          Object.keys(requestBody).forEach(key => requestBody[key] === undefined && delete requestBody[key]);
           console.log(
-            "Constructed PATCH request body for Class:",
+            "[PlannerService.saveClass] Constructed PATCH request body:",
             JSON.stringify(requestBody, null, 2),
           );
         } else {
-          // For POST, send all plan data + topicIds
+          // For POST
           const postPlanData = { ...classData.classPlan };
-          // Ensure nested topics array is removed before spreading
           delete postPlanData.topics;
+          delete postPlanData.consultantProfile;
+          delete postPlanData.id;
+          delete postPlanData.createdAt;
+          delete postPlanData.updatedAt;
           requestBody = {
             ...postPlanData,
             consultantProfileId: consultantId,
-            topicIds: allTopicIds, // Send newly created/found topic IDs
+            topics: allTopicIds ?? [], // Send topic IDs (API expects 'topics' key with IDs)
           };
+           // Remove undefined fields before sending
+          Object.keys(requestBody).forEach(key => requestBody[key] === undefined && delete requestBody[key]);
           console.log(
-            "Constructed POST request body for Class:",
+            "[PlannerService.saveClass] Constructed POST request body:",
             JSON.stringify(requestBody, null, 2),
           );
         }
-
+         console.log(
+          `[PlannerService.saveClass] Sending ${method} request to ${endpoint}...`,
+        );
         const response = await fetch(endpoint, {
           method,
           headers: {
@@ -540,6 +595,9 @@ export class PlannerService {
           },
           body: JSON.stringify(requestBody),
         });
+        console.log(
+          `[PlannerService.saveClass] Received response status: ${response.status}`,
+        );
 
         if (!response.ok) {
           const errorData = await response.json();
@@ -567,14 +625,9 @@ export class PlannerService {
           this.newlyCreatedEventId = null;
           this.newlyCreatedEventType = null;
 
-          return {
-            id: classEvent.id,
-            type: "class",
-            classPlan: classEvent.classPlan,
-            appointments: classEvent.appointments,
-            waitlist: classEvent.waitlist,
-            meetingRoom: classEvent.meetingRoom,
-          };
+          // Spread the properties from the API response and add the type
+          // The API response (`classEvent`) should conform to ClassEventPayload
+          return { ...classEvent, type: "class" as const };
         } catch (postProcessError) {
           // If additional processing fails, rollback everything
           await this.rollbackTransaction();
@@ -625,6 +678,7 @@ export class PlannerService {
   static async createTopics(topicNames: string[]): Promise<string[]> {
     try {
       if (!Array.isArray(topicNames) || topicNames.length === 0) {
+        console.log("[PlannerService.createTopics] No topic names provided.");
         return [];
       }
 
@@ -645,12 +699,15 @@ export class PlannerService {
 
       if (uniqueTopicNames.length === 0) {
         console.log(
-          "No valid topics after simplified processing and deduplication",
+          "[PlannerService.createTopics] No valid unique topic names after processing.",
         );
         return []; // Return empty array if no valid topics remain
       }
 
-      console.log("Requesting topics from backend:", uniqueTopicNames);
+      console.log(
+        "[PlannerService.createTopics] Requesting topics from backend with names:",
+        uniqueTopicNames,
+      );
 
       // Create/retrieve all topics in a single request
       const response = await fetch("/api/user/content/topics", {
@@ -661,21 +718,34 @@ export class PlannerService {
         body: JSON.stringify({ names: uniqueTopicNames }),
       });
 
+      console.log(
+        `[PlannerService.createTopics] API response status: ${response.status}`,
+      );
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to create topics");
+        const errorData = await response.json().catch(() => ({ error: "Failed to parse error response" }));
+        console.error(
+          "[PlannerService.createTopics] API error response:",
+          errorData,
+        );
+        throw new Error(errorData.error || "Failed to create topics via API");
       }
 
       const { data: topics } = await response.json();
-      if (!Array.isArray(topics) || topics.length === 0) {
-        throw new Error("Invalid response - no topics returned");
+      if (!Array.isArray(topics)) { // Simplified check
+        console.error(
+          "[PlannerService.createTopics] Invalid API response format - 'data' is not an array:", topics
+        );
+        throw new Error("Invalid response format from topic creation API");
       }
 
-      console.log("Topics created/retrieved:", topics);
-      return topics.map((topic) => topic.id);
+      console.log("[PlannerService.createTopics] Topics received from API:", topics);
+      const topicIds = topics.map((topic) => topic.id);
+      console.log("[PlannerService.createTopics] Returning topic IDs:", topicIds);
+      return topicIds;
     } catch (error) {
-      console.error("Error creating topics:", error);
-      throw error;
+      console.error("[PlannerService.createTopics] Error:", error);
+      throw error; // Re-throw the error
     }
   }
 
@@ -800,7 +870,6 @@ export class PlannerService {
     consultantId: string,
     topicIds: string[],
   ): Promise<WebinarEvent> {
-    // Reset tracking for new transaction
     this.newlyCreatedEventId = null;
     this.newlyCreatedEventType = null;
 
@@ -816,42 +885,49 @@ export class PlannerService {
         ? initialData.webinarPlan.createdAt
         : now;
 
-    const webinarData = {
+    // Construct the event data ensuring all required fields are present and match Partial<WebinarEvent>
+    const webinarData: Partial<WebinarEvent> = {
       type: "webinar" as const,
-      id: webinarInstanceId, // Include the webinar instance ID for updates
+      id: webinarInstanceId || undefined,
       webinarPlan: {
+        // Base Plan fields
         id: webinarPlanId,
         title: data.title,
-        description: data.description,
+        description: data.description ?? "",
         price: data.price,
-        durationInHours: "durationInHours" in data ? data.durationInHours : 0,
+        priceCurrency: data.priceCurrency ?? "INR",
         maxParticipants: data.maxParticipants,
-        language: data.language,
-        level: data.level,
+        language: data.language ?? "English",
+        level: data.level ?? "Beginner",
         prerequisites: data.prerequisites ?? null,
         materialProvided: data.materialProvided ?? null,
-        learningOutcomes: data.learningOutcomes,
-        topics: topicIds.map((id) => ({
-          id,
-          name: Array.isArray(data.topics)
-            ? (data.topics.find((_, index) => index === topicIds.indexOf(id)) ??
-              "")
-            : "",
-          createdAt: now,
-          updatedAt: now,
-        })),
-        topicIds: topicIds,
-        consultantProfileId: consultantId,
-        consultantProfile: null,
+        learningOutcomes: data.learningOutcomes ?? [],
+        // Relationships
+        consultantProfileId: consultantId, // Required for creation/update context
+        consultantProfile: null, // Set to null as expected by type
+        topics: topicIds.map((id) => ({ id, name: "", createdAt: now, updatedAt: now })),
+        // Webinar specific plan fields
+        durationInHours: typeof data.durationInHours === 'number' ? data.durationInHours : 1,
+        certificateProvided: data.certificateProvided ?? false,
+        // Timestamps
         createdAt: createdAt,
         updatedAt: now,
-        scheduledAt: (data as any).scheduledAt,
       },
+      // Other optional root fields for WebinarEvent
+      status: WebinarStatus.SCHEDULED, // Provide a default status if needed
+      feedbackSummary: null,
+      appointment: undefined, // Let the API handler manage appointment creation/update
+      waitlist: undefined,
+      meetingRoom: undefined,
     };
 
     console.log("Saving webinar data:", webinarData);
 
-    const savedWebinar = await this.saveWebinar(webinarData, consultantId);
+    const savedWebinar = await this.saveWebinar(
+      webinarData,
+      data.scheduledAt,
+      consultantId,
+    );
     this.showSuccessToast(data.title, initialData, "webinar");
     return savedWebinar;
 
@@ -867,13 +943,11 @@ export class PlannerService {
     consultantId: string,
     topicIds: string[],
   ): Promise<ClassEvent> {
-    // Reset tracking for new transaction
     this.newlyCreatedEventId = null;
     this.newlyCreatedEventType = null;
 
     const now = new Date();
-    const classData = data as any;
-    const classContents = classData.classContents ?? [];
+    const classDataForm = data;
 
     const classPlanId =
       initialData && this.isClassEvent(initialData)
@@ -886,47 +960,51 @@ export class PlannerService {
         ? initialData.classPlan.createdAt
         : now;
 
-    const classEventData = {
+    // Construct the event data ensuring all required fields are present and match Partial<ClassEvent>
+    const classEventData: Partial<ClassEvent> = {
       type: "class" as const,
-      id: classInstanceId, // Include the class instance ID for updates
+      id: classInstanceId || undefined,
       classPlan: {
+        // Base Plan fields
         id: classPlanId,
-        title: data.title,
-        description: data.description,
-        price: data.price,
-        durationInMonths:
-          "durationInMonths" in data ? data.durationInMonths : 0,
-        maxParticipants: data.maxParticipants,
-        language: data.language,
-        level: data.level,
-        prerequisites: data.prerequisites ?? null,
-        materialProvided: data.materialProvided ?? null,
-        learningOutcomes: data.learningOutcomes,
-        topics: topicIds.map((id) => ({
-          id,
-          name: Array.isArray(data.topics)
-            ? (data.topics.find((_, index) => index === topicIds.indexOf(id)) ??
-              "")
-            : "",
-          createdAt: now,
-          updatedAt: now,
-        })),
-        topicIds: topicIds,
-        consultantProfileId: consultantId,
-        consultantProfile: null,
-        certificateProvided:
-          "certificateProvided" in data ? data.certificateProvided : false,
-        callsPerWeek: "callsPerWeek" in data ? data.callsPerWeek : 0,
-        videoMeetings: "videoMeetings" in data ? data.videoMeetings : 0,
-        emailSupport: "emailSupport" in data ? data.emailSupport : "GENERAL",
+        title: classDataForm.title,
+        description: classDataForm.description ?? "",
+        price: classDataForm.price,
+        priceCurrency: classDataForm.priceCurrency ?? "INR",
+        maxParticipants: classDataForm.maxParticipants,
+        language: classDataForm.language ?? "English",
+        level: classDataForm.level ?? "Beginner",
+        prerequisites: classDataForm.prerequisites ?? null,
+        materialProvided: classDataForm.materialProvided ?? null,
+        learningOutcomes: classDataForm.learningOutcomes ?? [],
+         // Relationships
+        consultantProfileId: consultantId, // Required for context
+        consultantProfile: null, // Set to null as expected by type
+        topics: topicIds.map((id) => ({ id, name: "", createdAt: now, updatedAt: now })),
         classContents: this.formatClassContents(
-          classContents,
-          classPlanId,
-          now,
-        ),
+            classDataForm.classContents ?? [],
+            classPlanId,
+            now,
+          ),
+        // Class specific plan fields
+        certificateProvided: classDataForm.certificateProvided ?? false,
+        durationInMonths: typeof classDataForm.durationInMonths === 'number' ? classDataForm.durationInMonths : 1,
+        callsPerWeek: typeof classDataForm.callsPerWeek === 'number' ? classDataForm.callsPerWeek : 1,
+        videoMeetings: typeof classDataForm.videoMeetings === 'number' ? classDataForm.videoMeetings : 1,
+        emailSupport: classDataForm.emailSupport ?? "GENERAL",
+        // Timestamps
         createdAt: createdAt,
         updatedAt: now,
       },
+      // Other optional root fields for ClassEvent
+      startDate: undefined, // Let API handle based on logic
+      endDate: undefined,   // Let API handle based on logic
+      status: ClassStatus.SCHEDULED, // Provide default status
+      recordingUrls: [],
+      feedbackSummary: null,
+      appointments: undefined,
+      waitlist: undefined,
+      meetingRoom: undefined,
     };
 
     console.log("Saving class data:", classEventData);

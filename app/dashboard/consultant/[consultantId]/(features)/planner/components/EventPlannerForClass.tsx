@@ -35,6 +35,18 @@ import { useForm } from "react-hook-form";
 import { PlannerService } from "../services/planner";
 import { ClassEvent, ClassPlannerProps } from "../types/event";
 import { TopicsMultiSelect } from "./TopicsMultiSelect";
+import iso6391 from 'iso-639-1'; // Import the language library
+
+// Define the level options
+const levelOptions = [
+  "Beginner",
+  "Intermediate",
+  "Advanced",
+  "Expert",
+];
+
+// Define currency options
+const currencyOptions = ["INR", "USD", "EUR", "GBP"]; // Add more as needed
 
 export function EventPlannerForClass({
   isOpen,
@@ -75,6 +87,7 @@ export function EventPlannerForClass({
           title: initialData.classPlan.title,
           description: initialData.classPlan.description ?? "",
           price: initialData.classPlan.price,
+          priceCurrency: initialData.classPlan.priceCurrency ?? "INR",
           durationInMonths: initialData.classPlan.durationInMonths,
           maxParticipants: initialData.classPlan.maxParticipants,
           language: initialData.classPlan.language ?? "English",
@@ -98,6 +111,7 @@ export function EventPlannerForClass({
           title: "",
           description: "",
           price: 0,
+          priceCurrency: "INR", // Default currency for new class
           durationInMonths: 1,
           maxParticipants: 100,
           language: "English",
@@ -124,6 +138,7 @@ export function EventPlannerForClass({
         title: initialData.classPlan.title,
         description: initialData.classPlan.description ?? "",
         price: initialData.classPlan.price,
+        priceCurrency: initialData.classPlan.priceCurrency ?? "INR",
         durationInMonths: initialData.classPlan.durationInMonths,
         maxParticipants: initialData.classPlan.maxParticipants,
         language: initialData.classPlan.language ?? "English",
@@ -241,6 +256,7 @@ export function EventPlannerForClass({
             title: formData.title,
             description: formData.description || "",
             price: formData.price,
+            priceCurrency: formData.priceCurrency,
             durationInMonths: formData.durationInMonths,
             maxParticipants: formData.maxParticipants,
             language: formData.language,
@@ -274,6 +290,7 @@ export function EventPlannerForClass({
           toast({
             title: "Success",
             description: `${initialData ? "Updated" : "Created"} class "${formData.title}" successfully`,
+            variant: "success",
           });
           onClose();
         } catch (error) {
@@ -389,7 +406,12 @@ export function EventPlannerForClass({
                 <FormItem>
                   <FormLabel>Description</FormLabel>
                   <FormControl>
-                    <Textarea {...field} value={field.value ?? ""} />
+                    <Textarea
+                      {...field}
+                      value={field.value ?? ""}
+                      className="min-h-[120px]"
+                      placeholder="Describe your class"
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -400,17 +422,56 @@ export function EventPlannerForClass({
               <FormField
                 control={form.control}
                 name="price"
-                render={({ field }) => (
+                render={() => ( // Use render without field directly to handle combined input
                   <FormItem>
                     <FormLabel>Price</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        {...field}
-                        onChange={(e) => field.onChange(Number(e.target.value))}
+                    <div className="flex gap-2">
+                      <FormField
+                        control={form.control}
+                        name="priceCurrency"
+                        render={({ field: currencyField }) => (
+                          <Select
+                            onValueChange={currencyField.onChange}
+                            defaultValue={currencyField.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger className="w-[80px]">
+                                <SelectValue placeholder="Currency" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {currencyOptions.map((currency) => (
+                                <SelectItem key={currency} value={currency}>
+                                  {currency}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
                       />
-                    </FormControl>
-                    <FormMessage />
+                      <FormField
+                        control={form.control}
+                        name="price"
+                        render={({ field: priceField }) => (
+                          <FormControl>
+                            <Input
+                              type="number"
+                              placeholder="0"
+                              className="flex-1" // Take remaining space
+                              {...priceField}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                priceField.onChange(value === '' ? 0 : Number.parseFloat(value));
+                              }}
+                            />
+                          </FormControl>
+                        )}
+                      />
+                    </div>
+                    {/* Display errors for either field below the group */}
+                    <FormMessage className="mt-1">
+                      {form.formState.errors.price?.message || form.formState.errors.priceCurrency?.message}
+                    </FormMessage>
                   </FormItem>
                 )}
               />
@@ -428,8 +489,8 @@ export function EventPlannerForClass({
                         min="1"
                         {...field}
                         onChange={(e) => {
-                          const value = parseFloat(e.target.value);
-                          field.onChange(isNaN(value) ? "" : value);
+                          const value = e.target.value;
+                          field.onChange(value === '' ? 0 : Number.parseFloat(value));
                         }}
                       />
                     </FormControl>
@@ -449,7 +510,10 @@ export function EventPlannerForClass({
                     <Input
                       type="number"
                       {...field}
-                      onChange={(e) => field.onChange(Number(e.target.value))}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        field.onChange(value === '' ? 0 : Number.parseInt(value, 10));
+                      }}
                     />
                   </FormControl>
                   <FormMessage />
@@ -464,7 +528,23 @@ export function EventPlannerForClass({
                 <FormItem>
                   <FormLabel>Language</FormLabel>
                   <FormControl>
-                    <Input {...field} />
+                    <Select
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select language" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {iso6391.getAllNames().map((langName) => (
+                          <SelectItem key={langName} value={langName}>
+                            {langName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -478,7 +558,23 @@ export function EventPlannerForClass({
                 <FormItem>
                   <FormLabel>Level</FormLabel>
                   <FormControl>
-                    <Input {...field} />
+                    <Select
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select level" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {levelOptions.map((level) => (
+                          <SelectItem key={level} value={level}>
+                            {level}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -492,7 +588,11 @@ export function EventPlannerForClass({
                 <FormItem>
                   <FormLabel>Prerequisites</FormLabel>
                   <FormControl>
-                    <Input {...field} value={field.value ?? ""} />
+                    <Textarea
+                      {...field}
+                      placeholder="Enter prerequisites"
+                      value={field.value ?? ""}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -506,7 +606,11 @@ export function EventPlannerForClass({
                 <FormItem>
                   <FormLabel>Material Provided</FormLabel>
                   <FormControl>
-                    <Input {...field} value={field.value ?? ""} />
+                    <Textarea
+                      {...field}
+                      placeholder="Enter material provided"
+                      value={field.value ?? ""}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -594,7 +698,10 @@ export function EventPlannerForClass({
                       <Input
                         type="number"
                         {...field}
-                        onChange={(e) => field.onChange(Number(e.target.value))}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          field.onChange(value === '' ? 0 : Number.parseInt(value, 10));
+                        }}
                       />
                     </FormControl>
                     <FormMessage />
@@ -612,7 +719,10 @@ export function EventPlannerForClass({
                       <Input
                         type="number"
                         {...field}
-                        onChange={(e) => field.onChange(Number(e.target.value))}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          field.onChange(value === '' ? 0 : Number.parseInt(value, 10));
+                        }}
                       />
                     </FormControl>
                     <FormMessage />

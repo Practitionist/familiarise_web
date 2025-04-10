@@ -1,91 +1,12 @@
 import { TWebinar, TClass } from "@/types/appointment";
+import { PlanEmailSupport } from "@prisma/client";
 
-type ConsultantProfile = {
-  user: {
-    id: string;
-    name: string | null;
-    consultantProfileId: string | null;
-    address: string | null;
-    image: string | null;
-    email: string | null;
-    staffProfileId: string | null;
-  };
-};
+// Define the final event types, intersecting with the literal type
+export type WebinarEvent = TWebinar & { type: "webinar" };
+export type ClassEvent = TClass & { type: "class" };
 
-export interface Event {
-  id: string;
-  type: "webinar" | "class";
-  // Common properties across all event types
-}
-
-export interface WebinarEvent extends Event {
-  type: "webinar";
-  webinarPlan: {
-    id: string;
-    title: string;
-    description: string;
-    price: number;
-    durationInHours: number;
-    maxParticipants: number;
-    language: string;
-    level: string;
-    prerequisites: string | null;
-    materialProvided: string | null;
-    learningOutcomes: string[];
-    topics: { id: string; name: string; createdAt: Date; updatedAt: Date }[];
-    consultantProfileId: string | null;
-    consultantProfile: ConsultantProfile | null;
-    createdAt: Date;
-    updatedAt: Date;
-    scheduledAt: string;
-  };
-  appointment: TWebinar["appointment"];
-  waitlist: TWebinar["waitlist"];
-  meetingRoom: TWebinar["meetingRoom"];
-}
-
-export interface ClassEvent extends Event {
-  type: "class";
-  classPlan: {
-    id: string;
-    title: string;
-    description: string;
-    price: number;
-    certificateProvided: boolean;
-    durationInMonths: number;
-    callsPerWeek: number;
-    videoMeetings: number;
-    emailSupport: "GENERAL" | "PRIORITY" | "DEDICATED";
-    maxParticipants: number;
-    language: string;
-    level: string;
-    prerequisites: string | null;
-    materialProvided: string | null;
-    learningOutcomes: string[];
-    topics: { id: string; name: string; createdAt: Date; updatedAt: Date }[];
-    classContents: {
-      id: string;
-      title: string;
-      description: string;
-      contentType: string | null;
-      contentUrl: string | null;
-      order: number;
-      hoursAllotted: number;
-      createdAt: Date;
-      updatedAt: Date;
-      classPlanId: string;
-    }[];
-    consultantProfileId: string | null;
-    consultantProfile: ConsultantProfile | null;
-    createdAt: Date;
-    updatedAt: Date;
-  };
-  startDate?: Date;
-  endDate?: Date;
-  appointments: TClass["appointments"];
-  waitlist: TClass["waitlist"];
-  meetingRoom: TClass["meetingRoom"];
-}
+// Update base Event type to be a union
+export type Event = WebinarEvent | ClassEvent;
 
 export type EventPlannerProps = {
   isOpen: boolean;
@@ -108,6 +29,15 @@ export type FormData = {
   learningOutcomes: string[];
   topics: string[];
   consultantProfileId?: string | null;
+  durationInHours?: number;
+  durationInMonths?: number;
+  callsPerWeek?: number;
+  videoMeetings?: number;
+  emailSupport?: PlanEmailSupport;
+  certificateProvided?: boolean;
+  classContents?: ClassContentInput[];
+  scheduledAt?: string | Date | null;
+  priceCurrency?: string;
 } & (
   | {
       durationInHours: number;
@@ -139,10 +69,24 @@ export interface BasePlannerProps {
 
 export interface WebinarPlannerProps extends BasePlannerProps {
   initialData?: WebinarEvent;
-  onSave: (data: Partial<WebinarEvent>) => void;
+  onSave: (
+    data: Partial<WebinarEvent>,
+    scheduledAt?: string | Date,
+  ) => void;
 }
 
 export interface ClassPlannerProps extends BasePlannerProps {
   initialData?: ClassEvent;
   onSave: (data: Partial<ClassEvent>) => void;
 }
+
+// Define input type for ClassContent based on usage
+export type ClassContentInput = {
+  id?: string; // Optional for new content
+  title: string;
+  description: string;
+  contentType?: string | null;
+  contentUrl?: string | null;
+  order: number;
+  hoursAllotted: number;
+};

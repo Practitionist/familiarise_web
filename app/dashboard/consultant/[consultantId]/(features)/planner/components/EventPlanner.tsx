@@ -9,7 +9,11 @@ import {
 import { EventPlannerForWebinar } from "./EventPlannerForWebinar";
 import { EventPlannerForClass } from "./EventPlannerForClass";
 
-type WebinarCallback = (data: Partial<WebinarEvent>) => void;
+// Update WebinarCallback type to accept scheduledAt
+type WebinarCallback = (
+  data: Partial<WebinarEvent>,
+  scheduledAt?: string | Date,
+) => void;
 type ClassCallback = (data: Partial<ClassEvent>) => void;
 
 // Add these type guards
@@ -49,16 +53,14 @@ export function EventPlanner({
       : undefined;
 
     // Create a wrapper around the save callback to handle topic formats if needed
-    const handleWebinarSave = (data: Partial<WebinarEvent>) => {
-      console.log(
-        "EventPlanner - preparing to save webinar data:",
-        JSON.stringify(data, null, 2),
-      );
-
+    const handleWebinarSave = (
+      data: Partial<WebinarEvent>,
+      scheduledAt?: string | Date,
+    ) => {
       // No need for additional validation as we're now using string[] directly
 
-      // Call the original callback
-      webinarSaveCallback(data);
+      // Call the original callback with both arguments
+      webinarSaveCallback(data, scheduledAt);
     };
 
     return (
