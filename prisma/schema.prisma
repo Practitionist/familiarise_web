@@ -476,18 +476,20 @@ enum RequestStatus {
 
 // Many-Many Webinar
 model WebinarPlan {
-  id               String   @id @default(cuid())
-  title            String
-  topics           Topic[]
-  description      String?  @db.Text
-  price            Int
-  durationInHours  Float    @default(1) // Duration in hours
-  maxParticipants  Int      @default(100)
-  language         String?  @default("English")
-  level            String?  @default("Beginner")
-  prerequisites    String?  @default("None")
-  materialProvided String?  @default("None")
-  learningOutcomes String[] @default([])
+  id                  String   @id @default(cuid())
+  title               String
+  topics              Topic[]
+  description         String?  @db.Text
+  price               Int
+  priceCurrency       String   @default("INR")
+  certificateProvided Boolean  @default(false)
+  durationInHours     Float    @default(1) // Duration in hours
+  maxParticipants     Int      @default(100)
+  language            String?  @default("English")
+  level               String?  @default("Beginner")
+  prerequisites       String?  @default("None")
+  materialProvided    String?  @default("None")
+  learningOutcomes    String[] @default([])
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
@@ -528,6 +530,7 @@ model ClassPlan {
   topics              Topic[]
   classContents       ClassContent[]
   price               Int
+  priceCurrency       String           @default("INR")
   certificateProvided Boolean          @default(false)
   durationInMonths    Int              @default(1) // Duration in months
   callsPerWeek        Int              @default(1)

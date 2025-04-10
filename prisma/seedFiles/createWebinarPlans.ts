@@ -20,6 +20,8 @@ export async function createWebinarPlans(consultants: UserWithProfiles[]) {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Introduction Webinar",
             description: faker.lorem.paragraph(),
+            priceCurrency: "INR",
+            certificateProvided: false,
             durationInHours: 1,
             price: faker.number.int({ min: 1500, max: 3000 }), // $15 to $30
             maxParticipants: faker.number.int({ min: 20, max: 50 }),
@@ -46,6 +48,8 @@ export async function createWebinarPlans(consultants: UserWithProfiles[]) {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Advanced Topics Webinar",
             description: faker.lorem.paragraph(),
+            priceCurrency: "INR",
+            certificateProvided: false,
             durationInHours: 2,
             price: faker.number.int({ min: 2500, max: 5000 }), // $25 to $50
             maxParticipants: faker.number.int({ min: 15, max: 40 }),
@@ -72,6 +76,8 @@ export async function createWebinarPlans(consultants: UserWithProfiles[]) {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Expert Workshop Webinar",
             description: faker.lorem.paragraph(),
+            priceCurrency: "INR",
+            certificateProvided: false,
             durationInHours: 3,
             price: faker.number.int({ min: 3500, max: 7000 }), // $35 to $70
             maxParticipants: faker.number.int({ min: 10, max: 30 }),
