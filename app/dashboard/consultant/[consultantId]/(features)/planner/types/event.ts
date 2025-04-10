@@ -69,10 +69,7 @@ export interface BasePlannerProps {
 
 export interface WebinarPlannerProps extends BasePlannerProps {
   initialData?: WebinarEvent;
-  onSave: (
-    data: Partial<WebinarEvent>,
-    scheduledAt?: string | Date,
-  ) => void;
+  onSave: (data: Partial<WebinarEvent>, scheduledAt?: string | Date) => void;
 }
 
 export interface ClassPlannerProps extends BasePlannerProps {

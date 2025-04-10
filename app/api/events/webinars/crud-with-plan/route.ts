@@ -7,8 +7,8 @@ import { WebinarStatus } from "@prisma/client"; // Import Enum
 // Schema for POST request body based on WebinarPlanSchema
 const PostWebinarWithPlanBodySchema = WebinarPlanSchema.omit({
   consultantProfile: true, // We use consultantProfileId
-  topics: true,              // We use topicIds instead
-  scheduledAt: true,         // We redefine below
+  topics: true, // We use topicIds instead
+  scheduledAt: true, // We redefine below
   // priceCurrency is inherited from WebinarPlanSchema (which inherits from BaseEventPlanSchema)
 }).extend({
   consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
@@ -22,23 +22,26 @@ const PostWebinarWithPlanBodySchema = WebinarPlanSchema.omit({
       message: "Invalid date format for scheduledAt",
     }),
   // Fields for the webinar instance
-  status: z.nativeEnum(WebinarStatus).optional().default(WebinarStatus.SCHEDULED),
+  status: z
+    .nativeEnum(WebinarStatus)
+    .optional()
+    .default(WebinarStatus.SCHEDULED),
   // DO NOT define priceCurrency here, it's inherited and has default in base
 });
 
 // Schema for PATCH request body
 // Inherits from corrected PostWebinarWithPlanBodySchema
 const PatchWebinarWithPlanBodySchema = PostWebinarWithPlanBodySchema.omit({
-    topicIds: true, // Make topicIds optional separately
-}).partial().extend(
-  {
+  topicIds: true, // Make topicIds optional separately
+})
+  .partial()
+  .extend({
     id: z.string().min(1, "Webinar Plan ID is required for update"), // Plan ID is required
     webinarId: z.string().optional().nullable(), // Webinar Instance ID is optional
     topicIds: z.array(z.string()).optional(), // topicIds is optional for PATCH
     // scheduledAt is already optional via partial()
     // priceCurrency is already optional via partial() inherited from base
-  },
-);
+  });
 
 export async function POST(request: NextRequest) {
   try {
@@ -98,24 +101,29 @@ export async function POST(request: NextRequest) {
       // Zod refine ensures parseable date if scheduledAt is a string
       const parsedStartTime = new Date(scheduledAt);
       if (!isNaN(parsedStartTime.getTime())) {
-          startTime = parsedStartTime;
-          endTime = new Date(startTime);
-          // Zod ensures durationInHours is a valid number
-          endTime.setHours(startTime.getHours() + durationInHours);
-          console.log("Calculated times:", {
-            startTime: startTime.toISOString(),
-            endTime: endTime.toISOString(),
-            durationInHours,
-          });
+        startTime = parsedStartTime;
+        endTime = new Date(startTime);
+        // Zod ensures durationInHours is a valid number
+        endTime.setHours(startTime.getHours() + durationInHours);
+        console.log("Calculated times:", {
+          startTime: startTime.toISOString(),
+          endTime: endTime.toISOString(),
+          durationInHours,
+        });
       } else {
-         // Handle case where refine might somehow miss an invalid date string
-         // Or if null was somehow passed despite schema (shouldn't happen)
-         console.warn("Invalid date format received for scheduledAt despite validation:", scheduledAt);
-         // startTime and endTime remain undefined
+        // Handle case where refine might somehow miss an invalid date string
+        // Or if null was somehow passed despite schema (shouldn't happen)
+        console.warn(
+          "Invalid date format received for scheduledAt despite validation:",
+          scheduledAt,
+        );
+        // startTime and endTime remain undefined
       }
     } else {
-        console.log("No scheduledAt provided. Webinar will be created without an initial appointment.");
-        // startTime and endTime remain undefined
+      console.log(
+        "No scheduledAt provided. Webinar will be created without an initial appointment.",
+      );
+      // startTime and endTime remain undefined
     }
 
     // Create webinar plan, instance, and appointment in a transaction
@@ -129,8 +137,8 @@ export async function POST(request: NextRequest) {
           });
 
           if (topics.length !== topicIds.length) {
-             const missingIds = topicIds.filter(
-                (reqId) => !topics.some((dbTopic) => dbTopic.id === reqId),
+            const missingIds = topicIds.filter(
+              (reqId) => !topics.some((dbTopic) => dbTopic.id === reqId),
             );
             throw new Error(
               `The following topic IDs do not exist: ${missingIds.join(", ")}`,
@@ -189,18 +197,22 @@ export async function POST(request: NextRequest) {
             webinarPlan: { connect: { id: webinarPlan.id } },
             // Create the appointment at the same time
             // Ensure startTime and endTime are valid before creating appointment
-            appointment: startTime && endTime ? { // Check if dates were successfully calculated
-              create: {
-                appointmentType: "WEBINAR",
-                slotsOfAppointment: {
-                  create: {
-                    slotStartTimeInUTC: startTime, // Use calculated startTime
-                    slotEndTimeInUTC: endTime,     // Use calculated endTime
-                    isTentative: false,
-                  },
-                },
-              },
-            } : undefined, // Don't create appointment if no valid scheduledAt
+            appointment:
+              startTime && endTime
+                ? {
+                    // Check if dates were successfully calculated
+                    create: {
+                      appointmentType: "WEBINAR",
+                      slotsOfAppointment: {
+                        create: {
+                          slotStartTimeInUTC: startTime, // Use calculated startTime
+                          slotEndTimeInUTC: endTime, // Use calculated endTime
+                          isTentative: false,
+                        },
+                      },
+                    },
+                  }
+                : undefined, // Don't create appointment if no valid scheduledAt
           },
           include: {
             webinarPlan: {
@@ -244,12 +256,12 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     // --- Zod Error Handling ---
     if (error instanceof z.ZodError) {
-        console.error("Validation Error (POST Catch):", error.issues);
-        return NextResponse.json(
-          { error: "Invalid input", details: error.issues },
-          { status: 400 },
-        );
-      }
+      console.error("Validation Error (POST Catch):", error.issues);
+      return NextResponse.json(
+        { error: "Invalid input", details: error.issues },
+        { status: 400 },
+      );
+    }
     // --- End Zod Error Handling ---
 
     console.error("Error creating webinar with plan:", error);
@@ -289,7 +301,7 @@ export async function PATCH(request: NextRequest) {
         { status: 400 },
       );
     }
- 
+
     const validatedData = validationResult.data;
     const {
       id, // Webinar plan ID (required)
@@ -311,7 +323,7 @@ export async function PATCH(request: NextRequest) {
       scheduledAt, // Optional string date
       priceCurrency, // <-- Add this line back
     } = validatedData;
-     // --- End Zod Validation ---
+    // --- End Zod Validation ---
 
     // Log validated fields
     console.log("Validated fields for update:", {
@@ -369,7 +381,10 @@ export async function PATCH(request: NextRequest) {
         ? existingPlan.webinars[0]
         : null;
 
-    if (!webinarToUpdate && (status !== undefined || scheduledAt !== undefined)) {
+    if (
+      !webinarToUpdate &&
+      (status !== undefined || scheduledAt !== undefined)
+    ) {
       return NextResponse.json(
         {
           error:
@@ -385,41 +400,49 @@ export async function PATCH(request: NextRequest) {
 
     // Use the validated scheduledAt (optional) and durationInHours (required if scheduledAt provided for calc)
     if (scheduledAt) {
-        // Zod refine should ensure valid date string if present
-        const scheduledDate = new Date(scheduledAt);
-         if (isNaN(scheduledDate.getTime())) {
-            throw new Error("Invalid scheduledAt date format after validation (PATCH).");
-        }
+      // Zod refine should ensure valid date string if present
+      const scheduledDate = new Date(scheduledAt);
+      if (isNaN(scheduledDate.getTime())) {
+        throw new Error(
+          "Invalid scheduledAt date format after validation (PATCH).",
+        );
+      }
 
-        startTime = scheduledDate;
+      startTime = scheduledDate;
 
-        // Duration needed to calculate end time. Use plan's existing if not provided in patch.
-        // Ensure durationInHours from validatedData (optional) or existingPlan is valid
-        const effectiveDuration = durationInHours ?? existingPlan.durationInHours;
-        if (typeof effectiveDuration !== 'number' || effectiveDuration <= 0) {
-            throw new Error("Invalid duration for calculating end time.")
-        }
+      // Duration needed to calculate end time. Use plan's existing if not provided in patch.
+      // Ensure durationInHours from validatedData (optional) or existingPlan is valid
+      const effectiveDuration = durationInHours ?? existingPlan.durationInHours;
+      if (typeof effectiveDuration !== "number" || effectiveDuration <= 0) {
+        throw new Error("Invalid duration for calculating end time.");
+      }
 
-        const endTimeDate = new Date(scheduledDate);
-        endTimeDate.setHours(endTimeDate.getHours() + effectiveDuration);
-        endTime = endTimeDate;
+      const endTimeDate = new Date(scheduledDate);
+      endTimeDate.setHours(endTimeDate.getHours() + effectiveDuration);
+      endTime = endTimeDate;
 
-        console.log("Calculated slot times (PATCH):", {
-            startTime: startTime.toISOString(),
-            endTime: endTime.toISOString(),
-            effectiveDuration,
-        });
-    } else if (durationInHours !== undefined && webinarToUpdate?.appointment?.slotsOfAppointment[0]) {
-        // Handle case where only duration changes, recalculate end time based on existing start time
-        const existingSlot = webinarToUpdate.appointment.slotsOfAppointment[0];
-        startTime = existingSlot.slotStartTimeInUTC; // Keep existing start time
-        endTime = new Date(startTime);
-        endTime.setHours(startTime.getHours() + durationInHours);
-         console.log("Recalculated slot end time due to duration change (PATCH):", {
-            startTime: startTime.toISOString(),
-            endTime: endTime.toISOString(),
-            newDuration: durationInHours,
-        });
+      console.log("Calculated slot times (PATCH):", {
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+        effectiveDuration,
+      });
+    } else if (
+      durationInHours !== undefined &&
+      webinarToUpdate?.appointment?.slotsOfAppointment[0]
+    ) {
+      // Handle case where only duration changes, recalculate end time based on existing start time
+      const existingSlot = webinarToUpdate.appointment.slotsOfAppointment[0];
+      startTime = existingSlot.slotStartTimeInUTC; // Keep existing start time
+      endTime = new Date(startTime);
+      endTime.setHours(startTime.getHours() + durationInHours);
+      console.log(
+        "Recalculated slot end time due to duration change (PATCH):",
+        {
+          startTime: startTime.toISOString(),
+          endTime: endTime.toISOString(),
+          newDuration: durationInHours,
+        },
+      );
     }
 
     // Update webinar plan and related data in a transaction
@@ -438,16 +461,25 @@ export async function PATCH(request: NextRequest) {
         const updateData: any = {};
         if (title !== undefined) updateData.title = title;
         if (description !== undefined) updateData.description = description;
-        if (durationInHours !== undefined) updateData.durationInHours = durationInHours;
+        if (durationInHours !== undefined)
+          updateData.durationInHours = durationInHours;
         if (price !== undefined) updateData.price = price;
-        if (priceCurrency !== undefined) updateData.priceCurrency = priceCurrency;
-        if (maxParticipants !== undefined) updateData.maxParticipants = maxParticipants;
+        if (priceCurrency !== undefined)
+          updateData.priceCurrency = priceCurrency;
+        if (maxParticipants !== undefined)
+          updateData.maxParticipants = maxParticipants;
         if (language !== undefined) updateData.language = language;
         if (level !== undefined) updateData.level = level;
-        if (prerequisites !== undefined) updateData.prerequisites = prerequisites;
-        if (materialProvided !== undefined) updateData.materialProvided = materialProvided;
-        if (learningOutcomes !== undefined) updateData.learningOutcomes = learningOutcomes;
-        if (consultantProfileId !== undefined) updateData.consultantProfile = { connect: { id: consultantProfileId } };
+        if (prerequisites !== undefined)
+          updateData.prerequisites = prerequisites;
+        if (materialProvided !== undefined)
+          updateData.materialProvided = materialProvided;
+        if (learningOutcomes !== undefined)
+          updateData.learningOutcomes = learningOutcomes;
+        if (consultantProfileId !== undefined)
+          updateData.consultantProfile = {
+            connect: { id: consultantProfileId },
+          };
 
         // Determine how to handle topics (using validated 'topicIds')
         if (topicIds !== undefined) {
@@ -494,24 +526,29 @@ export async function PATCH(request: NextRequest) {
 
         // Execute the plan update only if there are changes
         let updatedWebinarPlan = existingPlan;
-        if (Object.keys(updateData).length > 0 || topicIds !== undefined) { // Check topicIds for changes
-            updatedWebinarPlan = await tx.webinarPlan.update({
-              where: { id },
-              data: updateData,
-              include: {
-                consultantProfile: true,
-                topics: true,
-                webinars: {             // Ensure webinars relation is included
-                  include: {            // And nest includes to match existingPlan type
-                    appointment: {      // Include the appointment
-                      include: {        // And the slots within the appointment
-                        slotsOfAppointment: true
-                      }
-                    }
-                  }
-                }
+        if (Object.keys(updateData).length > 0 || topicIds !== undefined) {
+          // Check topicIds for changes
+          updatedWebinarPlan = await tx.webinarPlan.update({
+            where: { id },
+            data: updateData,
+            include: {
+              consultantProfile: true,
+              topics: true,
+              webinars: {
+                // Ensure webinars relation is included
+                include: {
+                  // And nest includes to match existingPlan type
+                  appointment: {
+                    // Include the appointment
+                    include: {
+                      // And the slots within the appointment
+                      slotsOfAppointment: true,
+                    },
+                  },
+                },
               },
-            });
+            },
+          });
         }
 
         // Update the webinar instance status if provided in the validated data
@@ -519,8 +556,8 @@ export async function PATCH(request: NextRequest) {
         if (updatedWebinar) {
           const webinarUpdateData: any = {};
 
-           // Only update status if it was present in validatedData
-           if (status !== undefined) {
+          // Only update status if it was present in validatedData
+          if (status !== undefined) {
             webinarUpdateData.status = status;
           }
 
@@ -551,7 +588,8 @@ export async function PATCH(request: NextRequest) {
           }
 
           // 8. Update appointment slot if startTime and endTime were calculated
-          if (startTime && endTime) { // Check if recalculation happened
+          if (startTime && endTime) {
+            // Check if recalculation happened
             const appointment = updatedWebinar.appointment;
 
             if (appointment) {
@@ -668,12 +706,12 @@ export async function PATCH(request: NextRequest) {
   } catch (error) {
     // --- Zod Error Handling ---
     if (error instanceof z.ZodError) {
-        console.error("Validation Error (PATCH Catch):", error.issues);
-        return NextResponse.json(
-          { error: "Invalid input", details: error.issues },
-          { status: 400 },
-        );
-      }
+      console.error("Validation Error (PATCH Catch):", error.issues);
+      return NextResponse.json(
+        { error: "Invalid input", details: error.issues },
+        { status: 400 },
+      );
+    }
     // --- End Zod Error Handling ---
 
     console.error("Error updating webinar with plan:", error);
@@ -684,7 +722,7 @@ export async function PATCH(request: NextRequest) {
       error.message.includes("The following topic IDs do not exist:") // More specific check
     ) {
       return NextResponse.json(
-         { error: `Invalid topics provided: ${error.message}` },
+        { error: `Invalid topics provided: ${error.message}` },
         { status: 400 },
       );
     }
@@ -726,7 +764,9 @@ export async function DELETE(
       }
 
       const webinarPlanId = webinarInstance.webinarPlanId;
-      console.log(`Found webinar plan ID: ${webinarPlanId} for instance ${webinarId}`);
+      console.log(
+        `Found webinar plan ID: ${webinarPlanId} for instance ${webinarId}`,
+      );
 
       // 2. Delete the webinar instance
       // Note: Prisma cascade delete might handle related appointment/slots automatically
@@ -744,12 +784,16 @@ export async function DELETE(
       let deletedPlan = null;
       if (remainingInstancesCount === 0) {
         // 4. If no other instances use the plan, delete the plan
-        console.log(`Deleting webinar plan: ${webinarPlanId} as no other instances exist`);
+        console.log(
+          `Deleting webinar plan: ${webinarPlanId} as no other instances exist`,
+        );
         deletedPlan = await tx.webinarPlan.delete({
           where: { id: webinarPlanId },
         });
       } else {
-        console.log(`Webinar plan ${webinarPlanId} is still used by ${remainingInstancesCount} other instance(s), not deleting plan.`);
+        console.log(
+          `Webinar plan ${webinarPlanId} is still used by ${remainingInstancesCount} other instance(s), not deleting plan.`,
+        );
       }
 
       return { deletedInstanceId: webinarId, deletedPlan };
@@ -758,12 +802,14 @@ export async function DELETE(
     console.log("Webinar and potentially plan deleted successfully:", result);
     return NextResponse.json(
       {
-        message: `Webinar ${result.deletedInstanceId} deleted successfully.` + 
-                 (result.deletedPlan ? ` Plan ${result.deletedPlan.id} also deleted.` : ' Plan was kept as it is used by other instances.')
+        message:
+          `Webinar ${result.deletedInstanceId} deleted successfully.` +
+          (result.deletedPlan
+            ? ` Plan ${result.deletedPlan.id} also deleted.`
+            : " Plan was kept as it is used by other instances."),
       },
       { status: 200 },
     );
-
   } catch (error) {
     console.error("Error deleting webinar:", error);
     if (error instanceof Error && error.message.includes("not found")) {

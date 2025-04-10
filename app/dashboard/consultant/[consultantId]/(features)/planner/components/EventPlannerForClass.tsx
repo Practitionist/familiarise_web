@@ -35,15 +35,10 @@ import { useForm } from "react-hook-form";
 import { PlannerService } from "../services/planner";
 import { ClassEvent, ClassPlannerProps } from "../types/event";
 import { TopicsMultiSelect } from "./TopicsMultiSelect";
-import iso6391 from 'iso-639-1'; // Import the language library
+import iso6391 from "iso-639-1"; // Import the language library
 
 // Define the level options
-const levelOptions = [
-  "Beginner",
-  "Intermediate",
-  "Advanced",
-  "Expert",
-];
+const levelOptions = ["Beginner", "Intermediate", "Advanced", "Expert"];
 
 // Define currency options
 const currencyOptions = ["INR", "USD", "EUR", "GBP"]; // Add more as needed
@@ -422,7 +417,8 @@ export function EventPlannerForClass({
               <FormField
                 control={form.control}
                 name="price"
-                render={() => ( // Use render without field directly to handle combined input
+                render={() => (
+                  // Use render without field directly to handle combined input
                   <FormItem>
                     <FormLabel>Price</FormLabel>
                     <div className="flex gap-2">
@@ -461,7 +457,9 @@ export function EventPlannerForClass({
                               {...priceField}
                               onChange={(e) => {
                                 const value = e.target.value;
-                                priceField.onChange(value === '' ? 0 : Number.parseFloat(value));
+                                priceField.onChange(
+                                  value === "" ? 0 : Number.parseFloat(value),
+                                );
                               }}
                             />
                           </FormControl>
@@ -470,7 +468,8 @@ export function EventPlannerForClass({
                     </div>
                     {/* Display errors for either field below the group */}
                     <FormMessage className="mt-1">
-                      {form.formState.errors.price?.message || form.formState.errors.priceCurrency?.message}
+                      {form.formState.errors.price?.message ||
+                        form.formState.errors.priceCurrency?.message}
                     </FormMessage>
                   </FormItem>
                 )}
@@ -490,7 +489,9 @@ export function EventPlannerForClass({
                         {...field}
                         onChange={(e) => {
                           const value = e.target.value;
-                          field.onChange(value === '' ? 0 : Number.parseFloat(value));
+                          field.onChange(
+                            value === "" ? 0 : Number.parseFloat(value),
+                          );
                         }}
                       />
                     </FormControl>
@@ -512,7 +513,9 @@ export function EventPlannerForClass({
                       {...field}
                       onChange={(e) => {
                         const value = e.target.value;
-                        field.onChange(value === '' ? 0 : Number.parseInt(value, 10));
+                        field.onChange(
+                          value === "" ? 0 : Number.parseInt(value, 10),
+                        );
                       }}
                     />
                   </FormControl>
@@ -700,7 +703,9 @@ export function EventPlannerForClass({
                         {...field}
                         onChange={(e) => {
                           const value = e.target.value;
-                          field.onChange(value === '' ? 0 : Number.parseInt(value, 10));
+                          field.onChange(
+                            value === "" ? 0 : Number.parseInt(value, 10),
+                          );
                         }}
                       />
                     </FormControl>
@@ -721,7 +726,9 @@ export function EventPlannerForClass({
                         {...field}
                         onChange={(e) => {
                           const value = e.target.value;
-                          field.onChange(value === '' ? 0 : Number.parseInt(value, 10));
+                          field.onChange(
+                            value === "" ? 0 : Number.parseInt(value, 10),
+                          );
                         }}
                       />
                     </FormControl>

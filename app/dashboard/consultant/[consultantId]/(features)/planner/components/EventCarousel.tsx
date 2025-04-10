@@ -184,7 +184,11 @@ export function EventCarousel({
 
   const handleDelete = async (event: Event) => {
     const eventTitle = getEventTitle(event);
-    if (window.confirm(`Are you sure you want to delete "${eventTitle}"? This action cannot be undone.`)) {
+    if (
+      window.confirm(
+        `Are you sure you want to delete "${eventTitle}"? This action cannot be undone.`,
+      )
+    ) {
       try {
         await onDelete(event.id);
         // Optionally show a success toast, though parent might handle it
@@ -230,7 +234,8 @@ export function EventCarousel({
 
   const getEventStartDate = (event: Event): Date | null => {
     if (isWebinarEvent(event)) {
-      const startTimeString = event.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+      const startTimeString =
+        event.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
       return startTimeString ? new Date(startTimeString) : null;
     }
     if (isClassEvent(event)) {
@@ -254,7 +259,9 @@ export function EventCarousel({
   };
 
   // Helper function for status badge variant - Uses distinct valid variants
-  const getStatusVariant = (status: WebinarStatus | ClassStatus ): "default" | "secondary" | "destructive" | "outline" => {
+  const getStatusVariant = (
+    status: WebinarStatus | ClassStatus,
+  ): "default" | "secondary" | "destructive" | "outline" => {
     switch (status) {
       case WebinarStatus.SCHEDULED:
       case ClassStatus.SCHEDULED:
@@ -306,8 +313,11 @@ export function EventCarousel({
                         {formatDateTime(startDate)}
                       </span>
                       {startDate && status !== null && (
-                        <Badge variant={getStatusVariant(status)} className="text-xs">
-                          {status.toString().replace('_', ' ')}
+                        <Badge
+                          variant={getStatusVariant(status)}
+                          className="text-xs"
+                        >
+                          {status.toString().replace("_", " ")}
                         </Badge>
                       )}
                     </div>

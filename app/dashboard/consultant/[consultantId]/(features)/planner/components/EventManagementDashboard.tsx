@@ -119,9 +119,12 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   const handleWebinarDelete = async (webinarId: string) => {
     console.log(`EventManagementDashboard - Deleting webinar: ${webinarId}`);
     try {
-      const response = await fetch(`/api/events/webinars/crud-with-plan/${webinarId}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/events/webinars/crud-with-plan/${webinarId}`,
+        {
+          method: "DELETE",
+        },
+      );
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -136,12 +139,12 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
 
       // Refresh the list
       setWebinars((prev) => prev.filter((w) => w.id !== webinarId));
-
     } catch (error) {
       console.error("Error deleting webinar:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to delete webinar.",
+        description:
+          error instanceof Error ? error.message : "Failed to delete webinar.",
         variant: "destructive",
       });
       // Re-throw or handle as needed
@@ -153,9 +156,12 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   const handleClassDelete = async (classId: string) => {
     console.log(`EventManagementDashboard - Deleting class: ${classId}`);
     try {
-      const response = await fetch(`/api/events/classes/crud-with-plan/${classId}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/events/classes/crud-with-plan/${classId}`,
+        {
+          method: "DELETE",
+        },
+      );
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -170,12 +176,12 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
 
       // Refresh the list
       setClasses((prev) => prev.filter((c) => c.id !== classId));
-
     } catch (error) {
       console.error("Error deleting class:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to delete class.",
+        description:
+          error instanceof Error ? error.message : "Failed to delete class.",
         variant: "destructive",
       });
       // Re-throw or handle as needed

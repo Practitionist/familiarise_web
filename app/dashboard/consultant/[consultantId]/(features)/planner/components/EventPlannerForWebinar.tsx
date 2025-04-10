@@ -38,7 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import iso6391 from 'iso-639-1'; // Import the language library
+import iso6391 from "iso-639-1"; // Import the language library
 
 // Define the level options
 const levelOptions = ["Beginner", "Intermediate", "Advanced", "Expert"];
@@ -84,10 +84,10 @@ export function EventPlannerForWebinar({
 
     // Get local time components using browser's interpretation of the Date object
     const year = dateObj.getFullYear();
-    const month = (dateObj.getMonth() + 1).toString().padStart(2, '0'); // Months are 0-indexed
-    const day = dateObj.getDate().toString().padStart(2, '0');
-    const hours = dateObj.getHours().toString().padStart(2, '0');
-    const minutes = dateObj.getMinutes().toString().padStart(2, '0');
+    const month = (dateObj.getMonth() + 1).toString().padStart(2, "0"); // Months are 0-indexed
+    const day = dateObj.getDate().toString().padStart(2, "0");
+    const hours = dateObj.getHours().toString().padStart(2, "0");
+    const minutes = dateObj.getMinutes().toString().padStart(2, "0");
 
     // Format as YYYY-MM-DDTHH:mm which is expected by datetime-local
     return `${year}-${month}-${day}T${hours}:${minutes}`;
@@ -125,7 +125,10 @@ export function EventPlannerForWebinar({
       initialData.appointment.slotsOfAppointment.length > 0
     ) {
       const slot = initialData.appointment.slotsOfAppointment[0];
-      console.log("[EventPlannerForWebinar] Raw slotStartTimeInUTC from initialData:", slot.slotStartTimeInUTC);
+      console.log(
+        "[EventPlannerForWebinar] Raw slotStartTimeInUTC from initialData:",
+        slot.slotStartTimeInUTC,
+      );
       console.log("Found existing slot for appointment:", {
         slotId: slot.id,
         startTime: slot.slotStartTimeInUTC,
@@ -150,7 +153,8 @@ export function EventPlannerForWebinar({
       prerequisites: initialData?.webinarPlan?.prerequisites ?? "",
       materialProvided: initialData?.webinarPlan?.materialProvided ?? "",
       learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
-      certificateProvided: initialData?.webinarPlan?.certificateProvided ?? false,
+      certificateProvided:
+        initialData?.webinarPlan?.certificateProvided ?? false,
       // Convert topics from objects to strings for the form
       // Simplify mapping: Assume topics are always objects from Prisma include
       topics:
@@ -177,7 +181,8 @@ export function EventPlannerForWebinar({
         prerequisites: initialData.webinarPlan.prerequisites ?? "",
         materialProvided: initialData.webinarPlan.materialProvided ?? "",
         learningOutcomes: initialData.webinarPlan.learningOutcomes ?? [],
-        certificateProvided: initialData.webinarPlan.certificateProvided ?? false,
+        certificateProvided:
+          initialData.webinarPlan.certificateProvided ?? false,
         topics:
           initialData.webinarPlan.topics?.map((topic) => topic.name) ?? [],
         scheduledAt: getInitialScheduledAt(),
@@ -189,7 +194,10 @@ export function EventPlannerForWebinar({
   // Log initialData when it changes
   useEffect(() => {
     if (initialData) {
-      console.log("[EventPlannerForWebinar] Received initialData:", JSON.stringify(initialData, null, 2));
+      console.log(
+        "[EventPlannerForWebinar] Received initialData:",
+        JSON.stringify(initialData, null, 2),
+      );
     }
   }, [initialData]);
 
@@ -420,7 +428,9 @@ export function EventPlannerForWebinar({
                               <SelectValue placeholder="Select language" />
                             </SelectTrigger>
                           </FormControl>
-                          <SelectContent className="max-h-[200px]"> {/* Allow scrolling */}
+                          <SelectContent className="max-h-[200px]">
+                            {" "}
+                            {/* Allow scrolling */}
                             {iso6391.getAllNames().map((langName) => (
                               <SelectItem key={langName} value={langName}>
                                 {langName}
@@ -503,7 +513,11 @@ export function EventPlannerForWebinar({
                                   {...priceField}
                                   onChange={(e) => {
                                     const value = e.target.value;
-                                    priceField.onChange(value === '' ? 0 : Number.parseFloat(value));
+                                    priceField.onChange(
+                                      value === ""
+                                        ? 0
+                                        : Number.parseFloat(value),
+                                    );
                                   }}
                                 />
                               </FormControl>
@@ -511,7 +525,8 @@ export function EventPlannerForWebinar({
                           />
                         </div>
                         <FormMessage className="mt-1">
-                          {form.formState.errors.price?.message ?? form.formState.errors.priceCurrency?.message}
+                          {form.formState.errors.price?.message ??
+                            form.formState.errors.priceCurrency?.message}
                         </FormMessage>
                       </FormItem>
                     )}
@@ -552,7 +567,9 @@ export function EventPlannerForWebinar({
                             {...field}
                             onChange={(e) => {
                               const value = e.target.value;
-                              field.onChange(value === '' ? 0 : Number.parseFloat(value));
+                              field.onChange(
+                                value === "" ? 0 : Number.parseFloat(value),
+                              );
                             }}
                           />
                         </FormControl>

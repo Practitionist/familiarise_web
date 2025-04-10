@@ -15,8 +15,9 @@ const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
 }).extend({
   consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
   // Redefine topics to expect an array of IDs without content validation
-  topics: z.array(z.string().min(1, "Topic ID cannot be empty"))
-          .min(1, "At least one topic ID is required"),
+  topics: z
+    .array(z.string().min(1, "Topic ID cannot be empty"))
+    .min(1, "At least one topic ID is required"),
   // Fields for the class instance
   status: z.nativeEnum(ClassStatus).optional().default(ClassStatus.SCHEDULED),
   startDate: z
@@ -30,8 +31,8 @@ const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
 
 // Schema for PATCH request body
 // Makes most fields optional, requires plan 'id', adds 'classId'
-const PatchClassWithPlanBodySchema = PostClassWithPlanBodySchema.partial().extend(
-  {
+const PatchClassWithPlanBodySchema =
+  PostClassWithPlanBodySchema.partial().extend({
     id: z.string().min(1, "Class Plan ID is required for update"), // Plan ID is required
     classId: z.string().optional().nullable(), // Class Instance ID is optional
     // topics is already optional via partial()
@@ -43,8 +44,7 @@ const PatchClassWithPlanBodySchema = PostClassWithPlanBodySchema.partial().exten
       .refine((val) => !val || !isNaN(Date.parse(val)), {
         message: "Invalid date format for endDate",
       }),
-  },
-);
+  });
 
 export async function POST(request: NextRequest) {
   try {
@@ -89,18 +89,19 @@ export async function POST(request: NextRequest) {
     // Calculate end date only if startDate is provided and valid
     let start: Date | undefined = startDate ? new Date(startDate) : undefined;
     let end: Date | undefined = undefined;
-    if (start && !isNaN(start.getTime())) { // Check if date is valid
+    if (start && !isNaN(start.getTime())) {
+      // Check if date is valid
       end = new Date(start);
       // Ensure durationInMonths is valid before using
-      if (typeof durationInMonths === 'number' && durationInMonths > 0) {
-         end.setMonth(end.getMonth() + durationInMonths);
+      if (typeof durationInMonths === "number" && durationInMonths > 0) {
+        end.setMonth(end.getMonth() + durationInMonths);
       } else {
-         // Handle invalid durationInMonths if necessary, maybe throw error or default
-         console.warn("Invalid durationInMonths provided:", durationInMonths);
-         end = undefined; // Or set default end date logic
+        // Handle invalid durationInMonths if necessary, maybe throw error or default
+        console.warn("Invalid durationInMonths provided:", durationInMonths);
+        end = undefined; // Or set default end date logic
       }
     } else {
-        start = undefined; // Treat invalid start date string as undefined
+      start = undefined; // Treat invalid start date string as undefined
     }
 
     // Create class plan, instance, and appointments in a transaction
@@ -128,11 +129,12 @@ export async function POST(request: NextRequest) {
             ? { connect: topicIds.map((id: string) => ({ id })) }
             : undefined,
           classContents: {
-            create: classContents.map((content) => ({ // No 'any' needed
+            create: classContents.map((content) => ({
+              // No 'any' needed
               title: content.title,
               description: content.description,
               contentType: content.contentType ?? null, // Use nullish coalescing
-              contentUrl: content.contentUrl ?? null,   // Use nullish coalescing
+              contentUrl: content.contentUrl ?? null, // Use nullish coalescing
               order: content.order,
               hoursAllotted: content.hoursAllotted,
             })),
@@ -225,10 +227,11 @@ export async function POST(request: NextRequest) {
       // Log stack trace for more context if available
       console.error("Stack trace:", error.stack);
       // Capture Prisma-specific errors if possible (example)
-      if ('code' in error && 'meta' in error) { // Basic check for Prisma error structure
-          errorDetails = { code: error.code, meta: error.meta };
-          console.error("Prisma Error Code:", error.code);
-          console.error("Prisma Error Meta:", error.meta);
+      if ("code" in error && "meta" in error) {
+        // Basic check for Prisma error structure
+        errorDetails = { code: error.code, meta: error.meta };
+        console.error("Prisma Error Code:", error.code);
+        console.error("Prisma Error Meta:", error.meta);
       }
     }
     return NextResponse.json(
@@ -282,7 +285,7 @@ export async function PATCH(request: NextRequest) {
       classContents,
       status,
       startDate: startDateString, // Rename to avoid conflict with Date object
-      endDate: endDateString,     // Rename to avoid conflict with Date object
+      endDate: endDateString, // Rename to avoid conflict with Date object
     } = validatedData;
     // --- End Zod Validation ---
 
@@ -323,7 +326,12 @@ export async function PATCH(request: NextRequest) {
         : null;
 
     // Check if trying to update instance fields without an instance (still necessary)
-     if (!classToUpdate && (status !== undefined || startDateString !== undefined || endDateString !== undefined)) {
+    if (
+      !classToUpdate &&
+      (status !== undefined ||
+        startDateString !== undefined ||
+        endDateString !== undefined)
+    ) {
       return NextResponse.json(
         { error: "Cannot update status or dates: no class instance found" },
         { status: 400 },
@@ -354,7 +362,8 @@ export async function PATCH(request: NextRequest) {
           // Prepare new class contents for creation
           classContentsUpdateData = {
             classContents: {
-              create: classContents.map((content) => ({ // Use validated content
+              create: classContents.map((content) => ({
+                // Use validated content
                 title: content.title,
                 description: content.description,
                 contentType: content.contentType ?? null,
@@ -375,24 +384,35 @@ export async function PATCH(request: NextRequest) {
         const updateData: any = {};
         if (title !== undefined) updateData.title = title;
         if (description !== undefined) updateData.description = description;
-        if (durationInMonths !== undefined) updateData.durationInMonths = durationInMonths;
+        if (durationInMonths !== undefined)
+          updateData.durationInMonths = durationInMonths;
         if (price !== undefined) updateData.price = price;
-        if (priceCurrency !== undefined) updateData.priceCurrency = priceCurrency;
-        if (certificateProvided !== undefined) updateData.certificateProvided = certificateProvided;
+        if (priceCurrency !== undefined)
+          updateData.priceCurrency = priceCurrency;
+        if (certificateProvided !== undefined)
+          updateData.certificateProvided = certificateProvided;
         if (callsPerWeek !== undefined) updateData.callsPerWeek = callsPerWeek;
-        if (videoMeetings !== undefined) updateData.videoMeetings = videoMeetings;
+        if (videoMeetings !== undefined)
+          updateData.videoMeetings = videoMeetings;
         if (emailSupport !== undefined) updateData.emailSupport = emailSupport;
-        if (maxParticipants !== undefined) updateData.maxParticipants = maxParticipants;
+        if (maxParticipants !== undefined)
+          updateData.maxParticipants = maxParticipants;
         if (language !== undefined) updateData.language = language;
         if (level !== undefined) updateData.level = level;
-        if (prerequisites !== undefined) updateData.prerequisites = prerequisites; // handles null too
-        if (materialProvided !== undefined) updateData.materialProvided = materialProvided; // handles null too
-        if (learningOutcomes !== undefined) updateData.learningOutcomes = learningOutcomes;
-        if (consultantProfileId !== undefined) updateData.consultantProfile = { connect: { id: consultantProfileId } };
+        if (prerequisites !== undefined)
+          updateData.prerequisites = prerequisites; // handles null too
+        if (materialProvided !== undefined)
+          updateData.materialProvided = materialProvided; // handles null too
+        if (learningOutcomes !== undefined)
+          updateData.learningOutcomes = learningOutcomes;
+        if (consultantProfileId !== undefined)
+          updateData.consultantProfile = {
+            connect: { id: consultantProfileId },
+          };
 
         // Spread the contents update if any (only if classContents was in validatedData)
         if (classContents !== undefined) {
-             Object.assign(updateData, classContentsUpdateData);
+          Object.assign(updateData, classContentsUpdateData);
         }
 
         // Determine how to handle topics: Use validated 'topicIds' if provided in the request,
@@ -443,17 +463,21 @@ export async function PATCH(request: NextRequest) {
         // Execute the plan update only if there's data to update
         let updatedClassPlan = existingPlan; // Start with existing if no updates
         // Check if updateData has keys, or if topics/contents were explicitly provided for update
-        if (Object.keys(updateData).length > 0 || topicIds !== undefined || classContents !== undefined ) {
-             updatedClassPlan = await tx.classPlan.update({
-              where: { id }, // Use validated id
-              data: updateData,
-              include: {
-                consultantProfile: true,
-                topics: true,
-                classContents: true,
-                classes: true, // Keep included to match existingPlan type
-              },
-            });
+        if (
+          Object.keys(updateData).length > 0 ||
+          topicIds !== undefined ||
+          classContents !== undefined
+        ) {
+          updatedClassPlan = await tx.classPlan.update({
+            where: { id }, // Use validated id
+            data: updateData,
+            include: {
+              consultantProfile: true,
+              topics: true,
+              classContents: true,
+              classes: true, // Keep included to match existingPlan type
+            },
+          });
         }
 
         console.log("Updated class plan:", {
@@ -481,25 +505,38 @@ export async function PATCH(request: NextRequest) {
           // Handle startDate: update if provided, set to null if explicitly null, otherwise leave unchanged
           // Need to parse the string date from validated data
           if (startDateString !== undefined) {
-             classUpdateData.startDate = startDateString ? new Date(startDateString) : null;
-             // Optional: Add check for valid date parsing: !isNaN(classUpdateData.startDate?.getTime())
-             if (classUpdateData.startDate && isNaN(classUpdateData.startDate.getTime())) {
-                 console.warn("Invalid startDate received in PATCH:", startDateString);
-                 // Decide how to handle: throw error, ignore, set null?
-                 // For now, let's ignore the invalid date update for startDate
-                 delete classUpdateData.startDate;
-             }
+            classUpdateData.startDate = startDateString
+              ? new Date(startDateString)
+              : null;
+            // Optional: Add check for valid date parsing: !isNaN(classUpdateData.startDate?.getTime())
+            if (
+              classUpdateData.startDate &&
+              isNaN(classUpdateData.startDate.getTime())
+            ) {
+              console.warn(
+                "Invalid startDate received in PATCH:",
+                startDateString,
+              );
+              // Decide how to handle: throw error, ignore, set null?
+              // For now, let's ignore the invalid date update for startDate
+              delete classUpdateData.startDate;
+            }
           }
 
           // Handle endDate: update if provided, set to null if explicitly null, otherwise leave unchanged
           if (endDateString !== undefined) {
-             classUpdateData.endDate = endDateString ? new Date(endDateString) : null;
-             // Optional: Add check for valid date parsing
-             if (classUpdateData.endDate && isNaN(classUpdateData.endDate.getTime())) {
-                 console.warn("Invalid endDate received in PATCH:", endDateString);
-                 // Ignore invalid date update for endDate
-                 delete classUpdateData.endDate;
-             }
+            classUpdateData.endDate = endDateString
+              ? new Date(endDateString)
+              : null;
+            // Optional: Add check for valid date parsing
+            if (
+              classUpdateData.endDate &&
+              isNaN(classUpdateData.endDate.getTime())
+            ) {
+              console.warn("Invalid endDate received in PATCH:", endDateString);
+              // Ignore invalid date update for endDate
+              delete classUpdateData.endDate;
+            }
           }
 
           if (Object.keys(classUpdateData).length > 0) {
@@ -580,15 +617,15 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ data: responseData }, { status: 200 });
   } catch (error) {
-     // --- Zod Error Handling ---
-     if (error instanceof z.ZodError) {
+    // --- Zod Error Handling ---
+    if (error instanceof z.ZodError) {
       console.error("Validation Error (PATCH Catch):", error.issues);
       return NextResponse.json(
         { error: "Invalid input", details: error.issues },
         { status: 400 },
       );
     }
-     // --- End Zod Error Handling ---
+    // --- End Zod Error Handling ---
 
     console.error("Error updating class with plan:", error);
 
@@ -602,11 +639,11 @@ export async function PATCH(request: NextRequest) {
         { status: 400 },
       );
     }
-     if (
+    if (
       error instanceof Error &&
       error.message === "Invalid data provided for class contents." // Catch specific content error
     ) {
-       return NextResponse.json(
+      return NextResponse.json(
         { error: "Invalid class contents provided." },
         { status: 400 },
       );

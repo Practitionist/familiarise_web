@@ -110,8 +110,11 @@ export class PlannerService {
 
       return webinarsData.data.map((webinar: any) => {
         // Extract the start time from the first slot, if available
-        const startTimeString = webinar.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
-        const scheduledAtDate = startTimeString ? new Date(startTimeString) : undefined;
+        const startTimeString =
+          webinar.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+        const scheduledAtDate = startTimeString
+          ? new Date(startTimeString)
+          : undefined;
 
         return {
           id: webinar.id,
@@ -235,7 +238,10 @@ export class PlannerService {
             allTopicIds,
           );
         } catch (error) {
-          console.error("[PlannerService.saveWebinar] Error creating topics:", error);
+          console.error(
+            "[PlannerService.saveWebinar] Error creating topics:",
+            error,
+          );
           throw new Error(
             "Failed to create topics: " +
               (error instanceof Error ? error.message : String(error)),
@@ -290,7 +296,11 @@ export class PlannerService {
             price: webinarData.webinarPlan?.price,
             priceCurrency: webinarData.webinarPlan?.priceCurrency,
             certificateProvided: webinarData.webinarPlan?.certificateProvided,
-            durationInHours: ("durationInHours" in (webinarData.webinarPlan ?? {}) && typeof webinarData.webinarPlan?.durationInHours === 'number') ? webinarData.webinarPlan.durationInHours : undefined, // Only include if valid number
+            durationInHours:
+              "durationInHours" in (webinarData.webinarPlan ?? {}) &&
+              typeof webinarData.webinarPlan?.durationInHours === "number"
+                ? webinarData.webinarPlan.durationInHours
+                : undefined, // Only include if valid number
             maxParticipants: webinarData.webinarPlan?.maxParticipants,
             language: webinarData.webinarPlan?.language,
             level: webinarData.webinarPlan?.level,
@@ -299,15 +309,18 @@ export class PlannerService {
             learningOutcomes: webinarData.webinarPlan?.learningOutcomes,
             consultantProfileId: consultantId, // Should this be optional for PATCH? API expects it currently. Keep for now.
             scheduledAt: scheduledAtDate,
-            topicIds: // API expects 'topicIds' for PATCH (inherited from POST schema definition)
+            // API expects 'topicIds' for PATCH (inherited from POST schema definition)
+            topicIds:
               allTopicIds.length > 0 // If we got IDs back from createTopics
                 ? allTopicIds
                 : topicNames.length === 0 // If input 'topicNames' was empty (explicit clear)
                   ? [] // Send empty array to clear topics
                   : undefined, // Otherwise (no change requested / error getting IDs?), send undefined
           };
-           // Remove undefined fields before sending
-          Object.keys(requestBody).forEach(key => requestBody[key] === undefined && delete requestBody[key]);
+          // Remove undefined fields before sending
+          Object.keys(requestBody).forEach(
+            (key) => requestBody[key] === undefined && delete requestBody[key],
+          );
 
           console.log(
             "[PlannerService.saveWebinar] Constructed PATCH request body:",
@@ -324,8 +337,10 @@ export class PlannerService {
             scheduledAt: scheduledAtDate,
             topicIds: allTopicIds, // Send newly created/found topic IDs (API expects topicIds)
           };
-           // Remove undefined fields before sending
-          Object.keys(requestBody).forEach(key => requestBody[key] === undefined && delete requestBody[key]);
+          // Remove undefined fields before sending
+          Object.keys(requestBody).forEach(
+            (key) => requestBody[key] === undefined && delete requestBody[key],
+          );
           console.log(
             "[PlannerService.saveWebinar] Constructed POST request body:",
             JSON.stringify(requestBody, null, 2),
@@ -476,7 +491,7 @@ export class PlannerService {
           .map((topic) => (typeof topic === "string" ? topic : topic?.name)) // Safer access
           .filter(Boolean); // Filter out null/undefined names
       }
-       console.log(
+      console.log(
         "[PlannerService.saveClass] Extracted topic names from input data:",
         topicNames,
       );
@@ -486,26 +501,29 @@ export class PlannerService {
 
       if (topicNames.length > 0) {
         try {
-           console.log(
+          console.log(
             "[PlannerService.saveClass] Calling createTopics with names:",
             topicNames,
           );
           const newTopicIds = await this.createTopics(topicNames);
           this.newlyCreatedTopicIds = newTopicIds; // See comment in saveWebinar about rollback
           allTopicIds = [...newTopicIds];
-           console.log(
+          console.log(
             "[PlannerService.saveClass] Received topic IDs from createTopics:",
             allTopicIds,
           );
         } catch (error) {
-          console.error("[PlannerService.saveClass] Error creating topics:", error);
+          console.error(
+            "[PlannerService.saveClass] Error creating topics:",
+            error,
+          );
           throw new Error(
             "Failed to create topics: " +
               (error instanceof Error ? error.message : String(error)),
           );
         }
       } else if (isUpdate) {
-         console.log(
+        console.log(
           "[PlannerService.saveClass] No topic names provided for update. Existing topics might be preserved or cleared.",
         );
       }
@@ -526,41 +544,52 @@ export class PlannerService {
           // --- Linter Fix: Ensure classData.classPlan exists ---
           if (!classData.classPlan) {
             // This shouldn't logically happen if isUpdate is true, but handle defensively
-            console.error("[PlannerService.saveClass] Error: classData.classPlan is undefined during PATCH operation.");
-            throw new Error("Internal error: Class plan data is missing during update.");
+            console.error(
+              "[PlannerService.saveClass] Error: classData.classPlan is undefined during PATCH operation.",
+            );
+            throw new Error(
+              "Internal error: Class plan data is missing during update.",
+            );
           }
           // --- End Linter Fix ---
 
           requestBody = {
-              id: planId, // Plan ID is guaranteed if isUpdate is true
-              classId: classId || undefined, // Instance ID or undefined
-              // Now safe to access classData.classPlan properties directly
-              title: classData.classPlan.title,
-              description: classData.classPlan.description,
-              price: classData.classPlan.price,
-              priceCurrency: classData.classPlan.priceCurrency,
-              certificateProvided: classData.classPlan.certificateProvided,
-              durationInMonths: ("durationInMonths" in classData.classPlan && typeof classData.classPlan.durationInMonths === 'number') ? classData.classPlan.durationInMonths : undefined,
-              maxParticipants: classData.classPlan.maxParticipants,
-              language: classData.classPlan.language,
-              level: classData.classPlan.level,
-              prerequisites: classData.classPlan.prerequisites,
-              materialProvided: classData.classPlan.materialProvided,
-              learningOutcomes: classData.classPlan.learningOutcomes,
-              emailSupport: classData.classPlan.emailSupport,
-              callsPerWeek: classData.classPlan.callsPerWeek,
-              videoMeetings: classData.classPlan.videoMeetings,
-              classContents: classData.classPlan.classContents, // Send updated contents if provided
+            id: planId, // Plan ID is guaranteed if isUpdate is true
+            classId: classId || undefined, // Instance ID or undefined
+            // Now safe to access classData.classPlan properties directly
+            title: classData.classPlan.title,
+            description: classData.classPlan.description,
+            price: classData.classPlan.price,
+            priceCurrency: classData.classPlan.priceCurrency,
+            certificateProvided: classData.classPlan.certificateProvided,
+            durationInMonths:
+              "durationInMonths" in classData.classPlan &&
+              typeof classData.classPlan.durationInMonths === "number"
+                ? classData.classPlan.durationInMonths
+                : undefined,
+            maxParticipants: classData.classPlan.maxParticipants,
+            language: classData.classPlan.language,
+            level: classData.classPlan.level,
+            prerequisites: classData.classPlan.prerequisites,
+            materialProvided: classData.classPlan.materialProvided,
+            learningOutcomes: classData.classPlan.learningOutcomes,
+            emailSupport: classData.classPlan.emailSupport,
+            callsPerWeek: classData.classPlan.callsPerWeek,
+            videoMeetings: classData.classPlan.videoMeetings,
+            classContents: classData.classPlan.classContents, // Send updated contents if provided
             consultantProfileId: consultantId, // Keep for now, API might require it
-            topics: // API expects 'topics' (containing IDs) for Class PATCH
+            // API expects 'topics' (containing IDs) for Class PATCH
+            topics:
               allTopicIds.length > 0 // If we got IDs back
                 ? allTopicIds
                 : topicNames.length === 0 // If input 'topicNames' was empty
                   ? [] // Send empty array to clear topics
                   : undefined, // Otherwise, send undefined
           };
-           // Remove undefined fields before sending
-          Object.keys(requestBody).forEach(key => requestBody[key] === undefined && delete requestBody[key]);
+          // Remove undefined fields before sending
+          Object.keys(requestBody).forEach(
+            (key) => requestBody[key] === undefined && delete requestBody[key],
+          );
           console.log(
             "[PlannerService.saveClass] Constructed PATCH request body:",
             JSON.stringify(requestBody, null, 2),
@@ -578,14 +607,16 @@ export class PlannerService {
             consultantProfileId: consultantId,
             topics: allTopicIds ?? [], // Send topic IDs (API expects 'topics' key with IDs)
           };
-           // Remove undefined fields before sending
-          Object.keys(requestBody).forEach(key => requestBody[key] === undefined && delete requestBody[key]);
+          // Remove undefined fields before sending
+          Object.keys(requestBody).forEach(
+            (key) => requestBody[key] === undefined && delete requestBody[key],
+          );
           console.log(
             "[PlannerService.saveClass] Constructed POST request body:",
             JSON.stringify(requestBody, null, 2),
           );
         }
-         console.log(
+        console.log(
           `[PlannerService.saveClass] Sending ${method} request to ${endpoint}...`,
         );
         const response = await fetch(endpoint, {
@@ -723,7 +754,9 @@ export class PlannerService {
       );
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: "Failed to parse error response" }));
+        const errorData = await response
+          .json()
+          .catch(() => ({ error: "Failed to parse error response" }));
         console.error(
           "[PlannerService.createTopics] API error response:",
           errorData,
@@ -732,16 +765,24 @@ export class PlannerService {
       }
 
       const { data: topics } = await response.json();
-      if (!Array.isArray(topics)) { // Simplified check
+      if (!Array.isArray(topics)) {
+        // Simplified check
         console.error(
-          "[PlannerService.createTopics] Invalid API response format - 'data' is not an array:", topics
+          "[PlannerService.createTopics] Invalid API response format - 'data' is not an array:",
+          topics,
         );
         throw new Error("Invalid response format from topic creation API");
       }
 
-      console.log("[PlannerService.createTopics] Topics received from API:", topics);
+      console.log(
+        "[PlannerService.createTopics] Topics received from API:",
+        topics,
+      );
       const topicIds = topics.map((topic) => topic.id);
-      console.log("[PlannerService.createTopics] Returning topic IDs:", topicIds);
+      console.log(
+        "[PlannerService.createTopics] Returning topic IDs:",
+        topicIds,
+      );
       return topicIds;
     } catch (error) {
       console.error("[PlannerService.createTopics] Error:", error);
@@ -905,9 +946,15 @@ export class PlannerService {
         // Relationships
         consultantProfileId: consultantId, // Required for creation/update context
         consultantProfile: null, // Set to null as expected by type
-        topics: topicIds.map((id) => ({ id, name: "", createdAt: now, updatedAt: now })),
+        topics: topicIds.map((id) => ({
+          id,
+          name: "",
+          createdAt: now,
+          updatedAt: now,
+        })),
         // Webinar specific plan fields
-        durationInHours: typeof data.durationInHours === 'number' ? data.durationInHours : 1,
+        durationInHours:
+          typeof data.durationInHours === "number" ? data.durationInHours : 1,
         certificateProvided: data.certificateProvided ?? false,
         // Timestamps
         createdAt: createdAt,
@@ -977,20 +1024,34 @@ export class PlannerService {
         prerequisites: classDataForm.prerequisites ?? null,
         materialProvided: classDataForm.materialProvided ?? null,
         learningOutcomes: classDataForm.learningOutcomes ?? [],
-         // Relationships
+        // Relationships
         consultantProfileId: consultantId, // Required for context
         consultantProfile: null, // Set to null as expected by type
-        topics: topicIds.map((id) => ({ id, name: "", createdAt: now, updatedAt: now })),
+        topics: topicIds.map((id) => ({
+          id,
+          name: "",
+          createdAt: now,
+          updatedAt: now,
+        })),
         classContents: this.formatClassContents(
-            classDataForm.classContents ?? [],
-            classPlanId,
-            now,
-          ),
+          classDataForm.classContents ?? [],
+          classPlanId,
+          now,
+        ),
         // Class specific plan fields
         certificateProvided: classDataForm.certificateProvided ?? false,
-        durationInMonths: typeof classDataForm.durationInMonths === 'number' ? classDataForm.durationInMonths : 1,
-        callsPerWeek: typeof classDataForm.callsPerWeek === 'number' ? classDataForm.callsPerWeek : 1,
-        videoMeetings: typeof classDataForm.videoMeetings === 'number' ? classDataForm.videoMeetings : 1,
+        durationInMonths:
+          typeof classDataForm.durationInMonths === "number"
+            ? classDataForm.durationInMonths
+            : 1,
+        callsPerWeek:
+          typeof classDataForm.callsPerWeek === "number"
+            ? classDataForm.callsPerWeek
+            : 1,
+        videoMeetings:
+          typeof classDataForm.videoMeetings === "number"
+            ? classDataForm.videoMeetings
+            : 1,
         emailSupport: classDataForm.emailSupport ?? "GENERAL",
         // Timestamps
         createdAt: createdAt,
@@ -998,7 +1059,7 @@ export class PlannerService {
       },
       // Other optional root fields for ClassEvent
       startDate: undefined, // Let API handle based on logic
-      endDate: undefined,   // Let API handle based on logic
+      endDate: undefined, // Let API handle based on logic
       status: ClassStatus.SCHEDULED, // Provide default status
       recordingUrls: [],
       feedbackSummary: null,
