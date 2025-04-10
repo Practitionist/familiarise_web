@@ -886,8 +886,16 @@ export function EventPlannerForClass({
                               <FormControl>
                                 <Input
                                   type="number"
+                                  min="1"
                                   {...contentField}
-                                  value={String(contentField.value ?? "")}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    const parsedValue = parseInt(value, 10);
+                                    // Pass the parsed number if valid, otherwise 0 (Zod will catch min(1))
+                                    contentField.onChange(
+                                      isNaN(parsedValue) ? 0 : parsedValue,
+                                    );
+                                  }}
                                 />
                               </FormControl>
                               <FormMessage />
@@ -906,8 +914,17 @@ export function EventPlannerForClass({
                               <FormControl>
                                 <Input
                                   type="number"
+                                  step="0.5"
+                                  min="0.5"
                                   {...contentField}
-                                  value={String(contentField.value ?? "")}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    const parsedValue = parseFloat(value);
+                                    // Pass the parsed number if valid, otherwise 0 (Zod will catch min(0.5))
+                                    contentField.onChange(
+                                      isNaN(parsedValue) ? 0 : parsedValue,
+                                    );
+                                  }}
                                 />
                               </FormControl>
                               <FormMessage />
