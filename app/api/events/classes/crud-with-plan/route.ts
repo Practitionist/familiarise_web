@@ -199,7 +199,6 @@ export async function POST(request: NextRequest) {
               },
             },
           },
-          meetingRoom: true,
           waitlist: true,
         },
       });
@@ -560,7 +559,6 @@ export async function PATCH(request: NextRequest) {
                     },
                   },
                 },
-                meetingRoom: true,
                 waitlist: true,
               },
             });
@@ -585,7 +583,6 @@ export async function PATCH(request: NextRequest) {
                     },
                   },
                 },
-                meetingRoom: true,
                 waitlist: true,
               },
             });
