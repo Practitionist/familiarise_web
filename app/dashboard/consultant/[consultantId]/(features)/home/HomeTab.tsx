@@ -4,7 +4,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import { joinAppointmentMeeting } from "@/lib/meeting";
+import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { useRouter } from "next/navigation";
 import { Suspense } from "react";
@@ -46,23 +46,32 @@ export function HomeTab({
   const { toast } = useToast();
 
   const handleJoinMeeting = async (appointment: IAppointment) => {
-    try {
-      if (!client) {
-        toast({
-          title: "Error",
-          description: "Video client not initialized",
-          variant: "destructive",
-        });
-        return;
-      }
+    if (!client) {
+      console.error("Stream client not ready");
+      toast({ title: "Error", description: "Meeting client not ready." });
+      return;
+    }
+    const relevantSlot = appointment.slotsOfAppointment?.[0];
+    if (!relevantSlot) {
+      toast({
+        title: "Error",
+        description: "Slot information missing for this appointment item.",
+      });
+      return;
+    }
 
-      const meetingId = await joinAppointmentMeeting(client, appointment);
+    try {
+      const meetingId = await getOrCreateAppointmentMeeting(
+        client,
+        appointment,
+        relevantSlot,
+      );
       router.push(`/meetings/${meetingId}`);
     } catch (error) {
       console.error("Error joining meeting:", error);
       toast({
-        title: "Error joining meeting",
-        description: error instanceof Error ? error.message : "Unknown error",
+        title: "Error",
+        description: "Failed to join meeting.",
         variant: "destructive",
       });
     }
@@ -146,11 +155,13 @@ export function HomeTab({
                       </div>
                     </div>
                     <div className="mt-3">
-                      <p className="text-sm text-gray-500">
+                      <div className="text-xs text-gray-500 mt-1">
                         {getStartTime(appointment)
-                          ? formatAppointmentTime(getStartTime(appointment)!)
+                          ? formatAppointmentTime(
+                              getStartTime(appointment)!.toISOString(),
+                            )
                           : "Time not set"}
-                      </p>
+                      </div>
                       <div className="mt-2 flex items-center justify-between">
                         <Badge
                           variant="secondary"
@@ -163,9 +174,7 @@ export function HomeTab({
                           size="sm"
                           className={joinButtonStyle}
                           disabled={!isJoinable}
-                          onClick={() =>
-                            isJoinable && handleJoinMeeting(appointment)
-                          }
+                          onClick={() => handleJoinMeeting(appointment)}
                         >
                           Join meet
                         </Button>
@@ -275,13 +284,15 @@ export function HomeTab({
                                     </p>
                                   </>
                                 )}
-                                <p className="text-xs">
+                                <div className="text-xs text-gray-500">
                                   {getStartTime(appointment)
                                     ? formatAppointmentTime(
-                                        getStartTime(appointment)!,
+                                        getStartTime(
+                                          appointment,
+                                        )!.toISOString(),
                                       )
                                     : "Time not set"}
-                                </p>
+                                </div>
                               </div>
                               <div className="flex items-center space-x-2">
                                 <Badge
@@ -295,7 +306,6 @@ export function HomeTab({
                                     className="bg-blue-500 text-white w-full sm:w-auto text-sm py-1"
                                     disabled={!isJoinable}
                                     onClick={() =>
-                                      isJoinable &&
                                       handleJoinMeeting(appointment)
                                     }
                                   >

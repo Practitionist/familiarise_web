@@ -4,20 +4,20 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { joinAppointmentMeeting } from "@/lib/meeting";
+import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { useRouter } from "next/navigation";
-import { AppointmentsTabProps } from "../../types";
+import { AppointmentsTabProps, IAppointment } from "../../types";
 import {
-  getConsumeeName,
-  getConsumeeImage,
-  getStartTime,
   formatAppointmentTime,
   getAppointmentStatus,
   getAppointmentTypeAndPlan,
-  groupRecurringAppointments,
-  getGroupTitle,
+  getConsumeeImage,
+  getConsumeeName,
   getGroupStatus,
+  getGroupTitle,
+  getStartTime,
+  groupRecurringAppointments,
 } from "../../utils/appointmentHelpers";
 
 export function AppointmentsTab({
@@ -28,19 +28,32 @@ export function AppointmentsTab({
   const client = useStreamVideoClient();
   const { toast } = useToast();
 
-  const handleJoinMeeting = async (appointment: any) => {
-    try {
-      if (!client) {
-        toast({
-          title: "Not signed in",
-          description:
-            "Video client not initialized. You have to sign in to join a meeting.",
-          variant: "warning",
-        });
-        return;
-      }
+  const handleJoinMeeting = async (appointment: IAppointment) => {
+    if (!client) {
+      console.warn("Stream client not ready");
+      toast({
+        title: "Not signed in",
+        description:
+          "Video client not initialized. You have to sign in to join a meeting.",
+        variant: "warning",
+      });
+      return;
+    }
+    const relevantSlot = appointment.slotsOfAppointment?.[0];
+    if (!relevantSlot) {
+      toast({
+        title: "Error",
+        description: "Slot information missing for this appointment item.",
+      });
+      return;
+    }
 
-      const meetingId = await joinAppointmentMeeting(client, appointment);
+    try {
+      const meetingId = await getOrCreateAppointmentMeeting(
+        client,
+        appointment,
+        relevantSlot,
+      );
       router.push(`/meetings/${meetingId}`);
       toast({
         title: "Joining meeting",
@@ -148,13 +161,12 @@ export function AppointmentsTab({
                                 </p>
                               </>
                             )}
-                            <p className="text-sm text-gray-500">
-                              {getStartTime(appointment)
-                                ? formatAppointmentTime(
-                                    getStartTime(appointment)!,
-                                  )
-                                : "Time not set"}
-                            </p>
+                            <div className="text-sm text-gray-500">
+                              Starts:{" "}
+                              {formatAppointmentTime(
+                                getStartTime(appointment)!.toISOString(),
+                              )}
+                            </div>
                           </div>
                         </div>
                         <div className="flex items-center space-x-2">
@@ -173,22 +185,7 @@ export function AppointmentsTab({
                                   ? !isJoinable
                                   : false
                               }
-                              onClick={() => {
-                                if (process.env.NODE_ENV === "production") {
-                                  // Production behavior
-                                  if (isJoinable) {
-                                    handleJoinMeeting(appointment);
-                                  }
-                                } else {
-                                  // Development behavior - more flexible for testing
-                                  toast({
-                                    title: "Development Mode",
-                                    description: `Joining meeting with ID: ${appointment.id}`,
-                                    variant: "info",
-                                  });
-                                  handleJoinMeeting(appointment);
-                                }
-                              }}
+                              onClick={() => handleJoinMeeting(appointment)}
                             >
                               {process.env.NODE_ENV === "production"
                                 ? isJoinable

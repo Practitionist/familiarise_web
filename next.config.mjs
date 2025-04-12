@@ -26,6 +26,9 @@ const config = {
       {
         hostname: "source.unsplash.com",
       },
+      {
+        hostname: "cdn.jsdelivr.net",
+      },
     ],
   },
 };

@@ -1,82 +1,171 @@
-import { PREVIOUS_YEAR } from "@/constants/datetime";
 import { EventWithType } from "../utils";
+// Import the specific types needed
+import type {
+  IAppointment,
+  ISlotOfAppointment,
+} from "@/app/dashboard/consultant/[consultantId]/types";
+import type { SlotOfAppointment } from "@prisma/client"; // Import Prisma types
 
-export interface SlotWithStatus {
-  date: Date;
-  isTentative: boolean;
-  endTime?: Date;
+// Revert getActualSlots to return simple SlotOfAppointment[]
+export function getActualSlots(event: EventWithType): SlotOfAppointment[] {
+  let appointmentSlots: SlotOfAppointment[] = [];
+
+  switch (event.type) {
+    case "Subscription":
+    case "Class":
+      appointmentSlots = (event.appointments || []).flatMap(
+        (apt) => apt?.slotsOfAppointment || [],
+      );
+      break;
+    case "Consultation":
+    case "Webinar":
+      appointmentSlots = event.appointment?.slotsOfAppointment ?? [];
+      break;
+    default:
+      break;
+  }
+
+  const now = new Date(); // Get current time for comparison
+
+  // Filter out past slots and sort
+  return appointmentSlots
+    .filter(
+      (slot) => new Date(slot.slotStartTimeInUTC).getTime() >= now.getTime(), // Keep only future or current slots
+      // && new Date(slot.slotStartTimeInUTC).getFullYear() > PREVIOUS_YEAR // Removed year filter
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.slotStartTimeInUTC).getTime() -
+        new Date(b.slotStartTimeInUTC).getTime(),
+    );
 }
 
-export function getActualSlots(event: EventWithType): SlotWithStatus[] {
-  // Handle appointments based on event type
-  const appointments = (() => {
-    switch (event.type) {
-      case "Subscription":
-      case "Class":
-        return event.appointments || [];
-      case "Consultation":
-      case "Webinar":
-        return event.appointment ? [event.appointment] : [];
-      default:
-        return [];
-    }
-  })();
-
-  const slots = appointments.flatMap((apt) =>
-    (apt?.slotsOfAppointment || []).map((slot) => ({
-      date: new Date(slot.slotStartTimeInUTC),
-      endTime: new Date(slot.slotEndTimeInUTC),
-      isTentative: slot.isTentative,
-    })),
-  );
-
-  return slots
-    .filter((slot) => slot.date.getFullYear() > PREVIOUS_YEAR)
-    .sort((a, b) => a.date.getTime() - b.date.getTime());
-}
-
-export function getActualNextSlotTime(event: EventWithType): {
-  date: Date | null;
-  isTentative: boolean;
-  endTime?: Date;
-} {
+// Revert getActualNextSlotTime to use the simpler getActualSlots
+export function getActualNextSlotTime(
+  event: EventWithType,
+): SlotOfAppointment | null {
   const now = Date.now();
   const slots = getActualSlots(event);
-  const futureSlots = slots.filter((slot) => slot.date.getTime() > now);
-  return futureSlots.length > 0
-    ? {
-        date: futureSlots[0].date,
-        endTime: futureSlots[0].endTime,
-        isTentative: futureSlots[0].isTentative,
-      }
-    : { date: null, isTentative: false };
+  const futureSlots = slots.filter(
+    (slot) => new Date(slot.slotStartTimeInUTC).getTime() > now,
+  );
+  return futureSlots.length > 0 ? futureSlots[0] : null;
 }
 
+// getActualUpcomingSlots: Manually transform to the required structure
 export function getActualUpcomingSlots(events: EventWithType[]): Array<{
-  event: EventWithType;
-  slotTime: Date;
-  endTime?: Date;
+  appointment: IAppointment;
+  slot: ISlotOfAppointment;
   isTentative: boolean;
 }> {
   const now = new Date();
-  const allSlots = events.flatMap((event) =>
-    getActualSlots(event).map((slot) => ({
-      event,
-      slotTime: slot.date,
-      endTime: slot.endTime,
-      isTentative: slot.isTentative,
-    })),
-  );
+  const allUpcomingItems: Array<{
+    appointment: IAppointment;
+    slot: ISlotOfAppointment;
+    isTentative: boolean;
+  }> = [];
 
-  return allSlots
-    .filter(({ slotTime }) => slotTime > now)
-    .sort((a, b) => a.slotTime.getTime() - b.slotTime.getTime());
+  events.forEach((event) => {
+    const slots = getActualSlots(event);
+    const futureSlots = slots.filter(
+      (slot) => new Date(slot.slotStartTimeInUTC).getTime() > now.getTime(),
+    );
+
+    futureSlots.forEach((prismaSlot) => {
+      // 1. Construct ISlotOfAppointment
+      const iSlot: ISlotOfAppointment = {
+        id: prismaSlot.id,
+        slotStartTimeInUTC: new Date(prismaSlot.slotStartTimeInUTC),
+        slotEndTimeInUTC: prismaSlot.slotEndTimeInUTC
+          ? new Date(prismaSlot.slotEndTimeInUTC)
+          : null,
+        isTentative: prismaSlot.isTentative,
+        // Explicitly set user to empty array as relation is likely missing
+        // TODO: Ensure user relation is included in upstream fetch if needed
+        user: [],
+        // user: ((prismaSlot as any).user || []).map((u: User) => ({ ... })), // Original attempt
+      };
+
+      // 2. Construct IAppointment
+      let baseAppointment: Omit<IAppointment, "slotsOfAppointment">;
+      const upperCaseEventType =
+        event.type.toUpperCase() as IAppointment["appointmentType"];
+
+      switch (upperCaseEventType) {
+        case "CONSULTATION":
+          if (event.type === "Consultation") {
+            baseAppointment = {
+              id: event.appointment?.id ?? event.id,
+              appointmentType: upperCaseEventType,
+              // WARNING: Unsafe cast due to structural mismatch (consultantProfile)
+              consultation: event as any,
+            };
+          } else return; // Use return to exit forEach iteration
+          break;
+        case "SUBSCRIPTION":
+          if (event.type === "Subscription") {
+            baseAppointment = {
+              id: event.id,
+              appointmentType: upperCaseEventType,
+              // WARNING: Unsafe cast due to structural mismatch (consultantProfile)
+              subscription: event as any,
+            };
+          } else return;
+          break;
+        case "WEBINAR":
+          if (event.type === "Webinar") {
+            baseAppointment = {
+              id: event.appointment?.id ?? event.id,
+              appointmentType: upperCaseEventType,
+              // WARNING: Unsafe cast due to structural mismatch (consultantProfile)
+              webinar: event as any,
+            };
+          } else return;
+          break;
+        case "CLASS":
+          if (event.type === "Class") {
+            baseAppointment = {
+              id: event.id,
+              appointmentType: upperCaseEventType,
+              // WARNING: Unsafe cast due to structural mismatch (consultantProfile)
+              class: event as any,
+            };
+          } else return;
+          break;
+        default:
+          console.warn(`Unknown event type encountered: ${event.type}`);
+          return; // Use return to exit forEach iteration
+      }
+
+      // baseAppointment is guaranteed to be assigned if we reach here
+      const iAppointment: IAppointment = {
+        ...baseAppointment,
+        slotsOfAppointment: [iSlot],
+      };
+
+      allUpcomingItems.push({
+        appointment: iAppointment,
+        slot: iSlot,
+        isTentative: iSlot.isTentative,
+      });
+    });
+  });
+
+  // Sort the final array
+  return allUpcomingItems.sort(
+    (a, b) =>
+      a.slot.slotStartTimeInUTC.getTime() - b.slot.slotStartTimeInUTC.getTime(),
+  );
 }
 
+// Revert getActualMonthlyEvents to use simpler getActualSlots
 export function getActualMonthlyEvents(
   events: EventWithType[],
   month: Date,
-): Array<{ event: EventWithType; slots: SlotWithStatus[] }> {
+): Array<{
+  event: EventWithType;
+  slots: (SlotOfAppointment & { isPast?: boolean; isCancelled?: boolean })[];
+}> {
   const startOfMonth = new Date(month.getFullYear(), month.getMonth(), 1);
   const endOfMonth = new Date(
     month.getFullYear(),
@@ -88,22 +177,38 @@ export function getActualMonthlyEvents(
   );
 
   return events
-    .map((event) => ({
-      event,
-      slots: getActualSlots(event)
-        .filter((slot) => slot.date >= startOfMonth && slot.date <= endOfMonth)
-        .sort((a, b) => a.date.getTime() - b.date.getTime()),
-    }))
+    .map((event) => {
+      const relevantSlots = getActualSlots(event); // Returns SlotOfAppointment[]
+
+      const monthlySlots = relevantSlots
+        .filter(
+          (slot) =>
+            new Date(slot.slotStartTimeInUTC) >= startOfMonth &&
+            new Date(slot.slotStartTimeInUTC) <= endOfMonth,
+        )
+        .sort(
+          (a, b) =>
+            new Date(a.slotStartTimeInUTC).getTime() -
+            new Date(b.slotStartTimeInUTC).getTime(),
+        )
+        .map((slot) => ({ ...slot /* Add enrichment flags here if needed */ }));
+
+      return {
+        event,
+        slots: monthlySlots,
+      };
+    })
     .filter(({ slots }) => slots.length > 0);
 }
 
+// Revert isEventJoinable to use simpler getActualNextSlotTime
 export function isEventJoinable(event: EventWithType): boolean {
-  const slotInfo = getActualNextSlotTime(event);
-  if (!slotInfo.date || slotInfo.isTentative) return false;
+  const nextSlot = getActualNextSlotTime(event); // Returns SlotOfAppointment | null
+  if (!nextSlot || nextSlot.isTentative) return false;
 
   const now = new Date();
   const diffInMinutes = Math.floor(
-    (slotInfo.date.getTime() - now.getTime()) / 60000,
+    (new Date(nextSlot.slotStartTimeInUTC).getTime() - now.getTime()) / 60000,
   );
   return diffInMinutes <= 10 && diffInMinutes > -30;
 }
