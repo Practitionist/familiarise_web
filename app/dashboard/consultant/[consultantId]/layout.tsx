@@ -90,7 +90,7 @@ function useConsultantData(consultantId: string) {
     }
 
     fetchData();
-  }, [session, consultantId]);
+  }, [consultantId]);
 
   return state;
 }
