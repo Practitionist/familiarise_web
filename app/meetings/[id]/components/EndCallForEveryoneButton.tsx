@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useCall, useCallStateHooks } from "@stream-io/video-react-sdk";
 import { Button } from "@/components/ui/button";
 
-const EndCallButton = () => {
+const EndCallForEveryoneButton = () => {
   const call = useCall();
   const [isPressed, setIsPressed] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -64,4 +64,4 @@ const EndCallButton = () => {
   );
 };
 
-export default EndCallButton;
+export default EndCallForEveryoneButton;

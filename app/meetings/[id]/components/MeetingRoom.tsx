@@ -1,10 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import {
-  CallControls,
   CallParticipantsList,
-  CallStatsButton,
   CallingState,
   PaginatedGridLayout,
   SpeakerLayout,
@@ -12,21 +9,12 @@ import {
   useCallStateHooks,
 } from "@stream-io/video-react-sdk";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Users, LayoutList } from "lucide-react";
+import { useEffect, useState } from "react";
 
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import Loader from "./Loader";
-import EndCallButton from "./EndCallButton";
-import CallEnded from "./CallEnded";
 import { cn } from "@/lib/utils";
-
-type CallLayoutType = "grid" | "speaker-left" | "speaker-right";
+import CallEnded from "./CallEnded";
+import CustomCallControls from './CustomCallControls';
+import Loader from "./Loader";
 
 // Move the component outside of the parent component
 type CallLayoutProps = {
@@ -48,7 +36,6 @@ const MeetingRoom = () => {
   const searchParams = useSearchParams();
   const isPersonalRoom = !!searchParams.get("personal");
   const router = useRouter();
-  const [layout, setLayout] = useState<CallLayoutType>("speaker-left");
   const [showParticipants, setShowParticipants] = useState(false);
   const call = useCall();
   const { useCallCallingState, useCallEndedAt } = useCallStateHooks();
@@ -113,56 +100,32 @@ const MeetingRoom = () => {
     );
   }
 
+  const toggleParticipantsBar = () => setShowParticipants((prev) => !prev);
+
   return (
     <section className="relative h-screen w-full overflow-hidden pt-4 text-white">
       <div className="relative flex size-full items-center justify-center">
         <div className="flex size-full max-w-[1000px] items-center">
-          <CallLayout layout={layout} />
+          <CallLayout layout={"speaker-left"} />
         </div>
         <div
           className={cn("h-[calc(100vh-86px)] hidden ml-2", {
             block: showParticipants,
           })}
         >
-          <CallParticipantsList onClose={() => setShowParticipants(false)} />
+          {showParticipants && (
+            <CallParticipantsList onClose={toggleParticipantsBar} />
+          )}
         </div>
       </div>
 
-      {/* Video layout and call controls */}
-      <div className="fixed bottom-0 flex w-full items-center justify-center gap-5">
-        <CallControls onLeave={() => router.push("/")} />
-
-        <DropdownMenu>
-          <div className="flex items-center">
-            <DropdownMenuTrigger className="cursor-pointer rounded-2xl bg-[#19232d] px-4 py-2 hover:bg-[#4c535b]">
-              <LayoutList size={20} className="text-white" />
-            </DropdownMenuTrigger>
-          </div>
-          <DropdownMenuContent className="border-dark-1 bg-dark-1 text-white">
-            {["Grid", "Speaker-Left", "Speaker-Right"].map((item, index) => (
-              <div key={index}>
-                <DropdownMenuItem
-                  onClick={() =>
-                    setLayout(item.toLowerCase() as CallLayoutType)
-                  }
-                >
-                  {item}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator className="border-dark-1" />
-              </div>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <CallStatsButton />
-
-        <button onClick={() => setShowParticipants((prev) => !prev)}>
-          <div className="cursor-pointer rounded-2xl bg-[#19232d] px-4 py-2 hover:bg-[#4c535b]">
-            <Users size={20} className="text-white" />
-          </div>
-        </button>
-
-        {!isPersonalRoom && <EndCallButton />}
+      {/* Controls Container */}
+      <div className="fixed bottom-0 flex w-full items-center justify-center gap-5 flex-wrap p-2">
+        <CustomCallControls
+          onLeave={() => router.push("/")}
+          isPersonalRoom={isPersonalRoom}
+          toggleParticipantsBar={toggleParticipantsBar}
+        />
       </div>
     </section>
   );

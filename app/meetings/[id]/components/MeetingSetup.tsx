@@ -9,7 +9,7 @@ import {
   useCallStateHooks,
   VideoPreview,
 } from "@stream-io/video-react-sdk";
-import { Mic, MicOff, Video, VideoOff } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, Settings } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 interface MeetingSetupProps {
@@ -246,94 +246,95 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-white p-4">
-      <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
-        <h1 className="text-2xl font-bold mb-6 text-center text-gray-900">
-          {call?.state.custom?.title || "Join Meeting"}
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-gray-100 to-gray-200 p-4 sm:p-6 md:p-8">
+      <div className="bg-white rounded-2xl shadow-xl p-8 sm:p-10 w-full max-w-3xl">
+        <h1 className="text-3xl font-bold mb-8 text-center text-gray-800">
+          {call?.state.custom?.title || "Meeting Setup"}
         </h1>
 
-        {/* Video preview */}
+        {/* Video preview - Conditional Rendering */}
         <div
-          className="mb-6 rounded-lg overflow-hidden bg-gray-900 relative"
-          style={{ height: "300px" }}
+          className="mb-8 rounded-xl overflow-hidden bg-gray-900 relative aspect-video flex items-center justify-center"
         >
-          <div className="w-full h-full flex items-center justify-center">
+          {isCameraOn ? (
+            // Render VideoPreview only when camera is on
             <VideoPreview
               mirror={true}
-              className="w-full h-full object-contain"
+              className="w-full h-full object-cover" // Changed to object-cover for better fit
             />
-          </div>
-          {!isCameraOn && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-70 text-white">
-              <p className="text-lg font-medium">Camera is disabled</p>
+          ) : (
+            // Render custom overlay only when camera is off
+            <div className="flex flex-col items-center justify-center text-white p-4">
+              <VideoOff className="h-12 w-12 mb-2 text-gray-400" />
+              <p className="text-lg font-medium">Camera Disabled</p>
             </div>
           )}
         </div>
 
-        {/* Mic level indicator */}
         {isMicOn && (
-          <div className="mb-4">
-            <p className="text-sm text-gray-700 mb-1">Microphone Level</p>
-            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+          <div className="mb-6">
+            <p className="text-base font-medium text-gray-700 mb-2">Microphone Level</p>
+            <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
               <div
-                className="h-full bg-green-500 transition-all duration-100"
+                className="h-full bg-gradient-to-r from-green-400 to-green-600 transition-all duration-100 rounded-full"
                 style={{ width: `${micLevel * 100}%` }}
               ></div>
             </div>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-sm text-gray-600 mt-2 text-center">
               {micLevel < 0.05
-                ? "No sound detected. Try speaking..."
-                : "Sound detected!"}
+                ? "No sound detected. Speak clearly..."
+                : "Mic is active!"}
             </p>
           </div>
         )}
 
-        {/* Controls with Device Settings */}
-        <div className="flex flex-col space-y-4 mb-6">
-          {/* Camera and Mic controls */}
-          <div className="flex justify-center space-x-4">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-4 mb-8">
+          <div className="flex justify-center space-x-4 flex-1">
             <Button
               onClick={toggleCamera}
               variant={isCameraOn ? "default" : "outline"}
-              className="w-1/2 flex items-center justify-center gap-2"
+              size="lg"
+              className="flex-1 flex items-center justify-center gap-2"
             >
               {isCameraOn ? (
                 <>
-                  <Video className="h-4 w-4" /> Camera On
+                  <Video className="h-5 w-5" /> Camera On
                 </>
               ) : (
                 <>
-                  <VideoOff className="h-4 w-4" /> Camera Off
+                  <VideoOff className="h-5 w-5" /> Camera Off
                 </>
               )}
             </Button>
             <Button
               onClick={toggleMic}
               variant={isMicOn ? "default" : "outline"}
-              className="w-1/2 flex items-center justify-center gap-2"
+              size="lg"
+              className="flex-1 flex items-center justify-center gap-2"
             >
               {isMicOn ? (
                 <>
-                  <Mic className="h-4 w-4" /> Mic On
+                  <Mic className="h-5 w-5" /> Mic On
                 </>
               ) : (
                 <>
-                  <MicOff className="h-4 w-4" /> Mic Off
+                  <MicOff className="h-5 w-5" /> Mic Off
                 </>
               )}
             </Button>
           </div>
 
-          {/* Device Settings */}
           <div className="flex justify-center">
-            <DeviceSettings />
+            <Button variant="outline" size="icon" asChild title="Device Settings" className="p-2">
+              <DeviceSettings />
+            </Button>
           </div>
         </div>
 
-        {/* Join button */}
         <Button
           onClick={handleJoinMeeting}
-          className="w-full bg-green-600 hover:bg-green-700"
+          size="lg"
+          className="w-full bg-gradient-to-r from-green-500 to-green-700 hover:from-green-600 hover:to-green-800 text-white font-semibold text-lg shadow-md hover:shadow-lg transition-all duration-200 ease-in-out"
         >
           Join Meeting
         </Button>
