@@ -1,6 +1,7 @@
 "use client";
 
 import { useToast } from "@/hooks/use-toast";
+import { isDevelopmentEnvironment } from "@/lib/env";
 import type { SlotOfAppointment } from "@prisma/client";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
@@ -241,12 +242,12 @@ export function SlotCard({
               <span className="text-red-500 text-xs italic">*Tentative</span>
             )}
           </div>
-          {(process.env.NODE_ENV === "production" ? isJoinable : true) && (
+          {(isDevelopmentEnvironment() || isJoinable) && (
             <Button
               onClick={handleJoinMeeting}
               className="ml-auto bg-gradient-to-b from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white text-xs h-6 px-2.5 rounded-md shadow-sm hover:shadow-md transition-all duration-200"
             >
-              {process.env.NODE_ENV === "production" ? "Join" : "Join (Dev)"}
+              {isDevelopmentEnvironment() ? "Join (Dev)" : "Join"}
             </Button>
           )}
         </div>
