@@ -13,7 +13,7 @@ import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import CallEnded from "./CallEnded";
-import CustomCallControls from './CustomCallControls';
+import CustomCallControls from "./CustomCallControls";
 import Loader from "./Loader";
 
 // Move the component outside of the parent component

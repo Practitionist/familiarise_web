@@ -253,9 +253,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
         </h1>
 
         {/* Video preview - Conditional Rendering */}
-        <div
-          className="mb-8 rounded-xl overflow-hidden bg-gray-900 relative aspect-video flex items-center justify-center"
-        >
+        <div className="mb-8 rounded-xl overflow-hidden bg-gray-900 relative aspect-video flex items-center justify-center">
           {isCameraOn ? (
             // Render VideoPreview only when camera is on
             <VideoPreview
@@ -273,7 +271,9 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
 
         {isMicOn && (
           <div className="mb-6">
-            <p className="text-base font-medium text-gray-700 mb-2">Microphone Level</p>
+            <p className="text-base font-medium text-gray-700 mb-2">
+              Microphone Level
+            </p>
             <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
               <div
                 className="h-full bg-gradient-to-r from-green-400 to-green-600 transition-all duration-100 rounded-full"
@@ -325,7 +325,13 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
           </div>
 
           <div className="flex justify-center">
-            <Button variant="outline" size="icon" asChild title="Device Settings" className="p-2">
+            <Button
+              variant="outline"
+              size="icon"
+              asChild
+              title="Device Settings"
+              className="p-2"
+            >
               <DeviceSettings />
             </Button>
           </div>
