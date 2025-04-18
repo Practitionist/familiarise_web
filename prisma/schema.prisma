@@ -370,8 +370,12 @@ model SlotOfAppointment {
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
 
+  meetingSession MeetingSession?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([appointmentId])
 }
 
 //////////////////////////////////////////////////// PRICING PLANS ////////////////////////////////////////////////////
@@ -476,18 +480,20 @@ enum RequestStatus {
 
 // Many-Many Webinar
 model WebinarPlan {
-  id               String   @id @default(cuid())
-  title            String
-  topics           Topic[]
-  description      String?  @db.Text
-  price            Int
-  durationInHours  Float    @default(1) // Duration in hours
-  maxParticipants  Int      @default(100)
-  language         String?  @default("English")
-  level            String?  @default("Beginner")
-  prerequisites    String?  @default("None")
-  materialProvided String?  @default("None")
-  learningOutcomes String[] @default([])
+  id                  String   @id @default(cuid())
+  title               String
+  topics              Topic[]
+  description         String?  @db.Text
+  price               Int
+  priceCurrency       String   @default("INR")
+  certificateProvided Boolean  @default(false)
+  durationInHours     Float    @default(1) // Duration in hours
+  maxParticipants     Int      @default(100)
+  language            String?  @default("English")
+  level               String?  @default("Beginner")
+  prerequisites       String?  @default("None")
+  materialProvided    String?  @default("None")
+  learningOutcomes    String[] @default([])
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
@@ -507,10 +513,11 @@ model Webinar {
   webinarPlanId String
 
   appointment Appointment?
-  meetingRoom MeetingRoom?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([webinarPlanId])
 }
 
 enum WebinarStatus {
@@ -528,6 +535,7 @@ model ClassPlan {
   topics              Topic[]
   classContents       ClassContent[]
   price               Int
+  priceCurrency       String           @default("INR")
   certificateProvided Boolean          @default(false)
   durationInMonths    Int              @default(1) // Duration in months
   callsPerWeek        Int              @default(1)
@@ -561,10 +569,11 @@ model Class {
   classPlanId String
 
   appointments Appointment[]
-  meetingRoom  MeetingRoom?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([classPlanId])
 }
 
 model ClassContent {
@@ -659,25 +668,17 @@ model Waitlist {
 
 ////////////////////////////////////////////// MEETINGS ////////////////////////////////////////////////////
 
-model MeetingRoom {
-  id         String   @id @default(cuid())
-  platform   Platform @default(STREAM)
-  meetingUrl String
-  meetingId  String?
-  passcode   String?
-  hostKeys   String[]
+model MeetingSession {
+  id           String   @id @default(cuid())
+  streamCallId String   @unique
+  platform     Platform @default(STREAM)
+  passcode     String?
+  hostKeys     String[]
 
-  // For webinar we will have multiple recordings
-  // For class we will have single recording per class
-  // The recording feature is not available for consultation and subscription
-  // The recording feature will come soon for webinar and class
   recordings Recording[]
 
-  webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  webinarId String?  @unique
-
-  class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classId String? @unique
+  slotOfAppointment   SlotOfAppointment @relation(fields: [slotOfAppointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  slotOfAppointmentId String            @unique
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -685,17 +686,19 @@ model MeetingRoom {
 
 // New model for storing recording details
 model Recording {
-  id           String   @id @default(cuid())
-  title        String
-  recordingUrl String
-  duration     Int // in minutes
-  recordedAt   DateTime
+  id                String   @id @default(cuid())
+  title             String
+  recordingUrl      String
+  durationInMinutes Int
+  recordedAt        DateTime
 
-  meetingRoom   MeetingRoom @relation(fields: [meetingRoomId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  meetingRoomId String
+  meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingSessionId String
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([meetingSessionId])
 }
 
 enum Platform {
@@ -750,7 +753,7 @@ model DiscountCode {
   description   String
   discountType  DiscountType
   discountValue Float
-
+ 
   Payment Payment[]
 
   createdAt DateTime @default(now())

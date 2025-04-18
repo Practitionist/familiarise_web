@@ -5,12 +5,14 @@ import { Button } from "@/components/ui/button";
 import { EventCarousel } from "./EventCarousel";
 import { EventPlanner } from "./EventPlanner";
 import { WebinarEvent, ClassEvent, Event } from "../types/event";
+import { PlannerService } from "../services/planner";
+import { useToast } from "@/hooks/use-toast";
 
 interface Props {
   consultantId: string;
 }
 
-export function EventManagementDashboard({ consultantId }: Props) {
+export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   const [webinars, setWebinars] = useState<WebinarEvent[]>([]);
   const [classes, setClasses] = useState<ClassEvent[]>([]);
   const [isWebinarDialogOpen, setIsWebinarDialogOpen] = useState(false);
@@ -19,46 +21,23 @@ export function EventManagementDashboard({ consultantId }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const { toast } = useToast();
 
+  // Fetch events on load
   useEffect(() => {
     const fetchEvents = async () => {
       try {
         setIsLoading(true);
         setError(null);
 
-        const [webinarsRes, classesRes] = await Promise.all([
-          fetch(`/api/events/webinars?consultantProfileId=${consultantId}`),
-          fetch(`/api/events/classes?consultantProfileId=${consultantId}`),
+        // Use the service to fetch data
+        const [fetchedWebinars, fetchedClasses] = await Promise.all([
+          PlannerService.fetchWebinars(consultantId),
+          PlannerService.fetchClasses(consultantId),
         ]);
 
-        if (!webinarsRes.ok || !classesRes.ok) {
-          throw new Error("Failed to fetch events");
-        }
-
-        const webinarsData = await webinarsRes.json();
-        const classesData = await classesRes.json();
-
-        setWebinars(
-          webinarsData.data.map((webinar: any) => ({
-            id: webinar.id,
-            type: "webinar" as const,
-            webinarPlan: webinar.webinarPlan,
-            appointment: webinar.appointment,
-            waitlist: webinar.waitlist,
-            meetingRoom: webinar.meetingRoom,
-          })),
-        );
-
-        setClasses(
-          classesData.data.map((classEvent: any) => ({
-            id: classEvent.id,
-            type: "class" as const,
-            classPlan: classEvent.classPlan,
-            appointments: classEvent.appointments,
-            waitlist: classEvent.waitlist,
-            meetingRoom: classEvent.meetingRoom,
-          })),
-        );
+        setWebinars(fetchedWebinars);
+        setClasses(fetchedClasses);
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred");
         console.error("Error fetching events:", err);
@@ -70,87 +49,57 @@ export function EventManagementDashboard({ consultantId }: Props) {
     fetchEvents();
   }, [consultantId]);
 
-  const handleSaveWebinar = async (webinarData: Partial<WebinarEvent>) => {
+  // Handle webinar saved event
+  const handleWebinarSaved = async (
+    data: Partial<WebinarEvent>,
+    scheduledAt?: string | Date,
+  ) => {
     try {
       setIsSaving(true);
-      const response = await fetch("/api/events/webinars", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...webinarData,
-          consultantProfileId: consultantId,
-        }),
+      console.log("EventManagementDashboard - Saving webinar:", {
+        data,
+        scheduledAt,
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to save webinar");
-      }
+      const savedWebinar = await PlannerService.saveWebinar(
+        data,
+        scheduledAt,
+        consultantId,
+      );
+      console.log("Webinar saved successfully:", savedWebinar);
 
-      const { data } = await response.json();
-      const newWebinar: WebinarEvent = {
-        id: data.id,
-        type: "webinar",
-        webinarPlan: data.webinarPlan,
-        appointment: data.appointment,
-        waitlist: data.waitlist,
-        meetingRoom: data.meetingRoom,
-      };
-
-      if ("id" in webinarData && webinarData.id) {
-        setWebinars(webinars.map((w) => (w.id === data.id ? newWebinar : w)));
-      } else {
-        setWebinars([...webinars, newWebinar]);
-      }
-
+      // Then fetch updated webinars list
+      const updatedWebinars = await PlannerService.fetchWebinars(consultantId);
+      setWebinars(updatedWebinars);
       setIsWebinarDialogOpen(false);
       setEditingEvent(null);
-    } catch (err) {
-      console.error("Error saving webinar:", err);
+    } catch (error) {
+      console.error("Error saving/refreshing webinar:", error);
+      // Re-throw the error so it can be handled by the form
+      throw error;
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleSaveClass = async (classData: Partial<ClassEvent>) => {
+  // Handle class saved event
+  const handleClassSaved = async (data: Partial<ClassEvent>) => {
     try {
       setIsSaving(true);
-      const response = await fetch("/api/events/classes", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...classData,
-          consultantProfileId: consultantId,
-        }),
-      });
+      console.log("EventManagementDashboard - Saving class:", data);
 
-      if (!response.ok) {
-        throw new Error("Failed to save class");
-      }
+      // First save the class
+      const savedClass = await PlannerService.saveClass(data, consultantId);
+      console.log("Class saved successfully:", savedClass);
 
-      const { data } = await response.json();
-      const newClass: ClassEvent = {
-        id: data.id,
-        type: "class",
-        classPlan: data.classPlan,
-        appointments: data.appointments,
-        waitlist: data.waitlist,
-        meetingRoom: data.meetingRoom,
-      };
-
-      if ("id" in classData && classData.id) {
-        setClasses(classes.map((c) => (c.id === data.id ? newClass : c)));
-      } else {
-        setClasses([...classes, newClass]);
-      }
-
+      // Then fetch updated classes list
+      const updatedClasses = await PlannerService.fetchClasses(consultantId);
+      setClasses(updatedClasses);
       setIsClassDialogOpen(false);
       setEditingEvent(null);
-    } catch (err) {
-      console.error("Error saving class:", err);
+    } catch (error) {
+      console.error("Error saving/refreshing class:", error);
+      throw error; // Propagate error to form handler
     } finally {
       setIsSaving(false);
     }
@@ -164,6 +113,80 @@ export function EventManagementDashboard({ consultantId }: Props) {
   const handleEditClass = (classEvent: ClassEvent) => {
     setEditingEvent(classEvent);
     setIsClassDialogOpen(true);
+  };
+
+  // Handle webinar delete event
+  const handleWebinarDelete = async (webinarId: string) => {
+    console.log(`EventManagementDashboard - Deleting webinar: ${webinarId}`);
+    try {
+      const response = await fetch(
+        `/api/events/webinars/crud-with-plan/${webinarId}`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to delete webinar");
+      }
+
+      const result = await response.json();
+      toast({
+        title: "Success",
+        description: result.message || "Webinar deleted successfully.",
+      });
+
+      // Refresh the list
+      setWebinars((prev) => prev.filter((w) => w.id !== webinarId));
+    } catch (error) {
+      console.error("Error deleting webinar:", error);
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error ? error.message : "Failed to delete webinar.",
+        variant: "destructive",
+      });
+      // Re-throw or handle as needed
+      throw error;
+    }
+  };
+
+  // Handle class delete event
+  const handleClassDelete = async (classId: string) => {
+    console.log(`EventManagementDashboard - Deleting class: ${classId}`);
+    try {
+      const response = await fetch(
+        `/api/events/classes/crud-with-plan/${classId}`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to delete class");
+      }
+
+      const result = await response.json();
+      toast({
+        title: "Success",
+        description: result.message || "Class deleted successfully.",
+      });
+
+      // Refresh the list
+      setClasses((prev) => prev.filter((c) => c.id !== classId));
+    } catch (error) {
+      console.error("Error deleting class:", error);
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error ? error.message : "Failed to delete class.",
+        variant: "destructive",
+      });
+      // Re-throw or handle as needed
+      throw error;
+    }
   };
 
   if (error) {
@@ -208,6 +231,7 @@ export function EventManagementDashboard({ consultantId }: Props) {
         <EventCarousel
           events={webinars}
           onEdit={handleEditWebinar}
+          onDelete={handleWebinarDelete}
           eventType="webinar"
         />
       </div>
@@ -222,6 +246,7 @@ export function EventManagementDashboard({ consultantId }: Props) {
         <EventCarousel
           events={classes}
           onEdit={handleEditClass}
+          onDelete={handleClassDelete}
           eventType="class"
         />
       </div>
@@ -232,10 +257,10 @@ export function EventManagementDashboard({ consultantId }: Props) {
           setIsWebinarDialogOpen(false);
           setEditingEvent(null);
         }}
-        onSave={handleSaveWebinar}
+        onSaved={handleWebinarSaved}
         eventType="webinar"
         initialData={editingEvent as WebinarEvent}
-        isSaving={isSaving}
+        consultantId={consultantId}
       />
 
       <EventPlanner
@@ -244,10 +269,10 @@ export function EventManagementDashboard({ consultantId }: Props) {
           setIsClassDialogOpen(false);
           setEditingEvent(null);
         }}
-        onSave={handleSaveClass}
+        onSaved={handleClassSaved}
         eventType="class"
         initialData={editingEvent as ClassEvent}
-        isSaving={isSaving}
+        consultantId={consultantId}
       />
     </div>
   );

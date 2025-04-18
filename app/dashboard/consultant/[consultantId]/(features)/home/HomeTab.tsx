@@ -1,6 +1,12 @@
+"use client";
+
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast";
+import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
+import { useStreamVideoClient } from "@stream-io/video-react-sdk";
+import { useRouter } from "next/navigation";
 import { Suspense } from "react";
 import { ClientActivity } from "../../components/ClientActivity";
 import {
@@ -35,6 +41,41 @@ export function HomeTab({
   getBadgeStyle,
   onUpdate,
 }: Readonly<HomeTabProps>) {
+  const router = useRouter();
+  const client = useStreamVideoClient();
+  const { toast } = useToast();
+
+  const handleJoinMeeting = async (appointment: IAppointment) => {
+    if (!client) {
+      console.error("Stream client not ready");
+      toast({ title: "Error", description: "Meeting client not ready." });
+      return;
+    }
+    const relevantSlot = appointment.slotsOfAppointment?.[0];
+    if (!relevantSlot) {
+      toast({
+        title: "Error",
+        description: "Slot information missing for this appointment item.",
+      });
+      return;
+    }
+
+    try {
+      const meetingId = await getOrCreateAppointmentMeeting(
+        client,
+        appointment,
+        relevantSlot,
+      );
+      router.push(`/meetings/${meetingId}`);
+    } catch (error) {
+      console.error("Error joining meeting:", error);
+      toast({
+        title: "Error",
+        description: "Failed to join meeting.",
+        variant: "destructive",
+      });
+    }
+  };
   if (!getBadgeStyle) {
     throw new Error("getBadgeStyle is required for HomeTab");
   }
@@ -114,11 +155,13 @@ export function HomeTab({
                       </div>
                     </div>
                     <div className="mt-3">
-                      <p className="text-sm text-gray-500">
+                      <div className="text-xs text-gray-500 mt-1">
                         {getStartTime(appointment)
-                          ? formatAppointmentTime(getStartTime(appointment)!)
+                          ? formatAppointmentTime(
+                              getStartTime(appointment)!.toISOString(),
+                            )
                           : "Time not set"}
-                      </p>
+                      </div>
                       <div className="mt-2 flex items-center justify-between">
                         <Badge
                           variant="secondary"
@@ -131,6 +174,7 @@ export function HomeTab({
                           size="sm"
                           className={joinButtonStyle}
                           disabled={!isJoinable}
+                          onClick={() => handleJoinMeeting(appointment)}
                         >
                           Join meet
                         </Button>
@@ -240,13 +284,15 @@ export function HomeTab({
                                     </p>
                                   </>
                                 )}
-                                <p className="text-xs">
+                                <div className="text-xs text-gray-500">
                                   {getStartTime(appointment)
                                     ? formatAppointmentTime(
-                                        getStartTime(appointment)!,
+                                        getStartTime(
+                                          appointment,
+                                        )!.toISOString(),
                                       )
                                     : "Time not set"}
-                                </p>
+                                </div>
                               </div>
                               <div className="flex items-center space-x-2">
                                 <Badge
@@ -259,6 +305,9 @@ export function HomeTab({
                                   <Button
                                     className="bg-blue-500 text-white w-full sm:w-auto text-sm py-1"
                                     disabled={!isJoinable}
+                                    onClick={() =>
+                                      handleJoinMeeting(appointment)
+                                    }
                                   >
                                     {isJoinable ? "Join meet" : "Chat"}
                                   </Button>

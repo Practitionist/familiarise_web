@@ -98,17 +98,21 @@ export function getRecurringEvents(events: EventWithType[]): EventWithType[] {
 export function getEventStatus(event: EventWithType): string {
   switch (event.type) {
     case "Consultation":
-      return event.requestStatus;
+      return event.requestStatus || "Unknown";
     case "Subscription":
-      return event.requestStatus;
+      return event.requestStatus || "Unknown";
     case "Webinar":
-      return event.status;
+      return event.status || "Unknown";
     case "Class":
-      return event.status;
+      return event.status || "Unknown";
   }
+  return "Unknown";
 }
 
 export function getStatusColor(status: string): string {
+  if (!status) {
+    return "bg-gray-50 text-gray-700";
+  }
   const statusLower = status.toLowerCase();
   if (statusLower === "completed") return "bg-green-50 text-green-700";
   if (statusLower === "rejected") return "bg-red-50 text-red-700";

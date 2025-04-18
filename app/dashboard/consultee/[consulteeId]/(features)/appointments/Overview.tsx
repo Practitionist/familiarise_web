@@ -13,6 +13,7 @@ import {
   getActualSlots,
 } from "../../utils/actual-schedule";
 import { EventCard } from "./EventCard";
+import type { SlotOfAppointment } from "@prisma/client";
 
 interface OverviewProps {
   consultations: ConsultationWithPlan[];
@@ -27,11 +28,12 @@ interface AppointmentSlot {
 }
 
 function getNoSlotMessage(type: string): string {
-  return `No slots scheduled for this ${type.toLowerCase()}. Please wait for confirmation.`;
+  return `No upcoming slots scheduled for this ${type.toLowerCase()}. Check details or wait for confirmation.`;
 }
 
-function formatDate(date: Date | null): string {
-  if (!date) return "Please select a valid date and time";
+function formatDateFromSlot(slot: SlotOfAppointment | null): string {
+  if (!slot) return "No upcoming slot";
+  const date = new Date(slot.slotStartTimeInUTC);
   return date.toLocaleString(undefined, {
     weekday: "short",
     day: "numeric",
@@ -46,8 +48,10 @@ function formatDate(date: Date | null): string {
 function getValidAppointmentSlots(event: EventWithType): AppointmentSlot[] {
   const slots = getActualSlots(event);
   return slots.map((slot) => ({
-    startTime: slot.date,
-    endTime: slot.endTime || slot.date,
+    startTime: new Date(slot.slotStartTimeInUTC),
+    endTime: slot.slotEndTimeInUTC
+      ? new Date(slot.slotEndTimeInUTC)
+      : new Date(slot.slotStartTimeInUTC),
   }));
 }
 
@@ -75,13 +79,13 @@ export function Overview({
             consultant:
               consultation.consultationPlan.consultantProfile?.user?.name ??
               "Unknown Consultant",
-            date: slotInfo.date
-              ? formatDate(slotInfo.date)
+            date: slotInfo
+              ? formatDateFromSlot(slotInfo)
               : getNoSlotMessage("Consultation"),
             image: consultation.consultationPlan.consultantProfile?.user?.image,
             status: consultation.requestStatus.toString(),
             type: "Consultation" as const,
-            isTentative: slotInfo.isTentative,
+            isTentative: slotInfo?.isTentative ?? false,
             actualSlots: getValidAppointmentSlots({
               ...consultation,
               type: "Consultation",
@@ -104,13 +108,13 @@ export function Overview({
             consultant:
               subscription.subscriptionPlan.consultantProfile?.user?.name ??
               "Unknown Consultant",
-            date: slotInfo.date
-              ? formatDate(slotInfo.date)
+            date: slotInfo
+              ? formatDateFromSlot(slotInfo)
               : getNoSlotMessage("Subscription"),
             image: subscription.subscriptionPlan.consultantProfile?.user?.image,
             status: subscription.requestStatus.toString(),
             type: "Subscription" as const,
-            isTentative: slotInfo.isTentative,
+            isTentative: slotInfo?.isTentative ?? false,
             actualSlots: getValidAppointmentSlots({
               ...subscription,
               type: "Subscription",
@@ -133,13 +137,13 @@ export function Overview({
             consultant:
               classItem.classPlan.consultantProfile?.user?.name ??
               "Unknown Consultant",
-            date: slotInfo.date
-              ? formatDate(slotInfo.date)
+            date: slotInfo
+              ? formatDateFromSlot(slotInfo)
               : getNoSlotMessage("Class"),
             image: classItem.classPlan.consultantProfile?.user?.image,
             status: classItem.status.toString(),
             type: "Class" as const,
-            isTentative: slotInfo.isTentative,
+            isTentative: slotInfo?.isTentative ?? false,
             actualSlots: getValidAppointmentSlots({
               ...classItem,
               type: "Class",
@@ -161,13 +165,13 @@ export function Overview({
             consultant:
               webinar.webinarPlan.consultantProfile?.user?.name ??
               "Unknown Consultant",
-            date: slotInfo.date
-              ? formatDate(slotInfo.date)
+            date: slotInfo
+              ? formatDateFromSlot(slotInfo)
               : getNoSlotMessage("Webinar"),
             image: webinar.webinarPlan.consultantProfile?.user?.image,
             status: webinar.status.toString(),
             type: "Webinar" as const,
-            isTentative: slotInfo.isTentative,
+            isTentative: slotInfo?.isTentative ?? false,
             actualSlots: getValidAppointmentSlots({
               ...webinar,
               type: "Webinar",

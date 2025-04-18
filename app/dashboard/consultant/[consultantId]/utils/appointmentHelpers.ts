@@ -1,5 +1,5 @@
 import { format } from "date-fns";
-import { IAppointment } from "../types";
+import { IAppointment, ISlotOfAppointment } from "../types";
 
 // Get the consultee name based on appointment type
 export const getConsumeeName = (appointment: IAppointment): string => {
@@ -8,16 +8,16 @@ export const getConsumeeName = (appointment: IAppointment): string => {
   switch (appointment.appointmentType) {
     case "CONSULTATION":
       return (
-        appointment.consultation?.requestedBy?.user?.name || "Unknown User"
+        appointment.consultation?.requestedBy?.user?.name ?? "Unknown User"
       );
     case "SUBSCRIPTION":
       return (
-        appointment.subscription?.requestedBy?.user?.name || "Unknown User"
+        appointment.subscription?.requestedBy?.user?.name ?? "Unknown User"
       );
     case "WEBINAR":
     case "CLASS":
       return (
-        appointment.slotsOfAppointment?.[0]?.user?.[0]?.name || "Unknown User"
+        appointment.slotsOfAppointment?.[0]?.user?.[0]?.name ?? "Unknown User"
       );
     default:
       return "Unknown User";
@@ -31,16 +31,16 @@ export const getConsumeeImage = (appointment: IAppointment): string => {
   switch (appointment.appointmentType) {
     case "CONSULTATION":
       return (
-        appointment.consultation?.requestedBy?.user?.image || "/placeholder.svg"
+        appointment.consultation?.requestedBy?.user?.image ?? "/placeholder.svg"
       );
     case "SUBSCRIPTION":
       return (
-        appointment.subscription?.requestedBy?.user?.image || "/placeholder.svg"
+        appointment.subscription?.requestedBy?.user?.image ?? "/placeholder.svg"
       );
     case "WEBINAR":
     case "CLASS":
       return (
-        appointment.slotsOfAppointment?.[0]?.user?.[0]?.image ||
+        appointment.slotsOfAppointment?.[0]?.user?.[0]?.image ??
         "/placeholder.svg"
       );
     default:
@@ -62,17 +62,17 @@ export const getAppointmentTypeAndPlan = (
   switch (appointment.appointmentType) {
     case "CONSULTATION":
       plan =
-        appointment.consultation?.consultationPlan?.title || "Unknown Plan";
+        appointment.consultation?.consultationPlan?.title ?? "Unknown Plan";
       break;
     case "SUBSCRIPTION":
       plan =
-        appointment.subscription?.subscriptionPlan?.title || "Unknown Plan";
+        appointment.subscription?.subscriptionPlan?.title ?? "Unknown Plan";
       break;
     case "WEBINAR":
-      plan = appointment.webinar?.webinarPlan?.title || "Unknown Plan";
+      plan = appointment.webinar?.webinarPlan?.title ?? "Unknown Plan";
       break;
     case "CLASS":
-      plan = appointment.class?.classPlan?.title || "Unknown Plan";
+      plan = appointment.class?.classPlan?.title ?? "Unknown Plan";
       break;
   }
 
@@ -80,7 +80,7 @@ export const getAppointmentTypeAndPlan = (
 };
 
 // Get all slot times from appointment
-export const getSlotTimes = (appointment: IAppointment): string[] => {
+export const getSlotTimes = (appointment: IAppointment): Date[] => {
   return (
     appointment?.slotsOfAppointment?.map((slot) => slot.slotStartTimeInUTC) ||
     []
@@ -88,7 +88,7 @@ export const getSlotTimes = (appointment: IAppointment): string[] => {
 };
 
 // Get first slot time from appointment (for backwards compatibility)
-export const getStartTime = (appointment: IAppointment): string | undefined => {
+export const getStartTime = (appointment: IAppointment): Date | undefined => {
   const times = getSlotTimes(appointment);
   return times[0];
 };

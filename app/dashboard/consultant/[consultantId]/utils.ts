@@ -11,6 +11,7 @@ import {
   TConsultation,
   TSubscription,
 } from "@/types/appointment";
+import { User } from "@prisma/client";
 
 export async function fetchConsultantData(
   consultantId: string,
@@ -42,45 +43,55 @@ export async function fetchAppointments(
     }
     const data: ApiResponse<TAppointment[]> = await response.json();
 
-    // Transform the API response to match our IAppointment type
+    // Transform the API response to match our IAppointment type (which expects Date objects)
     return data.data.map((appointment) => ({
       id: appointment.id,
       appointmentType: appointment.appointmentType,
       slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
         id: slot.id,
-        slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC).toISOString(),
-        slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC).toISOString(),
+        // Convert string dates from API/TAppointment to Date objects for IAppointment
+        slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
+        slotEndTimeInUTC: slot.slotEndTimeInUTC
+          ? new Date(slot.slotEndTimeInUTC)
+          : null,
         isTentative: slot.isTentative,
-        user: slot.user.map((u) => ({
+        // Map all required fields from Prisma User (u) to IUser structure
+        user: (slot.user || []).map((u: User) => ({
+          // Fields required by IUser (ensure these exist on Prisma 'u')
           id: u.id,
-          name: u.name || "Unknown User",
-          email: u.email || "",
-          image: u.image || "/placeholder.svg",
-          currentTimezone: u.currentTimezone || "UTC",
+          name: u.name,
+          email: u.email,
+          image: u.image,
+          phone: u.phone,
+          address: u.address,
+          onlineStatus: u.onlineStatus,
+          currentTimezone: u.currentTimezone,
+          onboardingCompleted: u.onboardingCompleted,
+          role: u.role,
+          consultantProfileId: u.consultantProfileId,
+          consulteeProfileId: u.consulteeProfileId,
+          staffProfileId: u.staffProfileId,
+          // Omit fields explicitly excluded in IUser definition if necessary
         })),
       })),
+      // Map other relations, ensuring nested types match IAppointment definitions
       consultation: appointment.consultation
         ? {
             id: appointment.consultation.id,
             consultationPlan: {
-              id: appointment.consultation.consultationPlan.id,
-              title:
-                appointment.consultation.consultationPlan.title ||
-                "Untitled Plan",
-              description:
-                appointment.consultation.consultationPlan.description || "",
-              durationInHours:
-                appointment.consultation.consultationPlan.durationInHours || 1,
+              // Ensure consultationPlan structure matches IConsultationPlan
+              ...appointment.consultation.consultationPlan,
+              // consultantProfile needs to be mapped if IConsultationPlan expects it
+              consultantProfile: appointment.consultation.consultationPlan
+                .consultantProfile as any, // Cast if necessary
             },
-            requestStatus: appointment.consultation.requestStatus || "PENDING",
+            requestStatus: appointment.consultation.requestStatus,
             requestedBy: {
+              id: appointment.consultation.requestedBy?.id ?? "",
               user: {
-                name:
-                  appointment.consultation.requestedBy?.user?.name ||
-                  "Unknown User",
+                name: appointment.consultation.requestedBy?.user?.name ?? null,
                 image:
-                  appointment.consultation.requestedBy?.user?.image ||
-                  "/placeholder.svg",
+                  appointment.consultation.requestedBy?.user?.image ?? null,
               },
             },
           }
@@ -89,26 +100,17 @@ export async function fetchAppointments(
         ? {
             id: appointment.subscription.id,
             subscriptionPlan: {
-              id: appointment.subscription.subscriptionPlan.id,
-              title:
-                appointment.subscription.subscriptionPlan.title ||
-                "Untitled Plan",
-              description:
-                appointment.subscription.subscriptionPlan.description || "",
-              durationInMonths:
-                appointment.subscription.subscriptionPlan.durationInMonths || 1,
-              callsPerWeek:
-                appointment.subscription.subscriptionPlan.callsPerWeek || 1,
+              ...appointment.subscription.subscriptionPlan,
+              consultantProfile: appointment.subscription.subscriptionPlan
+                .consultantProfile as any, // Cast if necessary
             },
-            requestStatus: appointment.subscription.requestStatus || "PENDING",
+            requestStatus: appointment.subscription.requestStatus,
             requestedBy: {
+              id: appointment.subscription.requestedBy?.id ?? "",
               user: {
-                name:
-                  appointment.subscription.requestedBy?.user?.name ||
-                  "Unknown User",
+                name: appointment.subscription.requestedBy?.user?.name ?? null,
                 image:
-                  appointment.subscription.requestedBy?.user?.image ||
-                  "/placeholder.svg",
+                  appointment.subscription.requestedBy?.user?.image ?? null,
               },
             },
             startDate: new Date(
@@ -121,11 +123,9 @@ export async function fetchAppointments(
         ? {
             id: appointment.webinar.id,
             webinarPlan: {
-              id: appointment.webinar.webinarPlan.id,
-              title: appointment.webinar.webinarPlan.title || "Untitled Plan",
-              description: appointment.webinar.webinarPlan.description || "",
-              durationInHours:
-                appointment.webinar.webinarPlan.durationInHours || 1,
+              ...appointment.webinar.webinarPlan,
+              consultantProfile: appointment.webinar.webinarPlan
+                .consultantProfile as any, // Cast if necessary
             },
             status: appointment.webinar.status,
           }
@@ -134,11 +134,9 @@ export async function fetchAppointments(
         ? {
             id: appointment.class.id,
             classPlan: {
-              id: appointment.class.classPlan.id,
-              title: appointment.class.classPlan.title || "Untitled Plan",
-              description: appointment.class.classPlan.description || "",
-              durationInMonths:
-                appointment.class.classPlan.durationInMonths || 1,
+              ...appointment.class.classPlan,
+              consultantProfile: appointment.class.classPlan
+                .consultantProfile as any, // Cast if necessary
             },
             status: appointment.class.status,
           }

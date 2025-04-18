@@ -1,17 +1,36 @@
 import { TConsultantProfile } from "@/types/consultant";
+import type { User } from "@prisma/client";
 
-export interface IUser {
+export interface IUser
+  extends Omit<
+    User,
+    | "emailVerified"
+    | "passwordHash"
+    | "accounts"
+    | "sessions"
+    | "consultantProfile"
+    | "consulteeProfile"
+    | "staffProfile"
+    | "slotsOfAppointment"
+    | "Waitlist"
+    | "feedbacks"
+    | "supportTickets"
+    | "supportResponses"
+    | "cookiePreferences"
+    | "notificationPreferences"
+    | "Payment"
+  > {
   id: string;
-  name: string;
-  email: string;
-  image: string;
-  currentTimezone: string;
+  name: string | null;
+  email: string | null;
+  image: string | null;
+  currentTimezone: string | null;
 }
 
 export interface ISlotOfAppointment {
   id: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  slotStartTimeInUTC: Date;
+  slotEndTimeInUTC: Date | null;
   isTentative: boolean;
   user: IUser[];
 }
@@ -19,31 +38,33 @@ export interface ISlotOfAppointment {
 export interface IBasePlan {
   id: string;
   title: string;
-  description: string;
+  description: string | null;
 }
 
 export interface IConsultationPlan extends IBasePlan {
   durationInHours: number;
+  consultantProfile: TConsultantProfile;
 }
 
 export interface ISubscriptionPlan extends IBasePlan {
   durationInMonths: number;
   callsPerWeek: number;
+  consultantProfile: TConsultantProfile;
 }
 
 export interface IWebinarPlan extends IBasePlan {
   durationInHours: number;
+  consultantProfile?: TConsultantProfile | null;
 }
 
 export interface IClassPlan extends IBasePlan {
   durationInMonths: number;
+  consultantProfile?: TConsultantProfile | null;
 }
 
 export interface IRequestedBy {
-  user: {
-    name: string;
-    image: string;
-  };
+  id: string;
+  user: Pick<IUser, "name" | "image">;
 }
 
 export interface IConsultation {

@@ -1,9 +1,13 @@
 "use client";
 
+import { useToast } from "@/hooks/use-toast";
+import type { SlotOfAppointment } from "@prisma/client";
+import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Badge } from "components/ui/badge";
 import { Button } from "components/ui/button";
 import { Card } from "components/ui/card";
+import { useRouter } from "next/navigation";
 import {
   EventWithType,
   getConsultantImage,
@@ -15,109 +19,236 @@ import {
 } from "../../utils";
 import { formatTimeUntil } from "../../utils/actual-schedule";
 import { formatDateTime, formatTimeString } from "./utils";
-import type { SlotWithStatus } from "../../utils/actual-schedule";
 
 interface SlotCardProps {
-  event: EventWithType;
-  slotTime: Date;
-  endTime?: Date;
+  appointment: any;
+  slot: any;
   isTentative: boolean;
   isFirst?: boolean;
 }
 
 export function SlotCard({
-  event,
-  slotTime,
-  endTime,
+  appointment,
+  slot,
   isTentative,
   isFirst = false,
 }: Readonly<SlotCardProps>) {
   const now = new Date();
+  const startTime = new Date(slot.slotStartTimeInUTC);
   const diffInMinutes = Math.floor(
-    (slotTime.getTime() - now.getTime()) / 60000,
+    (startTime.getTime() - now.getTime()) / 60000,
   );
   const isJoinable = !isTentative && diffInMinutes <= 10 && diffInMinutes >= 0;
-  const status = getEventStatus(event);
 
-  const handleJoinMeeting = (e: React.MouseEvent) => {
+  const router = useRouter();
+  const client = useStreamVideoClient();
+  const { toast } = useToast();
+
+  const handleJoinMeeting = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    console.log("Joining meeting:", {
-      id: event.id,
-      title: getEventTitle(event),
-      type: event.type,
-    });
-  };
 
-  const handleClick = () => {
-    if (!isJoinable) {
-      console.log("SlotCard clicked:", {
-        id: event.id,
-        title: getEventTitle(event),
-        type: event.type,
-        status,
-        consultant: getConsultantName(event),
-        time: slotTime,
-        isTentative,
+    try {
+      if (!client) {
+        toast({
+          title: "Not signed in",
+          description:
+            "Video client not initialized. You have to sign in to join a meeting.",
+          variant: "warning",
+        });
+        return;
+      }
+
+      const meetingId = `appointment-${appointment.id}`;
+
+      const call = client.call("default", meetingId);
+
+      if (!call) {
+        toast({
+          title: "Error",
+          description: "Failed to create call",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      await call.getOrCreate({
+        data: {
+          starts_at: startTime.toISOString(),
+          custom: {
+            title:
+              appointment.webinar?.webinarPlan?.title ??
+              appointment.subscription?.subscriptionPlan?.title ??
+              appointment.consultation?.consultationPlan?.title ??
+              appointment.class?.classPlan?.title ??
+              "Session",
+            description: `${appointment.webinar?.webinarPlan?.title ?? appointment.subscription?.subscriptionPlan?.title ?? appointment.consultation?.consultationPlan?.title ?? appointment.class?.classPlan?.title ?? "Session"} Meeting`,
+            eventId: appointment.id,
+            eventType:
+              appointment.webinar?.webinarPlan?.title ??
+              appointment.subscription?.subscriptionPlan?.title ??
+              appointment.consultation?.consultationPlan?.title ??
+              appointment.class?.classPlan?.title ??
+              "Session",
+          },
+        },
+      });
+
+      router.push(`/meetings/${meetingId}`);
+      toast({
+        title: "Joining meeting",
+        description: "You will now be redirected to the meeting",
+        variant: "success",
+      });
+    } catch (error) {
+      console.error("Error joining meeting:", error);
+      toast({
+        title: "Error joining meeting",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
       });
     }
   };
 
+  let status = "Unknown";
+  const appointmentType = appointment.appointmentType;
+  switch (appointmentType) {
+    case "CONSULTATION":
+      status = appointment.consultation?.requestStatus ?? "Unknown";
+      break;
+    case "SUBSCRIPTION":
+      status = appointment.subscription?.requestStatus ?? "Unknown";
+      break;
+    case "WEBINAR":
+      status = appointment.webinar?.status ?? "Unknown";
+      break;
+    case "CLASS":
+      status = appointment.class?.status ?? "Unknown";
+      break;
+  }
+
+  let consultantName = "Unknown Consultant";
+  let consultantImage: string | null | undefined = "/placeholder.svg";
+  let consultantInitial = "?";
+  let eventTitle = `${appointmentType} Session`;
+
+  switch (appointmentType) {
+    case "CONSULTATION":
+      consultantName =
+        appointment.consultation?.consultationPlan?.consultantProfile?.user
+          ?.name ?? consultantName;
+      consultantImage =
+        appointment.consultation?.consultationPlan?.consultantProfile?.user
+          ?.image;
+      consultantInitial =
+        consultantName?.charAt(0).toUpperCase() ?? consultantInitial;
+      eventTitle =
+        appointment.consultation?.consultationPlan?.title ?? eventTitle;
+      break;
+    case "SUBSCRIPTION":
+      consultantName =
+        appointment.subscription?.subscriptionPlan?.consultantProfile?.user
+          ?.name ?? consultantName;
+      consultantImage =
+        appointment.subscription?.subscriptionPlan?.consultantProfile?.user
+          ?.image;
+      consultantInitial =
+        consultantName?.charAt(0).toUpperCase() ?? consultantInitial;
+      eventTitle =
+        appointment.subscription?.subscriptionPlan?.title ?? eventTitle;
+      break;
+    case "WEBINAR":
+      consultantName =
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ??
+        "Webinar Host";
+      consultantImage =
+        appointment.webinar?.webinarPlan?.consultantProfile?.user?.image;
+      consultantInitial = consultantName?.charAt(0).toUpperCase() ?? "W";
+      eventTitle = appointment.webinar?.webinarPlan?.title ?? eventTitle;
+      break;
+    case "CLASS":
+      consultantName =
+        appointment.class?.classPlan?.consultantProfile?.user?.name ??
+        "Class Instructor";
+      consultantImage =
+        appointment.class?.classPlan?.consultantProfile?.user?.image;
+      consultantInitial = consultantName?.charAt(0).toUpperCase() ?? "C";
+      eventTitle = appointment.class?.classPlan?.title ?? eventTitle;
+      break;
+  }
+
   return (
     <Card
-      className={`h-full border ${
-        isFirst ? "border-blue-100 bg-blue-50/50" : "border-gray-200 bg-white"
-      } hover:border-gray-300 transition-colors`}
+      className={`h-full border rounded-lg ${
+        isFirst ? "border-blue-200 bg-blue-50/30" : "border-gray-200 bg-white"
+      } hover:border-gray-300 hover:shadow-sm transition-all duration-200`}
     >
-      <div className="p-4">
-        <div className="flex items-start gap-4">
-          <Avatar className="h-10 w-10">
+      <div className="p-3 flex flex-col h-full">
+        <div className="flex items-start gap-3">
+          <Avatar className="h-9 w-9">
             <AvatarImage
-              src={getConsultantImage(event) ?? "/placeholder.svg"}
+              src={consultantImage ?? "/placeholder.svg"}
               alt="Consultant"
             />
-            <AvatarFallback>{getConsultantInitial(event)}</AvatarFallback>
+            <AvatarFallback>{consultantInitial}</AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
-            <h3 className="font-medium text-gray-900 truncate">
-              {getEventTitle(event)}
-            </h3>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-              <span className="text-gray-600">{getConsultantName(event)}</span>
-              <span className="text-gray-600">
-                {formatDateTime(slotTime, endTime)}
-              </span>
+            <div className="flex justify-between items-center mb-1">
+              <h3
+                className="font-semibold text-sm text-gray-800 truncate"
+                title={eventTitle}
+              >
+                {eventTitle}
+              </h3>
+              <Badge
+                className={`flex-shrink-0 ${
+                  isJoinable
+                    ? "bg-green-100 text-green-800 animate-pulse"
+                    : "bg-blue-100 text-blue-800"
+                } text-xs px-2 py-0.5 rounded-full`}
+              >
+                {isJoinable ? "Now!" : formatTimeUntil(diffInMinutes)}
+              </Badge>
             </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="text-xs">
-                {event.type}
-              </Badge>
-              <Badge className={`${getStatusColor(status)} text-xs`}>
-                {status}
-              </Badge>
-              {isTentative && (
-                <span className="text-red-500 text-xs">*Subject to change</span>
-              )}
-              {isJoinable && (
-                <Button
-                  onClick={handleJoinMeeting}
-                  className="ml-auto bg-green-600 hover:bg-green-700 text-white text-xs h-7"
-                >
-                  Join Now
-                </Button>
-              )}
+            <div className="space-y-0.5 text-xs text-gray-500">
+              <p className="truncate" title={consultantName}>
+                {consultantName}
+              </p>
+              <p>
+                {formatDateTime(
+                  new Date(slot.slotStartTimeInUTC),
+                  slot.slotEndTimeInUTC
+                    ? new Date(slot.slotEndTimeInUTC)
+                    : undefined,
+                )}
+              </p>
             </div>
           </div>
-          <div className="flex-shrink-0">
+        </div>
+        <div className="mt-auto pt-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <Badge
-              className={`${
-                isJoinable
-                  ? "bg-green-100 text-green-800 animate-pulse"
-                  : "bg-blue-100 text-blue-800"
-              } text-xs px-2 py-0.5`}
+              variant="outline"
+              className="text-xs rounded-full px-2 py-0.5"
             >
-              {isJoinable ? "Starting Soon!" : formatTimeUntil(diffInMinutes)}
+              {appointmentType}
             </Badge>
+            <Badge
+              className={`${getStatusColor(status)} text-xs rounded-full px-2 py-0.5`}
+            >
+              {status}
+            </Badge>
+            {isTentative && (
+              <span className="text-red-500 text-xs italic">*Tentative</span>
+            )}
           </div>
+          {(process.env.NODE_ENV === "production" ? isJoinable : true) && (
+            <Button
+              onClick={handleJoinMeeting}
+              className="ml-auto bg-gradient-to-b from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white text-xs h-6 px-2.5 rounded-md shadow-sm hover:shadow-md transition-all duration-200"
+            >
+              {process.env.NODE_ENV === "production" ? "Join" : "Join (Dev)"}
+            </Button>
+          )}
         </div>
       </div>
     </Card>
@@ -126,19 +257,27 @@ export function SlotCard({
 
 interface MonthlyEventCardProps {
   event: EventWithType;
-  slots: SlotWithStatus[];
+  slots: (SlotOfAppointment & { isPast?: boolean; isCancelled?: boolean })[];
 }
 
-export function MonthlyEventCard({ event, slots }: MonthlyEventCardProps) {
+export function MonthlyEventCard({
+  event,
+  slots,
+}: Readonly<MonthlyEventCardProps>) {
   const status = getEventStatus(event);
+  const title = getEventTitle(event);
+  const name = getConsultantName(event);
+  const image = getConsultantImage(event);
+  const initial = getConsultantInitial(event);
+  const eventType = event.type;
 
   const handleClick = () => {
     console.log("MonthlyEventCard clicked:", {
       id: event.id,
-      title: getEventTitle(event),
-      type: event.type,
+      title,
+      type: eventType,
       status,
-      consultant: getConsultantName(event),
+      consultant: name,
       slots,
     });
   };
@@ -152,34 +291,31 @@ export function MonthlyEventCard({ event, slots }: MonthlyEventCardProps) {
       >
         <div className="flex items-center gap-4">
           <Avatar className="h-8 w-8">
-            <AvatarImage
-              src={getConsultantImage(event) ?? "/placeholder.svg"}
-              alt="Consultant"
-            />
-            <AvatarFallback>{getConsultantInitial(event)}</AvatarFallback>
+            <AvatarImage src={image ?? "/placeholder.svg"} alt="Consultant" />
+            <AvatarFallback>{initial}</AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="font-medium text-sm text-gray-900 truncate">
-                  {getEventTitle(event)}
+                  {title}
                 </h3>
                 <span
                   className="text-sm text-gray-600"
                   data-testid="consultant-name"
                 >
-                  {getConsultantName(event)}
+                  {name}
                 </span>
               </div>
               <div className="flex items-center gap-2">
                 <Badge
                   className={`${
-                    event.type === "Subscription"
+                    eventType === "Subscription"
                       ? "bg-purple-100 text-purple-800"
                       : "bg-indigo-100 text-indigo-800"
                   } text-xs px-2 py-0.5`}
                 >
-                  {event.type}
+                  {eventType}
                 </Badge>
                 <Badge
                   className={`${getStatusColor(status)} text-xs px-2 py-0.5`}
@@ -196,23 +332,21 @@ export function MonthlyEventCard({ event, slots }: MonthlyEventCardProps) {
         <div className="mt-2 space-y-1">
           {slots.map((slot) => (
             <div
-              key={slot.date.getTime()}
+              key={slot.id}
               className="text-sm text-gray-600 flex items-center gap-4"
               data-testid="monthly-slot"
             >
               <span className="min-w-[100px]">
-                {slot.date.toLocaleString(undefined, {
+                {new Date(slot.slotStartTimeInUTC).toLocaleString(undefined, {
                   weekday: "short",
                   day: "numeric",
                   month: "short",
                 })}
               </span>
               <span>
-                {slot.endTime
-                  ? `${formatTimeString(slot.date)} - ${formatTimeString(
-                      slot.endTime,
-                    )}`
-                  : formatTimeString(slot.date)}
+                {slot.slotEndTimeInUTC
+                  ? `${formatTimeString(new Date(slot.slotStartTimeInUTC))} - ${formatTimeString(new Date(slot.slotEndTimeInUTC))}`
+                  : formatTimeString(new Date(slot.slotStartTimeInUTC))}
                 {slot.isTentative && (
                   <span className="text-red-500 ml-1">*</span>
                 )}

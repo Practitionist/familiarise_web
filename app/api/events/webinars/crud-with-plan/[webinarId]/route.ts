@@ -1,0 +1,124 @@
+import prisma from "@/lib/prisma";
+import { NextRequest, NextResponse } from "next/server";
+// Remove Zod import if no longer needed
+// import { z } from "zod";
+
+// Remove UUID schema
+// const uuidSchema = z.string().uuid();
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ webinarId: string }> },
+) {
+  try {
+    // Add session check if needed
+    // const session = await getServerSession(authOptions);
+    // if (!session) {
+    //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // }
+
+    const awaitedParams = await params;
+    const { webinarId } = awaitedParams;
+
+    // Replace UUID validation with simple string check
+    if (!webinarId || typeof webinarId !== "string") {
+      return NextResponse.json(
+        { error: "Invalid or missing Webinar ID" }, // Updated error message
+        { status: 400 },
+      );
+    }
+
+    console.log(`Attempting to delete webinar instance with ID: ${webinarId}`);
+
+    // Start transaction
+    const result = await prisma.$transaction(
+      async (tx) => {
+        // 1. Find the webinar instance, get plan ID AND plan title
+        const webinarInstance = await tx.webinar.findUnique({
+          where: { id: webinarId },
+          select: {
+            webinarPlanId: true,
+            // Include the related plan to get its title
+            webinarPlan: { select: { title: true } },
+          },
+        });
+
+        if (!webinarInstance) {
+          throw new Error(`Webinar instance with ID ${webinarId} not found.`);
+        }
+
+        const webinarPlanId = webinarInstance.webinarPlanId;
+        const eventTitle = webinarInstance.webinarPlan.title; // Store the title
+        console.log(
+          `Found webinar plan ID: ${webinarPlanId} (Title: "${eventTitle}") for instance ${webinarId}`,
+        );
+
+        // 2. Delete the webinar instance
+        console.log(`Deleting webinar instance: ${webinarId}`);
+        await tx.webinar.delete({ where: { id: webinarId } });
+
+        // 3. Check if other instances use the same plan
+        const remainingInstancesCount = await tx.webinar.count({
+          where: { webinarPlanId: webinarPlanId },
+        });
+
+        let planWasDeleted = false; // Flag to know if plan deletion happened
+        if (remainingInstancesCount === 0) {
+          // 4. Delete the plan if needed
+          console.log(
+            `Deleting webinar plan: ${webinarPlanId} as no other instances exist`,
+          );
+          await tx.webinarPlan.delete({ where: { id: webinarPlanId } });
+          planWasDeleted = true;
+        } else {
+          console.log(
+            `Webinar plan ${webinarPlanId} is still used by ${remainingInstancesCount} other instance(s), not deleting plan.`,
+          );
+        }
+
+        // Return title and whether plan was deleted
+        return { eventTitle, planWasDeleted };
+      },
+      {
+        maxWait: 15000,
+        timeout: 30000,
+        isolationLevel: "Serializable",
+      },
+    );
+
+    console.log("Webinar and potentially plan deleted successfully:", result);
+    // Use the fetched title in the response message
+    return NextResponse.json(
+      {
+        message:
+          `Webinar "${result.eventTitle}" deleted successfully.` + // Use title
+          (result.planWasDeleted
+            ? ` The associated plan was also deleted.`
+            : " The associated plan was kept as it is used by other instances."),
+      },
+      { status: 200 },
+    );
+  } catch (error) {
+    console.error("Error deleting webinar:", error);
+    // Remove specific ZodError check if Zod is fully removed
+    // if (error instanceof z.ZodError) { ... }
+    if (error instanceof Error && error.message.includes("not found")) {
+      return NextResponse.json({ error: error.message }, { status: 404 });
+    }
+    return NextResponse.json(
+      { error: "An error occurred during webinar deletion" },
+      { status: 500 },
+    );
+  }
+}
+
+// Add dummy GET, POST, PATCH handlers if needed
+// export async function GET(request: NextRequest, { params }: { params: Promise<{ webinarId: string }> }) {
+//   return NextResponse.json({ message: "GET not implemented" }, { status: 405 });
+// }
+// export async function POST(request: NextRequest, { params }: { params: Promise<{ webinarId: string }> }) {
+//   return NextResponse.json({ message: "POST not implemented" }, { status: 405 });
+// }
+// export async function PATCH(request: NextRequest, { params }: { params: Promise<{ webinarId: string }> }) {
+//   return NextResponse.json({ message: "PATCH not implemented" }, { status: 405 });
+// }

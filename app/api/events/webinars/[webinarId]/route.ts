@@ -31,11 +31,6 @@ export async function GET(
           },
         },
         waitlist: true,
-        meetingRoom: {
-          include: {
-            recordings: true,
-          },
-        },
       },
     });
 
@@ -100,11 +95,6 @@ export async function PUT(
           },
         },
         waitlist: true,
-        meetingRoom: {
-          include: {
-            recordings: true,
-          },
-        },
       },
     });
 
@@ -148,11 +138,6 @@ export async function DELETE(
           },
         },
         waitlist: true,
-        meetingRoom: {
-          include: {
-            recordings: true,
-          },
-        },
       },
     });
 

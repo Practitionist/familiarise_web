@@ -64,76 +64,89 @@ export function Calendar({
       [
         ...consultations.flatMap((c) => {
           const slots = getActualSlots({ ...c, type: "Consultation" });
-          return slots.map((slot) => ({
-            id: `${c.id}-${slot.date.getTime()}`,
-            title: c.consultationPlan.title,
-            start: slot.date,
-            end: new Date(slot.date.getTime() + 60 * 60 * 1000), // 1 hour duration
-            type: "Consultation" as const,
-            status: c.requestStatus,
-            consultant:
-              c.consultationPlan.consultantProfile?.user?.name || "Unknown",
-            subscriptionId: null,
-            time: slot.date.toLocaleTimeString(undefined, {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            isTentative: slot.isTentative,
-          }));
+          return slots.map((slot) => {
+            const startTime = new Date(slot.slotStartTimeInUTC);
+            return {
+              id: `${c.id}-${startTime.getTime()}`,
+              title: c.consultationPlan.title,
+              start: startTime,
+              end: new Date(startTime.getTime() + 60 * 60 * 1000),
+              type: "Consultation" as const,
+              status: c.requestStatus,
+              consultant:
+                c.consultationPlan.consultantProfile?.user?.name || "Unknown",
+              subscriptionId: null,
+              time: startTime.toLocaleTimeString(undefined, {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+              isTentative: slot.isTentative,
+            };
+          });
         }),
         ...subscriptions.flatMap((s) => {
           const slots = getActualSlots({ ...s, type: "Subscription" });
-          return slots.map((slot) => ({
-            id: `${s.id}-${slot.date.getTime()}`,
-            title: s.subscriptionPlan.title,
-            start: slot.date,
-            end: new Date(slot.date.getTime() + 60 * 60 * 1000), // 1 hour duration
-            type: "Subscription" as const,
-            status: s.requestStatus,
-            consultant:
-              s.subscriptionPlan.consultantProfile?.user?.name || "Unknown",
-            subscriptionId: s.id,
-            time: slot.date.toLocaleTimeString(undefined, {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            isTentative: slot.isTentative,
-          }));
+          return slots.map((slot) => {
+            const startTime = new Date(slot.slotStartTimeInUTC);
+            return {
+              id: `${s.id}-${startTime.getTime()}`,
+              title: s.subscriptionPlan.title,
+              start: startTime,
+              end: new Date(startTime.getTime() + 60 * 60 * 1000),
+              type: "Subscription" as const,
+              status: s.requestStatus,
+              consultant:
+                s.subscriptionPlan.consultantProfile?.user?.name || "Unknown",
+              subscriptionId: s.id,
+              time: startTime.toLocaleTimeString(undefined, {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+              isTentative: slot.isTentative,
+            };
+          });
         }),
         ...classes.flatMap((c) => {
           const slots = getActualSlots({ ...c, type: "Class" });
-          return slots.map((slot) => ({
-            id: `${c.id}-${slot.date.getTime()}`,
-            title: c.classPlan.title,
-            start: slot.date,
-            end: new Date(slot.date.getTime() + 60 * 60 * 1000), // 1 hour duration
-            type: "Class" as const,
-            status: c.status,
-            consultant: c.classPlan.consultantProfile?.user?.name || "Unknown",
-            time: slot.date.toLocaleTimeString(undefined, {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            isTentative: slot.isTentative,
-          }));
+          return slots.map((slot) => {
+            const startTime = new Date(slot.slotStartTimeInUTC);
+            return {
+              id: `${c.id}-${startTime.getTime()}`,
+              title: c.classPlan.title,
+              start: startTime,
+              end: new Date(startTime.getTime() + 60 * 60 * 1000),
+              type: "Class" as const,
+              status: c.status,
+              consultant:
+                c.classPlan.consultantProfile?.user?.name || "Unknown",
+              time: startTime.toLocaleTimeString(undefined, {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+              isTentative: slot.isTentative,
+            };
+          });
         }),
         ...webinars.flatMap((w) => {
           const slots = getActualSlots({ ...w, type: "Webinar" });
-          return slots.map((slot) => ({
-            id: `${w.id}-${slot.date.getTime()}`,
-            title: w.webinarPlan.title,
-            start: slot.date,
-            end: new Date(slot.date.getTime() + 60 * 60 * 1000), // 1 hour duration
-            type: "Webinar" as const,
-            status: w.status,
-            consultant:
-              w.webinarPlan.consultantProfile?.user?.name || "Unknown",
-            time: slot.date.toLocaleTimeString(undefined, {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            isTentative: slot.isTentative,
-          }));
+          return slots.map((slot) => {
+            const startTime = new Date(slot.slotStartTimeInUTC);
+            return {
+              id: `${w.id}-${startTime.getTime()}`,
+              title: w.webinarPlan.title,
+              start: startTime,
+              end: new Date(startTime.getTime() + 60 * 60 * 1000),
+              type: "Webinar" as const,
+              status: w.status,
+              consultant:
+                w.webinarPlan.consultantProfile?.user?.name || "Unknown",
+              time: startTime.toLocaleTimeString(undefined, {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+              isTentative: slot.isTentative,
+            };
+          });
         }),
       ].filter((event) => {
         const startTime = event.start.getTime();

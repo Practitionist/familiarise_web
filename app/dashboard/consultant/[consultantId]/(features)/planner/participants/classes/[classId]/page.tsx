@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,39 +13,39 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { WebinarEvent } from "../../../types/event";
+import { ClassEvent } from "../../../types/event";
 import { useParams } from "next/navigation";
 
-export default function WebinarParticipantsPage() {
+export default function ClassParticipantsPage() {
   const params = useParams();
-  const [webinar, setWebinar] = useState<WebinarEvent | null>(null);
+  const [classEvent, setClassEvent] = useState<ClassEvent | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const response = await fetch(
-          `/api/participants/webinar/${params.webinarId}`,
+          `/api/participants/class/${params.classId}`,
         );
         if (!response.ok) {
-          throw new Error("Failed to fetch webinar data");
+          throw new Error("Failed to fetch class data");
         }
         const data = await response.json();
-        setWebinar(data.webinarEvent);
+        setClassEvent(data.classEvent);
         setLoading(false);
       } catch (error) {
-        console.error("Error fetching webinar data:", error);
+        console.error("Error fetching class data:", error);
         setLoading(false);
       }
     };
 
     fetchData();
-  }, [params.webinarId]);
+  }, [params.classId]);
 
   const handleRemoveParticipant = async (userId: string) => {
     try {
       const response = await fetch(
-        `/api/participants/webinar/${params.webinarId}?userId=${userId}`,
+        `/api/participants/class/${params.classId}?userId=${userId}`,
         {
           method: "DELETE",
         },
@@ -55,13 +57,13 @@ export default function WebinarParticipantsPage() {
 
       // Refresh the data
       const updatedResponse = await fetch(
-        `/api/participants/webinar/${params.webinarId}`,
+        `/api/participants/class/${params.classId}`,
       );
       if (!updatedResponse.ok) {
-        throw new Error("Failed to fetch updated webinar data");
+        throw new Error("Failed to fetch updated class data");
       }
       const updatedData = await updatedResponse.json();
-      setWebinar(updatedData.webinarEvent);
+      setClassEvent(updatedData.classEvent);
     } catch (error) {
       console.error("Error removing participant:", error);
     }
@@ -71,15 +73,20 @@ export default function WebinarParticipantsPage() {
     return <div>Loading...</div>;
   }
 
-  if (!webinar) {
-    return <div>Webinar not found</div>;
+  if (!classEvent) {
+    return <div>Class not found</div>;
   }
 
   // Get unique participants by user ID
   const participants = Array.from(
     new Map(
-      (webinar.appointment?.slotsOfAppointment || [])
-        .flatMap((slot) => slot.user || [])
+      (classEvent.appointments || [])
+        .flatMap(
+          (appointment) =>
+            (appointment.slotsOfAppointment || []).flatMap(
+              (slot) => slot.user || [],
+            ) || [],
+        )
         .map((user) => [user.id, user]) || [],
     ).values(),
   );
@@ -88,13 +95,24 @@ export default function WebinarParticipantsPage() {
     <div className="container mx-auto py-8">
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl font-bold">
-            {webinar.webinarPlan.title} - Participants
-          </CardTitle>
-          <p className="text-sm text-gray-500">
-            {participants.length}/{webinar.webinarPlan.maxParticipants}{" "}
-            participants
-          </p>
+          <Link
+            href={`/dashboard/consultant/${params.consultantId}/planner`}
+            passHref
+            className="mb-4"
+          >
+            <Button variant="outline" size="sm">
+              <ArrowLeft className="mr-2 h-4 w-4" /> Back to Planner
+            </Button>
+          </Link>
+          <div>
+            <CardTitle className="text-2xl font-bold">
+              {classEvent.classPlan.title} - Participants
+            </CardTitle>
+            <p className="text-sm text-gray-500">
+              {participants.length}/{classEvent.classPlan.maxParticipants}{" "}
+              participants
+            </p>
+          </div>
         </CardHeader>
         <CardContent>
           <Table>

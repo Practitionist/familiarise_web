@@ -1,22 +1,25 @@
 "use client";
 
+import type {
+  IAppointment,
+  ISlotOfAppointment,
+} from "@/app/dashboard/consultant/[consultantId]/types";
+import type { SlotOfAppointment } from "@prisma/client";
 import { ArrowLeftIcon, ArrowRightIcon } from "assets/icons";
 import { Button } from "components/ui/button";
 import { useRef } from "react";
-import { EventWithType } from "../../utils";
-import { SlotWithStatus } from "../../utils/actual-schedule";
+import type { EventWithType } from "../../utils";
 import { MonthlyEventCard, SlotCard } from "./SessionCards";
 
 interface UpcomingSectionProps {
-  slots: {
-    event: EventWithType;
-    slotTime: Date;
-    endTime?: Date;
+  readonly slots: {
+    appointment: IAppointment;
+    slot: ISlotOfAppointment;
     isTentative: boolean;
   }[];
 }
 
-export function UpcomingSection({ slots }: UpcomingSectionProps) {
+export function UpcomingSection({ slots }: Readonly<UpcomingSectionProps>) {
   const carouselRef = useRef<HTMLDivElement>(null);
 
   const scrollCarousel = (direction: "left" | "right") => {
@@ -63,13 +66,18 @@ export function UpcomingSection({ slots }: UpcomingSectionProps) {
         style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
         data-testid="upcoming-slot-list"
       >
-        {slots.map((slot, index) => (
+        {slots.map((item, index) => (
           <div
-            key={`${slot.event.id}-${slot.slotTime.getTime()}`}
+            key={item.slot.id}
             className={`flex-none ${index === 0 ? "w-[400px]" : "w-[300px]"}`}
-            data-testid={`${slot.event.type.toLowerCase()}-${slot.event.id}`}
+            data-testid={`${item.appointment.appointmentType.toLowerCase()}-${item.appointment.id}-${item.slot.id}`}
           >
-            <SlotCard {...slot} isFirst={index === 0} />
+            <SlotCard
+              appointment={item.appointment}
+              slot={item.slot}
+              isTentative={item.isTentative}
+              isFirst={index === 0}
+            />
           </div>
         ))}
         {slots.length === 0 && (
@@ -83,10 +91,13 @@ export function UpcomingSection({ slots }: UpcomingSectionProps) {
 }
 
 interface MonthlySectionProps {
-  currentMonth: Date;
-  events: { event: EventWithType; slots: SlotWithStatus[] }[];
-  onPreviousMonth: () => void;
-  onNextMonth: () => void;
+  readonly currentMonth: Date;
+  readonly events: {
+    event: EventWithType;
+    slots: (SlotOfAppointment & { isPast?: boolean; isCancelled?: boolean })[];
+  }[];
+  readonly onPreviousMonth: () => void;
+  readonly onNextMonth: () => void;
 }
 
 export function MonthlySection({
@@ -94,7 +105,7 @@ export function MonthlySection({
   events,
   onPreviousMonth,
   onNextMonth,
-}: MonthlySectionProps) {
+}: Readonly<MonthlySectionProps>) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       <div className="lg:col-span-8 bg-white rounded-xl">
@@ -132,7 +143,7 @@ export function MonthlySection({
         >
           {events.map(({ event, slots }) => (
             <div
-              key={`${event.id}-${slots[0]?.date.getTime()}`}
+              key={`${event.id}-${slots[0]?.id}`}
               data-testid={`${event.type.toLowerCase()}-${event.id}`}
             >
               <MonthlyEventCard event={event} slots={slots} />

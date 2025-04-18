@@ -115,6 +115,12 @@ export async function GET(request: Request) {
           classPlan: {
             include: {
               consultantProfile: true,
+              topics: true,
+              classContents: {
+                orderBy: {
+                  order: "asc",
+                },
+              },
             },
           },
           appointments: true,

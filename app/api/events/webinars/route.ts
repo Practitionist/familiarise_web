@@ -80,7 +80,7 @@ export async function GET(request: Request) {
               payment: true,
             },
           },
-          meetingRoom: true,
+          // meetingRoom: true,
           waitlist: {
             where: {
               user: {
@@ -126,7 +126,7 @@ export async function GET(request: Request) {
               },
             },
           },
-          meetingRoom: true,
+          // meetingRoom: true,
           waitlist: true,
         },
       });
@@ -148,7 +148,7 @@ export async function GET(request: Request) {
               },
             },
           },
-          meetingRoom: true,
+          // meetingRoom: true,
           waitlist: true,
         },
       });
@@ -202,7 +202,7 @@ export async function POST(request: Request) {
             },
           },
         },
-        meetingRoom: true,
+        // meetingRoom: true,
         waitlist: true,
       },
     });

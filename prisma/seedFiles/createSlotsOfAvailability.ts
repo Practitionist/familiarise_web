@@ -3,48 +3,42 @@ import { DayOfWeek, ScheduleType } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./createUsers";
 
-const MAX_SLOT_DURATION = 6; // 6 hours
-const MIN_SLOT_DURATION = 0.5; // 30 minutes
-const MIN_BREAK_DURATION = 0.5; // 30 minutes
+const MAX_SLOT_DURATION = 6 * 2; // In 30-min intervals (12)
+const MIN_SLOT_DURATION = 1; // In 30-min intervals (1 = 30 mins)
+const MIN_BREAK_DURATION = 1; // In 30-min intervals (1 = 30 mins)
 const MAX_SLOTS_PER_DAY = 4;
 
 function generateSlotTime(
-  existingSlots: Array<{ start: number; end: number }>,
+  existingSlots: Array<{ start: number; end: number }>, // start/end now in 30-min intervals from midnight
 ) {
-  // Keep trying until we find a valid slot
   let attempts = 0;
   while (attempts < 50) {
-    // Prevent infinite loops
-    // Generate random start hour (0-23)
-    const startHour = faker.number.int({ min: 0, max: 23 });
-    // Randomly decide if we want to start at half hour
-    const startMinute = faker.helpers.arrayElement([0, 0.5]);
-    const start = startHour + startMinute;
+    // Generate random start interval (0-47, representing 00:00, 00:30, ..., 23:30)
+    const startInterval = faker.number.int({ min: 0, max: 47 });
 
-    // Generate random duration between 30 mins and 6 hours
-    const possibleDurations = Array.from(
-      { length: MAX_SLOT_DURATION * 2 }, // *2 because we're counting in half hours
-      (_, i) => (i + 1) * 0.5, // Generate durations from 0.5 to 6 in 0.5 increments
-    );
-    const duration = faker.helpers.arrayElement(possibleDurations);
-    const end = start + duration;
+    // Generate random duration between 1 and 12 (30 mins to 6 hours)
+    const durationInterval = faker.number.int({
+      min: MIN_SLOT_DURATION,
+      max: MAX_SLOT_DURATION,
+    });
+    const endInterval = startInterval + durationInterval;
 
-    // Verify this slot doesn't overlap with existing slots
+    // Verify overlap (intervals already include break)
     const hasOverlap = existingSlots.some((slot) => {
-      // Add MIN_BREAK_DURATION to ensure minimum break between slots
       return !(
-        end + MIN_BREAK_DURATION <= slot.start ||
-        start >= slot.end + MIN_BREAK_DURATION
+        endInterval + MIN_BREAK_DURATION <= slot.start ||
+        startInterval >= slot.end + MIN_BREAK_DURATION
       );
     });
 
-    if (!hasOverlap) {
-      return { start, end };
+    if (!hasOverlap && endInterval <= 48) {
+      // Ensure slot doesn't go past midnight (interval 48)
+      return { start: startInterval, end: endInterval };
     }
 
     attempts++;
   }
-  return null; // Couldn't find a valid slot
+  return null;
 }
 
 function generateDaySlots() {
@@ -57,8 +51,6 @@ function generateDaySlots() {
       slots.push(slot);
     }
   }
-
-  // Sort slots by start time
   return slots.sort((a, b) => a.start - b.start);
 }
 
@@ -87,11 +79,11 @@ export async function createSlotsOfAvailability(
           const daySlots = generateDaySlots();
 
           for (const slot of daySlots) {
-            const startHour = Math.floor(slot.start);
-            const startMinute = (slot.start % 1) * 60;
-
-            const endHour = Math.floor(slot.end);
-            const endMinute = (slot.end % 1) * 60;
+            // Convert intervals back to hours and minutes
+            const startHour = Math.floor(slot.start / 2);
+            const startMinute = (slot.start % 2) * 30;
+            const endHour = Math.floor(slot.end / 2);
+            const endMinute = (slot.end % 2) * 30;
 
             // For weekly slots, since they represent recurring time patterns, we have a few options:
             //
@@ -153,11 +145,11 @@ export async function createSlotsOfAvailability(
           const daySlots = generateDaySlots();
 
           for (const slot of daySlots) {
-            const startHour = Math.floor(slot.start);
-            const startMinute = (slot.start % 1) * 60;
-
-            const endHour = Math.floor(slot.end);
-            const endMinute = (slot.end % 1) * 60;
+            // Convert intervals back to hours and minutes
+            const startHour = Math.floor(slot.start / 2);
+            const startMinute = (slot.start % 2) * 30;
+            const endHour = Math.floor(slot.end / 2);
+            const endMinute = (slot.end % 2) * 30;
 
             // Create a date for this specific day
             const startTime = new Date(date);
