@@ -1,172 +1,141 @@
-import React, { useState } from "react";
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  MoveHorizontalIcon,
-  SendIcon,
-  PhoneIcon,
-  VideoIcon,
-  SearchIcon,
-  ArrowLeftIcon,
-} from "lucide-react";
+"use client";
+
+// import { DebugButton } from "@/components/chat/DebugButton";
+// import { InitializeChannelsButton } from "@/components/chat/InitializeChannelsButton";
+import { initializeAllChannels } from "@/actions/channel.action";
+import { ChatLayout } from "@/components/chat/ChatLayout";
+import { useToast } from "@/components/ui/use-toast";
+import { fetchConsultantDetails } from "@/lib/user";
+import StreamChatProvider from "@/providers/StreamChatProvider";
+import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
 
 export function ChatsTab() {
-  const [selectedChat, setSelectedChat] = useState<string | null>(null);
+  const { consultantId } = useParams();
+  const [userId, setUserId] = useState<string | null>(null);
+  const [userRole, setUserRole] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [initializing, setInitializing] = useState(false);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const fetchUserId = async () => {
+      try {
+        const consultantDetails = await fetchConsultantDetails(
+          consultantId as string,
+        );
+
+        // Check if user property exists before accessing its properties
+        if (consultantDetails?.user) {
+          setUserId(consultantDetails.user.id);
+          setUserRole(consultantDetails.user.role);
+        } else {
+          console.error("User property missing in consultant details");
+          toast({
+            title: "Error",
+            description:
+              "Failed to get user information. Please try again later.",
+            variant: "destructive",
+          });
+        }
+      } catch (error) {
+        console.error("Error fetching consultant details:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load user data. Please try again later.",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (consultantId) {
+      fetchUserId();
+    }
+  }, [consultantId]);
+
+  // Auto-initialize channels when the component loads
+  useEffect(() => {
+    const autoInitializeChannels = async () => {
+      if (!userId) return;
+
+      try {
+        setInitializing(true);
+        console.log("Auto-initializing channels...");
+
+        const result = await initializeAllChannels();
+
+        console.log("Channels initialized:", result);
+
+        toast({
+          title: "Channels initialized",
+          description:
+            "Channels have been created for all webinars, classes, consultations, and subscriptions.",
+        });
+      } catch (error) {
+        console.error("Error initializing channels:", error);
+
+        toast({
+          title: "Error initializing channels",
+          description: (error as Error).message || "An error occurred",
+          variant: "destructive",
+        });
+      } finally {
+        setInitializing(false);
+      }
+    };
+
+    if (userRole === "ADMIN") {
+      autoInitializeChannels();
+    }
+  }, [userId, userRole, toast]);
+
+  if (loading || !userId) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex h-full w-full bg-white rounded-lg shadow-lg overflow-hidden">
-      {/* Chat List */}
-      <div
-        className={`w-full lg:w-80 border-r border-gray-200 flex flex-col ${selectedChat ? "hidden lg:flex" : "flex"}`}
-      >
-        <div className="h-[60px] flex items-center bg-gray-200 px-4">
-          <h2 className="text-lg font-semibold">Chats</h2>
-          <div className="relative flex-1 ml-4">
-            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <Input
-              type="search"
-              placeholder="Search chats"
-              className="pl-9 w-full text-sm"
-            />
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {["John Doe", "Jane Doe", "Bob Smith", "Sarah Johnson"].map(
-            (name, index) => (
-              <button
-                key={index}
-                onClick={() => setSelectedChat(name)}
-                className="w-full flex items-center gap-3 p-4 hover:bg-gray-50 transition-colors border-b border-gray-200 last:border-0"
-              >
-                <Avatar>
-                  <AvatarImage src="/placeholder-user.jpg" alt={name} />
-                  <AvatarFallback>
-                    {name
-                      .split(" ")
-                      .map((n) => n[0])
-                      .join("")}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0 text-left">
-                  <div className="font-medium">{name}</div>
-                  <div className="text-sm text-gray-500 truncate">
-                    Last message preview...
-                  </div>
-                </div>
-                <div className="text-xs text-gray-400">{`${index + 1}:${index * 15} PM`}</div>
-              </button>
-            ),
-          )}
-        </div>
-      </div>
-
-      {/* Chat Window */}
-      <div className={`flex-1 ${selectedChat ? "flex" : "hidden lg:flex"}`}>
-        <div className="flex flex-col w-full">
-          <div className="h-[60px] flex items-center justify-between bg-gray-200 px-4">
-            <div className="flex items-center gap-3">
-              {selectedChat && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="lg:hidden mr-1"
-                  onClick={() => setSelectedChat(null)}
-                >
-                  <ArrowLeftIcon className="w-5 h-5" />
-                  <span className="sr-only">Back to chat list</span>
-                </Button>
+    <div className="flex flex-col h-full w-full">
+      {/* Admin tools - only visible to admins
+      {userRole === "ADMIN" && (
+        <div className="mb-4 p-4 bg-gray-100 rounded-lg">
+          <h3 className="text-lg font-medium mb-2">Admin Tools</h3>
+          <p className="text-sm text-gray-600 mb-2">
+            Use these tools to debug and initialize Stream Chat channels.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <h4 className="text-sm font-medium mb-1">Initialize Channels</h4>
+              <p className="text-xs text-gray-600 mb-2">
+                Create channels for all webinars, classes, consultations, and subscriptions.
+              </p>
+              <InitializeChannelsButton />
+              {initializing && (
+                <p className="text-xs text-blue-600 mt-2">
+                  Initializing channels... This may take a moment.
+                </p>
               )}
-              <Avatar>
-                <AvatarImage src="/placeholder-user.jpg" alt="John Doe" />
-                <AvatarFallback>JD</AvatarFallback>
-              </Avatar>
-              <div>
-                <div className="font-medium">John Doe</div>
-                <div className="text-sm text-gray-500">
-                  Last seen 2 hours ago
-                </div>
-              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="hidden sm:inline-flex"
-              >
-                <PhoneIcon className="w-5 h-5" />
-                <span className="sr-only">Call</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="hidden sm:inline-flex"
-              >
-                <VideoIcon className="w-5 h-5" />
-                <span className="sr-only">Video call</span>
-              </Button>
-              <Button variant="ghost" size="icon">
-                <MoveHorizontalIcon className="w-5 h-5" />
-                <span className="sr-only">More options</span>
-              </Button>
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {[
-              { text: "Hey, how's it going?", sender: "them", time: "2:30 PM" },
-              {
-                text: "I'm doing great, thanks for asking!",
-                sender: "me",
-                time: "2:31 PM",
-              },
-              {
-                text: "Did you see the new update?",
-                sender: "them",
-                time: "2:32 PM",
-              },
-              {
-                text: "Yeah, it looks really cool! I can't wait to try it out.",
-                sender: "me",
-                time: "2:33 PM",
-              },
-            ].map((message, index) => (
-              <div
-                key={index}
-                className={`flex ${message.sender === "me" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-[70%] rounded-lg px-4 py-2 ${
-                    message.sender === "me"
-                      ? "bg-blue-500 text-white"
-                      : "bg-gray-100"
-                  }`}
-                >
-                  <p>{message.text}</p>
-                  <div
-                    className={`text-xs mt-1 ${
-                      message.sender === "me"
-                        ? "text-blue-100"
-                        : "text-gray-500"
-                    }`}
-                  >
-                    {message.time}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="border-t border-gray-200">
-            <div className="p-4 flex gap-2">
-              <Input placeholder="Type your message..." className="flex-1" />
-              <Button size="icon" className="shrink-0">
-                <SendIcon className="w-5 h-5" />
-                <span className="sr-only">Send</span>
-              </Button>
+            <div>
+              <h4 className="text-sm font-medium mb-1">Debug Stream Chat</h4>
+              <p className="text-xs text-gray-600 mb-2">
+                View debug information about channels, consultations, subscriptions, webinars, and classes.
+              </p>
+              <DebugButton userId={userId} />
             </div>
           </div>
         </div>
+      )} */}
+
+      <div className="flex-1 bg-white rounded-lg shadow-lg overflow-hidden">
+        <StreamChatProvider userId={userId}>
+          <ChatLayout />
+        </StreamChatProvider>
       </div>
     </div>
   );
