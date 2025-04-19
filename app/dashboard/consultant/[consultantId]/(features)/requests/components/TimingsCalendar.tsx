@@ -83,144 +83,163 @@ export function TimingsCalendar({
     });
   }, [currentDate]);
 
-  // Calculate Min/Max Hour (UTC) for the current week view
-  const { minHourUTC, maxHourUTC } = useMemo(() => {
-    let minUTC = 24; // Default start hour (UTC)
-    let maxUTC = 0; // Default end hour (UTC)
-    const weekStart = weekViewDates[0]; // Already set to 00:00 local time
+  // Calculate Min/Max Hour (LOCAL) for the current week view time labels
+  const { minHourLocal, maxHourLocal } = useMemo(() => {
+    let minLocal = 24; // Default start hour (Local)
+    let maxLocal = 0; // Default end hour (Local)
+    const weekStart = weekViewDates[0]; // Start of the week, local time 00:00
     const weekEnd = new Date(weekViewDates[6]);
-    weekEnd.setHours(23, 59, 59, 999); // End of the last day local time
+    weekEnd.setHours(23, 59, 59, 999); // End of the week, local time 23:59
+
+    // We need to consider slots that *intersect* with the week view,
+    // even if their start/end times are slightly outside in UTC.
+    // Convert weekStart/weekEnd to UTC for a more robust filter.
+    const weekStartUTC = weekStart.toISOString();
+    const weekEndUTC = weekEnd.toISOString();
 
     const relevantSlots = [
         ...(availableSlots || []),
         ...(existingAppointments || [])
     ].filter(slot => {
-        const slotStartDate = new Date(slot.slotStartTimeInUTC);
-        // Compare UTC timestamps against the local start/end of the week
-        // This comparison might be slightly off due to timezone differences, but should capture most relevant slots.
-        // A more robust check would convert weekStart/weekEnd to UTC before filtering.
-        return slotStartDate >= weekStart && slotStartDate <= weekEnd;
+        // Check if the slot interval overlaps with the week view interval in UTC
+        return slot.slotStartTimeInUTC < weekEndUTC && slot.slotEndTimeInUTC > weekStartUTC;
     });
 
     if (relevantSlots.length > 0) {
         relevantSlots.forEach(slot => {
-            const slotStartDate = new Date(slot.slotStartTimeInUTC);
-            const slotEndDate = new Date(slot.slotEndTimeInUTC);
-            const startUTC = slotStartDate.getUTCHours();
-            const endUTC = slotEndDate.getUTCHours();
-            const endMinuteUTC = slotEndDate.getUTCMinutes();
+            const slotStartDateLocal = new Date(slot.slotStartTimeInUTC); // Convert UTC to local Date object
+            const slotEndDateLocal = new Date(slot.slotEndTimeInUTC);   // Convert UTC to local Date object
 
-            minUTC = Math.min(minUTC, startUTC);
+            // Iterate through the days this slot touches within the current week view
+            for (let d = new Date(slotStartDateLocal); d < slotEndDateLocal; d.setDate(d.getDate() + 1)) {
+                // Ensure the day is within the current week view
+                if (d >= weekStart && d <= weekEnd) {
+                    const dayStartTime = new Date(d);
+                    dayStartTime.setHours(0,0,0,0);
+                    const dayEndTime = new Date(d);
+                    dayEndTime.setHours(23,59,59,999);
 
-            let currentMax = startUTC; // Consider the starting hour
+                    // Determine the effective start/end hour *for this specific day* in local time
+                    const effectiveStartLocal = slotStartDateLocal < dayStartTime ? 0 : slotStartDateLocal.getHours();
+                    const effectiveEndLocal = slotEndDateLocal > dayEndTime ? 24 : slotEndDateLocal.getHours() + (slotEndDateLocal.getMinutes() > 0 ? 1 : 0); // +1 if minutes > 0
 
-            // Calculate effective end hour, checking if it crosses midnight UTC
-            if (slotEndDate.getUTCDate() !== slotStartDate.getUTCDate()) {
-                // If it crosses midnight, the range for the start day goes up to 24
-                currentMax = Math.max(currentMax, 24);
-            } else {
-                // If it doesn't cross midnight, calculate effective end hour for *that* day
-                const effectiveEndUTC = endMinuteUTC === 0 ? endUTC : endUTC + 1;
-                currentMax = Math.max(currentMax, effectiveEndUTC);
+
+                    minLocal = Math.min(minLocal, effectiveStartLocal);
+                    maxLocal = Math.max(maxLocal, effectiveEndLocal);
+                }
             }
-            maxUTC = Math.max(maxUTC, currentMax);
         });
 
         // Add padding and clamp to 0-24
-        minUTC = Math.max(0, minUTC - 1); // Padding before
-        maxUTC = Math.min(24, maxUTC); // Clamp max, no +1 padding needed with '< maxUTC' filter
+        minLocal = Math.max(0, minLocal - 1); // Padding before
+        maxLocal = Math.min(24, maxLocal + 1); // Padding after, clamp max
 
     } else {
         // Default range if no slots found
-        minUTC = 8;
-        maxUTC = 18;
+        minLocal = 8;
+        maxLocal = 18;
     }
 
     // Ensure min is strictly less than max
-    if (minUTC >= maxUTC) {
-        minUTC = 8;
-        maxUTC = 18;
+    if (minLocal >= maxLocal) {
+        minLocal = 8;
+        maxLocal = 18;
     }
 
-    return { minHourUTC: minUTC, maxHourUTC: maxUTC };
-  }, [weekViewDates, availableSlots, existingAppointments]);
+    return { minHourLocal: minLocal, maxHourLocal: maxLocal };
+}, [weekViewDates, availableSlots, existingAppointments]);
 
-  // Generate intervals based on calculated min/max UTC hour
-  const visibleIntervals = useMemo(() => {
-      return INTERVALS.filter(interval => interval.hour >= minHourUTC && interval.hour < maxHourUTC);
-  }, [minHourUTC, maxHourUTC]);
+// Generate intervals based on calculated min/max LOCAL hour for the time labels
+const visibleIntervals = useMemo(() => {
+    return INTERVALS.filter(interval => interval.hour >= minHourLocal && interval.hour < maxHourLocal);
+}, [minHourLocal, maxHourLocal]);
 
-  const renderTimeCell = (
-    baseDate: Date,
-    interval: { hour: number; minute: number },
-  ) => {
-    const intervalStartDateUTC = new Date(baseDate);
-    intervalStartDateUTC.setUTCHours(interval.hour, interval.minute, 0, 0);
+const renderTimeCell = (
+    baseDate: Date, // This date is already timezone-adjusted to local 00:00 for the day
+    interval: { hour: number; minute: number }, // These represent the *local* time intervals for the rows
+) => {
+    // 1. Construct the LOCAL start and end times for this specific calendar cell
+    const localIntervalStartDate = new Date(baseDate);
+    localIntervalStartDate.setHours(interval.hour, interval.minute, 0, 0);
 
-    const intervalEndDateUTC = new Date(intervalStartDateUTC);
-    intervalEndDateUTC.setUTCMinutes(intervalStartDateUTC.getUTCMinutes() + 30);
+    const localIntervalEndDate = new Date(localIntervalStartDate);
+    localIntervalEndDate.setMinutes(localIntervalStartDate.getMinutes() + 30);
 
-    const intervalStartStringUTC = intervalStartDateUTC.toISOString();
+    // 2. Convert these LOCAL times to their equivalent UTC times for comparison and selection
+    //    Note: toISOString() ALWAYS returns UTC 'Z' format
+    const intervalStartStringUTC = localIntervalStartDate.toISOString();
+    const intervalEndStringUTC = localIntervalEndDate.toISOString(); // We'll need this for comparison
 
-    // Check status
+    // Create Date objects from the UTC strings for comparison logic
+    const intervalStartDateUTC = new Date(intervalStartStringUTC);
+    const intervalEndDateUTC = new Date(intervalEndStringUTC);
+
+
+    // 3. Check status using the CORRECT UTC range for this cell
     const isWithinAvailability = isOverlapping(
-      intervalStartDateUTC,
-      intervalEndDateUTC,
-      availableSlots,
+        intervalStartDateUTC,
+        intervalEndDateUTC,
+        availableSlots,
     );
     const isBooked = isOverlapping(
-      intervalStartDateUTC,
-      intervalEndDateUTC,
-      existingAppointments,
+        intervalStartDateUTC,
+        intervalEndDateUTC,
+        existingAppointments,
     );
-    const isSelected = selectedSlots.includes(intervalStartStringUTC);
-    const now = new Date();
-    const isInPast = intervalEndDateUTC < now;
+    // NEW: Check for partial booking
+    const isPartiallyBooked = isWithinAvailability && isBooked;
 
+    const isSelected = selectedSlots.includes(intervalStartStringUTC); // Use the calculated UTC start string
+    const now = new Date();
+    // Compare the cell's LOCAL end time with the current time
+    const isInPast = localIntervalEndDate < now;
+
+    // Slot is disabled if it's booked (fully or partially), not available, or in the past
     const isDisabled = !isWithinAvailability || isBooked || isInPast;
 
     let cellClassName = "h-8 w-full relative text-[10px] leading-tight px-1 py-0.5 transition-colors duration-150 ease-in-out border border-transparent rounded-sm ";
+    let buttonText = "";
+
     if (isSelected) {
         cellClassName += "bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
-    } else if (isBooked) {
+        buttonText = "Selected";
+    } else if (isPartiallyBooked) { // Check partial first
+        cellClassName += "bg-yellow-400 text-yellow-900 cursor-not-allowed"; // Example: Yellow style
+        buttonText = "Partially Booked";
+    } else if (isBooked) { // Only fully booked (not available)
         cellClassName += "bg-slate-400 text-slate-800 cursor-not-allowed";
-    } else if (isWithinAvailability) {
+        buttonText = "Booked";
+    } else if (isWithinAvailability) { // Available and not booked/partially booked
         if (isInPast) {
             cellClassName += "bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
+             buttonText = "Available"; // Still show text but disabled
         } else {
             cellClassName += "bg-green-300 text-green-950 hover:bg-green-400 border-green-400";
+             buttonText = "Available";
         }
-    } else {
+    } else { // Not within availability, not booked
         if (isInPast) {
              cellClassName += "bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
         } else {
              cellClassName += "bg-slate-300 cursor-not-allowed";
         }
+        // buttonText remains ""
     }
-
-    // Determine button text separately
-    const buttonText = isBooked
-      ? "Booked"
-      : isSelected
-        ? "Selected"
-        : isWithinAvailability // Show "Available" even if in the past, rely on disabled state
-          ? "Available"
-          : "";
 
     return (
       <Button
-        key={intervalStartStringUTC}
+        key={intervalStartStringUTC} // Key uses the correct UTC representation
         variant={"ghost"}
         className={cellClassName}
-        onClick={() => !isDisabled && onSlotSelect(intervalStartStringUTC)}
+        onClick={() => !isDisabled && onSlotSelect(intervalStartStringUTC)} // Pass the correct UTC string
         disabled={isDisabled}
       >
         {buttonText}
       </Button>
     );
-  };
+};
 
-  const renderWeekView = () => {
+const renderWeekView = () => {
     return (
       <div className="flex flex-col h-[calc(100vh-20rem)] md:h-[65vh] max-h-[700px]">
         <div className="grid grid-cols-8 gap-0.5 md:gap-1 sticky top-0 bg-background z-20 pb-1">
@@ -270,9 +289,9 @@ export function TimingsCalendar({
         </div>
       </div>
     );
-  };
+};
 
-  const renderMonthView = () => {
+const renderMonthView = () => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     const firstDayOfMonth = new Date(year, month, 1).getDay();
@@ -354,9 +373,9 @@ export function TimingsCalendar({
         })}
       </div>
     );
-  };
+};
 
-  return (
+return (
     <div className="flex flex-col h-full max-w-[100vw] overflow-x-hidden">
       <div className="flex justify-between items-center mb-1 md:mb-4">
         <Button variant="outline" size="sm" onClick={navigatePrevious} className="p-1 md:p-2">
