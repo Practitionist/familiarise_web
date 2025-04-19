@@ -131,19 +131,45 @@ export function EventTimingsCalendar({
       intervalEndDateUTC,
       currentAvailableSlots,
     );
-    // isBooked is true if there are ANY overlapping appointments
-    const isBooked = overlappingAppointments.length > 0;
-    const isPartiallyBooked = isWithinAvailability && isBooked;
+    // Determine actual booking status
+    const isActuallyBooked = overlappingAppointments.length > 0;
+
+    // Calculate total booked duration *within* this 30-min interval
+    let bookedDurationWithinInterval = 0;
+    if (isActuallyBooked) {
+        overlappingAppointments.forEach(appSlot => {
+            const appStart = appSlot.startTime.getTime();
+            const appEnd = appSlot.endTime.getTime();
+
+            // Find the intersection
+            const intersectionStart = Math.max(intervalStartDateUTC.getTime(), appStart);
+            const intersectionEnd = Math.min(intervalEndDateUTC.getTime(), appEnd);
+
+            if (intersectionEnd > intersectionStart) {
+                bookedDurationWithinInterval += (intersectionEnd - intersectionStart);
+            }
+        });
+    }
+
+    // Check if the interval is fully covered by the booking(s)
+    // Use a small tolerance (e.g., 1ms) for floating point comparisons if needed, here comparing >= duration
+    const isFullyBooked = bookedDurationWithinInterval >= 30 * 60 * 1000;
 
     const now = new Date();
     const isInPast = localIntervalEndDate < now;
 
-    const isDisabled = !isWithinAvailability || isBooked || isInPast;
+    //isDisabled if not available OR booked OR in the past
+    const isDisabled = !isWithinAvailability || isActuallyBooked || isInPast;
+
+    // Define refined states based on the calculations
+    const isPartiallyBooked = isWithinAvailability && isActuallyBooked && !isFullyBooked;
+    const isBookedForDisplay = isActuallyBooked && isFullyBooked; // Use this for the main 'Booked' style
 
     return {
-      isAvailable: isWithinAvailability && !isBooked,
-      isBooked: isBooked && !isWithinAvailability,
-      isPartiallyBooked,
+      isAvailable: isWithinAvailability && !isActuallyBooked,
+      isBooked: isActuallyBooked, // Still indicates *any* booking overlap for tooltip trigger
+      isBookedForDisplay, // Indicates the interval is fully booked
+      isPartiallyBooked, // Indicates the interval is available but partially booked
       isDisabled,
       isInPast,
       intervalStartUTCString: intervalStartDateUTC.toISOString(),
@@ -510,24 +536,25 @@ export function EventTimingsCalendar({
     );
 
     // Log status for debugging
-    if (status.isBooked || status.isPartiallyBooked) {
+    if (status.isBooked) {
         console.log(`Slot Status [${format(date, 'yyyy-MM-dd')} ${interval.hour}:${interval.minute}]`, status);
     }
 
     let cellClassName = `h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5`;
     let buttonText = "";
-    const showTooltip = status.isBooked || status.isPartiallyBooked;
+    // Show tooltip if there's any booking overlap
+    const showTooltip = status.isBooked;
 
     if (isCurrentlySelected) {
       cellClassName += " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
       buttonText = "Selected";
-    } else if (status.isPartiallyBooked) {
-      cellClassName += " bg-yellow-400 text-yellow-900 cursor-not-allowed";
-      buttonText = "Partially Booked";
-    } else if (status.isBooked) {
+    } else if (status.isBookedForDisplay) { // Fully booked takes priority
       cellClassName += " bg-slate-400 text-slate-800 cursor-not-allowed";
       buttonText = "Booked";
-    } else if (status.isAvailable) {
+    } else if (status.isPartiallyBooked) { // Partially booked (available but overlapped)
+      cellClassName += " bg-yellow-400 text-yellow-900 cursor-not-allowed";
+      buttonText = "Partially Booked";
+    } else if (status.isAvailable) { // Available and not booked at all
       if (status.isInPast) {
         cellClassName += " bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
         buttonText = "Available";
