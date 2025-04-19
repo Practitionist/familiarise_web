@@ -576,7 +576,7 @@ export function EventTimingsCalendar({
               <div className="grid grid-cols-8 gap-1 h-[600px] overflow-y-auto">
                 {HOURS.map((hour) => (
                   <React.Fragment key={hour}>
-                    <div className="w-20 text-right pr-2 py-2 text-sm sticky left-0 bg-background z-10">
+                    <div className="w-20 text-right pr-2 pt-1 text-sm sticky left-0 bg-background z-10">
                       {new Date(1970, 0, 1, hour).toLocaleTimeString([], {
                         hour: '2-digit', minute: '2-digit', hour12: false, timeZone: browserTimezone
                       })}
@@ -696,8 +696,11 @@ export function EventTimingsCalendar({
             </div>
           )}
 
-          <div className="flex justify-between items-center">
-            <div className="text-sm">
+          <div className="flex justify-between items-center mt-4">
+            <div className="text-sm text-muted-foreground">
+              Timezone: {browserTimezone}
+            </div>
+            <div className="text-sm ml-auto mr-4">
               Selected: {selectedSlots.length} /{" "}
               {eventType === "webinar"
                 ? "1"

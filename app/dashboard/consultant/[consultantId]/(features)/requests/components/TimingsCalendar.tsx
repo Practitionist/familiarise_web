@@ -266,7 +266,7 @@ const renderWeekView = () => {
               <div className="w-14 md:w-20">
                 <div
                   key={`time-label-${i}`}
-                  className="h-8 text-right pr-2 py-0.5 text-[10px] md:text-sm flex items-center justify-end"
+                  className="h-8 text-right pr-2 pt-0.5 text-[10px] md:text-sm flex items-start justify-end" 
                 >
                   {new Date(1970, 0, 1, interval.hour, interval.minute).toLocaleTimeString(
                       [],
