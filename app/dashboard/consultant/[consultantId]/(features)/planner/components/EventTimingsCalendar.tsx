@@ -23,6 +23,7 @@ import React, { useEffect, useState, useMemo } from "react";
 import { AppointmentsType, ConsultantProfile, SlotOfAvailabilityWeekly, SlotOfAvailabilityCustom } from "@prisma/client";
 import { Appointment, AppointmentSlot, TimeSlot } from "../types/calendar";
 import { mapCustomSlots, mapWeeklySlots } from "../utils";
+import { TAppointment } from "@/types/appointment";
 
 // Define intervals similar to TimingsCalendar
 const INTERVALS_PER_HOUR = 2; // 30-minute intervals
@@ -66,7 +67,7 @@ export function EventTimingsCalendar({
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState<"week" | "month">("week");
   const [consultantDetails, setConsultantDetails] = useState<ConsultantProfile | null>(null);
-  const [allAppointmentsRawData, setAllAppointmentsRawData] = useState<Appointment[]>([]);
+  const [allAppointmentsRawData, setAllAppointmentsRawData] = useState<TAppointment[]>([]);
   const [selectedSlots, setSelectedSlots] = useState<TimeSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -213,8 +214,8 @@ export function EventTimingsCalendar({
         throw new Error("Failed to fetch consultant data");
       }
 
-      let weeklySlotsRaw: any[] = [];
-      let customSlotsRaw: any[] = [];
+      let weeklySlotsRaw: SlotOfAvailabilityWeekly[] = [];
+      let customSlotsRaw: SlotOfAvailabilityCustom[] = [];
       if (weeklyAvailabilityResponse.ok) {
         const { data } = await weeklyAvailabilityResponse.json();
         weeklySlotsRaw = data || [];
@@ -338,21 +339,24 @@ export function EventTimingsCalendar({
 
     // Map raw appointments to DetailedTimeSlot, including necessary details
     const currentExistingAppointments: DetailedTimeSlot[] = allAppointmentsRawData
-       .flatMap((appointment: any) => { // Use 'any' for now, assuming API returns nested data
+       .flatMap((appointment: TAppointment) => {
          return (appointment.slotsOfAppointment || []).map((slot: AppointmentSlot): DetailedTimeSlot => {
              let title = "Unknown Appointment";
              // Construct title based on appointment type (assuming nested data exists)
-             if (appointment.appointmentType === "CLASS" && appointment.class?.name) {
-                 title = `Class: ${appointment.class.name}`;
-             } else if (appointment.appointmentType === "WEBINAR" && appointment.webinar?.title) {
-                 title = `Webinar: ${appointment.webinar.title}`;
+             if (appointment.appointmentType === "CLASS" && appointment.class?.classPlan?.name) {
+                 title = `Class: ${appointment.class.classPlan.name}`;
+             } else if (appointment.appointmentType === "WEBINAR" && appointment.webinar?.webinarPlan?.title) {
+                 title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
              } else if (appointment.appointmentType === "CONSULTATION" && appointment.consultation?.consultationPlan?.title) {
                  title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
                  if (appointment.consultation.requestedBy?.user?.name) {
                      title += ` with ${appointment.consultation.requestedBy.user.name}`;
                  }
-             } else if (appointment.appointmentType === "SUBSCRIPTION" && appointment.subscription?.user?.name) {
-                 title = `Subscription: ${appointment.subscription.user.name}`;
+             } else if (appointment.appointmentType === "SUBSCRIPTION" && appointment.subscription?.subscriptionPlan?.title) {
+                 title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
+                 if (appointment.subscription.requestedBy?.user?.name) {
+                     title += ` for ${appointment.subscription.requestedBy.user.name}`;
+                 }
              }
 
              return {
