@@ -9,6 +9,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useToast } from "@/components/ui/use-toast";
 import { addDays, format, isSameDay, startOfWeek } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -36,6 +42,15 @@ interface EventTimingsCalendarProps {
   eventId: string;
   callsPerWeek?: number;
   durationInMonths?: number;
+}
+
+// Extend TimeSlot to include optional appointment details for tooltips
+interface DetailedTimeSlot extends TimeSlot {
+  appointmentDetails?: {
+    id: string;
+    type: AppointmentsType;
+    title: string;
+  };
 }
 
 export function EventTimingsCalendar({
@@ -77,11 +92,24 @@ export function EventTimingsCalendar({
     });
   };
 
+  // Helper function to find overlapping appointments
+  const findOverlappingAppointments = (
+    intervalStart: Date,
+    intervalEnd: Date,
+    slotList: DetailedTimeSlot[] = [],
+  ): DetailedTimeSlot[] => {
+    return slotList.filter((slot) => {
+      const slotStart = slot.startTime instanceof Date ? slot.startTime : new Date(slot.startTime);
+      const slotEnd = slot.endTime instanceof Date ? slot.endTime : new Date(slot.endTime);
+      return intervalStart < slotEnd && intervalEnd > slotStart;
+    });
+  };
+
   const getSlotStatus = (
     interval: { hour: number; minute: number },
     date: Date,
     currentAvailableSlots: TimeSlot[],
-    currentExistingAppointments: TimeSlot[]
+    currentExistingAppointments: DetailedTimeSlot[]
   ) => {
     const localIntervalStartDate = new Date(date);
     localIntervalStartDate.setHours(interval.hour, interval.minute, 0, 0);
@@ -91,16 +119,20 @@ export function EventTimingsCalendar({
     const intervalStartDateUTC = new Date(localIntervalStartDate.toISOString());
     const intervalEndDateUTC = new Date(localIntervalEndDate.toISOString());
 
+    // Find all appointments overlapping this specific interval
+    const overlappingAppointments = findOverlappingAppointments(
+        intervalStartDateUTC,
+        intervalEndDateUTC,
+        currentExistingAppointments
+    );
+
     const isWithinAvailability = isOverlapping(
       intervalStartDateUTC,
       intervalEndDateUTC,
       currentAvailableSlots,
     );
-    const isBooked = isOverlapping(
-      intervalStartDateUTC,
-      intervalEndDateUTC,
-      currentExistingAppointments,
-    );
+    // isBooked is true if there are ANY overlapping appointments
+    const isBooked = overlappingAppointments.length > 0;
     const isPartiallyBooked = isWithinAvailability && isBooked;
 
     const now = new Date();
@@ -118,6 +150,7 @@ export function EventTimingsCalendar({
       intervalEndUTCString: intervalEndDateUTC.toISOString(),
       localStartTime: localIntervalStartDate,
       localEndTime: localIntervalEndDate,
+      overlappingAppointments: overlappingAppointments,
     };
   };
 
@@ -277,15 +310,39 @@ export function EventTimingsCalendar({
       }
     }
 
-    const currentExistingAppointments: TimeSlot[] = allAppointmentsRawData
-      .flatMap((appointment: Appointment) => (appointment.slotsOfAppointment || []))
-      .map((slot: AppointmentSlot): TimeSlot => ({
-        startTime: new Date(slot.slotStartTimeInUTC),
-        endTime: new Date(slot.slotEndTimeInUTC),
-        isAvailable: false,
-        isBooked: true,
-      }))
-      .filter(slot => slot.startTime < endOfView && slot.endTime > startOfView);
+    // Map raw appointments to DetailedTimeSlot, including necessary details
+    const currentExistingAppointments: DetailedTimeSlot[] = allAppointmentsRawData
+       .flatMap((appointment: any) => { // Use 'any' for now, assuming API returns nested data
+         return (appointment.slotsOfAppointment || []).map((slot: AppointmentSlot): DetailedTimeSlot => {
+             let title = "Unknown Appointment";
+             // Construct title based on appointment type (assuming nested data exists)
+             if (appointment.appointmentType === "CLASS" && appointment.class?.name) {
+                 title = `Class: ${appointment.class.name}`;
+             } else if (appointment.appointmentType === "WEBINAR" && appointment.webinar?.title) {
+                 title = `Webinar: ${appointment.webinar.title}`;
+             } else if (appointment.appointmentType === "CONSULTATION" && appointment.consultationRequest?.service?.name) {
+                 title = `Consultation: ${appointment.consultationRequest.service.name}`;
+                 if (appointment.consultationRequest.user?.name) {
+                     title += ` with ${appointment.consultationRequest.user.name}`;
+                 }
+             } else if (appointment.appointmentType === "SUBSCRIPTION" && appointment.subscription?.user?.name) {
+                 title = `Subscription: ${appointment.subscription.user.name}`;
+             }
+
+             return {
+                 startTime: new Date(slot.slotStartTimeInUTC),
+                 endTime: new Date(slot.slotEndTimeInUTC),
+                 isAvailable: false,
+                 isBooked: true,
+                 appointmentDetails: {
+                     id: appointment.id,
+                     type: appointment.appointmentType,
+                     title: title,
+                 },
+             };
+         });
+       })
+       .filter(slot => slot.startTime < endOfView && slot.endTime > startOfView);
 
     return { availableSlots: currentAvailableSlots, existingAppointments: currentExistingAppointments };
   }, [consultantDetails, rawAvailabilitySlots, allAppointmentsRawData, currentDate, view]);
@@ -444,16 +501,22 @@ export function EventTimingsCalendar({
     }
   };
 
+  // Updated to handle 30-minute intervals and add Tooltip
   const renderTimeCell = (interval: { hour: number; minute: number }, date: Date) => {
     const status = getSlotStatus(interval, date, availableSlots, existingAppointments);
     const slotUTCTimestamp = status.intervalStartUTCString;
-
     const isCurrentlySelected = selectedSlots.some(
       (slot) => slot.startTime.toISOString() === slotUTCTimestamp
     );
 
+    // Log status for debugging
+    if (status.isBooked || status.isPartiallyBooked) {
+        console.log(`Slot Status [${format(date, 'yyyy-MM-dd')} ${interval.hour}:${interval.minute}]`, status);
+    }
+
     let cellClassName = `h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5`;
     let buttonText = "";
+    const showTooltip = status.isBooked || status.isPartiallyBooked;
 
     if (isCurrentlySelected) {
       cellClassName += " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
@@ -480,17 +543,63 @@ export function EventTimingsCalendar({
       }
     }
 
-    return (
+    const buttonElement = (
       <Button
         key={slotUTCTimestamp}
         variant={"ghost"}
         className={cellClassName}
         onClick={() => handleSlotSelect(interval, date)}
-        disabled={status.isDisabled}
+        disabled={status.isDisabled && !isCurrentlySelected}
       >
         {buttonText}
       </Button>
     );
+
+    if (showTooltip && status.overlappingAppointments.length > 0) {
+        // Button inside tooltip trigger should not be disabled itself for hover to work
+        const tooltipButtonElement = (
+            <Button
+                key={slotUTCTimestamp}
+                variant={"ghost"}
+                className={cellClassName}
+                // The click handler still respects the original logic
+                onClick={() => handleSlotSelect(interval, date)}
+                // Explicitly NOT disabled here; parent TooltipTrigger handles interaction
+                disabled={false}
+              >
+                {buttonText}
+              </Button>
+        );
+
+        return (
+            <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        {/* Use the non-disabled button version for the trigger */}
+                        {tooltipButtonElement}
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs text-xs" side="top" align="center">
+                        <div className="flex flex-col gap-1">
+                            {status.overlappingAppointments.map((appSlot) => (
+                                <div key={appSlot.appointmentDetails?.id + appSlot.startTime.toISOString()} className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0">
+                                    <p className="font-semibold">{appSlot.appointmentDetails?.title || "Booked Slot"}</p>
+                                    <p className="text-muted-foreground">
+                                        {appSlot.appointmentDetails?.type}
+                                    </p>
+                                    <p className="text-muted-foreground">
+                                        {format(appSlot.startTime, "HH:mm")} - {format(appSlot.endTime, "HH:mm")}
+                                    </p>
+                                </div>
+                            ))}
+                        </div>
+                    </TooltipContent>
+                </Tooltip>
+            </TooltipProvider>
+        );
+    }
+
+    // Render original button (with potential disabled state) if not showing tooltip
+    return buttonElement;
   };
 
   if (loading) {
