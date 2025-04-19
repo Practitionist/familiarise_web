@@ -346,10 +346,10 @@ export function EventTimingsCalendar({
                  title = `Class: ${appointment.class.name}`;
              } else if (appointment.appointmentType === "WEBINAR" && appointment.webinar?.title) {
                  title = `Webinar: ${appointment.webinar.title}`;
-             } else if (appointment.appointmentType === "CONSULTATION" && appointment.consultationRequest?.service?.name) {
-                 title = `Consultation: ${appointment.consultationRequest.service.name}`;
-                 if (appointment.consultationRequest.user?.name) {
-                     title += ` with ${appointment.consultationRequest.user.name}`;
+             } else if (appointment.appointmentType === "CONSULTATION" && appointment.consultation?.consultationPlan?.title) {
+                 title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
+                 if (appointment.consultation.requestedBy?.user?.name) {
+                     title += ` with ${appointment.consultation.requestedBy.user.name}`;
                  }
              } else if (appointment.appointmentType === "SUBSCRIPTION" && appointment.subscription?.user?.name) {
                  title = `Subscription: ${appointment.subscription.user.name}`;
