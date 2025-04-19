@@ -20,7 +20,7 @@ import { mapCustomSlots, mapWeeklySlots } from "../utils";
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-interface TimingsCalendarProps {
+interface EventTimingsCalendarProps {
   isOpen: boolean;
   onClose: () => void;
   eventType: "webinar" | "class";
@@ -29,14 +29,14 @@ interface TimingsCalendarProps {
   durationInMonths?: number;
 }
 
-export function TimingsCalendar({
+export function EventTimingsCalendar({
   isOpen,
   onClose,
   eventType,
   eventId,
   callsPerWeek = 1,
   durationInMonths = 1,
-}: TimingsCalendarProps) {
+}: EventTimingsCalendarProps) {
   const params = useParams();
   const { toast } = useToast();
   const [currentDate, setCurrentDate] = useState(new Date());

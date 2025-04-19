@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import React, { useState } from "react";
 
-type CalendarProps = {
+type TimingsCalendarProps = {
   availableSlots: string[] | undefined;
   existingAppointments: string[] | undefined;
   onSlotSelect: (slot: string) => void;
@@ -17,7 +17,7 @@ type CalendarProps = {
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
-export function Calendar({
+export function TimingsCalendar({
   availableSlots = [],
   existingAppointments = [],
   onSlotSelect,
@@ -25,7 +25,7 @@ export function Calendar({
   requiredSlots,
   scheduleType,
   consultantTimezone,
-}: CalendarProps) {
+}: TimingsCalendarProps) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState<"week" | "month">("week");
 

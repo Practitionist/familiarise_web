@@ -28,7 +28,7 @@ import { toast } from "@/components/ui/use-toast";
 import { AppointmentsType, RequestStatus } from "@prisma/client";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Calendar } from "./components/Calendar";
+import { TimingsCalendar } from "./components/TimingsCalendar";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
 
 interface Request {
@@ -591,7 +591,7 @@ export function RequestSlotAllocationTab({
                               {request.type.toLowerCase()}
                             </DialogDescription>
                           </DialogHeader>
-                          <Calendar
+                          <TimingsCalendar
                             availableSlots={availableSlots.map(
                               (slot) => slot.slotStartTimeInUTC,
                             )}
