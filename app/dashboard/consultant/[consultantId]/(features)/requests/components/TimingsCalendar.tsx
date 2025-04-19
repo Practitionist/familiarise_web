@@ -83,49 +83,72 @@ export function TimingsCalendar({
     });
   }, [currentDate]);
 
-  const { minHour, maxHour } = useMemo(() => {
-    let min = 9;
-    let max = 17;
-    const weekStart = weekViewDates[0];
+  // Calculate Min/Max Hour (UTC) for the current week view
+  const { minHourUTC, maxHourUTC } = useMemo(() => {
+    let minUTC = 24; // Default start hour (UTC)
+    let maxUTC = 0; // Default end hour (UTC)
+    const weekStart = weekViewDates[0]; // Already set to 00:00 local time
     const weekEnd = new Date(weekViewDates[6]);
-    weekEnd.setHours(23, 59, 59, 999);
+    weekEnd.setHours(23, 59, 59, 999); // End of the last day local time
 
     const relevantSlots = [
         ...(availableSlots || []),
         ...(existingAppointments || [])
     ].filter(slot => {
-        const slotStart = new Date(slot.slotStartTimeInUTC);
-        return slotStart >= weekStart && slotStart <= weekEnd;
+        const slotStartDate = new Date(slot.slotStartTimeInUTC);
+        // Compare UTC timestamps against the local start/end of the week
+        // This comparison might be slightly off due to timezone differences, but should capture most relevant slots.
+        // A more robust check would convert weekStart/weekEnd to UTC before filtering.
+        return slotStartDate >= weekStart && slotStartDate <= weekEnd;
     });
 
     if (relevantSlots.length > 0) {
-        min = 24;
-        max = 0;
         relevantSlots.forEach(slot => {
-            const startHour = new Date(slot.slotStartTimeInUTC).getHours();
-            const endHour = new Date(slot.slotEndTimeInUTC).getHours();
-            const endMinute = new Date(slot.slotEndTimeInUTC).getMinutes();
+            const slotStartDate = new Date(slot.slotStartTimeInUTC);
+            const slotEndDate = new Date(slot.slotEndTimeInUTC);
+            const startUTC = slotStartDate.getUTCHours();
+            const endUTC = slotEndDate.getUTCHours();
+            const endMinuteUTC = slotEndDate.getUTCMinutes();
 
-            if (startHour < min) min = startHour;
-            const effectiveEndHour = endMinute === 0 ? endHour : endHour + 1;
-            if (effectiveEndHour > max) max = effectiveEndHour;
+            minUTC = Math.min(minUTC, startUTC);
+
+            let currentMax = startUTC; // Consider the starting hour
+
+            // Calculate effective end hour, checking if it crosses midnight UTC
+            if (slotEndDate.getUTCDate() !== slotStartDate.getUTCDate()) {
+                // If it crosses midnight, the range for the start day goes up to 24
+                currentMax = Math.max(currentMax, 24);
+            } else {
+                // If it doesn't cross midnight, calculate effective end hour for *that* day
+                const effectiveEndUTC = endMinuteUTC === 0 ? endUTC : endUTC + 1;
+                currentMax = Math.max(currentMax, effectiveEndUTC);
+            }
+            maxUTC = Math.max(maxUTC, currentMax);
         });
-        
-        min = Math.max(0, min - 1);
-        max = Math.min(24, max);
+
+        // Add padding and clamp to 0-24
+        minUTC = Math.max(0, minUTC - 1); // Padding before
+        maxUTC = Math.min(24, maxUTC); // Clamp max, no +1 padding needed with '< maxUTC' filter
+
+    } else {
+        // Default range if no slots found
+        minUTC = 8;
+        maxUTC = 18;
     }
 
-    if (min >= max) {
-        min = 8;
-        max = 18;
+    // Ensure min is strictly less than max
+    if (minUTC >= maxUTC) {
+        minUTC = 8;
+        maxUTC = 18;
     }
 
-    return { minHour: min, maxHour: max };
+    return { minHourUTC: minUTC, maxHourUTC: maxUTC };
   }, [weekViewDates, availableSlots, existingAppointments]);
 
+  // Generate intervals based on calculated min/max UTC hour
   const visibleIntervals = useMemo(() => {
-      return INTERVALS.filter(interval => interval.hour >= minHour && interval.hour < maxHour);
-  }, [minHour, maxHour]);
+      return INTERVALS.filter(interval => interval.hour >= minHourUTC && interval.hour < maxHourUTC);
+  }, [minHourUTC, maxHourUTC]);
 
   const renderTimeCell = (
     baseDate: Date,
