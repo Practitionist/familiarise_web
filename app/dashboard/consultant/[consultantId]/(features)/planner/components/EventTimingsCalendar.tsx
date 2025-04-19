@@ -1,5 +1,6 @@
 "use client";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,7 +18,15 @@ import { AppointmentsType, ConsultantProfile, SlotOfAvailabilityWeekly, SlotOfAv
 import { Appointment, AppointmentSlot, TimeSlot } from "../types/calendar";
 import { mapCustomSlots, mapWeeklySlots } from "../utils";
 
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
+// Define intervals similar to TimingsCalendar
+const INTERVALS_PER_HOUR = 2; // 30-minute intervals
+const TOTAL_INTERVALS = 24 * INTERVALS_PER_HOUR;
+const INTERVALS = Array.from({ length: TOTAL_INTERVALS }, (_, i) => {
+  const hour = Math.floor(i / INTERVALS_PER_HOUR);
+  const minute = (i % INTERVALS_PER_HOUR) * (60 / INTERVALS_PER_HOUR);
+  return { hour, minute };
+});
+
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 interface EventTimingsCalendarProps {
@@ -69,18 +78,18 @@ export function EventTimingsCalendar({
   };
 
   const getSlotStatus = (
-    hour: number,
+    interval: { hour: number; minute: number },
     date: Date,
     currentAvailableSlots: TimeSlot[],
     currentExistingAppointments: TimeSlot[]
   ) => {
     const localIntervalStartDate = new Date(date);
-    localIntervalStartDate.setHours(hour, 0, 0, 0);
+    localIntervalStartDate.setHours(interval.hour, interval.minute, 0, 0);
     const localIntervalEndDate = new Date(localIntervalStartDate);
-    localIntervalEndDate.setHours(hour + 1, 0, 0, 0);
+    localIntervalEndDate.setMinutes(localIntervalStartDate.getMinutes() + 30);
 
     const intervalStartDateUTC = new Date(localIntervalStartDate.toISOString());
-    const intervalEndDateUTC = new Date(intervalStartDateUTC.getTime() + 60 * 60 * 1000);
+    const intervalEndDateUTC = new Date(localIntervalEndDate.toISOString());
 
     const isWithinAvailability = isOverlapping(
       intervalStartDateUTC,
@@ -106,6 +115,7 @@ export function EventTimingsCalendar({
       isDisabled,
       isInPast,
       intervalStartUTCString: intervalStartDateUTC.toISOString(),
+      intervalEndUTCString: intervalEndDateUTC.toISOString(),
       localStartTime: localIntervalStartDate,
       localEndTime: localIntervalEndDate,
     };
@@ -195,13 +205,26 @@ export function EventTimingsCalendar({
       if (response.ok) {
         const { data } = await response.json();
         if (data && data.length > 0 && data[0].slotsOfAppointment?.length > 0) {
-          const slots: TimeSlot[] = data[0].slotsOfAppointment.map(
-            (slot: AppointmentSlot) => ({
-              startTime: new Date(slot.slotStartTimeInUTC),
-              endTime: new Date(slot.slotEndTimeInUTC),
-              isAvailable: true,
-              isBooked: false,
-            }),
+          const slots: TimeSlot[] = data[0].slotsOfAppointment.flatMap(
+            (slot: AppointmentSlot) => {
+              const start = new Date(slot.slotStartTimeInUTC);
+              const end = new Date(slot.slotEndTimeInUTC);
+              const durationMinutes = (end.getTime() - start.getTime()) / (1000 * 60);
+              const numIntervals = Math.round(durationMinutes / 30);
+
+              const intervalSlots: TimeSlot[] = [];
+              for (let i = 0; i < numIntervals; i++) {
+                const intervalStart = new Date(start.getTime() + i * 30 * 60 * 1000);
+                const intervalEnd = new Date(intervalStart.getTime() + 30 * 60 * 1000);
+                intervalSlots.push({
+                  startTime: intervalStart,
+                  endTime: intervalEnd,
+                  isAvailable: true,
+                  isBooked: false,
+                });
+              }
+              return intervalSlots;
+            }
           );
           setSelectedSlots(slots);
 
@@ -271,8 +294,8 @@ export function EventTimingsCalendar({
   const existingAppointments = currentViewSlots.existingAppointments;
   const scheduleType = consultantDetails?.scheduleType;
 
-  const handleSlotSelect = (hour: number, date: Date) => {
-    const status = getSlotStatus(hour, date, availableSlots, existingAppointments);
+  const handleSlotSelect = (interval: { hour: number; minute: number }, date: Date) => {
+    const status = getSlotStatus(interval, date, availableSlots, existingAppointments);
 
     if (status.isDisabled) return;
 
@@ -280,7 +303,7 @@ export function EventTimingsCalendar({
 
     const newSlot: TimeSlot = {
       startTime: new Date(status.intervalStartUTCString),
-      endTime: new Date(status.localEndTime.toISOString()),
+      endTime: new Date(status.intervalEndUTCString),
       isAvailable: true,
       isBooked: false,
     };
@@ -301,12 +324,12 @@ export function EventTimingsCalendar({
         return;
       }
 
-      const requiredSlots = callsPerWeek * 4 * durationInMonths;
+      const requiredSlots = callsPerWeek * 2 * 4 * durationInMonths;
       if (selectedSlots.length >= requiredSlots) {
         toast({
           variant: "destructive",
           title: "Maximum slots reached",
-          description: `You can only select ${requiredSlots} slots for this class (${callsPerWeek} calls/week × 4 weeks × ${durationInMonths} months)`,
+          description: `You can only select ${requiredSlots} slots (30-min each) for this class.`,
         });
         return;
       }
@@ -371,10 +394,8 @@ export function EventTimingsCalendar({
               [eventType]: { connect: { id: eventId } },
               slotsOfAppointment: {
                 create: selectedSlots.map((slot) => ({
-                  slotStartTimeInUTC:
-                    slot.originalSlot?.slotStartTimeInUTC || slot.startTime,
-                  slotEndTimeInUTC:
-                    slot.originalSlot?.slotEndTimeInUTC || slot.endTime,
+                  slotStartTimeInUTC: slot.startTime.toISOString(),
+                  slotEndTimeInUTC: slot.endTime.toISOString(),
                 })),
               },
             }),
@@ -423,15 +444,15 @@ export function EventTimingsCalendar({
     }
   };
 
-  const renderTimeCell = (hour: number, date: Date) => {
-    const status = getSlotStatus(hour, date, availableSlots, existingAppointments);
+  const renderTimeCell = (interval: { hour: number; minute: number }, date: Date) => {
+    const status = getSlotStatus(interval, date, availableSlots, existingAppointments);
     const slotUTCTimestamp = status.intervalStartUTCString;
 
     const isCurrentlySelected = selectedSlots.some(
       (slot) => slot.startTime.toISOString() === slotUTCTimestamp
     );
 
-    let cellClassName = `h-12 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-xs px-1 py-0.5`;
+    let cellClassName = `h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5`;
     let buttonText = "";
 
     if (isCurrentlySelected) {
@@ -455,7 +476,7 @@ export function EventTimingsCalendar({
       if (status.isInPast) {
         cellClassName += " bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
       } else {
-        cellClassName += " bg-slate-300 cursor-not-allowed";
+        cellClassName += " bg-slate-200 cursor-not-allowed";
       }
     }
 
@@ -464,7 +485,7 @@ export function EventTimingsCalendar({
         key={slotUTCTimestamp}
         variant={"ghost"}
         className={cellClassName}
-        onClick={() => handleSlotSelect(hour, date)}
+        onClick={() => handleSlotSelect(interval, date)}
         disabled={status.isDisabled}
       >
         {buttonText}
@@ -517,6 +538,81 @@ export function EventTimingsCalendar({
     );
   }
 
+  const requiredTotalSlots = eventType === "webinar" ? 1 : (callsPerWeek * 2 * 4 * durationInMonths);
+
+  const renderMonthView = () => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const firstDayOfMonth = new Date(year, month, 1).getDay();
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    const countAvailableSlotsForDay = (date: Date): number => {
+      let count = 0;
+      const dayStart = new Date(date);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(date);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      const dayAvailableSlots = availableSlots.filter(slot =>
+        slot.startTime < dayEnd && slot.endTime > dayStart);
+      const dayExistingAppointments = existingAppointments.filter(slot =>
+        slot.startTime < dayEnd && slot.endTime > dayStart);
+
+      for (const interval of INTERVALS) {
+        const status = getSlotStatus(interval, date, dayAvailableSlots, dayExistingAppointments);
+        if (status.isAvailable && !status.isInPast) {
+          count++;
+        }
+      }
+      return count;
+    };
+
+    return (
+      <div className="grid grid-cols-7 gap-1 h-[600px] overflow-y-auto">
+        {DAYS.map((day) => (
+          <div key={day} className="text-center font-bold p-2">
+            {day.slice(0,3)}
+          </div>
+        ))}
+        {Array.from({ length: firstDayOfMonth }, (_, i) => (
+          <div key={`empty-start-${i}`} className="min-h-[100px] border bg-gray-50/50" />
+        ))}
+        {Array.from({ length: new Date(year, month + 1, 0).getDate() }, (_, i) => {
+          const date = new Date(year, month, i + 1);
+          const isCurrentDay = isSameDay(date, now);
+          const isPastDay = date < today;
+          const availableCount = isPastDay ? 0 : countAvailableSlotsForDay(date);
+
+          return (
+            <div
+              key={date.toISOString()}
+              className={`min-h-[100px] border p-1 flex flex-col ${isCurrentDay ? "ring-2 ring-primary" : ""} ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
+            >
+              <div className={`font-bold mb-1 text-xs ${isCurrentDay ? "text-primary" : ""} ${isPastDay ? "" : "text-gray-700"}`}>
+                {i + 1}
+              </div>
+              <div className="flex-grow flex items-center justify-center">
+                {!isPastDay && availableCount > 0 && (
+                  <Badge variant="outline" className="text-[10px] p-1">
+                    {availableCount} slots
+                  </Badge>
+                )}
+                {!isPastDay && availableCount === 0 && (
+                  <span className="text-xs text-muted-foreground">No Slots</span>
+                )}
+                {isPastDay && <span className="text-xs text-muted-foreground"></span>}
+              </div>
+            </div>
+          );
+        })}
+        {Array.from({ length: (7 - (firstDayOfMonth + new Date(year, month + 1, 0).getDate()) % 7) % 7 }, (_, i) => (
+          <div key={`empty-end-${i}`} className="min-h-[100px] border bg-gray-50/50" />
+        ))}
+      </div>
+    );
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-7xl">
@@ -526,8 +622,8 @@ export function EventTimingsCalendar({
           </DialogTitle>
           <DialogDescription>
             {eventType === "webinar"
-              ? "Select one time slot for your webinar."
-              : `Select ${callsPerWeek * 4 * durationInMonths} time slots for your class (${callsPerWeek} calls/week × 4 weeks × ${durationInMonths} months).`}
+              ? "Select one 30-minute time slot for your webinar."
+              : `Select ${requiredTotalSlots} time slots (30-min each) for your class.`}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
@@ -548,164 +644,73 @@ export function EventTimingsCalendar({
                 Month
               </Button>
             </div>
-            <Button variant="outline" size="sm" onClick={navigatePrevious}>
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <div className="text-lg font-bold">
-              {format(currentDate, "MMMM yyyy")}
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={navigatePrevious}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <div className="text-lg font-bold text-center min-w-[150px]">
+                {view === 'week'
+                  ? `${format(weekDates[0], "MMM d")} - ${format(weekDates[6], "MMM d, yyyy")}`
+                  : format(currentDate, "MMMM yyyy")
+                }
+              </div>
+              <Button variant="outline" size="sm" onClick={navigateNext}>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
             </div>
-            <Button variant="outline" size="sm" onClick={navigateNext}>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+            <div className="w-20"></div>
           </div>
 
           {view === "week" ? (
-            <>
-              <div className="grid grid-cols-8 gap-1">
-                <div className="w-20"></div>
-                {weekDates.map((date, i) => (
-                  <div key={i} className="text-center">
-                    <div className="font-bold">{DAYS[i]}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {format(date, "d")}
+            <div className="flex flex-col h-[calc(100vh-20rem)] md:h-[65vh] max-h-[700px]">
+              <div className="grid grid-cols-8 gap-0.5 md:gap-1 sticky top-0 bg-background z-20 pb-1">
+                <div className="w-14 md:w-20"></div>
+                {weekDates.map((date, index) => {
+                  const isToday = isSameDay(date, new Date());
+                  return (
+                    <div key={DAYS[index]} className="text-center p-1 md:p-2">
+                      <div className={`font-bold text-xs md:text-base ${isToday ? "text-primary" : ""}`}>
+                        {DAYS[index].slice(0, 3)}
+                      </div>
+                      <div className="text-xs md:text-sm text-muted-foreground">
+                        {format(date, "d")}
+                      </div>
                     </div>
+                  );
+                })}
+              </div>
+              <div className="flex-1 overflow-y-auto scrollbar-thin">
+                {INTERVALS.map((interval, i) => (
+                  <div key={`interval-row-${interval.hour}-${interval.minute}`} className="grid grid-cols-8 gap-0.5 md:gap-1">
+                    <div className="w-14 md:w-20">
+                      {/* Display time label for every interval */}
+                      { (
+                        <div className="h-8 text-right pr-2 pt-0.5 text-[10px] md:text-sm flex items-start justify-end" >
+                          {new Date(1970, 0, 1, interval.hour, interval.minute).toLocaleTimeString(
+                            [], { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: browserTimezone }
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {weekDates.map((date) => (
+                      <div key={date.toISOString()} className="col-span-1">
+                        {renderTimeCell(interval, date)}
+                      </div>
+                    ))}
                   </div>
                 ))}
               </div>
-
-              <div className="grid grid-cols-8 gap-1 h-[600px] overflow-y-auto">
-                {HOURS.map((hour) => (
-                  <React.Fragment key={hour}>
-                    <div className="w-20 text-right pr-2 pt-1 text-sm sticky left-0 bg-background z-10">
-                      {new Date(1970, 0, 1, hour).toLocaleTimeString([], {
-                        hour: '2-digit', minute: '2-digit', hour12: false, timeZone: browserTimezone
-                      })}
-                    </div>
-                    {weekDates.map((date, i) => (
-                      <div key={i}>{renderTimeCell(hour, date)}</div>
-                    ))}
-                  </React.Fragment>
-                ))}
-              </div>
-            </>
-          ) : (
-            <div className="grid grid-cols-7 gap-1 h-[600px] overflow-y-auto">
-              {DAYS.map((day) => (
-                <div key={day} className="text-center font-bold">
-                  {day}
-                </div>
-              ))}
-              {Array.from(
-                {
-                  length: new Date(
-                    currentDate.getFullYear(),
-                    currentDate.getMonth(),
-                    1,
-                  ).getDay(),
-                },
-                (_, i) => (
-                  <div
-                    key={`empty-start-${i}`}
-                    className="min-h-[100px] border p-2 bg-gray-50/50"
-                  />
-                ),
-              )}
-
-              {Array.from(
-                {
-                  length: new Date(
-                    currentDate.getFullYear(),
-                    currentDate.getMonth() + 1,
-                    0,
-                  ).getDate(),
-                },
-                (_, i) => {
-                  const date = new Date(
-                    currentDate.getFullYear(),
-                    currentDate.getMonth(),
-                    i + 1,
-                  );
-                  const daySlots = availableSlots.filter((slot) =>
-                    isSameDay(slot.startTime, date),
-                  );
-                  const bookedDaySlots = existingAppointments.filter((slot) =>
-                    isSameDay(slot.startTime, date),
-                  );
-                  const selectedDaySlots = selectedSlots.filter((slot) =>
-                    isSameDay(slot.startTime, date),
-                  );
-
-                  const displaySlots = daySlots.filter((availableSlot) => {
-                    const isBookedOrPartially = bookedDaySlots.some(bookedSlot => {
-                      return availableSlot.startTime < bookedSlot.endTime && availableSlot.endTime > bookedSlot.startTime;
-                    });
-                    return !isBookedOrPartially;
-                  });
-
-                  return (
-                    <div
-                      key={date.toISOString()}
-                      className={`min-h-[100px] border p-2 ${isSameDay(date, new Date()) ? "ring-2 ring-primary" : ""
-                        }`}
-                    >
-                      <div
-                        className={`font-bold mb-1 ${isSameDay(date, new Date()) ? "text-primary" : ""
-                          }`}
-                      >
-                        {i + 1}
-                      </div>
-                      <div className="space-y-1 overflow-y-auto max-h-[80px] scrollbar-thin">
-                        {bookedDaySlots.map((slot) => (
-                          <div
-                            key={`booked-${slot.startTime.toISOString()}`}
-                            className="text-xs bg-gray-200 p-1 rounded"
-                          >
-                            {format(slot.startTime, "HH:mm")} - Booked
-                          </div>
-                        ))}
-                        {displaySlots.map((slot, j) => (
-                          <Button
-                            key={`avail-${j}`}
-                            variant={
-                              selectedDaySlots.some(
-                                (s) =>
-                                  s.startTime.getTime() ===
-                                  slot.startTime.getTime(),
-                              )
-                                ? "default"
-                                : "outline"
-                            }
-                            size="sm"
-                            className="w-full text-xs justify-start"
-                            onClick={() =>
-                              handleSlotSelect(
-                                slot.startTime.getHours(),
-                                slot.startTime,
-                              )
-                            }
-                            disabled={slot.endTime < new Date()}
-                          >
-                            {format(slot.startTime, "HH:mm")}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                },
-              )}
             </div>
+          ) : (
+            renderMonthView()
           )}
 
-          <div className="flex justify-between items-center mt-4">
-            <div className="text-sm text-muted-foreground">
-              Timezone: {browserTimezone}
+          <div className="flex items-center mt-4 gap-4">
+            <div className="text-sm">
+              Selected: {selectedSlots.length} / {requiredTotalSlots} slots
             </div>
-            <div className="text-sm ml-auto mr-4">
-              Selected: {selectedSlots.length} /{" "}
-              {eventType === "webinar"
-                ? "1"
-                : `${callsPerWeek * 4 * durationInMonths}`}{" "}
-              slots
+            <div className="text-sm text-muted-foreground ml-auto">
+              Timezone: {browserTimezone}
             </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={onClose}>
@@ -716,10 +721,7 @@ export function EventTimingsCalendar({
                 disabled={
                   selectedSlots.length === 0 ||
                   saving ||
-                  (eventType === "webinar" && selectedSlots.length !== 1) ||
-                  (eventType === "class" &&
-                    selectedSlots.length !==
-                      callsPerWeek * 4 * durationInMonths)
+                  selectedSlots.length !== requiredTotalSlots
                 }
               >
                 {saving ? "Saving..." : "Save Timings"}
