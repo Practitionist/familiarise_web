@@ -12,8 +12,8 @@ import { useToast } from "@/components/ui/use-toast";
 import { addDays, format, isSameDay, startOfWeek } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useParams } from "next/navigation";
-import React, { useEffect, useState } from "react";
-import { AppointmentsType } from "@prisma/client";
+import React, { useEffect, useState, useMemo } from "react";
+import { AppointmentsType, ConsultantProfile, SlotOfAvailabilityWeekly, SlotOfAvailabilityCustom } from "@prisma/client";
 import { Appointment, AppointmentSlot, TimeSlot } from "../types/calendar";
 import { mapCustomSlots, mapWeeklySlots } from "../utils";
 
@@ -41,26 +41,144 @@ export function EventTimingsCalendar({
   const { toast } = useToast();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState<"week" | "month">("week");
-  const [availableSlots, setAvailableSlots] = useState<TimeSlot[]>([]);
-  const [existingAppointments, setExistingAppointments] = useState<TimeSlot[]>(
-    [],
-  );
+  const [consultantDetails, setConsultantDetails] = useState<ConsultantProfile | null>(null);
+  const [allAppointmentsRawData, setAllAppointmentsRawData] = useState<Appointment[]>([]);
   const [selectedSlots, setSelectedSlots] = useState<TimeSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [scheduleType, setScheduleType] = useState<"WEEKLY" | "CUSTOM" | null>(
-    null,
-  );
   const [browserTimezone] = useState(() =>
     typeof window !== "undefined"
       ? Intl.DateTimeFormat().resolvedOptions().timeZone
       : "UTC",
   );
+  const [rawAvailabilitySlots, setRawAvailabilitySlots] = useState<{ weekly: SlotOfAvailabilityWeekly[], custom: SlotOfAvailabilityCustom[] }>({ weekly: [], custom: [] });
 
   const startDate = startOfWeek(currentDate);
   const weekDates = [...Array(7)].map((_, i) => addDays(startDate, i));
 
+  const isOverlapping = (
+    intervalStart: Date,
+    intervalEnd: Date,
+    slotList: TimeSlot[] = [],
+  ): boolean => {
+    return slotList.some((slot) => {
+      const slotStart = slot.startTime instanceof Date ? slot.startTime : new Date(slot.startTime);
+      const slotEnd = slot.endTime instanceof Date ? slot.endTime : new Date(slot.endTime);
+      return intervalStart < slotEnd && intervalEnd > slotStart;
+    });
+  };
+
+  const getSlotStatus = (
+    hour: number,
+    date: Date,
+    currentAvailableSlots: TimeSlot[],
+    currentExistingAppointments: TimeSlot[]
+  ) => {
+    const localIntervalStartDate = new Date(date);
+    localIntervalStartDate.setHours(hour, 0, 0, 0);
+    const localIntervalEndDate = new Date(localIntervalStartDate);
+    localIntervalEndDate.setHours(hour + 1, 0, 0, 0);
+
+    const intervalStartDateUTC = new Date(localIntervalStartDate.toISOString());
+    const intervalEndDateUTC = new Date(intervalStartDateUTC.getTime() + 60 * 60 * 1000);
+
+    const isWithinAvailability = isOverlapping(
+      intervalStartDateUTC,
+      intervalEndDateUTC,
+      currentAvailableSlots,
+    );
+    const isBooked = isOverlapping(
+      intervalStartDateUTC,
+      intervalEndDateUTC,
+      currentExistingAppointments,
+    );
+    const isPartiallyBooked = isWithinAvailability && isBooked;
+
+    const now = new Date();
+    const isInPast = localIntervalEndDate < now;
+
+    const isDisabled = !isWithinAvailability || isBooked || isInPast;
+
+    return {
+      isAvailable: isWithinAvailability && !isBooked,
+      isBooked: isBooked && !isWithinAvailability,
+      isPartiallyBooked,
+      isDisabled,
+      isInPast,
+      intervalStartUTCString: intervalStartDateUTC.toISOString(),
+      localStartTime: localIntervalStartDate,
+      localEndTime: localIntervalEndDate,
+    };
+  };
+
+  const fetchData = async () => {
+    if (!isOpen || !eventId || !params.consultantId) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const consultantId = params.consultantId.toString();
+      const appointmentSearchParams = new URLSearchParams({ consultantProfileId: consultantId });
+      const weeklyAvailabilityParams = new URLSearchParams({ consultantProfileId: consultantId });
+      const customAvailabilityParams = new URLSearchParams({ consultantProfileId: consultantId });
+
+      const [
+        consultantResponse,
+        appointmentsResponse,
+        weeklyAvailabilityResponse,
+        customAvailabilityResponse,
+      ] = await Promise.all([
+        fetch(`/api/user/consultants/${consultantId}`),
+        fetch(`/api/slots/appointments?${appointmentSearchParams}`),
+        fetch(`/api/slots/availability/weekly?${weeklyAvailabilityParams}`),
+        fetch(`/api/slots/availability/custom?${customAvailabilityParams}`),
+      ]);
+
+      if (consultantResponse.ok) {
+        const { data } = await consultantResponse.json();
+        if (!data) throw new Error("Consultant not found");
+        setConsultantDetails(data);
+      } else {
+        throw new Error("Failed to fetch consultant data");
+      }
+
+      let weeklySlotsRaw: any[] = [];
+      let customSlotsRaw: any[] = [];
+      if (weeklyAvailabilityResponse.ok) {
+        const { data } = await weeklyAvailabilityResponse.json();
+        weeklySlotsRaw = data || [];
+      }
+      if (customAvailabilityResponse.ok) {
+        const { data } = await customAvailabilityResponse.json();
+        customSlotsRaw = data || [];
+      }
+      setRawAvailabilitySlots({ weekly: weeklySlotsRaw, custom: customSlotsRaw });
+
+      if (appointmentsResponse.ok) {
+        const { data } = await appointmentsResponse.json();
+        setAllAppointmentsRawData(data || []);
+      } else {
+        throw new Error("Failed to fetch appointments data");
+      }
+    } catch (error) {
+      console.error("Error fetching data:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to fetch calendar data",
+      });
+      setConsultantDetails(null);
+      setAllAppointmentsRawData([]);
+      setRawAvailabilitySlots({ weekly: [], custom: [] });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchEventSlots = async () => {
+    if (!isOpen || !eventId) return;
     try {
       const params = new URLSearchParams({
         type: eventType.toUpperCase(),
@@ -77,19 +195,19 @@ export function EventTimingsCalendar({
       if (response.ok) {
         const { data } = await response.json();
         if (data && data.length > 0 && data[0].slotsOfAppointment?.length > 0) {
-          const slots = data[0].slotsOfAppointment.map(
+          const slots: TimeSlot[] = data[0].slotsOfAppointment.map(
             (slot: AppointmentSlot) => ({
               startTime: new Date(slot.slotStartTimeInUTC),
               endTime: new Date(slot.slotEndTimeInUTC),
               isAvailable: true,
               isBooked: false,
-              originalSlot: slot,
             }),
           );
           setSelectedSlots(slots);
 
-          // Set current date to the first slot's date
-          setCurrentDate(new Date(slots[0].startTime));
+          if (slots.length > 0) {
+            setCurrentDate(new Date(slots[0].startTime));
+          }
         }
       }
     } catch (error) {
@@ -97,201 +215,94 @@ export function EventTimingsCalendar({
     }
   };
 
-  const fetchData = async () => {
-    try {
-      if (!params.consultantId) {
-        throw new Error("Consultant ID is required");
-      }
-
-      setLoading(true);
-
-      const consultantId = params.consultantId.toString();
-      const searchParams = new URLSearchParams();
-
-      searchParams.append("consultantProfileId", consultantId);
-      searchParams.append("type", eventType.toUpperCase());
-
-      if (eventType === "webinar") {
-        searchParams.append("webinarStatus", "APPROVED");
-      } else {
-        searchParams.append("classStatus", "APPROVED");
-      }
-
-      const [consultantResponse, appointmentsResponse] = await Promise.all([
-        fetch(`/api/user/consultants/${consultantId}`),
-        fetch(`/api/slots/appointments?${searchParams}`),
-      ]);
-
-      // Handle consultant data
-      if (consultantResponse.ok) {
-        const { data: consultantData } = await consultantResponse.json();
-        if (!consultantData) {
-          throw new Error("Consultant not found");
-        }
-
-        setScheduleType(consultantData.scheduleType);
-
-        // Map slots based on schedule type
-        if (consultantData.scheduleType === "WEEKLY") {
-          const slots = mapWeeklySlots(consultantData, currentDate, view);
-          setAvailableSlots(slots);
-        } else if (consultantData.scheduleType === "CUSTOM") {
-          const slots = mapCustomSlots(consultantData);
-          setAvailableSlots(slots);
-        } else {
-          toast({
-            variant: "destructive",
-            title: "No availability slots",
-            description: "Please set up your availability slots first",
-          });
-        }
-      }
-
-      // Handle appointments data
-      if (appointmentsResponse.ok) {
-        const appointmentsData = await appointmentsResponse.json();
-        const rawAppointments = appointmentsData.data || [];
-
-        const bookedSlots = rawAppointments
-          .filter((appointment: Appointment) => {
-            const slots = appointment.slotsOfAppointment || [];
-            const isCorrectType =
-              appointment.appointmentType === eventType.toUpperCase();
-            const isScheduled =
-              eventType === "webinar"
-                ? appointment.webinar?.status === "SCHEDULED"
-                : eventType === "class"
-                  ? appointment.class?.status === "SCHEDULED"
-                  : true;
-
-            return slots.length > 0 && isCorrectType && isScheduled;
-          })
-          .flatMap((appointment: Appointment) => {
-            const slots = appointment.slotsOfAppointment || [];
-            return slots.map((slot: AppointmentSlot) => ({
-              startTime: new Date(slot.slotStartTimeInUTC),
-              endTime: new Date(slot.slotEndTimeInUTC),
-              isAvailable: false,
-              isBooked: true,
-            }));
-          });
-        setExistingAppointments(bookedSlots);
-      }
-    } catch (error) {
-      console.error("Error fetching data:", error);
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Failed to fetch available slots",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Fetch event slots and data when dialog opens
   useEffect(() => {
-    if (isOpen) {
-      fetchEventSlots();
-      fetchData();
-    } else {
-      // Reset state when dialog closes
-      setSelectedSlots([]);
-      setCurrentDate(new Date());
-    }
-  }, [isOpen]);
+    fetchData();
+    fetchEventSlots();
 
-  // Fetch data when date, schedule type, or view changes
-  useEffect(() => {
-    if (isOpen && scheduleType) {
-      fetchData();
+    return () => {
+      if (!isOpen) {
+        setSelectedSlots([]);
+        setCurrentDate(new Date());
+        setConsultantDetails(null);
+        setAllAppointmentsRawData([]);
+        setRawAvailabilitySlots({ weekly: [], custom: [] });
+      }
+    };
+  }, [isOpen, eventId, params.consultantId, eventType]);
+
+  const currentViewSlots = useMemo(() => {
+    const startOfView = view === 'week' ? startOfWeek(currentDate) : new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+    const endOfView = view === 'week'
+      ? addDays(startOfView, 7)
+      : new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    let currentAvailableSlots: TimeSlot[] = [];
+    const scheduleType = consultantDetails?.scheduleType;
+
+    if (consultantDetails) {
+      const consultantDataForMapping = {
+        ...consultantDetails,
+        slotsOfAvailabilityWeekly: rawAvailabilitySlots.weekly as SlotOfAvailabilityWeekly[],
+        slotsOfAvailabilityCustom: rawAvailabilitySlots.custom as SlotOfAvailabilityCustom[],
+      };
+
+      if (scheduleType === "WEEKLY") {
+        currentAvailableSlots = mapWeeklySlots(consultantDataForMapping, currentDate, view);
+      } else if (scheduleType === "CUSTOM") {
+        const allCustomSlots = mapCustomSlots(consultantDataForMapping);
+        currentAvailableSlots = allCustomSlots.filter(slot => slot.startTime < endOfView && slot.endTime > startOfView);
+      }
     }
-  }, [currentDate, scheduleType, view]);
+
+    const currentExistingAppointments: TimeSlot[] = allAppointmentsRawData
+      .flatMap((appointment: Appointment) => (appointment.slotsOfAppointment || []))
+      .map((slot: AppointmentSlot): TimeSlot => ({
+        startTime: new Date(slot.slotStartTimeInUTC),
+        endTime: new Date(slot.slotEndTimeInUTC),
+        isAvailable: false,
+        isBooked: true,
+      }))
+      .filter(slot => slot.startTime < endOfView && slot.endTime > startOfView);
+
+    return { availableSlots: currentAvailableSlots, existingAppointments: currentExistingAppointments };
+  }, [consultantDetails, rawAvailabilitySlots, allAppointmentsRawData, currentDate, view]);
+
+  const availableSlots = currentViewSlots.availableSlots;
+  const existingAppointments = currentViewSlots.existingAppointments;
+  const scheduleType = consultantDetails?.scheduleType;
 
   const handleSlotSelect = (hour: number, date: Date) => {
-    const slotStart = new Date(date);
-    slotStart.setHours(hour, 0, 0, 0);
-    const slotEnd = new Date(slotStart);
-    slotEnd.setHours(hour + 1, 0, 0, 0);
+    const status = getSlotStatus(hour, date, availableSlots, existingAppointments);
 
-    // Get all slots for this hour
-    const hourSlots = availableSlots.filter(
-      (slot) =>
-        isSameDay(slot.startTime, slotStart) &&
-        slot.startTime.getHours() === hour,
-    );
+    if (status.isDisabled) return;
 
-    const bookedHourSlots = existingAppointments.filter(
-      (slot) =>
-        isSameDay(slot.startTime, slotStart) &&
-        slot.startTime.getHours() === hour,
-    );
+    const slotUTCTimestamp = status.intervalStartUTCString;
 
-    // Apply overlap rules
-    const isAvailable = hourSlots.some((availableSlot) => {
-      // Check for any type of overlap with booked slots
-      const hasOverlap = bookedHourSlots.some((bookedSlot) => {
-        // Case 1: Available fully overlapped by Booked
-        const availableFullyOverlapped =
-          availableSlot.startTime >= bookedSlot.startTime &&
-          availableSlot.endTime <= bookedSlot.endTime;
-
-        // Case 2: Booked fully overlapped by Available
-        const bookedFullyOverlapped =
-          bookedSlot.startTime >= availableSlot.startTime &&
-          bookedSlot.endTime <= availableSlot.endTime;
-
-        // Case 3: Partial overlap
-        const partialOverlap =
-          (availableSlot.startTime < bookedSlot.endTime &&
-            availableSlot.endTime > bookedSlot.startTime) ||
-          (bookedSlot.startTime < availableSlot.endTime &&
-            bookedSlot.endTime > availableSlot.startTime);
-
-        return (
-          availableFullyOverlapped || bookedFullyOverlapped || partialOverlap
-        );
-      });
-
-      // Case 4: No overlap - show the available slot
-      return !hasOverlap;
-    });
-
-    const isBooked = bookedHourSlots.length > 0;
-
-    if (!isAvailable || isBooked) return;
-
-    const newSlot = {
-      startTime: slotStart,
-      endTime: slotEnd,
+    const newSlot: TimeSlot = {
+      startTime: new Date(status.intervalStartUTCString),
+      endTime: new Date(status.localEndTime.toISOString()),
       isAvailable: true,
       isBooked: false,
     };
 
-    // For webinars, only allow one slot
-    if (eventType === "webinar") {
-      setSelectedSlots([newSlot]);
-      return;
-    }
-
-    // For classes, allow multiple slots
     const isSelected = selectedSlots.some(
-      (slot) =>
-        isSameDay(slot.startTime, slotStart) &&
-        slot.startTime.getHours() === hour,
+      (slot) => slot.startTime.toISOString() === slotUTCTimestamp
     );
 
     if (isSelected) {
       setSelectedSlots(
         selectedSlots.filter(
-          (slot) =>
-            !isSameDay(slot.startTime, slotStart) ||
-            slot.startTime.getHours() !== hour,
+          (slot) => slot.startTime.toISOString() !== slotUTCTimestamp
         ),
       );
     } else {
+      if (eventType === "webinar") {
+        setSelectedSlots([newSlot]);
+        return;
+      }
+
       const requiredSlots = callsPerWeek * 4 * durationInMonths;
-      if (eventType === "class" && selectedSlots.length >= requiredSlots) {
+      if (selectedSlots.length >= requiredSlots) {
         toast({
           variant: "destructive",
           title: "Maximum slots reached",
@@ -299,7 +310,7 @@ export function EventTimingsCalendar({
         });
         return;
       }
-      setSelectedSlots([...selectedSlots, newSlot]);
+      setSelectedSlots([...selectedSlots, newSlot].sort((a, b) => a.startTime.getTime() - b.startTime.getTime()));
     }
   };
 
@@ -307,7 +318,6 @@ export function EventTimingsCalendar({
     try {
       setSaving(true);
 
-      // First, fetch existing appointments for this event
       const params = new URLSearchParams({
         type: eventType.toUpperCase(),
       });
@@ -325,7 +335,6 @@ export function EventTimingsCalendar({
         const existingAppointment = data?.[0];
 
         let response;
-        // If there's an existing appointment, update it
         if (existingAppointment) {
           response = await fetch(
             `/api/slots/appointments/${existingAppointment.id}`,
@@ -352,7 +361,6 @@ export function EventTimingsCalendar({
             },
           );
         } else {
-          // Create new appointment if none exists
           response = await fetch(`/api/slots/appointments`, {
             method: "POST",
             headers: {
@@ -416,99 +424,92 @@ export function EventTimingsCalendar({
   };
 
   const renderTimeCell = (hour: number, date: Date) => {
-    const slotStart = new Date(date);
-    slotStart.setHours(hour, 0, 0, 0);
+    const status = getSlotStatus(hour, date, availableSlots, existingAppointments);
+    const slotUTCTimestamp = status.intervalStartUTCString;
 
-    // Get all slots for this hour
-    const hourSlots = availableSlots.filter(
-      (slot) =>
-        isSameDay(slot.startTime, slotStart) &&
-        slot.startTime.getHours() === hour,
+    const isCurrentlySelected = selectedSlots.some(
+      (slot) => slot.startTime.toISOString() === slotUTCTimestamp
     );
 
-    const bookedHourSlots = existingAppointments.filter(
-      (slot) =>
-        isSameDay(slot.startTime, slotStart) &&
-        slot.startTime.getHours() === hour,
-    );
+    let cellClassName = `h-12 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-xs px-1 py-0.5`;
+    let buttonText = "";
 
-    // Apply overlap rules
-    const isAvailable = hourSlots.some((availableSlot) => {
-      // Check for any type of overlap with booked slots
-      const hasOverlap = bookedHourSlots.some((bookedSlot) => {
-        // Case 1: Available fully overlapped by Booked
-        const availableFullyOverlapped =
-          availableSlot.startTime >= bookedSlot.startTime &&
-          availableSlot.endTime <= bookedSlot.endTime;
-
-        // Case 2: Booked fully overlapped by Available
-        const bookedFullyOverlapped =
-          bookedSlot.startTime >= availableSlot.startTime &&
-          bookedSlot.endTime <= availableSlot.endTime;
-
-        // Case 3: Partial overlap
-        const partialOverlap =
-          (availableSlot.startTime < bookedSlot.endTime &&
-            availableSlot.endTime > bookedSlot.startTime) ||
-          (bookedSlot.startTime < availableSlot.endTime &&
-            bookedSlot.endTime > availableSlot.startTime);
-
-        return (
-          availableFullyOverlapped || bookedFullyOverlapped || partialOverlap
-        );
-      });
-
-      // Case 4: No overlap - show the available slot
-      return !hasOverlap;
-    });
-
-    const isBooked = bookedHourSlots.length > 0;
-
-    const isSelected = selectedSlots.some(
-      (slot) =>
-        isSameDay(slot.startTime, slotStart) &&
-        slot.startTime.getHours() === hour,
-    );
-
-    const now = new Date();
-    const isInPast = slotStart < now;
+    if (isCurrentlySelected) {
+      cellClassName += " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
+      buttonText = "Selected";
+    } else if (status.isPartiallyBooked) {
+      cellClassName += " bg-yellow-400 text-yellow-900 cursor-not-allowed";
+      buttonText = "Partially Booked";
+    } else if (status.isBooked) {
+      cellClassName += " bg-slate-400 text-slate-800 cursor-not-allowed";
+      buttonText = "Booked";
+    } else if (status.isAvailable) {
+      if (status.isInPast) {
+        cellClassName += " bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
+        buttonText = "Available";
+      } else {
+        cellClassName += " bg-green-300 text-green-950 hover:bg-green-400 border-green-400";
+        buttonText = "Available";
+      }
+    } else {
+      if (status.isInPast) {
+        cellClassName += " bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
+      } else {
+        cellClassName += " bg-slate-300 cursor-not-allowed";
+      }
+    }
 
     return (
       <Button
-        key={`${date.toISOString()}-${hour}`}
-        variant={isSelected ? "default" : isAvailable ? "outline" : "ghost"}
-        className={`h-12 w-full relative
-          ${isBooked ? "bg-gray-200 hover:bg-gray-200" : ""}
-          ${isInPast ? "opacity-50" : ""}
-        `}
-        onClick={() => !isInPast && handleSlotSelect(hour, date)}
-        disabled={!isAvailable || isBooked || isInPast}
+        key={slotUTCTimestamp}
+        variant={"ghost"}
+        className={cellClassName}
+        onClick={() => handleSlotSelect(hour, date)}
+        disabled={status.isDisabled}
       >
-        {isBooked
-          ? "Booked"
-          : isSelected
-            ? "Selected"
-            : isAvailable
-              ? "Available"
-              : ""}
+        {buttonText}
       </Button>
     );
   };
 
-  if (loading || !scheduleType) {
+  if (loading) {
     return (
       <Dialog open={isOpen} onOpenChange={onClose}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {loading
-                ? "Loading your calendar..."
-                : "Schedule type not configured"}
-            </DialogTitle>
+            <DialogTitle>Loading your calendar...</DialogTitle>
             <DialogDescription>
-              {loading
-                ? "Please wait while we fetch your calendar data..."
-                : "Please set up your availability in the settings before managing event timings."}
+              Please wait while we fetch your calendar data...
+            </DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  if (!loading && !consultantDetails) {
+    return (
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Error Loading Data</DialogTitle>
+            <DialogDescription>
+              Could not load consultant or availability data. Please try again later.
+            </DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  if (!loading && consultantDetails && scheduleType !== 'WEEKLY' && scheduleType !== 'CUSTOM') {
+    return (
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>No Availability Found</DialogTitle>
+            <DialogDescription>
+              No availability slots were found for this consultant. Please configure availability in settings.
             </DialogDescription>
           </DialogHeader>
         </DialogContent>
@@ -576,7 +577,9 @@ export function EventTimingsCalendar({
                 {HOURS.map((hour) => (
                   <React.Fragment key={hour}>
                     <div className="w-20 text-right pr-2 py-2 text-sm sticky left-0 bg-background z-10">
-                      {hour.toString().padStart(2, "0")}:00
+                      {new Date(1970, 0, 1, hour).toLocaleTimeString([], {
+                        hour: '2-digit', minute: '2-digit', hour12: false, timeZone: browserTimezone
+                      })}
                     </div>
                     {weekDates.map((date, i) => (
                       <div key={i}>{renderTimeCell(hour, date)}</div>
@@ -592,7 +595,6 @@ export function EventTimingsCalendar({
                   {day}
                 </div>
               ))}
-              {/* Empty cells for days before the first of the month */}
               {Array.from(
                 {
                   length: new Date(
@@ -609,7 +611,6 @@ export function EventTimingsCalendar({
                 ),
               )}
 
-              {/* Days of the month */}
               {Array.from(
                 {
                   length: new Date(
@@ -627,70 +628,36 @@ export function EventTimingsCalendar({
                   const daySlots = availableSlots.filter((slot) =>
                     isSameDay(slot.startTime, date),
                   );
-                  const bookedSlots = existingAppointments.filter((slot) =>
+                  const bookedDaySlots = existingAppointments.filter((slot) =>
                     isSameDay(slot.startTime, date),
                   );
                   const selectedDaySlots = selectedSlots.filter((slot) =>
                     isSameDay(slot.startTime, date),
                   );
 
-                  // Filter slots based on overlap rules
                   const displaySlots = daySlots.filter((availableSlot) => {
-                    // Check for any type of overlap with booked slots
-                    const overlappingBookedSlots = bookedSlots.filter(
-                      (bookedSlot) => {
-                        const availableStart = availableSlot.startTime;
-                        const availableEnd = availableSlot.endTime;
-                        const bookedStart = bookedSlot.startTime;
-                        const bookedEnd = bookedSlot.endTime;
-
-                        // Case 1: Available fully overlapped by Booked
-                        const availableFullyOverlapped =
-                          availableStart >= bookedStart &&
-                          availableEnd <= bookedEnd;
-
-                        // Case 2: Booked fully overlapped by Available
-                        const bookedFullyOverlapped =
-                          bookedStart >= availableStart &&
-                          bookedEnd <= availableEnd;
-
-                        // Case 3: Partial overlap
-                        const partialOverlap =
-                          (availableStart < bookedEnd &&
-                            availableEnd > bookedStart) ||
-                          (bookedStart < availableEnd &&
-                            bookedEnd > availableStart);
-
-                        return (
-                          availableFullyOverlapped ||
-                          bookedFullyOverlapped ||
-                          partialOverlap
-                        );
-                      },
-                    );
-
-                    // Case 4: No overlap - show the available slot
-                    return overlappingBookedSlots.length === 0;
+                    const isBookedOrPartially = bookedDaySlots.some(bookedSlot => {
+                      return availableSlot.startTime < bookedSlot.endTime && availableSlot.endTime > bookedSlot.startTime;
+                    });
+                    return !isBookedOrPartially;
                   });
 
                   return (
                     <div
-                      key={i}
-                      className={`min-h-[100px] border p-2 ${
-                        isSameDay(date, new Date()) ? "ring-2 ring-primary" : ""
-                      }`}
+                      key={date.toISOString()}
+                      className={`min-h-[100px] border p-2 ${isSameDay(date, new Date()) ? "ring-2 ring-primary" : ""
+                        }`}
                     >
                       <div
-                        className={`font-bold mb-1 ${
-                          isSameDay(date, new Date()) ? "text-primary" : ""
-                        }`}
+                        className={`font-bold mb-1 ${isSameDay(date, new Date()) ? "text-primary" : ""
+                          }`}
                       >
                         {i + 1}
                       </div>
                       <div className="space-y-1 overflow-y-auto max-h-[80px] scrollbar-thin">
-                        {bookedSlots.map((slot, j) => (
+                        {bookedDaySlots.map((slot) => (
                           <div
-                            key={j}
+                            key={`booked-${slot.startTime.toISOString()}`}
                             className="text-xs bg-gray-200 p-1 rounded"
                           >
                             {format(slot.startTime, "HH:mm")} - Booked
@@ -698,7 +665,7 @@ export function EventTimingsCalendar({
                         ))}
                         {displaySlots.map((slot, j) => (
                           <Button
-                            key={j}
+                            key={`avail-${j}`}
                             variant={
                               selectedDaySlots.some(
                                 (s) =>
@@ -716,6 +683,7 @@ export function EventTimingsCalendar({
                                 slot.startTime,
                               )
                             }
+                            disabled={slot.endTime < new Date()}
                           >
                             {format(slot.startTime, "HH:mm")}
                           </Button>
@@ -745,6 +713,7 @@ export function EventTimingsCalendar({
                 disabled={
                   selectedSlots.length === 0 ||
                   saving ||
+                  (eventType === "webinar" && selectedSlots.length !== 1) ||
                   (eventType === "class" &&
                     selectedSlots.length !==
                       callsPerWeek * 4 * durationInMonths)
