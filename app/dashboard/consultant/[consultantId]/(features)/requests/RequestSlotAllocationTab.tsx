@@ -25,24 +25,39 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { toast } from "@/components/ui/use-toast";
-import { AppointmentsType, RequestStatus } from "@prisma/client";
+import { AppointmentsType, RequestStatus, ScheduleType } from "@prisma/client";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { TimingsCalendar } from "./components/TimingsCalendar";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
+import {
+    ConsultationApiResponse,
+    SubscriptionApiResponse,
+    AvailabilityApiResponse,
+    AppointmentInfo,
+    ConsultantApiResponse,
+    SlotInterval,
+    RequestedBy
+  } from "./types";
+
+// --- API Response Type Definitions ---
+// interface UserInfo { ... } // Removed
+// interface RequestedBy { ... } // Removed
+// interface ConsultationPlanInfo { ... } // Removed
+// interface SubscriptionPlanInfo { ... } // Removed
+// interface AppointmentSlot { ... } // Removed (part of SlotInterval now)
+// interface AppointmentInfo { ... } // Removed
+// interface ConsultationApiResponse { ... } // Removed
+// interface SubscriptionApiResponse { ... } // Removed
+// interface AvailabilityApiResponse extends AppointmentSlot { } // Removed
+// interface ConsultantApiResponse { ... } // Removed
+// --- End API Response Type Definitions ---
 
 interface Request {
   id: string;
   type: AppointmentsType;
   title: string;
-  requestedBy: {
-    id: string;
-    user: {
-      id: string;
-      name: string;
-      image?: string;
-    };
-  };
+  requestedBy: RequestedBy;
   requestedAt: string;
   requestedTimes?: string[];
   status: RequestStatus;
@@ -50,17 +65,31 @@ interface Request {
   allocatedSlots?: string[];
 }
 
-interface Slot {
-  id: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
-}
+// interface SlotInterval { ... } // Removed - Now imported
 
 type RequestType = "all" | "consultation" | "subscription";
 
 interface RequestSlotAllocationTabProps {
   type: RequestType;
   onUpdate: () => void;
+}
+
+// Helper function to fetch and process data
+async function fetchDataFromApi<T>(url: string): Promise<{ ok: boolean; data: T | null; error?: string }> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Failed to fetch ${url}:`, errorText);
+      return { ok: false, data: null, error: `Failed to fetch data (status ${response.status})` };
+    }
+    const data = await response.json();
+    return { ok: true, data: data.data as T, error: undefined }; // Assuming API wraps data in { data: ... }
+  } catch (err) {
+    console.error(`Error fetching ${url}:`, err);
+    const message = err instanceof Error ? err.message : "An unknown network error occurred";
+    return { ok: false, data: null, error: message };
+  }
 }
 
 export function RequestSlotAllocationTab({
@@ -72,8 +101,8 @@ export function RequestSlotAllocationTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<Request[]>([]);
-  const [availableSlots, setAvailableSlots] = useState<Slot[]>([]);
-  const [existingAppointments, setExistingAppointments] = useState<Slot[]>([]);
+  const [availableSlots, setAvailableSlots] = useState<SlotInterval[]>([]);
+  const [existingAppointments, setExistingAppointments] = useState<SlotInterval[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
   const [selectedSlots, setSelectedSlots] = useState<string[]>([]);
   const [isAllocating, setIsAllocating] = useState(false);
@@ -83,165 +112,156 @@ export function RequestSlotAllocationTab({
   const [selectedRequestForDialog, setSelectedRequestForDialog] =
     useState<Request | null>(null);
   const [consultantData, setConsultantData] = useState<{
-    scheduleType: "WEEKLY" | "CUSTOM";
+    scheduleType: ScheduleType;
     timezone: string;
   }>({
-    scheduleType: "WEEKLY",
+    scheduleType: ScheduleType.WEEKLY,
     timezone: "UTC",
   });
 
   // Fetch requests, available slots, and existing appointments
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        setError(null);
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
 
-        // Fetch data in parallel
-        const [
-          consultationsRes,
-          subscriptionsRes,
-          availabilityRes,
-          appointmentsRes,
-          consultantRes,
-        ] = await Promise.all([
-          fetch(
-            `/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
-          ),
-          fetch(
-            `/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
-          ),
-          Promise.all([
-            fetch(
-              `/api/slots/availability/weekly?consultantProfileId=${consultantId}`,
-            ),
-            fetch(
-              `/api/slots/availability/custom?consultantProfileId=${consultantId}`,
-            ),
-          ]).then(async ([weeklyRes, customRes]) => {
-            const weeklyData = weeklyRes.ok
-              ? await weeklyRes.json()
-              : { data: [] };
-            const customData = customRes.ok
-              ? await customRes.json()
-              : { data: [] };
-            return {
-              ok: weeklyRes.ok || customRes.ok,
-              data: [...weeklyData.data, ...customData.data],
-            };
-          }),
-          fetch(
-            `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
-          ),
-          fetch(`/api/user/consultants/${consultantId}`),
-        ]);
+    try {
+      // Fetch data in parallel
+      const [
+        consultationsResult,
+        subscriptionsResult,
+        weeklyAvailabilityResult,
+        customAvailabilityResult,
+        appointmentsResult,
+        consultantResult,
+      ] = await Promise.all([
+        fetchDataFromApi<ConsultationApiResponse[]>(
+          `/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
+        ),
+        fetchDataFromApi<SubscriptionApiResponse[]>(
+          `/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
+        ),
+        fetchDataFromApi<AvailabilityApiResponse[]>(
+          `/api/slots/availability/weekly?consultantProfileId=${consultantId}`,
+        ),
+        fetchDataFromApi<AvailabilityApiResponse[]>(
+          `/api/slots/availability/custom?consultantProfileId=${consultantId}`,
+        ),
+        fetchDataFromApi<AppointmentInfo[]>(
+          `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
+        ),
+        fetchDataFromApi<ConsultantApiResponse>(
+          `/api/user/consultants/${consultantId}`,
+        ),
+      ]);
 
-        // Handle consultation requests
-        let filteredRequests = [];
-        if (consultationsRes.ok) {
-          const consultationsData = await consultationsRes.json();
-          if (type === "all" || type === "consultation") {
-            filteredRequests.push(
-              ...consultationsData.data.map((consultation: any) => ({
-                id: consultation.id,
-                type: AppointmentsType.CONSULTATION,
-                title: consultation.consultationPlan?.title || "Untitled Plan",
-                requestedBy: consultation.requestedBy,
-                requestedAt: consultation.requestedAt,
-                requestedTimes:
-                  consultation.appointment?.slotsOfAppointment?.map(
-                    (slot: any) => slot.slotStartTimeInUTC,
-                  ) || [],
-                status: consultation.requestStatus,
-                requiredSlots: 1, // Consultations always require 1 slot
-              })),
-            );
-          }
-        } else {
-          console.error(
-            "Failed to fetch consultations:",
-            await consultationsRes.text(),
-          );
-        }
-
-        // Handle subscription requests
-        if (subscriptionsRes.ok) {
-          const subscriptionsData = await subscriptionsRes.json();
-          if (type === "all" || type === "subscription") {
-            filteredRequests.push(
-              ...subscriptionsData.data.map((subscription: any) => ({
-                id: subscription.id,
-                type: AppointmentsType.SUBSCRIPTION,
-                title: subscription.subscriptionPlan?.title || "Untitled Plan",
-                requestedBy: subscription.requestedBy,
-                requestedAt: subscription.requestedAt,
-                requestedTimes:
-                  subscription.appointments?.flatMap(
-                    (appt: any) =>
-                      appt.slotsOfAppointment?.map(
-                        (slot: any) => slot.slotStartTimeInUTC,
-                      ) || [],
-                  ) || [],
-                status: subscription.requestStatus,
-                requiredSlots:
-                  subscription.subscriptionPlan?.callsPerWeek *
-                    4 *
-                    subscription.subscriptionPlan?.durationInMonths || 0,
-              })),
-            );
-          }
-        } else {
-          console.error(
-            "Failed to fetch subscriptions:",
-            await subscriptionsRes.text(),
-          );
-        }
-
-        // Handle availability
-        let availableSlots: Slot[] = [];
-        if (availabilityRes.ok) {
-          availableSlots = availabilityRes.data;
-        } else {
-          console.error("Failed to fetch availability");
-        }
-
-        // Handle appointments
-        let existingAppointments: Slot[] = [];
-        if (appointmentsRes.ok) {
-          const appointmentsData = await appointmentsRes.json();
-          existingAppointments = appointmentsData.data;
-        } else {
-          console.error(
-            "Failed to fetch appointments:",
-            await appointmentsRes.text(),
-          );
-        }
-
-        // Handle consultant data
-        if (consultantRes.ok) {
-          const consultantData = await consultantRes.json();
-          setConsultantData({
-            scheduleType: consultantData.scheduleType || "WEEKLY",
-            timezone: consultantData.user?.currentTimezone || "UTC",
-          });
-        } else {
-          console.error(
-            "Failed to fetch consultant data:",
-            await consultantRes.text(),
-          );
-        }
-
-        // Update state
-        setRequests(filteredRequests);
-        setAvailableSlots(availableSlots);
-        setExistingAppointments(existingAppointments);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "An error occurred");
-      } finally {
-        setLoading(false);
+      let combinedError: string | null = null;
+      const updateError = (newError?: string) => {
+         if (newError) {
+            combinedError = combinedError ? `${combinedError}; ${newError}` : newError;
+         }
       }
-    };
 
+      updateError(consultationsResult.error);
+      updateError(subscriptionsResult.error);
+      updateError(weeklyAvailabilityResult.error);
+      updateError(customAvailabilityResult.error);
+      updateError(appointmentsResult.error);
+      updateError(consultantResult.error);
+
+      // --- Process Data ---
+      const processedRequests: Request[] = [];
+
+      // Process consultations
+      if (consultationsResult.ok && consultationsResult.data && (type === "all" || type === "consultation")) {
+        processedRequests.push(
+          ...consultationsResult.data.map((consultation) => ({
+            id: consultation.id,
+            type: AppointmentsType.CONSULTATION,
+            title: consultation.consultationPlan?.title || "Untitled Plan",
+            requestedBy: consultation.requestedBy,
+            requestedAt: consultation.requestedAt,
+            requestedTimes:
+              consultation.appointment?.slotsOfAppointment?.map(
+                (slot) => slot.slotStartTimeInUTC,
+              ) || [],
+            status: consultation.requestStatus,
+            requiredSlots: 1, // Consultations always require 1 slot
+          })),
+        );
+      }
+
+      // Process subscriptions
+      if (subscriptionsResult.ok && subscriptionsResult.data && (type === "all" || type === "subscription")) {
+        processedRequests.push(
+          ...subscriptionsResult.data.map((subscription) => ({
+            id: subscription.id,
+            type: AppointmentsType.SUBSCRIPTION,
+            title: subscription.subscriptionPlan?.title || "Untitled Plan",
+            requestedBy: subscription.requestedBy,
+            requestedAt: subscription.requestedAt,
+            requestedTimes:
+              subscription.appointments?.flatMap(
+                (appt) => appt.slotsOfAppointment?.map((slot) => slot.slotStartTimeInUTC) || [],
+              ) || [],
+            status: subscription.requestStatus,
+            requiredSlots:
+              (subscription.subscriptionPlan?.callsPerWeek ?? 0) *
+                4 *
+                (subscription.subscriptionPlan?.durationInMonths ?? 0) || 0,
+          })),
+        );
+      }
+
+      // Process availability
+      const processedAvailableSlots: SlotInterval[] = [];
+      if (weeklyAvailabilityResult.ok && weeklyAvailabilityResult.data) {
+        processedAvailableSlots.push(...weeklyAvailabilityResult.data);
+      }
+      if (customAvailabilityResult.ok && customAvailabilityResult.data) {
+        processedAvailableSlots.push(...customAvailabilityResult.data);
+      }
+
+      // Process appointments
+      const processedExistingAppointments: SlotInterval[] = [];
+      if (appointmentsResult.ok && appointmentsResult.data) {
+        processedExistingAppointments.push(
+          ...appointmentsResult.data.flatMap(
+            (appt) => appt.slotsOfAppointment || [],
+          ),
+        );
+      }
+
+       // Process consultant data
+      if (consultantResult.ok && consultantResult.data) {
+        setConsultantData({
+          scheduleType: consultantResult.data.scheduleType || ScheduleType.WEEKLY,
+          timezone: consultantResult.data.user?.currentTimezone || "UTC",
+        });
+      } else {
+         // Handle potential error in fetching consultant data, maybe set defaults or show specific error
+         console.error("Could not fetch consultant schedule/timezone info.");
+         // Keep default or previous state for consultantData
+      }
+
+      // --- Update State ---
+      setRequests(processedRequests);
+      setAvailableSlots(processedAvailableSlots);
+      setExistingAppointments(processedExistingAppointments);
+
+      if (combinedError) {
+        setError(combinedError)
+      }
+
+    } catch (err) {
+      // Catch unexpected errors during processing (Promise.all itself shouldn't throw for individual failures with this setup)
+      console.error("Unexpected error during fetch/process:", err);
+      setError(err instanceof Error ? err.message : "An unexpected error occurred");
+    } finally {
+      setLoading(false);
+    }
+  }, [consultantId, type]);
+
+  useEffect(() => {
     fetchData();
     // Set up polling for real-time updates
     const REQUEST_POLL_INTERVAL = parseInt(
@@ -250,7 +270,7 @@ export function RequestSlotAllocationTab({
     const interval = setInterval(fetchData, REQUEST_POLL_INTERVAL);
 
     return () => clearInterval(interval);
-  }, [consultantId, type]);
+  }, [fetchData]);
 
   const handleSlotSelect = (slot: string) => {
     setSelectedSlots((prevSlots) => {
@@ -438,14 +458,22 @@ export function RequestSlotAllocationTab({
   };
 
   // Check if auto-allocation is possible
-  const canAutoAllocate =
-    selectedRequest?.requiredSlots &&
-    availableSlots.filter(
-      (slot) =>
-        !existingAppointments.some(
-          (existing) => existing.slotStartTimeInUTC === slot.slotStartTimeInUTC,
-        ),
-    ).length >= selectedRequest.requiredSlots;
+  const canAutoAllocate = () => {
+      if (!selectedRequest) return false;
+      // Filter available slots that do NOT overlap with any existing appointment
+      const trulyAvailableSlots = availableSlots.filter(availSlot =>
+          !existingAppointments.some(existingSlot => {
+              const availStart = new Date(availSlot.slotStartTimeInUTC);
+              const availEnd = new Date(availSlot.slotEndTimeInUTC);
+              const existingStart = new Date(existingSlot.slotStartTimeInUTC);
+              const existingEnd = new Date(existingSlot.slotEndTimeInUTC);
+              // Check for overlap: (StartA < EndB) and (StartB < EndA)
+              return availStart < existingEnd && existingStart < availEnd;
+          })
+      );
+      // Check if the count of non-overlapping available slots is sufficient
+      return trulyAvailableSlots.length >= selectedRequest.requiredSlots;
+  };
 
   // Check if manual allocation quota is met
   const isQuotaMet = selectedRequest?.requiredSlots === selectedSlots.length;
@@ -517,7 +545,7 @@ export function RequestSlotAllocationTab({
                   {request.requestedTimes &&
                   request.requestedTimes.length > 0 ? (
                     request.requestedTimes.map((time, index) => (
-                      <div key={index} className="text-sm">
+                      <div key={time + index} className="text-sm">
                         {new Date(time).toLocaleString()}
                       </div>
                     ))
@@ -530,13 +558,7 @@ export function RequestSlotAllocationTab({
                 <TableCell>{request.requiredSlots}</TableCell>
                 <TableCell>
                   <Badge
-                    variant={
-                      request.status === RequestStatus.PENDING
-                        ? "outline"
-                        : request.status === RequestStatus.APPROVED
-                          ? "default"
-                          : "destructive"
-                    }
+                    variant={getRequestStatusBadgeVariant(request.status)}
                   >
                     {request.status}
                   </Badge>
@@ -592,23 +614,18 @@ export function RequestSlotAllocationTab({
                             </DialogDescription>
                           </DialogHeader>
                           <TimingsCalendar
-                            availableSlots={availableSlots.map(
-                              (slot) => slot.slotStartTimeInUTC,
-                            )}
-                            existingAppointments={existingAppointments.map(
-                              (slot) => slot.slotStartTimeInUTC,
-                            )}
+                            availableSlots={availableSlots}
+                            existingAppointments={existingAppointments}
                             onSlotSelect={handleSlotSelect}
                             selectedSlots={selectedSlots}
                             requiredSlots={request.requiredSlots}
                             scheduleType={consultantData.scheduleType}
-                            consultantTimezone={consultantData.timezone}
                           />
                           <DialogFooter>
                             <Button
                               variant="outline"
                               onClick={handleAutoAllocation}
-                              disabled={!canAutoAllocate || isAllocating}
+                              disabled={!canAutoAllocate() || isAllocating}
                             >
                               {isAllocating ? "Allocating..." : "Auto Allocate"}
                             </Button>
@@ -654,4 +671,44 @@ export function RequestSlotAllocationTab({
       </CardContent>
     </Card>
   );
+}
+
+// Helper function for badge variant
+function getRequestStatusBadgeVariant(
+  status: RequestStatus,
+): "outline" | "default" | "destructive" {
+  switch (status) {
+    case RequestStatus.PENDING:
+      return "outline";
+    case RequestStatus.APPROVED:
+      return "default";
+    case RequestStatus.REJECTED:
+    case RequestStatus.CANCELLED:
+    case RequestStatus.EXPIRED:
+      return "destructive";
+    default:
+      return "outline"; // Default case
+  }
+}
+
+// Helper function for auto-allocation check
+function checkCanAutoAllocate(
+    selectedRequest: Request | null,
+    availableSlots: SlotInterval[],
+    existingAppointments: SlotInterval[]
+): boolean {
+    if (!selectedRequest) return false;
+    // Filter available slots that do NOT overlap with any existing appointment
+    const trulyAvailableSlots = availableSlots.filter(availSlot =>
+        !existingAppointments.some(existingSlot => {
+            const availStart = new Date(availSlot.slotStartTimeInUTC);
+            const availEnd = new Date(availSlot.slotEndTimeInUTC);
+            const existingStart = new Date(existingSlot.slotStartTimeInUTC);
+            const existingEnd = new Date(existingSlot.slotEndTimeInUTC);
+            // Check for overlap: (StartA < EndB) and (StartB < EndA)
+            return availStart < existingEnd && existingStart < availEnd;
+        })
+    );
+    // Check if the count of non-overlapping available slots is sufficient
+    return trulyAvailableSlots.length >= selectedRequest.requiredSlots;
 }
