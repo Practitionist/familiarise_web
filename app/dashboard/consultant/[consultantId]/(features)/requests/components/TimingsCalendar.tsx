@@ -83,81 +83,10 @@ export function TimingsCalendar({
     });
   }, [currentDate]);
 
-  // Calculate Min/Max Hour (LOCAL) for the current week view time labels
-  const { minHourLocal, maxHourLocal } = useMemo(() => {
-    let minLocal = 24; // Default start hour (Local)
-    let maxLocal = 0; // Default end hour (Local)
-    const weekStart = weekViewDates[0]; // Start of the week, local time 00:00
-    const weekEnd = new Date(weekViewDates[6]);
-    weekEnd.setHours(23, 59, 59, 999); // End of the week, local time 23:59
-
-    // We need to consider slots that *intersect* with the week view,
-    // even if their start/end times are slightly outside in UTC.
-    // Convert weekStart/weekEnd to UTC for a more robust filter.
-    const weekStartUTC = weekStart.toISOString();
-    const weekEndUTC = weekEnd.toISOString();
-
-    const relevantSlots = [
-        ...(availableSlots || []),
-        ...(existingAppointments || [])
-    ].filter(slot => {
-        // Check if the slot interval overlaps with the week view interval in UTC
-        return slot.slotStartTimeInUTC < weekEndUTC && slot.slotEndTimeInUTC > weekStartUTC;
-    });
-
-    if (relevantSlots.length > 0) {
-        relevantSlots.forEach(slot => {
-            const slotStartDateLocal = new Date(slot.slotStartTimeInUTC); // Convert UTC to local Date object
-            const slotEndDateLocal = new Date(slot.slotEndTimeInUTC);   // Convert UTC to local Date object
-
-            // Iterate through the days this slot touches within the current week view
-            for (let d = new Date(slotStartDateLocal); d < slotEndDateLocal; d.setDate(d.getDate() + 1)) {
-                // Ensure the day is within the current week view
-                if (d >= weekStart && d <= weekEnd) {
-                    const dayStartTime = new Date(d);
-                    dayStartTime.setHours(0,0,0,0);
-                    const dayEndTime = new Date(d);
-                    dayEndTime.setHours(23,59,59,999);
-
-                    // Determine the effective start/end hour *for this specific day* in local time
-                    const effectiveStartLocal = slotStartDateLocal < dayStartTime ? 0 : slotStartDateLocal.getHours();
-                    const effectiveEndLocal = slotEndDateLocal > dayEndTime ? 24 : slotEndDateLocal.getHours() + (slotEndDateLocal.getMinutes() > 0 ? 1 : 0); // +1 if minutes > 0
-
-
-                    minLocal = Math.min(minLocal, effectiveStartLocal);
-                    maxLocal = Math.max(maxLocal, effectiveEndLocal);
-                }
-            }
-        });
-
-        // Add padding and clamp to 0-24
-        minLocal = Math.max(0, minLocal - 1); // Padding before
-        maxLocal = Math.min(24, maxLocal + 1); // Padding after, clamp max
-
-    } else {
-        // Default range if no slots found
-        minLocal = 8;
-        maxLocal = 18;
-    }
-
-    // Ensure min is strictly less than max
-    if (minLocal >= maxLocal) {
-        minLocal = 8;
-        maxLocal = 18;
-    }
-
-    return { minHourLocal: minLocal, maxHourLocal: maxLocal };
-}, [weekViewDates, availableSlots, existingAppointments]);
-
-// Generate intervals based on calculated min/max LOCAL hour for the time labels
-const visibleIntervals = useMemo(() => {
-    return INTERVALS.filter(interval => interval.hour >= minHourLocal && interval.hour < maxHourLocal);
-}, [minHourLocal, maxHourLocal]);
-
-const renderTimeCell = (
+  const renderTimeCell = (
     baseDate: Date, // This date is already timezone-adjusted to local 00:00 for the day
     interval: { hour: number; minute: number }, // These represent the *local* time intervals for the rows
-) => {
+  ) => {
     // 1. Construct the LOCAL start and end times for this specific calendar cell
     const localIntervalStartDate = new Date(baseDate);
     localIntervalStartDate.setHours(interval.hour, interval.minute, 0, 0);
@@ -237,9 +166,9 @@ const renderTimeCell = (
         {buttonText}
       </Button>
     );
-};
+  };
 
-const renderWeekView = () => {
+  const renderWeekView = () => {
     return (
       <div className="flex flex-col h-[calc(100vh-20rem)] md:h-[65vh] max-h-[700px]">
         <div className="grid grid-cols-8 gap-0.5 md:gap-1 sticky top-0 bg-background z-20 pb-1">
@@ -261,7 +190,7 @@ const renderWeekView = () => {
           })}
         </div>
         <div className="flex-1 overflow-y-auto scrollbar-thin">
-          {visibleIntervals.map((interval, i) => (
+          {INTERVALS.map((interval, i) => (
             <div key={`interval-row-${i}`} className="grid grid-cols-8 gap-0.5 md:gap-1">
               <div className="w-14 md:w-20">
                 <div
@@ -289,9 +218,9 @@ const renderWeekView = () => {
         </div>
       </div>
     );
-};
+  };
 
-const renderMonthView = () => {
+  const renderMonthView = () => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     const firstDayOfMonth = new Date(year, month, 1).getDay();
@@ -373,9 +302,9 @@ const renderMonthView = () => {
         })}
       </div>
     );
-};
+  };
 
-return (
+  return (
     <div className="flex flex-col h-full max-w-[100vw] overflow-x-hidden">
       <div className="flex justify-between items-center mb-1 md:mb-4">
         <Button variant="outline" size="sm" onClick={navigatePrevious} className="p-1 md:p-2">
