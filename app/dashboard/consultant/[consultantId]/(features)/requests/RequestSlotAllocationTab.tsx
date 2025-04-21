@@ -26,13 +26,13 @@ import {
 } from "@/components/ui/table";
 import { toast } from "@/components/ui/use-toast";
 import { DetailedTimeSlotMeta, TimeSlotMeta } from "@/lib/timeSlotsMeta";
+import { TAppointment } from "@/types/appointment";
 import { AppointmentsType, RequestStatus, ScheduleType } from "@prisma/client";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
 import { TimingsCalendar } from "./components/TimingsCalendar";
 import {
-  AppointmentInfo,
   AvailabilityApiResponse,
   ConsultantApiResponse,
   ConsultationApiResponse,
@@ -155,7 +155,7 @@ export function RequestSlotAllocationTab({
         fetchDataFromApi<AvailabilityApiResponse[]>(
           `/api/slots/availability/custom?consultantProfileId=${consultantId}`,
         ),
-        fetchDataFromApi<AppointmentInfo[]>(
+        fetchDataFromApi<TAppointment[]>(
           `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
         ),
         fetchDataFromApi<ConsultantApiResponse>(
@@ -258,13 +258,28 @@ export function RequestSlotAllocationTab({
       const processedExistingAppointments: DetailedTimeSlotMeta[] = [];
       if (appointmentsResult.ok && appointmentsResult.data) {
         processedExistingAppointments.push(
-          ...appointmentsResult.data.flatMap((appt) =>
+          ...appointmentsResult.data.flatMap((appt: TAppointment) =>
             (appt.slotsOfAppointment || []).map(
               (slot): DetailedTimeSlotMeta => {
-                // Create generic appointment details as specific info is unavailable
-                const id = appt.id || "unknown-appt-" + slot.id;
-                const type = AppointmentsType.CONSULTATION; // Default type
-                const title = "Booked Slot"; // Generic title
+                let title = "Booked Slot"; // Default
+                let type = appt.appointmentType || AppointmentsType.CONSULTATION;
+                let id = appt.id || "unknown-appt-" + slot.id;
+
+                if (appt.appointmentType === "CONSULTATION" && appt.consultation?.consultationPlan?.title) {
+                  title = `Consultation: ${appt.consultation.consultationPlan.title}`;
+                  if (appt.consultation.requestedBy?.user?.name) {
+                    title += ` with ${appt.consultation.requestedBy.user.name}`;
+                  }
+                } else if (appt.appointmentType === "SUBSCRIPTION" && appt.subscription?.subscriptionPlan?.title) {
+                  title = `Subscription: ${appt.subscription.subscriptionPlan.title}`;
+                  if (appt.subscription.requestedBy?.user?.name) {
+                    title += ` for ${appt.subscription.requestedBy.user.name}`;
+                  }
+                } else if (appt.appointmentType === "WEBINAR" && appt.webinar?.webinarPlan?.title) {
+                  title = `Webinar: ${appt.webinar.webinarPlan.title}`;
+                } else if (appt.appointmentType === "CLASS" && appt.class?.classPlan?.name) {
+                  title = `Class: ${appt.class.classPlan.name}`;
+                }
 
                 return {
                   startTime: slot.slotStartTimeInUTC,
@@ -754,41 +769,4 @@ function getRequestStatusBadgeVariant(
     default:
       return "outline"; // Default case
   }
-}
-
-// Helper function for auto-allocation check
-function checkCanAutoAllocate(
-  selectedRequest: Request | null,
-  availableSlots: TimeSlotMeta[],
-  existingAppointments: DetailedTimeSlotMeta[],
-): boolean {
-  if (!selectedRequest) return false;
-  // Filter available slots that do NOT overlap with any existing appointment
-  const trulyAvailableSlots = availableSlots.filter(
-    (availSlot) =>
-      !existingAppointments.some((existingSlot) => {
-        // Compare using startTime/endTime
-        // FIX: Ensure Date objects are compared, handle potential string types
-        const availStart =
-          availSlot.startTime instanceof Date
-            ? availSlot.startTime
-            : new Date(availSlot.startTime);
-        const availEnd =
-          availSlot.endTime instanceof Date
-            ? availSlot.endTime
-            : new Date(availSlot.endTime);
-        const existingStart =
-          existingSlot.startTime instanceof Date
-            ? existingSlot.startTime
-            : new Date(existingSlot.startTime);
-        const existingEnd =
-          existingSlot.endTime instanceof Date
-            ? existingSlot.endTime
-            : new Date(existingSlot.endTime);
-        // Check for overlap: (StartA < EndB) and (StartB < EndA)
-        return availStart < existingEnd && existingStart < availEnd;
-      }),
-  );
-  // Check if the count of non-overlapping available slots is sufficient
-  return trulyAvailableSlots.length >= selectedRequest.requiredSlots;
 }

@@ -10,6 +10,13 @@ import {
 } from "@/lib/timeSlotsMeta";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { format } from "date-fns";
 
 type TimingsCalendarProps = {
   availableSlots: TimeSlotMeta[] | undefined;
@@ -117,19 +124,67 @@ export function TimingsCalendar({
       }
     }
 
-    return (
+    const buttonElement = (
       <Button
         key={intervalStartStringUTC}
         variant={"ghost"}
         className={cellClassName}
-        onClick={() =>
-          !isButtonDisabled && onSlotSelect(intervalStartStringUTC)
-        }
+        onClick={() => !isButtonDisabled && onSlotSelect(intervalStartStringUTC)}
         disabled={isButtonDisabled && !isSelected}
       >
         {buttonText}
       </Button>
     );
+
+    if (status.isBooked && status.overlappingAppointments.length > 0) {
+      const tooltipButtonElement = (
+        <Button
+          key={`${intervalStartStringUTC}-tooltip-trigger`}
+          variant={"ghost"}
+          className={cellClassName}
+          onClick={() => !isButtonDisabled && onSlotSelect(intervalStartStringUTC)}
+          disabled={false}
+        >
+          {buttonText}
+        </Button>
+      );
+
+      return (
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              {tooltipButtonElement}
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs text-xs" side="top" align="center">
+              <div className="flex flex-col gap-1">
+                {status.overlappingAppointments.map((appSlot) => (
+                  <div
+                    key={
+                      appSlot.appointmentDetails?.id +
+                      (appSlot.startTime instanceof Date ? appSlot.startTime.toISOString() : new Date(appSlot.startTime).toISOString())
+                    }
+                    className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0"
+                  >
+                    <p className="font-semibold">
+                      {appSlot.appointmentDetails?.title || "Booked Slot"}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {appSlot.appointmentDetails?.type}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {format(appSlot.startTime instanceof Date ? appSlot.startTime : new Date(appSlot.startTime), "HH:mm")} -{" "}
+                      {format(appSlot.endTime instanceof Date ? appSlot.endTime : new Date(appSlot.endTime), "HH:mm")}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      );
+    }
+
+    return buttonElement;
   };
 
   const renderWeekView = () => {
