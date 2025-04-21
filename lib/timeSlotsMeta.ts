@@ -151,7 +151,7 @@ export const getSlotStatus = (
   // 7. Define final states
   const isAvailableForSelection = isWithinAvailability && !isActuallyBooked;
   const isPartiallyBookedForDisplay =
-    isWithinAvailability && isActuallyBooked && !isFullyBooked;
+    /* isWithinAvailability && */ isActuallyBooked && !isFullyBooked;
   const isBookedForDisplay = isActuallyBooked && isFullyBooked; // Use this for the main 'Booked' style
 
   // Slot is disabled if not available OR fully booked OR in the past
