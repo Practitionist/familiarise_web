@@ -1,4 +1,4 @@
-import { EventWithType } from "../utils";
+import { EventWithType } from "./getMetadata";
 // Import the specific types needed
 import type {
   IAppointment,

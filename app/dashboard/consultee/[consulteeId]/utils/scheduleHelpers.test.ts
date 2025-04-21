@@ -1,13 +1,13 @@
 import { IAppointment } from "@/app/dashboard/consultant/[consultantId]/types";
-import { EventWithType } from "@/app/dashboard/consultee/[consulteeId]/utils";
+import { EventWithType } from "@/app/dashboard/consultee/[consulteeId]/utils/getMetadata";
 import {
   formatTimeUntil,
   getActualMonthlyEvents,
   getActualNextSlotTime,
   getActualSlots,
   getActualUpcomingSlots,
-} from "@/app/dashboard/consultee/[consulteeId]/utils/actual-schedule";
-import { eventWithoutSlots, mockEvents, pastEvent } from "./mockData";
+} from "@/app/dashboard/consultee/[consulteeId]/utils/scheduleHelpers";
+import { eventWithoutSlots, mockEvents, pastEvent } from "../mockData";
 
 describe("Schedule Data Consistency Tests", () => {
   const now = new Date("2024-12-28T00:00:00Z");

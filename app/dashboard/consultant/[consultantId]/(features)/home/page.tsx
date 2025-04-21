@@ -5,7 +5,7 @@ import {
   fetchAppointments,
   fetchActivities,
   fetchApprovals,
-} from "../../utils";
+} from "../../utils/fetchHelpers";
 import {
   type IAppointment,
   type IActivity,

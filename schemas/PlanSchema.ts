@@ -3,7 +3,7 @@ import {
   hasDuplicates,
   isMeaningfulText,
   isProfanityFree,
-} from "@/lib/validation-utils";
+} from "@/lib/contentValidation";
 
 // Separate refine functions for different validation types
 const profanityFreeRefinement = (value: string) => {

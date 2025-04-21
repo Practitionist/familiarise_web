@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { AppointmentsType } from "@prisma/client";
-import { checkOverlappingAppointments } from "@/lib/appointmentUtils";
+import { checkOverlappingAppointments } from "@/utils/appointmentUtils";
 import { acquireLock, releaseLock, checkRateLimit } from "@/lib/redis";
 
 export async function POST(req: NextRequest) {

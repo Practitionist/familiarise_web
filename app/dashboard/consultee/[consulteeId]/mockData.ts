@@ -1,4 +1,4 @@
-import { EventWithType } from "@/app/dashboard/consultee/[consulteeId]/utils";
+import { EventWithType } from "@/app/dashboard/consultee/[consulteeId]/utils/getMetadata";
 
 export const mockEvents: EventWithType[] = [
   {

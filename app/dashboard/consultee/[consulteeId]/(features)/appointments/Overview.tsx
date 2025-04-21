@@ -7,11 +7,11 @@ import {
   SubscriptionWithPlan,
   WebinarWithPlan,
 } from "@/hooks/useEvents";
-import { EventWithType } from "../../utils";
+import { EventWithType } from "../../utils/getMetadata";
 import {
   getActualNextSlotTime,
   getActualSlots,
-} from "../../utils/actual-schedule";
+} from "../../utils/scheduleHelpers";
 import { EventCard } from "./EventCard";
 import type { SlotOfAppointment } from "@prisma/client";
 

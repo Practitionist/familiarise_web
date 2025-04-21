@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
-import { fetchDocuments } from "../../utils";
+import { fetchDocuments } from "../../utils/fetchHelpers";
 import { type IDocument } from "../../types";
 import { DocumentsTab } from "./DocumentsTab";
 

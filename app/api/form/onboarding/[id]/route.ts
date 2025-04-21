@@ -1,7 +1,7 @@
+import { isValidTimeRange } from "@/utils/timeSlotValidation";
 import prisma from "@/lib/prisma";
 import { ConsultationMode, ScheduleType, UserRole } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import { isValidTimeRange } from "@/lib/timeSlotValidation";
 
 export async function PATCH(
   req: NextRequest,

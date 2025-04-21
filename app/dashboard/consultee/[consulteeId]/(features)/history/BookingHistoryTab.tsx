@@ -24,7 +24,7 @@ import {
   getConsultantName,
   getConsultantImage,
   getConsultantInitial,
-} from "../../utils";
+} from "../../utils/getMetadata";
 
 type EventWithType =
   | (ConsultationWithPlan & { type: "Consultation" })

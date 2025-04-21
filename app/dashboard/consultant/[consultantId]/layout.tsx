@@ -6,7 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { use, useEffect, useState } from "react";
 import { TConsultantProfile } from "types/consultant";
-import { fetchConsultantData } from "./utils";
+import { fetchConsultantData } from "./utils/fetchHelpers";
 
 // Navigation configuration
 const NAV_ITEMS = [

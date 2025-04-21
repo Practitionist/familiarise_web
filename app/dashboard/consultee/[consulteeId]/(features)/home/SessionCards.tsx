@@ -17,8 +17,8 @@ import {
   getEventStatus,
   getEventTitle,
   getStatusColor,
-} from "../../utils";
-import { formatTimeUntil } from "../../utils/actual-schedule";
+} from "../../utils/getMetadata";
+import { formatTimeUntil } from "../../utils/scheduleHelpers";
 import { formatDateTime, formatTimeString } from "./utils";
 
 interface SlotCardProps {

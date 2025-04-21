@@ -14,7 +14,10 @@ export async function PATCH(
   const { webinarId } = await params;
 
   if (!webinarId) {
-    return NextResponse.json({ error: "Webinar ID is required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Webinar ID is required" },
+      { status: 400 },
+    );
   }
 
   let requestBody: AllocationRequestBody;
@@ -23,7 +26,10 @@ export async function PATCH(
   } catch (error) {
     // Log the specific error before returning generic response
     console.error("Failed to parse request body:", error);
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid request body" },
+      { status: 400 },
+    );
   }
 
   const { slots } = requestBody;

@@ -18,7 +18,13 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { TAppointment } from "@/types/appointment";
 import {
-  AppointmentsType,
+  DAYS,
+  DetailedTimeSlotMeta,
+  getSlotStatus,
+  INTERVALS,
+  TimeSlotMeta,
+} from "@/utils/timeSlotsMeta";
+import {
   ConsultantProfile,
   SlotOfAvailabilityCustom,
   SlotOfAvailabilityWeekly,
@@ -27,15 +33,8 @@ import { addDays, format, isSameDay, startOfWeek } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { mapCustomSlots, mapWeeklySlots } from "../utils";
-import {
-  getSlotStatus,
-  DetailedTimeSlotMeta,
-  TimeSlotMeta,
-  INTERVALS,
-  DAYS,
-} from "@/lib/timeSlotsMeta";
 import { AppointmentSlot } from "../types/calendar";
+import { mapCustomSlots, mapWeeklySlots } from "../utils";
 
 interface EventTimingsCalendarProps {
   isOpen: boolean;
@@ -430,7 +429,8 @@ export function EventTimingsCalendar({
       toast({
         variant: "destructive",
         title: "Invalid Selection",
-        description: "Please select exactly one 30-minute slot for the webinar.",
+        description:
+          "Please select exactly one 30-minute slot for the webinar.",
       });
       return;
     }
@@ -449,13 +449,16 @@ export function EventTimingsCalendar({
       setSaving(true);
 
       // Determine the correct endpoint and ID based on eventType
-      const endpoint = eventType === "webinar"
-        ? `/api/events/webinars/${eventId}/allocate`
-        : `/api/events/classes/${eventId}/allocate`;
+      const endpoint =
+        eventType === "webinar"
+          ? `/api/events/webinars/${eventId}/allocate`
+          : `/api/events/classes/${eventId}/allocate`;
 
       // Prepare the slots data in the expected format (array of ISO strings)
       const slotsPayload = selectedSlots.map((slot) =>
-        slot.startTime instanceof Date ? slot.startTime.toISOString() : slot.startTime
+        slot.startTime instanceof Date
+          ? slot.startTime.toISOString()
+          : slot.startTime,
       );
 
       // Make the PATCH request to the specific allocation endpoint
@@ -484,7 +487,8 @@ export function EventTimingsCalendar({
       toast({
         variant: "destructive",
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to save timings",
+        description:
+          error instanceof Error ? error.message : "Failed to save timings",
       });
     } finally {
       setSaving(false);

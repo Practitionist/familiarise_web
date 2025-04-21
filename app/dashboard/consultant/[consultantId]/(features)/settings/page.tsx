@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
-import { fetchConsultantData } from "../../utils";
+import { fetchConsultantData } from "../../utils/fetchHelpers";
 import { TConsultantProfile } from "types/consultant";
 import { SettingsTab } from "./SettingsTab";
 

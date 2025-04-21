@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
-import { fetchAppointments } from "../../utils";
+import { fetchAppointments } from "../../utils/fetchHelpers";
 import { type IAppointment, BADGE_STYLES } from "../../types";
 import { AppointmentsTab } from "./AppointmentsTab";
 

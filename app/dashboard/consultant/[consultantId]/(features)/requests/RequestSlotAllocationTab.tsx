@@ -25,8 +25,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { toast } from "@/components/ui/use-toast";
-import { DetailedTimeSlotMeta, TimeSlotMeta } from "@/lib/timeSlotsMeta";
 import { TAppointment } from "@/types/appointment";
+import { DetailedTimeSlotMeta, TimeSlotMeta } from "@/utils/timeSlotsMeta";
 import { AppointmentsType, RequestStatus, ScheduleType } from "@prisma/client";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";

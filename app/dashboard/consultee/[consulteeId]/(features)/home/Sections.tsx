@@ -8,7 +8,7 @@ import type { SlotOfAppointment } from "@prisma/client";
 import { ArrowLeftIcon, ArrowRightIcon } from "assets/icons";
 import { Button } from "components/ui/button";
 import { useRef } from "react";
-import type { EventWithType } from "../../utils";
+import type { EventWithType } from "../../utils/getMetadata";
 import { MonthlyEventCard, SlotCard } from "./SessionCards";
 
 interface UpcomingSectionProps {

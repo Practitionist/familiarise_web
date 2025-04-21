@@ -4,7 +4,7 @@ import {
   IActivity,
   IApproval,
   ApiResponse,
-} from "./types";
+} from "../types";
 import { TConsultantProfile } from "@/types/consultant";
 import {
   TAppointment,

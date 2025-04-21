@@ -14,7 +14,10 @@ export async function PATCH(
   const { classId } = await params;
 
   if (!classId) {
-    return NextResponse.json({ error: "Class ID is required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Class ID is required" },
+      { status: 400 },
+    );
   }
 
   let requestBody: AllocationRequestBody;
@@ -23,7 +26,10 @@ export async function PATCH(
   } catch (error) {
     // Log the specific error before returning generic response
     console.error("Failed to parse request body:", error);
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid request body" },
+      { status: 400 },
+    );
   }
 
   const { slots } = requestBody;
@@ -91,8 +97,10 @@ export async function PATCH(
         appointmentId = existingAppointments[0].id;
         // Optionally, delete other appointments if logic requires only one per class
         if (existingAppointments.length > 1) {
-            const idsToDelete = existingAppointments.slice(1).map(a => a.id);
-            await tx.appointment.deleteMany({ where: { id: { in: idsToDelete } } });
+          const idsToDelete = existingAppointments.slice(1).map((a) => a.id);
+          await tx.appointment.deleteMany({
+            where: { id: { in: idsToDelete } },
+          });
         }
       }
 
@@ -125,4 +133,4 @@ export async function PATCH(
       { status: 500 },
     );
   }
-} 
+}
