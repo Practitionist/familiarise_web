@@ -425,94 +425,66 @@ export function EventTimingsCalendar({
   };
 
   const handleSave = async () => {
+    // Validate slots based on event type
+    if (eventType === "webinar" && selectedSlots.length !== 1) {
+      toast({
+        variant: "destructive",
+        title: "Invalid Selection",
+        description: "Please select exactly one 30-minute slot for the webinar.",
+      });
+      return;
+    }
+
+    const requiredClassSlots = callsPerWeek * 2 * 4 * durationInMonths;
+    if (eventType === "class" && selectedSlots.length !== requiredClassSlots) {
+      toast({
+        variant: "destructive",
+        title: "Invalid Selection",
+        description: `Please select exactly ${requiredClassSlots} slots for the class.`,
+      });
+      return;
+    }
+
     try {
       setSaving(true);
 
-      const params = new URLSearchParams({
-        type: eventType.toUpperCase(),
+      // Determine the correct endpoint and ID based on eventType
+      const endpoint = eventType === "webinar"
+        ? `/api/events/webinars/${eventId}/allocate`
+        : `/api/events/classes/${eventId}/allocate`;
+
+      // Prepare the slots data in the expected format (array of ISO strings)
+      const slotsPayload = selectedSlots.map((slot) =>
+        slot.startTime instanceof Date ? slot.startTime.toISOString() : slot.startTime
+      );
+
+      // Make the PATCH request to the specific allocation endpoint
+      const response = await fetch(endpoint, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          slots: slotsPayload,
+        }),
       });
 
-      if (eventType === "webinar") {
-        params.append("webinarId", eventId);
-      } else {
-        params.append("classId", eventId);
-      }
-
-      const existingResponse = await fetch(`/api/slots/appointments?${params}`);
-
-      if (existingResponse.ok) {
-        const { data } = await existingResponse.json();
-        const existingAppointment = data?.[0];
-
-        let response;
-        if (existingAppointment) {
-          response = await fetch(
-            `/api/slots/appointments/${existingAppointment.id}`,
-            {
-              method: "PATCH",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                slotsOfAppointment: {
-                  deleteMany: {},
-                  createMany: {
-                    data: selectedSlots.map((slot) => ({
-                      slotStartTimeInUTC:
-                        slot.startTime instanceof Date
-                          ? slot.startTime.toISOString()
-                          : slot.startTime,
-                      slotEndTimeInUTC:
-                        slot.endTime instanceof Date
-                          ? slot.endTime.toISOString()
-                          : slot.endTime,
-                    })),
-                  },
-                },
-              }),
-            },
-          );
-        } else {
-          response = await fetch(`/api/slots/appointments`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              appointmentType: eventType.toUpperCase() as AppointmentsType,
-              [eventType]: { connect: { id: eventId } },
-              slotsOfAppointment: {
-                create: selectedSlots.map((slot) => ({
-                  slotStartTimeInUTC:
-                    slot.startTime instanceof Date
-                      ? slot.startTime.toISOString()
-                      : slot.startTime,
-                  slotEndTimeInUTC:
-                    slot.endTime instanceof Date
-                      ? slot.endTime.toISOString()
-                      : slot.endTime,
-                })),
-              },
-            }),
-          });
-        }
-
-        if (!response.ok) {
-          throw new Error("Failed to save timings");
-        }
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to save timings");
       }
 
       toast({
         title: "Success",
         description: "Timings saved successfully",
       });
-      onClose();
+      onClose(); // Close the dialog on success
     } catch (error) {
       console.error("Error saving timings:", error);
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to save timings",
+        description: error instanceof Error ? error.message : "Failed to save timings",
       });
     } finally {
       setSaving(false);
