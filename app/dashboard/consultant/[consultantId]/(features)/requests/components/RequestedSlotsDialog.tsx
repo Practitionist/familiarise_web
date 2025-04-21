@@ -95,6 +95,78 @@ export function RequestedSlotsDialog({
   const hasConflicts = conflicts.length > 0;
   const hasOutsideSlots = outsideAvailability.length > 0;
 
+  const renderDialogContent = () => {
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center p-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+        </div>
+      );
+    }
+
+    if (error) {
+      return (
+        <div className="bg-red-50 p-4 rounded-md text-red-700">{error}</div>
+      );
+    }
+
+    if (validationResult) {
+      return (
+        <>
+          {hasConflicts && (
+            <div className="bg-red-50 p-4 rounded-md mb-4">
+              <h3 className="font-semibold text-red-700 mb-2">
+                Conflicting Slots
+              </h3>
+              <ul className="space-y-2">
+                {conflicts.map((conflict) => (
+                  <li key={conflict.slot} className="text-sm text-red-600">
+                    {new Date(conflict.slot).toLocaleString()} - Conflicts with{" "}
+                    {conflict.existingAppointment.type} with{" "}
+                    {conflict.existingAppointment.with}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {hasOutsideSlots && (
+            <div className="bg-yellow-50 p-4 rounded-md mb-4">
+              <h3 className="font-semibold text-yellow-800 mb-2">
+                Slots Outside Availability
+              </h3>
+              <ul className="space-y-2">
+                {outsideAvailability.map((slot) => (
+                  <li key={slot.slot} className="text-sm text-yellow-700">
+                    {new Date(slot.slot).toLocaleString()}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-sm text-yellow-700">
+                These slots are outside your regular availability. You can
+                override and allocate them anyway.
+              </p>
+            </div>
+          )}
+
+          {!hasConflicts && !hasOutsideSlots && (
+            <div className="bg-green-50 p-4 rounded-md mb-4">
+              <h3 className="font-semibold text-green-700">
+                All Slots Available
+              </h3>
+              <p className="text-sm text-green-600">
+                All requested slots are within your availability and have no
+                conflicts.
+              </p>
+            </div>
+          )}
+        </>
+      );
+    }
+
+    return null; // Should not happen if validation runs on open
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
@@ -105,65 +177,7 @@ export function RequestedSlotsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {loading ? (
-          <div className="flex items-center justify-center p-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
-          </div>
-        ) : error ? (
-          <div className="bg-red-50 p-4 rounded-md text-red-700">{error}</div>
-        ) : (
-          validationResult && (
-            <>
-              {hasConflicts && (
-                <div className="bg-red-50 p-4 rounded-md mb-4">
-                  <h3 className="font-semibold text-red-700 mb-2">
-                    Conflicting Slots
-                  </h3>
-                  <ul className="space-y-2">
-                    {conflicts.map((conflict, index) => (
-                      <li key={index} className="text-sm text-red-600">
-                        {new Date(conflict.slot).toLocaleString()} - Conflicts
-                        with {conflict.existingAppointment.type}
-                        with {conflict.existingAppointment.with}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {hasOutsideSlots && (
-                <div className="bg-yellow-50 p-4 rounded-md mb-4">
-                  <h3 className="font-semibold text-yellow-800 mb-2">
-                    Slots Outside Availability
-                  </h3>
-                  <ul className="space-y-2">
-                    {outsideAvailability.map((slot, index) => (
-                      <li key={index} className="text-sm text-yellow-700">
-                        {new Date(slot.slot).toLocaleString()}
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="mt-2 text-sm text-yellow-700">
-                    These slots are outside your regular availability. You can
-                    override and allocate them anyway.
-                  </p>
-                </div>
-              )}
-
-              {!hasConflicts && !hasOutsideSlots && (
-                <div className="bg-green-50 p-4 rounded-md mb-4">
-                  <h3 className="font-semibold text-green-700">
-                    All Slots Available
-                  </h3>
-                  <p className="text-sm text-green-600">
-                    All requested slots are within your availability and have no
-                    conflicts.
-                  </p>
-                </div>
-              )}
-            </>
-          )
-        )}
+        {renderDialogContent()}
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onCancel} disabled={loading}>

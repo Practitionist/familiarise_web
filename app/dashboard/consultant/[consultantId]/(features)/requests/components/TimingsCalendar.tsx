@@ -6,7 +6,7 @@ import {
   DetailedTimeSlotMeta,
   getSlotStatus,
   INTERVALS,
-  TimeSlotMeta
+  TimeSlotMeta,
 } from "@/lib/timeSlotsMeta";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -129,7 +129,9 @@ export function TimingsCalendar({
         key={intervalStartStringUTC}
         variant={"ghost"}
         className={cellClassName}
-        onClick={() => !isButtonDisabled && onSlotSelect(intervalStartStringUTC)}
+        onClick={() =>
+          !isButtonDisabled && onSlotSelect(intervalStartStringUTC)
+        }
         disabled={isButtonDisabled && !isSelected}
       >
         {buttonText}
@@ -142,7 +144,9 @@ export function TimingsCalendar({
           key={`${intervalStartStringUTC}-tooltip-trigger`}
           variant={"ghost"}
           className={cellClassName}
-          onClick={() => !isButtonDisabled && onSlotSelect(intervalStartStringUTC)}
+          onClick={() =>
+            !isButtonDisabled && onSlotSelect(intervalStartStringUTC)
+          }
           disabled={false}
         >
           {buttonText}
@@ -152,16 +156,20 @@ export function TimingsCalendar({
       return (
         <TooltipProvider delayDuration={200}>
           <Tooltip>
-            <TooltipTrigger asChild>
-              {tooltipButtonElement}
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs text-xs" side="top" align="center">
+            <TooltipTrigger asChild>{tooltipButtonElement}</TooltipTrigger>
+            <TooltipContent
+              className="max-w-xs text-xs"
+              side="top"
+              align="center"
+            >
               <div className="flex flex-col gap-1">
                 {status.overlappingAppointments.map((appSlot) => (
                   <div
                     key={
                       appSlot.appointmentDetails?.id +
-                      (appSlot.startTime instanceof Date ? appSlot.startTime.toISOString() : new Date(appSlot.startTime).toISOString())
+                      (appSlot.startTime instanceof Date
+                        ? appSlot.startTime.toISOString()
+                        : new Date(appSlot.startTime).toISOString())
                     }
                     className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0"
                   >
@@ -172,8 +180,19 @@ export function TimingsCalendar({
                       {appSlot.appointmentDetails?.type}
                     </p>
                     <p className="text-muted-foreground">
-                      {format(appSlot.startTime instanceof Date ? appSlot.startTime : new Date(appSlot.startTime), "HH:mm")} -{" "}
-                      {format(appSlot.endTime instanceof Date ? appSlot.endTime : new Date(appSlot.endTime), "HH:mm")}
+                      {format(
+                        appSlot.startTime instanceof Date
+                          ? appSlot.startTime
+                          : new Date(appSlot.startTime),
+                        "HH:mm",
+                      )}{" "}
+                      -{" "}
+                      {format(
+                        appSlot.endTime instanceof Date
+                          ? appSlot.endTime
+                          : new Date(appSlot.endTime),
+                        "HH:mm",
+                      )}
                     </p>
                   </div>
                 ))}

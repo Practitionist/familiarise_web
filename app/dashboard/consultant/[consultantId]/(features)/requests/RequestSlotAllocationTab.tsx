@@ -37,7 +37,7 @@ import {
   ConsultantApiResponse,
   ConsultationApiResponse,
   RequestedBy,
-  SubscriptionApiResponse
+  SubscriptionApiResponse,
 } from "./types";
 
 // --- API Response Type Definitions ---
@@ -86,15 +86,33 @@ async function fetchDataFromApi<T>(
       return {
         ok: false,
         data: null,
-        error: `Failed to fetch data (status ${response.status})`,
+        // Keep server errors somewhat specific
+        error: `Server error (${response.status}) while fetching data.`,
       };
     }
     const data = await response.json();
-    return { ok: true, data: data.data as T, error: undefined }; // Assuming API wraps data in { data: ... }
+    // Ensure data exists and has the expected structure
+    if (data && data.data !== undefined) {
+      return { ok: true, data: data.data as T, error: undefined };
+    } else {
+      console.error(`Unexpected response structure from ${url}:`, data);
+      return {
+        ok: false,
+        data: null,
+        error: "Received unexpected data structure from server.",
+      };
+    }
   } catch (err) {
     console.error(`Error fetching ${url}:`, err);
-    const message =
-      err instanceof Error ? err.message : "An unknown network error occurred";
+    let message = "An unknown error occurred while fetching data.";
+    // Specifically check for the browser's network error
+    if (err instanceof TypeError && err.message === "Failed to fetch") {
+      message =
+        "Network error: Could not connect to the server. Please check your internet connection.";
+    } else if (err instanceof Error) {
+      // Use message from other error types
+      message = err.message;
+    }
     return { ok: false, data: null, error: message };
   }
 }
@@ -163,23 +181,28 @@ export function RequestSlotAllocationTab({
         ),
       ]);
 
-      let combinedError: string | null = null;
-      const updateError = (newError?: string) => {
-        if (newError) {
-          combinedError = combinedError
-            ? `${combinedError}; ${newError}`
-            : newError;
+      // Check results for the first error
+      const results = [
+        consultationsResult,
+        subscriptionsResult,
+        weeklyAvailabilityResult,
+        customAvailabilityResult,
+        appointmentsResult,
+        consultantResult,
+      ];
+
+      for (const result of results) {
+        if (!result.ok && result.error) {
+          // Set the first encountered error and stop
+          setError(result.error);
+          setLoading(false); // Ensure loading state is updated
+          return; // Exit fetchData early
         }
-      };
+      }
 
-      updateError(consultationsResult.error);
-      updateError(subscriptionsResult.error);
-      updateError(weeklyAvailabilityResult.error);
-      updateError(customAvailabilityResult.error);
-      updateError(appointmentsResult.error);
-      updateError(consultantResult.error);
+      // If we reach here, all fetches were successful (or returned data: null without error)
 
-      // --- Process Data ---
+      // --- Process Data (only if all fetches were ok) ---
       const processedRequests: Request[] = [];
 
       // Process consultations
@@ -262,22 +285,35 @@ export function RequestSlotAllocationTab({
             (appt.slotsOfAppointment || []).map(
               (slot): DetailedTimeSlotMeta => {
                 let title = "Booked Slot"; // Default
-                let type = appt.appointmentType || AppointmentsType.CONSULTATION;
+                let type =
+                  appt.appointmentType || AppointmentsType.CONSULTATION;
                 let id = appt.id || "unknown-appt-" + slot.id;
 
-                if (appt.appointmentType === "CONSULTATION" && appt.consultation?.consultationPlan?.title) {
+                if (
+                  appt.appointmentType === "CONSULTATION" &&
+                  appt.consultation?.consultationPlan?.title
+                ) {
                   title = `Consultation: ${appt.consultation.consultationPlan.title}`;
                   if (appt.consultation.requestedBy?.user?.name) {
                     title += ` with ${appt.consultation.requestedBy.user.name}`;
                   }
-                } else if (appt.appointmentType === "SUBSCRIPTION" && appt.subscription?.subscriptionPlan?.title) {
+                } else if (
+                  appt.appointmentType === "SUBSCRIPTION" &&
+                  appt.subscription?.subscriptionPlan?.title
+                ) {
                   title = `Subscription: ${appt.subscription.subscriptionPlan.title}`;
                   if (appt.subscription.requestedBy?.user?.name) {
                     title += ` for ${appt.subscription.requestedBy.user.name}`;
                   }
-                } else if (appt.appointmentType === "WEBINAR" && appt.webinar?.webinarPlan?.title) {
+                } else if (
+                  appt.appointmentType === "WEBINAR" &&
+                  appt.webinar?.webinarPlan?.title
+                ) {
                   title = `Webinar: ${appt.webinar.webinarPlan.title}`;
-                } else if (appt.appointmentType === "CLASS" && appt.class?.classPlan?.name) {
+                } else if (
+                  appt.appointmentType === "CLASS" &&
+                  appt.class?.classPlan?.name
+                ) {
                   title = `Class: ${appt.class.classPlan.name}`;
                 }
 
@@ -313,18 +349,20 @@ export function RequestSlotAllocationTab({
       setRequests(processedRequests);
       setAvailableSlots(processedAvailableSlots);
       setExistingAppointments(processedExistingAppointments);
-
-      if (combinedError) {
-        setError(combinedError);
-      }
     } catch (err) {
-      // Catch unexpected errors during processing (Promise.all itself shouldn't throw for individual failures with this setup)
-      console.error("Unexpected error during fetch/process:", err);
+      // This catch block now primarily handles errors during data *processing*
+      console.error("Error processing fetched data:", err);
       setError(
-        err instanceof Error ? err.message : "An unexpected error occurred",
+        err instanceof Error
+          ? err.message
+          : "An unexpected error occurred while processing data.",
       );
     } finally {
-      setLoading(false);
+      // setLoading(false) is handled earlier in case of fetch errors
+      // Only set it here if no fetch error occurred
+      if (!error) {
+        setLoading(false);
+      }
     }
   }, [consultantId, type]);
 
