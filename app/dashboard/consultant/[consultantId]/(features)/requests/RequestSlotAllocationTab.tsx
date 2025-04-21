@@ -25,19 +25,19 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { toast } from "@/components/ui/use-toast";
+import { DetailedTimeSlotMeta, TimeSlotMeta } from "@/lib/timeSlotsMeta";
 import { AppointmentsType, RequestStatus, ScheduleType } from "@prisma/client";
 import { useParams } from "next/navigation";
-import { useEffect, useState, useCallback } from "react";
-import { TimingsCalendar } from "./components/TimingsCalendar";
+import { useCallback, useEffect, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
+import { TimingsCalendar } from "./components/TimingsCalendar";
 import {
-  ConsultationApiResponse,
-  SubscriptionApiResponse,
-  AvailabilityApiResponse,
   AppointmentInfo,
+  AvailabilityApiResponse,
   ConsultantApiResponse,
-  SlotInterval,
+  ConsultationApiResponse,
   RequestedBy,
+  SubscriptionApiResponse
 } from "./types";
 
 // --- API Response Type Definitions ---
@@ -108,9 +108,9 @@ export function RequestSlotAllocationTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<Request[]>([]);
-  const [availableSlots, setAvailableSlots] = useState<SlotInterval[]>([]);
+  const [availableSlots, setAvailableSlots] = useState<TimeSlotMeta[]>([]);
   const [existingAppointments, setExistingAppointments] = useState<
-    SlotInterval[]
+    DetailedTimeSlotMeta[]
   >([]);
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
   const [selectedSlots, setSelectedSlots] = useState<string[]>([]);
@@ -235,20 +235,48 @@ export function RequestSlotAllocationTab({
       }
 
       // Process availability
-      const processedAvailableSlots: SlotInterval[] = [];
+      const processedAvailableSlots: TimeSlotMeta[] = [];
       if (weeklyAvailabilityResult.ok && weeklyAvailabilityResult.data) {
-        processedAvailableSlots.push(...weeklyAvailabilityResult.data);
+        processedAvailableSlots.push(
+          ...weeklyAvailabilityResult.data.map((slot) => ({
+            startTime: slot.slotStartTimeInUTC,
+            endTime: slot.slotEndTimeInUTC,
+            // Add other properties if TimeSlotMeta requires them
+          })),
+        );
       }
       if (customAvailabilityResult.ok && customAvailabilityResult.data) {
-        processedAvailableSlots.push(...customAvailabilityResult.data);
+        processedAvailableSlots.push(
+          ...customAvailabilityResult.data.map((slot) => ({
+            startTime: slot.slotStartTimeInUTC,
+            endTime: slot.slotEndTimeInUTC,
+          })),
+        );
       }
 
       // Process appointments
-      const processedExistingAppointments: SlotInterval[] = [];
+      const processedExistingAppointments: DetailedTimeSlotMeta[] = [];
       if (appointmentsResult.ok && appointmentsResult.data) {
         processedExistingAppointments.push(
-          ...appointmentsResult.data.flatMap(
-            (appt) => appt.slotsOfAppointment || [],
+          ...appointmentsResult.data.flatMap((appt) =>
+            (appt.slotsOfAppointment || []).map(
+              (slot): DetailedTimeSlotMeta => {
+                // Create generic appointment details as specific info is unavailable
+                const id = appt.id || "unknown-appt-" + slot.id;
+                const type = AppointmentsType.CONSULTATION; // Default type
+                const title = "Booked Slot"; // Generic title
+
+                return {
+                  startTime: slot.slotStartTimeInUTC,
+                  endTime: slot.slotEndTimeInUTC,
+                  appointmentDetails: {
+                    id: id,
+                    type: type,
+                    title: title,
+                  },
+                };
+              },
+            ),
           ),
         );
       }
@@ -488,10 +516,24 @@ export function RequestSlotAllocationTab({
     const trulyAvailableSlots = availableSlots.filter(
       (availSlot) =>
         !existingAppointments.some((existingSlot) => {
-          const availStart = new Date(availSlot.slotStartTimeInUTC);
-          const availEnd = new Date(availSlot.slotEndTimeInUTC);
-          const existingStart = new Date(existingSlot.slotStartTimeInUTC);
-          const existingEnd = new Date(existingSlot.slotEndTimeInUTC);
+          // Compare using startTime/endTime
+          // FIX: Ensure Date objects are compared, handle potential string types
+          const availStart =
+            availSlot.startTime instanceof Date
+              ? availSlot.startTime
+              : new Date(availSlot.startTime);
+          const availEnd =
+            availSlot.endTime instanceof Date
+              ? availSlot.endTime
+              : new Date(availSlot.endTime);
+          const existingStart =
+            existingSlot.startTime instanceof Date
+              ? existingSlot.startTime
+              : new Date(existingSlot.startTime);
+          const existingEnd =
+            existingSlot.endTime instanceof Date
+              ? existingSlot.endTime
+              : new Date(existingSlot.endTime);
           // Check for overlap: (StartA < EndB) and (StartB < EndA)
           return availStart < existingEnd && existingStart < availEnd;
         }),
@@ -717,18 +759,32 @@ function getRequestStatusBadgeVariant(
 // Helper function for auto-allocation check
 function checkCanAutoAllocate(
   selectedRequest: Request | null,
-  availableSlots: SlotInterval[],
-  existingAppointments: SlotInterval[],
+  availableSlots: TimeSlotMeta[],
+  existingAppointments: DetailedTimeSlotMeta[],
 ): boolean {
   if (!selectedRequest) return false;
   // Filter available slots that do NOT overlap with any existing appointment
   const trulyAvailableSlots = availableSlots.filter(
     (availSlot) =>
       !existingAppointments.some((existingSlot) => {
-        const availStart = new Date(availSlot.slotStartTimeInUTC);
-        const availEnd = new Date(availSlot.slotEndTimeInUTC);
-        const existingStart = new Date(existingSlot.slotStartTimeInUTC);
-        const existingEnd = new Date(existingSlot.slotEndTimeInUTC);
+        // Compare using startTime/endTime
+        // FIX: Ensure Date objects are compared, handle potential string types
+        const availStart =
+          availSlot.startTime instanceof Date
+            ? availSlot.startTime
+            : new Date(availSlot.startTime);
+        const availEnd =
+          availSlot.endTime instanceof Date
+            ? availSlot.endTime
+            : new Date(availSlot.endTime);
+        const existingStart =
+          existingSlot.startTime instanceof Date
+            ? existingSlot.startTime
+            : new Date(existingSlot.startTime);
+        const existingEnd =
+          existingSlot.endTime instanceof Date
+            ? existingSlot.endTime
+            : new Date(existingSlot.endTime);
         // Check for overlap: (StartA < EndB) and (StartB < EndA)
         return availStart < existingEnd && existingStart < availEnd;
       }),

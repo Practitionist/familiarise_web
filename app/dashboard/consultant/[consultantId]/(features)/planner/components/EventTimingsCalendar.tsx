@@ -27,19 +27,15 @@ import { addDays, format, isSameDay, startOfWeek } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { AppointmentSlot, TimeSlot } from "../types/calendar";
 import { mapCustomSlots, mapWeeklySlots } from "../utils";
-
-// Define intervals similar to TimingsCalendar
-const INTERVALS_PER_HOUR = 2; // 30-minute intervals
-const TOTAL_INTERVALS = 24 * INTERVALS_PER_HOUR;
-const INTERVALS = Array.from({ length: TOTAL_INTERVALS }, (_, i) => {
-  const hour = Math.floor(i / INTERVALS_PER_HOUR);
-  const minute = (i % INTERVALS_PER_HOUR) * (60 / INTERVALS_PER_HOUR);
-  return { hour, minute };
-});
-
-const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+import {
+  getSlotStatus,
+  DetailedTimeSlotMeta,
+  TimeSlotMeta,
+  INTERVALS,
+  DAYS,
+} from "@/lib/timeSlotsMeta";
+import { AppointmentSlot } from "../types/calendar";
 
 interface EventTimingsCalendarProps {
   isOpen: boolean;
@@ -48,15 +44,6 @@ interface EventTimingsCalendarProps {
   eventId: string;
   callsPerWeek?: number;
   durationInMonths?: number;
-}
-
-// Extend TimeSlot to include optional appointment details for tooltips
-interface DetailedTimeSlot extends TimeSlot {
-  appointmentDetails?: {
-    id: string;
-    type: AppointmentsType;
-    title: string;
-  };
 }
 
 export function EventTimingsCalendar({
@@ -76,7 +63,7 @@ export function EventTimingsCalendar({
   const [allAppointmentsRawData, setAllAppointmentsRawData] = useState<
     TAppointment[]
   >([]);
-  const [selectedSlots, setSelectedSlots] = useState<TimeSlot[]>([]);
+  const [selectedSlots, setSelectedSlots] = useState<TimeSlotMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [browserTimezone] = useState(() =>
@@ -91,118 +78,6 @@ export function EventTimingsCalendar({
 
   const startDate = startOfWeek(currentDate);
   const weekDates = [...Array(7)].map((_, i) => addDays(startDate, i));
-
-  const isOverlapping = (
-    intervalStart: Date,
-    intervalEnd: Date,
-    slotList: TimeSlot[] = [],
-  ): boolean => {
-    return slotList.some((slot) => {
-      const slotStart =
-        slot.startTime instanceof Date
-          ? slot.startTime
-          : new Date(slot.startTime);
-      const slotEnd =
-        slot.endTime instanceof Date ? slot.endTime : new Date(slot.endTime);
-      return intervalStart < slotEnd && intervalEnd > slotStart;
-    });
-  };
-
-  // Helper function to find overlapping appointments
-  const findOverlappingAppointments = (
-    intervalStart: Date,
-    intervalEnd: Date,
-    slotList: DetailedTimeSlot[] = [],
-  ): DetailedTimeSlot[] => {
-    return slotList.filter((slot) => {
-      const slotStart =
-        slot.startTime instanceof Date
-          ? slot.startTime
-          : new Date(slot.startTime);
-      const slotEnd =
-        slot.endTime instanceof Date ? slot.endTime : new Date(slot.endTime);
-      return intervalStart < slotEnd && intervalEnd > slotStart;
-    });
-  };
-
-  const getSlotStatus = (
-    interval: { hour: number; minute: number },
-    date: Date,
-    currentAvailableSlots: TimeSlot[],
-    currentExistingAppointments: DetailedTimeSlot[],
-  ) => {
-    const localIntervalStartDate = new Date(date);
-    localIntervalStartDate.setHours(interval.hour, interval.minute, 0, 0);
-    const localIntervalEndDate = new Date(localIntervalStartDate);
-    localIntervalEndDate.setMinutes(localIntervalStartDate.getMinutes() + 30);
-
-    const intervalStartDateUTC = new Date(localIntervalStartDate.toISOString());
-    const intervalEndDateUTC = new Date(localIntervalEndDate.toISOString());
-
-    // Find all appointments overlapping this specific interval
-    const overlappingAppointments = findOverlappingAppointments(
-      intervalStartDateUTC,
-      intervalEndDateUTC,
-      currentExistingAppointments,
-    );
-
-    const isWithinAvailability = isOverlapping(
-      intervalStartDateUTC,
-      intervalEndDateUTC,
-      currentAvailableSlots,
-    );
-    // Determine actual booking status
-    const isActuallyBooked = overlappingAppointments.length > 0;
-
-    // Calculate total booked duration *within* this 30-min interval
-    let bookedDurationWithinInterval = 0;
-    if (isActuallyBooked) {
-      overlappingAppointments.forEach((appSlot) => {
-        const appStart = appSlot.startTime.getTime();
-        const appEnd = appSlot.endTime.getTime();
-
-        // Find the intersection
-        const intersectionStart = Math.max(
-          intervalStartDateUTC.getTime(),
-          appStart,
-        );
-        const intersectionEnd = Math.min(intervalEndDateUTC.getTime(), appEnd);
-
-        if (intersectionEnd > intersectionStart) {
-          bookedDurationWithinInterval += intersectionEnd - intersectionStart;
-        }
-      });
-    }
-
-    // Check if the interval is fully covered by the booking(s)
-    // Use a small tolerance (e.g., 1ms) for floating point comparisons if needed, here comparing >= duration
-    const isFullyBooked = bookedDurationWithinInterval >= 30 * 60 * 1000;
-
-    const now = new Date();
-    const isInPast = localIntervalEndDate < now;
-
-    //isDisabled if not available OR booked OR in the past
-    const isDisabled = !isWithinAvailability || isActuallyBooked || isInPast;
-
-    // Define refined states based on the calculations
-    const isPartiallyBooked =
-      isWithinAvailability && isActuallyBooked && !isFullyBooked;
-    const isBookedForDisplay = isActuallyBooked && isFullyBooked; // Use this for the main 'Booked' style
-
-    return {
-      isAvailable: isWithinAvailability && !isActuallyBooked,
-      isBooked: isActuallyBooked, // Still indicates *any* booking overlap for tooltip trigger
-      isBookedForDisplay, // Indicates the interval is fully booked
-      isPartiallyBooked, // Indicates the interval is available but partially booked
-      isDisabled,
-      isInPast,
-      intervalStartUTCString: intervalStartDateUTC.toISOString(),
-      intervalEndUTCString: intervalEndDateUTC.toISOString(),
-      localStartTime: localIntervalStartDate,
-      localEndTime: localIntervalEndDate,
-      overlappingAppointments: overlappingAppointments,
-    };
-  };
 
   const fetchData = async () => {
     if (!isOpen || !eventId || !params.consultantId) {
@@ -297,15 +172,15 @@ export function EventTimingsCalendar({
       if (response.ok) {
         const { data } = await response.json();
         if (data && data.length > 0 && data[0].slotsOfAppointment?.length > 0) {
-          const slots: TimeSlot[] = data[0].slotsOfAppointment.flatMap(
-            (slot: AppointmentSlot) => {
+          const slots: TimeSlotMeta[] = data[0].slotsOfAppointment.flatMap(
+            (slot: AppointmentSlot): TimeSlotMeta[] => {
               const start = new Date(slot.slotStartTimeInUTC);
               const end = new Date(slot.slotEndTimeInUTC);
               const durationMinutes =
                 (end.getTime() - start.getTime()) / (1000 * 60);
               const numIntervals = Math.round(durationMinutes / 30);
 
-              const intervalSlots: TimeSlot[] = [];
+              const intervalSlots: TimeSlotMeta[] = [];
               for (let i = 0; i < numIntervals; i++) {
                 const intervalStart = new Date(
                   start.getTime() + i * 30 * 60 * 1000,
@@ -316,8 +191,6 @@ export function EventTimingsCalendar({
                 intervalSlots.push({
                   startTime: intervalStart,
                   endTime: intervalEnd,
-                  isAvailable: true,
-                  isBooked: false,
                 });
               }
               return intervalSlots;
@@ -326,7 +199,12 @@ export function EventTimingsCalendar({
           setSelectedSlots(slots);
 
           if (slots.length > 0) {
-            setCurrentDate(new Date(slots[0].startTime));
+            const firstStartTime = slots[0].startTime;
+            setCurrentDate(
+              firstStartTime instanceof Date
+                ? firstStartTime
+                : new Date(firstStartTime),
+            );
           }
         }
       }
@@ -368,7 +246,7 @@ export function EventTimingsCalendar({
             999,
           );
 
-    let currentAvailableSlots: TimeSlot[] = [];
+    let currentAvailableSlots: TimeSlotMeta[] = [];
     const scheduleType = consultantDetails?.scheduleType;
 
     if (consultantDetails) {
@@ -385,23 +263,31 @@ export function EventTimingsCalendar({
           consultantDataForMapping,
           currentDate,
           view,
-        );
+        ) as TimeSlotMeta[];
       } else if (scheduleType === "CUSTOM") {
-        const allCustomSlots = mapCustomSlots(consultantDataForMapping);
-        currentAvailableSlots = allCustomSlots.filter(
-          (slot) => slot.startTime < endOfView && slot.endTime > startOfView,
-        );
+        const allCustomSlots = mapCustomSlots(
+          consultantDataForMapping,
+        ) as TimeSlotMeta[];
+        currentAvailableSlots = allCustomSlots.filter((slot) => {
+          const start =
+            slot.startTime instanceof Date
+              ? slot.startTime
+              : new Date(slot.startTime);
+          const end =
+            slot.endTime instanceof Date
+              ? slot.endTime
+              : new Date(slot.endTime);
+          return start < endOfView && end > startOfView;
+        });
       }
     }
 
-    // Map raw appointments to DetailedTimeSlot, including necessary details
-    const currentExistingAppointments: DetailedTimeSlot[] =
+    const currentExistingAppointments: DetailedTimeSlotMeta[] =
       allAppointmentsRawData
         .flatMap((appointment: TAppointment) => {
           return (appointment.slotsOfAppointment || []).map(
-            (slot: AppointmentSlot): DetailedTimeSlot => {
+            (slot: AppointmentSlot): DetailedTimeSlotMeta => {
               let title = "Unknown Appointment";
-              // Construct title based on appointment type (assuming nested data exists)
               if (
                 appointment.appointmentType === "CLASS" &&
                 appointment.class?.classPlan?.name
@@ -433,8 +319,6 @@ export function EventTimingsCalendar({
               return {
                 startTime: new Date(slot.slotStartTimeInUTC),
                 endTime: new Date(slot.slotEndTimeInUTC),
-                isAvailable: false,
-                isBooked: true,
                 appointmentDetails: {
                   id: appointment.id,
                   type: appointment.appointmentType,
@@ -444,9 +328,17 @@ export function EventTimingsCalendar({
             },
           );
         })
-        .filter(
-          (slot) => slot.startTime < endOfView && slot.endTime > startOfView,
-        );
+        .filter((slot) => {
+          const start =
+            slot.startTime instanceof Date
+              ? slot.startTime
+              : new Date(slot.startTime);
+          const end =
+            slot.endTime instanceof Date
+              ? slot.endTime
+              : new Date(slot.endTime);
+          return start < endOfView && end > startOfView;
+        });
 
     return {
       availableSlots: currentAvailableSlots,
@@ -460,8 +352,9 @@ export function EventTimingsCalendar({
     view,
   ]);
 
-  const availableSlots = currentViewSlots.availableSlots;
-  const existingAppointments = currentViewSlots.existingAppointments;
+  const availableSlots: TimeSlotMeta[] = currentViewSlots.availableSlots;
+  const existingAppointments: DetailedTimeSlotMeta[] =
+    currentViewSlots.existingAppointments;
   const scheduleType = consultantDetails?.scheduleType;
 
   const handleSlotSelect = (
@@ -479,21 +372,25 @@ export function EventTimingsCalendar({
 
     const slotUTCTimestamp = status.intervalStartUTCString;
 
-    const newSlot: TimeSlot = {
+    const newSlot: TimeSlotMeta = {
       startTime: new Date(status.intervalStartUTCString),
       endTime: new Date(status.intervalEndUTCString),
-      isAvailable: true,
-      isBooked: false,
     };
 
     const isSelected = selectedSlots.some(
-      (slot) => slot.startTime.toISOString() === slotUTCTimestamp,
+      (slot) =>
+        (slot.startTime instanceof Date
+          ? slot.startTime.toISOString()
+          : slot.startTime) === slotUTCTimestamp,
     );
 
     if (isSelected) {
       setSelectedSlots(
         selectedSlots.filter(
-          (slot) => slot.startTime.toISOString() !== slotUTCTimestamp,
+          (slot) =>
+            (slot.startTime instanceof Date
+              ? slot.startTime.toISOString()
+              : slot.startTime) !== slotUTCTimestamp,
         ),
       );
     } else {
@@ -512,9 +409,17 @@ export function EventTimingsCalendar({
         return;
       }
       setSelectedSlots(
-        [...selectedSlots, newSlot].sort(
-          (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-        ),
+        [...selectedSlots, newSlot].sort((a, b) => {
+          const timeA =
+            a.startTime instanceof Date
+              ? a.startTime.getTime()
+              : new Date(a.startTime).getTime();
+          const timeB =
+            b.startTime instanceof Date
+              ? b.startTime.getTime()
+              : new Date(b.startTime).getTime();
+          return timeA - timeB;
+        }),
       );
     }
   };
@@ -554,11 +459,13 @@ export function EventTimingsCalendar({
                   createMany: {
                     data: selectedSlots.map((slot) => ({
                       slotStartTimeInUTC:
-                        slot.originalSlot?.slotStartTimeInUTC ||
-                        slot.startTime.toISOString(),
+                        slot.startTime instanceof Date
+                          ? slot.startTime.toISOString()
+                          : slot.startTime,
                       slotEndTimeInUTC:
-                        slot.originalSlot?.slotEndTimeInUTC ||
-                        slot.endTime.toISOString(),
+                        slot.endTime instanceof Date
+                          ? slot.endTime.toISOString()
+                          : slot.endTime,
                     })),
                   },
                 },
@@ -576,8 +483,14 @@ export function EventTimingsCalendar({
               [eventType]: { connect: { id: eventId } },
               slotsOfAppointment: {
                 create: selectedSlots.map((slot) => ({
-                  slotStartTimeInUTC: slot.startTime.toISOString(),
-                  slotEndTimeInUTC: slot.endTime.toISOString(),
+                  slotStartTimeInUTC:
+                    slot.startTime instanceof Date
+                      ? slot.startTime.toISOString()
+                      : slot.startTime,
+                  slotEndTimeInUTC:
+                    slot.endTime instanceof Date
+                      ? slot.endTime.toISOString()
+                      : slot.endTime,
                 })),
               },
             }),
@@ -626,7 +539,6 @@ export function EventTimingsCalendar({
     }
   };
 
-  // Updated to handle 30-minute intervals and add Tooltip
   const renderTimeCell = (
     interval: { hour: number; minute: number },
     date: Date,
@@ -639,10 +551,12 @@ export function EventTimingsCalendar({
     );
     const slotUTCTimestamp = status.intervalStartUTCString;
     const isCurrentlySelected = selectedSlots.some(
-      (slot) => slot.startTime.toISOString() === slotUTCTimestamp,
+      (slot) =>
+        (slot.startTime instanceof Date
+          ? slot.startTime.toISOString()
+          : slot.startTime) === slotUTCTimestamp,
     );
 
-    // Log status for debugging
     if (status.isBooked) {
       console.log(
         `Slot Status [${format(date, "yyyy-MM-dd")} ${interval.hour}:${interval.minute}]`,
@@ -652,7 +566,6 @@ export function EventTimingsCalendar({
 
     let cellClassName = `h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5`;
     let buttonText = "";
-    // Show tooltip if there's any booking overlap
     const showTooltip = status.isBooked;
 
     if (isCurrentlySelected) {
@@ -660,15 +573,12 @@ export function EventTimingsCalendar({
         " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
       buttonText = "Selected";
     } else if (status.isBookedForDisplay) {
-      // Fully booked takes priority
       cellClassName += " bg-slate-400 text-slate-800 cursor-not-allowed";
       buttonText = "Booked";
     } else if (status.isPartiallyBooked) {
-      // Partially booked (available but overlapped)
       cellClassName += " bg-yellow-400 text-yellow-900 cursor-not-allowed";
       buttonText = "Partially Booked";
     } else if (status.isAvailable) {
-      // Available and not booked at all
       if (status.isInPast) {
         cellClassName +=
           " bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
@@ -682,10 +592,12 @@ export function EventTimingsCalendar({
       if (status.isInPast) {
         cellClassName +=
           " bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
-      } else {
+      } else if (!status.isBookedForDisplay && !status.isPartiallyBooked) {
         cellClassName += " bg-slate-200 cursor-not-allowed";
       }
     }
+
+    const isButtonDisabled = status.isDisabled && !isCurrentlySelected;
 
     const buttonElement = (
       <Button
@@ -693,22 +605,19 @@ export function EventTimingsCalendar({
         variant={"ghost"}
         className={cellClassName}
         onClick={() => handleSlotSelect(interval, date)}
-        disabled={status.isDisabled && !isCurrentlySelected}
+        disabled={isButtonDisabled}
       >
         {buttonText}
       </Button>
     );
 
     if (showTooltip && status.overlappingAppointments.length > 0) {
-      // Button inside tooltip trigger should not be disabled itself for hover to work
       const tooltipButtonElement = (
         <Button
           key={slotUTCTimestamp}
           variant={"ghost"}
           className={cellClassName}
-          // The click handler still respects the original logic
           onClick={() => handleSlotSelect(interval, date)}
-          // Explicitly NOT disabled here; parent TooltipTrigger handles interaction
           disabled={false}
         >
           {buttonText}
@@ -718,10 +627,7 @@ export function EventTimingsCalendar({
       return (
         <TooltipProvider delayDuration={200}>
           <Tooltip>
-            <TooltipTrigger asChild>
-              {/* Use the non-disabled button version for the trigger */}
-              {tooltipButtonElement}
-            </TooltipTrigger>
+            <TooltipTrigger asChild>{tooltipButtonElement}</TooltipTrigger>
             <TooltipContent
               className="max-w-xs text-xs"
               side="top"
@@ -732,7 +638,9 @@ export function EventTimingsCalendar({
                   <div
                     key={
                       appSlot.appointmentDetails?.id +
-                      appSlot.startTime.toISOString()
+                      (appSlot.startTime instanceof Date
+                        ? appSlot.startTime.toISOString()
+                        : new Date(appSlot.startTime).toISOString())
                     }
                     className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0"
                   >
@@ -743,8 +651,19 @@ export function EventTimingsCalendar({
                       {appSlot.appointmentDetails?.type}
                     </p>
                     <p className="text-muted-foreground">
-                      {format(appSlot.startTime, "HH:mm")} -{" "}
-                      {format(appSlot.endTime, "HH:mm")}
+                      {format(
+                        appSlot.startTime instanceof Date
+                          ? appSlot.startTime
+                          : new Date(appSlot.startTime),
+                        "HH:mm",
+                      )}{" "}
+                      -{" "}
+                      {format(
+                        appSlot.endTime instanceof Date
+                          ? appSlot.endTime
+                          : new Date(appSlot.endTime),
+                        "HH:mm",
+                      )}
                     </p>
                   </div>
                 ))}
@@ -755,7 +674,6 @@ export function EventTimingsCalendar({
       );
     }
 
-    // Render original button (with potential disabled state) if not showing tooltip
     return buttonElement;
   };
 
@@ -994,23 +912,20 @@ export function EventTimingsCalendar({
                     className="grid grid-cols-8 gap-0.5 md:gap-1"
                   >
                     <div className="w-14 md:w-20">
-                      {/* Display time label for every interval */}
-                      {
-                        <div className="h-8 text-right pr-2 pt-0.5 text-[10px] md:text-sm flex items-start justify-end">
-                          {new Date(
-                            1970,
-                            0,
-                            1,
-                            interval.hour,
-                            interval.minute,
-                          ).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            hour12: false,
-                            timeZone: browserTimezone,
-                          })}
-                        </div>
-                      }
+                      <div className="h-8 text-right pr-2 pt-0.5 text-[10px] md:text-sm flex items-start justify-end">
+                        {new Date(
+                          1970,
+                          0,
+                          1,
+                          interval.hour,
+                          interval.minute,
+                        ).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: false,
+                          timeZone: browserTimezone,
+                        })}
+                      </div>
                     </div>
                     {weekDates.map((date) => (
                       <div key={date.toISOString()} className="col-span-1">

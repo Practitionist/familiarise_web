@@ -1,38 +1,23 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DAYS,
+  DetailedTimeSlotMeta,
+  getSlotStatus,
+  INTERVALS,
+  TimeSlotMeta
+} from "@/lib/timeSlotsMeta";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { SlotInterval } from "../types";
 
 type TimingsCalendarProps = {
-  availableSlots: SlotInterval[] | undefined;
-  existingAppointments: SlotInterval[] | undefined;
+  availableSlots: TimeSlotMeta[] | undefined;
+  existingAppointments: DetailedTimeSlotMeta[] | undefined;
   onSlotSelect: (slotStartTimeUTC: string) => void;
   selectedSlots: string[] | undefined;
   requiredSlots: number;
   scheduleType: "WEEKLY" | "CUSTOM";
-};
-
-const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const INTERVALS_PER_HOUR = 2;
-const TOTAL_INTERVALS = 24 * INTERVALS_PER_HOUR;
-const INTERVALS = Array.from({ length: TOTAL_INTERVALS }, (_, i) => {
-  const hour = Math.floor(i / INTERVALS_PER_HOUR);
-  const minute = (i % INTERVALS_PER_HOUR) * (60 / INTERVALS_PER_HOUR);
-  return { hour, minute };
-});
-
-const isOverlapping = (
-  intervalStart: Date,
-  intervalEnd: Date,
-  slotList: SlotInterval[] = [],
-): boolean => {
-  return slotList.some((slot) => {
-    const slotStart = new Date(slot.slotStartTimeInUTC);
-    const slotEnd = new Date(slot.slotEndTimeInUTC);
-    return intervalStart < slotEnd && slotStart < intervalEnd;
-  });
 };
 
 export function TimingsCalendar({
@@ -84,46 +69,20 @@ export function TimingsCalendar({
   }, [currentDate]);
 
   const renderTimeCell = (
-    baseDate: Date, // This date is already timezone-adjusted to local 00:00 for the day
-    interval: { hour: number; minute: number }, // These represent the *local* time intervals for the rows
+    baseDate: Date,
+    interval: { hour: number; minute: number },
   ) => {
-    // 1. Construct the LOCAL start and end times for this specific calendar cell
-    const localIntervalStartDate = new Date(baseDate);
-    localIntervalStartDate.setHours(interval.hour, interval.minute, 0, 0);
-
-    const localIntervalEndDate = new Date(localIntervalStartDate);
-    localIntervalEndDate.setMinutes(localIntervalStartDate.getMinutes() + 30);
-
-    // 2. Convert these LOCAL times to their equivalent UTC times for comparison and selection
-    //    Note: toISOString() ALWAYS returns UTC 'Z' format
-    const intervalStartStringUTC = localIntervalStartDate.toISOString();
-    const intervalEndStringUTC = localIntervalEndDate.toISOString(); // We'll need this for comparison
-
-    // Create Date objects from the UTC strings for comparison logic
-    const intervalStartDateUTC = new Date(intervalStartStringUTC);
-    const intervalEndDateUTC = new Date(intervalEndStringUTC);
-
-    // 3. Check status using the CORRECT UTC range for this cell
-    const isWithinAvailability = isOverlapping(
-      intervalStartDateUTC,
-      intervalEndDateUTC,
+    const status = getSlotStatus(
+      interval,
+      baseDate,
       availableSlots,
-    );
-    const isBooked = isOverlapping(
-      intervalStartDateUTC,
-      intervalEndDateUTC,
       existingAppointments,
     );
-    // NEW: Check for partial booking
-    const isPartiallyBooked = isWithinAvailability && isBooked;
 
-    const isSelected = selectedSlots.includes(intervalStartStringUTC); // Use the calculated UTC start string
-    const now = new Date();
-    // Compare the cell's LOCAL end time with the current time
-    const isInPast = localIntervalEndDate < now;
+    const intervalStartStringUTC = status.intervalStartUTCString;
+    const isSelected = selectedSlots.includes(intervalStartStringUTC);
 
-    // Slot is disabled if it's booked (fully or partially), not available, or in the past
-    const isDisabled = !isWithinAvailability || isBooked || isInPast;
+    const isButtonDisabled = status.isDisabled;
 
     let cellClassName =
       "h-8 w-full relative text-[10px] leading-tight px-1 py-0.5 transition-colors duration-150 ease-in-out border border-transparent rounded-sm ";
@@ -133,43 +92,40 @@ export function TimingsCalendar({
       cellClassName +=
         "bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
       buttonText = "Selected";
-    } else if (isPartiallyBooked) {
-      // Check partial first
-      cellClassName += "bg-yellow-400 text-yellow-900 cursor-not-allowed"; // Example: Yellow style
-      buttonText = "Partially Booked";
-    } else if (isBooked) {
-      // Only fully booked (not available)
+    } else if (status.isBookedForDisplay) {
       cellClassName += "bg-slate-400 text-slate-800 cursor-not-allowed";
       buttonText = "Booked";
-    } else if (isWithinAvailability) {
-      // Available and not booked/partially booked
-      if (isInPast) {
+    } else if (status.isPartiallyBooked) {
+      cellClassName += "bg-yellow-400 text-yellow-900 cursor-not-allowed";
+      buttonText = "Partially Booked";
+    } else if (status.isAvailable) {
+      if (status.isInPast) {
         cellClassName +=
           "bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
-        buttonText = "Available"; // Still show text but disabled
+        buttonText = "Available";
       } else {
         cellClassName +=
           "bg-green-300 text-green-950 hover:bg-green-400 border-green-400";
         buttonText = "Available";
       }
     } else {
-      // Not within availability, not booked
-      if (isInPast) {
+      if (status.isInPast) {
         cellClassName +=
           "bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
-      } else {
+      } else if (!status.isBookedForDisplay && !status.isPartiallyBooked) {
         cellClassName += "bg-slate-300 cursor-not-allowed";
       }
-      // buttonText remains ""
     }
 
     return (
       <Button
-        key={intervalStartStringUTC} // Key uses the correct UTC representation
+        key={intervalStartStringUTC}
         variant={"ghost"}
         className={cellClassName}
-        onClick={() => !isDisabled && onSlotSelect(intervalStartStringUTC)} // Pass the correct UTC string
-        disabled={isDisabled}
+        onClick={() =>
+          !isButtonDisabled && onSlotSelect(intervalStartStringUTC)
+        }
+        disabled={isButtonDisabled && !isSelected}
       >
         {buttonText}
       </Button>
@@ -252,39 +208,34 @@ export function TimingsCalendar({
       const dayEnd = new Date(date);
       dayEnd.setHours(23, 59, 59, 999);
 
-      const relevantAvailability = availableSlots.filter((slot) => {
-        const slotStart = new Date(slot.slotStartTimeInUTC);
-        const slotEnd = new Date(slot.slotEndTimeInUTC);
+      const dayAvailableSlots = availableSlots.filter((slot) => {
+        const slotStart =
+          slot.startTime instanceof Date
+            ? slot.startTime
+            : new Date(slot.startTime);
+        const slotEnd =
+          slot.endTime instanceof Date ? slot.endTime : new Date(slot.endTime);
         return slotStart < dayEnd && slotEnd > dayStart;
       });
-      const relevantAppointments = existingAppointments.filter((slot) => {
-        const slotStart = new Date(slot.slotStartTimeInUTC);
-        const slotEnd = new Date(slot.slotEndTimeInUTC);
+      const dayExistingAppointments = existingAppointments.filter((slot) => {
+        const slotStart =
+          slot.startTime instanceof Date
+            ? slot.startTime
+            : new Date(slot.startTime);
+        const slotEnd =
+          slot.endTime instanceof Date ? slot.endTime : new Date(slot.endTime);
         return slotStart < dayEnd && slotEnd > dayStart;
       });
 
       for (const interval of INTERVALS) {
-        const intervalStartDateUTC = new Date(date);
-        intervalStartDateUTC.setUTCHours(interval.hour, interval.minute, 0, 0);
-        const intervalEndDateUTC = new Date(intervalStartDateUTC);
-        intervalEndDateUTC.setUTCMinutes(
-          intervalStartDateUTC.getUTCMinutes() + 30,
+        const status = getSlotStatus(
+          interval,
+          date,
+          dayAvailableSlots,
+          dayExistingAppointments,
         );
 
-        if (intervalEndDateUTC <= now) continue;
-
-        const isAvail = isOverlapping(
-          intervalStartDateUTC,
-          intervalEndDateUTC,
-          relevantAvailability,
-        );
-        const isBooked = isOverlapping(
-          intervalStartDateUTC,
-          intervalEndDateUTC,
-          relevantAppointments,
-        );
-
-        if (isAvail && !isBooked) {
+        if (status.isAvailable && !status.isInPast) {
           count++;
         }
       }
