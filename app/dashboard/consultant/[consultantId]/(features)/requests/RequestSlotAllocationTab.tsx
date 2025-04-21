@@ -31,14 +31,14 @@ import { useEffect, useState, useCallback } from "react";
 import { TimingsCalendar } from "./components/TimingsCalendar";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
 import {
-    ConsultationApiResponse,
-    SubscriptionApiResponse,
-    AvailabilityApiResponse,
-    AppointmentInfo,
-    ConsultantApiResponse,
-    SlotInterval,
-    RequestedBy
-  } from "./types";
+  ConsultationApiResponse,
+  SubscriptionApiResponse,
+  AvailabilityApiResponse,
+  AppointmentInfo,
+  ConsultantApiResponse,
+  SlotInterval,
+  RequestedBy,
+} from "./types";
 
 // --- API Response Type Definitions ---
 // interface UserInfo { ... } // Removed
@@ -75,19 +75,26 @@ interface RequestSlotAllocationTabProps {
 }
 
 // Helper function to fetch and process data
-async function fetchDataFromApi<T>(url: string): Promise<{ ok: boolean; data: T | null; error?: string }> {
+async function fetchDataFromApi<T>(
+  url: string,
+): Promise<{ ok: boolean; data: T | null; error?: string }> {
   try {
     const response = await fetch(url);
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`Failed to fetch ${url}:`, errorText);
-      return { ok: false, data: null, error: `Failed to fetch data (status ${response.status})` };
+      return {
+        ok: false,
+        data: null,
+        error: `Failed to fetch data (status ${response.status})`,
+      };
     }
     const data = await response.json();
     return { ok: true, data: data.data as T, error: undefined }; // Assuming API wraps data in { data: ... }
   } catch (err) {
     console.error(`Error fetching ${url}:`, err);
-    const message = err instanceof Error ? err.message : "An unknown network error occurred";
+    const message =
+      err instanceof Error ? err.message : "An unknown network error occurred";
     return { ok: false, data: null, error: message };
   }
 }
@@ -102,7 +109,9 @@ export function RequestSlotAllocationTab({
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<Request[]>([]);
   const [availableSlots, setAvailableSlots] = useState<SlotInterval[]>([]);
-  const [existingAppointments, setExistingAppointments] = useState<SlotInterval[]>([]);
+  const [existingAppointments, setExistingAppointments] = useState<
+    SlotInterval[]
+  >([]);
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
   const [selectedSlots, setSelectedSlots] = useState<string[]>([]);
   const [isAllocating, setIsAllocating] = useState(false);
@@ -156,10 +165,12 @@ export function RequestSlotAllocationTab({
 
       let combinedError: string | null = null;
       const updateError = (newError?: string) => {
-         if (newError) {
-            combinedError = combinedError ? `${combinedError}; ${newError}` : newError;
-         }
-      }
+        if (newError) {
+          combinedError = combinedError
+            ? `${combinedError}; ${newError}`
+            : newError;
+        }
+      };
 
       updateError(consultationsResult.error);
       updateError(subscriptionsResult.error);
@@ -172,7 +183,11 @@ export function RequestSlotAllocationTab({
       const processedRequests: Request[] = [];
 
       // Process consultations
-      if (consultationsResult.ok && consultationsResult.data && (type === "all" || type === "consultation")) {
+      if (
+        consultationsResult.ok &&
+        consultationsResult.data &&
+        (type === "all" || type === "consultation")
+      ) {
         processedRequests.push(
           ...consultationsResult.data.map((consultation) => ({
             id: consultation.id,
@@ -191,7 +206,11 @@ export function RequestSlotAllocationTab({
       }
 
       // Process subscriptions
-      if (subscriptionsResult.ok && subscriptionsResult.data && (type === "all" || type === "subscription")) {
+      if (
+        subscriptionsResult.ok &&
+        subscriptionsResult.data &&
+        (type === "all" || type === "subscription")
+      ) {
         processedRequests.push(
           ...subscriptionsResult.data.map((subscription) => ({
             id: subscription.id,
@@ -201,7 +220,10 @@ export function RequestSlotAllocationTab({
             requestedAt: subscription.requestedAt,
             requestedTimes:
               subscription.appointments?.flatMap(
-                (appt) => appt.slotsOfAppointment?.map((slot) => slot.slotStartTimeInUTC) || [],
+                (appt) =>
+                  appt.slotsOfAppointment?.map(
+                    (slot) => slot.slotStartTimeInUTC,
+                  ) || [],
               ) || [],
             status: subscription.requestStatus,
             requiredSlots:
@@ -231,16 +253,17 @@ export function RequestSlotAllocationTab({
         );
       }
 
-       // Process consultant data
+      // Process consultant data
       if (consultantResult.ok && consultantResult.data) {
         setConsultantData({
-          scheduleType: consultantResult.data.scheduleType || ScheduleType.WEEKLY,
+          scheduleType:
+            consultantResult.data.scheduleType || ScheduleType.WEEKLY,
           timezone: consultantResult.data.user?.currentTimezone || "UTC",
         });
       } else {
-         // Handle potential error in fetching consultant data, maybe set defaults or show specific error
-         console.error("Could not fetch consultant schedule/timezone info.");
-         // Keep default or previous state for consultantData
+        // Handle potential error in fetching consultant data, maybe set defaults or show specific error
+        console.error("Could not fetch consultant schedule/timezone info.");
+        // Keep default or previous state for consultantData
       }
 
       // --- Update State ---
@@ -249,13 +272,14 @@ export function RequestSlotAllocationTab({
       setExistingAppointments(processedExistingAppointments);
 
       if (combinedError) {
-        setError(combinedError)
+        setError(combinedError);
       }
-
     } catch (err) {
       // Catch unexpected errors during processing (Promise.all itself shouldn't throw for individual failures with this setup)
       console.error("Unexpected error during fetch/process:", err);
-      setError(err instanceof Error ? err.message : "An unexpected error occurred");
+      setError(
+        err instanceof Error ? err.message : "An unexpected error occurred",
+      );
     } finally {
       setLoading(false);
     }
@@ -459,20 +483,21 @@ export function RequestSlotAllocationTab({
 
   // Check if auto-allocation is possible
   const canAutoAllocate = () => {
-      if (!selectedRequest) return false;
-      // Filter available slots that do NOT overlap with any existing appointment
-      const trulyAvailableSlots = availableSlots.filter(availSlot =>
-          !existingAppointments.some(existingSlot => {
-              const availStart = new Date(availSlot.slotStartTimeInUTC);
-              const availEnd = new Date(availSlot.slotEndTimeInUTC);
-              const existingStart = new Date(existingSlot.slotStartTimeInUTC);
-              const existingEnd = new Date(existingSlot.slotEndTimeInUTC);
-              // Check for overlap: (StartA < EndB) and (StartB < EndA)
-              return availStart < existingEnd && existingStart < availEnd;
-          })
-      );
-      // Check if the count of non-overlapping available slots is sufficient
-      return trulyAvailableSlots.length >= selectedRequest.requiredSlots;
+    if (!selectedRequest) return false;
+    // Filter available slots that do NOT overlap with any existing appointment
+    const trulyAvailableSlots = availableSlots.filter(
+      (availSlot) =>
+        !existingAppointments.some((existingSlot) => {
+          const availStart = new Date(availSlot.slotStartTimeInUTC);
+          const availEnd = new Date(availSlot.slotEndTimeInUTC);
+          const existingStart = new Date(existingSlot.slotStartTimeInUTC);
+          const existingEnd = new Date(existingSlot.slotEndTimeInUTC);
+          // Check for overlap: (StartA < EndB) and (StartB < EndA)
+          return availStart < existingEnd && existingStart < availEnd;
+        }),
+    );
+    // Check if the count of non-overlapping available slots is sufficient
+    return trulyAvailableSlots.length >= selectedRequest.requiredSlots;
   };
 
   // Check if manual allocation quota is met
@@ -557,9 +582,7 @@ export function RequestSlotAllocationTab({
                 </TableCell>
                 <TableCell>{request.requiredSlots}</TableCell>
                 <TableCell>
-                  <Badge
-                    variant={getRequestStatusBadgeVariant(request.status)}
-                  >
+                  <Badge variant={getRequestStatusBadgeVariant(request.status)}>
                     {request.status}
                   </Badge>
                 </TableCell>
@@ -693,22 +716,23 @@ function getRequestStatusBadgeVariant(
 
 // Helper function for auto-allocation check
 function checkCanAutoAllocate(
-    selectedRequest: Request | null,
-    availableSlots: SlotInterval[],
-    existingAppointments: SlotInterval[]
+  selectedRequest: Request | null,
+  availableSlots: SlotInterval[],
+  existingAppointments: SlotInterval[],
 ): boolean {
-    if (!selectedRequest) return false;
-    // Filter available slots that do NOT overlap with any existing appointment
-    const trulyAvailableSlots = availableSlots.filter(availSlot =>
-        !existingAppointments.some(existingSlot => {
-            const availStart = new Date(availSlot.slotStartTimeInUTC);
-            const availEnd = new Date(availSlot.slotEndTimeInUTC);
-            const existingStart = new Date(existingSlot.slotStartTimeInUTC);
-            const existingEnd = new Date(existingSlot.slotEndTimeInUTC);
-            // Check for overlap: (StartA < EndB) and (StartB < EndA)
-            return availStart < existingEnd && existingStart < availEnd;
-        })
-    );
-    // Check if the count of non-overlapping available slots is sufficient
-    return trulyAvailableSlots.length >= selectedRequest.requiredSlots;
+  if (!selectedRequest) return false;
+  // Filter available slots that do NOT overlap with any existing appointment
+  const trulyAvailableSlots = availableSlots.filter(
+    (availSlot) =>
+      !existingAppointments.some((existingSlot) => {
+        const availStart = new Date(availSlot.slotStartTimeInUTC);
+        const availEnd = new Date(availSlot.slotEndTimeInUTC);
+        const existingStart = new Date(existingSlot.slotStartTimeInUTC);
+        const existingEnd = new Date(existingSlot.slotEndTimeInUTC);
+        // Check for overlap: (StartA < EndB) and (StartB < EndA)
+        return availStart < existingEnd && existingStart < availEnd;
+      }),
+  );
+  // Check if the count of non-overlapping available slots is sufficient
+  return trulyAvailableSlots.length >= selectedRequest.requiredSlots;
 }

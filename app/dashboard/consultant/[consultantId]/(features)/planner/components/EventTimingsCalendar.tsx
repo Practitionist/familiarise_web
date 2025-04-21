@@ -16,14 +16,19 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useToast } from "@/components/ui/use-toast";
+import { TAppointment } from "@/types/appointment";
+import {
+  AppointmentsType,
+  ConsultantProfile,
+  SlotOfAvailabilityCustom,
+  SlotOfAvailabilityWeekly,
+} from "@prisma/client";
 import { addDays, format, isSameDay, startOfWeek } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useParams } from "next/navigation";
-import React, { useEffect, useState, useMemo } from "react";
-import { AppointmentsType, ConsultantProfile, SlotOfAvailabilityWeekly, SlotOfAvailabilityCustom } from "@prisma/client";
-import { Appointment, AppointmentSlot, TimeSlot } from "../types/calendar";
+import { useEffect, useMemo, useState } from "react";
+import { AppointmentSlot, TimeSlot } from "../types/calendar";
 import { mapCustomSlots, mapWeeklySlots } from "../utils";
-import { TAppointment } from "@/types/appointment";
 
 // Define intervals similar to TimingsCalendar
 const INTERVALS_PER_HOUR = 2; // 30-minute intervals
@@ -66,8 +71,11 @@ export function EventTimingsCalendar({
   const { toast } = useToast();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState<"week" | "month">("week");
-  const [consultantDetails, setConsultantDetails] = useState<ConsultantProfile | null>(null);
-  const [allAppointmentsRawData, setAllAppointmentsRawData] = useState<TAppointment[]>([]);
+  const [consultantDetails, setConsultantDetails] =
+    useState<ConsultantProfile | null>(null);
+  const [allAppointmentsRawData, setAllAppointmentsRawData] = useState<
+    TAppointment[]
+  >([]);
   const [selectedSlots, setSelectedSlots] = useState<TimeSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -76,7 +84,10 @@ export function EventTimingsCalendar({
       ? Intl.DateTimeFormat().resolvedOptions().timeZone
       : "UTC",
   );
-  const [rawAvailabilitySlots, setRawAvailabilitySlots] = useState<{ weekly: SlotOfAvailabilityWeekly[], custom: SlotOfAvailabilityCustom[] }>({ weekly: [], custom: [] });
+  const [rawAvailabilitySlots, setRawAvailabilitySlots] = useState<{
+    weekly: SlotOfAvailabilityWeekly[];
+    custom: SlotOfAvailabilityCustom[];
+  }>({ weekly: [], custom: [] });
 
   const startDate = startOfWeek(currentDate);
   const weekDates = [...Array(7)].map((_, i) => addDays(startDate, i));
@@ -87,8 +98,12 @@ export function EventTimingsCalendar({
     slotList: TimeSlot[] = [],
   ): boolean => {
     return slotList.some((slot) => {
-      const slotStart = slot.startTime instanceof Date ? slot.startTime : new Date(slot.startTime);
-      const slotEnd = slot.endTime instanceof Date ? slot.endTime : new Date(slot.endTime);
+      const slotStart =
+        slot.startTime instanceof Date
+          ? slot.startTime
+          : new Date(slot.startTime);
+      const slotEnd =
+        slot.endTime instanceof Date ? slot.endTime : new Date(slot.endTime);
       return intervalStart < slotEnd && intervalEnd > slotStart;
     });
   };
@@ -100,8 +115,12 @@ export function EventTimingsCalendar({
     slotList: DetailedTimeSlot[] = [],
   ): DetailedTimeSlot[] => {
     return slotList.filter((slot) => {
-      const slotStart = slot.startTime instanceof Date ? slot.startTime : new Date(slot.startTime);
-      const slotEnd = slot.endTime instanceof Date ? slot.endTime : new Date(slot.endTime);
+      const slotStart =
+        slot.startTime instanceof Date
+          ? slot.startTime
+          : new Date(slot.startTime);
+      const slotEnd =
+        slot.endTime instanceof Date ? slot.endTime : new Date(slot.endTime);
       return intervalStart < slotEnd && intervalEnd > slotStart;
     });
   };
@@ -110,7 +129,7 @@ export function EventTimingsCalendar({
     interval: { hour: number; minute: number },
     date: Date,
     currentAvailableSlots: TimeSlot[],
-    currentExistingAppointments: DetailedTimeSlot[]
+    currentExistingAppointments: DetailedTimeSlot[],
   ) => {
     const localIntervalStartDate = new Date(date);
     localIntervalStartDate.setHours(interval.hour, interval.minute, 0, 0);
@@ -122,9 +141,9 @@ export function EventTimingsCalendar({
 
     // Find all appointments overlapping this specific interval
     const overlappingAppointments = findOverlappingAppointments(
-        intervalStartDateUTC,
-        intervalEndDateUTC,
-        currentExistingAppointments
+      intervalStartDateUTC,
+      intervalEndDateUTC,
+      currentExistingAppointments,
     );
 
     const isWithinAvailability = isOverlapping(
@@ -138,18 +157,21 @@ export function EventTimingsCalendar({
     // Calculate total booked duration *within* this 30-min interval
     let bookedDurationWithinInterval = 0;
     if (isActuallyBooked) {
-        overlappingAppointments.forEach(appSlot => {
-            const appStart = appSlot.startTime.getTime();
-            const appEnd = appSlot.endTime.getTime();
+      overlappingAppointments.forEach((appSlot) => {
+        const appStart = appSlot.startTime.getTime();
+        const appEnd = appSlot.endTime.getTime();
 
-            // Find the intersection
-            const intersectionStart = Math.max(intervalStartDateUTC.getTime(), appStart);
-            const intersectionEnd = Math.min(intervalEndDateUTC.getTime(), appEnd);
+        // Find the intersection
+        const intersectionStart = Math.max(
+          intervalStartDateUTC.getTime(),
+          appStart,
+        );
+        const intersectionEnd = Math.min(intervalEndDateUTC.getTime(), appEnd);
 
-            if (intersectionEnd > intersectionStart) {
-                bookedDurationWithinInterval += (intersectionEnd - intersectionStart);
-            }
-        });
+        if (intersectionEnd > intersectionStart) {
+          bookedDurationWithinInterval += intersectionEnd - intersectionStart;
+        }
+      });
     }
 
     // Check if the interval is fully covered by the booking(s)
@@ -163,7 +185,8 @@ export function EventTimingsCalendar({
     const isDisabled = !isWithinAvailability || isActuallyBooked || isInPast;
 
     // Define refined states based on the calculations
-    const isPartiallyBooked = isWithinAvailability && isActuallyBooked && !isFullyBooked;
+    const isPartiallyBooked =
+      isWithinAvailability && isActuallyBooked && !isFullyBooked;
     const isBookedForDisplay = isActuallyBooked && isFullyBooked; // Use this for the main 'Booked' style
 
     return {
@@ -190,9 +213,15 @@ export function EventTimingsCalendar({
     setLoading(true);
     try {
       const consultantId = params.consultantId.toString();
-      const appointmentSearchParams = new URLSearchParams({ consultantProfileId: consultantId });
-      const weeklyAvailabilityParams = new URLSearchParams({ consultantProfileId: consultantId });
-      const customAvailabilityParams = new URLSearchParams({ consultantProfileId: consultantId });
+      const appointmentSearchParams = new URLSearchParams({
+        consultantProfileId: consultantId,
+      });
+      const weeklyAvailabilityParams = new URLSearchParams({
+        consultantProfileId: consultantId,
+      });
+      const customAvailabilityParams = new URLSearchParams({
+        consultantProfileId: consultantId,
+      });
 
       const [
         consultantResponse,
@@ -224,7 +253,10 @@ export function EventTimingsCalendar({
         const { data } = await customAvailabilityResponse.json();
         customSlotsRaw = data || [];
       }
-      setRawAvailabilitySlots({ weekly: weeklySlotsRaw, custom: customSlotsRaw });
+      setRawAvailabilitySlots({
+        weekly: weeklySlotsRaw,
+        custom: customSlotsRaw,
+      });
 
       if (appointmentsResponse.ok) {
         const { data } = await appointmentsResponse.json();
@@ -269,13 +301,18 @@ export function EventTimingsCalendar({
             (slot: AppointmentSlot) => {
               const start = new Date(slot.slotStartTimeInUTC);
               const end = new Date(slot.slotEndTimeInUTC);
-              const durationMinutes = (end.getTime() - start.getTime()) / (1000 * 60);
+              const durationMinutes =
+                (end.getTime() - start.getTime()) / (1000 * 60);
               const numIntervals = Math.round(durationMinutes / 30);
 
               const intervalSlots: TimeSlot[] = [];
               for (let i = 0; i < numIntervals; i++) {
-                const intervalStart = new Date(start.getTime() + i * 30 * 60 * 1000);
-                const intervalEnd = new Date(intervalStart.getTime() + 30 * 60 * 1000);
+                const intervalStart = new Date(
+                  start.getTime() + i * 30 * 60 * 1000,
+                );
+                const intervalEnd = new Date(
+                  intervalStart.getTime() + 30 * 60 * 1000,
+                );
                 intervalSlots.push({
                   startTime: intervalStart,
                   endTime: intervalEnd,
@@ -284,7 +321,7 @@ export function EventTimingsCalendar({
                 });
               }
               return intervalSlots;
-            }
+            },
           );
           setSelectedSlots(slots);
 
@@ -314,10 +351,22 @@ export function EventTimingsCalendar({
   }, [isOpen, eventId, params.consultantId, eventType]);
 
   const currentViewSlots = useMemo(() => {
-    const startOfView = view === 'week' ? startOfWeek(currentDate) : new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-    const endOfView = view === 'week'
-      ? addDays(startOfView, 7)
-      : new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59, 999);
+    const startOfView =
+      view === "week"
+        ? startOfWeek(currentDate)
+        : new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+    const endOfView =
+      view === "week"
+        ? addDays(startOfView, 7)
+        : new Date(
+            currentDate.getFullYear(),
+            currentDate.getMonth() + 1,
+            0,
+            23,
+            59,
+            59,
+            999,
+          );
 
     let currentAvailableSlots: TimeSlot[] = [];
     const scheduleType = consultantDetails?.scheduleType;
@@ -325,64 +374,106 @@ export function EventTimingsCalendar({
     if (consultantDetails) {
       const consultantDataForMapping = {
         ...consultantDetails,
-        slotsOfAvailabilityWeekly: rawAvailabilitySlots.weekly as SlotOfAvailabilityWeekly[],
-        slotsOfAvailabilityCustom: rawAvailabilitySlots.custom as SlotOfAvailabilityCustom[],
+        slotsOfAvailabilityWeekly:
+          rawAvailabilitySlots.weekly as SlotOfAvailabilityWeekly[],
+        slotsOfAvailabilityCustom:
+          rawAvailabilitySlots.custom as SlotOfAvailabilityCustom[],
       };
 
       if (scheduleType === "WEEKLY") {
-        currentAvailableSlots = mapWeeklySlots(consultantDataForMapping, currentDate, view);
+        currentAvailableSlots = mapWeeklySlots(
+          consultantDataForMapping,
+          currentDate,
+          view,
+        );
       } else if (scheduleType === "CUSTOM") {
         const allCustomSlots = mapCustomSlots(consultantDataForMapping);
-        currentAvailableSlots = allCustomSlots.filter(slot => slot.startTime < endOfView && slot.endTime > startOfView);
+        currentAvailableSlots = allCustomSlots.filter(
+          (slot) => slot.startTime < endOfView && slot.endTime > startOfView,
+        );
       }
     }
 
     // Map raw appointments to DetailedTimeSlot, including necessary details
-    const currentExistingAppointments: DetailedTimeSlot[] = allAppointmentsRawData
-       .flatMap((appointment: TAppointment) => {
-         return (appointment.slotsOfAppointment || []).map((slot: AppointmentSlot): DetailedTimeSlot => {
-             let title = "Unknown Appointment";
-             // Construct title based on appointment type (assuming nested data exists)
-             if (appointment.appointmentType === "CLASS" && appointment.class?.classPlan?.name) {
-                 title = `Class: ${appointment.class.classPlan.name}`;
-             } else if (appointment.appointmentType === "WEBINAR" && appointment.webinar?.webinarPlan?.title) {
-                 title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
-             } else if (appointment.appointmentType === "CONSULTATION" && appointment.consultation?.consultationPlan?.title) {
-                 title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
-                 if (appointment.consultation.requestedBy?.user?.name) {
-                     title += ` with ${appointment.consultation.requestedBy.user.name}`;
-                 }
-             } else if (appointment.appointmentType === "SUBSCRIPTION" && appointment.subscription?.subscriptionPlan?.title) {
-                 title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
-                 if (appointment.subscription.requestedBy?.user?.name) {
-                     title += ` for ${appointment.subscription.requestedBy.user.name}`;
-                 }
-             }
+    const currentExistingAppointments: DetailedTimeSlot[] =
+      allAppointmentsRawData
+        .flatMap((appointment: TAppointment) => {
+          return (appointment.slotsOfAppointment || []).map(
+            (slot: AppointmentSlot): DetailedTimeSlot => {
+              let title = "Unknown Appointment";
+              // Construct title based on appointment type (assuming nested data exists)
+              if (
+                appointment.appointmentType === "CLASS" &&
+                appointment.class?.classPlan?.name
+              ) {
+                title = `Class: ${appointment.class.classPlan.name}`;
+              } else if (
+                appointment.appointmentType === "WEBINAR" &&
+                appointment.webinar?.webinarPlan?.title
+              ) {
+                title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
+              } else if (
+                appointment.appointmentType === "CONSULTATION" &&
+                appointment.consultation?.consultationPlan?.title
+              ) {
+                title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
+                if (appointment.consultation.requestedBy?.user?.name) {
+                  title += ` with ${appointment.consultation.requestedBy.user.name}`;
+                }
+              } else if (
+                appointment.appointmentType === "SUBSCRIPTION" &&
+                appointment.subscription?.subscriptionPlan?.title
+              ) {
+                title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
+                if (appointment.subscription.requestedBy?.user?.name) {
+                  title += ` for ${appointment.subscription.requestedBy.user.name}`;
+                }
+              }
 
-             return {
-                 startTime: new Date(slot.slotStartTimeInUTC),
-                 endTime: new Date(slot.slotEndTimeInUTC),
-                 isAvailable: false,
-                 isBooked: true,
-                 appointmentDetails: {
-                     id: appointment.id,
-                     type: appointment.appointmentType,
-                     title: title,
-                 },
-             };
-         });
-       })
-       .filter(slot => slot.startTime < endOfView && slot.endTime > startOfView);
+              return {
+                startTime: new Date(slot.slotStartTimeInUTC),
+                endTime: new Date(slot.slotEndTimeInUTC),
+                isAvailable: false,
+                isBooked: true,
+                appointmentDetails: {
+                  id: appointment.id,
+                  type: appointment.appointmentType,
+                  title: title,
+                },
+              };
+            },
+          );
+        })
+        .filter(
+          (slot) => slot.startTime < endOfView && slot.endTime > startOfView,
+        );
 
-    return { availableSlots: currentAvailableSlots, existingAppointments: currentExistingAppointments };
-  }, [consultantDetails, rawAvailabilitySlots, allAppointmentsRawData, currentDate, view]);
+    return {
+      availableSlots: currentAvailableSlots,
+      existingAppointments: currentExistingAppointments,
+    };
+  }, [
+    consultantDetails,
+    rawAvailabilitySlots,
+    allAppointmentsRawData,
+    currentDate,
+    view,
+  ]);
 
   const availableSlots = currentViewSlots.availableSlots;
   const existingAppointments = currentViewSlots.existingAppointments;
   const scheduleType = consultantDetails?.scheduleType;
 
-  const handleSlotSelect = (interval: { hour: number; minute: number }, date: Date) => {
-    const status = getSlotStatus(interval, date, availableSlots, existingAppointments);
+  const handleSlotSelect = (
+    interval: { hour: number; minute: number },
+    date: Date,
+  ) => {
+    const status = getSlotStatus(
+      interval,
+      date,
+      availableSlots,
+      existingAppointments,
+    );
 
     if (status.isDisabled) return;
 
@@ -396,13 +487,13 @@ export function EventTimingsCalendar({
     };
 
     const isSelected = selectedSlots.some(
-      (slot) => slot.startTime.toISOString() === slotUTCTimestamp
+      (slot) => slot.startTime.toISOString() === slotUTCTimestamp,
     );
 
     if (isSelected) {
       setSelectedSlots(
         selectedSlots.filter(
-          (slot) => slot.startTime.toISOString() !== slotUTCTimestamp
+          (slot) => slot.startTime.toISOString() !== slotUTCTimestamp,
         ),
       );
     } else {
@@ -420,7 +511,11 @@ export function EventTimingsCalendar({
         });
         return;
       }
-      setSelectedSlots([...selectedSlots, newSlot].sort((a, b) => a.startTime.getTime() - b.startTime.getTime()));
+      setSelectedSlots(
+        [...selectedSlots, newSlot].sort(
+          (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+        ),
+      );
     }
   };
 
@@ -532,16 +627,27 @@ export function EventTimingsCalendar({
   };
 
   // Updated to handle 30-minute intervals and add Tooltip
-  const renderTimeCell = (interval: { hour: number; minute: number }, date: Date) => {
-    const status = getSlotStatus(interval, date, availableSlots, existingAppointments);
+  const renderTimeCell = (
+    interval: { hour: number; minute: number },
+    date: Date,
+  ) => {
+    const status = getSlotStatus(
+      interval,
+      date,
+      availableSlots,
+      existingAppointments,
+    );
     const slotUTCTimestamp = status.intervalStartUTCString;
     const isCurrentlySelected = selectedSlots.some(
-      (slot) => slot.startTime.toISOString() === slotUTCTimestamp
+      (slot) => slot.startTime.toISOString() === slotUTCTimestamp,
     );
 
     // Log status for debugging
     if (status.isBooked) {
-        console.log(`Slot Status [${format(date, 'yyyy-MM-dd')} ${interval.hour}:${interval.minute}]`, status);
+      console.log(
+        `Slot Status [${format(date, "yyyy-MM-dd")} ${interval.hour}:${interval.minute}]`,
+        status,
+      );
     }
 
     let cellClassName = `h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5`;
@@ -550,25 +656,32 @@ export function EventTimingsCalendar({
     const showTooltip = status.isBooked;
 
     if (isCurrentlySelected) {
-      cellClassName += " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
+      cellClassName +=
+        " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
       buttonText = "Selected";
-    } else if (status.isBookedForDisplay) { // Fully booked takes priority
+    } else if (status.isBookedForDisplay) {
+      // Fully booked takes priority
       cellClassName += " bg-slate-400 text-slate-800 cursor-not-allowed";
       buttonText = "Booked";
-    } else if (status.isPartiallyBooked) { // Partially booked (available but overlapped)
+    } else if (status.isPartiallyBooked) {
+      // Partially booked (available but overlapped)
       cellClassName += " bg-yellow-400 text-yellow-900 cursor-not-allowed";
       buttonText = "Partially Booked";
-    } else if (status.isAvailable) { // Available and not booked at all
+    } else if (status.isAvailable) {
+      // Available and not booked at all
       if (status.isInPast) {
-        cellClassName += " bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
+        cellClassName +=
+          " bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
         buttonText = "Available";
       } else {
-        cellClassName += " bg-green-300 text-green-950 hover:bg-green-400 border-green-400";
+        cellClassName +=
+          " bg-green-300 text-green-950 hover:bg-green-400 border-green-400";
         buttonText = "Available";
       }
     } else {
       if (status.isInPast) {
-        cellClassName += " bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
+        cellClassName +=
+          " bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
       } else {
         cellClassName += " bg-slate-200 cursor-not-allowed";
       }
@@ -587,46 +700,59 @@ export function EventTimingsCalendar({
     );
 
     if (showTooltip && status.overlappingAppointments.length > 0) {
-        // Button inside tooltip trigger should not be disabled itself for hover to work
-        const tooltipButtonElement = (
-            <Button
-                key={slotUTCTimestamp}
-                variant={"ghost"}
-                className={cellClassName}
-                // The click handler still respects the original logic
-                onClick={() => handleSlotSelect(interval, date)}
-                // Explicitly NOT disabled here; parent TooltipTrigger handles interaction
-                disabled={false}
-              >
-                {buttonText}
-              </Button>
-        );
+      // Button inside tooltip trigger should not be disabled itself for hover to work
+      const tooltipButtonElement = (
+        <Button
+          key={slotUTCTimestamp}
+          variant={"ghost"}
+          className={cellClassName}
+          // The click handler still respects the original logic
+          onClick={() => handleSlotSelect(interval, date)}
+          // Explicitly NOT disabled here; parent TooltipTrigger handles interaction
+          disabled={false}
+        >
+          {buttonText}
+        </Button>
+      );
 
-        return (
-            <TooltipProvider delayDuration={200}>
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        {/* Use the non-disabled button version for the trigger */}
-                        {tooltipButtonElement}
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-xs text-xs" side="top" align="center">
-                        <div className="flex flex-col gap-1">
-                            {status.overlappingAppointments.map((appSlot) => (
-                                <div key={appSlot.appointmentDetails?.id + appSlot.startTime.toISOString()} className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0">
-                                    <p className="font-semibold">{appSlot.appointmentDetails?.title || "Booked Slot"}</p>
-                                    <p className="text-muted-foreground">
-                                        {appSlot.appointmentDetails?.type}
-                                    </p>
-                                    <p className="text-muted-foreground">
-                                        {format(appSlot.startTime, "HH:mm")} - {format(appSlot.endTime, "HH:mm")}
-                                    </p>
-                                </div>
-                            ))}
-                        </div>
-                    </TooltipContent>
-                </Tooltip>
-            </TooltipProvider>
-        );
+      return (
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              {/* Use the non-disabled button version for the trigger */}
+              {tooltipButtonElement}
+            </TooltipTrigger>
+            <TooltipContent
+              className="max-w-xs text-xs"
+              side="top"
+              align="center"
+            >
+              <div className="flex flex-col gap-1">
+                {status.overlappingAppointments.map((appSlot) => (
+                  <div
+                    key={
+                      appSlot.appointmentDetails?.id +
+                      appSlot.startTime.toISOString()
+                    }
+                    className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0"
+                  >
+                    <p className="font-semibold">
+                      {appSlot.appointmentDetails?.title || "Booked Slot"}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {appSlot.appointmentDetails?.type}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {format(appSlot.startTime, "HH:mm")} -{" "}
+                      {format(appSlot.endTime, "HH:mm")}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      );
     }
 
     // Render original button (with potential disabled state) if not showing tooltip
@@ -655,7 +781,8 @@ export function EventTimingsCalendar({
           <DialogHeader>
             <DialogTitle>Error Loading Data</DialogTitle>
             <DialogDescription>
-              Could not load consultant or availability data. Please try again later.
+              Could not load consultant or availability data. Please try again
+              later.
             </DialogDescription>
           </DialogHeader>
         </DialogContent>
@@ -663,14 +790,20 @@ export function EventTimingsCalendar({
     );
   }
 
-  if (!loading && consultantDetails && scheduleType !== 'WEEKLY' && scheduleType !== 'CUSTOM') {
+  if (
+    !loading &&
+    consultantDetails &&
+    scheduleType !== "WEEKLY" &&
+    scheduleType !== "CUSTOM"
+  ) {
     return (
       <Dialog open={isOpen} onOpenChange={onClose}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>No Availability Found</DialogTitle>
             <DialogDescription>
-              No availability slots were found for this consultant. Please configure availability in settings.
+              No availability slots were found for this consultant. Please
+              configure availability in settings.
             </DialogDescription>
           </DialogHeader>
         </DialogContent>
@@ -678,7 +811,8 @@ export function EventTimingsCalendar({
     );
   }
 
-  const requiredTotalSlots = eventType === "webinar" ? 1 : (callsPerWeek * 2 * 4 * durationInMonths);
+  const requiredTotalSlots =
+    eventType === "webinar" ? 1 : callsPerWeek * 2 * 4 * durationInMonths;
 
   const renderMonthView = () => {
     const year = currentDate.getFullYear();
@@ -694,13 +828,20 @@ export function EventTimingsCalendar({
       const dayEnd = new Date(date);
       dayEnd.setHours(23, 59, 59, 999);
 
-      const dayAvailableSlots = availableSlots.filter(slot =>
-        slot.startTime < dayEnd && slot.endTime > dayStart);
-      const dayExistingAppointments = existingAppointments.filter(slot =>
-        slot.startTime < dayEnd && slot.endTime > dayStart);
+      const dayAvailableSlots = availableSlots.filter(
+        (slot) => slot.startTime < dayEnd && slot.endTime > dayStart,
+      );
+      const dayExistingAppointments = existingAppointments.filter(
+        (slot) => slot.startTime < dayEnd && slot.endTime > dayStart,
+      );
 
       for (const interval of INTERVALS) {
-        const status = getSlotStatus(interval, date, dayAvailableSlots, dayExistingAppointments);
+        const status = getSlotStatus(
+          interval,
+          date,
+          dayAvailableSlots,
+          dayExistingAppointments,
+        );
         if (status.isAvailable && !status.isInPast) {
           count++;
         }
@@ -712,43 +853,69 @@ export function EventTimingsCalendar({
       <div className="grid grid-cols-7 gap-1 h-[600px] overflow-y-auto">
         {DAYS.map((day) => (
           <div key={day} className="text-center font-bold p-2">
-            {day.slice(0,3)}
+            {day.slice(0, 3)}
           </div>
         ))}
         {Array.from({ length: firstDayOfMonth }, (_, i) => (
-          <div key={`empty-start-${i}`} className="min-h-[100px] border bg-gray-50/50" />
+          <div
+            key={`empty-start-${i}`}
+            className="min-h-[100px] border bg-gray-50/50"
+          />
         ))}
-        {Array.from({ length: new Date(year, month + 1, 0).getDate() }, (_, i) => {
-          const date = new Date(year, month, i + 1);
-          const isCurrentDay = isSameDay(date, now);
-          const isPastDay = date < today;
-          const availableCount = isPastDay ? 0 : countAvailableSlotsForDay(date);
+        {Array.from(
+          { length: new Date(year, month + 1, 0).getDate() },
+          (_, i) => {
+            const date = new Date(year, month, i + 1);
+            const isCurrentDay = isSameDay(date, now);
+            const isPastDay = date < today;
+            const availableCount = isPastDay
+              ? 0
+              : countAvailableSlotsForDay(date);
 
-          return (
+            return (
+              <div
+                key={date.toISOString()}
+                className={`min-h-[100px] border p-1 flex flex-col ${isCurrentDay ? "ring-2 ring-primary" : ""} ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
+              >
+                <div
+                  className={`font-bold mb-1 text-xs ${isCurrentDay ? "text-primary" : ""} ${isPastDay ? "" : "text-gray-700"}`}
+                >
+                  {i + 1}
+                </div>
+                <div className="flex-grow flex items-center justify-center">
+                  {!isPastDay && availableCount > 0 && (
+                    <Badge variant="outline" className="text-[10px] p-1">
+                      {availableCount} slots
+                    </Badge>
+                  )}
+                  {!isPastDay && availableCount === 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      No Slots
+                    </span>
+                  )}
+                  {isPastDay && (
+                    <span className="text-xs text-muted-foreground"></span>
+                  )}
+                </div>
+              </div>
+            );
+          },
+        )}
+        {Array.from(
+          {
+            length:
+              (7 -
+                ((firstDayOfMonth + new Date(year, month + 1, 0).getDate()) %
+                  7)) %
+              7,
+          },
+          (_, i) => (
             <div
-              key={date.toISOString()}
-              className={`min-h-[100px] border p-1 flex flex-col ${isCurrentDay ? "ring-2 ring-primary" : ""} ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
-            >
-              <div className={`font-bold mb-1 text-xs ${isCurrentDay ? "text-primary" : ""} ${isPastDay ? "" : "text-gray-700"}`}>
-                {i + 1}
-              </div>
-              <div className="flex-grow flex items-center justify-center">
-                {!isPastDay && availableCount > 0 && (
-                  <Badge variant="outline" className="text-[10px] p-1">
-                    {availableCount} slots
-                  </Badge>
-                )}
-                {!isPastDay && availableCount === 0 && (
-                  <span className="text-xs text-muted-foreground">No Slots</span>
-                )}
-                {isPastDay && <span className="text-xs text-muted-foreground"></span>}
-              </div>
-            </div>
-          );
-        })}
-        {Array.from({ length: (7 - (firstDayOfMonth + new Date(year, month + 1, 0).getDate()) % 7) % 7 }, (_, i) => (
-          <div key={`empty-end-${i}`} className="min-h-[100px] border bg-gray-50/50" />
-        ))}
+              key={`empty-end-${i}`}
+              className="min-h-[100px] border bg-gray-50/50"
+            />
+          ),
+        )}
       </div>
     );
   };
@@ -789,10 +956,9 @@ export function EventTimingsCalendar({
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <div className="text-lg font-bold text-center min-w-[150px]">
-                {view === 'week'
+                {view === "week"
                   ? `${format(weekDates[0], "MMM d")} - ${format(weekDates[6], "MMM d, yyyy")}`
-                  : format(currentDate, "MMMM yyyy")
-                }
+                  : format(currentDate, "MMMM yyyy")}
               </div>
               <Button variant="outline" size="sm" onClick={navigateNext}>
                 <ChevronRight className="h-4 w-4" />
@@ -809,7 +975,9 @@ export function EventTimingsCalendar({
                   const isToday = isSameDay(date, new Date());
                   return (
                     <div key={DAYS[index]} className="text-center p-1 md:p-2">
-                      <div className={`font-bold text-xs md:text-base ${isToday ? "text-primary" : ""}`}>
+                      <div
+                        className={`font-bold text-xs md:text-base ${isToday ? "text-primary" : ""}`}
+                      >
                         {DAYS[index].slice(0, 3)}
                       </div>
                       <div className="text-xs md:text-sm text-muted-foreground">
@@ -821,16 +989,28 @@ export function EventTimingsCalendar({
               </div>
               <div className="flex-1 overflow-y-auto scrollbar-thin">
                 {INTERVALS.map((interval, i) => (
-                  <div key={`interval-row-${interval.hour}-${interval.minute}`} className="grid grid-cols-8 gap-0.5 md:gap-1">
+                  <div
+                    key={`interval-row-${interval.hour}-${interval.minute}`}
+                    className="grid grid-cols-8 gap-0.5 md:gap-1"
+                  >
                     <div className="w-14 md:w-20">
                       {/* Display time label for every interval */}
-                      { (
-                        <div className="h-8 text-right pr-2 pt-0.5 text-[10px] md:text-sm flex items-start justify-end" >
-                          {new Date(1970, 0, 1, interval.hour, interval.minute).toLocaleTimeString(
-                            [], { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: browserTimezone }
-                          )}
+                      {
+                        <div className="h-8 text-right pr-2 pt-0.5 text-[10px] md:text-sm flex items-start justify-end">
+                          {new Date(
+                            1970,
+                            0,
+                            1,
+                            interval.hour,
+                            interval.minute,
+                          ).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: false,
+                            timeZone: browserTimezone,
+                          })}
                         </div>
-                      )}
+                      }
                     </div>
                     {weekDates.map((date) => (
                       <div key={date.toISOString()} className="col-span-1">

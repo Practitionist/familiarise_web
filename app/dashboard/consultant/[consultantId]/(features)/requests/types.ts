@@ -51,7 +51,7 @@ export interface SubscriptionApiResponse {
   requestStatus: RequestStatus;
 }
 
-export interface AvailabilityApiResponse extends AppointmentSlot { }
+export interface AvailabilityApiResponse extends AppointmentSlot {}
 
 export interface ConsultantApiResponse {
   scheduleType?: ScheduleType;
@@ -62,7 +62,7 @@ export interface ConsultantApiResponse {
 
 // Interface used within the component
 export interface SlotInterval {
-    id: string;
-    slotStartTimeInUTC: string;
-    slotEndTimeInUTC: string;
-  }
+  id: string;
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
+}

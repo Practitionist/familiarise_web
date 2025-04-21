@@ -2,7 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import React, { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SlotInterval } from "../types";
 
 type TimingsCalendarProps = {
@@ -103,17 +103,16 @@ export function TimingsCalendar({
     const intervalStartDateUTC = new Date(intervalStartStringUTC);
     const intervalEndDateUTC = new Date(intervalEndStringUTC);
 
-
     // 3. Check status using the CORRECT UTC range for this cell
     const isWithinAvailability = isOverlapping(
-        intervalStartDateUTC,
-        intervalEndDateUTC,
-        availableSlots,
+      intervalStartDateUTC,
+      intervalEndDateUTC,
+      availableSlots,
     );
     const isBooked = isOverlapping(
-        intervalStartDateUTC,
-        intervalEndDateUTC,
-        existingAppointments,
+      intervalStartDateUTC,
+      intervalEndDateUTC,
+      existingAppointments,
     );
     // NEW: Check for partial booking
     const isPartiallyBooked = isWithinAvailability && isBooked;
@@ -126,33 +125,42 @@ export function TimingsCalendar({
     // Slot is disabled if it's booked (fully or partially), not available, or in the past
     const isDisabled = !isWithinAvailability || isBooked || isInPast;
 
-    let cellClassName = "h-8 w-full relative text-[10px] leading-tight px-1 py-0.5 transition-colors duration-150 ease-in-out border border-transparent rounded-sm ";
+    let cellClassName =
+      "h-8 w-full relative text-[10px] leading-tight px-1 py-0.5 transition-colors duration-150 ease-in-out border border-transparent rounded-sm ";
     let buttonText = "";
 
     if (isSelected) {
-        cellClassName += "bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
-        buttonText = "Selected";
-    } else if (isPartiallyBooked) { // Check partial first
-        cellClassName += "bg-yellow-400 text-yellow-900 cursor-not-allowed"; // Example: Yellow style
-        buttonText = "Partially Booked";
-    } else if (isBooked) { // Only fully booked (not available)
-        cellClassName += "bg-slate-400 text-slate-800 cursor-not-allowed";
-        buttonText = "Booked";
-    } else if (isWithinAvailability) { // Available and not booked/partially booked
-        if (isInPast) {
-            cellClassName += "bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
-             buttonText = "Available"; // Still show text but disabled
-        } else {
-            cellClassName += "bg-green-300 text-green-950 hover:bg-green-400 border-green-400";
-             buttonText = "Available";
-        }
-    } else { // Not within availability, not booked
-        if (isInPast) {
-             cellClassName += "bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
-        } else {
-             cellClassName += "bg-slate-300 cursor-not-allowed";
-        }
-        // buttonText remains ""
+      cellClassName +=
+        "bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
+      buttonText = "Selected";
+    } else if (isPartiallyBooked) {
+      // Check partial first
+      cellClassName += "bg-yellow-400 text-yellow-900 cursor-not-allowed"; // Example: Yellow style
+      buttonText = "Partially Booked";
+    } else if (isBooked) {
+      // Only fully booked (not available)
+      cellClassName += "bg-slate-400 text-slate-800 cursor-not-allowed";
+      buttonText = "Booked";
+    } else if (isWithinAvailability) {
+      // Available and not booked/partially booked
+      if (isInPast) {
+        cellClassName +=
+          "bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
+        buttonText = "Available"; // Still show text but disabled
+      } else {
+        cellClassName +=
+          "bg-green-300 text-green-950 hover:bg-green-400 border-green-400";
+        buttonText = "Available";
+      }
+    } else {
+      // Not within availability, not booked
+      if (isInPast) {
+        cellClassName +=
+          "bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
+      } else {
+        cellClassName += "bg-slate-300 cursor-not-allowed";
+      }
+      // buttonText remains ""
     }
 
     return (
@@ -191,21 +199,27 @@ export function TimingsCalendar({
         </div>
         <div className="flex-1 overflow-y-auto scrollbar-thin">
           {INTERVALS.map((interval, i) => (
-            <div key={`interval-row-${i}`} className="grid grid-cols-8 gap-0.5 md:gap-1">
+            <div
+              key={`interval-row-${i}`}
+              className="grid grid-cols-8 gap-0.5 md:gap-1"
+            >
               <div className="w-14 md:w-20">
                 <div
                   key={`time-label-${i}`}
-                  className="h-8 text-right pr-2 pt-0.5 text-[10px] md:text-sm flex items-start justify-end" 
+                  className="h-8 text-right pr-2 pt-0.5 text-[10px] md:text-sm flex items-start justify-end"
                 >
-                  {new Date(1970, 0, 1, interval.hour, interval.minute).toLocaleTimeString(
-                      [],
-                      {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        timeZone: browserTimezone,
-                        hour12: false,
-                      },
-                  )}
+                  {new Date(
+                    1970,
+                    0,
+                    1,
+                    interval.hour,
+                    interval.minute,
+                  ).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    timeZone: browserTimezone,
+                    hour12: false,
+                  })}
                 </div>
               </div>
               {weekViewDates.map((date) => (
@@ -225,49 +239,66 @@ export function TimingsCalendar({
     const month = currentDate.getMonth();
     const firstDayOfMonth = new Date(year, month, 1).getDay();
     const now = new Date();
-    const currentDayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const currentDayStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    );
 
     const countAvailableSlotsForDay = (date: Date): number => {
-       let count = 0;
-       const dayStart = new Date(date);
-       dayStart.setHours(0, 0, 0, 0);
-       const dayEnd = new Date(date);
-       dayEnd.setHours(23, 59, 59, 999);
+      let count = 0;
+      const dayStart = new Date(date);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(date);
+      dayEnd.setHours(23, 59, 59, 999);
 
-       const relevantAvailability = availableSlots.filter(slot => {
-          const slotStart = new Date(slot.slotStartTimeInUTC);
-          const slotEnd = new Date(slot.slotEndTimeInUTC);
-          return slotStart < dayEnd && slotEnd > dayStart;
-       });
-       const relevantAppointments = existingAppointments.filter(slot => {
-          const slotStart = new Date(slot.slotStartTimeInUTC);
-          const slotEnd = new Date(slot.slotEndTimeInUTC);
-          return slotStart < dayEnd && slotEnd > dayStart;
-       });
+      const relevantAvailability = availableSlots.filter((slot) => {
+        const slotStart = new Date(slot.slotStartTimeInUTC);
+        const slotEnd = new Date(slot.slotEndTimeInUTC);
+        return slotStart < dayEnd && slotEnd > dayStart;
+      });
+      const relevantAppointments = existingAppointments.filter((slot) => {
+        const slotStart = new Date(slot.slotStartTimeInUTC);
+        const slotEnd = new Date(slot.slotEndTimeInUTC);
+        return slotStart < dayEnd && slotEnd > dayStart;
+      });
 
-        for (const interval of INTERVALS) {
-            const intervalStartDateUTC = new Date(date);
-            intervalStartDateUTC.setUTCHours(interval.hour, interval.minute, 0, 0);
-            const intervalEndDateUTC = new Date(intervalStartDateUTC);
-            intervalEndDateUTC.setUTCMinutes(intervalStartDateUTC.getUTCMinutes() + 30);
+      for (const interval of INTERVALS) {
+        const intervalStartDateUTC = new Date(date);
+        intervalStartDateUTC.setUTCHours(interval.hour, interval.minute, 0, 0);
+        const intervalEndDateUTC = new Date(intervalStartDateUTC);
+        intervalEndDateUTC.setUTCMinutes(
+          intervalStartDateUTC.getUTCMinutes() + 30,
+        );
 
-            if (intervalEndDateUTC <= now) continue;
+        if (intervalEndDateUTC <= now) continue;
 
-            const isAvail = isOverlapping(intervalStartDateUTC, intervalEndDateUTC, relevantAvailability);
-            const isBooked = isOverlapping(intervalStartDateUTC, intervalEndDateUTC, relevantAppointments);
+        const isAvail = isOverlapping(
+          intervalStartDateUTC,
+          intervalEndDateUTC,
+          relevantAvailability,
+        );
+        const isBooked = isOverlapping(
+          intervalStartDateUTC,
+          intervalEndDateUTC,
+          relevantAppointments,
+        );
 
-            if (isAvail && !isBooked) {
-                count++;
-            }
+        if (isAvail && !isBooked) {
+          count++;
         }
-        return count;
+      }
+      return count;
     };
 
     return (
       <div className="grid grid-cols-7 gap-0.5 md:gap-1 h-[calc(100vh-20rem)] md:h-[65vh] max-h-[600px]">
         {DAYS.map((day) => (
-          <div key={day} className="text-center font-bold p-1 md:p-2 text-xs md:text-base">
-             {window.innerWidth < 768 ? day.slice(0, 1) : day}
+          <div
+            key={day}
+            className="text-center font-bold p-1 md:p-2 text-xs md:text-base"
+          >
+            {window.innerWidth < 768 ? day.slice(0, 1) : day}
           </div>
         ))}
         {Array.from({ length: firstDayOfMonth }, (_, i) => (
@@ -285,17 +316,19 @@ export function TimingsCalendar({
               className={`h-full min-h-[60px] md:min-h-[100px] ${isToday ? "ring-2 ring-primary" : ""} ${isPast ? "bg-gray-50" : ""}`}
             >
               <CardContent className="p-0.5 md:p-1 h-full flex flex-col">
-                <div className={`font-bold bg-background/95 backdrop-blur p-1 flex justify-between items-center text-xs md:text-sm ${isToday ? "text-primary" : ""}`}>
+                <div
+                  className={`font-bold bg-background/95 backdrop-blur p-1 flex justify-between items-center text-xs md:text-sm ${isToday ? "text-primary" : ""}`}
+                >
                   <span>{i + 1}</span>
                   {availableCount > 0 && !isPast && (
                     <Badge variant="outline" className="text-[10px] md:text-xs">
                       {availableCount} slots
                     </Badge>
                   )}
-                 </div>
-                 <div className="flex-1 text-center text-xs text-muted-foreground pt-2 md:pt-4">
-                   {isPast ? '' : availableCount === 0 ? 'No Slots' : ''}
-                 </div>
+                </div>
+                <div className="flex-1 text-center text-xs text-muted-foreground pt-2 md:pt-4">
+                  {isPast ? "" : availableCount === 0 ? "No Slots" : ""}
+                </div>
               </CardContent>
             </Card>
           );
@@ -307,21 +340,44 @@ export function TimingsCalendar({
   return (
     <div className="flex flex-col h-full max-w-[100vw] overflow-x-hidden">
       <div className="flex justify-between items-center mb-1 md:mb-4">
-        <Button variant="outline" size="sm" onClick={navigatePrevious} className="p-1 md:p-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={navigatePrevious}
+          className="p-1 md:p-2"
+        >
           <ChevronLeft className="h-3 w-3 md:h-4 md:w-4" />
         </Button>
         <div className="text-sm md:text-lg font-bold truncate px-2">
-          {currentDate.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+          {currentDate.toLocaleDateString("en-US", {
+            month: "long",
+            year: "numeric",
+          })}
         </div>
-        <Button variant="outline" size="sm" onClick={navigateNext} className="p-1 md:p-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={navigateNext}
+          className="p-1 md:p-2"
+        >
           <ChevronRight className="h-3 w-3 md:h-4 md:w-4" />
         </Button>
       </div>
       <div className="flex justify-end gap-1 md:gap-2 mb-1 md:mb-2">
-        <Button variant={view === "week" ? "default" : "outline"} size="sm" onClick={() => setView("week")} className="text-xs md:text-sm px-2 md:px-3">
+        <Button
+          variant={view === "week" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setView("week")}
+          className="text-xs md:text-sm px-2 md:px-3"
+        >
           Week
         </Button>
-        <Button variant={view === "month" ? "default" : "outline"} size="sm" onClick={() => setView("month")} className="text-xs md:text-sm px-2 md:px-3">
+        <Button
+          variant={view === "month" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setView("month")}
+          className="text-xs md:text-sm px-2 md:px-3"
+        >
           Month
         </Button>
       </div>

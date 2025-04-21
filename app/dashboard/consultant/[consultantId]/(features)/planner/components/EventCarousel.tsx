@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Users, Edit, Clock, Trash2 } from "lucide-react";
-import { EventTimingsCalendar } from "./EventTimingsCalendar"
+import { EventTimingsCalendar } from "./EventTimingsCalendar";
 import Link from "next/link";
 import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons";
 import { WebinarEvent, ClassEvent, Event } from "../types/event";
