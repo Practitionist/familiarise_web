@@ -546,9 +546,11 @@ export function EventTimingsCalendar({
       buttonText = "Selected";
     } else if (status.isBookedForDisplay) {
       cellClassName += " bg-slate-400 text-slate-800 cursor-not-allowed";
+      cellClassName += status.isInPast ? " opacity-50" : "";
       buttonText = "Booked";
     } else if (status.isPartiallyBooked) {
       cellClassName += " bg-yellow-400 text-yellow-900 cursor-not-allowed";
+      cellClassName += status.isInPast ? " opacity-50" : "";
       buttonText = "Partially Booked";
     } else if (status.isAvailable) {
       if (status.isInPast) {
