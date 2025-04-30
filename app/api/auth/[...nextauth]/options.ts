@@ -37,7 +37,11 @@ const authOptions: NextAuthOptions = {
     CredentialsProvider({
       name: "Credentials",
       credentials: {
-        email: { label: "Email", type: "email", placeholder: "jsmith@example.com" },
+        email: {
+          label: "Email",
+          type: "email",
+          placeholder: "jsmith@example.com",
+        },
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
@@ -55,7 +59,7 @@ const authOptions: NextAuthOptions = {
 
         const isValidPassword = await bcrypt.compare(
           credentials.password,
-          user.password
+          user.password,
         );
 
         if (!isValidPassword) {
@@ -228,7 +232,7 @@ const authOptions: NextAuthOptions = {
 
   // Add pages configuration
   pages: {
-    signIn: '/auth/signin',
+    signIn: "/auth/signin",
   },
 };
 

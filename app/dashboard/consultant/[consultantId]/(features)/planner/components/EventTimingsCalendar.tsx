@@ -430,7 +430,8 @@ export function EventTimingsCalendar({
       toast({
         variant: "destructive",
         title: "Invalid Selection",
-        description: "Please select exactly one 30-minute slot for the webinar.",
+        description:
+          "Please select exactly one 30-minute slot for the webinar.",
       });
       return;
     }
@@ -449,13 +450,16 @@ export function EventTimingsCalendar({
       setSaving(true);
 
       // Determine the correct endpoint and ID based on eventType
-      const endpoint = eventType === "webinar"
-        ? `/api/events/webinars/${eventId}/allocate`
-        : `/api/events/classes/${eventId}/allocate`;
+      const endpoint =
+        eventType === "webinar"
+          ? `/api/events/webinars/${eventId}/allocate`
+          : `/api/events/classes/${eventId}/allocate`;
 
       // Prepare the slots data in the expected format (array of ISO strings)
       const slotsPayload = selectedSlots.map((slot) =>
-        slot.startTime instanceof Date ? slot.startTime.toISOString() : slot.startTime
+        slot.startTime instanceof Date
+          ? slot.startTime.toISOString()
+          : slot.startTime,
       );
 
       // Make the PATCH request to the specific allocation endpoint
@@ -484,7 +488,8 @@ export function EventTimingsCalendar({
       toast({
         variant: "destructive",
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to save timings",
+        description:
+          error instanceof Error ? error.message : "Failed to save timings",
       });
     } finally {
       setSaving(false);

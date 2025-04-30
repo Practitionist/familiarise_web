@@ -1,7 +1,7 @@
-import nodemailer from 'nodemailer';
-import crypto from 'crypto';
-import prisma from '@/lib/prisma';
-import bcrypt from 'bcrypt';
+import nodemailer from "nodemailer";
+import crypto from "crypto";
+import prisma from "@/lib/prisma";
+import bcrypt from "bcrypt";
 
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_SERVER_HOST,
@@ -28,7 +28,7 @@ export const sendPasswordResetEmail = async (email: string) => {
   }
 
   // Generate a secure token
-  const resetToken = crypto.randomBytes(32).toString('hex');
+  const resetToken = crypto.randomBytes(32).toString("hex");
   const passwordResetToken = await bcrypt.hash(resetToken, 10); // Hash the token before storing
   const passwordResetExpires = new Date(Date.now() + 3600000); // Token expires in 1 hour
 
@@ -45,7 +45,7 @@ export const sendPasswordResetEmail = async (email: string) => {
   const mailOptions = {
     from: process.env.EMAIL_FROM,
     to: email,
-    subject: 'Reset Your ConsultX Password',
+    subject: "Reset Your ConsultX Password",
     html: `
         <p>You requested a password reset for your ConsultX account.</p>
         <p>Click the link below to reset your password. This link will expire in 1 hour.</p>
@@ -63,4 +63,4 @@ export const sendPasswordResetEmail = async (email: string) => {
     // Optionally, throw an error or return a status to the API route
     throw new Error("Could not send password reset email.");
   }
-}; 
+};

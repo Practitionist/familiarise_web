@@ -34,7 +34,10 @@ export default function SignIn() {
       if (result?.error) {
         toast({
           title: "Sign In Failed",
-          description: result.error === "CredentialsSignin" ? "Invalid email or password." : "An unexpected error occurred.",
+          description:
+            result.error === "CredentialsSignin"
+              ? "Invalid email or password."
+              : "An unexpected error occurred.",
           variant: "destructive",
         });
       } else if (result?.ok) {
@@ -44,23 +47,22 @@ export default function SignIn() {
         });
         router.push("/");
       } else {
-         toast({
+        toast({
           title: "Sign In Failed",
           description: "An unknown error occurred during sign in.",
           variant: "destructive",
         });
       }
     } catch (error) {
-        console.error("Sign in error:", error);
-        toast({
-          title: "Sign In Error",
-          description: "An unexpected error occurred. Please try again.",
-          variant: "destructive",
-        });
+      console.error("Sign in error:", error);
+      toast({
+        title: "Sign In Error",
+        description: "An unexpected error occurred. Please try again.",
+        variant: "destructive",
+      });
     } finally {
-        setIsLoading(false);
+      setIsLoading(false);
     }
-
   };
 
   return (
@@ -114,10 +116,13 @@ export default function SignIn() {
             </div>
             <div className="grid gap-2 mt-4">
               <div className="flex items-center justify-between">
-                 <Label htmlFor="password">Password</Label>
-                 <Link href="/auth/forgot-password" className="text-sm font-medium text-blue-400 hover:underline">
-                    Forgot password?
-                 </Link>
+                <Label htmlFor="password">Password</Label>
+                <Link
+                  href="/auth/forgot-password"
+                  className="text-sm font-medium text-blue-400 hover:underline"
+                >
+                  Forgot password?
+                </Link>
               </div>
               <Input
                 id="password"
@@ -190,14 +195,17 @@ export default function SignIn() {
           </Button>
           <p className="text-xs text-gray-400 mt-4 md:mt-6">
             Don't have an account?{" "}
-            <Link href="/auth/signup" className="font-medium text-blue-400 hover:underline">
-                Sign up
+            <Link
+              href="/auth/signup"
+              className="font-medium text-blue-400 hover:underline"
+            >
+              Sign up
             </Link>
           </p>
           <p className="text-xs text-gray-400 mt-2">
-             By clicking continue, you agree to our Terms of Service and Privacy
-             Policy.
-           </p>
+            By clicking continue, you agree to our Terms of Service and Privacy
+            Policy.
+          </p>
         </div>
         <div />
       </div>

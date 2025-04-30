@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import bcrypt from "bcrypt";
-import { UserRole } from '@prisma/client'; // Import UserRole enum
+import { UserRole } from "@prisma/client"; // Import UserRole enum
 
 export async function POST(req: Request) {
   try {
@@ -9,7 +9,9 @@ export async function POST(req: Request) {
     const { name, email, password } = body;
 
     if (!name || !email || !password) {
-      return new NextResponse("Missing name, email, or password", { status: 400 });
+      return new NextResponse("Missing name, email, or password", {
+        status: 400,
+      });
     }
 
     const exist = await prisma.user.findUnique({
@@ -35,11 +37,11 @@ export async function POST(req: Request) {
           create: {},
         },
         notificationPreferences: {
-            create: {},
+          create: {},
         },
         consulteeProfile: {
-            create: {}, // Automatically create a consultee profile
-        }
+          create: {}, // Automatically create a consultee profile
+        },
       },
       // Include related models if needed upon creation
       include: {
@@ -57,4 +59,4 @@ export async function POST(req: Request) {
     console.error("[REGISTER_POST] Error:", error);
     return new NextResponse("Internal Server Error", { status: 500 });
   }
-} 
+}

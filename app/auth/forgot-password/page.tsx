@@ -26,7 +26,8 @@ export default function ForgotPassword() {
       toast({ title: "Request Sent", description: response.data.message });
     } catch (error: any) {
       console.error("Forgot password error:", error);
-      const errorMessage = error.response?.data?.message || "An unexpected error occurred.";
+      const errorMessage =
+        error.response?.data?.message || "An unexpected error occurred.";
       setMessage(errorMessage); // Display error message as well
       toast({
         title: "Error Sending Request",
@@ -42,8 +43,23 @@ export default function ForgotPassword() {
     <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-950">
       <div className="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-md dark:bg-gray-900">
         <div className="text-center">
-            {/* Reusing GlobeIcon style from SignIn */}
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mx-auto h-12 w-auto text-gray-900 dark:text-gray-100"><circle cx="12" cy="12" r="10" /><line x1="2" x2="22" y1="12" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg>
+          {/* Reusing GlobeIcon style from SignIn */}
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="mx-auto h-12 w-auto text-gray-900 dark:text-gray-100"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <line x1="2" x2="22" y1="12" y2="12" />
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+          </svg>
           <h2 className="mt-6 text-3xl font-extrabold text-gray-900 dark:text-white">
             Forgot Your Password?
           </h2>
@@ -53,7 +69,9 @@ export default function ForgotPassword() {
         </div>
         <form className="space-y-6" onSubmit={handleRequestReset}>
           <div>
-            <Label htmlFor="email" className="sr-only">Email address</Label>
+            <Label htmlFor="email" className="sr-only">
+              Email address
+            </Label>
             <Input
               id="email"
               name="email"
@@ -69,7 +87,9 @@ export default function ForgotPassword() {
           </div>
 
           {message && (
-            <p className={`text-sm ${message.includes("Error") ? "text-red-600" : "text-green-600"} dark:text-gray-300`}>
+            <p
+              className={`text-sm ${message.includes("Error") ? "text-red-600" : "text-green-600"} dark:text-gray-300`}
+            >
               {message}
             </p>
           )}
@@ -84,12 +104,15 @@ export default function ForgotPassword() {
             </Button>
           </div>
         </form>
-         <div className="text-sm text-center">
-            <Link href="/auth/signin" className="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300">
-              Remembered your password? Sign in
-            </Link>
-          </div>
+        <div className="text-sm text-center">
+          <Link
+            href="/auth/signin"
+            className="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+          >
+            Remembered your password? Sign in
+          </Link>
+        </div>
       </div>
     </div>
   );
-} 
+}
