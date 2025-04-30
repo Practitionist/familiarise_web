@@ -5,12 +5,63 @@
  */
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 export default function SignIn() {
   const { toast } = useToast();
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleEmailSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    toast({ title: "Signing in..." });
+
+    try {
+      const result = await signIn("credentials", {
+        redirect: false,
+        email,
+        password,
+      });
+
+      if (result?.error) {
+        toast({
+          title: "Sign In Failed",
+          description: result.error === "CredentialsSignin" ? "Invalid email or password." : "An unexpected error occurred.",
+          variant: "destructive",
+        });
+      } else if (result?.ok) {
+        toast({
+          title: "Sign In Successful",
+          description: "Redirecting to dashboard...",
+        });
+        router.push("/");
+      } else {
+         toast({
+          title: "Sign In Failed",
+          description: "An unknown error occurred during sign in.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+        console.error("Sign in error:", error);
+        toast({
+          title: "Sign In Error",
+          description: "An unexpected error occurred. Please try again.",
+          variant: "destructive",
+        });
+    } finally {
+        setIsLoading(false);
+    }
+
+  };
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row h-full">
@@ -40,18 +91,51 @@ export default function SignIn() {
       <div className="flex-1 md:w-1/2 bg-gray-900 text-white p-6 md:p-12 flex flex-col justify-center mt-auto md:mt-0">
         <div className="flex flex-col p-4 md:p-20">
           <h2 className="text-2xl md:text-3xl font-semibold mb-4 md:mb-6">
-            Create an account
+            Sign in to your account
           </h2>
           <p className="text-sm md:text-base mb-4 md:mb-6">
-            Enter your email below to create your account
+            Enter your email and password below to sign in.
           </p>
-          <Input placeholder="name@example.com" />
-          <Button
-            className="w-full mt-4 bg-gray-800 hover:bg-gray-700
-          "
-          >
-            Sign In with Email
-          </Button>
+          <form onSubmit={handleEmailSignIn}>
+            <div className="grid gap-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                placeholder="name@example.com"
+                type="email"
+                autoCapitalize="none"
+                autoComplete="email"
+                autoCorrect="off"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                disabled={isLoading}
+              />
+            </div>
+            <div className="grid gap-2 mt-4">
+              <div className="flex items-center justify-between">
+                 <Label htmlFor="password">Password</Label>
+                 <Link href="/auth/forgot-password" className="text-sm font-medium text-blue-400 hover:underline">
+                    Forgot password?
+                 </Link>
+              </div>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                disabled={isLoading}
+              />
+            </div>
+            <Button
+              type="submit"
+              className="w-full mt-4 bg-gray-800 hover:bg-gray-700"
+              disabled={isLoading}
+            >
+              {isLoading ? "Signing In..." : "Sign In with Email"}
+            </Button>
+          </form>
           <div className="relative my-4 md:my-6">
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-gray-600" />
@@ -64,6 +148,7 @@ export default function SignIn() {
           </div>
           <Button
             className="w-full flex items-center justify-center bg-black hover:bg-gray-700"
+            disabled={isLoading}
             onClick={() => {
               signIn("github");
               toast({
@@ -77,6 +162,7 @@ export default function SignIn() {
           </Button>
           <Button
             className="w-full flex items-center justify-center mt-4 bg-red-600 hover:bg-red-500"
+            disabled={isLoading}
             onClick={() => {
               signIn("google");
               toast({
@@ -90,6 +176,7 @@ export default function SignIn() {
           </Button>
           <Button
             className="w-full flex items-center justify-center mt-4 bg-blue-600 hover:bg-blue-500"
+            disabled={isLoading}
             onClick={() => {
               signIn("facebook");
               toast({
@@ -102,9 +189,15 @@ export default function SignIn() {
             Facebook
           </Button>
           <p className="text-xs text-gray-400 mt-4 md:mt-6">
-            By clicking continue, you agree to our Terms of Service and Privacy
-            Policy.
+            Don't have an account?{" "}
+            <Link href="/auth/signup" className="font-medium text-blue-400 hover:underline">
+                Sign up
+            </Link>
           </p>
+          <p className="text-xs text-gray-400 mt-2">
+             By clicking continue, you agree to our Terms of Service and Privacy
+             Policy.
+           </p>
         </div>
         <div />
       </div>

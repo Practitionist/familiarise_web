@@ -19,6 +19,9 @@ model User {
   image               String?
   phone               String?   @unique
   address             String?
+  password            String?
+  passwordResetToken  String?   @unique
+  passwordResetExpires DateTime?
   onlineStatus        Boolean   @default(false)
   currentTimezone     String?
   onboardingCompleted Boolean?  @default(false)
