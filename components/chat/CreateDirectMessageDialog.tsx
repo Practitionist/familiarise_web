@@ -67,7 +67,7 @@ export const CreateDirectMessageDialog = ({
         try {
           console.log("No users found in Stream, trying API search");
           const apiResponse = await fetch(
-            `/api/user/search?term=${encodeURIComponent(searchTerm)}`,
+            `/api/stream/search?term=${encodeURIComponent(searchTerm)}`,
           );
 
           if (apiResponse.ok) {
