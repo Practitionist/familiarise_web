@@ -4,7 +4,10 @@ import {
   IAppointment,
   ISlotOfAppointment,
 } from "@/app/dashboard/consultant/[consultantId]/types";
-import prisma from "@/lib/prisma";
+import {
+  findDbMeetingSessionBySlot,
+  createDbMeetingSession,
+} from "@/actions/meeting.action";
 
 /**
  * Creates a new meeting (This function might need less usage now)
@@ -57,7 +60,9 @@ export const createMeeting = async (
 };
 
 /**
- * Gets or creates a meeting session for a specific appointment slot.
+ * Gets an existing meeting session ID from the DB or creates a new Stream call
+ * and corresponding DB session if one doesn't exist for the appointment slot.
+ * Uses server actions for DB operations.
  * @param client The Stream Video client
  * @param appointment The appointment details
  * @param slot The specific slot of the appointment
@@ -76,28 +81,34 @@ export const getOrCreateAppointmentMeeting = async (
   }
 
   try {
-    let meetingSession = await prisma.meetingSession.findUnique({
-      where: { slotOfAppointmentId: slot.id },
-    });
+    // 1. Try to find an existing meeting session via server action
+    const existingMeetingSession = await findDbMeetingSessionBySlot(slot.id);
 
     let streamCallId: string;
 
-    if (meetingSession) {
-      streamCallId = meetingSession.streamCallId;
+    if (existingMeetingSession) {
+      // 2a. Found existing session, use its Stream Call ID
+      streamCallId = existingMeetingSession.streamCallId;
       console.log(
-        `Found existing meeting session for slot ${slot.id}: ${streamCallId}`,
+        `Using existing meeting session for slot ${slot.id}: ${streamCallId}`,
       );
+      // Optional: Could potentially verify the call still exists on Stream side here if needed
+      // const call = client.call('default', streamCallId);
+      // await call.get(); // This would throw if the call doesn't exist
     } else {
+      // 2b. No existing session found, create a new one
       streamCallId = crypto.randomUUID();
       console.log(
-        `Creating new meeting session for slot ${slot.id}: ${streamCallId}`,
+        `Creating new Stream call and DB session for slot ${slot.id}: ${streamCallId}`,
       );
 
+      // 3. Create the Stream call
       const call: Call = client.call("default", streamCallId);
       const startsAt = slot.slotStartTimeInUTC
         ? new Date(slot.slotStartTimeInUTC).toISOString()
         : new Date().toISOString();
 
+      // Determine title and description based on appointment type
       let title = `Meeting for Appointment ${appointment.id}`;
       let description = `${appointment.appointmentType} Meeting`;
 
@@ -125,32 +136,26 @@ export const getOrCreateAppointmentMeeting = async (
           },
         },
       });
+      console.log(`Stream call ${streamCallId} created or retrieved.`);
 
-      meetingSession = await prisma.meetingSession.create({
-        data: {
-          streamCallId: streamCallId,
-          platform: "STREAM",
-          slotOfAppointment: {
-            connect: { id: slot.id },
-          },
-        },
-      });
-      console.log(
-        `Stored new meeting session ${meetingSession.id} in DB linking slot ${slot.id}.`,
-      );
+      // 4. Create the corresponding record in the database via server action
+      await createDbMeetingSession(slot, streamCallId);
+      // Log message is now inside createDbMeetingSession action
     }
 
+    // 5. Return the Stream Call ID (either existing or newly created)
     return streamCallId;
   } catch (error) {
     console.error(
-      `Error getting or creating meeting for slot ${slot.id}:`,
+      `Error in getOrCreateAppointmentMeeting for slot ${slot.id}:`,
       error,
     );
+    // Wrap the original error
     if (error instanceof Error) {
-      throw new Error(`Failed to get/create meeting: ${error.message}`);
+      throw new Error(`Failed to get/create meeting session: ${error.message}`);
     }
     throw new Error(
-      "An unknown error occurred while managing the meeting session.",
+      "An unknown error occurred while managing the appointment meeting session.",
     );
   }
 };
