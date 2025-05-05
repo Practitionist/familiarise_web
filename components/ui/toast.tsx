@@ -29,6 +29,7 @@ const toastVariants = cva(
   {
     variants: {
       variant: {
+        // Using Tailwind CSS colors
         default: "border bg-background text-foreground",
         destructive:
           "destructive group border-destructive bg-destructive text-destructive-foreground",
@@ -38,6 +39,9 @@ const toastVariants = cva(
           "warning group border-warning bg-warning text-warning-foreground",
         info: "info group border-info bg-info text-info-foreground",
         error: "error group border-error bg-error text-error-foreground",
+
+        // Using Tailwind CSS colors
+        // default: "border bg-background text-foreground bg-white",
       },
     },
     defaultVariants: {

@@ -44,6 +44,7 @@ export function AppointmentsTab({
       toast({
         title: "Error",
         description: "Slot information missing for this appointment item.",
+        variant: "error",
       });
       return;
     }
