@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { useState } from "react";
+import { initializeAllChannels } from "@/actions/channel.action";
 
 export const InitializeChannelsButton = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -11,32 +12,27 @@ export const InitializeChannelsButton = () => {
   const handleInitializeChannels = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch("/api/stream/initialize-channels", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
+      console.log("Initializing all channels via action...");
+      const result = await initializeAllChannels();
 
-      const data = await response.json();
-
-      if (data.success) {
+      if (result.success) {
         toast({
           title: "Channels initialized successfully",
-          description: `Created channels for ${data.result.counts.webinars} webinars, ${data.result.counts.classes} classes, ${data.result.counts.consultations} consultations, and ${data.result.counts.subscriptions} subscriptions.`,
+          description: `Created/checked channels for ${result.counts.webinars} webinars, ${result.counts.classes} classes, ${result.counts.consultations} consultations, and ${result.counts.subscriptions} subscriptions. Upserted ${result.counts.users} users.`,
         });
+        console.log("Initialize all channels result:", result);
       } else {
         toast({
           title: "Error initializing channels",
-          description: data.error || "An error occurred",
+          description: "An unexpected error occurred in the action.",
           variant: "destructive",
         });
       }
     } catch (error) {
-      console.error("Error initializing channels:", error);
+      console.error("Error initializing channels via action:", error);
       toast({
         title: "Error initializing channels",
-        description: (error as Error).message || "An error occurred",
+        description: (error as Error).message || "An unknown error occurred",
         variant: "destructive",
       });
     } finally {

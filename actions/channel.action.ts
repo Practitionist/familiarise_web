@@ -452,3 +452,52 @@ export async function initializeAllChannels() {
     },
   };
 }
+
+/**
+ * Adds a user to a specific channel.
+ * Ensures Stream keys are configured.
+ * @param channelId The ID of the channel to add the user to.
+ * @param userId The ID of the user to add.
+ */
+export async function addMemberToChannel(channelId: string, userId: string) {
+  if (!apiKey || !apiSecret) {
+    throw new Error("Stream API keys not configured");
+  }
+  if (!channelId || !userId) {
+    throw new Error("Channel ID and User ID are required");
+  }
+
+  const serverClient = StreamChat.getInstance(apiKey, apiSecret);
+
+  // OPTIMIZATION: No need to explicitly upsert user here.
+  // Stream's addMembers should handle user creation if needed.
+  // await upsertUserToStream(userId); // Removed this line
+
+  // TODO: Determine channel type dynamically if needed, assuming 'team' for now
+  // This might need adjustment if you add members to 'messaging' channels this way.
+  const channelType = "team";
+  console.log(
+    `Adding member ${userId} to ${channelType} channel ${channelId} via action`,
+  );
+
+  try {
+    const channel = serverClient.channel(channelType, channelId);
+    // Ensure channel exists before adding members (optional but safer)
+    await channel.create(); // Creates if it doesn't exist, does nothing if it does
+
+    const response = await channel.addMembers([userId]);
+
+    console.log(
+      `Add members response for user ${userId} to channel ${channelId}:`,
+      response,
+    );
+    return { success: true, response };
+  } catch (error) {
+    console.error(
+      `Error adding member ${userId} to channel ${channelId} via action:`,
+      error,
+    );
+    // Rethrow the error so the calling component can handle it
+    throw error;
+  }
+}

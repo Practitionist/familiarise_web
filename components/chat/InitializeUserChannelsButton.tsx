@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { useState } from "react";
+import { syncUserEventChannels } from "@/actions/event-channel.action";
 
 interface InitializeUserChannelsButtonProps {
   userId: string;
@@ -43,38 +44,24 @@ export const InitializeUserChannelsButton = ({
     setIsLoading(true);
 
     try {
-      const response = await fetch("/api/stream/initialize-user-channels", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ userId }),
-      });
-
-      if (!response.ok) {
-        throw new Error(
-          `Failed to initialize channels: ${await response.text()}`,
-        );
-      }
-
-      const data = await response.json();
+      console.log(`Initializing channels for user via action: ${userId}`);
+      const result = await syncUserEventChannels(userId);
 
       toast({
         title: "Success",
-        description: "Channels initialized successfully",
+        description: "Channels synchronized successfully",
       });
 
-      console.log("Channels initialized:", data);
+      console.log("Channels synchronized result:", result);
 
-      // Call the onSuccess callback if provided
       if (onSuccess) {
         onSuccess();
       }
     } catch (error) {
-      console.error("Error initializing channels:", error);
+      console.error("Error initializing channels via action:", error);
       toast({
         title: "Error",
-        description: `Failed to initialize channels: ${(error as Error).message}`,
+        description: `Failed to synchronize channels: ${(error as Error).message}`,
         variant: "destructive",
       });
     } finally {

@@ -115,8 +115,9 @@ export const addUserToEventChannel = async (
         console.log(`Created channel for class ${eventId}`);
       }
     } else {
-      // Ensure the user is registered with Stream Chat
-      await upsertUserToStream(userId);
+      // OPTIMIZATION: Removed explicit upsert before adding members.
+      // Stream's channel.addMembers() should implicitly create the user if they don't exist.
+      // await upsertUserToStream(userId);
 
       // Get the channel
       const channel = client.channel("team", channelId);
