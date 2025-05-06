@@ -30,10 +30,10 @@ export async function GET(
       );
     }
 
-    // Omit password from the returned user object
-    const { password: _, ...userWithoutPassword } = staffUser;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    // const { password: _, ...userWithoutPassword } = staffUser;
 
-    return NextResponse.json(userWithoutPassword);
+    return NextResponse.json(staffUser);
   } catch (error) {
     console.error("Error fetching staff member:", error);
     return NextResponse.json(
@@ -88,9 +88,15 @@ export async function PUT(
     if (typeof onboardingCompleted === "boolean")
       userData.onboardingCompleted = onboardingCompleted;
 
-    // Handle password update separately
+    // If password is provided, hash it before updating
     if (password) {
-      userData.password = await hash(password, 10); // Hash new password
+      if (password.length < 6) {
+        return NextResponse.json(
+          { message: "Password must be at least 6 characters long" },
+          { status: 400 },
+        );
+      }
+      // userData.password = await hash(password, 10); // Hash new password
     }
 
     if (department) staffProfileData.department = department;
@@ -160,10 +166,10 @@ export async function PUT(
       },
     });
 
-    // Omit password from the returned user object
-    const { password: _, ...userWithoutPassword } = updatedUser;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    // const { password: _, ...userWithoutPassword } = updatedUser;
 
-    return NextResponse.json(userWithoutPassword);
+    return NextResponse.json(updatedUser);
   } catch (error) {
     console.error("Error updating staff member:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {

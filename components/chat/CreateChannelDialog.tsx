@@ -10,11 +10,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/components/ui/use-toast";
-import { PlusIcon } from "lucide-react";
-import { useState, useEffect } from "react";
-import { useChatContext } from "stream-chat-react";
-import { useEventsByUser } from "@/hooks/useEvents";
 import {
   Select,
   SelectContent,
@@ -22,7 +17,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { upsertUserToStream } from "@/actions/user.action";
+import { useToast } from "@/components/ui/use-toast";
+import { useEventsByUser } from "@/hooks/useEvents";
+import { PlusIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useChatContext } from "stream-chat-react";
 
 interface CreateChannelDialogProps {
   onChannelCreated?: () => void;

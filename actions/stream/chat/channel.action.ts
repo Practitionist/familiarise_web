@@ -2,6 +2,7 @@
 
 import { StreamChat } from "stream-chat";
 import prisma from "@/lib/prisma";
+import { upsertUsersToStream } from "./user.action";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 const apiSecret = process.env.STREAM_SECRET_KEY;
@@ -228,8 +229,6 @@ export async function createSubscriptionChannel(subscriptionId: string) {
     additionalData: { subscription_id: subscriptionId },
   });
 }
-
-import { upsertUsersToStream } from "./user.action";
 
 // Initialize channels for all existing webinars, classes, consultations, and subscriptions
 export async function initializeAllChannels() {

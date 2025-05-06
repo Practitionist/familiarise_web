@@ -1,4 +1,7 @@
-import { searchUsers, upsertUsersToStream } from "@/actions/user.action";
+import {
+  searchUsers,
+  upsertUsersToStream,
+} from "@/actions/stream/chat/user.action";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {

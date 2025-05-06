@@ -16,7 +16,6 @@ import { useToast } from "@/components/ui/use-toast";
 import { PlusIcon, SearchIcon } from "lucide-react";
 import { useState } from "react";
 import { useChatContext } from "stream-chat-react";
-import { upsertUserToStream } from "@/actions/user.action";
 
 type User = {
   id: string;

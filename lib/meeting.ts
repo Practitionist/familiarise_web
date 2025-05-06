@@ -1,13 +1,13 @@
-import { StreamVideoClient } from "@stream-io/video-react-sdk";
-import type { Call } from "@stream-io/video-react-sdk";
+import {
+  createDbMeetingSession,
+  findDbMeetingSessionBySlot,
+} from "@/actions/stream/meetings/meeting.action";
 import {
   IAppointment,
   ISlotOfAppointment,
 } from "@/app/dashboard/consultant/[consultantId]/types";
-import {
-  findDbMeetingSessionBySlot,
-  createDbMeetingSession,
-} from "@/actions/meeting.action";
+import type { Call } from "@stream-io/video-react-sdk";
+import { StreamVideoClient } from "@stream-io/video-react-sdk";
 
 /**
  * Creates a new meeting (This function might need less usage now)

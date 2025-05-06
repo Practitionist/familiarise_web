@@ -1,9 +1,9 @@
 "use client";
 
+import { tokenProvider } from "@/actions/stream/chat/stream.action";
+import { useUserData } from "@/hooks/useUserData";
 import { StreamVideo, StreamVideoClient } from "@stream-io/video-react-sdk";
 import { useEffect, useState } from "react";
-import { useUserData } from "@/hooks/useUserData";
-import { tokenProvider } from "@/actions/stream.action";
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 
 const StreamVideoProvider = ({

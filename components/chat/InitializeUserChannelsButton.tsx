@@ -1,9 +1,9 @@
 "use client";
 
+import { syncUserEventChannels } from "@/actions/stream/chat/event-channel.action";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { useState } from "react";
-import { syncUserEventChannels } from "@/actions/event-channel.action";
 
 interface InitializeUserChannelsButtonProps {
   userId: string;

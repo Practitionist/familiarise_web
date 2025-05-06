@@ -1,6 +1,6 @@
 "use client";
 
-import { tokenProvider } from "@/actions/stream.action";
+import { tokenProvider } from "@/actions/stream/chat/stream.action";
 import { useUserData } from "@/hooks/useUserData";
 import { useEffect, useState } from "react";
 import { StreamChat } from "stream-chat";

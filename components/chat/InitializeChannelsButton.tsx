@@ -1,9 +1,9 @@
 "use client";
 
+import { initializeAllChannels } from "@/actions/stream/chat/channel.action";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { useState } from "react";
-import { initializeAllChannels } from "@/actions/channel.action";
 
 export const InitializeChannelsButton = () => {
   const [isLoading, setIsLoading] = useState(false);
