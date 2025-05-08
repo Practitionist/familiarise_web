@@ -13,11 +13,21 @@ import {
 } from "@/types/appointment";
 import { User } from "@prisma/client";
 
+// Helper to get the base URL, preferring VERCEL_URL if available
+const getBaseUrl = () => {
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  // Fallback for local development
+  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+};
+
 export async function fetchConsultantData(
   consultantId: string,
 ): Promise<TConsultantProfile> {
+  const baseUrl = getBaseUrl();
   try {
-    const response = await fetch(`/api/user/consultants/${consultantId}`);
+    const response = await fetch(
+      `${baseUrl}/api/user/consultants/${consultantId}`,
+    );
     if (!response.ok) {
       throw new Error(
         `Failed to fetch consultant data: ${response.statusText}`,
@@ -34,9 +44,10 @@ export async function fetchConsultantData(
 export async function fetchAppointments(
   consultantId: string,
 ): Promise<IAppointment[]> {
+  const baseUrl = getBaseUrl();
   try {
     const response = await fetch(
-      `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
+      `${baseUrl}/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
     );
     if (!response.ok) {
       throw new Error(`Failed to fetch appointments: ${response.statusText}`);
@@ -151,14 +162,15 @@ export async function fetchAppointments(
 export async function fetchApprovals(
   consultantId: string,
 ): Promise<IApproval[]> {
+  const baseUrl = getBaseUrl();
   try {
     // Fetch both consultations and subscriptions
     const [consultationsRes, subscriptionsRes] = await Promise.all([
       fetch(
-        `/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
+        `${baseUrl}/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
       ),
       fetch(
-        `/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
+        `${baseUrl}/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
       ),
     ]);
 

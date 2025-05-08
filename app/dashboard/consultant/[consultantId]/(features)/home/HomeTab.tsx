@@ -24,22 +24,23 @@ import {
   sortAppointmentsByStartTime,
 } from "../../utils/appointmentHelpers";
 
-import { IActivity, IAppointment, IApproval } from "../../types";
+import { IActivity, IAppointment, IApproval, BADGE_STYLES } from "../../types";
 import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationTabMini";
+
+// Define the type for the badge styles object if not already defined/imported
+type BadgeStyleMap = typeof BADGE_STYLES; // Use typeof if BADGE_STYLES is an object constant
 
 interface HomeTabProps {
   appointments: IAppointment[];
   activities: IActivity[];
   approvals: IApproval[];
-  getBadgeStyle: (status: string) => string;
-  onUpdate: () => void;
+  badgeStyles: BadgeStyleMap; // Accept the data object
 }
 
 export function HomeTab({
   appointments,
   activities,
-  getBadgeStyle,
-  onUpdate,
+  badgeStyles, // Destructure the new prop
 }: Readonly<HomeTabProps>) {
   const router = useRouter();
   const client = useStreamVideoClient();
@@ -76,9 +77,11 @@ export function HomeTab({
       });
     }
   };
-  if (!getBadgeStyle) {
-    throw new Error("getBadgeStyle is required for HomeTab");
-  }
+
+  // Internal function to get style using the passed object
+  const getBadgeStyleFromData = (status: string): string => {
+    return badgeStyles[status] || badgeStyles.default;
+  };
 
   // Expand appointments into individual slots
   const expandedAppointments = (appointments || []).flatMap((appointment) => {
@@ -165,7 +168,7 @@ export function HomeTab({
                       <div className="mt-2 flex items-center justify-between">
                         <Badge
                           variant="secondary"
-                          className={getBadgeStyle(status)}
+                          className={getBadgeStyleFromData(status)}
                         >
                           {status}
                         </Badge>
@@ -240,7 +243,7 @@ export function HomeTab({
                             </div>
                             <Badge
                               variant="secondary"
-                              className={getBadgeStyle(groupStatus)}
+                              className={getBadgeStyleFromData(groupStatus)}
                             >
                               {groupStatus}
                             </Badge>
@@ -297,7 +300,7 @@ export function HomeTab({
                               <div className="flex items-center space-x-2">
                                 <Badge
                                   variant="secondary"
-                                  className={getBadgeStyle(status)}
+                                  className={getBadgeStyleFromData(status)}
                                 >
                                   {status}
                                 </Badge>

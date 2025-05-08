@@ -1,59 +1,22 @@
 "use client";
 
-// import { DebugButton } from "@/components/chat/DebugButton";
-// import { InitializeChannelsButton } from "@/components/chat/InitializeChannelsButton";
 import { initializeAllChannels } from "@/actions/stream/chat/channel.action";
 import { ChatLayout } from "@/components/chat/ChatLayout";
 import { useToast } from "@/components/ui/use-toast";
-import { fetchConsultantDetails } from "@/lib/user";
 import StreamChatProvider from "@/providers/StreamChatProvider";
-import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
-export function ChatsTab() {
-  const { consultantId } = useParams();
-  const [userId, setUserId] = useState<string | null>(null);
-  const [userRole, setUserRole] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+// Define props expected from the Server Component
+interface ChatsTabProps {
+  userId: string;
+  userRole: string | null;
+}
+
+export function ChatsTab({ userId, userRole }: Readonly<ChatsTabProps>) {
+  // consultantId might not be needed here anymore if initialization logic changes
+  // const { consultantId } = useParams(); // Keep if still needed for other logic
   const [initializing, setInitializing] = useState(false);
   const { toast } = useToast();
-
-  useEffect(() => {
-    const fetchUserId = async () => {
-      try {
-        const consultantDetails = await fetchConsultantDetails(
-          consultantId as string,
-        );
-
-        // Check if user property exists before accessing its properties
-        if (consultantDetails?.user) {
-          setUserId(consultantDetails.user.id);
-          setUserRole(consultantDetails.user.role);
-        } else {
-          console.error("User property missing in consultant details");
-          toast({
-            title: "Error",
-            description:
-              "Failed to get user information. Please try again later.",
-            variant: "destructive",
-          });
-        }
-      } catch (error) {
-        console.error("Error fetching consultant details:", error);
-        toast({
-          title: "Error",
-          description: "Failed to load user data. Please try again later.",
-          variant: "destructive",
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (consultantId) {
-      fetchUserId();
-    }
-  }, [consultantId]);
 
   // Auto-initialize channels when the component loads
   useEffect(() => {
@@ -90,14 +53,6 @@ export function ChatsTab() {
       autoInitializeChannels();
     }
   }, [userId, userRole, toast]);
-
-  if (loading || !userId) {
-    return (
-      <div className="flex h-full w-full items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col h-full w-full">

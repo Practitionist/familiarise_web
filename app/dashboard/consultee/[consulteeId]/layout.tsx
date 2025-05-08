@@ -8,6 +8,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { use, useEffect, useState } from "react";
 import { UserProvider } from "./UserContext";
+import { getEffectiveUserId } from "@/utils/auth";
 
 // Navigation configuration
 const NAV_ITEMS = [
@@ -103,14 +104,12 @@ function useConsulteeData(consulteeId: string) {
       try {
         setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
-        const userId =
-          process.env.NODE_ENV === "test" ||
-          process.env.NODE_ENV === "development"
-            ? process.env.NEXT_PUBLIC_TEST_USERID
-            : session?.user?.id;
-
+        const userId = getEffectiveUserId(session);
         if (!userId) {
-          throw new Error("User not authenticated");
+          console.log("User not authenticated or user ID could not be determined.");
+          throw new Error(
+            "User not authenticated or user ID could not be determined.",
+          );
         }
 
         const [userData, consulteeData] = await Promise.all([

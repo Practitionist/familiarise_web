@@ -1,15 +1,6 @@
-"use client";
-
-import { use } from "react";
 import { HelpTab } from "./HelpTab";
+import { faqs } from "./questions"; // Import the FAQ data
 
-export default function HelpPage({
-  params,
-}: Readonly<{
-  params: Promise<{ consultantId: string }>;
-}>) {
-  const resolvedParams = use(params);
-  const consultantId = resolvedParams.consultantId;
-
-  return <HelpTab />;
+export default function HelpPage() { 
+  return <HelpTab faqs={faqs} />;
 }
