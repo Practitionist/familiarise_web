@@ -1,16 +1,16 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { hash } from "bcryptjs"; // For password updates
 import prisma from "@/lib/prisma"; // Use central instance
 import { Prisma } from "@prisma/client";
+import { NextResponse, type NextRequest } from "next/server";
 
 // GET /api/user/staff/{id} - Fetch a single staff member by ID
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const id = params.id;
-
   try {
+    const resolvedParams = await params;
+    const id = resolvedParams.id;
+
     const staffUser = await prisma.user.findUnique({
       where: {
         id,
@@ -46,11 +46,12 @@ export async function GET(
 // PUT /api/user/staff/{id} - Update a staff member by ID
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const id = params.id;
-
   try {
+    const resolvedParams = await params;
+    const id = resolvedParams.id;
+
     const body = await request.json();
     const {
       email,
@@ -198,11 +199,12 @@ export async function PUT(
 // DELETE /api/user/staff/{id} - Delete a staff member by ID
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const id = params.id;
-
   try {
+    const resolvedParams = await params;
+    const id = resolvedParams.id;
+
     await prisma.user.delete({
       where: {
         id,

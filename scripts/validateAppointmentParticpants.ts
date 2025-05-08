@@ -1,5 +1,5 @@
-import { TAppointment } from "../../types/appointment";
-import prisma from "../../lib/prisma";
+import { TAppointment } from "@/types/appointment";
+import prisma from "@/lib/prisma";
 
 export const validateAppointmentParticipants = async (
   appointment: TAppointment,
