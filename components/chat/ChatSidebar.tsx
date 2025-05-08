@@ -382,6 +382,7 @@ export const ChatSidebar = () => {
         <InitializeUserChannelsButton
           userId={client?.userID || ""}
           className="w-full"
+          onSuccess={handleRefresh}
         />
       </div>
     </div>

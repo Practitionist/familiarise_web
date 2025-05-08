@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import { mapRoleToStream } from "@/lib/user";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
-const apiSecret = process.env.STREAM_SECRET_KEY;
+const apiSecret = process.env.STREAM_API_SECRET;
 
 /**
  * Upserts a user to Stream Chat
@@ -45,9 +45,9 @@ export const upsertUserToStream = async (userId: string) => {
     // Upsert the user to Stream Chat
     const streamUser = await client.upsertUser({
       id: user.id,
-      name: user.name || user.id,
+      name: user.name ?? user.id,
       email: user.email,
-      image: user.image || undefined,
+      image: user.image ?? undefined,
       role: streamRole,
     });
 
@@ -99,9 +99,9 @@ export const upsertUsersToStream = async (userIds: string[]) => {
 
       return {
         id: user.id,
-        name: user.name || user.id,
+        name: user.name ?? user.id,
         email: user.email,
-        image: user.image || undefined,
+        image: user.image ?? undefined,
         role: streamRole,
       };
     });
@@ -117,19 +117,38 @@ export const upsertUsersToStream = async (userIds: string[]) => {
 };
 
 /**
- * Searches for users in the database
- * @param searchTerm The term to search for
- * @returns The users that match the search term
+ * Searches for users in the database, excluding known system/bot patterns.
+ * @param searchTerm The term to search for (name or email).
+ * @returns The users that match the search term.
  */
 export const searchUsers = async (searchTerm: string) => {
   try {
-    // Search for users by name or email
+    if (!searchTerm.trim()) {
+      return [];
+    }
+    console.log(`Searching DB for users with term: ${searchTerm}`);
     const users = await prisma.user.findMany({
       where: {
-        OR: [
-          { name: { contains: searchTerm, mode: "insensitive" } },
-          { email: { contains: searchTerm, mode: "insensitive" } },
-          { id: { contains: searchTerm, mode: "insensitive" } },
+        AND: [
+          {
+            // Exclude users whose IDs start with common system prefixes
+            // or have a specific role indicating they are not regular users.
+            // Adjust these conditions based on your data model and needs.
+            NOT: [
+              { id: { startsWith: "recording-egress-" } },
+              { id: { startsWith: "system-" } },
+              // Example: { role: "BOT" }, // If you have a 'role' field in your Prisma User model
+              // Example: { email: { endsWith: "@system.internal" } } // If system users have specific email patterns
+            ],
+          },
+          {
+            OR: [
+              { name: { contains: searchTerm, mode: "insensitive" } },
+              { email: { contains: searchTerm, mode: "insensitive" } },
+              // Avoid broad ID contains search for user-facing DM search to prevent irrelevant matches
+              // If specific ID search is needed, consider an exact match: { id: searchTerm }
+            ],
+          },
         ],
       },
       select: {
@@ -140,11 +159,13 @@ export const searchUsers = async (searchTerm: string) => {
         role: true,
       },
       take: 10,
+      orderBy: [{ name: "asc" }],
     });
-
+    console.log(`Found ${users.length} users in DB matching criteria.`);
     return users;
   } catch (error) {
-    console.error("Error searching users:", error);
+    console.error("Error searching users in DB:", error);
+    // Decide if to throw or return empty array for robustness in calling code
     throw error;
   }
 };

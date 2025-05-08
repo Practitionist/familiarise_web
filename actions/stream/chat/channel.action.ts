@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import { upsertUsersToStream } from "./user.action";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
-const apiSecret = process.env.STREAM_SECRET_KEY;
+const apiSecret = process.env.STREAM_API_SECRET;
 
 // Generic function to create a channel
 async function createChannel({

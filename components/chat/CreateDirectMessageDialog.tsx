@@ -48,69 +48,76 @@ export const CreateDirectMessageDialog = ({
       console.log("Searching for users with term:", searchTerm);
 
       // First try to search using Stream's built-in search
-      const response = await client.queryUsers(
+      const streamUserResponse = await client.queryUsers(
         {
-          $or: [
-            { name: { $autocomplete: searchTerm } },
-            { id: { $autocomplete: searchTerm } },
+          $and: [
+            { id: { $ne: client.userID || "" } }, // Exclude current user
+            // Add role-based exclusion if you have specific roles for system/bot users
+            // For example: { role: { $ne: "bot" } },
+            // { role: { $ne: "system_agent" } },
+            {
+              $or: [
+                { name: { $autocomplete: searchTerm } },
+                { id: { $autocomplete: searchTerm } }, // Standard autocomplete for ID
+              ],
+            },
           ],
-          id: { $ne: client.userID || "" }, // Exclude current user
         },
-        { id: 1 },
-        { limit: 10 },
+        { last_active: -1, name: 1 }, // Sort by last active, then by name
+        { limit: 20 }, // Fetch a bit more to allow for potential client-side filtering if needed
       );
 
-      console.log("Stream search results:", response.users);
+      // Client-side filter for unwanted patterns if Stream query is too broad
+      const filteredStreamUsers = streamUserResponse.users.filter(
+        (user) =>
+          !user.id.startsWith("recording-egress-") &&
+          !user.id.startsWith("system-"),
+        // Add other ID patterns to exclude if necessary
+      );
 
-      // If no results found, try to search using our API
-      if (response.users.length === 0) {
-        try {
-          console.log("No users found in Stream, trying API search");
-          const apiResponse = await fetch(
-            `/api/stream/search?term=${encodeURIComponent(searchTerm)}`,
-          );
+      console.log("Filtered Stream search results:", filteredStreamUsers);
 
-          if (apiResponse.ok) {
-            const data = await apiResponse.json();
-            console.log("API search results:", data.users);
-
-            if (data.users && data.users.length > 0) {
-              // The API already upserted these users
-              console.log("Users found via API search:", data.users.length);
-
-              setUsers(
-                data.users.map((user: any) => ({
-                  id: user.id,
-                  name: user.name || user.id,
-                  image: user.image,
-                })),
-              );
-            } else {
-              // No users found via API either
-              setUsers([]);
-            }
-          } else {
-            console.error("API search failed:", await apiResponse.text());
-            setUsers([]);
-          }
-        } catch (apiError) {
-          console.error("Error searching users via API:", apiError);
-          setUsers([]);
-          toast({
-            title: "Error",
-            description: "Failed to search users via API. Please try again.",
-            variant: "destructive",
-          });
-        }
-      } else {
-        // Users found via Stream search
+      if (filteredStreamUsers.length > 0) {
         setUsers(
-          response.users.map((user) => ({
+          filteredStreamUsers.map((user) => ({
             id: user.id,
             name: user.name || user.id,
-            image: user.image,
+            image: user.image as string | undefined, // Cast image type
           })),
         );
+        // No need to call API if Stream search yielded results after filtering
+        setIsSearching(false);
+        return;
+      }
+
+      // If no results from Stream search (or after client-side filtering), try API search
+      console.log("No relevant users found in Stream, trying API search");
+      const apiResponse = await fetch(
+        `/api/stream/search?term=${encodeURIComponent(searchTerm)}`,
+      );
+
+      if (apiResponse.ok) {
+        const data = await apiResponse.json();
+        console.log("API search results:", data.users);
+        if (data.users && data.users.length > 0) {
+          setUsers(
+            data.users.map((user: any) => ({
+              id: user.id,
+              name: user.name || user.id,
+              image: user.image,
+            })),
+          );
+        } else {
+          setUsers([]); // No users from API either
+        }
+      } else {
+        console.error("API search failed:", await apiResponse.text());
+        setUsers([]);
+        toast({
+          title: "Error",
+          description: "API user search failed.",
+          variant: "destructive",
+        });
       }
     } catch (error) {
       console.error("Error searching users:", error);
@@ -119,6 +126,7 @@ export const CreateDirectMessageDialog = ({
         description: "Failed to search users. Please try again.",
         variant: "destructive",
       });
+      setUsers([]); // Clear users on error
     } finally {
       setIsSearching(false);
     }

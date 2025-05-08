@@ -3,7 +3,7 @@ import { StreamChat } from "stream-chat";
 import prisma from "@/lib/prisma";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
-const apiSecret = process.env.STREAM_SECRET_KEY;
+const apiSecret = process.env.STREAM_API_SECRET;
 
 export async function GET(req: NextRequest) {
   try {
