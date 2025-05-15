@@ -106,7 +106,9 @@ function useConsulteeData(consulteeId: string) {
 
         const userId = getEffectiveUserId(session);
         if (!userId) {
-          console.log("User not authenticated or user ID could not be determined.");
+          console.log(
+            "User not authenticated or user ID could not be determined.",
+          );
           throw new Error(
             "User not authenticated or user ID could not be determined.",
           );

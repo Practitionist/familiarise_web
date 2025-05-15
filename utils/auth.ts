@@ -6,7 +6,10 @@ export function getEffectiveUserId(
 ): string | undefined {
   if (session?.user?.id) {
     return session.user.id;
-  } else if (process.env.NODE_ENV === "test" || process.env.NODE_ENV === "development") {
+  } else if (
+    process.env.NODE_ENV === "test" ||
+    process.env.NODE_ENV === "development"
+  ) {
     return process.env.NEXT_PUBLIC_TEST_USERID;
   }
   return undefined;

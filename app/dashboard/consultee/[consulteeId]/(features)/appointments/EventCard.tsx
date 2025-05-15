@@ -182,7 +182,7 @@ export function EventCard({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.1 }}
-      className={`group ${className || ''}`}
+      className={`group ${className || ""}`}
     >
       <Card
         onClick={handleClick}
@@ -191,7 +191,9 @@ export function EventCard({
         <CardHeader className="pb-2">
           <div className="flex items-start justify-between">
             <div>
-              <CardTitle className="text-lg font-semibold break-words">{title}</CardTitle>
+              <CardTitle className="text-lg font-semibold break-words">
+                {title}
+              </CardTitle>
               <div className="flex items-center mt-2">
                 <Avatar className="h-6 w-6 mr-2">
                   <AvatarImage
@@ -237,7 +239,10 @@ export function EventCard({
           <div className="flex flex-col space-y-2">
             {type === "Consultation" || type === "Webinar" ? (
               <div className="flex items-center justify-between">
-                <span data-testid="slot-time" className="text-sm text-gray-600 break-words">
+                <span
+                  data-testid="slot-time"
+                  className="text-sm text-gray-600 break-words"
+                >
                   {actualSlots && actualSlots.length > 0 ? (
                     <div className="bg-gray-50 p-2 rounded flex flex-col space-y-1">
                       <div className="text-sm font-medium text-gray-700 break-words">
@@ -292,7 +297,10 @@ export function EventCard({
               </Accordion>
             ) : (
               <div className="flex items-center justify-between">
-                <span data-testid="slot-time" className="text-sm text-gray-600 break-words">
+                <span
+                  data-testid="slot-time"
+                  className="text-sm text-gray-600 break-words"
+                >
                   {date}
                 </span>
               </div>

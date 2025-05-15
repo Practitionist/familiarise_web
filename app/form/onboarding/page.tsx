@@ -132,7 +132,9 @@ const MultiStepForm: React.FC = () => {
         }),
       );
 
-      const requestBody: Parameters<typeof updateOnboardingInformationAction>[1] = {
+      const requestBody: Parameters<
+        typeof updateOnboardingInformationAction
+      >[1] = {
         name: finalData.name,
         email: finalData.email,
         phone: finalData.phone,
@@ -148,16 +150,24 @@ const MultiStepForm: React.FC = () => {
                   specialization: finalData.specialization ?? "",
                   experience: finalData.experience ?? "",
                   domain: { connect: { id: finalData.domain!.id } },
-                  subDomains: finalData.subDomains?.filter(sd => sd.id !== undefined && sd.id !== null).length
+                  subDomains: finalData.subDomains?.filter(
+                    (sd) => sd.id !== undefined && sd.id !== null,
+                  ).length
                     ? {
-                        connect: finalData.subDomains.filter(sd => sd.id !== undefined && sd.id !== null).map((sd: SubDomain) => ({
-                          id: sd.id!,
-                        })),
+                        connect: finalData.subDomains
+                          .filter((sd) => sd.id !== undefined && sd.id !== null)
+                          .map((sd: SubDomain) => ({
+                            id: sd.id!,
+                          })),
                       }
                     : undefined,
-                  tags: finalData.tags?.filter(t => t.id !== undefined && t.id !== null).length
+                  tags: finalData.tags?.filter(
+                    (t) => t.id !== undefined && t.id !== null,
+                  ).length
                     ? {
-                        connect: finalData.tags.filter(t => t.id !== undefined && t.id !== null).map((t: Tag) => ({ id: t.id! })),
+                        connect: finalData.tags
+                          .filter((t) => t.id !== undefined && t.id !== null)
+                          .map((t: Tag) => ({ id: t.id! })),
                       }
                     : undefined,
                   scheduleType: finalData.scheduleType ?? "WEEKLY",
@@ -210,7 +220,10 @@ const MultiStepForm: React.FC = () => {
             : undefined,
       };
 
-      console.log("Request Body for Action:", JSON.stringify(requestBody, null, 2));
+      console.log(
+        "Request Body for Action:",
+        JSON.stringify(requestBody, null, 2),
+      );
       toast({
         title: "Updating Onboarding Information",
         description: "Please wait...",
@@ -220,7 +233,8 @@ const MultiStepForm: React.FC = () => {
       const result = await updateOnboardingInformationAction(id, requestBody);
 
       if (!result.success || !result.user) {
-        const errorMessage = result.error ?? "Failed to update onboarding information";
+        const errorMessage =
+          result.error ?? "Failed to update onboarding information";
 
         if (errorMessage.includes("User not found")) {
           toast({

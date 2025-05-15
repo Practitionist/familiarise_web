@@ -14,20 +14,24 @@ export default function DocumentsLoading() {
             <Skeleton className="h-5 flex-1 rounded" /> {/* Invoice No. */}
             <Skeleton className="h-5 flex-1 rounded" /> {/* Title */}
             <Skeleton className="h-5 flex-1 rounded" /> {/* Client Name */}
-            <Skeleton className="h-5 w-24 rounded" />   {/* Tag */}
-            <Skeleton className="h-5 w-32 rounded" />   {/* Action */}
+            <Skeleton className="h-5 w-24 rounded" /> {/* Tag */}
+            <Skeleton className="h-5 w-32 rounded" /> {/* Action */}
           </div>
 
           {/* Simulate TableBody with a few rows */}
           {[...Array(4)].map((_, i) => (
-            <div key={i} className="flex space-x-4 p-3 border-b last:border-b-0">
+            <div
+              key={i}
+              className="flex space-x-4 p-3 border-b last:border-b-0"
+            >
               <Skeleton className="h-5 flex-1 rounded" />
               <Skeleton className="h-5 flex-1 rounded" />
               <Skeleton className="h-5 flex-1 rounded" />
               <Skeleton className="h-6 w-20 rounded-md" /> {/* Badge */}
               <div className="flex space-x-2 w-32">
                 <Skeleton className="h-8 w-1/2 rounded" /> {/* Review Button */}
-                <Skeleton className="h-8 w-1/2 rounded" /> {/* Download Button */}
+                <Skeleton className="h-8 w-1/2 rounded" />{" "}
+                {/* Download Button */}
               </div>
             </div>
           ))}
@@ -35,4 +39,4 @@ export default function DocumentsLoading() {
       </div>
     </div>
   );
-} 
+}

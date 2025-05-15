@@ -21,8 +21,12 @@ const SlotWeeklyCreateInputSchema = z.object({
 });
 
 const SlotCustomCreateInputSchema = z.object({
-  slotStartTimeInUTC: z.string().datetime({ message: "Invalid start datetime string for custom slot" }),
-  slotEndTimeInUTC: z.string().datetime({ message: "Invalid end datetime string for custom slot" }),
+  slotStartTimeInUTC: z
+    .string()
+    .datetime({ message: "Invalid start datetime string for custom slot" }),
+  slotEndTimeInUTC: z
+    .string()
+    .datetime({ message: "Invalid end datetime string for custom slot" }),
 });
 
 const ConsultantProfileRelatedSubDomainsInputSchema = z.object({
@@ -44,24 +48,33 @@ const BaseConsultantProfileCreateInputSchema = z.object({
   domain: z.object({ connect: z.object({ id: z.string() }) }),
   subDomains: ConsultantProfileRelatedSubDomainsInputSchema.optional(),
   tags: ConsultantProfileRelatedTagsInputSchema.optional(),
-  slotsOfAvailabilityWeekly: z.object({ create: z.array(SlotWeeklyCreateInputSchema).optional() }).optional(),
-  slotsOfAvailabilityCustom: z.object({ create: z.array(SlotCustomCreateInputSchema).optional() }).optional(),
+  slotsOfAvailabilityWeekly: z
+    .object({ create: z.array(SlotWeeklyCreateInputSchema).optional() })
+    .optional(),
+  slotsOfAvailabilityCustom: z
+    .object({ create: z.array(SlotCustomCreateInputSchema).optional() })
+    .optional(),
 });
 // This is separate for the discriminated union to correctly infer types for .create
-const ConsultantProfileCreateObjectSchema = z.object({ create: BaseConsultantProfileCreateInputSchema });
-
+const ConsultantProfileCreateObjectSchema = z.object({
+  create: BaseConsultantProfileCreateInputSchema,
+});
 
 const BaseConsulteeProfileCreateInputSchema = z.object({
   education: z.string().optional(),
   occupation: z.string().optional(),
   aboutMe: z.string().optional(),
-  preferredCommunicationMethod: z.nativeEnum(ConsultationMode).default(ConsultationMode.VIDEO),
+  preferredCommunicationMethod: z
+    .nativeEnum(ConsultationMode)
+    .default(ConsultationMode.VIDEO),
   preferredLanguage: z.string().optional(),
   specialRequirements: z.string().optional(),
   interests: z.union([z.array(z.string()), z.string()]).optional(),
   goals: z.union([z.array(z.string()), z.string()]).optional(),
 });
-const ConsulteeProfileCreateObjectSchema = z.object({ create: BaseConsulteeProfileCreateInputSchema });
+const ConsulteeProfileCreateObjectSchema = z.object({
+  create: BaseConsulteeProfileCreateInputSchema,
+});
 
 const BaseStaffProfileCreateInputSchema = z.object({
   department: z.string().optional(),
@@ -69,7 +82,9 @@ const BaseStaffProfileCreateInputSchema = z.object({
   permissions: z.any().optional(),
   responsibilities: z.any().optional(),
 });
-const StaffProfileCreateObjectSchema = z.object({ create: BaseStaffProfileCreateInputSchema });
+const StaffProfileCreateObjectSchema = z.object({
+  create: BaseStaffProfileCreateInputSchema,
+});
 
 const OnboardingBaseSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -111,8 +126,12 @@ const OnboardingDataSchema = z.discriminatedUnion("role", [
 // #region TypeScript Types Inferred from Zod Schemas
 
 type OnboardingData = z.infer<typeof OnboardingDataSchema>;
-type ConsultantProfileCreateData = z.infer<typeof BaseConsultantProfileCreateInputSchema>;
-type ConsulteeProfileCreateData = z.infer<typeof BaseConsulteeProfileCreateInputSchema>;
+type ConsultantProfileCreateData = z.infer<
+  typeof BaseConsultantProfileCreateInputSchema
+>;
+type ConsulteeProfileCreateData = z.infer<
+  typeof BaseConsulteeProfileCreateInputSchema
+>;
 type StaffProfileCreateData = z.infer<typeof BaseStaffProfileCreateInputSchema>;
 
 // #endregion
@@ -131,7 +150,7 @@ async function getExistingUserForValidation(id: string) {
 async function updateConsultantProfileAndRelations(
   userId: string,
   profileData: ConsultantProfileCreateData,
-  tx: Prisma.TransactionClient
+  tx: Prisma.TransactionClient,
 ) {
   const scheduleTypeEnum = profileData.scheduleType;
   const domainId = profileData.domain.connect.id;
@@ -179,13 +198,12 @@ async function updateConsultantProfileAndRelations(
     });
     const weeklySlotsToCreate = profileData.slotsOfAvailabilityWeekly?.create;
     if (weeklySlotsToCreate && weeklySlotsToCreate.length > 0) {
-      const validWeeklySlots =
-        weeklySlotsToCreate.filter((slot) =>
-          isValidTimeRange(
-            slot.slotStartTimeInUTC.split("T")[1]?.slice(0, 5) || "",
-            slot.slotEndTimeInUTC.split("T")[1]?.slice(0, 5) || ""
-          )
-        );
+      const validWeeklySlots = weeklySlotsToCreate.filter((slot) =>
+        isValidTimeRange(
+          slot.slotStartTimeInUTC.split("T")[1]?.slice(0, 5) || "",
+          slot.slotEndTimeInUTC.split("T")[1]?.slice(0, 5) || "",
+        ),
+      );
       if (validWeeklySlots.length > 0) {
         await tx.slotOfAvailabilityWeekly.createMany({
           data: validWeeklySlots.map((slot) => ({
@@ -207,13 +225,12 @@ async function updateConsultantProfileAndRelations(
     });
     const customSlotsToCreate = profileData.slotsOfAvailabilityCustom?.create;
     if (customSlotsToCreate && customSlotsToCreate.length > 0) {
-      const validCustomSlots =
-        customSlotsToCreate.filter((slot) =>
-          isValidTimeRange(
-            new Date(slot.slotStartTimeInUTC).toTimeString().slice(0,5),
-            new Date(slot.slotEndTimeInUTC).toTimeString().slice(0,5)
-          )
-        );
+      const validCustomSlots = customSlotsToCreate.filter((slot) =>
+        isValidTimeRange(
+          new Date(slot.slotStartTimeInUTC).toTimeString().slice(0, 5),
+          new Date(slot.slotEndTimeInUTC).toTimeString().slice(0, 5),
+        ),
+      );
       if (validCustomSlots.length > 0) {
         await tx.slotOfAvailabilityCustom.createMany({
           data: validCustomSlots.map((slot) => ({
@@ -231,14 +248,14 @@ async function updateConsultantProfileAndRelations(
 async function updateConsulteeProfileAndRelations(
   userId: string,
   profileData: ConsulteeProfileCreateData,
-  tx: Prisma.TransactionClient
+  tx: Prisma.TransactionClient,
 ) {
   const interests = Array.isArray(profileData.interests)
     ? profileData.interests.join(", ")
-    : profileData.interests ?? "";
+    : (profileData.interests ?? "");
   const goals = Array.isArray(profileData.goals)
     ? profileData.goals.join(", ")
-    : profileData.goals ?? "";
+    : (profileData.goals ?? "");
 
   const consulteeProfile = await tx.consulteeProfile.upsert({
     where: { userId: userId },
@@ -270,7 +287,7 @@ async function updateConsulteeProfileAndRelations(
 async function updateStaffProfileAndRelations(
   userId: string,
   profileData: StaffProfileCreateData,
-  tx: Prisma.TransactionClient
+  tx: Prisma.TransactionClient,
 ) {
   const staffProfile = await tx.staffProfile.upsert({
     where: { userId: userId },
@@ -294,31 +311,37 @@ async function updateStaffProfileAndRelations(
 async function updateUserProfileAndGetFkData(
   userId: string,
   validatedBody: OnboardingData,
-  tx: Prisma.TransactionClient
-): Promise<{ consultantProfileId?: string; consulteeProfileId?: string; staffProfileId?: string }> {
+  tx: Prisma.TransactionClient,
+): Promise<{
+  consultantProfileId?: string;
+  consulteeProfileId?: string;
+  staffProfileId?: string;
+}> {
   switch (validatedBody.role) {
     case UserRole.CONSULTANT:
       return updateConsultantProfileAndRelations(
         userId,
         validatedBody.consultantProfile.create,
-        tx
+        tx,
       );
     case UserRole.CONSULTEE:
       return updateConsulteeProfileAndRelations(
         userId,
         validatedBody.consulteeProfile.create,
-        tx
+        tx,
       );
     case UserRole.STAFF:
       return updateStaffProfileAndRelations(
         userId,
         validatedBody.staffProfile.create,
-        tx
+        tx,
       );
     case UserRole.ADMIN:
       return {};
     default:
-      throw new Error(`Invalid role encountered after validation: ${(validatedBody as any).role}`);
+      throw new Error(
+        `Invalid role encountered after validation: ${(validatedBody as any).role}`,
+      );
   }
 }
 // #endregion
@@ -326,18 +349,23 @@ async function updateUserProfileAndGetFkData(
 // #region Main Server Action
 export async function updateOnboardingInformationAction(
   userId: string,
-  body: any
+  body: any,
 ): Promise<{ success: boolean; user?: any; error?: string }> {
   try {
     console.log("Server Action: updateOnboardingInformationAction - Received", {
       userId,
-      bodyPreview: typeof body === 'object' && body !== null ? { ...body, consultantProfile: "..." } : body,
+      bodyPreview:
+        typeof body === "object" && body !== null
+          ? { ...body, consultantProfile: "..." }
+          : body,
     });
 
     const validationResult = OnboardingDataSchema.safeParse(body);
 
     if (!validationResult.success) {
-      const errorMessage = validationResult.error.errors.map(e => `Field '${e.path.join('.')}': ${e.message}`).join('; ');
+      const errorMessage = validationResult.error.errors
+        .map((e) => `Field '${e.path.join(".")}': ${e.message}`)
+        .join("; ");
       console.error("Validation Error:", validationResult.error.issues);
       return { success: false, error: `Invalid input: ${errorMessage}` };
     }
@@ -360,7 +388,11 @@ export async function updateOnboardingInformationAction(
         staffProfileId: null,
       };
 
-      const profileFkData = await updateUserProfileAndGetFkData(userId, validatedBody, tx);
+      const profileFkData = await updateUserProfileAndGetFkData(
+        userId,
+        validatedBody,
+        tx,
+      );
 
       const finalUserData: Prisma.UserUpdateInput = {
         ...baseUserData,
@@ -389,14 +421,18 @@ export async function updateOnboardingInformationAction(
     return { success: true, user: updatedUser };
   } catch (error: unknown) {
     console.error("Error in updateOnboardingInformationAction:", error);
-    const errorMessage = error instanceof Error
+    const errorMessage =
+      error instanceof Error
         ? error.message
         : "An unknown error occurred while updating onboarding information.";
 
     if (error instanceof Error) {
-        console.error("Error details:", { message: error.message, stack: error.stack });
+      console.error("Error details:", {
+        message: error.message,
+        stack: error.stack,
+      });
     } else {
-        console.error("Unknown error object:", error);
+      console.error("Unknown error object:", error);
     }
     return { success: false, error: errorMessage };
   }

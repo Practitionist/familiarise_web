@@ -17,7 +17,10 @@ export default async function DocumentsPage({
     documents = await fetchDocuments(consultantId);
   } catch (err) {
     console.error("Error fetching documents:", err);
-    error = err instanceof Error ? err.message : "An error occurred while fetching documents.";
+    error =
+      err instanceof Error
+        ? err.message
+        : "An error occurred while fetching documents.";
   }
 
   if (error) {

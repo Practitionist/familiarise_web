@@ -25,7 +25,8 @@ export default async function ChatsPage({
     }
   } catch (err) {
     console.error("Error fetching consultant details for chat page:", err);
-    error = err instanceof Error ? err.message : "Failed to load user data for chat.";
+    error =
+      err instanceof Error ? err.message : "Failed to load user data for chat.";
     // In a real app, you might want to log this more robustly or have specific error codes
   }
 

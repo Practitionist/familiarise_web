@@ -99,9 +99,11 @@ function useConsultantData(consultantId: string) {
               lowerCaseMessage.includes("forbidden")
             ) {
               displayMessage = `You are not authorized to view the data for consultant (ID: ${consultantId}).`;
-            } else if (lowerCaseMessage.startsWith("failed to fetch consultant data")) {
-                // If the error message from fetchConsultantData is already somewhat descriptive
-                displayMessage = err.message;
+            } else if (
+              lowerCaseMessage.startsWith("failed to fetch consultant data")
+            ) {
+              // If the error message from fetchConsultantData is already somewhat descriptive
+              displayMessage = err.message;
             } else {
               // General fallback for other errors related to fetching this consultant's data
               displayMessage = `An error occurred while fetching data for consultant (ID: ${consultantId}): ${err.message}`;

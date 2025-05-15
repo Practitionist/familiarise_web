@@ -17,7 +17,10 @@ export default async function AppointmentsPage({
     appointments = await fetchAppointments(consultantId);
   } catch (err) {
     console.error("Error fetching appointments:", err);
-    error = err instanceof Error ? err.message : "An error occurred while fetching appointments.";
+    error =
+      err instanceof Error
+        ? err.message
+        : "An error occurred while fetching appointments.";
   }
 
   if (error) {
@@ -29,9 +32,6 @@ export default async function AppointmentsPage({
   }
 
   return (
-    <AppointmentsTab
-      appointments={appointments}
-      badgeStyles={BADGE_STYLES}
-    />
+    <AppointmentsTab appointments={appointments} badgeStyles={BADGE_STYLES} />
   );
 }

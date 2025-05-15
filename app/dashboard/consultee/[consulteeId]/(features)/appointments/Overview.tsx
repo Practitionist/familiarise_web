@@ -209,7 +209,8 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
 
   const updateScrollButtonStates = useCallback(() => {
     if (scrollContainerRef.current) {
-      const { scrollLeft, scrollWidth, clientWidth } = scrollContainerRef.current;
+      const { scrollLeft, scrollWidth, clientWidth } =
+        scrollContainerRef.current;
       setCanScrollLeft(scrollLeft > 5);
       setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 5);
     }
@@ -218,14 +219,16 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container || items.length === 0) {
-       setCanScrollLeft(false);
-       setCanScrollRight(false);
-       return;
+      setCanScrollLeft(false);
+      setCanScrollRight(false);
+      return;
     }
 
     updateScrollButtonStates();
 
-    container.addEventListener("scroll", updateScrollButtonStates, { passive: true });
+    container.addEventListener("scroll", updateScrollButtonStates, {
+      passive: true,
+    });
     window.addEventListener("resize", updateScrollButtonStates);
 
     const observer = new MutationObserver(updateScrollButtonStates);
@@ -252,24 +255,36 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
       setTimeout(updateScrollButtonStates, 350);
     }
   };
-  
+
   if (!items || items.length === 0) {
     return (
-      <Card className="rounded-xl shadow-lg bg-white" data-testid={`${title.toLowerCase()}-card`}>
+      <Card
+        className="rounded-xl shadow-lg bg-white"
+        data-testid={`${title.toLowerCase()}-card`}
+      >
         <CardHeader className="p-6">
-          <CardTitle className="text-xl font-semibold text-gray-800">{title}</CardTitle>
+          <CardTitle className="text-xl font-semibold text-gray-800">
+            {title}
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-6">
-          <p className="text-gray-500">No {title.toLowerCase()} events scheduled yet.</p>
+          <p className="text-gray-500">
+            No {title.toLowerCase()} events scheduled yet.
+          </p>
         </CardContent>
       </Card>
     );
   }
 
   return (
-    <Card className="rounded-xl shadow-lg bg-white relative" data-testid={`${title.toLowerCase()}-card`}>
+    <Card
+      className="rounded-xl shadow-lg bg-white relative"
+      data-testid={`${title.toLowerCase()}-card`}
+    >
       <CardHeader className="p-6 flex flex-row justify-between items-center">
-        <CardTitle className="text-xl font-semibold text-gray-800">{title}</CardTitle>
+        <CardTitle className="text-xl font-semibold text-gray-800">
+          {title}
+        </CardTitle>
         {(canScrollLeft || canScrollRight) && (
           <div className="flex space-x-2">
             {canScrollLeft && (
