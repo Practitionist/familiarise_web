@@ -118,7 +118,7 @@ function useConsultantData(consultantId: string) {
     }
 
     fetchData();
-  }, [consultantId, session]);
+  }, [consultantId, session?.user?.id]);
 
   return state;
 }
@@ -190,7 +190,6 @@ export default function ConsultantLayout({
             {NAV_ITEMS.map((item) => (
               <li key={item.path}>
                 <Link
-                  prefetch={false}
                   href={`/dashboard/consultant/${consultantId}/${item.path}`}
                   className={`flex items-center space-x-2 p-2 rounded-md transition-colors ${
                     currentPath === item.path

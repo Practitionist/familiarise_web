@@ -1,4 +1,5 @@
 "use client";
+import { updateOnboardingInformationAction } from "@/actions/forms/onboarding.action";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { Domain, SubDomain, Tag } from "@/schemas/PlanSchema";
@@ -90,8 +91,8 @@ const MultiStepForm: React.FC = () => {
         ...prevData,
         ...stepData,
         preferredCommunicationMethod:
-          stepData.preferredCommunicationMethod ||
-          prevData.preferredCommunicationMethod ||
+          stepData.preferredCommunicationMethod ??
+          prevData.preferredCommunicationMethod ??
           "VIDEO",
       };
 
@@ -131,14 +132,13 @@ const MultiStepForm: React.FC = () => {
         }),
       );
 
-      const requestBody = {
+      const requestBody: Parameters<typeof updateOnboardingInformationAction>[1] = {
         name: finalData.name,
         email: finalData.email,
         phone: finalData.phone,
         address: finalData.address,
         currentTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         role: finalData.role,
-        onboardingCompleted: true,
         consultantProfile:
           finalData.role === "CONSULTANT"
             ? {
@@ -148,16 +148,16 @@ const MultiStepForm: React.FC = () => {
                   specialization: finalData.specialization ?? "",
                   experience: finalData.experience ?? "",
                   domain: { connect: { id: finalData.domain!.id } },
-                  subDomains: finalData.subDomains?.length
+                  subDomains: finalData.subDomains?.filter(sd => sd.id !== undefined && sd.id !== null).length
                     ? {
-                        connect: finalData.subDomains.map((sd: SubDomain) => ({
-                          id: sd.id,
+                        connect: finalData.subDomains.filter(sd => sd.id !== undefined && sd.id !== null).map((sd: SubDomain) => ({
+                          id: sd.id!,
                         })),
                       }
                     : undefined,
-                  tags: finalData.tags?.length
+                  tags: finalData.tags?.filter(t => t.id !== undefined && t.id !== null).length
                     ? {
-                        connect: finalData.tags.map((t: Tag) => ({ id: t.id })),
+                        connect: finalData.tags.filter(t => t.id !== undefined && t.id !== null).map((t: Tag) => ({ id: t.id! })),
                       }
                     : undefined,
                   scheduleType: finalData.scheduleType ?? "WEEKLY",
@@ -210,41 +210,26 @@ const MultiStepForm: React.FC = () => {
             : undefined,
       };
 
-      console.log("Request Body:", JSON.stringify(requestBody, null, 2));
+      console.log("Request Body for Action:", JSON.stringify(requestBody, null, 2));
       toast({
         title: "Updating Onboarding Information",
         description: "Please wait...",
         variant: "default",
       });
 
-      const response = await fetch(`/api/form/onboarding/${id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody),
-      });
+      const result = await updateOnboardingInformationAction(id, requestBody);
 
-      if (!response.ok) {
-        let errorMessage = "Failed to update onboarding information";
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.error || errorData.message || errorMessage;
-        } catch (parseError) {
-          console.error("Error parsing response:", parseError);
-          const errorText = await response.text();
-          console.error("Server response:", errorText);
+      if (!result.success || !result.user) {
+        const errorMessage = result.error ?? "Failed to update onboarding information";
 
-          if (response.status === 404) {
-            errorMessage = "User not found. Please sign out and sign in again.";
-            toast({
-              title: "User Not Found",
-              description: errorMessage,
-              variant: "destructive",
-            });
-            signOut();
-            return;
-          }
+        if (errorMessage.includes("User not found")) {
+          toast({
+            title: "User Not Found",
+            description: "Please sign out and sign in again.",
+            variant: "destructive",
+          });
+          signOut();
+          return;
         }
 
         toast({
@@ -255,7 +240,6 @@ const MultiStepForm: React.FC = () => {
         return;
       }
 
-      const result = await response.json();
       toast({
         title: "Onboarding Completed",
         description:

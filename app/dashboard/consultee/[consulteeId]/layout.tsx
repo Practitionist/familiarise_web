@@ -75,7 +75,7 @@ function ConsulteeNav({
                 className={`${
                   currentPath === item.path
                     ? "bg-[#f87171] text-white"
-                    : "text-gray-500 hover:bg-gray-200"
+                    : "text-gray-600 hover:bg-gray-100 hover:shadow-sm transition-all duration-150 ease-in-out"
                 } rounded-md px-4 py-2 transition-colors whitespace-nowrap`}
                 variant={currentPath === item.path ? "default" : "ghost"}
               >
@@ -134,7 +134,7 @@ function useConsulteeData(consulteeId: string) {
     }
 
     fetchData();
-  }, [consulteeId]);
+  }, [consulteeId, session?.user?.id]);
 
   return state;
 }
@@ -186,7 +186,7 @@ export default function ConsulteeLayout({
   // Main layout
   return (
     <UserProvider userDetails={userDetails}>
-      <div className="bg-gray-100 min-h-screen flex flex-col">
+      <div className="bg-slate-50 min-h-screen flex flex-col">
         <ConsulteeNav consulteeId={consulteeId} currentPath={currentPath} />
         <main className="flex-grow overflow-y-auto p-8">{children}</main>
       </div>

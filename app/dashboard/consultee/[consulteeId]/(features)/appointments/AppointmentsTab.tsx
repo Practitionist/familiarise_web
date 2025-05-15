@@ -84,24 +84,24 @@ export default function AppointmentsTab({
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100">
         <Tabs defaultValue="overview" className="w-full">
-          <div className="px-8 pt-6 border-b border-gray-100">
-            <TabsList className="inline-flex h-10 items-center justify-center rounded-lg bg-gray-100 p-1 text-gray-500">
+          <div className="px-6 pt-4 pb-0">
+            <TabsList className="inline-flex h-auto items-center justify-center rounded-lg bg-transparent p-0">
               <TabsTrigger
                 value="overview"
-                className="inline-flex items-center justify-center whitespace-nowrap rounded-md px-6 py-2 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-white data-[state=active]:text-gray-950 data-[state=active]:shadow-sm"
+                className="inline-flex items-center justify-center whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-[#f87171] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:text-gray-500 data-[state=inactive]:hover:bg-gray-100 data-[state=inactive]:hover:text-gray-700"
               >
                 Overview
               </TabsTrigger>
               <TabsTrigger
                 value="calendar"
-                className="inline-flex items-center justify-center whitespace-nowrap rounded-md px-6 py-2 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-white data-[state=active]:text-gray-950 data-[state=active]:shadow-sm"
+                className="inline-flex items-center justify-center whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-[#f87171] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=inactive]:text-gray-500 data-[state=inactive]:hover:bg-gray-100 data-[state=inactive]:hover:text-gray-700"
               >
                 Calendar
               </TabsTrigger>
             </TabsList>
           </div>
-          <div className="p-8">
-            <TabsContent value="overview" className="mt-0 space-y-8">
+          <div className="p-6">
+            <TabsContent value="overview" className="mt-0 space-y-6">
               <Overview
                 consultations={consultations}
                 subscriptions={subscriptions}

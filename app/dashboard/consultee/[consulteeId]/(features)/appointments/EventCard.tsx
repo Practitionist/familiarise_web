@@ -28,6 +28,7 @@ interface EventCardProps {
   type?: "Subscription" | "Class" | "Consultation" | "Webinar";
   isTentative?: boolean;
   appointmentId?: string;
+  className?: string;
 }
 
 function formatSlotDate(date: Date | string): string {
@@ -61,6 +62,7 @@ export function EventCard({
   type,
   isTentative,
   appointmentId,
+  className,
 }: Readonly<EventCardProps>) {
   const getStatusColor = (status: string) => {
     const statusLower = status.toLowerCase();
@@ -180,16 +182,16 @@ export function EventCard({
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.1 }}
-      className="group h-full"
+      className={`group ${className || ''}`}
     >
       <Card
         onClick={handleClick}
-        className="hover:shadow-md transition-shadow duration-200 border border-gray-100 h-full cursor-pointer"
+        className="hover:shadow-md transition-shadow duration-200 border border-gray-100 cursor-pointer w-96 min-h-[16rem] h-auto flex flex-col flex-shrink-0"
       >
         <CardHeader className="pb-2">
           <div className="flex items-start justify-between">
             <div>
-              <CardTitle className="text-lg font-semibold">{title}</CardTitle>
+              <CardTitle className="text-lg font-semibold break-words">{title}</CardTitle>
               <div className="flex items-center mt-2">
                 <Avatar className="h-6 w-6 mr-2">
                   <AvatarImage
@@ -200,7 +202,7 @@ export function EventCard({
                 </Avatar>
                 <span
                   data-testid="consultant-name"
-                  className="text-sm text-gray-600"
+                  className="text-sm text-gray-600 break-words"
                 >
                   {consultant}
                 </span>
@@ -210,7 +212,7 @@ export function EventCard({
               {status && (
                 <Badge
                   data-testid="event-status"
-                  className={`${getStatusColor(status)}`}
+                  className={`${getStatusColor(status)} whitespace-normal break-words`}
                 >
                   {status}
                 </Badge>
@@ -219,7 +221,7 @@ export function EventCard({
                 <div className="flex flex-col items-end gap-1">
                   <Badge
                     data-testid="tentative-notice"
-                    className="bg-red-50 text-red-700 border-red-200"
+                    className="bg-red-50 text-red-700 border-red-200 whitespace-normal break-words"
                   >
                     Tentative
                   </Badge>
@@ -231,28 +233,28 @@ export function EventCard({
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex-grow flex flex-col justify-between">
           <div className="flex flex-col space-y-2">
             {type === "Consultation" || type === "Webinar" ? (
               <div className="flex items-center justify-between">
-                <span data-testid="slot-time" className="text-sm text-gray-600">
+                <span data-testid="slot-time" className="text-sm text-gray-600 break-words">
                   {actualSlots && actualSlots.length > 0 ? (
                     <div className="bg-gray-50 p-2 rounded flex flex-col space-y-1">
-                      <div className="text-sm font-medium text-gray-700">
+                      <div className="text-sm font-medium text-gray-700 break-words">
                         Scheduled Time
                       </div>
                       <div>
-                        <span className="text-sm text-gray-600">
+                        <span className="text-sm text-gray-600 break-words">
                           {formatSlotDate(actualSlots[0].startTime)}
                         </span>
-                        <span className="text-sm text-gray-600 ml-2">
+                        <span className="text-sm text-gray-600 ml-2 break-words">
                           {formatSlotTime(actualSlots[0].startTime)} -{" "}
                           {formatSlotTime(actualSlots[0].endTime)}
                         </span>
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-yellow-50 p-2 rounded text-yellow-700">
+                    <div className="bg-yellow-50 p-2 rounded text-yellow-700 break-words">
                       {date}
                     </div>
                   )}
@@ -262,7 +264,7 @@ export function EventCard({
               <Accordion type="single" collapsible>
                 <AccordionItem value="sessions" className="border-none">
                   <AccordionTrigger className="py-2 hover:no-underline">
-                    <span className="text-sm font-medium text-gray-700">
+                    <span className="text-sm font-medium text-gray-700 break-words">
                       {type === "Subscription"
                         ? "Scheduled Sessions"
                         : "Class Schedule"}
@@ -275,10 +277,10 @@ export function EventCard({
                           key={index}
                           className="flex items-center justify-between bg-gray-50 p-2 rounded"
                         >
-                          <span className="text-sm text-gray-600">
+                          <span className="text-sm text-gray-600 break-words">
                             {formatSlotDate(slot.startTime)}
                           </span>
-                          <span className="text-sm text-gray-600">
+                          <span className="text-sm text-gray-600 break-words">
                             {formatSlotTime(slot.startTime)} -{" "}
                             {formatSlotTime(slot.endTime)}
                           </span>
@@ -290,12 +292,12 @@ export function EventCard({
               </Accordion>
             ) : (
               <div className="flex items-center justify-between">
-                <span data-testid="slot-time" className="text-sm text-gray-600">
+                <span data-testid="slot-time" className="text-sm text-gray-600 break-words">
                   {date}
                 </span>
               </div>
             )}
-            <div className="flex justify-end gap-2 mt-4">
+            <div className="flex justify-end gap-2 mt-auto pt-2">
               {!isTentative && status?.toLowerCase() !== "cancelled" && (
                 <Button
                   variant="outline"
