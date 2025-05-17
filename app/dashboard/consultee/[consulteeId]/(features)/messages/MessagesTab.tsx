@@ -1,6 +1,6 @@
 "use client";
 
-import { initializeAllChannels } from "@/actions/channel.action";
+import { initializeAllChannels } from "@/actions/stream/chat/channel.action";
 import { ChatLayout } from "@/components/chat/ChatLayout";
 import { useToast } from "@/components/ui/use-toast";
 import { fetchConsulteeDetails } from "@/lib/user";

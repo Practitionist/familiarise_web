@@ -48,61 +48,77 @@ export const CreateDirectMessageDialog = ({
       console.log("Searching for users with term:", searchTerm);
 
       // First try to search using Stream's built-in search
-      const response = await client.queryUsers(
+      const streamUserResponse = await client.queryUsers(
         {
-          $or: [
-            { name: { $autocomplete: searchTerm } },
-            { id: { $autocomplete: searchTerm } },
+          $and: [
+            { id: { $ne: client.userID || "" } }, // Exclude current user
+            // Add role-based exclusion if you have specific roles for system/bot users
+            // For example: { role: { $ne: "bot" } },
+            // { role: { $ne: "system_agent" } },
+            {
+              $or: [
+                { name: { $autocomplete: searchTerm } },
+                { id: { $autocomplete: searchTerm } }, // Standard autocomplete for ID
+              ],
+            },
           ],
-          id: { $ne: client.userID || "" }, // Exclude current user
         },
-        { id: 1 },
-        { limit: 10 },
+        { last_active: -1, name: 1 }, // Sort by last active, then by name
+        { limit: 20 }, // Fetch a bit more to allow for potential client-side filtering if needed
       );
 
-      console.log("Stream search results:", response.users);
+      // Client-side filter for unwanted patterns if Stream query is too broad
+      const filteredStreamUsers = streamUserResponse.users.filter(
+        (user) =>
+          !user.id.startsWith("recording-egress-") &&
+          !user.id.startsWith("system-"),
+        // Add other ID patterns to exclude if necessary
+      );
 
-      // If no results found, try to search using our API
-      if (response.users.length === 0) {
-        try {
-          console.log("No users found in Stream, trying API search");
-          const apiResponse = await fetch(
-            `/api/user/search?term=${encodeURIComponent(searchTerm)}`,
-          );
+      console.log("Filtered Stream search results:", filteredStreamUsers);
 
-          if (apiResponse.ok) {
-            const data = await apiResponse.json();
-            console.log("API search results:", data.users);
-
-            if (data.users && data.users.length > 0) {
-              // We don't need to upsert users here anymore
-              // The API has already done that for us
-              console.log("Users found via API search:", data.users.length);
-
-              // Return the users from our API
-              return setUsers(
-                data.users.map((user: any) => ({
-                  id: user.id,
-                  name: user.name || user.id,
-                  image: user.image,
-                })),
-              );
-            }
-          } else {
-            console.error("API search failed:", await apiResponse.text());
-          }
-        } catch (apiError) {
-          console.error("Error searching users via API:", apiError);
-        }
+      if (filteredStreamUsers.length > 0) {
+        setUsers(
+          filteredStreamUsers.map((user) => ({
+            id: user.id,
+            name: user.name || user.id,
+            image: user.image as string | undefined, // Cast image type
+          })),
+        );
+        // No need to call API if Stream search yielded results after filtering
+        setIsSearching(false);
+        return;
       }
 
-      setUsers(
-        response.users.map((user) => ({
-          id: user.id,
-          name: user.name || user.id,
-          image: user.image,
-        })),
+      // If no results from Stream search (or after client-side filtering), try API search
+      console.log("No relevant users found in Stream, trying API search");
+      const apiResponse = await fetch(
+        `/api/stream/search?term=${encodeURIComponent(searchTerm)}`,
       );
+
+      if (apiResponse.ok) {
+        const data = await apiResponse.json();
+        console.log("API search results:", data.users);
+        if (data.users && data.users.length > 0) {
+          setUsers(
+            data.users.map((user: any) => ({
+              id: user.id,
+              name: user.name || user.id,
+              image: user.image,
+            })),
+          );
+        } else {
+          setUsers([]); // No users from API either
+        }
+      } else {
+        console.error("API search failed:", await apiResponse.text());
+        setUsers([]);
+        toast({
+          title: "Error",
+          description: "API user search failed.",
+          variant: "destructive",
+        });
+      }
     } catch (error) {
       console.error("Error searching users:", error);
       toast({
@@ -110,6 +126,7 @@ export const CreateDirectMessageDialog = ({
         description: "Failed to search users. Please try again.",
         variant: "destructive",
       });
+      setUsers([]); // Clear users on error
     } finally {
       setIsSearching(false);
     }
@@ -133,6 +150,16 @@ export const CreateDirectMessageDialog = ({
       return;
     }
 
+    const currentUserId = client.userID;
+    if (!currentUserId) {
+      toast({
+        title: "Error",
+        description: "Current user ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (selectedUsers.length === 0) {
       toast({
         title: "Error",
@@ -145,72 +172,35 @@ export const CreateDirectMessageDialog = ({
     setIsLoading(true);
 
     try {
-      // First, ensure all selected users are upserted to Stream Chat
-      for (const userId of selectedUsers) {
-        try {
-          // Use the server-side API to upsert the user
-          const response = await fetch("/api/stream/upsert-user", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ userId }),
-          });
-
-          if (!response.ok) {
-            console.error(
-              `Failed to upsert user ${userId}:`,
-              await response.text(),
-            );
-          }
-        } catch (error) {
-          console.error(`Error upserting user ${userId}:`, error);
-          // Continue even if upserting fails for one user
-        }
-      }
-
-      // Also upsert the current user
-      if (client.userID) {
-        try {
-          const response = await fetch("/api/stream/upsert-user", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ userId: client.userID }),
-          });
-
-          if (!response.ok) {
-            console.error(
-              `Failed to upsert current user:`,
-              await response.text(),
-            );
-          }
-        } catch (error) {
-          console.error(`Error upserting current user:`, error);
-        }
-      }
-
       // Include current user in members
-      const members = [client.userID || "", ...selectedUsers];
+      const members = [currentUserId, ...selectedUsers];
 
       // Create a unique channel ID based on sorted member IDs
       const channelId = members.sort().join("-");
 
+      console.log(
+        `Creating messaging channel: ${channelId} with members:`,
+        members,
+      );
       // Create a new direct message channel
       const channel = client.channel("messaging", channelId, {
         members,
-        created_by_id: client.userID,
+        created_by_id: currentUserId,
+        // Optionally add a name for group DMs if needed
+        // name: members.length > 2 ? "Group Chat" : undefined,
       });
 
-      await channel.create();
+      // Use watch() instead of create() for messaging channels
+      // watch() creates the channel if it doesn't exist and watches for events
+      await channel.watch();
+      console.log(`Watched channel ${channel.cid}`);
 
       // Set the new channel as active
       setActiveChannel(channel);
 
       toast({
         title: "Success",
-        description: "Direct message created successfully",
+        description: "Direct message channel ready",
       });
 
       // Call the onChannelCreated callback if provided
@@ -218,15 +208,17 @@ export const CreateDirectMessageDialog = ({
         onChannelCreated();
       }
 
-      // Close the dialog
+      // Close the dialog and reset state
       setOpen(false);
       setSearchTerm("");
       setSelectedUsers([]);
+      setUsers([]);
     } catch (error) {
-      console.error("Error creating direct message:", error);
+      console.error("Error creating/watching direct message channel:", error);
       toast({
         title: "Error",
-        description: "Failed to create direct message. Please try again.",
+        description:
+          "Failed to create direct message channel. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -243,14 +235,25 @@ export const CreateDirectMessageDialog = ({
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => {
+        setOpen(isOpen);
+        if (!isOpen) {
+          // Reset state when closing
+          setSearchTerm("");
+          setSelectedUsers([]);
+          setUsers([]);
+        }
+      }}
+    >
       <DialogTrigger asChild>
         <Button
           variant="ghost"
           size="sm"
           className="p-1 text-white hover:bg-blue-700"
         >
-          <PlusIcon className="h-4 w-4" />
+          <PlusIcon className="h-4 w-4 mr-1" /> DM
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[425px]">
@@ -258,74 +261,66 @@ export const CreateDirectMessageDialog = ({
           <DialogTitle>Create Direct Message</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 pt-4">
-          <div className="space-y-2">
-            <Label htmlFor="searchUsers">Search Users</Label>
-            <div className="flex space-x-2">
-              <Input
-                id="searchUsers"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search by name or ID"
-                disabled={isSearching || isLoading}
-                onKeyDown={handleKeyDown}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleSearch}
-                disabled={isSearching || isLoading}
-              >
+          <div className="flex space-x-2">
+            <Input
+              id="searchUsers"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Search users by name or ID"
+              disabled={isLoading}
+            />
+            <Button
+              type="button"
+              onClick={handleSearch}
+              disabled={isLoading || isSearching || !searchTerm.trim()}
+            >
+              {isSearching ? (
+                "Searching..."
+              ) : (
                 <SearchIcon className="h-4 w-4" />
-              </Button>
-            </div>
+              )}
+            </Button>
           </div>
 
-          {isSearching ? (
-            <div className="py-4 text-center">
-              <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary mx-auto"></div>
-              <p className="text-sm text-gray-500 mt-2">Searching users...</p>
-            </div>
-          ) : users.length > 0 ? (
-            <div className="max-h-60 overflow-y-auto border rounded-md p-2">
+          {users.length > 0 && (
+            <div className="max-h-60 overflow-y-auto border rounded-md p-2 space-y-2">
+              <Label>Select Users:</Label>
               {users.map((user) => (
                 <div
                   key={user.id}
-                  className="flex items-center space-x-2 p-2 hover:bg-gray-100 rounded-md cursor-pointer"
-                  onClick={() => toggleUserSelection(user.id)}
+                  className="flex items-center space-x-2 p-1 rounded hover:bg-slate-100"
                 >
                   <Checkbox
                     id={`user-${user.id}`}
                     checked={selectedUsers.includes(user.id)}
                     onCheckedChange={() => toggleUserSelection(user.id)}
+                    disabled={isLoading}
                   />
-                  <Avatar className="h-8 w-8">
-                    <AvatarImage src={user.image || "/placeholder-user.jpg"} />
-                    <AvatarFallback>
-                      {user.name?.charAt(0) || user.id.charAt(0)}
-                    </AvatarFallback>
+                  <Avatar className="w-8 h-8">
+                    <AvatarImage src={user.image} />
+                    <AvatarFallback>{user.name?.charAt(0)}</AvatarFallback>
                   </Avatar>
-                  <Label
-                    htmlFor={`user-${user.id}`}
-                    className="cursor-pointer flex-1"
-                  >
-                    {user.name || user.id}
+                  <Label htmlFor={`user-${user.id}`} className="cursor-pointer">
+                    {user.name} ({user.id})
                   </Label>
                 </div>
               ))}
             </div>
-          ) : searchTerm ? (
-            <p className="text-sm text-gray-500 py-4 text-center">
-              No users found. Try a different search term.
+          )}
+          {isSearching && <p>Searching for users...</p>}
+          {!isSearching && searchTerm && users.length === 0 && (
+            <p className="text-sm text-gray-500">
+              No users found matching "{searchTerm}".
             </p>
-          ) : null}
+          )}
 
           <Button
-            type="button"
+            onClick={handleCreateDirectMessage}
             className="w-full"
             disabled={isLoading || selectedUsers.length === 0}
-            onClick={handleCreateDirectMessage}
           >
-            {isLoading ? "Creating..." : "Create Direct Message"}
+            {isLoading ? "Creating..." : "Start Direct Message"}
           </Button>
         </div>
       </DialogContent>

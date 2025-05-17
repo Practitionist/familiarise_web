@@ -8,11 +8,23 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { searchFAQs, faqs } from "./questions";
+import { type FAQ } from "./questions"; // Import the FAQ type
 
-export function HelpTab() {
+interface HelpTabProps {
+  faqs: FAQ[]; // Expect faqs as a prop
+}
+
+export function HelpTab({ faqs: initialFaqs }: Readonly<HelpTabProps>) {
   const [searchQuery, setSearchQuery] = useState("");
-  const filteredFaqs = searchQuery ? searchFAQs(searchQuery) : faqs;
+
+  // Perform filtering based on the searchQuery and the received initialFaqs prop
+  const filteredFaqs = searchQuery
+    ? initialFaqs.filter(
+        (faq) =>
+          faq.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          faq.answer.toLowerCase().includes(searchQuery.toLowerCase()),
+      )
+    : initialFaqs;
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -64,6 +76,11 @@ export function HelpTab() {
           </AccordionItem>
         ))}
       </Accordion>
+      {filteredFaqs.length === 0 && searchQuery && (
+        <p className="text-center text-gray-500 mt-6">
+          No FAQs found matching your search query.
+        </p>
+      )}
     </div>
   );
 }

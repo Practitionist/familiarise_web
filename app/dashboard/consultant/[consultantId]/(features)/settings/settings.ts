@@ -1,6 +1,6 @@
-import { DayOfWeek, ScheduleType } from "@prisma/client";
 import { TConsultantProfile } from "@/types/consultant";
-import { validateTimeSlot, isValidTimeRange } from "@/lib/timeSlotValidation";
+import { isValidTimeRange, validateTimeSlot } from "@/utils/timeSlotValidation";
+import { DayOfWeek, ScheduleType } from "@prisma/client";
 export interface SlotType {
   startTime: string;
   endTime: string;

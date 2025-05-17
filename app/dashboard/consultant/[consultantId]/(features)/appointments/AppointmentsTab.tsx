@@ -22,11 +22,15 @@ import {
 
 export function AppointmentsTab({
   appointments,
-  getBadgeStyle,
+  badgeStyles,
 }: Readonly<AppointmentsTabProps>) {
   const router = useRouter();
   const client = useStreamVideoClient();
   const { toast } = useToast();
+
+  const getStyleFromBadgeData = (status: string): string => {
+    return badgeStyles[status] || badgeStyles.default;
+  };
 
   const handleJoinMeeting = async (appointment: IAppointment) => {
     if (!client) {
@@ -44,6 +48,7 @@ export function AppointmentsTab({
       toast({
         title: "Error",
         description: "Slot information missing for this appointment item.",
+        variant: "error",
       });
       return;
     }
@@ -113,7 +118,7 @@ export function AppointmentsTab({
                       </div>
                       <Badge
                         variant="secondary"
-                        className={getBadgeStyle(groupStatus)}
+                        className={getStyleFromBadgeData(groupStatus)}
                       >
                         {groupStatus}
                       </Badge>
@@ -172,7 +177,7 @@ export function AppointmentsTab({
                         <div className="flex items-center space-x-2">
                           <Badge
                             variant="secondary"
-                            className={getBadgeStyle(status)}
+                            className={getStyleFromBadgeData(status)}
                           >
                             {status}
                           </Badge>

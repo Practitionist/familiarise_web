@@ -5,7 +5,7 @@ import {
   ConsulteeProfile,
   ConsulteePreferences,
   PersonalInfoAndRole,
-} from "@/schemas/UserSchema";
+} from "@/schemas/user";
 
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsulteeProfile> &

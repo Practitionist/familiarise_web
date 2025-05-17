@@ -1,7 +1,7 @@
 "use client";
 
-import { redirect } from "next/navigation";
-import { use } from "react";
+import { useRouter } from "next/navigation";
+import { use, useEffect } from "react";
 
 export default function ConsultantDashboard({
   params,
@@ -10,6 +10,13 @@ export default function ConsultantDashboard({
 }>) {
   const resolvedParams = use(params);
   const consultantId = resolvedParams.consultantId;
+  const router = useRouter();
 
-  redirect(`/dashboard/consultant/${consultantId}/home`);
+  useEffect(() => {
+    if (consultantId) {
+      router.replace(`/dashboard/consultant/${consultantId}/home`);
+    }
+  }, [consultantId, router]);
+
+  return null;
 }

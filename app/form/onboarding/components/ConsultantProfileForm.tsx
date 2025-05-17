@@ -17,8 +17,8 @@ import {
   ConsultantProfile,
   ConsultantProfileSchema,
   PersonalInfoAndRole,
-} from "@/schemas/UserSchema";
-import { Domain, SubDomain, Tag } from "@/schemas/PlanSchema";
+} from "@/schemas/user";
+import { Domain, SubDomain, Tag } from "@/schemas/plans";
 
 interface Props {
   onNext: (data: FormData) => void;

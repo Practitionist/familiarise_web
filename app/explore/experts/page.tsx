@@ -1,39 +1,19 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { Domain, SubDomain, Tag } from "@prisma/client";
+import { useState, useRef, useCallback } from "react";
 import { TConsultantProfile } from "@/types/consultant";
 import { FiltersSection } from "./components/FiltersSection";
 import { ConsultantCard } from "./components/ConsultantCard";
 import { FeaturedExperts } from "./components/FeaturedExperts";
 import { SatisfiedTestimonial } from "./components/SatisfiedTestimonial";
 import { SearchBar, SortOption } from "./components/SearchBar";
-
-interface MetaData {
-  domains: Domain[];
-  subdomains: SubDomain[];
-  tags: Tag[];
-  consultantMetadata: {
-    totalConsultants: number;
-    consultantsByDomain: {
-      id: string;
-      name: string;
-      consultantCount: number;
-    }[];
-    averageRating: number;
-  };
-}
-
-const CONSULTANTS_PER_PAGE = 10;
+import {
+  useConsultantsMetadata,
+  useConsultants,
+  groupConsultantsByDomain,
+} from "./utils";
 
 function FindExperts() {
-  const [metadata, setMetadata] = useState<MetaData | null>(null);
-  const [consultants, setConsultants] = useState<TConsultantProfile[]>([]);
-  const [isLoadingMetadata, setIsLoadingMetadata] = useState(true);
-  const [isLoadingConsultants, setIsLoadingConsultants] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
-  const [page, setPage] = useState(1);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [experienceYears, setExperienceYears] = useState(0);
@@ -43,6 +23,23 @@ function FindExperts() {
   );
   const [sortBy, setSortBy] = useState<SortOption>("nameAsc");
 
+  const { metadata, isLoading: isLoadingMetadata } = useConsultantsMetadata();
+
+  const {
+    consultants,
+    isLoading: isLoadingConsultants,
+    isLoadingMore,
+    hasMore,
+    loadMore,
+  } = useConsultants({
+    selectedDomain,
+    selectedSubdomain,
+    selectedTags,
+    experienceYears,
+    searchTerm,
+    sortBy,
+  });
+
   const observer = useRef<IntersectionObserver | null>(null);
   const lastConsultantRef = useCallback(
     (node: HTMLDivElement) => {
@@ -51,113 +48,17 @@ function FindExperts() {
 
       observer.current = new IntersectionObserver((entries) => {
         if (entries[0].isIntersecting && hasMore) {
-          setPage((prevPage) => prevPage + 1);
+          loadMore();
         }
       });
 
       if (node) observer.current.observe(node);
     },
-    [isLoadingMore, hasMore],
+    [isLoadingMore, hasMore, loadMore],
   );
 
-  // Reset page when filters change
-  useEffect(() => {
-    setPage(1);
-    setConsultants([]);
-    setHasMore(true);
-  }, [
-    searchTerm,
-    selectedDomain,
-    selectedSubdomain,
-    selectedTags,
-    experienceYears,
-    sortBy,
-  ]);
-
-  // Fetch metadata only once
-  useEffect(() => {
-    async function fetchMetadata() {
-      try {
-        const metaResponse = await fetch("/api/user/consultants/meta");
-        const metaData = await metaResponse.json();
-        setMetadata(metaData.data);
-      } catch (error) {
-        console.error("Error fetching metadata:", error);
-      } finally {
-        setIsLoadingMetadata(false);
-      }
-    }
-
-    fetchMetadata();
-  }, []);
-
-  // Fetch consultants
-  useEffect(() => {
-    async function fetchConsultants() {
-      if (page === 1) {
-        setIsLoadingConsultants(true);
-      } else {
-        setIsLoadingMore(true);
-      }
-
-      try {
-        const params = new URLSearchParams({
-          page: page.toString(),
-          limit: CONSULTANTS_PER_PAGE.toString(),
-          ...(selectedDomain && { domain: selectedDomain }),
-          ...(selectedSubdomain && { subdomain: selectedSubdomain }),
-          ...(selectedTags.length && { tags: selectedTags.join(",") }),
-          ...(experienceYears > 0 && {
-            experience: experienceYears.toString(),
-          }),
-          ...(searchTerm && { search: searchTerm }),
-          sort: sortBy,
-        });
-
-        const consultantsResponse = await fetch(
-          `/api/user/consultants?${params}`,
-        );
-        const consultantsData = await consultantsResponse.json();
-
-        if (page === 1) {
-          setConsultants(consultantsData.data);
-        } else {
-          setConsultants((prev) => [...prev, ...consultantsData.data]);
-        }
-
-        setHasMore(consultantsData.data.length === CONSULTANTS_PER_PAGE);
-      } catch (error) {
-        console.error("Error fetching consultants:", error);
-      } finally {
-        setIsLoadingConsultants(false);
-        setIsLoadingMore(false);
-      }
-    }
-
-    fetchConsultants();
-  }, [
-    page,
-    selectedDomain,
-    selectedSubdomain,
-    selectedTags,
-    experienceYears,
-    searchTerm,
-    sortBy,
-  ]);
-
   // Group consultants by domain
-  const groupedConsultants = useMemo(() => {
-    const grouped = new Map<string, TConsultantProfile[]>();
-
-    consultants.forEach((consultant) => {
-      if (!grouped.has(consultant.domain.id)) {
-        grouped.set(consultant.domain.id, []);
-      }
-      grouped.get(consultant.domain.id)?.push(consultant);
-    });
-
-    return grouped;
-  }, [consultants]);
+  const groupedConsultants = groupConsultantsByDomain(consultants);
 
   if (isLoadingMetadata) {
     return (

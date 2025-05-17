@@ -24,7 +24,7 @@ import {
 import Loader from "./Loader";
 import EndCallButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/tailwind";
 
 type CallLayoutType = "grid" | "speaker-left" | "speaker-right";
 

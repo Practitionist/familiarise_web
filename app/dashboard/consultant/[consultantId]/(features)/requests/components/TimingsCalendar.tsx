@@ -2,21 +2,21 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  DAYS,
-  DetailedTimeSlotMeta,
-  getSlotStatus,
-  INTERVALS,
-  TimeSlotMeta,
-} from "@/lib/timeSlotsMeta";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  DAYS,
+  DetailedTimeSlotMeta,
+  getSlotStatus,
+  INTERVALS,
+  TimeSlotMeta,
+} from "@/utils/timeSlotsMeta";
 import { format } from "date-fns";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 type TimingsCalendarProps = {
   availableSlots: TimeSlotMeta[] | undefined;

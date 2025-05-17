@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { WebinarPlanSchema } from "@/schemas/PlanSchema";
+import { WebinarPlanSchema } from "@/schemas/plans";
 import { WebinarStatus } from "@prisma/client"; // Import Enum
 
 // Schema for POST request body based on WebinarPlanSchema

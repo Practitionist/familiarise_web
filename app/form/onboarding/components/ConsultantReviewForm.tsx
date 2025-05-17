@@ -5,8 +5,8 @@ import {
   ConsultantProfile,
   PersonalInfoAndRole,
   PreferredSchedule,
-} from "@/schemas/UserSchema";
-import { Domain, SubDomain, Tag } from "@/schemas/PlanSchema";
+} from "@/schemas/user";
+import { Domain, SubDomain, Tag } from "@/schemas/plans";
 import { formatTime, formatDate } from "../timeUtils";
 
 type OnboardingFormData = PersonalInfoAndRole &

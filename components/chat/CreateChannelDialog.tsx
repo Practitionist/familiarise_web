@@ -10,11 +10,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/components/ui/use-toast";
-import { PlusIcon } from "lucide-react";
-import { useState, useEffect } from "react";
-import { useChatContext } from "stream-chat-react";
-import { useEventsByUser } from "@/hooks/useEvents";
 import {
   Select,
   SelectContent,
@@ -22,6 +17,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useToast } from "@/components/ui/use-toast";
+import { useEventsByUser } from "@/hooks/useEvents";
+import { PlusIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useChatContext } from "stream-chat-react";
 
 interface CreateChannelDialogProps {
   onChannelCreated?: () => void;
@@ -60,16 +60,38 @@ export const CreateChannelDialog = ({
 
   // Update channel name when event is selected
   useEffect(() => {
-    if (selectedEvent) {
+    if (selectedEvent && selectedEvent !== "custom") {
       const event = events.find((e) => e.id === selectedEvent);
       if (event) {
         setChannelName(event.name);
+      } else {
+        // Handle case where selectedEvent might be invalid (e.g., event deleted)
+        setChannelName("");
+        setSelectedEvent(null); // Reset selection
       }
+    } else if (selectedEvent === "custom") {
+      // Allow manual entry if "Custom Channel" is selected
+      // Optionally clear the name if you want them to start fresh
+      // setChannelName("");
+    } else {
+      // No event selected or selection cleared
+      // setChannelName(""); // Optional: Clear name if needed
     }
   }, [selectedEvent, events]);
 
   const handleCreateChannel = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const currentUserId = client?.userID;
+
+    if (!currentUserId) {
+      toast({
+        title: "Error",
+        description: "Chat client or user not initialized",
+        variant: "destructive",
+      });
+      return;
+    }
 
     if (!channelName.trim()) {
       toast({
@@ -80,56 +102,49 @@ export const CreateChannelDialog = ({
       return;
     }
 
-    if (!client) {
-      toast({
-        title: "Error",
-        description: "Chat client not initialized",
-        variant: "destructive",
-      });
-      return;
-    }
-
     setIsLoading(true);
 
     try {
-      // First, ensure the current user is upserted to Stream Chat
-      if (client.userID) {
-        try {
-          const response = await fetch("/api/stream/upsert-user", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ userId: client.userID }),
-          });
-
-          if (!response.ok) {
-            console.error(
-              `Failed to upsert current user:`,
-              await response.text(),
-            );
-          }
+      // OPTIMIZATION: Removed explicit upsert block.
+      // Stream's client.channel().create() typically handles creating the user if they don't exist.
+      /*
+      console.log("Ensuring current user exists in Stream via action...");
+      try {
+        await upsertUserToStream(currentUserId);
         } catch (error) {
-          console.error(`Error upserting current user:`, error);
-        }
+        console.warn(
+          `Could not upsert current user ${currentUserId} via action:`, error
+        );
+        // Allow proceeding, Stream might handle it
       }
+      */
 
       // Determine channel ID based on selection
-      let channelId = channelName.toLowerCase().replace(/\s+/g, "-");
+      // Use a UUID for custom channels to avoid potential naming conflicts
+      const channelId =
+        selectedEvent && selectedEvent !== "custom"
+          ? selectedEvent
+          : crypto.randomUUID();
 
-      // If an event is selected, use its ID as the channel ID
-      if (selectedEvent) {
-        channelId = selectedEvent;
-      }
+      console.log(
+        `Creating team channel: ${channelId} with name: ${channelName}`,
+      );
 
       // Create a new team channel
       const channel = client.channel("team", channelId, {
         name: channelName,
-        members: [client.userID || ""],
-        created_by_id: client.userID,
+        members: [currentUserId], // Start with only the creator
+        created_by_id: currentUserId,
+        // Add event type/id if linked to an event
+        ...(selectedEvent &&
+          selectedEvent !== "custom" && {
+            event_id: selectedEvent.split("-").pop(), // e.g., webinarId or classId
+            event_type: selectedEvent.split("-")[0], // e.g., 'webinar' or 'class'
+          }),
       });
 
       await channel.create();
+      console.log(`Created channel ${channel.cid}`);
 
       // Set the new channel as active
       setActiveChannel(channel);
@@ -144,7 +159,7 @@ export const CreateChannelDialog = ({
         onChannelCreated();
       }
 
-      // Close the dialog
+      // Close the dialog and reset state
       setOpen(false);
       setChannelName("");
       setSelectedEvent(null);
@@ -152,7 +167,7 @@ export const CreateChannelDialog = ({
       console.error("Error creating channel:", error);
       toast({
         title: "Error",
-        description: "Failed to create channel. Please try again.",
+        description: `Failed to create channel: ${(error as Error).message}. Please try again.`,
         variant: "destructive",
       });
     } finally {
@@ -161,7 +176,17 @@ export const CreateChannelDialog = ({
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => {
+        setOpen(isOpen);
+        if (!isOpen) {
+          // Reset state when dialog closes
+          setChannelName("");
+          setSelectedEvent(null);
+        }
+      }}
+    >
       <DialogTrigger asChild>
         <Button
           variant="ghost"
@@ -178,18 +203,18 @@ export const CreateChannelDialog = ({
         <form onSubmit={handleCreateChannel} className="space-y-4 pt-4">
           <div className="space-y-2">
             <Label htmlFor="eventSelect">
-              Select Webinar or Class (Optional)
+              Link to Webinar or Class (Optional)
             </Label>
             <Select
-              value={selectedEvent || ""}
-              onValueChange={(value) => setSelectedEvent(value || null)}
+              value={selectedEvent || "custom"} // Default to 'custom'
+              onValueChange={(value) => setSelectedEvent(value)}
               disabled={isLoadingEvents || isLoading}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Select a webinar or class" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="custom">Custom Channel</SelectItem>
+                <SelectItem value="custom">Create a Custom Channel</SelectItem>
                 {events.length > 0 ? (
                   events.map((event) => (
                     <SelectItem key={event.id} value={event.id}>
@@ -212,8 +237,16 @@ export const CreateChannelDialog = ({
               value={channelName}
               onChange={(e) => setChannelName(e.target.value)}
               placeholder="Enter channel name"
-              disabled={isLoading}
+              disabled={
+                isLoading || (!!selectedEvent && selectedEvent !== "custom")
+              }
+              required // Make name required
             />
+            {selectedEvent && selectedEvent !== "custom" && (
+              <p className="text-xs text-gray-500">
+                Channel name is set by the selected event.
+              </p>
+            )}
           </div>
 
           <Button type="submit" className="w-full" disabled={isLoading}>

@@ -18,7 +18,13 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { TAppointment } from "@/types/appointment";
 import {
-  AppointmentsType,
+  DAYS,
+  DetailedTimeSlotMeta,
+  getSlotStatus,
+  INTERVALS,
+  TimeSlotMeta,
+} from "@/utils/timeSlotsMeta";
+import {
   ConsultantProfile,
   SlotOfAvailabilityCustom,
   SlotOfAvailabilityWeekly,
@@ -27,15 +33,8 @@ import { addDays, format, isSameDay, startOfWeek } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { mapCustomSlots, mapWeeklySlots } from "../utils";
-import {
-  getSlotStatus,
-  DetailedTimeSlotMeta,
-  TimeSlotMeta,
-  INTERVALS,
-  DAYS,
-} from "@/lib/timeSlotsMeta";
 import { AppointmentSlot } from "../types/calendar";
+import { mapCustomSlots, mapWeeklySlots } from "../utils";
 
 interface EventTimingsCalendarProps {
   isOpen: boolean;

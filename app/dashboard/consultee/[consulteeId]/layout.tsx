@@ -1,12 +1,15 @@
 "use client";
 
 import { fetchConsulteeDetails, fetchUserDetails } from "@/lib/user";
-import { ConsulteeProfile, User } from "@prisma/client";
+import { getEffectiveUserId } from "@/utils/auth";
+import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Button } from "components/ui/button";
-import { useSession } from "next-auth/react";
+import { Skeleton } from "components/ui/skeleton";
+import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { use, useEffect, useState } from "react";
+import { use, useEffect } from "react";
+import useSWR, { preload } from "swr";
 import { UserProvider } from "./UserContext";
 
 // Navigation configuration
@@ -37,6 +40,8 @@ interface MessageContainerProps {
 interface ConsulteeNavProps {
   consulteeId: string;
   currentPath: string | undefined;
+  userImage?: string | null;
+  userName?: string | null;
 }
 
 // Reusable components
@@ -60,21 +65,26 @@ function MessageContainer({
 function ConsulteeNav({
   consulteeId,
   currentPath,
+  userImage,
+  userName,
 }: Readonly<ConsulteeNavProps>) {
+  const firstName = userName?.split(" ")[0] || "User";
+
   return (
     <nav className="p-4 sm:p-8 bg-white shadow-sm">
-      <div className="flex flex-col sm:flex-row justify-start items-start gap-4">
-        <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 w-full">
+      <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
           {NAV_ITEMS.map((item) => (
             <Link
               key={item.name}
               href={`/dashboard/consultee/${consulteeId}/${item.path}`}
+              prefetch={true}
             >
               <Button
                 className={`${
                   currentPath === item.path
                     ? "bg-[#f87171] text-white"
-                    : "text-gray-500 hover:bg-gray-200"
+                    : "text-gray-600 hover:bg-gray-100 hover:shadow-sm transition-all duration-150 ease-in-out"
                 } rounded-md px-4 py-2 transition-colors whitespace-nowrap`}
                 variant={currentPath === item.path ? "default" : "ghost"}
               >
@@ -83,61 +93,40 @@ function ConsulteeNav({
             </Link>
           ))}
         </div>
+
+        {/* User Profile Section */}
+        <div className="flex items-center gap-3">
+          {/* Welcome Message */}
+          <div className="hidden md:block">
+            <p className="text-sm font-medium text-gray-700">
+              Welcome, {firstName}
+            </p>
+          </div>
+
+          {/* Sign Out Button */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => signOut()}
+            className="text-red-600 hover:bg-red-50 hover:text-red-700"
+          >
+            Sign Out
+          </Button>
+
+          {/* User Profile Avatar */}
+          <Link href="/profile">
+            <Avatar className="h-10 w-10 cursor-pointer hover:ring-2 hover:ring-offset-2 hover:ring-blue-400 transition-all">
+              <AvatarImage
+                src={userImage || "/placeholder.svg"}
+                alt={userName || "User Profile"}
+              />
+              <AvatarFallback>{userName?.charAt(0) || "U"}</AvatarFallback>
+            </Avatar>
+          </Link>
+        </div>
       </div>
     </nav>
   );
-}
-
-// Custom hook for data fetching
-function useConsulteeData(consulteeId: string) {
-  const { data: session } = useSession();
-  const [state, setState] = useState({
-    userDetails: null as User | null,
-    profileDetails: null as ConsulteeProfile | null,
-    error: null as string | null,
-    isLoading: true,
-  });
-
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        setState((prev) => ({ ...prev, isLoading: true, error: null }));
-
-        const userId =
-          process.env.NODE_ENV === "test" ||
-          process.env.NODE_ENV === "development"
-            ? process.env.NEXT_PUBLIC_TEST_USERID
-            : session?.user?.id;
-
-        if (!userId) {
-          throw new Error("User not authenticated");
-        }
-
-        const [userData, consulteeData] = await Promise.all([
-          fetchUserDetails(userId),
-          fetchConsulteeDetails(consulteeId),
-        ]);
-
-        setState({
-          userDetails: userData,
-          profileDetails: consulteeData,
-          error: null,
-          isLoading: false,
-        });
-      } catch (err) {
-        console.error("Error fetching data:", err);
-        setState((prev) => ({
-          ...prev,
-          error: err instanceof Error ? err.message : "An error occurred",
-          isLoading: false,
-        }));
-      }
-    }
-
-    fetchData();
-  }, [consulteeId]);
-
-  return state;
 }
 
 // Main layout component
@@ -151,8 +140,45 @@ export default function ConsulteeLayout({
   const currentPath = pathname.split("/").pop();
   const { data: session } = useSession();
 
-  const { userDetails, profileDetails, error, isLoading } =
-    useConsulteeData(consulteeId);
+  const userId = getEffectiveUserId(session);
+
+  // Use SWR to fetch user details
+  const { data: userDetails, error: userError } = useSWR(
+    userId ? [`user-${userId}`, userId] : null,
+    ([_, id]) => fetchUserDetails(id),
+    {
+      revalidateOnFocus: false,
+      revalidateIfStale: false,
+      dedupingInterval: 300000, // 5 minutes
+    },
+  );
+
+  // Use SWR to fetch consultee details
+  const { data: profileDetails, error: profileError } = useSWR(
+    consulteeId ? [`consultee-${consulteeId}`, consulteeId] : null,
+    ([_, id]) => fetchConsulteeDetails(id),
+    {
+      revalidateOnFocus: false,
+      revalidateIfStale: false,
+      dedupingInterval: 300000, // 5 minutes
+    },
+  );
+
+  // Prefetch data for likely navigation paths
+  useEffect(() => {
+    // If we have userId and consulteeId, prefetch data
+    if (userId && consulteeId) {
+      // Prefetch user and consultee data
+      preload([`user-${userId}`, userId], ([_, id]) => fetchUserDetails(id));
+      preload([`consultee-${consulteeId}`, consulteeId], ([_, id]) =>
+        fetchConsulteeDetails(id),
+      );
+    }
+  }, [userId, consulteeId]);
+
+  const isLoading =
+    (!userDetails && !userError) || (!profileDetails && !profileError);
+  const error = userError || profileError;
 
   // Authentication check
   if (
@@ -170,25 +196,68 @@ export default function ConsulteeLayout({
 
   // Error state
   if (error) {
-    return <MessageContainer title="Error" message={error} />;
-  }
-
-  // Loading state
-  if (isLoading || !userDetails || !profileDetails) {
     return (
       <MessageContainer
-        title="Loading..."
-        message="Please wait while we fetch your data."
-        titleColor="text-gray-900"
+        title="Error"
+        message={
+          error instanceof Error ? error.message : "An unknown error occurred"
+        }
       />
+    );
+  }
+
+  // We'll provide a better loading UI instead of a loading message
+  if (isLoading) {
+    return (
+      <div className="bg-slate-50 min-h-screen flex flex-col">
+        {/* Skeleton Nav */}
+        <div className="p-4 sm:p-8 bg-white shadow-sm">
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
+              {NAV_ITEMS.map((_, i) => (
+                <Skeleton key={i} className="h-10 w-24 sm:w-32 rounded-md" />
+              ))}
+            </div>
+            <div className="flex items-center gap-3">
+              <Skeleton className="hidden md:block h-5 w-36" />
+              <Skeleton className="h-9 w-20" />
+              <Skeleton className="h-10 w-10 rounded-full" />
+            </div>
+          </div>
+        </div>
+
+        {/* Skeleton Main Content */}
+        <div className="flex-grow overflow-y-auto p-8">
+          <div className="space-y-6">
+            <Skeleton className="h-12 w-64" />
+            <Skeleton className="h-40 w-full rounded-lg" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Skeleton className="h-32 rounded-lg" />
+              <Skeleton className="h-32 rounded-lg" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Ensure userDetails is available since UserProvider expects it
+  if (!userDetails) {
+    return (
+      <MessageContainer title="Error" message="Failed to load user details" />
     );
   }
 
   // Main layout
   return (
     <UserProvider userDetails={userDetails}>
-      <div className="bg-gray-100 min-h-screen flex flex-col">
-        <ConsulteeNav consulteeId={consulteeId} currentPath={currentPath} />
+      <div className="bg-slate-50 min-h-screen flex flex-col">
+        <ConsulteeNav
+          consulteeId={consulteeId}
+          currentPath={currentPath}
+          userImage={userDetails.image}
+          userName={userDetails.name}
+        />
         <main className="flex-grow overflow-y-auto p-8">{children}</main>
       </div>
     </UserProvider>

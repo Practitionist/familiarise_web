@@ -1,7 +1,7 @@
 "use client";
 
 import { useToast } from "@/hooks/use-toast";
-import { isDevelopmentEnvironment } from "@/lib/env";
+import { isDevelopmentEnvironment } from "@/utils/env";
 import type { SlotOfAppointment } from "@prisma/client";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
@@ -17,8 +17,8 @@ import {
   getEventStatus,
   getEventTitle,
   getStatusColor,
-} from "../../utils";
-import { formatTimeUntil } from "../../utils/actual-schedule";
+} from "../../utils/getMetadata";
+import { formatTimeUntil } from "../../utils/scheduleHelpers";
 import { formatDateTime, formatTimeString } from "./utils";
 
 interface SlotCardProps {

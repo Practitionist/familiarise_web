@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { ClassPlanSchema } from "@/schemas/PlanSchema";
+import { ClassPlanSchema } from "@/schemas/plans";
 import { ClassStatus } from "@prisma/client"; // Import Enum
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";

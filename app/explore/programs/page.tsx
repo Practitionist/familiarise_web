@@ -13,148 +13,40 @@ import {
 import { LayoutGrid, List } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { generateProgramImageUrl } from "./utils";
-import { useCallback, useEffect, useRef, useState } from "react";
-
-import type { TClass, TWebinar } from "@/types/appointment";
-
-type ProgramType = "all" | "class" | "webinar";
-
-type ClassProgram = TClass & {
-  type: "class";
-  imageUrl: string;
-};
-
-type WebinarProgram = TWebinar & {
-  type: "webinar";
-  imageUrl: string;
-};
-
-type Program = ClassProgram | WebinarProgram;
-
-function isClassProgram(program: Program): program is ClassProgram {
-  return program.type === "class";
-}
-
-function isWebinarProgram(program: Program): program is WebinarProgram {
-  return program.type === "webinar";
-}
+import { useCallback, useRef, useState } from "react";
+import {
+  filterAndSortPrograms,
+  getUniqueLevels,
+  isClassProgram,
+  Program,
+  ProgramType,
+  usePrograms,
+} from "./utils";
 
 export default function Programs() {
   const router = useRouter();
-  const [programs, setPrograms] = useState<Program[]>([]);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sortBy, setSortBy] = useState("");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [programType, setProgramType] = useState<ProgramType>("all");
   const observer = useRef<IntersectionObserver>();
-  const ITEMS_PER_PAGE = 9;
+
+  const { programs, isLoading, hasMore, loadMore } = usePrograms(programType);
 
   const lastElementRef = useCallback(
     (node: HTMLDivElement) => {
-      if (loading) return;
+      if (isLoading) return;
       if (observer.current) observer.current.disconnect();
       observer.current = new IntersectionObserver((entries) => {
         if (entries[0].isIntersecting && hasMore) {
-          setPage((prevPage) => prevPage + 1);
+          loadMore();
         }
       });
       if (node) observer.current.observe(node);
     },
-    [loading, hasMore],
+    [isLoading, hasMore, loadMore],
   );
-
-  const fetchPrograms = async (
-    pageNum: number,
-    isNewSearch: boolean = false,
-  ) => {
-    try {
-      setLoading(true);
-      const requests = [];
-
-      if (programType === "all" || programType === "class") {
-        requests.push(
-          fetch(`/api/events/classes?page=${pageNum}&limit=${ITEMS_PER_PAGE}`),
-        );
-      }
-      if (programType === "all" || programType === "webinar") {
-        requests.push(
-          fetch(`/api/events/webinars?page=${pageNum}&limit=${ITEMS_PER_PAGE}`),
-        );
-      }
-
-      const responses = await Promise.all(requests);
-      const data = await Promise.all(responses.map((res) => res.json()));
-
-      let newPrograms: Program[] = [];
-
-      if ((programType === "all" || programType === "class") && data[0]) {
-        const formattedClasses = data[0].data
-          .filter(
-            (item: TClass) =>
-              item.status !== "CANCELLED" &&
-              item.startDate &&
-              new Date(item.startDate) >= new Date(),
-          )
-          .map(
-            (item: TClass): ClassProgram => ({
-              ...item,
-              type: "class",
-              imageUrl: generateProgramImageUrl(item.id),
-            }),
-          );
-        newPrograms = [...newPrograms, ...formattedClasses];
-      }
-
-      if (
-        (programType === "all" || programType === "webinar") &&
-        data[programType === "all" ? 1 : 0]
-      ) {
-        const formattedWebinars = data[programType === "all" ? 1 : 0].data
-          .filter((item: TWebinar) => item.status !== "CANCELLED")
-          .map(
-            (item: TWebinar): WebinarProgram => ({
-              ...item,
-              type: "webinar",
-              imageUrl: generateProgramImageUrl(item.id),
-            }),
-          );
-        newPrograms = [...newPrograms, ...formattedWebinars];
-      }
-
-      setPrograms((prev) =>
-        isNewSearch ? newPrograms : [...prev, ...newPrograms],
-      );
-      setHasMore(
-        newPrograms.length === ITEMS_PER_PAGE * (programType === "all" ? 2 : 1),
-      );
-    } catch (error) {
-      console.error("Error fetching programs:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchPrograms(1, true);
-  }, []);
-
-  useEffect(() => {
-    if (page > 1) {
-      fetchPrograms(page, false);
-    }
-  }, [page]);
-
-  useEffect(() => {
-    setPrograms([]);
-    setPage(1);
-    setHasMore(true);
-    fetchPrograms(1, true);
-  }, [searchTerm, selectedCategory, programType]);
 
   const handleProgramClick = (item: Program) => {
     if (item.type === "class") {
@@ -164,63 +56,14 @@ export default function Programs() {
     }
   };
 
-  const filteredAndSortedPrograms = programs
-    .filter((item) => {
-      const title = isClassProgram(item)
-        ? item.classPlan.title
-        : item.webinarPlan.title;
-      const description = isClassProgram(item)
-        ? item.classPlan.description
-        : item.webinarPlan.description;
-      const level = isClassProgram(item)
-        ? item.classPlan.level
-        : item.webinarPlan.level;
-
-      const searchMatch =
-        title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (description?.toLowerCase() || "").includes(searchTerm.toLowerCase());
-      const categoryMatch =
-        selectedCategory === "all" ? true : level === selectedCategory;
-      return searchMatch && categoryMatch;
-    })
-    .sort((a, b) => {
-      switch (sortBy) {
-        case "price-asc":
-          return (
-            (isClassProgram(a) ? a.classPlan.price : a.webinarPlan.price) -
-            (isClassProgram(b) ? b.classPlan.price : b.webinarPlan.price)
-          );
-        case "price-desc":
-          return (
-            (isClassProgram(b) ? b.classPlan.price : b.webinarPlan.price) -
-            (isClassProgram(a) ? a.classPlan.price : a.webinarPlan.price)
-          );
-        case "title-asc":
-          return (
-            isClassProgram(a) ? a.classPlan.title : a.webinarPlan.title
-          ).localeCompare(
-            isClassProgram(b) ? b.classPlan.title : b.webinarPlan.title,
-          );
-        case "title-desc":
-          return (
-            isClassProgram(b) ? b.classPlan.title : b.webinarPlan.title
-          ).localeCompare(
-            isClassProgram(a) ? a.classPlan.title : a.webinarPlan.title,
-          );
-        default:
-          return 0;
-      }
-    });
-
-  const uniqueLevels = Array.from(
-    new Set(
-      programs.map((program) =>
-        isClassProgram(program)
-          ? program.classPlan.level
-          : program.webinarPlan.level,
-      ),
-    ),
+  const filteredAndSortedPrograms = filterAndSortPrograms(
+    programs,
+    searchTerm,
+    selectedCategory,
+    sortBy,
   );
+
+  const uniqueLevels = getUniqueLevels(programs);
 
   return (
     <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-40 pb-32">
@@ -543,7 +386,7 @@ export default function Programs() {
         </div>
       )}
 
-      {loading && (
+      {isLoading && (
         <div className="text-center py-8 text-gray-500">Loading more...</div>
       )}
     </div>

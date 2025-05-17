@@ -134,15 +134,17 @@ export interface WithBadgeStyle {
 }
 
 // Props for each tab component
-export interface HomeTabProps extends WithBadgeStyle {
+export interface HomeTabProps {
   appointments: IAppointment[];
   activities: IActivity[];
   approvals: IApproval[];
+  badgeStyles: BadgeStyleMap;
   onUpdate?: () => void;
 }
 
-export interface AppointmentsTabProps extends WithBadgeStyle {
+export interface AppointmentsTabProps {
   appointments: IAppointment[];
+  badgeStyles: BadgeStyleMap;
   onUpdate?: () => void;
 }
 
@@ -156,16 +158,17 @@ export interface DocumentsTabProps {
 }
 
 // Props for reusable components
-export interface AppointmentCardProps extends IAppointment, WithBadgeStyle {}
+export interface AppointmentCardProps {
+  appointment: IAppointment;
+  badgeStyles: BadgeStyleMap;
+}
 
 export interface ClientActivityProps {
   activities: IActivity[];
 }
 
 // Utility type for badge styles
-export type BadgeStyleMap = {
-  [key: string]: string;
-};
+export type BadgeStyleMap = { [key: string]: string };
 
 // Constants for badge styles
 export const BADGE_STYLES: BadgeStyleMap = {

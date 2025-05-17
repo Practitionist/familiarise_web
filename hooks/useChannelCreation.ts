@@ -5,7 +5,7 @@ import {
   createConsultationChannel,
   createSubscriptionChannel,
   createWebinarChannel,
-} from "@/actions/channel.action";
+} from "@/actions/stream/chat/channel.action";
 import { useEffect, useState } from "react";
 
 type ChannelCreationProps = {

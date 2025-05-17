@@ -11,26 +11,23 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import {
-  PreferredSchedule,
-  PreferredScheduleSchema,
-} from "@/schemas/UserSchema";
-import { validateTimeSlot } from "@/lib/timeSlotValidation";
-import {
-  DAYS_OF_WEEK,
-  type DayOfWeek,
-  convertToUTC,
-  convertToLocalTime,
-  getLocalDateString,
-  isOvernight,
-  formatDayDisplay,
-  getNextDay,
-  getDaysInMonth,
-  getFirstDayOfMonth,
-} from "../timeUtils";
+import { PreferredSchedule, PreferredScheduleSchema } from "@/schemas/user";
+import { validateTimeSlot } from "@/utils/timeSlotValidation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
+import {
+  DAYS_OF_WEEK,
+  type DayOfWeek,
+  convertToLocalTime,
+  convertToUTC,
+  formatDayDisplay,
+  getDaysInMonth,
+  getFirstDayOfMonth,
+  getLocalDateString,
+  getNextDay,
+  isOvernight,
+} from "../timeUtils";
 
 interface SlotType {
   startTime: string;
