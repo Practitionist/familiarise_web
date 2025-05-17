@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
 import { getServerSession } from "next-auth";
+import { NextRequest, NextResponse } from "next/server";
+import authOptions from "../../auth/[...nextauth]/options";
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    const session = await getServerSession();
+    const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to access your feedback" },
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getServerSession();
+    const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to submit feedback" },
