@@ -12,6 +12,7 @@ import GoogleProvider from "next-auth/providers/google";
 import FacebookProvider from "next-auth/providers/facebook";
 import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcrypt";
+import { sendAccountLinkedEmail } from "@/lib/email";
 
 /**
  * NextAuth options configuration
@@ -296,6 +297,20 @@ const authOptions: NextAuthOptions = {
     async linkAccount({ user, account }) {
       // This event is triggered when a new account is linked to a user
       console.log(`Account linked: ${account.provider} for user ${user.email}`);
+      
+      // Send email notification when a new account is linked
+      if (user.email) {
+        try {
+          await sendAccountLinkedEmail({
+            email: user.email,
+            name: user.name || 'User',
+            provider: account.provider || 'Social Provider',
+          });
+        } catch (error) {
+          console.error('Failed to send account linked email:', error);
+          // Don't block the account linking process if email fails
+        }
+      }
     },
   },
 };

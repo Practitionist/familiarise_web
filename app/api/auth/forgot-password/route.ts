@@ -1,5 +1,8 @@
 import { sendPasswordResetEmail } from "@/lib/email";
 import { NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import bcrypt from "bcrypt";
+import crypto from "crypto";
 
 export async function POST(req: Request) {
   try {
@@ -10,7 +13,39 @@ export async function POST(req: Request) {
       return new NextResponse("Email is required", { status: 400 });
     }
 
-    await sendPasswordResetEmail(email);
+    // Find the user by email
+    const user = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true, name: true },
+    });
+
+    // Only proceed if user exists (but don't expose this information in the response)
+    if (user) {
+      // Generate random token
+      const resetToken = crypto.randomBytes(32).toString('hex');
+      // Hash the token for security
+      const hashedToken = await bcrypt.hash(resetToken, 10);
+      
+      // Set token expiration (30 minutes from now)
+      const expiryDate = new Date();
+      expiryDate.setMinutes(expiryDate.getMinutes() + 30);
+      
+      // Update user with reset token and expiry
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          passwordResetToken: hashedToken,
+          passwordResetExpires: expiryDate,
+        },
+      });
+      
+      // Send reset email with the plain text token (not the hash)
+      await sendPasswordResetEmail({
+        email,
+        name: user.name || "User",
+        token: resetToken,
+      });
+    }
 
     // Always return a success response to prevent email enumeration
     return NextResponse.json({

@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import bcrypt from "bcrypt";
 import { UserRole } from "@prisma/client"; // Import UserRole enum
+import { sendWelcomeEmail } from "@/lib/email";
 
 export async function POST(req: Request) {
   try {
@@ -127,6 +128,17 @@ export async function POST(req: Request) {
           consulteeProfile: true,
         },
       });
+
+      // Send welcome email to the new user
+      try {
+        await sendWelcomeEmail({
+          email,
+          name,
+        });
+      } catch (emailError) {
+        console.error("[REGISTER_POST] Welcome email error:", emailError);
+        // Continue despite email failure - don't block registration
+      }
 
       // Return only necessary user info, exclude password
       const { password: _, ...userWithoutPassword } = user;
