@@ -4,10 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  PersonalInfoAndRole,
-  PersonalInfoAndRoleSchema,
-} from "@/schemas/user";
+import { PersonalInfoAndRole, PersonalInfoAndRoleSchema } from "@/schemas/user";
 import { useSession } from "next-auth/react";
 
 interface Props {

@@ -184,7 +184,11 @@ export default function FeedbackSupportTab({
                   >
                     <div className="flex justify-between items-start">
                       <h3 className="font-semibold">{feedback.title}</h3>
-                      <Badge className={getStatusColor(feedback.status as FeedbackStatus)}>
+                      <Badge
+                        className={getStatusColor(
+                          feedback.status as FeedbackStatus,
+                        )}
+                      >
                         {feedback.status}
                       </Badge>
                     </div>
@@ -289,10 +293,18 @@ export default function FeedbackSupportTab({
                     <div className="flex justify-between items-start">
                       <h3 className="font-semibold">{ticket.title}</h3>
                       <div className="flex gap-2">
-                        <Badge className={getPriorityColor(ticket.priority as SupportPriority)}>
+                        <Badge
+                          className={getPriorityColor(
+                            ticket.priority as SupportPriority,
+                          )}
+                        >
                           {ticket.priority}
                         </Badge>
-                        <Badge className={getStatusColor(ticket.status as SupportTicketStatus)}>
+                        <Badge
+                          className={getStatusColor(
+                            ticket.status as SupportTicketStatus,
+                          )}
+                        >
                           {ticket.status}
                         </Badge>
                       </div>

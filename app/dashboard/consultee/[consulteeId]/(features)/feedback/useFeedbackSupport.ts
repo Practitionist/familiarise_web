@@ -46,7 +46,9 @@ export function useFeedbackSupport() {
     "feedback",
   );
   const [feedbacks, setFeedbacks] = React.useState<Feedback[]>([]);
-  const [tickets, setTickets] = React.useState<SupportTicketWithResponses[]>([]);
+  const [tickets, setTickets] = React.useState<SupportTicketWithResponses[]>(
+    [],
+  );
   const [selectedTicket, setSelectedTicket] = React.useState<string | null>(
     null,
   );
