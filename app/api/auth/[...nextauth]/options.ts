@@ -92,7 +92,15 @@ const authOptions: NextAuthOptions = {
      * @param {Object} params - Contains the user, account, and profile objects
      * @returns {boolean} - Whether the sign-in is allowed
      */
-    async signIn({ user, account, profile }: { user: User, account: Account | null, profile?: any }): Promise<boolean> {
+    async signIn({
+      user,
+      account,
+      profile,
+    }: {
+      user: User;
+      account: Account | null;
+      profile?: any;
+    }): Promise<boolean> {
       // Only proceed for OAuth sign-ins
       if (account && account.provider !== "credentials" && user.email) {
         // Check if there's an existing user with this email
@@ -105,7 +113,7 @@ const authOptions: NextAuthOptions = {
         if (existingUser && account.provider && account.providerAccountId) {
           // Check if they already have an account for this provider
           const existingAccount = existingUser.accounts.find(
-            (acc) => acc.provider === account.provider
+            (acc) => acc.provider === account.provider,
           );
 
           // If they don't have an account for this provider, link it
@@ -297,17 +305,17 @@ const authOptions: NextAuthOptions = {
     async linkAccount({ user, account }) {
       // This event is triggered when a new account is linked to a user
       console.log(`Account linked: ${account.provider} for user ${user.email}`);
-      
+
       // Send email notification when a new account is linked
       if (user.email) {
         try {
           await sendAccountLinkedEmail({
             email: user.email,
-            name: user.name || 'User',
-            provider: account.provider || 'Social Provider',
+            name: user.name || "User",
+            provider: account.provider || "Social Provider",
           });
         } catch (error) {
-          console.error('Failed to send account linked email:', error);
+          console.error("Failed to send account linked email:", error);
           // Don't block the account linking process if email fails
         }
       }

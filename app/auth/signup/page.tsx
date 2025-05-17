@@ -30,13 +30,18 @@ export default function SignUp() {
 
     try {
       // Call the registration API endpoint
-      const response = await axios.post("/api/auth/register", { name, email, password });
-      
+      const response = await axios.post("/api/auth/register", {
+        name,
+        email,
+        password,
+      });
+
       // Check if we got a message about linking accounts
       if (response.data.message && response.data.message.includes("linked")) {
         toast({
           title: "Account Linked Successfully!",
-          description: "Your password has been added to your existing social account.",
+          description:
+            "Your password has been added to your existing social account.",
         });
       } else {
         toast({
@@ -73,10 +78,10 @@ export default function SignUp() {
       }
     } catch (error: any) {
       console.error("Sign up error:", error);
-      
+
       // Handle JSON error responses
       let errorMessage = "An unexpected error occurred.";
-      
+
       if (error.response) {
         if (error.response.data.error) {
           // Get error message from our API response
@@ -86,7 +91,7 @@ export default function SignUp() {
           errorMessage = error.response.data;
         }
       }
-      
+
       toast({
         title: "Sign Up Failed",
         description: errorMessage,
@@ -204,7 +209,7 @@ export default function SignUp() {
               </span>
             </div>
           </div>
-          
+
           <Button
             className="w-full flex items-center justify-center bg-black hover:bg-gray-700"
             disabled={isLoading}

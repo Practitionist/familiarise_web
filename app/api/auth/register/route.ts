@@ -31,15 +31,18 @@ export async function POST(req: Request) {
     if (existingUser) {
       // If user already has a password, return error
       if (existingUser.password) {
-        return new NextResponse("An account with this email already exists. Please sign in instead.", { status: 409 });
+        return new NextResponse(
+          "An account with this email already exists. Please sign in instead.",
+          { status: 409 },
+        );
       }
-      
+
       // If user exists via OAuth only (has accounts but no password)
       if (existingUser.accounts.length > 0 && !existingUser.password) {
         try {
           // Add password credentials to existing OAuth user
           const hashedPassword = await bcrypt.hash(password, 10);
-          
+
           // Update the user with the password
           const updatedUser = await prisma.user.update({
             where: { id: existingUser.id },
@@ -50,7 +53,7 @@ export async function POST(req: Request) {
               // Do not attempt to modify the profile relationships here
             },
           });
-          
+
           // Check if consulteeProfile needs to be created
           if (!existingUser.consulteeProfile) {
             await prisma.consulteeProfile.create({
@@ -59,44 +62,53 @@ export async function POST(req: Request) {
               },
             });
           }
-          
+
           // Check if preference records exist and create if not
           const cookiePref = await prisma.cookiePreference.findUnique({
             where: { userId: existingUser.id },
           });
-          
+
           if (!cookiePref) {
             await prisma.cookiePreference.create({
               data: { userId: existingUser.id },
             });
           }
-          
+
           const notifPref = await prisma.notificationPreference.findUnique({
             where: { userId: existingUser.id },
           });
-          
+
           if (!notifPref) {
             await prisma.notificationPreference.create({
               data: { userId: existingUser.id },
             });
           }
-          
+
           // Return user without password
           const { password: _, ...userWithoutPassword } = updatedUser;
           return NextResponse.json({
             ...userWithoutPassword,
-            message: "Successfully linked your email and password to your existing account",
+            message:
+              "Successfully linked your email and password to your existing account",
           });
         } catch (error) {
           console.error("[REGISTER_POST] Account linking error:", error);
-          return NextResponse.json({ 
-            error: "We couldn't link your password to your existing account. Please try signing in with your social account instead.",
-          }, { status: 400 });
+          return NextResponse.json(
+            {
+              error:
+                "We couldn't link your password to your existing account. Please try signing in with your social account instead.",
+            },
+            { status: 400 },
+          );
         }
       } else {
-        return NextResponse.json({ 
-          error: "An account with this email already exists. Please sign in instead."
-        }, { status: 409 });
+        return NextResponse.json(
+          {
+            error:
+              "An account with this email already exists. Please sign in instead.",
+          },
+          { status: 409 },
+        );
       }
     }
 
@@ -146,14 +158,20 @@ export async function POST(req: Request) {
       return NextResponse.json(userWithoutPassword);
     } catch (error) {
       console.error("[REGISTER_POST] User creation error:", error);
-      return NextResponse.json({ 
-        error: "We couldn't create your account. Please try again later."
-      }, { status: 500 });
+      return NextResponse.json(
+        {
+          error: "We couldn't create your account. Please try again later.",
+        },
+        { status: 500 },
+      );
     }
   } catch (error) {
     console.error("[REGISTER_POST] Error:", error);
-    return NextResponse.json({ 
-      error: "Something went wrong. Please try again later."
-    }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: "Something went wrong. Please try again later.",
+      },
+      { status: 500 },
+    );
   }
 }

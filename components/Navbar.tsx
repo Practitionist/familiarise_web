@@ -80,9 +80,14 @@ const Navbar = () => {
   // Navigation links data
   const navLinks = [
     { path: "/explore/experts", label: "Experts", icon: "👨‍🏫" },
-    { path: "/explore/programs", label: "Programs", icon: "🎥", mobileLabel: "Webinar" },
+    {
+      path: "/explore/programs",
+      label: "Programs",
+      icon: "🎥",
+      mobileLabel: "Webinar",
+    },
     { path: "/explore/community", label: "Community", icon: "👥" },
-    { path: "/blog", label: "Blog", icon: "📝" }
+    { path: "/blog", label: "Blog", icon: "📝" },
   ];
 
   // Handle sign out
@@ -93,8 +98,8 @@ const Navbar = () => {
 
   // Get user image with fallback
   const getUserImage = () => {
-    return (session?.user?.image && session.user.image !== "") 
-      ? session.user.image 
+    return session?.user?.image && session.user.image !== ""
+      ? session.user.image
       : defaultUserImage;
   };
 
@@ -111,9 +116,7 @@ const Navbar = () => {
               height={40}
               className="rounded-full"
             />
-            <span className="text-sm font-medium">
-              {session.user.name}
-            </span>
+            <span className="text-sm font-medium">{session.user.name}</span>
           </div>
           <button
             onClick={handleSignOut}
@@ -133,10 +136,7 @@ const Navbar = () => {
               className="rounded-full cursor-pointer"
             />
           </Link>
-          <button
-            onClick={() => signOut()}
-            className="ml-2"
-          >
+          <button onClick={() => signOut()} className="ml-2">
             Sign out
           </button>
         </>
@@ -211,9 +211,7 @@ const Navbar = () => {
             ))}
           </div>
 
-          <div className="flex items-center">
-            {renderUserSection()}
-          </div>
+          <div className="flex items-center">{renderUserSection()}</div>
         </div>
       </nav>
 
