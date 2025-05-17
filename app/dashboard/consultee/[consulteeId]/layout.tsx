@@ -2,12 +2,14 @@
 
 import { fetchConsulteeDetails, fetchUserDetails } from "@/lib/user";
 import { getEffectiveUserId } from "@/utils/auth";
+import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Button } from "components/ui/button";
-import { useSession } from "next-auth/react";
+import { Skeleton } from "components/ui/skeleton";
+import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { use } from "react";
-import useSWR from "swr";
+import { use, useEffect } from "react";
+import useSWR, { preload } from "swr";
 import { UserProvider } from "./UserContext";
 
 // Navigation configuration
@@ -38,6 +40,8 @@ interface MessageContainerProps {
 interface ConsulteeNavProps {
   consulteeId: string;
   currentPath: string | undefined;
+  userImage?: string | null;
+  userName?: string | null;
 }
 
 // Reusable components
@@ -61,15 +65,20 @@ function MessageContainer({
 function ConsulteeNav({
   consulteeId,
   currentPath,
+  userImage,
+  userName,
 }: Readonly<ConsulteeNavProps>) {
+  const firstName = userName?.split(" ")[0] || "User";
+
   return (
     <nav className="p-4 sm:p-8 bg-white shadow-sm">
-      <div className="flex flex-col sm:flex-row justify-start items-start gap-4">
-        <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 w-full">
+      <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
           {NAV_ITEMS.map((item) => (
             <Link
               key={item.name}
               href={`/dashboard/consultee/${consulteeId}/${item.path}`}
+              prefetch={true}
             >
               <Button
                 className={`${
@@ -83,6 +92,37 @@ function ConsulteeNav({
               </Button>
             </Link>
           ))}
+        </div>
+
+        {/* User Profile Section */}
+        <div className="flex items-center gap-3">
+          {/* Welcome Message */}
+          <div className="hidden md:block">
+            <p className="text-sm font-medium text-gray-700">
+              Welcome, {firstName}
+            </p>
+          </div>
+
+          {/* Sign Out Button */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => signOut()}
+            className="text-red-600 hover:bg-red-50 hover:text-red-700"
+          >
+            Sign Out
+          </Button>
+
+          {/* User Profile Avatar */}
+          <Link href="/profile">
+            <Avatar className="h-10 w-10 cursor-pointer hover:ring-2 hover:ring-offset-2 hover:ring-blue-400 transition-all">
+              <AvatarImage
+                src={userImage || "/placeholder.svg"}
+                alt={userName || "User Profile"}
+              />
+              <AvatarFallback>{userName?.charAt(0) || "U"}</AvatarFallback>
+            </Avatar>
+          </Link>
         </div>
       </div>
     </nav>
@@ -110,7 +150,7 @@ export default function ConsulteeLayout({
       revalidateOnFocus: false,
       revalidateIfStale: false,
       dedupingInterval: 300000, // 5 minutes
-    }
+    },
   );
 
   // Use SWR to fetch consultee details
@@ -121,10 +161,23 @@ export default function ConsulteeLayout({
       revalidateOnFocus: false,
       revalidateIfStale: false,
       dedupingInterval: 300000, // 5 minutes
-    }
+    },
   );
 
-  const isLoading = !userDetails && !userError || !profileDetails && !profileError;
+  // Prefetch data for likely navigation paths
+  useEffect(() => {
+    // If we have userId and consulteeId, prefetch data
+    if (userId && consulteeId) {
+      // Prefetch user and consultee data
+      preload([`user-${userId}`, userId], ([_, id]) => fetchUserDetails(id));
+      preload([`consultee-${consulteeId}`, consulteeId], ([_, id]) =>
+        fetchConsulteeDetails(id),
+      );
+    }
+  }, [userId, consulteeId]);
+
+  const isLoading =
+    (!userDetails && !userError) || (!profileDetails && !profileError);
   const error = userError || profileError;
 
   // Authentication check
@@ -143,17 +196,55 @@ export default function ConsulteeLayout({
 
   // Error state
   if (error) {
-    return <MessageContainer title="Error" message={error instanceof Error ? error.message : "An unknown error occurred"} />;
-  }
-
-  // Loading state
-  if (isLoading || !userDetails || !profileDetails) {
     return (
       <MessageContainer
-        title="Loading..."
-        message="Please wait while we fetch your data."
-        titleColor="text-gray-900"
+        title="Error"
+        message={
+          error instanceof Error ? error.message : "An unknown error occurred"
+        }
       />
+    );
+  }
+
+  // We'll provide a better loading UI instead of a loading message
+  if (isLoading) {
+    return (
+      <div className="bg-slate-50 min-h-screen flex flex-col">
+        {/* Skeleton Nav */}
+        <div className="p-4 sm:p-8 bg-white shadow-sm">
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
+              {NAV_ITEMS.map((_, i) => (
+                <Skeleton key={i} className="h-10 w-24 sm:w-32 rounded-md" />
+              ))}
+            </div>
+            <div className="flex items-center gap-3">
+              <Skeleton className="hidden md:block h-5 w-36" />
+              <Skeleton className="h-9 w-20" />
+              <Skeleton className="h-10 w-10 rounded-full" />
+            </div>
+          </div>
+        </div>
+
+        {/* Skeleton Main Content */}
+        <div className="flex-grow overflow-y-auto p-8">
+          <div className="space-y-6">
+            <Skeleton className="h-12 w-64" />
+            <Skeleton className="h-40 w-full rounded-lg" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Skeleton className="h-32 rounded-lg" />
+              <Skeleton className="h-32 rounded-lg" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Ensure userDetails is available since UserProvider expects it
+  if (!userDetails) {
+    return (
+      <MessageContainer title="Error" message="Failed to load user details" />
     );
   }
 
@@ -161,7 +252,12 @@ export default function ConsulteeLayout({
   return (
     <UserProvider userDetails={userDetails}>
       <div className="bg-slate-50 min-h-screen flex flex-col">
-        <ConsulteeNav consulteeId={consulteeId} currentPath={currentPath} />
+        <ConsulteeNav
+          consulteeId={consulteeId}
+          currentPath={currentPath}
+          userImage={userDetails.image}
+          userName={userDetails.name}
+        />
         <main className="flex-grow overflow-y-auto p-8">{children}</main>
       </div>
     </UserProvider>

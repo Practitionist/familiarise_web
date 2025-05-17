@@ -186,16 +186,25 @@ export function EventCard({
     >
       <Card
         onClick={handleClick}
-        className="hover:shadow-md transition-shadow duration-200 border border-gray-100 cursor-pointer w-96 min-h-[16rem] h-auto flex flex-col flex-shrink-0"
+        className="relative overflow-hidden hover:shadow-lg transition-all duration-300 border border-gray-100 cursor-pointer w-96 min-h-[16rem] h-auto flex flex-col flex-shrink-0 rounded-xl bg-gradient-to-br from-white via-white to-gray-50 before:absolute before:inset-0 before:z-0 before:bg-[radial-gradient(circle_at_50%_0,rgba(255,255,255,0.7),transparent_70%)] before:opacity-80 hover:before:opacity-100 before:transition-opacity"
+        style={{
+          boxShadow: "0 10px 30px -10px rgba(0, 0, 0, 0.1)",
+        }}
       >
-        <CardHeader className="pb-2">
+        {/* Glossy top reflection effect */}
+        <div className="absolute top-0 left-0 right-0 h-[30%] bg-gradient-to-b from-white/40 to-transparent pointer-events-none z-10 rounded-t-xl"></div>
+
+        {/* Subtle side shine effect */}
+        <div className="absolute -right-20 top-0 bottom-0 w-40 bg-gradient-to-l from-white/40 to-transparent transform rotate-[15deg] group-hover:translate-x-10 transition-transform duration-700 pointer-events-none z-10"></div>
+
+        <CardHeader className="pb-2 relative z-20">
           <div className="flex items-start justify-between">
             <div>
-              <CardTitle className="text-lg font-semibold break-words">
+              <CardTitle className="text-lg font-semibold break-words text-gray-800 drop-shadow-sm">
                 {title}
               </CardTitle>
               <div className="flex items-center mt-2">
-                <Avatar className="h-6 w-6 mr-2">
+                <Avatar className="h-6 w-6 mr-2 ring-2 ring-white shadow-sm">
                   <AvatarImage
                     src={image ?? "/placeholder.svg"}
                     alt={consultant}
@@ -214,7 +223,7 @@ export function EventCard({
               {status && (
                 <Badge
                   data-testid="event-status"
-                  className={`${getStatusColor(status)} whitespace-normal break-words`}
+                  className={`${getStatusColor(status)} whitespace-normal break-words backdrop-blur-sm shadow-sm`}
                 >
                   {status}
                 </Badge>
@@ -223,7 +232,7 @@ export function EventCard({
                 <div className="flex flex-col items-end gap-1">
                   <Badge
                     data-testid="tentative-notice"
-                    className="bg-red-50 text-red-700 border-red-200 whitespace-normal break-words"
+                    className="bg-red-50 text-red-700 border-red-200 whitespace-normal break-words shadow-sm backdrop-blur-sm"
                   >
                     Tentative
                   </Badge>
@@ -235,7 +244,7 @@ export function EventCard({
             </div>
           </div>
         </CardHeader>
-        <CardContent className="flex-grow flex flex-col justify-between">
+        <CardContent className="flex-grow flex flex-col justify-between relative z-20">
           <div className="flex flex-col space-y-2">
             {type === "Consultation" || type === "Webinar" ? (
               <div className="flex items-center justify-between">

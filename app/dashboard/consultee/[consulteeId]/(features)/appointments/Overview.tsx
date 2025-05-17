@@ -248,43 +248,36 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
         direction === "left"
           ? currentScroll - SCROLL_AMOUNT
           : currentScroll + SCROLL_AMOUNT;
+
+      // Use smooth scrolling for button clicks
       scrollContainerRef.current.scrollTo({
         left: newScroll,
         behavior: "smooth",
       });
-      setTimeout(updateScrollButtonStates, 350);
+
+      setTimeout(updateScrollButtonStates, 300);
     }
   };
 
-  if (!items || items.length === 0) {
+  if (!items.length) {
     return (
-      <Card
-        className="rounded-xl shadow-lg bg-white"
-        data-testid={`${title.toLowerCase()}-card`}
-      >
-        <CardHeader className="p-6">
-          <CardTitle className="text-xl font-semibold text-gray-800">
-            {title}
-          </CardTitle>
+      <Card className="bg-gradient-to-br from-white via-white to-gray-50 border-gray-100 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-xl text-gray-800">{title}</CardTitle>
         </CardHeader>
-        <CardContent className="p-6">
-          <p className="text-gray-500">
-            No {title.toLowerCase()} events scheduled yet.
-          </p>
+        <CardContent>
+          <p className="text-gray-500">No appointments found.</p>
         </CardContent>
       </Card>
     );
   }
 
   return (
-    <Card
-      className="rounded-xl shadow-lg bg-white relative"
-      data-testid={`${title.toLowerCase()}-card`}
-    >
-      <CardHeader className="p-6 flex flex-row justify-between items-center">
-        <CardTitle className="text-xl font-semibold text-gray-800">
-          {title}
-        </CardTitle>
+    <Card className="relative overflow-hidden rounded-xl bg-gradient-to-br from-white via-white to-gray-50 border-gray-100 shadow-sm">
+      <CardHeader className="relative z-10 flex flex-row justify-between items-center">
+        <CardTitle className="text-xl text-gray-800">{title}</CardTitle>
+
+        {/* Scroll Buttons */}
         {(canScrollLeft || canScrollRight) && (
           <div className="flex space-x-2">
             {canScrollLeft && (
@@ -292,10 +285,10 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
                 variant="outline"
                 size="icon"
                 onClick={() => handleScroll("left")}
-                className="rounded-full h-8 w-8 sm:h-9 sm:w-9 md:h-10 md:w-10"
+                className="rounded-full h-9 w-9 bg-white/90 backdrop-blur-sm shadow-sm hover:shadow-md transition-all border-gray-200"
                 aria-label="Scroll left"
               >
-                <ChevronLeftIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+                <ChevronLeftIcon className="h-5 w-5" />
               </Button>
             )}
             {canScrollRight && (
@@ -303,28 +296,39 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
                 variant="outline"
                 size="icon"
                 onClick={() => handleScroll("right")}
-                className="rounded-full h-8 w-8 sm:h-9 sm:w-9 md:h-10 md:w-10"
+                className="rounded-full h-9 w-9 bg-white/90 backdrop-blur-sm shadow-sm hover:shadow-md transition-all border-gray-200"
                 aria-label="Scroll right"
               >
-                <ChevronRightIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+                <ChevronRightIcon className="h-5 w-5" />
               </Button>
             )}
           </div>
         )}
       </CardHeader>
-      <CardContent className="p-6 pt-2 sm:pt-4">
+
+      {/* Glossy top reflection effect */}
+      <div className="absolute top-0 left-0 right-0 h-[20%] bg-gradient-to-b from-white/30 to-transparent pointer-events-none z-0"></div>
+
+      <CardContent className="relative z-10">
         <div
           ref={scrollContainerRef}
           className="flex flex-row gap-4 overflow-x-auto pb-4 snap-x snap-mandatory 
                      [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']"
         >
           {items.map((item) => (
-            <EventCard
-              key={item.id}
-              {...item}
-              className="snap-start"
-              data-testid={`${item.type.toLowerCase()}-${item.id}`}
-            />
+            <div key={item.id} className="snap-start">
+              <EventCard
+                title={item.title}
+                consultant={item.consultant}
+                date={item.date}
+                status={item.status}
+                image={item.image}
+                type={item.type}
+                isTentative={item.isTentative}
+                actualSlots={item.actualSlots}
+                appointmentId={item.appointmentId}
+              />
+            </div>
           ))}
         </div>
       </CardContent>

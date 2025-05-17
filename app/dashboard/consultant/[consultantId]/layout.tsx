@@ -6,8 +6,8 @@ import { Skeleton } from "components/ui/skeleton";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { use } from "react";
-import useSWR from "swr";
+import { use, useEffect } from "react";
+import useSWR, { preload } from "swr";
 import { fetchConsultantData } from "./utils/fetchHelpers";
 
 // Navigation configuration
@@ -60,19 +60,33 @@ export default function ConsultantLayout({
   const pathname = usePathname();
   const currentPath = pathname.split("/").pop();
   const { data: session } = useSession();
-  
+
   const userId = getEffectiveUserId(session);
-  
+
   // Use SWR to fetch and cache consultant data
-  const { data: consultantData, error, isLoading } = useSWR(
+  const { data: consultantData, error } = useSWR(
     userId ? [`consultant-${consultantId}`, consultantId] : null,
     ([_, id]) => fetchConsultantData(id),
     {
       revalidateOnFocus: false,
       revalidateIfStale: false,
       dedupingInterval: 300000, // 5 minutes
-    }
+    },
   );
+
+  // Prefetch data for likely navigation paths
+  useEffect(() => {
+    // If we have userId and consultantId, prefetch data for common routes
+    if (userId && consultantId) {
+      // Prefetch consultant data
+      preload([`consultant-${consultantId}`, consultantId], ([_, id]) =>
+        fetchConsultantData(id),
+      );
+    }
+  }, [userId, consultantId]);
+
+  // Early render of the skeleton UI for better perceived performance
+  const isLoading = !consultantData && !error;
 
   // Authentication check
   if (
@@ -88,14 +102,14 @@ export default function ConsultantLayout({
     );
   }
 
-  // Main layout
+  // Main layout - Note we always render the layout even during loading
   return (
     <div className="flex min-h-screen bg-gray-100">
       {/* Sidebar */}
       <aside className="w-64 bg-white border-r relative min-h-screen flex flex-col">
         {/* Profile Section */}
         <div className="p-4 border-b">
-          {isLoading || !consultantData ? (
+          {isLoading ? (
             <div className="flex items-center space-x-3">
               <Skeleton className="h-12 w-12 rounded-full" />
               <div className="space-y-2">
@@ -134,6 +148,7 @@ export default function ConsultantLayout({
                       ? "bg-blue-50 text-blue-600"
                       : "text-gray-600 hover:bg-gray-100"
                   }`}
+                  prefetch={true}
                 >
                   <span>{item.icon}</span>
                   <span>{item.name}</span>
@@ -159,6 +174,7 @@ export default function ConsultantLayout({
                 ? "bg-blue-50 text-blue-600"
                 : "text-gray-600 hover:bg-gray-100"
             }`}
+            prefetch={true}
           >
             <span>⚙️</span>
             <span>Settings</span>
@@ -183,8 +199,20 @@ export default function ConsultantLayout({
                 Error
               </h2>
               <p className="text-gray-700">
-                {error instanceof Error ? error.message : "An unknown error occurred"}
+                {error instanceof Error
+                  ? error.message
+                  : "An unknown error occurred"}
               </p>
+            </div>
+          </div>
+        ) : isLoading ? (
+          // Show a loading UI in the main content while data is loading
+          <div className="flex flex-col space-y-4">
+            <Skeleton className="h-8 w-64" />
+            <Skeleton className="h-32 w-full rounded-md" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Skeleton className="h-24 rounded-md" />
+              <Skeleton className="h-24 rounded-md" />
             </div>
           </div>
         ) : (
