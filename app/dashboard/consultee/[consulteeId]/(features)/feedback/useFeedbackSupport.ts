@@ -1,12 +1,14 @@
 "use client";
 
-import React from "react";
-import { useToast } from "hooks/use-toast";
 import {
-  FeedbackStatus,
+  Feedback,
   SupportPriority,
-  SupportTicketStatus,
+  SupportTicket,
+  SupportResponse as PrismaSupportResponse,
+  UserRole,
 } from "@prisma/client";
+import { useToast } from "hooks/use-toast";
+import React from "react";
 
 interface FeedbackFormData {
   title: string;
@@ -26,14 +28,25 @@ interface SupportResponseFormData {
   message: string;
 }
 
+interface EnrichedSupportTicketResponse extends PrismaSupportResponse {
+  user: {
+    name: string | null;
+    role: UserRole | null;
+  } | null;
+}
+
+interface SupportTicketWithResponses extends SupportTicket {
+  responses: EnrichedSupportTicketResponse[];
+}
+
 export function useFeedbackSupport() {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<"feedback" | "support">(
     "feedback",
   );
-  const [feedbacks, setFeedbacks] = React.useState<any[]>([]);
-  const [tickets, setTickets] = React.useState<any[]>([]);
+  const [feedbacks, setFeedbacks] = React.useState<Feedback[]>([]);
+  const [tickets, setTickets] = React.useState<SupportTicketWithResponses[]>([]);
   const [selectedTicket, setSelectedTicket] = React.useState<string | null>(
     null,
   );
@@ -59,17 +72,19 @@ export function useFeedbackSupport() {
       setIsLoading(true);
       const response = await fetch(`/api/user/feedbacks`);
       if (!response.ok) {
-        const error = await response.json();
+        const errorData = await response.json();
         throw new Error(
-          error.message || "Failed to fetch your feedback history",
+          errorData.message || "Failed to fetch your feedback history",
         );
       }
       const data = await response.json();
       setFeedbacks(data);
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Failed to load feedbacks:", error);
       toast({
         title: "Error",
         description:
+          error.message ||
           "Unable to load your feedback history. Please try refreshing the page.",
         variant: "destructive",
       });
@@ -83,17 +98,19 @@ export function useFeedbackSupport() {
       setIsLoading(true);
       const response = await fetch(`/api/user/support-tickets`);
       if (!response.ok) {
-        const error = await response.json();
+        const errorData = await response.json();
         throw new Error(
-          error.message || "Failed to fetch your support tickets",
+          errorData.message || "Failed to fetch your support tickets",
         );
       }
       const data = await response.json();
       setTickets(data);
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Failed to load support tickets:", error);
       toast({
         title: "Error",
         description:
+          error.message ||
           "Unable to load your support tickets. Please try refreshing the page.",
         variant: "destructive",
       });
@@ -117,8 +134,8 @@ export function useFeedbackSupport() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || "Failed to submit your feedback");
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Failed to submit your feedback");
       }
 
       toast({
@@ -128,10 +145,12 @@ export function useFeedbackSupport() {
 
       setFeedbackForm({ title: "", description: "" });
       loadFeedbacks();
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Failed to submit feedback:", error);
       toast({
         title: "Error",
         description:
+          error.message ||
           "Unable to submit your feedback. Please check your input and try again.",
         variant: "destructive",
       });
@@ -150,9 +169,9 @@ export function useFeedbackSupport() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
+        const errorData = await response.json();
         throw new Error(
-          error.message || "Failed to create your support ticket",
+          errorData.message || "Failed to create your support ticket",
         );
       }
 
@@ -167,10 +186,12 @@ export function useFeedbackSupport() {
         priority: SupportPriority.MEDIUM,
       });
       loadTickets();
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Failed to create support ticket:", error);
       toast({
         title: "Error",
         description:
+          error.message ||
           "Unable to create your support ticket. Please check your input and try again.",
         variant: "destructive",
       });
@@ -192,8 +213,8 @@ export function useFeedbackSupport() {
       );
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || "Failed to submit your response");
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Failed to submit your response");
       }
 
       toast({
@@ -203,10 +224,12 @@ export function useFeedbackSupport() {
 
       setResponseForm({ message: "" });
       loadTickets(); // Reload tickets to show the new response
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Failed to submit response:", error);
       toast({
         title: "Error",
         description:
+          error.message ||
           "Unable to submit your response. Please check your message and try again.",
         variant: "destructive",
       });
@@ -233,4 +256,4 @@ export function useFeedbackSupport() {
     handleTicketSubmit,
     handleResponseSubmit,
   };
-} 
+}

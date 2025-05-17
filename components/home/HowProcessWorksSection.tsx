@@ -37,7 +37,7 @@ const ProcessStep = ({
       </div>
     </motion.div>
     {!isLast && (
-      <div className="absolute left-5 top-14 w-[2px] h-[calc(100%-1rem)] bg-gradient-to-b from-primary/30 to-transparent" />
+      <div className="absolute left-9 top-14 w-[2px] h-[calc(100%-0.5rem)] bg-gradient-to-b from-primary/30 to-transparent" />
     )}
   </div>
 );
@@ -68,6 +68,7 @@ const ConsultationFlow = () => (
       number={5}
       title="Join Consultation"
       description="Access your consultation at the scheduled time through our platform"
+      isLast={true}
     />
   </div>
 );
@@ -98,6 +99,7 @@ const SubscriptionFlow = () => (
       number={5}
       title="Access All Benefits"
       description="Enjoy regular sessions and additional subscription benefits"
+      isLast={true}
     />
   </div>
 );
@@ -128,6 +130,7 @@ const WebinarFlow = () => (
       number={5}
       title="Join Webinar"
       description="Get access to the webinar at the scheduled time"
+      isLast={true}
     />
   </div>
 );
@@ -158,6 +161,7 @@ const ClassFlow = () => (
       number={5}
       title="Start Learning"
       description="Access class materials and attend scheduled sessions"
+      isLast={true}
     />
   </div>
 );
