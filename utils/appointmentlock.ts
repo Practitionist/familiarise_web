@@ -1,6 +1,6 @@
 import { Redis } from "@upstash/redis";
 import Redlock from "redlock";
-import redisClient from "./redis";
+import redisClient from "../lib/redis";
 
 if (!redisClient) {
   throw new Error("Redis client is not initialized");

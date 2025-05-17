@@ -1,6 +1,6 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
-import { StaffProfile, PersonalInfoAndRole } from "@/schemas/UserSchema";
+import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import { useFormContext } from "react-hook-form";
 import TermsAndPrivacyAgreement from "./TermsAndPrivacyAgreement";
 

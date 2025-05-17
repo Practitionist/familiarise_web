@@ -14,7 +14,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   PreferredSchedule,
   PreferredScheduleSchema,
-} from "@/schemas/UserSchema";
+} from "@/schemas/user";
 import { validateTimeSlot } from "@/utils/timeSlotValidation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";

@@ -1,5 +1,5 @@
 import { ImageType } from "@/hooks/useImages";
-import { renderImage } from "@/lib/image";
+import { renderImage } from "@/utils/image";
 
 export default function UnlockPotentialSection({
   images,

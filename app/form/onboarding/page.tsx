@@ -2,7 +2,7 @@
 import { updateOnboardingInformationAction } from "@/actions/forms/onboarding.action";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
-import { Domain, SubDomain, Tag } from "@/schemas/PlanSchema";
+import { Domain, SubDomain, Tag } from "@/schemas/plans";
 import {
   ConsultantProfile,
   ConsulteeProfile,
@@ -10,7 +10,7 @@ import {
   PersonalInfoAndRoleSchema,
   PreferredSchedule,
   StaffProfile,
-} from "@/schemas/UserSchema";
+} from "@/schemas/user";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";

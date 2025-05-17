@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { StaffProfile, PersonalInfoAndRole } from "@/schemas/UserSchema";
-import { responsibilitiesAndPermissions } from "@/schemas/ResponsibilitiesAndPermissionsSchema";
+import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
+import { responsibilitiesAndPermissions } from "@/schemas/responsibbilities-permissions";
 import React from "react";
 import { useFormContext } from "react-hook-form";
 

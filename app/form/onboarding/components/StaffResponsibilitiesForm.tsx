@@ -15,8 +15,8 @@ import {
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { responsibilitiesAndPermissions } from "@/schemas/ResponsibilitiesAndPermissionsSchema";
-import { StaffProfile, PersonalInfoAndRole } from "@/schemas/UserSchema";
+import { responsibilitiesAndPermissions } from "@/schemas/responsibbilities-permissions";
+import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import React, { useEffect, useState } from "react";
 import { useFormContext } from "react-hook-form";
 

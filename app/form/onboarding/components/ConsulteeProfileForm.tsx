@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ConsulteeProfile, ConsulteeProfileSchema } from "@/schemas/UserSchema";
+import { ConsulteeProfile, ConsulteeProfileSchema } from "@/schemas/user";
 import { Textarea } from "@/components/ui/textarea";
 
 interface Props {

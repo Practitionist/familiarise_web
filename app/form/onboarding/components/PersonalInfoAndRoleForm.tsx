@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import {
   PersonalInfoAndRole,
   PersonalInfoAndRoleSchema,
-} from "@/schemas/UserSchema";
+} from "@/schemas/user";
 import { useSession } from "next-auth/react";
 
 interface Props {

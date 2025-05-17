@@ -13,7 +13,7 @@ import {
   ConsulteeProfile,
   ConsulteePreferences,
   PersonalInfoAndRole,
-} from "@/schemas/UserSchema";
+} from "@/schemas/user";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React from "react";
 import { useForm, Controller } from "react-hook-form";
