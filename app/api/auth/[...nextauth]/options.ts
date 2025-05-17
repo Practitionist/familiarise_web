@@ -88,10 +88,63 @@ const authOptions: NextAuthOptions = {
   callbacks: {
     /**
      * Callback function for sign-in
-     * @param {Object} params - Contains the user object
+     * @param {Object} params - Contains the user, account, and profile objects
      * @returns {boolean} - Whether the sign-in is allowed
      */
-    async signIn({ user }: { user: User }): Promise<boolean> {
+    async signIn({ user, account, profile }: { user: User, account: Account | null, profile?: any }): Promise<boolean> {
+      // Only proceed for OAuth sign-ins
+      if (account && account.provider !== "credentials" && user.email) {
+        // Check if there's an existing user with this email
+        const existingUser = await prisma.user.findUnique({
+          where: { email: user.email },
+          include: { accounts: true },
+        });
+
+        // If user exists but doesn't have an account with this provider
+        if (existingUser && account.provider && account.providerAccountId) {
+          // Check if they already have an account for this provider
+          const existingAccount = existingUser.accounts.find(
+            (acc) => acc.provider === account.provider
+          );
+
+          // If they don't have an account for this provider, link it
+          if (!existingAccount) {
+            await prisma.account.create({
+              data: {
+                userId: existingUser.id,
+                type: account.type,
+                provider: account.provider,
+                providerAccountId: account.providerAccountId,
+                refresh_token: account.refresh_token,
+                access_token: account.access_token,
+                expires_at: account.expires_at,
+                token_type: account.token_type,
+                scope: account.scope,
+                id_token: account.id_token,
+                session_state: account.session_state,
+              },
+            });
+          }
+
+          // Update user information with any new profile data
+          if (profile) {
+            await prisma.user.update({
+              where: { id: existingUser.id },
+              data: {
+                // Only update image if not already set
+                image: existingUser.image || user.image,
+                // Only update name if not already set
+                name: existingUser.name || user.name,
+              },
+            });
+          }
+
+          // Use existing user for sign-in
+          user.id = existingUser.id;
+          return true;
+        }
+      }
+
       return !!user;
     },
 
@@ -230,9 +283,20 @@ const authOptions: NextAuthOptions = {
     },
   },
 
+  // Enable debug in development
+  debug: process.env.NODE_ENV === "development",
+
   // Add pages configuration
   pages: {
     signIn: "/auth/signin",
+  },
+
+  // Custom events handlers
+  events: {
+    async linkAccount({ user, account }) {
+      // This event is triggered when a new account is linked to a user
+      console.log(`Account linked: ${account.provider} for user ${user.email}`);
+    },
   },
 };
 

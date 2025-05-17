@@ -7,6 +7,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import consultxlogo from "../public/static/assets/logos/ConsultX-logos/ConsultX-logos_transparent.png";
+import defaultUserImage from "../public/static/assets/default-profile.png";
 
 const Navbar = () => {
   const router = useRouter();
@@ -51,6 +52,16 @@ const Navbar = () => {
     };
   }, []); // Empty dependency array ensures this runs once on mount and unmount
 
+  const handleNavigation = (path: string) => {
+    try {
+      router.push(path);
+      closeMenu();
+    } catch (e) {
+      console.log(e);
+    }
+  };
+
+  // Check if the current route should exclude navbar
   const apiRoutes = ["/api/**"];
   const publicAuthRoutes = ["/auth/**"];
   const formRoutes = ["/form/**"];
@@ -65,6 +76,105 @@ const Navbar = () => {
     micromatch.isMatch(pathname, dashboardRoutes) ||
     micromatch.isMatch(pathname, meetingRoutes);
   if (excludeNavbar) return null;
+
+  // Navigation links data
+  const navLinks = [
+    { path: "/explore/experts", label: "Experts", icon: "👨‍🏫" },
+    { path: "/explore/programs", label: "Programs", icon: "🎥", mobileLabel: "Webinar" },
+    { path: "/explore/community", label: "Community", icon: "👥" },
+    { path: "/blog", label: "Blog", icon: "📝" }
+  ];
+
+  // Handle sign out
+  const handleSignOut = () => {
+    signOut();
+    closeMenu();
+  };
+
+  // Get user image with fallback
+  const getUserImage = () => {
+    return (session?.user?.image && session.user.image !== "") 
+      ? session.user.image 
+      : defaultUserImage;
+  };
+
+  // Render user section (profile or sign in/up buttons)
+  const renderUserSection = (isMobile = false) => {
+    if (session?.user) {
+      return isMobile ? (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <Image
+              src={getUserImage()}
+              alt="Profile"
+              width={40}
+              height={40}
+              className="rounded-full"
+            />
+            <span className="text-sm font-medium">
+              {session.user.name}
+            </span>
+          </div>
+          <button
+            onClick={handleSignOut}
+            className="px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
+      ) : (
+        <>
+          <Link href="/profile">
+            <Image
+              src={getUserImage()}
+              alt="Profile"
+              width={50}
+              height={50}
+              className="rounded-full cursor-pointer"
+            />
+          </Link>
+          <button
+            onClick={() => signOut()}
+            className="ml-2"
+          >
+            Sign out
+          </button>
+        </>
+      );
+    }
+
+    return isMobile ? (
+      <div className="flex flex-col space-y-2">
+        <button
+          onClick={() => handleNavigation("/auth/signin")}
+          className="w-full py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors"
+        >
+          Sign in
+        </button>
+        <button
+          onClick={() => handleNavigation("/auth/signup")}
+          className="w-full py-2 border border-black rounded-lg hover:bg-gray-50 transition-colors"
+        >
+          Sign up
+        </button>
+      </div>
+    ) : (
+      <>
+        <button
+          className="mr-2 border border-black rounded px-2 py-1"
+          onClick={() => handleNavigation("/auth/signup")}
+        >
+          Sign up
+        </button>
+        <button
+          className="mr-2 bg-black text-white border border-black rounded px-2 py-1"
+          onClick={() => handleNavigation("/auth/signin")}
+        >
+          Sign in
+        </button>
+      </>
+    );
+  };
 
   return (
     <>
@@ -94,75 +204,15 @@ const Navbar = () => {
                 <button>Dashboard</button>
               </Link>
             )}
-            {/* {session?.user && (
-              <Link href="/feed">
-                <button>Feed</button>
+            {navLinks.map((link) => (
+              <Link key={link.path} href={link.path}>
+                <button>{link.label}</button>
               </Link>
-            )} */}
-            <Link href="/explore/experts">
-              <button>Experts</button>
-            </Link>
-            <Link href="/explore/programs">
-              <button>Programs</button>
-            </Link>
-            <Link href="/explore/community">
-              <button>Community</button>
-            </Link>
-            <Link href="/blog">
-              <button>Blog</button>
-            </Link>
+            ))}
           </div>
 
           <div className="flex items-center">
-            {session?.user ? (
-              <>
-                <Link href="/profile">
-                  <Image
-                    src={session.user.image!}
-                    alt="Profile"
-                    width={50}
-                    height={50}
-                    className="rounded-full cursor-pointer"
-                  />
-                </Link>
-                <button
-                  onClick={() => {
-                    signOut();
-                  }}
-                  className="ml-2"
-                >
-                  Sign out
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  className="mr-2 border border-black rounded px-2 py-1"
-                  onClick={() => {
-                    try {
-                      // TODO: Redirect to the sign up page
-                      router.push("/auth/signin");
-                    } catch (e) {
-                      console.log(e);
-                    }
-                  }}
-                >
-                  Sign up
-                </button>
-                <button
-                  className="mr-2 bg-black text-white border border-black rounded px-2 py-1"
-                  onClick={() => {
-                    try {
-                      router.push("/auth/signin");
-                    } catch (e) {
-                      console.log(e);
-                    }
-                  }}
-                >
-                  Sign in
-                </button>
-              </>
-            )}
+            {renderUserSection()}
           </div>
         </div>
       </nav>
@@ -207,96 +257,22 @@ const Navbar = () => {
                   <span>Dashboard</span>
                 </Link>
               )}
-              <Link
-                href="/explore/experts"
-                className="flex items-center space-x-2 px-4 py-2 rounded-lg hover:bg-gray-100 transition-colors"
-                onClick={closeMenu}
-              >
-                <span>👨‍🏫</span>
-                <span>Experts</span>
-              </Link>
-              <Link
-                href="/explore/webinar"
-                className="flex items-center space-x-2 px-4 py-2 rounded-lg hover:bg-gray-100 transition-colors"
-                onClick={closeMenu}
-              >
-                <span>🎥</span>
-                <span>Webinar</span>
-              </Link>
-              <Link
-                href="/explore/events"
-                className="flex items-center space-x-2 px-4 py-2 rounded-lg hover:bg-gray-100 transition-colors"
-                onClick={closeMenu}
-              >
-                <span>📅</span>
-                <span>Events</span>
-              </Link>
-              <Link
-                href="/explore/community"
-                className="flex items-center space-x-2 px-4 py-2 rounded-lg hover:bg-gray-100 transition-colors"
-                onClick={closeMenu}
-              >
-                <span>👥</span>
-                <span>Community</span>
-              </Link>
-              <Link
-                href="/blog"
-                className="flex items-center space-x-2 px-4 py-2 rounded-lg hover:bg-gray-100 transition-colors"
-                onClick={closeMenu}
-              >
-                <span>📝</span>
-                <span>Blog</span>
-              </Link>
+              {navLinks.map((link) => (
+                <Link
+                  key={link.path}
+                  href={link.path}
+                  className="flex items-center space-x-2 px-4 py-2 rounded-lg hover:bg-gray-100 transition-colors"
+                  onClick={closeMenu}
+                >
+                  <span>{link.icon}</span>
+                  <span>{link.mobileLabel || link.label}</span>
+                </Link>
+              ))}
             </div>
 
-            {/* Footer */}
+            {/* User Section */}
             <div className="absolute bottom-0 left-0 right-0 p-6 border-t border-gray-100">
-              {session?.user ? (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <Image
-                      src={session.user.image!}
-                      alt="Profile"
-                      width={40}
-                      height={40}
-                      className="rounded-full"
-                    />
-                    <span className="text-sm font-medium">
-                      {session.user.name}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => {
-                      signOut();
-                      closeMenu();
-                    }}
-                    className="px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                  >
-                    Sign out
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-col space-y-2">
-                  <button
-                    onClick={() => {
-                      router.push("/auth/signin");
-                      closeMenu();
-                    }}
-                    className="w-full py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors"
-                  >
-                    Sign in
-                  </button>
-                  <button
-                    onClick={() => {
-                      router.push("/auth/signin");
-                      closeMenu();
-                    }}
-                    className="w-full py-2 border border-black rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    Sign up
-                  </button>
-                </div>
-              )}
+              {renderUserSection(true)}
             </div>
           </motion.div>
         </>

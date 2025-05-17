@@ -32,7 +32,7 @@ export default async function RootLayout({
           <Toaster />
           <AnnouncementBar />
           <Navbar />
-          {session?.user?.id ? (
+          {session?.user?.id && session.user.id !== "" ? (
             <StreamVideoProvider userId={session.user.id}>
               {children}
             </StreamVideoProvider>
