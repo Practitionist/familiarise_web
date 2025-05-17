@@ -1,14 +1,14 @@
 "use client";
 
+import { getEffectiveUserId } from "@/utils/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Skeleton } from "components/ui/skeleton";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { use, useEffect, useState } from "react";
-import { TConsultantProfile } from "types/consultant";
+import { use } from "react";
+import useSWR from "swr";
 import { fetchConsultantData } from "./utils/fetchHelpers";
-import { getEffectiveUserId } from "@/utils/auth";
 
 // Navigation configuration
 const NAV_ITEMS = [
@@ -50,81 +50,6 @@ function MessageContainer({
   );
 }
 
-// Custom hook for data fetching
-function useConsultantData(consultantId: string) {
-  const { data: session } = useSession();
-  const [state, setState] = useState({
-    consultantData: null as TConsultantProfile | null,
-    error: null as string | null,
-    isLoading: true,
-  });
-
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        setState((prev) => ({ ...prev, isLoading: true, error: null }));
-
-        const userId = getEffectiveUserId(session);
-        if (!userId) {
-          throw new Error(
-            "User not authenticated or user ID could not be determined.",
-          );
-        }
-
-        const consultantData = await fetchConsultantData(consultantId);
-
-        setState({
-          consultantData,
-          error: null,
-          isLoading: false,
-        });
-      } catch (err) {
-        console.error("Error fetching data:", err);
-        let displayMessage = `An unexpected error occurred while attempting to load consultant (ID: ${consultantId}) information.`;
-
-        if (err instanceof Error) {
-          if (
-            err.message ===
-            "User not authenticated or user ID could not be determined."
-          ) {
-            // Specific error for initial user authentication failure
-            displayMessage = err.message;
-          } else {
-            // Handle errors presumably from fetchConsultantData or subsequent operations
-            const lowerCaseMessage = err.message.toLowerCase();
-            if (lowerCaseMessage.includes("not found")) {
-              displayMessage = `The consultant profile (ID: ${consultantId}) could not be found, or you may not have permission to view it. Please verify the ID and your access rights.`;
-            } else if (
-              lowerCaseMessage.includes("unauthorized") ||
-              lowerCaseMessage.includes("forbidden")
-            ) {
-              displayMessage = `You are not authorized to view the data for consultant (ID: ${consultantId}).`;
-            } else if (
-              lowerCaseMessage.startsWith("failed to fetch consultant data")
-            ) {
-              // If the error message from fetchConsultantData is already somewhat descriptive
-              displayMessage = err.message;
-            } else {
-              // General fallback for other errors related to fetching this consultant's data
-              displayMessage = `An error occurred while fetching data for consultant (ID: ${consultantId}): ${err.message}`;
-            }
-          }
-        }
-        // For non-Error objects, the initial displayMessage will be used.
-        setState((prev) => ({
-          ...prev,
-          error: displayMessage,
-          isLoading: false,
-        }));
-      }
-    }
-
-    fetchData();
-  }, [consultantId, session?.user?.id]);
-
-  return state;
-}
-
 // Main layout component
 export default function ConsultantLayout({
   children,
@@ -135,8 +60,19 @@ export default function ConsultantLayout({
   const pathname = usePathname();
   const currentPath = pathname.split("/").pop();
   const { data: session } = useSession();
-
-  const { consultantData, error, isLoading } = useConsultantData(consultantId);
+  
+  const userId = getEffectiveUserId(session);
+  
+  // Use SWR to fetch and cache consultant data
+  const { data: consultantData, error, isLoading } = useSWR(
+    userId ? [`consultant-${consultantId}`, consultantId] : null,
+    ([_, id]) => fetchConsultantData(id),
+    {
+      revalidateOnFocus: false,
+      revalidateIfStale: false,
+      dedupingInterval: 300000, // 5 minutes
+    }
+  );
 
   // Authentication check
   if (
@@ -247,7 +183,7 @@ export default function ConsultantLayout({
                 Error
               </h2>
               <p className="text-gray-700">
-                {error ?? "An unknown error occurred"}
+                {error instanceof Error ? error.message : "An unknown error occurred"}
               </p>
             </div>
           </div>

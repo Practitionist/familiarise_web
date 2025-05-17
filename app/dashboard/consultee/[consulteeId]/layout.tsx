@@ -1,14 +1,14 @@
 "use client";
 
 import { fetchConsulteeDetails, fetchUserDetails } from "@/lib/user";
-import { ConsulteeProfile, User } from "@prisma/client";
+import { getEffectiveUserId } from "@/utils/auth";
 import { Button } from "components/ui/button";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { use, useEffect, useState } from "react";
+import { use } from "react";
+import useSWR from "swr";
 import { UserProvider } from "./UserContext";
-import { getEffectiveUserId } from "@/utils/auth";
 
 // Navigation configuration
 const NAV_ITEMS = [
@@ -89,58 +89,6 @@ function ConsulteeNav({
   );
 }
 
-// Custom hook for data fetching
-function useConsulteeData(consulteeId: string) {
-  const { data: session } = useSession();
-  const [state, setState] = useState({
-    userDetails: null as User | null,
-    profileDetails: null as ConsulteeProfile | null,
-    error: null as string | null,
-    isLoading: true,
-  });
-
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        setState((prev) => ({ ...prev, isLoading: true, error: null }));
-
-        const userId = getEffectiveUserId(session);
-        if (!userId) {
-          console.log(
-            "User not authenticated or user ID could not be determined.",
-          );
-          throw new Error(
-            "User not authenticated or user ID could not be determined.",
-          );
-        }
-
-        const [userData, consulteeData] = await Promise.all([
-          fetchUserDetails(userId),
-          fetchConsulteeDetails(consulteeId),
-        ]);
-
-        setState({
-          userDetails: userData,
-          profileDetails: consulteeData,
-          error: null,
-          isLoading: false,
-        });
-      } catch (err) {
-        console.error("Error fetching data:", err);
-        setState((prev) => ({
-          ...prev,
-          error: err instanceof Error ? err.message : "An error occurred",
-          isLoading: false,
-        }));
-      }
-    }
-
-    fetchData();
-  }, [consulteeId, session?.user?.id]);
-
-  return state;
-}
-
 // Main layout component
 export default function ConsulteeLayout({
   children,
@@ -152,8 +100,32 @@ export default function ConsulteeLayout({
   const currentPath = pathname.split("/").pop();
   const { data: session } = useSession();
 
-  const { userDetails, profileDetails, error, isLoading } =
-    useConsulteeData(consulteeId);
+  const userId = getEffectiveUserId(session);
+
+  // Use SWR to fetch user details
+  const { data: userDetails, error: userError } = useSWR(
+    userId ? [`user-${userId}`, userId] : null,
+    ([_, id]) => fetchUserDetails(id),
+    {
+      revalidateOnFocus: false,
+      revalidateIfStale: false,
+      dedupingInterval: 300000, // 5 minutes
+    }
+  );
+
+  // Use SWR to fetch consultee details
+  const { data: profileDetails, error: profileError } = useSWR(
+    consulteeId ? [`consultee-${consulteeId}`, consulteeId] : null,
+    ([_, id]) => fetchConsulteeDetails(id),
+    {
+      revalidateOnFocus: false,
+      revalidateIfStale: false,
+      dedupingInterval: 300000, // 5 minutes
+    }
+  );
+
+  const isLoading = !userDetails && !userError || !profileDetails && !profileError;
+  const error = userError || profileError;
 
   // Authentication check
   if (
@@ -171,7 +143,7 @@ export default function ConsulteeLayout({
 
   // Error state
   if (error) {
-    return <MessageContainer title="Error" message={error} />;
+    return <MessageContainer title="Error" message={error instanceof Error ? error.message : "An unknown error occurred"} />;
   }
 
   // Loading state
