@@ -1,17 +1,16 @@
 import {
-  IAppointment,
-  IDocument,
-  IActivity,
-  IApproval,
-  ApiResponse,
-} from "../types";
-import { TConsultantProfile } from "@/types/consultant";
-import {
   TAppointment,
   TConsultation,
   TSubscription,
 } from "@/types/appointment";
-import { User } from "@prisma/client";
+import { TConsultantProfile } from "@/types/consultant";
+import {
+  ApiResponse,
+  IActivity,
+  IAppointment,
+  IApproval,
+  IDocument,
+} from "../types";
 
 // Helper to get the base URL, preferring VERCEL_URL if available
 const getBaseUrl = () => {
@@ -66,24 +65,27 @@ export async function fetchAppointments(
           ? new Date(slot.slotEndTimeInUTC)
           : null,
         isTentative: slot.isTentative,
-        // Map all required fields from Prisma User (u) to IUser structure
-        user: (slot.user || []).map((u: User) => ({
-          // Fields required by IUser (ensure these exist on Prisma 'u')
-          id: u.id,
-          name: u.name,
-          email: u.email,
-          image: u.image,
-          phone: u.phone,
-          address: u.address,
-          onlineStatus: u.onlineStatus,
-          currentTimezone: u.currentTimezone,
-          onboardingCompleted: u.onboardingCompleted,
-          role: u.role,
-          consultantProfileId: u.consultantProfileId,
-          consulteeProfileId: u.consulteeProfileId,
-          staffProfileId: u.staffProfileId,
-          // Omit fields explicitly excluded in IUser definition if necessary
-        })),
+        // Map the user array to match IUser[] type expected by ISlotOfAppointment
+        user: Array.isArray(slot.user)
+          ? slot.user.map((u) => ({
+              id: u.id,
+              name: u.name,
+              email: u.email,
+              image: u.image,
+              phone: u.phone || null,
+              address: u.address || null,
+              password: u.password || null,
+              passwordResetToken: u.passwordResetToken || null,
+              passwordResetExpires: u.passwordResetExpires || null,
+              onlineStatus: u.onlineStatus,
+              currentTimezone: u.currentTimezone || null,
+              onboardingCompleted: u.onboardingCompleted,
+              role: u.role,
+              consultantProfileId: u.consultantProfileId,
+              consulteeProfileId: u.consulteeProfileId,
+              staffProfileId: u.staffProfileId,
+            }))
+          : [],
       })),
       // Map other relations, ensuring nested types match IAppointment definitions
       consultation: appointment.consultation
