@@ -16,20 +16,20 @@ interface PasswordResetEmailProps {
 
 export const PasswordResetEmail = ({
   name = "Valued User",
-  resetLink = "https://consultx.com/auth/reset-password?token=123",
+  resetLink = "https://familiarise.com/auth/reset-password?token=123",
 }: PasswordResetEmailProps) => {
   return (
     <Html>
       <Head />
-      <Preview>Reset your ConsultX password</Preview>
+      <Preview>Reset your Familiarise password</Preview>
       <Section style={main}>
         <Container style={container}>
           <Section>
             <Img
-              src={`https://consultx.com/static/assets/logos/ConsultX-logos_transparent.png`}
+              src={`https://familiarise.com/static/assets/logos/Familiarise-logos_transparent.png`}
               width="130"
               height="50"
-              alt="ConsultX"
+              alt="Familiarise"
               style={logo}
             />
           </Section>
@@ -37,8 +37,8 @@ export const PasswordResetEmail = ({
             <Text style={heading}>Password Reset Request</Text>
             <Text style={paragraph}>Hi {name},</Text>
             <Text style={paragraph}>
-              We received a request to reset your ConsultX account password. To
-              reset your password, click the button below:
+              We received a request to reset your Familiarise account password.
+              To reset your password, click the button below:
             </Text>
             <Section style={buttonContainer}>
               <Button style={button} href={resetLink}>
@@ -56,24 +56,24 @@ export const PasswordResetEmail = ({
             <Text style={paragraph}>
               Best regards,
               <br />
-              The ConsultX Security Team
+              The Familiarise Security Team
             </Text>
           </Section>
           <Section style={footer}>
             <Text style={footerText}>
-              © 2023 ConsultX, All Rights Reserved
+              © 2023 Familiarise, All Rights Reserved
             </Text>
             <Text style={footerText}>
               Our mailing address:
               <br />
-              123 ConsultX Way, Innovation District, Techville
+              123 Familiarise Way, Innovation District, Techville
             </Text>
             <Text style={footerLinks}>
-              <Link href="https://consultx.com/privacy" style={link}>
+              <Link href="https://familiarise.com/privacy" style={link}>
                 Privacy Policy
               </Link>{" "}
               •{" "}
-              <Link href="https://consultx.com/terms" style={link}>
+              <Link href="https://familiarise.com/terms" style={link}>
                 Terms of Service
               </Link>
             </Text>

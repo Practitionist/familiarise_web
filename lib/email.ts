@@ -4,11 +4,17 @@ import { PasswordResetEmail } from "@/emails/auth/PasswordResetEmail";
 import { AccountLinkedEmail } from "@/emails/auth/AccountLinkedEmail";
 import { render } from "@react-email/render";
 
-// Initialize Resend with API key
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Initialize Resend with API key, with validation
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+if (!RESEND_API_KEY) {
+  console.warn(
+    "WARNING: RESEND_API_KEY is not defined. Email functionality will not work.",
+  );
+}
+const resend = new Resend(RESEND_API_KEY);
 
 // Base URL for app
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
 /**
  * Send welcome email to newly registered user
@@ -25,15 +31,32 @@ export async function sendWelcomeEmail({
   dashboardUrl?: string;
 }) {
   try {
+    // Check if Resend API key is available
+    if (!RESEND_API_KEY) {
+      console.error(
+        "RESEND_API_KEY is not configured. Cannot send welcome email.",
+      );
+      return {
+        success: false,
+        error: "Email service not configured",
+      };
+    }
+
+    // Render email template
     const html = await render(WelcomeEmail({ name, dashboardUrl }));
 
+    // Send email
+    console.log(
+      `Attempting to send welcome email to ${email} from onboarding@familiarise.com`,
+    );
     const data = await resend.emails.send({
-      from: "ConsultX <onboarding@consultx.com>",
+      from: "Familiarise <onboarding@familiarise.com>",
       to: email,
-      subject: "Welcome to ConsultX!",
+      subject: "Welcome to Familiarise!",
       html,
     });
 
+    console.log("Resend API response:", data);
     return { success: true, data };
   } catch (error) {
     console.error("Failed to send welcome email:", error);
@@ -60,9 +83,9 @@ export async function sendPasswordResetEmail({
     const html = await render(PasswordResetEmail({ name, resetLink }));
 
     const data = await resend.emails.send({
-      from: "ConsultX Security <security@consultx.com>",
+      from: "Familiarise Security <security@familiarise.com>",
       to: email,
-      subject: "Reset your ConsultX password",
+      subject: "Reset your Familiarise password",
       html,
     });
 
@@ -95,9 +118,9 @@ export async function sendAccountLinkedEmail({
     );
 
     const data = await resend.emails.send({
-      from: "ConsultX Security <security@consultx.com>",
+      from: "Familiarise Security <security@familiarise.com>",
       to: email,
-      subject: `Your ConsultX account now linked with ${provider}`,
+      subject: `Your Familiarise account now linked with ${provider}`,
       html,
     });
 

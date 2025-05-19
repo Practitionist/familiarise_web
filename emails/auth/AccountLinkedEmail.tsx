@@ -18,20 +18,20 @@ interface AccountLinkedEmailProps {
 export const AccountLinkedEmail = ({
   name = "Valued User",
   provider = "Google",
-  dashboardUrl = "https://consultx.com/dashboard",
+  dashboardUrl = "https://familiarise.com/dashboard",
 }: AccountLinkedEmailProps) => {
   return (
     <Html>
       <Head />
-      <Preview>New sign-in method added to your ConsultX account</Preview>
+      <Preview>New sign-in method added to your Familiarise account</Preview>
       <Section style={main}>
         <Container style={container}>
           <Section>
             <Img
-              src={`https://consultx.com/static/assets/logos/ConsultX-logos_transparent.png`}
+              src={`https://familiarise.com/static/assets/logos/Familiarise-logos_transparent.png`}
               width="130"
               height="50"
-              alt="ConsultX"
+              alt="Familiarise"
               style={logo}
             />
           </Section>
@@ -40,11 +40,11 @@ export const AccountLinkedEmail = ({
             <Text style={paragraph}>Hi {name},</Text>
             <Text style={paragraph}>
               We're letting you know that a new sign-in method has been added to
-              your ConsultX account. You can now sign in using your {provider}{" "}
-              account.
+              your Familiarise account. You can now sign in using your{" "}
+              {provider} account.
             </Text>
             <Text style={paragraph}>
-              This provides you with more flexibility when accessing ConsultX
+              This provides you with more flexibility when accessing Familiarise
               and adds an additional layer of security to your account.
             </Text>
             <Section style={buttonContainer}>
@@ -55,33 +55,33 @@ export const AccountLinkedEmail = ({
             <Text style={paragraph}>
               If you did not authorize this change, please contact our support
               team immediately at
-              <Link href="mailto:support@consultx.com" style={link}>
+              <Link href="mailto:support@familiarise.com" style={link}>
                 {" "}
-                support@consultx.com
+                support@familiarise.com
               </Link>
               .
             </Text>
             <Text style={paragraph}>
               Security regards,
               <br />
-              The ConsultX Team
+              The Familiarise Team
             </Text>
           </Section>
           <Section style={footer}>
             <Text style={footerText}>
-              © 2023 ConsultX, All Rights Reserved
+              © 2023 Familiarise, All Rights Reserved
             </Text>
             <Text style={footerText}>
               Our mailing address:
               <br />
-              123 ConsultX Way, Innovation District, Techville
+              123 Familiarise Way, Innovation District, Techville
             </Text>
             <Text style={footerLinks}>
-              <Link href="https://consultx.com/privacy" style={link}>
+              <Link href="https://familiarise.com/privacy" style={link}>
                 Privacy Policy
               </Link>{" "}
               •{" "}
-              <Link href="https://consultx.com/terms" style={link}>
+              <Link href="https://familiarise.com/terms" style={link}>
                 Terms of Service
               </Link>
             </Text>

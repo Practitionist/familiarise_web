@@ -309,13 +309,30 @@ const authOptions: NextAuthOptions = {
       // Send email notification when a new account is linked
       if (user.email) {
         try {
-          await sendAccountLinkedEmail({
+          console.log(
+            `Sending account linked email to: ${user.email} for provider: ${account.provider}`,
+          );
+          const emailResult = await sendAccountLinkedEmail({
             email: user.email,
             name: user.name || "User",
             provider: account.provider || "Social Provider",
           });
+
+          if (!emailResult.success) {
+            console.error(
+              "[LINK_ACCOUNT] Account linked email failed:",
+              emailResult.error,
+            );
+          } else {
+            console.log(
+              "[LINK_ACCOUNT] Account linked email sent successfully",
+            );
+          }
         } catch (error) {
-          console.error("Failed to send account linked email:", error);
+          console.error(
+            "[LINK_ACCOUNT] Failed to send account linked email:",
+            error,
+          );
           // Don't block the account linking process if email fails
         }
       }

@@ -84,7 +84,6 @@ const Navbar = () => {
       path: "/explore/programs",
       label: "Programs",
       icon: "🎥",
-      mobileLabel: "Webinar",
     },
     { path: "/explore/community", label: "Community", icon: "👥" },
     { path: "/blog", label: "Blog", icon: "📝" },
@@ -263,7 +262,7 @@ const Navbar = () => {
                   onClick={closeMenu}
                 >
                   <span>{link.icon}</span>
-                  <span>{link.mobileLabel || link.label}</span>
+                  <span>{link.label}</span>
                 </Link>
               ))}
             </div>

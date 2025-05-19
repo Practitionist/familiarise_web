@@ -143,10 +143,23 @@ export async function POST(req: Request) {
 
       // Send welcome email to the new user
       try {
-        await sendWelcomeEmail({
+        console.log("Sending welcome email to:", email);
+        const emailResult = await sendWelcomeEmail({
           email,
           name,
         });
+
+        if (!emailResult.success) {
+          console.error(
+            "[REGISTER_POST] Welcome email failed:",
+            emailResult.error,
+          );
+        } else {
+          console.log(
+            "[REGISTER_POST] Welcome email sent successfully:",
+            emailResult.data,
+          );
+        }
       } catch (emailError) {
         console.error("[REGISTER_POST] Welcome email error:", emailError);
         // Continue despite email failure - don't block registration

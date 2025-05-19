@@ -40,11 +40,28 @@ export async function POST(req: Request) {
       });
 
       // Send reset email with the plain text token (not the hash)
-      await sendPasswordResetEmail({
-        email,
-        name: user.name || "User",
-        token: resetToken,
-      });
+      try {
+        console.log(`Sending password reset email to: ${email}`);
+        const emailResult = await sendPasswordResetEmail({
+          email,
+          name: user.name ?? "User",
+          token: resetToken,
+        });
+
+        if (!emailResult.success) {
+          console.error(
+            "[FORGOT_PASSWORD_POST] Email sending failed:",
+            emailResult.error,
+          );
+        } else {
+          console.log(
+            "[FORGOT_PASSWORD_POST] Password reset email sent successfully",
+          );
+        }
+      } catch (emailError) {
+        console.error("[FORGOT_PASSWORD_POST] Email error:", emailError);
+        // Continue despite email failure - don't block the process
+      }
     }
 
     // Always return a success response to prevent email enumeration

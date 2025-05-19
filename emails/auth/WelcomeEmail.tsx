@@ -16,29 +16,29 @@ interface WelcomeEmailProps {
 
 export const WelcomeEmail = ({
   name = "Valued User",
-  dashboardUrl = "https://consultx.com/dashboard",
+  dashboardUrl = "https://familiarise.com/dashboard",
 }: WelcomeEmailProps) => {
   return (
     <Html>
       <Head />
-      <Preview>Welcome to ConsultX - Your Expert Connection</Preview>
+      <Preview>Welcome to Familiarise - Your Expert Connection</Preview>
       <Section style={main}>
         <Container style={container}>
           <Section>
             <Img
-              src={`https://consultx.com/static/assets/logos/ConsultX-logos_transparent.png`}
+              src={`https://familiarise.com/static/assets/logos/Familiarise-logos_transparent.png`}
               width="130"
               height="50"
-              alt="ConsultX"
+              alt="Familiarise"
               style={logo}
             />
           </Section>
           <Section style={content}>
-            <Text style={heading}>Welcome to ConsultX!</Text>
+            <Text style={heading}>Welcome to Familiarise!</Text>
             <Text style={paragraph}>Hi {name},</Text>
             <Text style={paragraph}>
-              Thank you for joining ConsultX! We're thrilled to have you as part
-              of our community where you can connect with experts, join
+              Thank you for joining Familiarise! We're thrilled to have you as
+              part of our community where you can connect with experts, join
               programs, and grow your skills and network.
             </Text>
             <Text style={paragraph}>
@@ -57,24 +57,24 @@ export const WelcomeEmail = ({
             <Text style={paragraph}>
               Warm regards,
               <br />
-              The ConsultX Team
+              The Familiarise Team
             </Text>
           </Section>
           <Section style={footer}>
             <Text style={footerText}>
-              © 2023 ConsultX, All Rights Reserved
+              © 2023 Familiarise, All Rights Reserved
             </Text>
             <Text style={footerText}>
               Our mailing address:
               <br />
-              123 ConsultX Way, Innovation District, Techville
+              123 Familiarise Way, Innovation District, Techville
             </Text>
             <Text style={footerLinks}>
-              <Link href="https://consultx.com/privacy" style={link}>
+              <Link href="https://familiarise.com/privacy" style={link}>
                 Privacy Policy
               </Link>{" "}
               •{" "}
-              <Link href="https://consultx.com/terms" style={link}>
+              <Link href="https://familiarise.com/terms" style={link}>
                 Terms of Service
               </Link>
             </Text>
