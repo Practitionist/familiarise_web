@@ -54,6 +54,7 @@
     "@radix-ui/react-tooltip": "^1.2.3",
     "@react-email/components": "^0.0.41",
     "@reduxjs/toolkit": "^2.5.0",
+    "@sentry/nextjs": "^9.20.0",
     "@stream-io/node-sdk": "^0.4.17",
     "@stream-io/video-react-sdk": "^1.12.6",
     "@stripe/stripe-js": "^5.5.0",

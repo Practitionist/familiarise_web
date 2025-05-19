@@ -77,3 +77,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .qodo
+
+# Sentry Config File
+.env.sentry-build-plugin
