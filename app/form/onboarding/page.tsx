@@ -451,7 +451,7 @@ const MultiStepForm: React.FC = () => {
 const Header: React.FC = () => (
   <header className="flex items-center space-x-2 mb-8">
     <LogInIcon className="w-8 h-8 text-primary" />
-    <h1 className="text-2xl font-bold">ConsultX</h1>
+    <h1 className="text-2xl font-bold">Familiarise</h1>
   </header>
 );
 

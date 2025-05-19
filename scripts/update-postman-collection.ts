@@ -435,7 +435,7 @@ async function generatePostmanCollection(): Promise<PostmanCollection> {
 
   return {
     info: {
-      name: "ConsultXLabs Complete API Collection",
+      name: "Familiarise Complete API Collection",
       schema:
         "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     },

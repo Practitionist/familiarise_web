@@ -1,8 +1,8 @@
 ## Prompt:
-Here is the structure of my startup consultx, a consultation platform for consultants and consultees. we offer 4 kinds of services. Consultations, subscriptions, webinars, classes
+Here is the structure of my startup familiarise, a consultation platform for consultants and consultees. we offer 4 kinds of services. Consultations, subscriptions, webinars, classes
 
 ## Response:
-I'll help analyze your ConsultX platform structure. From the schema and directory tree, I can see you've built a comprehensive consultation platform with well-organized features. Let me break down the key aspects:
+I'll help analyze your Familiarise platform structure. From the schema and directory tree, I can see you've built a comprehensive consultation platform with well-organized features. Let me break down the key aspects:
 Core Services:
 
 Consultations (1:1 sessions)

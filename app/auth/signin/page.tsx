@@ -71,7 +71,7 @@ export default function SignIn() {
         <Link href="/">
           <div className="flex items-center justify-start space-x-2">
             <GlobeIcon className="text-black w-5 md:w-6 h-5 md:h-6" />
-            <h1 className="text-2xl md:text-4xl font-semibold">ConsultX</h1>
+            <h1 className="text-2xl md:text-4xl font-semibold">Familiarise</h1>
           </div>
         </Link>
         <div className="my-8 md:my-0">

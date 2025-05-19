@@ -15,7 +15,7 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "ConsultX Labs",
+  title: "Familiarise(formerly ConsultX)",
   description: "A consulting platform for the future",
 };
 

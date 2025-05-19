@@ -6,7 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import consultxlogo from "../public/static/assets/logos/ConsultX-logos/ConsultX-logos_transparent.png";
+import familiariselogo from "../public/static/assets/logos/Familiarise-logos/Familiarise-logos_transparent.png";
 import defaultUserImage from "../public/static/assets/default-profile.png";
 
 const Navbar = () => {
@@ -185,7 +185,7 @@ const Navbar = () => {
       >
         <div className="flex justify-between items-center">
           <Link href="/">
-            <Image src={consultxlogo} alt="ConsultX Logo" height={60} />
+            <Image src={familiariselogo} alt="Familiarise Logo" height={60} />
           </Link>
           <div className="lg:hidden">
             <button
@@ -233,7 +233,7 @@ const Navbar = () => {
           >
             {/* Header */}
             <div className="flex justify-between items-center p-6 border-b border-gray-100">
-              <Image src={consultxlogo} alt="ConsultX Logo" height={40} />
+              <Image src={familiariselogo} alt="Familiarise Logo" height={40} />
               <button
                 onClick={closeMenu}
                 className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"

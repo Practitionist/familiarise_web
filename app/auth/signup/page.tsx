@@ -110,12 +110,12 @@ export default function SignUp() {
           <div className="flex items-center justify-start space-x-2">
             {/* Reusing GlobeIcon from SignIn */}
             <GlobeIcon className="text-black w-5 md:w-6 h-5 md:h-6" />
-            <h1 className="text-2xl md:text-4xl font-semibold">ConsultX</h1>
+            <h1 className="text-2xl md:text-4xl font-semibold">Familiarise</h1>
           </div>
         </Link>
         <div className="my-8 md:my-0">
           <blockquote className="text-sm md:text-base">
-            "Joining ConsultX was the best decision for my startup. Access to
+            "Joining Familiarise was the best decision for my startup. Access to
             top-tier mentors gave us the clarity and direction we desperately
             needed."
           </blockquote>
@@ -124,8 +124,8 @@ export default function SignUp() {
           </p>
         </div>
         <div className="text-xs md:text-sm">
-          Start your journey with ConsultX today. Sign up to unlock a world of
-          expert mentorship.
+          Start your journey with Familiarise today. Sign up to unlock a world
+          of expert mentorship.
         </div>
       </div>
 

@@ -1,6 +1,6 @@
-# ConsultX - The One-stop Platform for Mentors, Advisors, Teachers, and Students
+# Familiarise(formerly ConsultX) - The One-stop Platform for Mentors, Advisors, Teachers, and Students
 
-ConsultX is going to be the one-stop platform for all experts, mentors, coaches, consultants, teachers and advisors to share their wisdom with the masses.
+Familiarise(formerly ConsultX) is going to be the one-stop platform for all experts, mentors, coaches, consultants, teachers and advisors to share their wisdom with the masses.
 Kind of like Swiggy with different restaurants for people.
 
 ## Architecture
@@ -61,7 +61,7 @@ FACEBOOK_CLIENT_SECRET="your_facebook_client_secret"
 
 ### Supabase Database Variables
 
-You need to log in to Supabase with the ConsultX account where we have already created a database. Then go to the database settings scroll down to the bottom and click on the connect button. Copy the connection string and paste it into the `.env` file.
+You need to log in to Supabase with the Familiarise account where we have already created a database. Then go to the database settings scroll down to the bottom and click on the connect button. Copy the connection string and paste it into the `.env` file.
 
 ```bash
 # You can ask the team for the connection string
@@ -84,8 +84,8 @@ This is useful if:
 
 ```bash
 # Build and run
-docker build -t consultx-docker .
-docker run -p 3000:3000 consultx-docker
+docker build -t familiarise-docker .
+docker run -p 3000:3000 familiarise-docker
 ```
 
 ### Running it through docker-compose

@@ -280,7 +280,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
               href="/dashboard"
             >
               <BuildingIcon className="h-6 w-6" />
-              <span className="">ConsultX</span>
+              <span className="">Familiarise</span>
             </Link>
             <Button className="ml-auto h-8 w-8" size="icon" variant="outline">
               <BellIcon className="h-4 w-4" />

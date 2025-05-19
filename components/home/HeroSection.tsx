@@ -16,7 +16,7 @@ export default function HeroSection({ images }: { images: ImageType[] }) {
       <div className="container mx-auto px-4 md:px-6">
         <div className="flex flex-col items-center space-y-6 text-center">
           <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold tracking-tighter text-gray-900">
-            Elevate Your Career with ConsultX
+            Elevate Your Career with Familiarise
           </h1>
           <p className="max-w-[700px] text-xl md:text-2xl text-gray-800 italic">
             <q>

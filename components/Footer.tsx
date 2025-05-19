@@ -8,7 +8,7 @@ import {
   FaLinkedin,
   FaTwitter,
 } from "react-icons/fa";
-import consultxlogo from "../public/static/assets/logos/ConsultX-logos/ConsultX-logos_white.png";
+import familiariselogo from "../public/static/assets/logos/Familiarise-logos/Familiarise-logos_white.png";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import micromatch from "micromatch";
@@ -36,7 +36,12 @@ const Footer: React.FC = () => {
     <footer className="flex flex-col items-center justify-center p-5 bg-black text-white mt-auto">
       <div className="w-full flex justify-center pb-5">
         {/* Replace with your company logo */}
-        <Image src={consultxlogo} alt="Company Logo" width={50} height={60} />
+        <Image
+          src={familiariselogo}
+          alt="Company Logo"
+          width={50}
+          height={60}
+        />
       </div>
       <div className="flex justify-between w-full max-w-6xl">
         <div className="flex flex-col w-1/5">
@@ -95,22 +100,20 @@ const Footer: React.FC = () => {
           </ul>
         </div>
         <div className="flex flex-col w-1/5">
-          <h2 className="mb-2 text-lg font-bold">ConsultX Apps</h2>
+          <h2 className="mb-2 text-lg font-bold">Familiarise Apps</h2>
           <p>Stay in touch with us over other platforms</p>
           <h2 className="mb-2 text-lg font-bold">Mobile App</h2>
           <div className="grid grid-cols-3 gap-4">
             {/* Replace with your app logo */}
             {/* Replace with your app store logos */}
           </div>
-          <h2 className="mb-2 text-lg font-bold">
-            ConsultX Labs Udemy Channel
-          </h2>
+          <h2 className="mb-2 text-lg font-bold">Familiarise Udemy Channel</h2>
           {/* Replace with your Udemy logo */}
         </div>
       </div>
       <div className="flex flex-col gap-2 sm:flex-row py-6 w-full shrink-0 items-center px-4 md:px-6 border-t">
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          © ConsultX. All rights reserved.
+          © Familiarise. All rights reserved.
         </p>
         <nav className="sm:ml-auto flex gap-4 sm:gap-6">
           <Link className="text-xs hover:underline underline-offset-4" href="#">
