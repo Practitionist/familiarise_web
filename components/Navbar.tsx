@@ -6,7 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import familiariselogo from "../public/static/assets/images/logos/Familiarise-logos_transparent.png";
+import familiariselogo from "../public/static/assets/logos/images/logos/Familiarise-logos_transparent.png";
 import defaultUserImage from "../public/static/assets/default-profile.png";
 
 const Navbar = () => {
