@@ -28,7 +28,7 @@ export const AccountLinkedEmail = ({
         <Container style={container}>
           <Section>
             <Img
-              src={`https://familiarise.com/static/assets/logos/Familiarise-logos_transparent.png`}
+              src={`../public/static/assets/logos/images/logos/Familiarise-logos_transparent.png`}
               width="130"
               height="50"
               alt="Familiarise"
