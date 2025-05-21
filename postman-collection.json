@@ -29,7 +29,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/appointments/{{appointmentId}}/cancel",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "appointments",
@@ -64,7 +66,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/appointments/{{appointmentId}}/reschedule",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "appointments",
@@ -79,6 +83,119 @@
                   }
                 }
               ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Forgot-password",
+          "item": [
+            {
+              "name": "forgot-password [POST]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{auth_token}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/auth/forgot-password",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "forgot-password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register",
+          "item": [
+            {
+              "name": "register [POST]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{auth_token}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/auth/register",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "register"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reset-password",
+          "item": [
+            {
+              "name": "reset-password [POST]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{auth_token}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/auth/reset-password",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "reset-password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                }
+              }
             }
           ]
         }
@@ -109,8 +226,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/class/lemon-squeezy",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "class", "lemon-squeezy"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "class",
+                        "lemon-squeezy"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -139,8 +263,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/class/razorpay",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "class", "razorpay"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "class",
+                        "razorpay"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -169,8 +300,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/class/stripe",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "class", "stripe"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "class",
+                        "stripe"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -199,8 +337,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/class/xflow",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "class", "xflow"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "class",
+                        "xflow"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -234,7 +379,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/consultation/lemon-squeezy",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "checkout",
@@ -269,8 +416,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/consultation/razorpay",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "consultation", "razorpay"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "consultation",
+                        "razorpay"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -299,8 +453,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/consultation/stripe",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "consultation", "stripe"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "consultation",
+                        "stripe"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -329,8 +490,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/consultation/xflow",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "consultation", "xflow"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "consultation",
+                        "xflow"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -364,7 +532,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/subscription/lemon-squeezy",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "checkout",
@@ -399,8 +569,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/subscription/razorpay",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "subscription", "razorpay"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "subscription",
+                        "razorpay"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -429,8 +606,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/subscription/stripe",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "subscription", "stripe"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "subscription",
+                        "stripe"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -459,8 +643,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/subscription/xflow",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "subscription", "xflow"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "subscription",
+                        "xflow"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -494,8 +685,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/webinar/lemon-squeezy",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "webinar", "lemon-squeezy"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "webinar",
+                        "lemon-squeezy"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -524,8 +722,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/webinar/razorpay",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "webinar", "razorpay"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "webinar",
+                        "razorpay"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -554,8 +759,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/webinar/stripe",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "webinar", "stripe"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "webinar",
+                        "stripe"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -584,8 +796,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/checkout/webinar/xflow",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "checkout", "webinar", "xflow"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "checkout",
+                        "webinar",
+                        "xflow"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -609,6 +828,44 @@
               "name": "ClassId",
               "item": [
                 {
+                  "name": "Allocate",
+                  "item": [
+                    {
+                      "name": "allocate [PATCH]",
+                      "request": {
+                        "method": "PATCH",
+                        "header": [
+                          {
+                            "key": "Authorization",
+                            "value": "Bearer {{auth_token}}"
+                          },
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/api/events/classes/{{classId}}/allocate",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "api",
+                            "events",
+                            "classes",
+                            "{{classId}}",
+                            "allocate"
+                          ]
+                        },
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{}"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
                   "name": "[classId] [GET]",
                   "request": {
                     "method": "GET",
@@ -624,8 +881,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/classes/{{classId}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "events", "classes", "{{classId}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "classes",
+                        "{{classId}}"
+                      ]
                     }
                   }
                 },
@@ -645,8 +909,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/classes/{{classId}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "events", "classes", "{{classId}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "classes",
+                        "{{classId}}"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -670,8 +941,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/classes/{{classId}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "events", "classes", "{{classId}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "classes",
+                        "{{classId}}"
+                      ]
                     }
                   }
                 }
@@ -696,8 +974,246 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/classes/book",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "events", "classes", "book"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "classes",
+                        "book"
+                      ]
+                    },
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{}"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Check-duplicate-title",
+              "item": [
+                {
+                  "name": "check-duplicate-title [GET]",
+                  "request": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/events/classes/check-duplicate-title",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "classes",
+                        "check-duplicate-title"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Crud-with-plan",
+              "item": [
+                {
+                  "name": "ClassId",
+                  "item": [
+                    {
+                      "name": "[classId] [GET]",
+                      "request": {
+                        "method": "GET",
+                        "header": [
+                          {
+                            "key": "Authorization",
+                            "value": "Bearer {{auth_token}}"
+                          },
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/api/events/classes/crud-with-plan/{{classId}}",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "api",
+                            "events",
+                            "classes",
+                            "crud-with-plan",
+                            "{{classId}}"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "name": "[classId] [POST]",
+                      "request": {
+                        "method": "POST",
+                        "header": [
+                          {
+                            "key": "Authorization",
+                            "value": "Bearer {{auth_token}}"
+                          },
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/api/events/classes/crud-with-plan/{{classId}}",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "api",
+                            "events",
+                            "classes",
+                            "crud-with-plan",
+                            "{{classId}}"
+                          ]
+                        },
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{}"
+                        }
+                      }
+                    },
+                    {
+                      "name": "[classId] [DELETE]",
+                      "request": {
+                        "method": "DELETE",
+                        "header": [
+                          {
+                            "key": "Authorization",
+                            "value": "Bearer {{auth_token}}"
+                          },
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/api/events/classes/crud-with-plan/{{classId}}",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "api",
+                            "events",
+                            "classes",
+                            "crud-with-plan",
+                            "{{classId}}"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "name": "[classId] [PATCH]",
+                      "request": {
+                        "method": "PATCH",
+                        "header": [
+                          {
+                            "key": "Authorization",
+                            "value": "Bearer {{auth_token}}"
+                          },
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/api/events/classes/crud-with-plan/{{classId}}",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "api",
+                            "events",
+                            "classes",
+                            "crud-with-plan",
+                            "{{classId}}"
+                          ]
+                        },
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{}"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "name": "crud-with-plan [POST]",
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/events/classes/crud-with-plan",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "classes",
+                        "crud-with-plan"
+                      ]
+                    },
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{}"
+                    }
+                  }
+                },
+                {
+                  "name": "crud-with-plan [PATCH]",
+                  "request": {
+                    "method": "PATCH",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/events/classes/crud-with-plan",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "classes",
+                        "crud-with-plan"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -723,8 +1239,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/events/classes?page=1&limit=10&sort=date&order=desc",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "events", "classes"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "events",
+                    "classes"
+                  ]
                 }
               }
             }
@@ -736,6 +1258,44 @@
             {
               "name": "ConsultationId",
               "item": [
+                {
+                  "name": "Allocate",
+                  "item": [
+                    {
+                      "name": "allocate [PATCH]",
+                      "request": {
+                        "method": "PATCH",
+                        "header": [
+                          {
+                            "key": "Authorization",
+                            "value": "Bearer {{auth_token}}"
+                          },
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/api/events/consultations/{{consultationId}}/allocate",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "api",
+                            "events",
+                            "consultations",
+                            "{{consultationId}}",
+                            "allocate"
+                          ]
+                        },
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{}"
+                        }
+                      }
+                    }
+                  ]
+                },
                 {
                   "name": "[consultationId] [GET]",
                   "request": {
@@ -752,7 +1312,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/consultations/{{consultationId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "events",
@@ -778,7 +1340,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/consultations/{{consultationId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "events",
@@ -808,7 +1372,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/consultations/{{consultationId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "events",
@@ -834,7 +1400,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/consultations/{{consultationId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "events",
@@ -847,6 +1415,44 @@
                       "raw": "{}"
                     }
                   }
+                },
+                {
+                  "name": "Validate",
+                  "item": [
+                    {
+                      "name": "validate [POST]",
+                      "request": {
+                        "method": "POST",
+                        "header": [
+                          {
+                            "key": "Authorization",
+                            "value": "Bearer {{auth_token}}"
+                          },
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/api/events/consultations/{{consultationId}}/validate",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "api",
+                            "events",
+                            "consultations",
+                            "{{consultationId}}",
+                            "validate"
+                          ]
+                        },
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{}"
+                        }
+                      }
+                    }
+                  ]
                 }
               ]
             },
@@ -869,12 +1475,52 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/consultations/book",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "events", "consultations", "book"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "consultations",
+                        "book"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
                       "raw": "{}"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Check-duplicate-title",
+              "item": [
+                {
+                  "name": "check-duplicate-title [GET]",
+                  "request": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/events/consultations/check-duplicate-title",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "consultations",
+                        "check-duplicate-title"
+                      ]
                     }
                   }
                 }
@@ -896,8 +1542,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/events/consultations?page=1&limit=10&sort=date&order=desc",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "events", "consultations"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "events",
+                    "consultations"
+                  ]
                 }
               }
             },
@@ -917,8 +1569,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/events/consultations?page=1&limit=10&sort=date&order=desc",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "events", "consultations"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "events",
+                    "consultations"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -953,7 +1611,9 @@
                         ],
                         "url": {
                           "raw": "{{base_url}}/api/events/subscriptions/{{subscriptionId}}/allocate",
-                          "host": ["{{base_url}}"],
+                          "host": [
+                            "{{base_url}}"
+                          ],
                           "path": [
                             "api",
                             "events",
@@ -986,7 +1646,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/subscriptions/{{subscriptionId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "events",
@@ -1012,7 +1674,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/subscriptions/{{subscriptionId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "events",
@@ -1042,7 +1706,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/subscriptions/{{subscriptionId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "events",
@@ -1068,7 +1734,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/subscriptions/{{subscriptionId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "events",
@@ -1081,6 +1749,44 @@
                       "raw": "{}"
                     }
                   }
+                },
+                {
+                  "name": "Validate",
+                  "item": [
+                    {
+                      "name": "validate [POST]",
+                      "request": {
+                        "method": "POST",
+                        "header": [
+                          {
+                            "key": "Authorization",
+                            "value": "Bearer {{auth_token}}"
+                          },
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/api/events/subscriptions/{{subscriptionId}}/validate",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "api",
+                            "events",
+                            "subscriptions",
+                            "{{subscriptionId}}",
+                            "validate"
+                          ]
+                        },
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{}"
+                        }
+                      }
+                    }
+                  ]
                 }
               ]
             },
@@ -1103,12 +1809,52 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/subscriptions/book",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "events", "subscriptions", "book"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "subscriptions",
+                        "book"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
                       "raw": "{}"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Check-duplicate-title",
+              "item": [
+                {
+                  "name": "check-duplicate-title [GET]",
+                  "request": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/events/subscriptions/check-duplicate-title",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "subscriptions",
+                        "check-duplicate-title"
+                      ]
                     }
                   }
                 }
@@ -1130,8 +1876,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/events/subscriptions?page=1&limit=10&sort=date&order=desc",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "events", "subscriptions"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "events",
+                    "subscriptions"
+                  ]
                 }
               }
             },
@@ -1151,8 +1903,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/events/subscriptions?page=1&limit=10&sort=date&order=desc",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "events", "subscriptions"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "events",
+                    "subscriptions"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -1169,6 +1927,44 @@
               "name": "WebinarId",
               "item": [
                 {
+                  "name": "Allocate",
+                  "item": [
+                    {
+                      "name": "allocate [PATCH]",
+                      "request": {
+                        "method": "PATCH",
+                        "header": [
+                          {
+                            "key": "Authorization",
+                            "value": "Bearer {{auth_token}}"
+                          },
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/api/events/webinars/{{webinarId}}/allocate",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "api",
+                            "events",
+                            "webinars",
+                            "{{webinarId}}",
+                            "allocate"
+                          ]
+                        },
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{}"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
                   "name": "[webinarId] [GET]",
                   "request": {
                     "method": "GET",
@@ -1184,8 +1980,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/webinars/{{webinarId}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "events", "webinars", "{{webinarId}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "webinars",
+                        "{{webinarId}}"
+                      ]
                     }
                   }
                 },
@@ -1205,8 +2008,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/webinars/{{webinarId}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "events", "webinars", "{{webinarId}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "webinars",
+                        "{{webinarId}}"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -1230,8 +2040,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/webinars/{{webinarId}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "events", "webinars", "{{webinarId}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "webinars",
+                        "{{webinarId}}"
+                      ]
                     }
                   }
                 }
@@ -1256,8 +2073,246 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/events/webinars/book",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "events", "webinars", "book"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "webinars",
+                        "book"
+                      ]
+                    },
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{}"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Check-duplicate-title",
+              "item": [
+                {
+                  "name": "check-duplicate-title [GET]",
+                  "request": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/events/webinars/check-duplicate-title",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "webinars",
+                        "check-duplicate-title"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Crud-with-plan",
+              "item": [
+                {
+                  "name": "WebinarId",
+                  "item": [
+                    {
+                      "name": "[webinarId] [GET]",
+                      "request": {
+                        "method": "GET",
+                        "header": [
+                          {
+                            "key": "Authorization",
+                            "value": "Bearer {{auth_token}}"
+                          },
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/api/events/webinars/crud-with-plan/{{webinarId}}",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "api",
+                            "events",
+                            "webinars",
+                            "crud-with-plan",
+                            "{{webinarId}}"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "name": "[webinarId] [POST]",
+                      "request": {
+                        "method": "POST",
+                        "header": [
+                          {
+                            "key": "Authorization",
+                            "value": "Bearer {{auth_token}}"
+                          },
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/api/events/webinars/crud-with-plan/{{webinarId}}",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "api",
+                            "events",
+                            "webinars",
+                            "crud-with-plan",
+                            "{{webinarId}}"
+                          ]
+                        },
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{}"
+                        }
+                      }
+                    },
+                    {
+                      "name": "[webinarId] [DELETE]",
+                      "request": {
+                        "method": "DELETE",
+                        "header": [
+                          {
+                            "key": "Authorization",
+                            "value": "Bearer {{auth_token}}"
+                          },
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/api/events/webinars/crud-with-plan/{{webinarId}}",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "api",
+                            "events",
+                            "webinars",
+                            "crud-with-plan",
+                            "{{webinarId}}"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "name": "[webinarId] [PATCH]",
+                      "request": {
+                        "method": "PATCH",
+                        "header": [
+                          {
+                            "key": "Authorization",
+                            "value": "Bearer {{auth_token}}"
+                          },
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          }
+                        ],
+                        "url": {
+                          "raw": "{{base_url}}/api/events/webinars/crud-with-plan/{{webinarId}}",
+                          "host": [
+                            "{{base_url}}"
+                          ],
+                          "path": [
+                            "api",
+                            "events",
+                            "webinars",
+                            "crud-with-plan",
+                            "{{webinarId}}"
+                          ]
+                        },
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{}"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "name": "crud-with-plan [POST]",
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/events/webinars/crud-with-plan",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "webinars",
+                        "crud-with-plan"
+                      ]
+                    },
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{}"
+                    }
+                  }
+                },
+                {
+                  "name": "crud-with-plan [PATCH]",
+                  "request": {
+                    "method": "PATCH",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/events/webinars/crud-with-plan",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "events",
+                        "webinars",
+                        "crud-with-plan"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -1283,8 +2338,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/events/webinars?page=1&limit=10&sort=date&order=desc",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "events", "webinars"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "events",
+                    "webinars"
+                  ]
                 }
               }
             },
@@ -1304,8 +2365,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/events/webinars?page=1&limit=10&sort=date&order=desc",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "events", "webinars"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "events",
+                    "webinars"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -1342,12 +2409,156 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/form/onboarding/{{id}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "form", "onboarding", "{{id}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "form",
+                        "onboarding",
+                        "{{id}}"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
                       "raw": "{}"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Participants",
+      "item": [
+        {
+          "name": "Class",
+          "item": [
+            {
+              "name": "ClassId",
+              "item": [
+                {
+                  "name": "[classId] [GET]",
+                  "request": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/participants/class/{{classId}}",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "participants",
+                        "class",
+                        "{{classId}}"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": "[classId] [DELETE]",
+                  "request": {
+                    "method": "DELETE",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/participants/class/{{classId}}",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "participants",
+                        "class",
+                        "{{classId}}"
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Webinar",
+          "item": [
+            {
+              "name": "WebinarId",
+              "item": [
+                {
+                  "name": "[webinarId] [GET]",
+                  "request": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/participants/webinar/{{webinarId}}",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "participants",
+                        "webinar",
+                        "{{webinarId}}"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": "[webinarId] [DELETE]",
+                  "request": {
+                    "method": "DELETE",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/participants/webinar/{{webinarId}}",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "participants",
+                        "webinar",
+                        "{{webinarId}}"
+                      ]
                     }
                   }
                 }
@@ -1379,8 +2590,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/payments/lemon-squeezy",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "payments", "lemon-squeezy"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "lemon-squeezy"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -1409,8 +2626,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/payments/razorpay",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "payments", "razorpay"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "razorpay"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -1436,8 +2659,13 @@
             ],
             "url": {
               "raw": "{{base_url}}/api/payments",
-              "host": ["{{base_url}}"],
-              "path": ["api", "payments"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "payments"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -1464,8 +2692,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/payments/stripe",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "payments", "stripe"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "stripe"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -1494,8 +2728,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/payments/xflow",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "payments", "xflow"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "payments",
+                    "xflow"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -1532,8 +2772,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/plans/classes/{{classId}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "plans", "classes", "{{classId}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "plans",
+                        "classes",
+                        "{{classId}}"
+                      ]
                     }
                   }
                 },
@@ -1553,8 +2800,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/plans/classes/{{classId}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "plans", "classes", "{{classId}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "plans",
+                        "classes",
+                        "{{classId}}"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -1578,8 +2832,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/plans/classes/{{classId}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "plans", "classes", "{{classId}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "plans",
+                        "classes",
+                        "{{classId}}"
+                      ]
                     }
                   }
                 }
@@ -1601,8 +2862,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/plans/classes",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "plans", "classes"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "plans",
+                    "classes"
+                  ]
                 }
               }
             },
@@ -1622,8 +2889,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/plans/classes",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "plans", "classes"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "plans",
+                    "classes"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -1655,7 +2928,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/plans/consultations/{{consultationId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "plans",
@@ -1681,7 +2956,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/plans/consultations/{{consultationId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "plans",
@@ -1711,7 +2988,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/plans/consultations/{{consultationId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "plans",
@@ -1739,8 +3018,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/plans/consultations",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "plans", "consultations"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "plans",
+                    "consultations"
+                  ]
                 }
               }
             },
@@ -1760,8 +3045,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/plans/consultations",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "plans", "consultations"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "plans",
+                    "consultations"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -1793,7 +3084,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/plans/subscriptions/{{subscriptionId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "plans",
@@ -1819,7 +3112,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/plans/subscriptions/{{subscriptionId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "plans",
@@ -1849,7 +3144,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/plans/subscriptions/{{subscriptionId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "plans",
@@ -1877,8 +3174,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/plans/subscriptions",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "plans", "subscriptions"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "plans",
+                    "subscriptions"
+                  ]
                 }
               }
             },
@@ -1898,8 +3201,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/plans/subscriptions",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "plans", "subscriptions"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "plans",
+                    "subscriptions"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -1931,8 +3240,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/plans/webinars/{{webinarId}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "plans", "webinars", "{{webinarId}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "plans",
+                        "webinars",
+                        "{{webinarId}}"
+                      ]
                     }
                   }
                 },
@@ -1952,8 +3268,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/plans/webinars/{{webinarId}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "plans", "webinars", "{{webinarId}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "plans",
+                        "webinars",
+                        "{{webinarId}}"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -1977,8 +3300,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/plans/webinars/{{webinarId}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "plans", "webinars", "{{webinarId}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "plans",
+                        "webinars",
+                        "{{webinarId}}"
+                      ]
                     }
                   }
                 }
@@ -2000,8 +3330,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/plans/webinars",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "plans", "webinars"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "plans",
+                    "webinars"
+                  ]
                 }
               }
             },
@@ -2021,8 +3357,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/plans/webinars",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "plans", "webinars"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "plans",
+                    "webinars"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -2056,8 +3398,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/register/class",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "register", "class"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "register",
+                    "class"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -2086,8 +3434,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/register/consultation",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "register", "consultation"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "register",
+                    "consultation"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -2116,8 +3470,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/register/subscription",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "register", "subscription"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "register",
+                    "subscription"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -2146,8 +3506,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/register/webinar",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "register", "webinar"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "register",
+                    "webinar"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -2156,6 +3522,37 @@
               }
             }
           ]
+        }
+      ]
+    },
+    {
+      "name": "Sentry-example-api",
+      "item": [
+        {
+          "name": "sentry-example-api [GET]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/sentry-example-api",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "sentry-example-api"
+              ]
+            }
+          }
         }
       ]
     },
@@ -2184,7 +3581,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/slots/appointments/{{appointmentId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "slots",
@@ -2210,7 +3609,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/slots/appointments/{{appointmentId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "slots",
@@ -2240,13 +3641,47 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/slots/appointments/{{appointmentId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "slots",
                         "appointments",
                         "{{appointmentId}}"
                       ]
+                    }
+                  }
+                },
+                {
+                  "name": "[appointmentId] [PATCH]",
+                  "request": {
+                    "method": "PATCH",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/slots/appointments/{{appointmentId}}",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "slots",
+                        "appointments",
+                        "{{appointmentId}}"
+                      ]
+                    },
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"startTime\": \"{{start_time}}\",\n  \"endTime\": \"{{end_time}}\",\n  \"notes\": \"{{notes}}\",\n  \"type\": \"consultation\"\n}"
                     }
                   }
                 }
@@ -2268,8 +3703,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/slots/appointments",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "slots", "appointments"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "slots",
+                    "appointments"
+                  ]
                 }
               }
             },
@@ -2289,8 +3730,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/slots/appointments",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "slots", "appointments"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "slots",
+                    "appointments"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -2322,7 +3769,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/slots/availability/{{consultantId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "slots",
@@ -2356,7 +3805,9 @@
                         ],
                         "url": {
                           "raw": "{{base_url}}/api/slots/availability/custom/{{id}}",
-                          "host": ["{{base_url}}"],
+                          "host": [
+                            "{{base_url}}"
+                          ],
                           "path": [
                             "api",
                             "slots",
@@ -2383,7 +3834,9 @@
                         ],
                         "url": {
                           "raw": "{{base_url}}/api/slots/availability/custom/{{id}}",
-                          "host": ["{{base_url}}"],
+                          "host": [
+                            "{{base_url}}"
+                          ],
                           "path": [
                             "api",
                             "slots",
@@ -2414,7 +3867,9 @@
                         ],
                         "url": {
                           "raw": "{{base_url}}/api/slots/availability/custom/{{id}}",
-                          "host": ["{{base_url}}"],
+                          "host": [
+                            "{{base_url}}"
+                          ],
                           "path": [
                             "api",
                             "slots",
@@ -2441,7 +3896,9 @@
                         ],
                         "url": {
                           "raw": "{{base_url}}/api/slots/availability/custom/{{id}}",
-                          "host": ["{{base_url}}"],
+                          "host": [
+                            "{{base_url}}"
+                          ],
                           "path": [
                             "api",
                             "slots",
@@ -2474,8 +3931,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/slots/availability/custom",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "slots", "availability", "custom"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "slots",
+                        "availability",
+                        "custom"
+                      ]
                     }
                   }
                 },
@@ -2495,8 +3959,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/slots/availability/custom",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "slots", "availability", "custom"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "slots",
+                        "availability",
+                        "custom"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -2528,7 +3999,9 @@
                         ],
                         "url": {
                           "raw": "{{base_url}}/api/slots/availability/weekly/{{id}}",
-                          "host": ["{{base_url}}"],
+                          "host": [
+                            "{{base_url}}"
+                          ],
                           "path": [
                             "api",
                             "slots",
@@ -2555,7 +4028,9 @@
                         ],
                         "url": {
                           "raw": "{{base_url}}/api/slots/availability/weekly/{{id}}",
-                          "host": ["{{base_url}}"],
+                          "host": [
+                            "{{base_url}}"
+                          ],
                           "path": [
                             "api",
                             "slots",
@@ -2586,7 +4061,9 @@
                         ],
                         "url": {
                           "raw": "{{base_url}}/api/slots/availability/weekly/{{id}}",
-                          "host": ["{{base_url}}"],
+                          "host": [
+                            "{{base_url}}"
+                          ],
                           "path": [
                             "api",
                             "slots",
@@ -2613,7 +4090,9 @@
                         ],
                         "url": {
                           "raw": "{{base_url}}/api/slots/availability/weekly/{{id}}",
-                          "host": ["{{base_url}}"],
+                          "host": [
+                            "{{base_url}}"
+                          ],
                           "path": [
                             "api",
                             "slots",
@@ -2646,8 +4125,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/slots/availability/weekly",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "slots", "availability", "weekly"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "slots",
+                        "availability",
+                        "weekly"
+                      ]
                     }
                   }
                 },
@@ -2667,8 +4153,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/slots/availability/weekly",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "slots", "availability", "weekly"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "slots",
+                        "availability",
+                        "weekly"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -2702,7 +4195,9 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/slots/unallocated/{{consultantId}}",
-                      "host": ["{{base_url}}"],
+                      "host": [
+                        "{{base_url}}"
+                      ],
                       "path": [
                         "api",
                         "slots",
@@ -2733,8 +4228,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/slots/unallocated/custom",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "slots", "unallocated", "custom"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "slots",
+                        "unallocated",
+                        "custom"
+                      ]
                     }
                   }
                 }
@@ -2759,8 +4261,163 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/slots/unallocated/weekly",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "slots", "unallocated", "weekly"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "slots",
+                        "unallocated",
+                        "weekly"
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Stream",
+      "item": [
+        {
+          "name": "Debug",
+          "item": [
+            {
+              "name": "debug [GET]",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{auth_token}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/stream/debug",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "stream",
+                    "debug"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search",
+          "item": [
+            {
+              "name": "search [GET]",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{auth_token}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/stream/search",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "stream",
+                    "search"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sync",
+          "item": [
+            {
+              "name": "Background",
+              "item": [
+                {
+                  "name": "background [POST]",
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/stream/sync/background",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "stream",
+                        "sync",
+                        "background"
+                      ]
+                    },
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{}"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Manual",
+              "item": [
+                {
+                  "name": "manual [POST]",
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/stream/sync/manual",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "stream",
+                        "sync",
+                        "manual"
+                      ]
+                    },
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{}"
                     }
                   }
                 }
@@ -2792,8 +4449,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/user/{{id}}",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "user", "{{id}}"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "{{id}}"
+                  ]
                 }
               }
             },
@@ -2813,8 +4476,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/user/{{id}}",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "user", "{{id}}"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "{{id}}"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -2838,8 +4507,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/user/{{id}}",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "user", "{{id}}"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "{{id}}"
+                  ]
                 }
               }
             }
@@ -2867,8 +4542,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/consultants/{{id}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "consultants", "{{id}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "consultants",
+                        "{{id}}"
+                      ]
                     }
                   }
                 },
@@ -2888,8 +4570,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/consultants/{{id}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "consultants", "{{id}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "consultants",
+                        "{{id}}"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -2913,8 +4602,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/consultants/{{id}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "consultants", "{{id}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "consultants",
+                        "{{id}}"
+                      ]
                     }
                   }
                 }
@@ -2939,8 +4635,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/consultants/meta",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "consultants", "meta"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "consultants",
+                        "meta"
+                      ]
                     }
                   }
                 }
@@ -2962,8 +4665,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/user/consultants?page=1&limit=10&search={{search_term}}&sortBy=rating",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "user", "consultants"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "consultants"
+                  ]
                 }
               }
             }
@@ -2991,8 +4700,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/consultees/{{id}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "consultees", "{{id}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "consultees",
+                        "{{id}}"
+                      ]
                     }
                   }
                 },
@@ -3012,8 +4728,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/consultees/{{id}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "consultees", "{{id}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "consultees",
+                        "{{id}}"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -3037,8 +4760,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/consultees/{{id}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "consultees", "{{id}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "consultees",
+                        "{{id}}"
+                      ]
                     }
                   }
                 },
@@ -3058,8 +4788,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/consultees/{{id}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "consultees", "{{id}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "consultees",
+                        "{{id}}"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -3085,8 +4822,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/user/consultees?page=1&limit=10&search={{search_term}}&sortBy=rating",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "user", "consultees"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "consultees"
+                  ]
                 }
               }
             }
@@ -3114,8 +4857,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/content/domains",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "content", "domains"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "content",
+                        "domains"
+                      ]
                     }
                   }
                 }
@@ -3140,8 +4890,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/content/subdomains",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "content", "subdomains"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "content",
+                        "subdomains"
+                      ]
                     }
                   }
                 }
@@ -3166,8 +4923,108 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/content/tags",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "content", "tags"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "content",
+                        "tags"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Topics",
+              "item": [
+                {
+                  "name": "topics [GET]",
+                  "request": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/user/content/topics",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "content",
+                        "topics"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": "topics [POST]",
+                  "request": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/user/content/topics",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "content",
+                        "topics"
+                      ]
+                    },
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{}"
+                    }
+                  }
+                },
+                {
+                  "name": "topics [DELETE]",
+                  "request": {
+                    "method": "DELETE",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/user/content/topics",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "content",
+                        "topics"
+                      ]
                     }
                   }
                 }
@@ -3194,8 +5051,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/user/feedbacks",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "user", "feedbacks"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "feedbacks"
+                  ]
                 }
               }
             },
@@ -3215,8 +5078,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/user/feedbacks",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "user", "feedbacks"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "feedbacks"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -3248,8 +5117,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/reviews/{{id}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "reviews", "{{id}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "reviews",
+                        "{{id}}"
+                      ]
                     }
                   }
                 },
@@ -3269,8 +5145,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/reviews/{{id}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "reviews", "{{id}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "reviews",
+                        "{{id}}"
+                      ]
                     },
                     "body": {
                       "mode": "raw",
@@ -3294,8 +5177,15 @@
                     ],
                     "url": {
                       "raw": "{{base_url}}/api/user/reviews/{{id}}",
-                      "host": ["{{base_url}}"],
-                      "path": ["api", "user", "reviews", "{{id}}"]
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "reviews",
+                        "{{id}}"
+                      ]
                     }
                   }
                 }
@@ -3317,8 +5207,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/user/reviews",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "user", "reviews"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "reviews"
+                  ]
                 }
               }
             },
@@ -3338,8 +5234,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/user/reviews",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "user", "reviews"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "reviews"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -3365,8 +5267,13 @@
             ],
             "url": {
               "raw": "{{base_url}}/api/user",
-              "host": ["{{base_url}}"],
-              "path": ["api", "user"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "user"
+              ]
             }
           }
         },
@@ -3386,14 +5293,175 @@
             ],
             "url": {
               "raw": "{{base_url}}/api/user",
-              "host": ["{{base_url}}"],
-              "path": ["api", "user"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "user"
+              ]
             },
             "body": {
               "mode": "raw",
               "raw": "{}"
             }
           }
+        },
+        {
+          "name": "Staff",
+          "item": [
+            {
+              "name": "Id",
+              "item": [
+                {
+                  "name": "[id] [GET]",
+                  "request": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/user/staff/{{id}}",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "staff",
+                        "{{id}}"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "name": "[id] [PUT]",
+                  "request": {
+                    "method": "PUT",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/user/staff/{{id}}",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "staff",
+                        "{{id}}"
+                      ]
+                    },
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{}"
+                    }
+                  }
+                },
+                {
+                  "name": "[id] [DELETE]",
+                  "request": {
+                    "method": "DELETE",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{auth_token}}"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{base_url}}/api/user/staff/{{id}}",
+                      "host": [
+                        "{{base_url}}"
+                      ],
+                      "path": [
+                        "api",
+                        "user",
+                        "staff",
+                        "{{id}}"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "name": "staff [GET]",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{auth_token}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/user/staff",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "staff"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "staff [POST]",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{auth_token}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/user/staff",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "staff"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"{{name}}\",\n  \"email\": \"{{email}}\",\n  \"bio\": \"{{bio}}\"\n}"
+                }
+              }
+            }
+          ]
         },
         {
           "name": "Support-tickets",
@@ -3420,7 +5488,9 @@
                         ],
                         "url": {
                           "raw": "{{base_url}}/api/user/support-tickets/{{ticketId}}/responses",
-                          "host": ["{{base_url}}"],
+                          "host": [
+                            "{{base_url}}"
+                          ],
                           "path": [
                             "api",
                             "user",
@@ -3455,8 +5525,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/user/support-tickets",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "user", "support-tickets"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "support-tickets"
+                  ]
                 }
               }
             },
@@ -3476,8 +5552,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/user/support-tickets",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "user", "support-tickets"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "user",
+                    "support-tickets"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -3511,8 +5593,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/webhooks/lemon-squeezy",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "webhooks", "lemon-squeezy"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "webhooks",
+                    "lemon-squeezy"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -3541,8 +5629,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/webhooks/payment",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "webhooks", "payment"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "webhooks",
+                    "payment"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -3571,8 +5665,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/webhooks/razorpay",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "webhooks", "razorpay"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "webhooks",
+                    "razorpay"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -3601,8 +5701,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/webhooks/stripe",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "webhooks", "stripe"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "webhooks",
+                    "stripe"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -3631,8 +5737,14 @@
                 ],
                 "url": {
                   "raw": "{{base_url}}/api/webhooks/xflow",
-                  "host": ["{{base_url}}"],
-                  "path": ["api", "webhooks", "xflow"]
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "webhooks",
+                    "xflow"
+                  ]
                 },
                 "body": {
                   "mode": "raw",
@@ -3691,7 +5803,9 @@
     {
       "listen": "test",
       "script": {
-        "exec": ["pm.environment.set('auth_token', pm.response.json().token);"],
+        "exec": [
+          "pm.environment.set('auth_token', pm.response.json().token);"
+        ],
         "type": "text/javascript"
       }
     }
