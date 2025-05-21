@@ -10,7 +10,7 @@ module.exports = function transformer(fileInfo, api) {
   if (!hasImport) {
     const importDecl = j.importDeclaration(
       [j.importNamespaceSpecifier(j.identifier("Sentry"))],
-      j.literal("@sentry/nextjs")
+      j.literal("@sentry/nextjs"),
     );
     root.get().node.program.body.unshift(importDecl);
   }
@@ -24,10 +24,10 @@ module.exports = function transformer(fileInfo, api) {
       j.callExpression(
         j.memberExpression(
           j.identifier("Sentry"),
-          j.identifier("captureException")
+          j.identifier("captureException"),
         ),
-        [j.identifier(errorName)]
-      )
+        [j.identifier(errorName)],
+      ),
     );
     // only insert if not already present
     const bodyStatements = path.value.body.body;
@@ -40,7 +40,7 @@ module.exports = function transformer(fileInfo, api) {
               property: { name: "captureException" },
             },
           })
-          .size() > 0
+          .size() > 0,
     );
     if (!alreadyInserted) {
       bodyStatements.unshift(captureCall);
