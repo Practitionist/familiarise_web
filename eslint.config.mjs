@@ -4,6 +4,7 @@ import tseslint from "typescript-eslint";
 import pluginReact from "eslint-plugin-react";
 import pluginCypress from "eslint-plugin-cypress";
 import pluginJest from "eslint-plugin-jest";
+import unusedImports from "eslint-plugin-unused-imports";
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
@@ -132,6 +133,27 @@ export default [
       // Error on references to undefined variables
       // typeof check ensures typeof checks don't trigger the error
       "no-undef": ["error", { typeof: true }],
+    },
+  },
+
+  // Configuration for eslint-plugin-unused-imports
+  {
+    plugins: {
+      "unused-imports": unusedImports,
+    },
+    rules: {
+      "no-unused-vars": "off", // or "@typescript-eslint/no-unused-vars": "off",
+      "@typescript-eslint/no-unused-vars": "off",
+      "unused-imports/no-unused-imports": "warn",
+      "unused-imports/no-unused-vars": [
+        "warn",
+        {
+          vars: "all",
+          varsIgnorePattern: "^_",
+          args: "after-used",
+          argsIgnorePattern: "^_",
+        },
+      ],
     },
   },
 ];
