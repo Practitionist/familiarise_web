@@ -13,9 +13,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const compat = new FlatCompat({
-    baseDirectory: __dirname,
-    // recommendedConfig: pluginJs.configs.recommended, // Optional: can be used if extending eslint:recommended via compat
-    allConfig: pluginJs.configs.all, // Optional: can be used if extending eslint:all via compat
+  baseDirectory: __dirname,
+  // recommendedConfig: pluginJs.configs.recommended, // Optional: can be used if extending eslint:recommended via compat
+  allConfig: pluginJs.configs.all, // Optional: can be used if extending eslint:all via compat
 });
 
 /** @type {import('eslint').Linter.Config[]} */
@@ -99,7 +99,7 @@ const eslintConfig = [
   ...tseslint.configs.recommended,
 
   // Next.js specific configurations using FlatCompat
-  // Choose the configurations you need. 
+  // Choose the configurations you need.
   // "next/core-web-vitals" is good for stricter checks.
   // "next/typescript" is for TypeScript-specific Next.js rules.
   // You can also just use "next" for the base Next.js rules.

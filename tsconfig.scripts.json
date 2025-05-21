@@ -7,10 +7,6 @@
     "moduleResolution": "NodeNext",
     "rootDir": "scripts"
   },
-  "include": [
-    "scripts/no-unescaped-entities.ts"
-  ],
-  "exclude": [
-    "node_modules"
-  ]
-} 
+  "include": ["scripts/no-unescaped-entities.ts"],
+  "exclude": ["node_modules"]
+}

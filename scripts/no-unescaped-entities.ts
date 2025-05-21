@@ -1,22 +1,27 @@
-import fs from 'fs';
-import path from 'path';
-import { glob } from 'glob';
+import fs from "fs";
+import path from "path";
+import { glob } from "glob";
 
-const targetDirectories = ['app', 'components']; // Add other directories if needed
-const fileExtensions = ['.tsx', '.jsx'];
+const targetDirectories = ["app", "components"]; // Add other directories if needed
+const fileExtensions = [".tsx", ".jsx"];
 
 async function processFiles() {
-  console.log('Starting to process files to escape HTML entities...');
+  console.log("Starting to process files to escape HTML entities...");
   const CWD = process.cwd();
   let filesChangedCount = 0;
 
   for (const dir of targetDirectories) {
-    const pattern = path.join(CWD, dir, `**/*{${fileExtensions.join(',')}}`).replace(/\\/g, '/'); // Normalize path for glob
-    const files = await glob(pattern, { nodir: true, ignore: ['node_modules/**', '.next/**'] });
+    const pattern = path
+      .join(CWD, dir, `**/*{${fileExtensions.join(",")}}`)
+      .replace(/\\/g, "/"); // Normalize path for glob
+    const files = await glob(pattern, {
+      nodir: true,
+      ignore: ["node_modules/**", ".next/**"],
+    });
 
     for (const file of files) {
       try {
-        const originalContent = fs.readFileSync(file, 'utf8');
+        const originalContent = fs.readFileSync(file, "utf8");
         let newContent = originalContent;
         let madeChangeInFile = false;
 
@@ -33,7 +38,7 @@ async function processFiles() {
             modifiedTextContent = modifiedTextContent.replace(/"/g, "&quot;");
             changedInThisMatch = true;
           }
-          
+
           // Example for handling > within text, be cautious:
           // if (textContent.includes('>') && !textContent.match(/^\s*<\/?.*>\s*$/)) { // Avoid replacing > in stray tags
           //   modifiedTextContent = modifiedTextContent.replace(/>/g, "&gt;");
@@ -45,7 +50,7 @@ async function processFiles() {
           }
           return `>${modifiedTextContent}<`;
         });
-        
+
         /*
         Handle cases where text might be at the start or end of a multi-line JSX element,
         not strictly between > and < on the same line.
@@ -60,7 +65,7 @@ async function processFiles() {
         */
 
         if (madeChangeInFile) {
-          fs.writeFileSync(file, newContent, 'utf8');
+          fs.writeFileSync(file, newContent, "utf8");
           console.log(`Updated entities in: ${file}`);
           filesChangedCount++;
         }
@@ -75,7 +80,9 @@ async function processFiles() {
 Finished processing files. ${filesChangedCount} file(s) were modified.`);
     console.log("Please review the changes and run your linter again.");
   } else {
-    console.log("\nFinished processing files. No files required changes based on the current script logic.");
+    console.log(
+      "\nFinished processing files. No files required changes based on the current script logic.",
+    );
   }
   console.log("You might need to manually fix remaining or complex cases.");
 }
