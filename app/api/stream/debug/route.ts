@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { StreamChat } from "stream-chat";
 import prisma from "@/lib/prisma";
@@ -278,6 +279,7 @@ export async function GET(req: NextRequest) {
       })),
     });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error debugging Stream Chat:", error);
     return NextResponse.json(
       { success: false, error: (error as Error).message },

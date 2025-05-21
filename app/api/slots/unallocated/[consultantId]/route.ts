@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { TSlotTiming } from "@/types/slots";
 import { DayOfWeek } from "@prisma/client";
@@ -28,6 +29,7 @@ export async function GET(
         throw new Error("Invalid date format");
       }
     } catch (error) {
+      Sentry.captureException(error);
       return NextResponse.json(
         { error: "Dates must be in UTC ISO format" },
         { status: 400 },
@@ -188,6 +190,7 @@ export async function GET(
 
     return NextResponse.json({ data: allSlots }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching unallocated slots:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching unallocated slots" },

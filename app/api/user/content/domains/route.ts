@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
@@ -12,6 +13,7 @@ export async function GET() {
 
     return NextResponse.json(domains);
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching domains:", error);
     return NextResponse.json(
       { error: "Internal server error" },

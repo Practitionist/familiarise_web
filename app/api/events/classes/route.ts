@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
@@ -137,6 +138,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ data: classes }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching classes:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching classes" },

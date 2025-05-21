@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "lib/prisma";
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
@@ -24,6 +25,7 @@ export async function GET() {
 
     return NextResponse.json(feedbacks);
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching feedbacks:", error);
     return NextResponse.json(
       {
@@ -59,6 +61,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(feedback, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error creating feedback:", error);
     return NextResponse.json(
       {

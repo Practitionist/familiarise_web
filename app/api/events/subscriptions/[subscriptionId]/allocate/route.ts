@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
   AppointmentsType,
@@ -617,6 +618,7 @@ export async function PATCH(
 
       return NextResponse.json({ data: result });
     } catch (error) {
+      Sentry.captureException(error);
       if (error instanceof Error) {
         // Fixes the below error:
         //  ⨯ TypeError: The "payload" argument must be of type object. Received null
@@ -631,6 +633,7 @@ export async function PATCH(
       );
     }
   } catch (error) {
+    Sentry.captureException(error);
     if (error instanceof Error) {
       // Fixes the below error:
       //  ⨯ TypeError: The "payload" argument must be of type object. Received null

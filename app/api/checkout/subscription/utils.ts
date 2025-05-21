@@ -1,7 +1,6 @@
-import { PrismaClient, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import {
-  SubscriptionCheckoutInput,
-  SubscriptionPlanWithDetails,
+  SubscriptionPlanWithDetails
 } from "./schema";
 
 export async function validateAndGetPlan(

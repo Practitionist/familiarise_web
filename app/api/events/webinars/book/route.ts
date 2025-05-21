@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
@@ -153,6 +154,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(appointment);
   } catch (error: any) {
+    Sentry.captureException(error);
     console.error("Error booking webinar:", error);
     return NextResponse.json(
       { error: error.message || "Internal server error" },

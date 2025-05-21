@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma, PlanEmailSupport } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -34,6 +35,7 @@ export async function GET(
 
     return NextResponse.json({ data: classPlan }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
@@ -169,6 +171,7 @@ export async function PUT(
 
     return NextResponse.json({ data: classPlan }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
@@ -230,6 +233,7 @@ export async function DELETE(
 
     return NextResponse.json({ data: classPlan }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"

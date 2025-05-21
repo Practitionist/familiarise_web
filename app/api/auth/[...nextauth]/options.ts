@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 /**
  * This file contains the configuration options for NextAuth.js authentication.
  * It sets up the authentication providers, session handling, and callback functions.
@@ -210,6 +211,7 @@ const authOptions: NextAuthOptions = {
             token.staffProfileId = dbUser.staffProfile?.id ?? undefined;
           }
         } catch (error) {
+          Sentry.captureException(error);
           console.error("Error fetching user data in jwt callback:", error);
           // Set default values if database query fails
           token.onboardingCompleted = false;
@@ -275,6 +277,7 @@ const authOptions: NextAuthOptions = {
             });
           }
         } catch (error) {
+          Sentry.captureException(error);
           console.error("Error fetching user data in session callback:", error);
           // Keep existing session data if database query fails
         }
@@ -329,6 +332,7 @@ const authOptions: NextAuthOptions = {
             );
           }
         } catch (error) {
+          Sentry.captureException(error);
           console.error(
             "[LINK_ACCOUNT] Failed to send account linked email:",
             error,

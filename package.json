@@ -26,7 +26,8 @@
     "cypress:e2e:headless": "start-server-and-test dev http://localhost:3000 \"cypress run --e2e\"",
     "cypress:component": "cypress open --component",
     "cypress:component:headless": "cypress run --component",
-    "update-postman": "npx ts-node scripts/typescript/update-postman-collection.ts"
+    "update-postman": "npx ts-node scripts/update-postman-collection.ts",
+    "sentry:codemod": "npx jscodeshift -t scripts/sentry-codemod.js app/api --extensions=ts --parser=tsx"
   },
   "dependencies": {
     "@faker-js/faker": "^9.3.0",
@@ -142,6 +143,7 @@
     "prisma": "^6.1.0",
     "start-server-and-test": "^2.0.9",
     "tailwindcss": "^3.4.17",
+    "terser-webpack-plugin": "^5.3.14",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.2"

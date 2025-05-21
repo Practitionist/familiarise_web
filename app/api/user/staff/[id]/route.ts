@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma"; // Use central instance
 import { Prisma } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
@@ -35,6 +36,7 @@ export async function GET(
 
     return NextResponse.json(staffUser);
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching staff member:", error);
     return NextResponse.json(
       { message: "Internal Server Error fetching staff member" },
@@ -172,6 +174,7 @@ export async function PUT(
 
     return NextResponse.json(updatedUser);
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error updating staff member:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       // Handle specific Prisma errors, e.g., record not found
@@ -215,6 +218,7 @@ export async function DELETE(
     // Return 204 No Content for successful deletion
     return new NextResponse(null, { status: 204 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error deleting staff member:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       // Handle specific Prisma errors, e.g., record not found

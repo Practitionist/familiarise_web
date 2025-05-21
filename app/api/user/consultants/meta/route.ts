@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -83,6 +84,7 @@ export async function GET(req: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error in GET request:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching metadata" },

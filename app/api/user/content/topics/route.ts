@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -24,6 +25,7 @@ export async function GET(req: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching topics:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching topics" },
@@ -105,6 +107,7 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error creating topics:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the topics" },
@@ -173,6 +176,7 @@ export async function DELETE(req: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error deleting topics:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting topics" },

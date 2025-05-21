@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
 import { getServerSession } from "next-auth";
@@ -67,6 +68,7 @@ export async function POST(
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error creating support response:", error);
     return NextResponse.json(
       {

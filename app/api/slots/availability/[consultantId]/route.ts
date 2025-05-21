@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DayOfWeek, ScheduleType } from "@prisma/client";
@@ -76,6 +77,7 @@ export async function GET(
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching slots:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching availability slots" },

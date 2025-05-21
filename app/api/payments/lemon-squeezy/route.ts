@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { createLemonSqueezyCheckout } from "./utils";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
@@ -81,6 +82,7 @@ export async function POST(req: NextRequest) {
       checkoutId: data.data.id,
     });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Lemon Squeezy checkout error:", error);
     return NextResponse.json(
       {

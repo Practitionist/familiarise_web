@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -24,6 +25,7 @@ export async function GET(
 
     return NextResponse.json({ data: customSlot }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching custom slot:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the custom slot" },
@@ -102,6 +104,7 @@ export async function PUT(
 
     return NextResponse.json({ data: updatedSlot }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error updating custom slot:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2025") {
@@ -197,6 +200,7 @@ export async function PATCH(
 
     return NextResponse.json({ data: updatedSlot }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error partially updating custom slot:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2025") {
@@ -243,6 +247,7 @@ export async function DELETE(
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error deleting custom slot:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === "P2025") {

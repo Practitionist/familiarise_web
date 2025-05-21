@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import bcrypt from "bcrypt";
@@ -61,6 +62,7 @@ export async function POST(req: Request) {
       message: "Password has been reset successfully.",
     });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("[RESET_PASSWORD_POST] Error:", error);
     return new NextResponse("Internal Server Error", { status: 500 });
   }

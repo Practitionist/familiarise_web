@@ -1,5 +1,5 @@
-import { PrismaClient, Prisma } from "@prisma/client";
-import { WebinarCheckoutInput, WebinarPlanWithDetails } from "./schema";
+import { Prisma } from "@prisma/client";
+import { WebinarPlanWithDetails } from "./schema";
 
 export async function validateAndGetPlan(
   tx: Prisma.TransactionClient,

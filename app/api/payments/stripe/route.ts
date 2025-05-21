@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { createStripePaymentIntent } from "./utils";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
@@ -68,6 +69,7 @@ export async function POST(req: NextRequest) {
       clientSecret: paymentIntent.client_secret,
     });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Stripe checkout error:", error);
     return NextResponse.json(
       {

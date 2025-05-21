@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { PaymentStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
@@ -128,6 +129,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ received: true });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Razorpay webhook error:", error);
     return NextResponse.json(
       { error: "Webhook handler failed" },

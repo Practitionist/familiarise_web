@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { createPaymentIntent } from "@/lib/payment";
 import prisma from "@/lib/prisma";
 import {
@@ -145,6 +146,7 @@ export async function POST(req: Request) {
 
     return result;
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Checkout error:", error);
     return NextResponse.json(
       { error: "Failed to process checkout" },

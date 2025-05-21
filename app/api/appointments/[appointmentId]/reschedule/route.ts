@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
@@ -67,6 +68,7 @@ export async function POST(
 
     return NextResponse.json(result);
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error requesting reschedule:", error);
     return NextResponse.json(
       { error: "Failed to request reschedule" },

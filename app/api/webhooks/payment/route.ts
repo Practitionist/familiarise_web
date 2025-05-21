@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { PaymentStatus, RequestStatus } from "@prisma/client";
 import { validatePaymentWebhook } from "@/lib/payment";
@@ -109,6 +110,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ received: true });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Webhook error:", error);
     return NextResponse.json(
       { error: "Webhook handler failed" },

@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { ClassPlanSchema } from "@/schemas/plans";
 import { ClassStatus } from "@prisma/client"; // Import Enum
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -208,6 +209,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ data: result.classEvent }, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error);
     // --- Zod Error Handling ---
     if (error instanceof z.ZodError) {
       console.error("Validation Error (POST Catch):", error.issues);
@@ -614,6 +616,7 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ data: responseData }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     // --- Zod Error Handling ---
     if (error instanceof z.ZodError) {
       console.error("Validation Error (PATCH Catch):", error.issues);

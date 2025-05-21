@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { createRazorpayOrder } from "./utils";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
@@ -70,6 +71,7 @@ export async function POST(req: NextRequest) {
       currency: order.currency,
     });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Razorpay checkout error:", error);
     return NextResponse.json(
       {

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 export interface LemonSqueezyCheckout {
   data: {
     id: string;

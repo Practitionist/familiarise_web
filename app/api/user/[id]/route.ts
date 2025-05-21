@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
@@ -51,6 +52,7 @@ export async function GET(
 
     return NextResponse.json({ data: user }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     if (error instanceof Error) {
       console.error("Error: ", error.stack);
     }
@@ -129,6 +131,7 @@ export async function PUT(
 
     return NextResponse.json({ data: updatedUser }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error updating user:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the user" },
@@ -161,6 +164,7 @@ export async function DELETE(
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error deleting user:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the user" },
