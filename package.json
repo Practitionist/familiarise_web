@@ -26,7 +26,8 @@
     "cypress:e2e:headless": "start-server-and-test dev http://localhost:3000 \"cypress run --e2e\"",
     "cypress:component": "cypress open --component",
     "cypress:component:headless": "cypress run --component",
-    "update-postman": "npx ts-node scripts/typescript/update-postman-collection.ts"
+    "update-postman": "npx ts-node scripts/typescript/update-postman-collection.ts",
+    "sentry:codemod": "npx jscodeshift -t scripts/sentry-codemod.js app/api --extensions=ts --parser=tsx"
   },
   "dependencies": {
     "@faker-js/faker": "^9.3.0",

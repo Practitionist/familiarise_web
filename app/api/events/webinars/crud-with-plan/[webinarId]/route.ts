@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 // Remove Zod import if no longer needed
@@ -99,6 +100,7 @@ export async function DELETE(
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error deleting webinar:", error);
     // Remove specific ZodError check if Zod is fully removed
     // if (error instanceof z.ZodError) { ... }

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { AppointmentsType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -24,6 +25,7 @@ export async function PATCH(
   try {
     requestBody = await request.json();
   } catch (error) {
+    Sentry.captureException(error);
     // Log the specific error before returning generic response
     console.error("Failed to parse request body:", error);
     return NextResponse.json(
@@ -122,6 +124,7 @@ export async function PATCH(
       { status: 200 },
     );
   } catch (error: any) {
+    Sentry.captureException(error);
     console.error("Error allocating class slots:", error);
     // Check for specific known errors (like 'Class not found')
     if (error.message === "Class not found") {

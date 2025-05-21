@@ -1,5 +1,5 @@
-import { PrismaClient, Prisma } from "@prisma/client";
-import { ClassCheckoutInput, ClassPlanWithDetails } from "./schema";
+import { Prisma } from "@prisma/client";
+import { ClassPlanWithDetails } from "./schema";
 
 export async function validateAndGetPlan(
   tx: Prisma.TransactionClient,

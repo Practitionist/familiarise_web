@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
@@ -62,6 +63,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ data: reviews }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error getting reviews:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
@@ -105,6 +107,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(newReview, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error creating review:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },

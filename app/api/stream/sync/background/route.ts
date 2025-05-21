@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { performStreamUserSync, SyncSummary } from "@/jobs/stream-sync"; // Removed FailedDeletionEntry from import if not directly used, or ensure no local conflict
 import { NextResponse } from "next/server";
 import { StreamChat } from "stream-chat";
@@ -64,6 +65,7 @@ export async function POST(request: Request) {
       { status: 200 },
     );
   } catch (error: any) {
+    Sentry.captureException(error);
     console.error(
       "[Stream Sync API Route] Error during synchronization process:",
       error.message,

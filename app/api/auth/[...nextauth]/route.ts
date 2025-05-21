@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import NextAuth from "next-auth/next";
 import authOptions from "./options";
 

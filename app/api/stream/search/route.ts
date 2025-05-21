@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import {
   searchUsers,
   upsertUsersToStream,
@@ -34,6 +35,7 @@ export async function GET(req: NextRequest) {
 
         console.log(`Upserted ${users.length} users to Stream Chat`);
       } catch (upsertError) {
+        Sentry.captureException(upsertError);
         console.error("Error upserting users to Stream Chat:", upsertError);
         // Continue even if upserting fails
       }
@@ -44,6 +46,7 @@ export async function GET(req: NextRequest) {
       users,
     });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error searching users:", error);
     return NextResponse.json(
       { success: false, error: (error as Error).message },

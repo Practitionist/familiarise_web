@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma, ScheduleType } from "@prisma/client";
 import { getServerSession } from "next-auth";
@@ -120,6 +121,7 @@ export async function GET(
 
     return NextResponse.json({ data: consultant });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching consultant:", error);
     return NextResponse.json(
       { error: "Internal server error" },
@@ -253,6 +255,7 @@ export async function PUT(
 
     return NextResponse.json({ data: updatedConsultant });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error updating consultant:", error);
     if (error instanceof Error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
@@ -313,6 +316,7 @@ export async function DELETE(
 
     return NextResponse.json({ message: "Consultant deleted successfully" });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error deleting consultant:", error);
     if (error instanceof Error) {
       return NextResponse.json({ error: error.message }, { status: 400 });

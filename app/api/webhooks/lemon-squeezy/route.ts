@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { headers } from "next/headers";
@@ -89,6 +90,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ received: true });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Webhook error:", error);
     return NextResponse.json(
       { error: "Webhook handler failed" },

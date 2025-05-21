@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
@@ -120,6 +121,7 @@ export async function GET(req: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching unallocated custom slots:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching unallocated custom slots" },

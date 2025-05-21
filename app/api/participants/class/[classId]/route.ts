@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
@@ -48,6 +49,7 @@ export async function GET(
       participants,
     });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("[CLASS_PARTICIPANTS_GET]", error);
     return new NextResponse("Internal error", { status: 500 });
   }
@@ -105,6 +107,7 @@ export async function DELETE(
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("[CLASS_PARTICIPANT_DELETE]", error);
     return new NextResponse("Internal error", { status: 500 });
   }

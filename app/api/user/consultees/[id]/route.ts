@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
@@ -25,6 +26,7 @@ export async function GET(
 
     return NextResponse.json({ data: consultee }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     if (error instanceof Error) {
       console.error("Error: ", error.stack);
     }
@@ -80,6 +82,7 @@ export async function POST(
 
     return NextResponse.json(createdConsultee, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error creating consultee:", error);
     return NextResponse.json(
       {
@@ -133,6 +136,7 @@ export async function PATCH(
 
     return NextResponse.json(updatedConsultee, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error updating consultee:", error);
     return NextResponse.json(
       {
@@ -174,6 +178,7 @@ export async function DELETE(
 
     return NextResponse.json(deletedConsultee, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error deleting consultee:", error);
     return NextResponse.json(
       {

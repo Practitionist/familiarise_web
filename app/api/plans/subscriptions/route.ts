@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { PlanEmailSupport } from "@prisma/client";
@@ -37,6 +38,7 @@ export async function GET(request: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching subscription plans:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching subscription plans" },
@@ -114,6 +116,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ data: newSubscriptionPlan }, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error creating subscription plan:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the subscription plan" },

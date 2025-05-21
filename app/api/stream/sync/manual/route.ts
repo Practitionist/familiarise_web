@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { StreamChat, UserResponse } from "stream-chat"; // Added UserResponse
@@ -138,6 +139,7 @@ export async function POST(request: Request) {
           );
         }
       } catch (error: any) {
+        Sentry.captureException(error);
         console.error(
           "Error during Stream user deletion process:",
           error.message,
@@ -168,6 +170,7 @@ export async function POST(request: Request) {
       { status: 200 },
     );
   } catch (error: any) {
+    Sentry.captureException(error);
     console.error("Error in Stream sync API route:", error);
     return NextResponse.json(
       { error: "Internal Server Error", details: error.message },

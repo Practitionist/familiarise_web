@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import bcrypt from "bcrypt";
@@ -92,6 +93,7 @@ export async function POST(req: Request) {
               "Successfully linked your email and password to your existing account",
           });
         } catch (error) {
+          Sentry.captureException(error);
           console.error("[REGISTER_POST] Account linking error:", error);
           return NextResponse.json(
             {
@@ -161,6 +163,7 @@ export async function POST(req: Request) {
           );
         }
       } catch (emailError) {
+        Sentry.captureException(emailError);
         console.error("[REGISTER_POST] Welcome email error:", emailError);
         // Continue despite email failure - don't block registration
       }
@@ -170,6 +173,7 @@ export async function POST(req: Request) {
 
       return NextResponse.json(userWithoutPassword);
     } catch (error) {
+      Sentry.captureException(error);
       console.error("[REGISTER_POST] User creation error:", error);
       return NextResponse.json(
         {
@@ -179,6 +183,7 @@ export async function POST(req: Request) {
       );
     }
   } catch (error) {
+    Sentry.captureException(error);
     console.error("[REGISTER_POST] Error:", error);
     return NextResponse.json(
       {

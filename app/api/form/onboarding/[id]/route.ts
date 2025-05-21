@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { isValidTimeRange } from "@/utils/timeSlotValidation";
 import prisma from "@/lib/prisma";
 import { ConsultationMode, ScheduleType, UserRole } from "@prisma/client";
@@ -33,6 +34,7 @@ export async function PATCH(
       user: finalUpdatedUser,
     });
   } catch (error: unknown) {
+    Sentry.captureException(error);
     console.error("Error updating onboarding information:", error);
     if (error instanceof Error) {
       console.error("Error message:", error.message);

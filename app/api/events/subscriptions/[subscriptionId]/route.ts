@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { AppointmentsType, Prisma, RequestStatus } from "@prisma/client";
 import { addMonths, addWeeks, setHours, setMinutes } from "date-fns";
@@ -61,6 +62,7 @@ export async function GET(
 
     return NextResponse.json({ data: subscriptionData }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
@@ -152,6 +154,7 @@ export async function PUT(
 
     return NextResponse.json({ data: subscriptionData }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error updating subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the subscription" },
@@ -219,6 +222,7 @@ export async function DELETE(
 
     return NextResponse.json({ data: subscriptionData }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error deleting subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the subscription" },
@@ -361,6 +365,7 @@ export async function PATCH(
 
       return NextResponse.json({ data: result });
     } catch (error) {
+      Sentry.captureException(error);
       console.error(
         "Transaction error:",
         error instanceof Error ? error.message : "Unknown error",
@@ -368,6 +373,7 @@ export async function PATCH(
       throw error;
     }
   } catch (error) {
+    Sentry.captureException(error);
     console.error(
       "Error updating subscription:",
       error instanceof Error ? error.message : "Unknown error",
@@ -471,6 +477,7 @@ async function createAppointmentsForSubscription(subscription: any, tx: any) {
       );
       appointments.push(...createdAppointments);
     } catch (error) {
+      Sentry.captureException(error);
       console.error(
         `Error creating appointments batch ${i / batchSize + 1}:`,
         error instanceof Error ? error.message : "Unknown error",

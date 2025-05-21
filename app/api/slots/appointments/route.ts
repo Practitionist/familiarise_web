@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { AppointmentsType, Prisma } from "@prisma/client";
@@ -94,6 +95,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ data: appointments });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching appointments:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching appointments" },
@@ -391,6 +393,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ data: newAppointment }, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error creating appointment:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the appointment" },

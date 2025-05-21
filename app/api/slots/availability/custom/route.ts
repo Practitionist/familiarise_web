@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
@@ -74,6 +75,7 @@ export async function GET(req: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching custom slots:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching custom availability slots" },
@@ -165,6 +167,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ data: newCustomSlot }, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error creating custom slot:", error);
     return NextResponse.json(
       {

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { hash } from "bcryptjs"; // Example hashing library
 import prisma from "@/lib/prisma";
@@ -65,6 +66,7 @@ export async function POST(request: NextRequest) {
     // Return the newly created staff user (excluding password)
     return NextResponse.json(newUser, { status: 201 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error creating staff:", error);
     // Provide a generic error message
     return NextResponse.json(
@@ -101,6 +103,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(staffUsers);
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Failed to fetch staff users:", error);
     return NextResponse.json(
       { message: "Internal Server Error fetching staff" },

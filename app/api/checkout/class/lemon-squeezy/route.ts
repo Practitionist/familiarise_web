@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { createLemonSqueezyCheckout } from "../../../payments/lemon-squeezy/utils";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
@@ -94,6 +95,7 @@ export async function POST(req: NextRequest) {
       });
     });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Checkout error:", error);
     return NextResponse.json(
       {

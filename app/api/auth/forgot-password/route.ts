@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -59,6 +60,7 @@ export async function POST(req: Request) {
           );
         }
       } catch (emailError) {
+        Sentry.captureException(emailError);
         console.error("[FORGOT_PASSWORD_POST] Email error:", emailError);
         // Continue despite email failure - don't block the process
       }
@@ -70,6 +72,7 @@ export async function POST(req: Request) {
         "If an account with that email exists, a password reset link has been sent.",
     });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("[FORGOT_PASSWORD_POST] Error:", error);
     // Return a generic error message even if email sending fails internally
     return NextResponse.json({

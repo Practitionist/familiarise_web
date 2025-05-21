@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { AppointmentsType, Prisma, RequestStatus } from "@prisma/client";
 import { addHours } from "date-fns";
@@ -61,6 +62,7 @@ export async function GET(
 
     return NextResponse.json({ data: consultationData }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
@@ -151,6 +153,7 @@ export async function PUT(
 
     return NextResponse.json({ data: consultationData }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error updating consultation:", error);
     return NextResponse.json(
       { error: "An error occurred while updating the consultation" },
@@ -218,6 +221,7 @@ export async function DELETE(
 
     return NextResponse.json({ data: consultationData }, { status: 200 });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error deleting consultation:", error);
     return NextResponse.json(
       { error: "An error occurred while deleting the consultation" },
@@ -337,6 +341,7 @@ export async function PATCH(
 
       return NextResponse.json({ data: consultation });
     } catch (error) {
+      Sentry.captureException(error);
       console.error(
         "Transaction error:",
         error instanceof Error ? error.message : "Unknown error",
@@ -344,6 +349,7 @@ export async function PATCH(
       throw error;
     }
   } catch (error) {
+    Sentry.captureException(error);
     console.error(
       "Error updating consultation:",
       error instanceof Error ? error.message : "Unknown error",
@@ -414,6 +420,7 @@ async function createAppointmentForConsultation(consultation: any) {
 
     return appointment;
   } catch (error) {
+    Sentry.captureException(error);
     console.error(`Error creating appointment:`, error);
     throw error;
   }

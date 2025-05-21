@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
@@ -141,6 +142,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Error fetching consultants:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },

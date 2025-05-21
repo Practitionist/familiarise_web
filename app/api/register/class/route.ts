@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
@@ -248,6 +249,7 @@ export async function POST(req: NextRequest) {
       });
     });
   } catch (error) {
+    Sentry.captureException(error);
     return handleError(error);
   }
 }

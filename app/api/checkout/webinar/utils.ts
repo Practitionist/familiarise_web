@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { PrismaClient, Prisma } from "@prisma/client";
 import { WebinarCheckoutInput, WebinarPlanWithDetails } from "./schema";
 

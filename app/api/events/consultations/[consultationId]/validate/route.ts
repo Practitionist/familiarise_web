@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma, RequestStatus, ScheduleType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -184,6 +185,7 @@ export async function POST(
 
     return NextResponse.json({ data: result });
   } catch (error) {
+    Sentry.captureException(error);
     console.error("Validation error:", error);
     return NextResponse.json(
       { error: "Failed to validate slots" },
