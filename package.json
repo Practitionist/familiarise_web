@@ -26,7 +26,11 @@
     "cypress:e2e:headless": "start-server-and-test dev http://localhost:3000 \"cypress run --e2e\"",
     "cypress:component": "cypress open --component",
     "cypress:component:headless": "cypress run --component",
-    "update-postman": "npx ts-node scripts/typescript/update-postman-collection.ts"
+    "update-postman": "npx ts-node scripts/typescript/update-postman-collection.ts",
+    "sentry:codemod": "npx jscodeshift -t scripts/sentry-codemod.js app/api --extensions=ts --parser=tsx",
+    "remove-unused-imports": "ts-node -P ./scripts/tsconfig.json scripts/remove-unused-imports.ts",
+    "prefix:entities": "tsc -p tsconfig.scripts.json",
+    "fix:entities": "node dist/scripts/no-unescaped-entities.js"
   },
   "dependencies": {
     "@faker-js/faker": "^9.3.0",
@@ -115,6 +119,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
     "@eslint/js": "^9.17.0",
     "@testing-library/cypress": "^10.0.2",
     "@testing-library/dom": "^10.4.0",

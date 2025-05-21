@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist/scripts",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": "scripts"
+  },
+  "include": [
+    "scripts/no-unescaped-entities.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+} 

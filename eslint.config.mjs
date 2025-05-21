@@ -1,12 +1,25 @@
-import globals from "globals";
+import { FlatCompat } from "@eslint/eslintrc";
 import pluginJs from "@eslint/js";
-import tseslint from "typescript-eslint";
-import pluginReact from "eslint-plugin-react";
 import pluginCypress from "eslint-plugin-cypress";
 import pluginJest from "eslint-plugin-jest";
+import pluginReact from "eslint-plugin-react";
+import globals from "globals";
+import path from "path";
+import tseslint from "typescript-eslint";
+import { fileURLToPath } from "url";
+
+// mimic CommonJS variables
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const compat = new FlatCompat({
+    baseDirectory: __dirname,
+    // recommendedConfig: pluginJs.configs.recommended, // Optional: can be used if extending eslint:recommended via compat
+    allConfig: pluginJs.configs.all, // Optional: can be used if extending eslint:all via compat
+});
 
 /** @type {import('eslint').Linter.Config[]} */
-export default [
+const eslintConfig = [
   // Ignore patterns
   {
     ignores: [
@@ -85,6 +98,14 @@ export default [
   // TypeScript rules
   ...tseslint.configs.recommended,
 
+  // Next.js specific configurations using FlatCompat
+  // Choose the configurations you need. 
+  // "next/core-web-vitals" is good for stricter checks.
+  // "next/typescript" is for TypeScript-specific Next.js rules.
+  // You can also just use "next" for the base Next.js rules.
+  ...compat.extends("next/core-web-vitals"),
+  ...compat.extends("next/typescript"),
+
   // React specific configuration
   {
     ...pluginReact.configs.flat.recommended,
@@ -105,6 +126,9 @@ export default [
 
       // Warn when React props are missing type definitions
       "react/prop-types": "warn",
+
+      // Warn when unescaped entities are used in JSX
+      "react/no-unescaped-entities": "warn",
 
       // These rules are turned off since React 17+ doesn't require importing React
       // when using JSX, as the new JSX transform handles this automatically
@@ -135,3 +159,5 @@ export default [
     },
   },
 ];
+
+export default eslintConfig;
