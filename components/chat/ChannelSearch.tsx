@@ -1,10 +1,23 @@
 "use client";
 
+// Helper function to safely get a string property from an object
+function getStringFromData(data: unknown, key: string, defaultValue: string | undefined = undefined): string | undefined {
+  if (data && typeof data === 'object' && data !== null) {
+    // We've confirmed data is an object. Now, treat it as a record for property access.
+    const record = data as Record<string, unknown>;
+    const value = record[key];
+    if (typeof value === 'string') {
+      return value;
+    }
+  }
+  return defaultValue;
+}
+
 import { useState, useEffect } from "react";
 import { useChatContext } from "stream-chat-react";
 import { SearchIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import type { Channel } from "stream-chat";
+import type { Channel, UserResponse } from "stream-chat";
 
 type SearchResult = {
   id: string;
@@ -12,7 +25,7 @@ type SearchResult = {
   name: string;
   image?: string;
   channel?: Channel;
-  user?: Record<string, unknown>;
+  user?: UserResponse;
 };
 
 export const ChannelSearch = () => {
@@ -46,7 +59,7 @@ export const ChannelSearch = () => {
 
       // Search for users
       const userResponse = await client.queryUsers({
-        id: { $ne: client.userID || "" },
+        // ID filter removed, will filter client-side
         $or: [
           { name: { $autocomplete: query } },
           { id: { $autocomplete: query } },
@@ -54,18 +67,19 @@ export const ChannelSearch = () => {
       });
 
       const channels = channelResponse.map((channel: Channel) => ({
-        id: channel.id || "",
+        id: channel.id ?? "",
         type: "channel" as const,
-        name: channel.data?.name || channel.id || "",
-        image: channel.data?.image as string | undefined,
+        name: getStringFromData(channel.data, 'name') ?? channel.id ?? "",
+        image: getStringFromData(channel.data, 'image'),
         channel,
       }));
 
-      const users = userResponse.users.map((user: Record<string, unknown>) => ({
-        id: user.id as string,
+      const filteredUsers = userResponse.users.filter(user => user.id !== (client.userID ?? ""));
+      const users = filteredUsers.map((user: UserResponse) => ({
+        id: user.id,
         type: "user" as const,
-        name: (user.name as string) || (user.id as string),
-        image: user.image as string,
+        name: user.name ?? user.id,
+        image: user.image,
         user,
       }));
 

@@ -10,7 +10,7 @@ import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons";
 // Define IconLeft component outside
 function IconLeft({
   className,
-  children,
+  children: _children, // explicitly destructure and ignore children
   ...props
 }: Readonly<React.SVGProps<SVGSVGElement>>) {
   // Destructure children but don't pass it down
@@ -20,7 +20,7 @@ function IconLeft({
 // Define IconRight component outside
 function IconRight({
   className,
-  children,
+  children: _children, // explicitly destructure and ignore children
   ...props
 }: Readonly<React.SVGProps<SVGSVGElement>>) {
   // Destructure children but don't pass it down
@@ -80,8 +80,15 @@ function Calendar({
         ...classNames,
       }}
       components={{
-        IconLeft,
-        IconRight,
+        Chevron: ({ orientation, className }: { orientation?: 'left' | 'right' | 'up' | 'down', className?: string }) => {
+          if (orientation === 'left') {
+            return <IconLeft className={className} />;
+          }
+          if (orientation === 'right') {
+            return <IconRight className={className} />;
+          }
+          return <></>; // Return an empty fragment if no icon matches
+        },
       }}
       {...props}
     />

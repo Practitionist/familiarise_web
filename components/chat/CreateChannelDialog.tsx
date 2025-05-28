@@ -131,17 +131,22 @@ export const CreateChannelDialog = ({
       );
 
       // Create a new team channel
-      const channel = client.channel("team", channelId, {
-        name: channelName,
+      const dataForChannelCreation: Record<string, any> = {
         members: [currentUserId], // Start with only the creator
         created_by_id: currentUserId,
-        // Add event type/id if linked to an event
-        ...(selectedEvent &&
-          selectedEvent !== "custom" && {
-            event_id: selectedEvent.split("-").pop(), // e.g., webinarId or classId
-            event_type: selectedEvent.split("-")[0], // e.g., 'webinar' or 'class'
-          }),
-      });
+      };
+
+      if (channelName) {
+        dataForChannelCreation.name = channelName;
+      }
+
+      if (selectedEvent && selectedEvent !== "custom") {
+        const eventParts = selectedEvent.split("-");
+        dataForChannelCreation.event_id = eventParts.pop(); // e.g., webinarId or classId
+        dataForChannelCreation.event_type = eventParts[0]; // e.g., 'webinar' or 'class'
+      }
+
+      const channel = client.channel("team", channelId, dataForChannelCreation);
 
       await channel.create();
       console.log(`Created channel ${channel.cid}`);

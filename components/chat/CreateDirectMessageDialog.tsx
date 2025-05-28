@@ -50,17 +50,13 @@ export const CreateDirectMessageDialog = ({
       // First try to search using Stream's built-in search
       const streamUserResponse = await client.queryUsers(
         {
-          $and: [
-            { id: { $ne: client.userID || "" } }, // Exclude current user
-            // Add role-based exclusion if you have specific roles for system/bot users
-            // For example: { role: { $ne: "bot" } },
-            // { role: { $ne: "system_agent" } },
-            {
-              $or: [
-                { name: { $autocomplete: searchTerm } },
-                { id: { $autocomplete: searchTerm } }, // Standard autocomplete for ID
-              ],
-            },
+          // The condition `{ id: { $ne: client.userID || "" } }` was removed as '$ne' is not supported for 'id' here.
+          // Current user exclusion should be handled by client-side filtering after fetching users.
+          // Role-based exclusions are currently commented out.
+          // The query is simplified to the $or condition for name and id autocomplete.
+          $or: [
+            { name: { $autocomplete: searchTerm } },
+            { id: { $autocomplete: searchTerm } }, // Standard autocomplete for ID
           ],
         },
         { last_active: -1, name: 1 }, // Sort by last active, then by name

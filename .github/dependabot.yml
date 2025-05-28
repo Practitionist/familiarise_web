@@ -1,24 +1,20 @@
 version: 2
 updates:
-  - package-ecosystem: "npm"
+  - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "Asia/Kolkata"
+    # Enable version updates for npm
+  - package-ecosystem: npm
+    # Look for `package.json` and `lock` files in the `root` directory
+    directory: "/"
+    # Check the npm registry for updates every week
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
     target-branch: "main"
+    # Increase the version requirements only when required
+    versioning-strategy: increase-if-necessary
     labels:
       - "dependencies"
       - "npm"
-    versioning-strategy: "auto"
-    allow:
-      - dependency-type: "direct"
-    ignore:
-      - dependency-name: "@types/*"
-        update-types: ["version-update:semver-patch"]
-    commit-message:
-      prefix: "chore"
-      include: "scope"
-    reviewers:
-      - "kaustavghosh"

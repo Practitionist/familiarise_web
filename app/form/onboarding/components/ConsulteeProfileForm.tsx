@@ -1,4 +1,5 @@
 import React from "react";
+import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -22,12 +23,15 @@ const ConsulteeProfileForm: React.FC<Props> = ({
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<ConsulteeProfile>({
+  } = useForm<z.input<typeof ConsulteeProfileSchema>>({
     resolver: zodResolver(ConsulteeProfileSchema),
-    defaultValues: initialData,
+    defaultValues: {
+      preferredCommunicationMethod: 'VIDEO', // Explicitly set schema default
+      ...initialData,
+    },
   });
 
-  const onSubmit = (data: ConsulteeProfile) => {
+  const onSubmit = (data: z.input<typeof ConsulteeProfileSchema>) => {
     onNext(data);
   };
 

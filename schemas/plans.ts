@@ -180,6 +180,7 @@ const BaseEventPlanSchema = z.object({
   topics: z
     .array(z.string().min(1, "Topic cannot be empty"))
     .min(1, "At least one topic is required")
+    .default([]) // Ensure topics is always an array
     .refine(noDuplicatesRefinement, "Duplicate topics are not allowed")
     .refine(
       meaningfulArrayContentRefinement,

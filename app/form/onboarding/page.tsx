@@ -7,11 +7,9 @@ import {
   ConsultantProfile,
   ConsulteeProfile,
   PersonalInfoAndRole,
-  PersonalInfoAndRoleSchema,
   PreferredSchedule,
   StaffProfile,
 } from "@/schemas/user";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
@@ -79,7 +77,7 @@ const MultiStepForm: React.FC = () => {
   const { toast } = useToast();
 
   const methods = useForm<OnboardingFormData>({
-    resolver: zodResolver(PersonalInfoAndRoleSchema),
+
     defaultValues: {
       preferredCommunicationMethod: "VIDEO",
     } as OnboardingFormData,

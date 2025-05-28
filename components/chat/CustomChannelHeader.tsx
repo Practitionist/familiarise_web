@@ -1,5 +1,18 @@
 "use client";
 
+// Helper function to safely get a string property from an object
+function getStringFromData(data: unknown, key: string, defaultValue: string | undefined = undefined): string | undefined {
+  if (data && typeof data === 'object' && data !== null) {
+    // We've confirmed data is an object. Now, treat it as a record for property access.
+    const record = data as Record<string, unknown>;
+    const value = record[key];
+    if (typeof value === 'string') {
+      return value;
+    }
+  }
+  return defaultValue;
+}
+
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useChatContext } from "stream-chat-react";
 import { ChannelInfoAndManageDialog } from "./ChannelInfoAndManageDialog";
@@ -41,7 +54,7 @@ export const CustomChannelHeader = () => {
   }
 
   // For team channels, use the default display
-  const displayName = channel.data?.name || channel.id || "";
+  const displayName = getStringFromData(channel.data, 'name') ?? channel.id ?? "";
   const memberCount = Object.keys(channel.state.members || {}).length;
 
   return (

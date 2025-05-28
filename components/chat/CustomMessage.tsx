@@ -1,5 +1,18 @@
 "use client";
 
+// Helper function to safely get a string property from an object
+function getStringFromData(data: unknown, key: string, defaultValue: string | undefined = undefined): string | undefined {
+  if (data && typeof data === 'object' && data !== null) {
+    // We've confirmed data is an object. Now, treat it as a record for property access.
+    const record = data as Record<string, unknown>;
+    const value = record[key];
+    if (typeof value === 'string') {
+      return value;
+    }
+  }
+  return defaultValue;
+}
+
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { format } from "date-fns";
 import {
@@ -20,7 +33,9 @@ export const CustomMessage = () => {
     !!message.attachments && message.attachments.length > 0;
 
   // Avoid rendering empty messages (e.g., deleted messages with no text/attachments)
-  if (!hasText && !hasAttachments && !message.customType) {
+  // Custom event types are typically direct properties on the message object or within a defined custom data structure.
+  // Accessing 'customType' safely from the message object itself.
+  if (!hasText && !hasAttachments && !getStringFromData(message, 'customType')) {
     // Allow rendering custom event messages even if they lack text/attachments
     return null;
   }

@@ -46,6 +46,7 @@ const levelOptions = ["Beginner", "Intermediate", "Advanced", "Expert"];
 // Define currency options
 const currencyOptions = ["INR", "USD", "EUR", "GBP"]; // Add more as needed
 
+
 export function EventPlannerForWebinar({
   isOpen,
   onClose,
@@ -139,37 +140,38 @@ export function EventPlannerForWebinar({
     return formatDateTimeForInput();
   };
 
-  const form = useForm<z.infer<typeof WebinarPlanSchema>>({
-    resolver: zodResolver(WebinarPlanSchema),
-    defaultValues: {
-      title: initialData?.webinarPlan?.title ?? "",
-      description: initialData?.webinarPlan?.description ?? "",
-      price: initialData?.webinarPlan?.price ?? 0,
-      priceCurrency: initialData?.webinarPlan?.priceCurrency ?? "INR",
-      durationInHours: initialData?.webinarPlan?.durationInHours ?? 1,
-      maxParticipants: initialData?.webinarPlan?.maxParticipants ?? 100,
-      language: initialData?.webinarPlan?.language ?? "English",
-      level: initialData?.webinarPlan?.level ?? "Beginner",
-      prerequisites: initialData?.webinarPlan?.prerequisites ?? "",
-      materialProvided: initialData?.webinarPlan?.materialProvided ?? "",
-      learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
-      certificateProvided:
-        initialData?.webinarPlan?.certificateProvided ?? false,
-      // Convert topics from objects to strings for the form
-      // Simplify mapping: Assume topics are always objects from Prisma include
-      topics:
-        initialData?.webinarPlan?.topics?.map((topic) => topic.name) ?? [],
-      scheduledAt: getInitialScheduledAt(),
-      consultantProfileId: consultantId,
-    },
-    mode: "onChange", // Validate on change for better UX
-  });
+  const defaultValuesObject: z.input<typeof WebinarPlanSchema> = {
+    title: initialData?.webinarPlan?.title ?? "",
+    description: initialData?.webinarPlan?.description ?? "",
+    price: initialData?.webinarPlan?.price ?? 0,
+    priceCurrency: initialData?.webinarPlan?.priceCurrency ?? "INR",
+    durationInHours: initialData?.webinarPlan?.durationInHours ?? 1,
+    maxParticipants: initialData?.webinarPlan?.maxParticipants ?? 100,
+    language: initialData?.webinarPlan?.language ?? "English",
+    level: initialData?.webinarPlan?.level ?? "Beginner",
+    prerequisites: initialData?.webinarPlan?.prerequisites ?? "",
+    materialProvided: initialData?.webinarPlan?.materialProvided ?? "",
+    learningOutcomes: initialData?.webinarPlan?.learningOutcomes ?? [],
+    certificateProvided:
+      initialData?.webinarPlan?.certificateProvided ?? false,
+    topics:
+      initialData?.webinarPlan?.topics?.map((topic) => topic.name) ?? [],
+    scheduledAt: getInitialScheduledAt(),
+    consultantProfileId: consultantId,
+    consultantProfile: null, // Ensure this is explicitly null or a valid object if needed by schema
+  };
+
+    const form = useForm<z.input<typeof WebinarPlanSchema>>({
+      resolver: zodResolver(WebinarPlanSchema),
+      defaultValues: defaultValuesObject,
+      mode: "onChange", // Validate on change for better UX
+    });
 
   // Reset form values when initialData changes
   useEffect(() => {
     if (initialData?.webinarPlan) {
       // Reset the form with values from initialData
-      form.reset({
+      const resetValues: z.input<typeof WebinarPlanSchema> = {
         title: initialData.webinarPlan.title,
         description: initialData.webinarPlan.description ?? "",
         price: initialData.webinarPlan.price,
@@ -181,13 +183,13 @@ export function EventPlannerForWebinar({
         prerequisites: initialData.webinarPlan.prerequisites ?? "",
         materialProvided: initialData.webinarPlan.materialProvided ?? "",
         learningOutcomes: initialData.webinarPlan.learningOutcomes ?? [],
-        certificateProvided:
-          initialData.webinarPlan.certificateProvided ?? false,
-        topics:
-          initialData.webinarPlan.topics?.map((topic) => topic.name) ?? [],
+        certificateProvided: initialData.webinarPlan.certificateProvided ?? false,
+        topics: initialData.webinarPlan.topics?.map((topic) => topic.name) ?? [],
         scheduledAt: getInitialScheduledAt(),
         consultantProfileId: consultantId,
-      });
+        consultantProfile: null,
+      };
+      form.reset(resetValues);
     }
   }, [initialData, form, consultantId]);
 
@@ -316,7 +318,9 @@ export function EventPlannerForWebinar({
             prerequisites: formData.prerequisites ?? null,
             materialProvided: formData.materialProvided ?? null,
             learningOutcomes: formData.learningOutcomes,
-            topics: formData.topics as any,
+            topics: (formData.topics ?? [])
+              .map(name => availableTopics.find(topic => topic.name === name))
+              .filter((topic): topic is { id: string; name: string; createdAt: Date; updatedAt: Date } => !!topic),
             consultantProfileId: consultantId,
             consultantProfile: null,
             createdAt: initialData?.webinarPlan?.createdAt ?? now,
@@ -421,7 +425,7 @@ export function EventPlannerForWebinar({
                         <FormLabel>Language</FormLabel>
                         <Select
                           onValueChange={field.onChange}
-                          defaultValue={field.value || "English"}
+                          defaultValue={field.value ?? "English"}
                         >
                           <FormControl>
                             <SelectTrigger>
@@ -710,9 +714,9 @@ export function EventPlannerForWebinar({
                     <FormItem>
                       <FormControl>
                         <TopicsMultiSelect
-                          initialTopics={field.value}
-                          onTopicsChange={(topics) => {
-                            field.onChange(topics);
+                          initialTopics={field.value ?? []}
+                          onTopicsChange={(selectedTopicNames: string[]) => {
+                            field.onChange(selectedTopicNames);
                           }}
                           availableTopics={availableTopics}
                           isLoading={isLoadingTopics}

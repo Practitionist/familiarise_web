@@ -128,11 +128,14 @@ export const addUserToEventChannel = async (
         }
       }
 
-      channel = client.channel("team", channelId, {
-        name: channelName,
+      const channelDataForCreation: Record<string, any> = {
         created_by_id: channelCreatorId,
         members: [userId], // Add the target user directly during creation
-      });
+      };
+      if (channelName) {
+        channelDataForCreation.name = channelName;
+      }
+      channel = client.channel("team", channelId, channelDataForCreation);
 
       await channel.create();
       systemCreatedChannel = true;
@@ -162,10 +165,10 @@ export const addUserToEventChannel = async (
       const existingChannelData = await channel.query();
       if (
         existingChannelData.channel &&
-        existingChannelData.channel.name !== expectedName
+        ((existingChannelData.channel as any)?.name as string) !== expectedName
       ) {
         console.log(`Updating channel ${channelId} name to "${expectedName}"`);
-        await channel.update({ name: expectedName });
+        await channel.update({ name: expectedName } as any); // Cast to any to allow setting custom fields
       }
 
       await upsertUserToStream(userId);

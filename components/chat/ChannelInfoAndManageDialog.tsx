@@ -1,5 +1,18 @@
 "use client";
 
+// Helper function to safely get a string property from an object
+function getStringFromData(data: unknown, key: string, defaultValue: string = ""): string {
+  if (data && typeof data === 'object' && data !== null) {
+    // We've confirmed data is an object. Now, treat it as a record for property access.
+    const record = data as Record<string, unknown>;
+    const value = record[key];
+    if (typeof value === 'string') {
+      return value;
+    }
+  }
+  return defaultValue;
+}
+
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -45,7 +58,7 @@ export const ChannelInfoAndManageDialog = ({
   const memberCount = Object.keys(channel.state.members || {}).length;
 
   // Get a user-friendly display name for the channel
-  let displayName = channel.data?.name || "";
+  let displayName = getStringFromData(channel.data, 'name', "");
 
   // For direct messages, use the other user's name
   if (isDirectMessage && client) {

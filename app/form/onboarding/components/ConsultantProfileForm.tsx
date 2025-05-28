@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { z } from "zod";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -14,24 +15,19 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  ConsultantProfile,
   ConsultantProfileSchema,
-  PersonalInfoAndRole,
 } from "@/schemas/user";
 import { Domain, SubDomain, Tag } from "@/schemas/plans";
 
+type FormDataType = z.input<typeof ConsultantProfileSchema>;
+
 interface Props {
-  onNext: (data: FormData) => void;
+  onNext: (data: FormDataType) => void;
   onBack: () => void;
-  initialData: FormData;
+  initialData: Partial<FormDataType>;
 }
 
-type FormData = PersonalInfoAndRole &
-  Partial<ConsultantProfile> & {
-    domain?: Domain;
-    subDomains?: SubDomain[];
-    tags?: Tag[];
-  };
+
 
 const ConsultantProfileForm: React.FC<Props> = ({
   onNext,
@@ -53,9 +49,21 @@ const ConsultantProfileForm: React.FC<Props> = ({
     watch,
     setValue,
     formState: { errors },
-  } = useForm<FormData>({
+  } = useForm<FormDataType>({
     resolver: zodResolver(ConsultantProfileSchema),
-    defaultValues: initialData,
+    defaultValues: {
+      description: initialData.description ?? undefined,
+      qualifications: initialData.qualifications ?? undefined,
+      specialization: initialData.specialization ?? undefined,
+      experience: initialData.experience ?? undefined,
+      rating: initialData.rating, // Zod default will apply if undefined
+      domain: initialData.domain || { id: "", name: "" }, // Ensure domain object exists
+      subDomains: initialData.subDomains || [],
+      tags: initialData.tags || [],
+      scheduleType: initialData.scheduleType || "WEEKLY",
+      weeklySlots: initialData.weeklySlots ?? undefined,
+      customSlots: initialData.customSlots ?? undefined,
+    },
   });
 
   const selectedDomain = watch("domain");
@@ -121,7 +129,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
     }
   }, [selectedDomain?.id]); // Only depend on the domain ID
 
-  const onSubmit = (data: FormData) => {
+  const onSubmit = (data: FormDataType) => {
     onNext(data);
   };
 

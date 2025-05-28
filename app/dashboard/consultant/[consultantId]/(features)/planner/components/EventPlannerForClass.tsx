@@ -1,4 +1,5 @@
 "use client";
+import { v4 as uuidv4 } from 'uuid';
 
 import { Button } from "@/components/ui/button";
 import {
@@ -243,13 +244,32 @@ export function EventPlannerForClass({
 
         const now = new Date();
 
+        const classPlanId = initialData?.classPlan?.id ?? uuidv4();
+
+        const processedClassContents = (formData.classContents ?? []).map(content => {
+          const existingContent = initialData?.classPlan?.classContents?.find(c => c.id === content.id);
+          const contentId = content.id ?? uuidv4();
+          return {
+            id: contentId,
+            title: content.title, // Already validated as string by Zod schema
+            order: content.order, // Already validated as number by Zod schema
+            description: content.description ?? "", // Already validated as string by Zod schema, but ?? for safety
+            contentType: content.contentType ?? null,
+            contentUrl: content.contentUrl ?? null,
+            hoursAllotted: content.hoursAllotted ?? 0, // Already validated as number by Zod schema
+            createdAt: existingContent?.createdAt ?? now,
+            updatedAt: now,
+            classPlanId: classPlanId,
+          };
+        });
+
         const classData: Partial<ClassEvent> = {
           type: "class" as const,
           id: initialData?.id,
           classPlan: {
-            id: initialData?.classPlan?.id ?? "",
+            id: classPlanId,
             title: formData.title,
-            description: formData.description || "",
+            description: formData.description ?? "",
             price: formData.price,
             priceCurrency: formData.priceCurrency,
             durationInMonths: formData.durationInMonths,
@@ -266,7 +286,7 @@ export function EventPlannerForClass({
             callsPerWeek: formData.callsPerWeek,
             videoMeetings: formData.videoMeetings,
             emailSupport: formData.emailSupport,
-            classContents: formData.classContents ?? [],
+            classContents: processedClassContents,
             createdAt: initialData?.classPlan?.createdAt ?? now,
             updatedAt: now,
           },

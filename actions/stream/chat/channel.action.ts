@@ -29,13 +29,24 @@ async function createChannel({
 
   const serverClient = StreamChat.getInstance(apiKey, apiSecret);
 
-  // Create the channel
-  const channel = serverClient.channel(channelType, channelId, {
-    name: channelName,
+  // Construct the data payload for channel creation
+  // Standard fields like members and created_by_id can be top-level in this payload.
+  // Custom fields (like channelName if used, and anything in additionalData) also go here.
+  const dataForChannelCreation: Record<string, any> = {
     members,
     created_by_id: createdById,
-    ...additionalData,
-  });
+    ...additionalData, // webinar_id, class_id etc.
+  };
+
+  if (channelName) {
+    dataForChannelCreation.name = channelName; // Add 'name' as a custom field
+  }
+
+  const channel = serverClient.channel(
+    channelType,
+    channelId,
+    dataForChannelCreation
+  );
 
   await channel.create();
 

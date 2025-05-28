@@ -1,5 +1,18 @@
 "use client";
 
+// Helper function to safely get a string property from an object
+function getStringFromData(data: unknown, key: string, defaultValue: string | undefined = undefined): string | undefined {
+  if (data && typeof data === 'object' && data !== null) {
+    // We've confirmed data is an object. Now, treat it as a record for property access.
+    const record = data as Record<string, unknown>;
+    const value = record[key];
+    if (typeof value === 'string') {
+      return value;
+    }
+  }
+  return defaultValue;
+}
+
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { MessageSquareIcon, RefreshCwIcon } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
@@ -34,7 +47,7 @@ const ChannelItem = ({
   const isTeamChannel = channel.type === "team";
 
   // For direct messages, get the other user's details
-  let displayName = channel.data?.name || channel.id || "";
+  let displayName = getStringFromData(channel.data, 'name') || channel.id || "";
   let displayImage: string | undefined = undefined;
 
   if (!isTeamChannel && client) {
@@ -136,7 +149,7 @@ export const ChatSidebar = () => {
       console.log(
         "Team channels found:",
         teamResponse.length,
-        teamResponse.map((c) => ({ id: c.cid, name: c.data?.name })),
+        teamResponse.map((c) => ({ id: c.cid, name: getStringFromData(c.data, 'name') })),
       );
       console.log(
         "DM channels found:",

@@ -220,16 +220,21 @@ export async function GET(req: NextRequest) {
         consultantProfileId: user.consultantProfileId,
         consulteeProfileId: user.consulteeProfileId,
       },
-      channels: channels.map((channel) => ({
-        id: channel.id,
-        type: channel.type,
-        name: channel.data?.name,
-        members: Object.keys(channel.state.members || {}),
-        memberCount: Object.keys(channel.state.members || {}).length,
-        messageCount: channel.state.messages.length,
-        lastMessage: channel.lastMessage,
-        data: channel.data,
-      })),
+      channels: channels.map((channel) => {
+        const cData = channel.data as Record<string, unknown> | undefined;
+        const name = (cData && typeof cData.name === 'string') ? cData.name : undefined;
+
+        return {
+          id: channel.id,
+          type: channel.type,
+          name: name,
+          members: Object.keys(channel.state.members || {}),
+          memberCount: Object.keys(channel.state.members || {}).length,
+          messageCount: channel.state.messages.length,
+          lastMessage: channel.lastMessage,
+          data: channel.data, // Keep original channel.data if needed elsewhere
+        };
+      }),
       consultations: consultations.map((consultation) => ({
         id: consultation.id,
         status: consultation.requestStatus,

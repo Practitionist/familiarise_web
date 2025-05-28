@@ -49,7 +49,7 @@ export const upsertUserToStream = async (userId: string) => {
       email: user.email,
       image: user.image ?? undefined,
       role: streamRole,
-    });
+    } as any); // Cast to any to allow custom fields like email
 
     return streamUser;
   } catch (error) {
