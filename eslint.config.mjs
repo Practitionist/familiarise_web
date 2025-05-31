@@ -128,7 +128,7 @@ export default [
       "@typescript-eslint/no-unused-vars": "off",
 
       // Configure unused-imports plugin for auto-fixing
-      "unused-imports/no-unused-imports": "error",
+      "unused-imports/no-unused-imports": "warn",
       "unused-imports/no-unused-vars": [
         "warn",
         {

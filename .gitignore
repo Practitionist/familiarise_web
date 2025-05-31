@@ -1,5 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# logs
+logs/
 
 # bot for postman collection
 update-postman-collection.js
