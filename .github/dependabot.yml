@@ -2,12 +2,12 @@ version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/"
+    open-pull-requests-limit: 30
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "daily"
       time: "09:00"
       timezone: "Asia/Kolkata"
-    target-branch: "main"
+    target-branch: "dev"
     labels:
       - "dependencies"
       - "npm"
@@ -22,3 +22,98 @@ updates:
       include: "scope"
     reviewers:
       - "kaustavghosh"
+    # Enable security updates for npm dependencies
+    security-updates-only: false
+    # Group dependencies to reduce PR noise
+    groups:
+      # Frontend framework dependencies
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
+      # Next.js related dependencies
+      next-js:
+        patterns:
+          - "next"
+          - "@next/*"
+          - "next-auth"
+        update-types:
+          - "minor"
+          - "patch"
+      # UI component libraries
+      radix-ui:
+        patterns:
+          - "@radix-ui/*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Database related dependencies
+      prisma:
+        patterns:
+          - "@prisma/*"
+          - "prisma"
+        update-types:
+          - "minor"
+          - "patch"
+      # Testing libraries
+      testing-libs:
+        patterns:
+          - "@testing-library/*"
+          - "jest*"
+          - "cypress"
+        update-types:
+          - "minor"
+          - "patch"
+      # Internationalization
+      next-intl:
+        patterns:
+          - "next-intl"
+          - "use-intl"
+        update-types:
+          - "minor"
+          - "patch"
+      # Stream related dependencies
+      stream-io:
+        patterns:
+          - "@stream-io/*"
+          - "stream-chat*"
+        update-types:
+          - "minor"
+          - "patch"
+      # ESLint and code quality tools
+      linting:
+        patterns:
+          - "eslint*"
+          - "prettier"
+          - "typescript-eslint"
+        update-types:
+          - "minor"
+          - "patch"
+      # Tailwind and styling
+      styling:
+        patterns:
+          - "tailwind*"
+          - "postcss*"
+          - "autoprefixer"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Add GitHub Actions updates
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    target-branch: "dev"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
