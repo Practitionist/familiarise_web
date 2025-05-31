@@ -22,8 +22,6 @@ updates:
       include: "scope"
     reviewers:
       - "kaustavghosh"
-    # Enable security updates for npm dependencies
-    security-updates-only: false
     # Group dependencies to reduce PR noise
     groups:
       # Frontend framework dependencies
