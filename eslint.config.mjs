@@ -4,6 +4,7 @@ import tseslint from "typescript-eslint";
 import pluginReact from "eslint-plugin-react";
 import pluginCypress from "eslint-plugin-cypress";
 import pluginJest from "eslint-plugin-jest";
+import pluginUnusedImports from "eslint-plugin-unused-imports";
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
@@ -77,6 +78,9 @@ export default [
         JSX: true,
       },
     },
+    plugins: {
+      "unused-imports": pluginUnusedImports,
+    },
   },
 
   // Core JavaScript rules
@@ -120,12 +124,17 @@ export default [
       // Warn when using require() instead of ES6 imports
       "@typescript-eslint/no-require-imports": "warn",
 
-      // Warn on unused variables, but allow ones starting with underscore
-      "@typescript-eslint/no-unused-vars": [
+      // Disable the built-in no-unused-vars rule as unused-imports will handle it
+      "@typescript-eslint/no-unused-vars": "off",
+      
+      // Configure unused-imports plugin for auto-fixing
+      "unused-imports/no-unused-imports": "error",
+      "unused-imports/no-unused-vars": [
         "warn",
         {
           varsIgnorePattern: "^_", // Ignore variables starting with _
           argsIgnorePattern: "^_", // Ignore parameters starting with _
+          ignoreRestSiblings: true,
         },
       ],
 

@@ -8,7 +8,7 @@ import {
   FaLinkedin,
   FaTwitter,
 } from "react-icons/fa";
-import familiariselogo from "../public/static/assets/logos/images/logos/Familiarise-logos_white.png";
+import familiariselogo from "../public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import micromatch from "micromatch";

@@ -26,7 +26,7 @@ export const WelcomeEmail = ({
         <Container style={container}>
           <Section>
             <Img
-              src={`../public/static/assets/logos/images/logos/Familiarise-logos_transparent.png`}
+              src={`../public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif`}
               width="130"
               height="50"
               alt="Familiarise"
