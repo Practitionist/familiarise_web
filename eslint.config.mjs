@@ -126,7 +126,7 @@ export default [
 
       // Disable the built-in no-unused-vars rule as unused-imports will handle it
       "@typescript-eslint/no-unused-vars": "off",
-      
+
       // Configure unused-imports plugin for auto-fixing
       "unused-imports/no-unused-imports": "error",
       "unused-imports/no-unused-vars": [

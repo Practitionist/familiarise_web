@@ -1,7 +1,7 @@
 "use client";
 
 import React, { Suspense } from "react";
-import dynamic from 'next/dynamic';
+import dynamic from "next/dynamic";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
@@ -30,37 +30,49 @@ type FlowComponentProps = object;
 type FlowComponent = React.ComponentType<FlowComponentProps>;
 
 // Dynamically import flow components to reduce initial bundle size
-const ConsultationFlow = dynamic<FlowComponentProps>(async () => {
-  const module = await import('./flows/ConsultationFlow');
-  return module.default as FlowComponent;
-}, {
-  loading: () => <LoadingFallback />,
-  ssr: true,
-});
+const ConsultationFlow = dynamic<FlowComponentProps>(
+  async () => {
+    const module = await import("./flows/ConsultationFlow");
+    return module.default as FlowComponent;
+  },
+  {
+    loading: () => <LoadingFallback />,
+    ssr: true,
+  },
+);
 
-const SubscriptionFlow = dynamic<FlowComponentProps>(async () => {
-  const module = await import('./flows/SubscriptionFlow');
-  return module.default as FlowComponent;
-}, {
-  loading: () => <LoadingFallback />,
-  ssr: true,
-});
+const SubscriptionFlow = dynamic<FlowComponentProps>(
+  async () => {
+    const module = await import("./flows/SubscriptionFlow");
+    return module.default as FlowComponent;
+  },
+  {
+    loading: () => <LoadingFallback />,
+    ssr: true,
+  },
+);
 
-const WebinarFlow = dynamic<FlowComponentProps>(async () => {
-  const module = await import('./flows/WebinarFlow');
-  return module.default as FlowComponent;
-}, {
-  loading: () => <LoadingFallback />,
-  ssr: true,
-});
+const WebinarFlow = dynamic<FlowComponentProps>(
+  async () => {
+    const module = await import("./flows/WebinarFlow");
+    return module.default as FlowComponent;
+  },
+  {
+    loading: () => <LoadingFallback />,
+    ssr: true,
+  },
+);
 
-const ClassFlow = dynamic<FlowComponentProps>(async () => {
-  const module = await import('./flows/ClassFlow');
-  return module.default as FlowComponent;
-}, {
-  loading: () => <LoadingFallback />,
-  ssr: true,
-});
+const ClassFlow = dynamic<FlowComponentProps>(
+  async () => {
+    const module = await import("./flows/ClassFlow");
+    return module.default as FlowComponent;
+  },
+  {
+    loading: () => <LoadingFallback />,
+    ssr: true,
+  },
+);
 
 export default function HowProcessWorksSection() {
   return (

@@ -72,12 +72,12 @@ export default function HeroSection({ images }: { images: ImageType[] }) {
           </div>
         </div>
 
-          {/* Dashboard image in a container */}
-          <div className="relative max-w-5xl mx-auto rounded-xl overflow-hidden shadow-2xl border border-gray-200 bg-white">
-            <div className="relative w-full aspect-[16/9]">
-              {renderLCPImage(images, 0, "/placeholder.svg", 1920, 1080)}
-            </div>
+        {/* Dashboard image in a container */}
+        <div className="relative max-w-5xl mx-auto rounded-xl overflow-hidden shadow-2xl border border-gray-200 bg-white">
+          <div className="relative w-full aspect-[16/9]">
+            {renderLCPImage(images, 0, "/placeholder.svg", 1920, 1080)}
           </div>
+        </div>
       </div>
     </section>
   );

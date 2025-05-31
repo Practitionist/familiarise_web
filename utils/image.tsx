@@ -1,7 +1,7 @@
 import Image from "next/image";
 import { ImageType } from "@/hooks/useImages";
 
-type ImagePriority = 'high' | 'low' | 'auto';
+type ImagePriority = "high" | "low" | "auto";
 
 export function renderImage(
   images: ImageType[],
@@ -9,25 +9,25 @@ export function renderImage(
   fallback: string,
   width: number,
   height: number,
-  priority: ImagePriority = 'auto',
-  sizes?: string
+  priority: ImagePriority = "auto",
+  sizes?: string,
 ) {
   const image = images[index];
   const src = image ? image.url : fallback;
   const alt = image ? image.name : "Placeholder image";
-  
+
   return (
     <Image
       src={src}
       alt={alt}
       width={width}
       height={height}
-      priority={priority === 'high'}
-      loading={priority === 'low' ? 'lazy' : undefined}
+      priority={priority === "high"}
+      loading={priority === "low" ? "lazy" : undefined}
       sizes={sizes || `(max-width: 768px) 100vw, ${width}px`}
       style={{
-        width: '100%',
-        height: 'auto',
+        width: "100%",
+        height: "auto",
         aspectRatio: `${width} / ${height}`,
       }}
       placeholder="blur"
@@ -44,7 +44,7 @@ export function renderLCPImage(
   width: number,
   height: number,
 ) {
-  return renderImage(images, index, fallback, width, height, 'high');
+  return renderImage(images, index, fallback, width, height, "high");
 }
 
 // Helper function for optimizing below-the-fold images
@@ -55,5 +55,5 @@ export function renderLazyImage(
   width: number,
   height: number,
 ) {
-  return renderImage(images, index, fallback, width, height, 'low');
+  return renderImage(images, index, fallback, width, height, "low");
 }

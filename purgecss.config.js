@@ -6,23 +6,23 @@
 // Use CommonJS format since PurgeCSS expects this
 module.exports = {
   content: [
-    './pages/**/*.{js,ts,jsx,tsx}',
-    './components/**/*.{js,ts,jsx,tsx}',
-    './app/**/*.{js,ts,jsx,tsx}',
+    "./pages/**/*.{js,ts,jsx,tsx}",
+    "./components/**/*.{js,ts,jsx,tsx}",
+    "./app/**/*.{js,ts,jsx,tsx}",
   ],
-  css: ['./.next/static/css/**/*.css'],
-  defaultExtractor: content => content.match(/[\w-/:]+(?<!:)/g) || [],
+  css: ["./.next/static/css/**/*.css"],
+  defaultExtractor: (content) => content.match(/[\w-/:]+(?<!:)/g) || [],
   safelist: {
     standard: [
       // Add classes that should never be purged
       /^bg-/,
       /^text-/,
-      'html',
-      'body',
-      'fade-in',
-      'fade-out',
-      'slide-in',
-      'slide-out',
+      "html",
+      "body",
+      "fade-in",
+      "fade-out",
+      "slide-in",
+      "slide-out",
       /^data-/,
       /^aria-/,
       /^swiper-/,
@@ -45,6 +45,6 @@ module.exports = {
       /^group$/,
       /^group-/,
       /^hover:/,
-    ]
-  }
+    ],
+  },
 };

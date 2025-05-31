@@ -24,16 +24,21 @@ export default function OptimizedImage({
   // Extract the path and filename without extension
   const getOptimizedSrc = (format: string): string => {
     if (!src || typeof src !== "string") return "";
-    
+
     const srcPath = src.startsWith("/") ? src : `/${src}`;
     const lastDotIndex = srcPath.lastIndexOf(".");
-    
+
     if (lastDotIndex === -1) return srcPath;
-    
+
     const pathWithoutExt = srcPath.substring(0, lastDotIndex);
-    const directory = pathWithoutExt.substring(0, pathWithoutExt.lastIndexOf("/"));
-    const filename = pathWithoutExt.substring(pathWithoutExt.lastIndexOf("/") + 1);
-    
+    const directory = pathWithoutExt.substring(
+      0,
+      pathWithoutExt.lastIndexOf("/"),
+    );
+    const filename = pathWithoutExt.substring(
+      pathWithoutExt.lastIndexOf("/") + 1,
+    );
+
     return `/${format}${directory}/${filename}.${format}`;
   };
 
@@ -43,24 +48,9 @@ export default function OptimizedImage({
 
   return (
     <picture>
-      {avifSrc && (
-        <source
-          srcSet={avifSrc}
-          type="image/avif"
-        />
-      )}
-      {webpSrc && (
-        <source
-          srcSet={webpSrc}
-          type="image/webp"
-        />
-      )}
-      <Image
-        src={originalSrc}
-        alt={alt}
-        className={className}
-        {...props}
-      />
+      {avifSrc && <source srcSet={avifSrc} type="image/avif" />}
+      {webpSrc && <source srcSet={webpSrc} type="image/webp" />}
+      <Image src={originalSrc} alt={alt} className={className} {...props} />
     </picture>
   );
 }
