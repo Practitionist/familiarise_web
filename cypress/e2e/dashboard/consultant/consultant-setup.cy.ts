@@ -1,30 +1,30 @@
 /// <reference types="cypress" />
 
 export function setupConsultantAppointments(consultantId: string) {
-  // Set up intercepts before visiting page
+  // Set up intercept for the consolidated appointments endpoint
   cy.intercept(
     "GET",
-    `/api/events/consultations?consultantProfileId=${consultantId}`,
+    `/api/events/consultations?consultantProfileId=${consultantId}&status=APPROVED`,
   ).as("getConsultations");
   cy.intercept(
     "GET",
-    `/api/events/subscriptions?consultantProfileId=${consultantId}`,
+    `/api/events/subscriptions?consultantProfileId=${consultantId}&status=APPROVED`,
   ).as("getSubscriptions");
   cy.intercept(
     "GET",
-    `/api/events/classes?consultantProfileId=${consultantId}`,
-  ).as("getClasses");
+    `/api/events/webinars?consultantProfileId=${consultantId}&status=APPROVED`,
+  ).as("getWebinars");
   cy.intercept(
     "GET",
-    `/api/events/webinars?consultantProfileId=${consultantId}`,
-  ).as("getWebinars");
+    `/api/events/classes?consultantProfileId=${consultantId}&status=APPROVED`,
+  ).as("getClasses");
 
   // Visit page and wait for it to be ready
   cy.visit(`/dashboard/consultant/${consultantId}/appointments`);
 
-  // Wait for API responses first
+  // Wait for the appointments API response
   cy.wait(
-    ["@getConsultations", "@getSubscriptions", "@getClasses", "@getWebinars"],
+    ["@getConsultations", "@getSubscriptions", "@getWebinars", "@getClasses"],
     { timeout: 30000 },
   );
 

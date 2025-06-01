@@ -1,10 +1,5 @@
 /// <reference types="cypress" />
 
-export const legacyConsulteeIds = [
-  "73318747-3425-4bb6-bba7-c3d6a6798441",
-  "15328195-84ef-47a2-b142-3ea4749c52f6",
-  "1ab7e4e2-fe2a-4c71-904d-d39e63e38278",
-];
 
 // Shared setup function
 export function setupConsulteeDashboard(consulteeId: string, route?: string) {

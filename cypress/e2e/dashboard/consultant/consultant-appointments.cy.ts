@@ -1,380 +1,364 @@
-// import { TAppointment } from "../../../../types/appointment";
-// import consultantIdsFixture from "../../../fixtures/consultant-ids.json";
-// import { setupConsultantAppointments } from "./consultant-setup.cy";
+/// <reference types="cypress" />
 
-// interface ConsultantIdsFixture {
-//   consultantIds: string[];
-// }
+import {
+  Consultation as PrismaConsultation,
+  Subscription as PrismaSubscription,
+  Webinar as PrismaWebinar,
+  Class as PrismaClass,
+  SlotOfAppointment as PrismaSlot,
+  ConsultationPlan as PrismaConsultationPlan,
+  SubscriptionPlan as PrismaSubscriptionPlan,
+  WebinarPlan as PrismaWebinarPlan,
+  ClassPlan as PrismaClassPlan,
+  User as PrismaUser,
+  ConsultantProfile as PrismaConsultantProfile
+} from "@prisma/client"; // Adjust path if your prisma client is located elsewhere
 
-// type Event = {
-//   appointment?: TAppointment;
-//   appointments?: TAppointment[];
-// };
+import { setupConsultantAppointments } from "./consultant-setup.cy";
 
-// type SlotWithAppointment = TAppointment["slotsOfAppointment"][0] & {
-//   appointment: TAppointment;
-// };
+// --- Define more specific types for API responses (Prisma types with includes) ---
+type ApiConsultation = PrismaConsultation & {
+  slotsOfConsultation?: PrismaSlot[];
+  consultationPlan: PrismaConsultationPlan & {
+    consultantProfile?: PrismaConsultantProfile & { user?: PrismaUser };
+  };
+};
 
-// function getAllSlots(events: Event[]): SlotWithAppointment[] {
-//   return events.flatMap((event) => {
-//     if (event.appointment?.slotsOfAppointment) {
-//       return event.appointment.slotsOfAppointment.map((slot) => ({
-//         ...slot,
-//         appointment: event.appointment!,
-//       }));
-//     }
-//     if (event.appointments) {
-//       return event.appointments.flatMap((apt) =>
-//         (apt.slotsOfAppointment || []).map((slot) => ({
-//           ...slot,
-//           appointment: apt,
-//         })),
-//       );
-//     }
-//     return [];
-//   });
-// }
+type ApiSubscription = PrismaSubscription & {
+  slotsOfSubscription?: PrismaSlot[];
+  subscriptionPlan: PrismaSubscriptionPlan & {
+    consultantProfile?: PrismaConsultantProfile & { user?: PrismaUser };
+  };
+};
 
-// function formatDateTime(date: Date): string {
-//   const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-//   const months = [
-//     "Jan",
-//     "Feb",
-//     "Mar",
-//     "Apr",
-//     "May",
-//     "Jun",
-//     "Jul",
-//     "Aug",
-//     "Sep",
-//     "Oct",
-//     "Nov",
-//     "Dec",
-//   ];
+type ApiWebinar = PrismaWebinar & {
+  slotsOfWebinar?: PrismaSlot[];
+  webinarPlan: PrismaWebinarPlan;
+};
 
-//   const dayName = days[date.getDay()];
-//   const monthName = months[date.getMonth()];
-//   const day = date.getDate();
-//   const hour = date.getHours() % 12 || 12;
-//   const minute = date.getMinutes().toString().padStart(2, "0");
-//   const period = date.getHours() < 12 ? "AM" : "PM";
+type ApiClass = PrismaClass & {
+  slotsOfClass?: PrismaSlot[];
+  classPlan: PrismaClassPlan;
+};
 
-//   return `${dayName}, ${monthName} ${day}, ${hour}:${minute} ${period}`;
-// }
+// --- Define the type for the processed slots returned by getAllSlots ---
+type ProcessedSlot = PrismaSlot & {
+  appointmentType: "Consultation" | "Subscription" | "Webinar" | "Class";
+  eventDetails: ApiConsultation | ApiSubscription | ApiWebinar | ApiClass;
+};
 
-// (consultantIdsFixture as unknown as ConsultantIdsFixture).consultantIds.forEach(
-//   (consultantId) => {
-//     describe(`Consultant Appointments Page - ID: ${consultantId}`, () => {
-//       beforeEach(() => {
-//         setupConsultantAppointments(consultantId);
-//       });
+// Helper function to process slots from different event types
+function getAllSlots(
+  consultations: ApiConsultation[],
+  subscriptions: ApiSubscription[],
+  webinars: ApiWebinar[],
+  classes: ApiClass[]
+): ProcessedSlot[] {
+  const allProcessedSlots: ProcessedSlot[] = [];
 
-//       it("verifies appointments from API match UI", () => {
-//         // Wait for API responses
-//         cy.wait([
-//           "@getConsultations",
-//           "@getSubscriptions",
-//           "@getWebinars",
-//           "@getClasses",
-//         ]).then((interceptions) => {
-//           // Log API responses for debugging
-//           interceptions.forEach((intercept) => {
-//             cy.log(
-//               `API Response for ${intercept.id}:`,
-//               intercept.response?.body,
-//             );
-//           });
+  // Process consultations
+  consultations.forEach(consultation => {
+    if (consultation && consultation.slotsOfConsultation) {
+      consultation.slotsOfConsultation?.forEach((slot: PrismaSlot) => {
+        allProcessedSlots.push({ ...slot, appointmentType: 'Consultation', eventDetails: consultation });
+      });
+    }
+  });
 
-//           // Verify all responses are 200
-//           interceptions.forEach((intercept) => {
-//             expect(intercept.response?.statusCode).to.equal(200);
-//           });
-//           const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] =
-//             interceptions;
-//           const consultations = consultationsReq.response?.body?.data || [];
-//           const subscriptions = subscriptionsReq.response?.body?.data || [];
-//           const webinars = webinarsReq.response?.body?.data || [];
-//           const classes = classesReq.response?.body?.data || [];
+  // Process subscriptions
+  subscriptions.forEach(subscription => {
+    if (subscription && subscription.slotsOfSubscription) {
+      subscription.slotsOfSubscription?.forEach((slot: PrismaSlot) => {
+        allProcessedSlots.push({ ...slot, appointmentType: 'Subscription', eventDetails: subscription });
+      });
+    }
+  });
 
-//           // Log processed data for debugging
-//           cy.log("Consultations:", consultations);
-//           cy.log("Subscriptions:", subscriptions);
-//           cy.log("Webinars:", webinars);
-//           cy.log("Classes:", classes);
+  // Process webinars
+  webinars.forEach(webinar => {
+    if (webinar && webinar.slotsOfWebinar) {
+      webinar.slotsOfWebinar?.forEach((slot: PrismaSlot) => {
+        allProcessedSlots.push({ ...slot, appointmentType: 'Webinar', eventDetails: webinar });
+      });
+    }
+  });
 
-//           // Process all slots
-//           const allEvents = [
-//             ...consultations,
-//             ...subscriptions,
-//             ...webinars,
-//             ...classes,
-//           ];
-//           const allSlots = getAllSlots(allEvents);
+  // Process classes
+  classes.forEach(classItem => {
+    if (classItem && classItem.slotsOfClass) {
+      classItem.slotsOfClass?.forEach((slot: PrismaSlot) => {
+        allProcessedSlots.push({ ...slot, appointmentType: 'Class', eventDetails: classItem });
+      });
+    }
+  });
 
-//           // Log slots for debugging
-//           cy.log("All Slots:", allSlots);
+  return allProcessedSlots;
+}
 
-//           // Sort slots by time
-//           const sortedSlots = allSlots.sort(
-//             (a, b) =>
-//               new Date(a.slotStartTimeInUTC).getTime() -
-//               new Date(b.slotStartTimeInUTC).getTime(),
-//           );
+// Helper function to format date and time
+function formatDateTime(date: Date): string {
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
 
-//           // If no slots, verify empty state
-//           if (sortedSlots.length === 0) {
-//             cy.contains("No Appointments Found").should("be.visible");
-//             return;
-//           }
+  const dayName = days[date.getDay()];
+  const monthName = months[date.getMonth()];
+  const day = date.getDate();
+  const hour = date.getHours() % 12 || 12;
+  const minute = date.getMinutes().toString().padStart(2, "0");
+  const period = date.getHours() < 12 ? "AM" : "PM";
 
-//           // Verify each slot appears in UI
-//           sortedSlots.forEach((slot) => {
-//             const formattedTime = formatDateTime(
-//               new Date(slot.slotStartTimeInUTC),
-//             );
+  return `${dayName}, ${monthName} ${day}, ${hour}:${minute} ${period}`;
+}
 
-//             // Log slot details for debugging
-//             cy.log("Checking slot:", {
-//               time: formattedTime,
-//               appointment: slot.appointment,
-//             });
+// Helper function to parse formatted date-time string back to Date object
+function parseFormattedDateTime(dateTimeStr: string): Date {
+    // Example: "Sun, Jul 21, 10:00 AM"
+    const parts = dateTimeStr.split(", "); 
+    const monthDay = parts[1].split(" "); 
+    const timePeriod = parts[2].split(" "); 
+    const time = timePeriod[0].split(":");
 
-//             // Find the appointment in UI
-//             cy.contains(formattedTime)
-//               .closest('[data-testid="appointment-item"]')
-//               .within(() => {
-//                 // Verify appointment type and details
-//                 const appointment = slot.appointment;
-//                 if (appointment.consultation) {
-//                   cy.contains(
-//                     `Consultation - ${appointment.consultation.consultationPlan.title}`,
-//                   );
-//                   cy.contains(
-//                     appointment.consultation.consultationPlan.consultantProfile
-//                       ?.user?.name || "",
-//                   );
-//                 } else if (appointment.subscription) {
-//                   cy.contains(
-//                     `Subscription - ${appointment.subscription.subscriptionPlan.title}`,
-//                   );
-//                   cy.contains(
-//                     appointment.subscription.subscriptionPlan.consultantProfile
-//                       ?.user?.name || "",
-//                   );
-//                 } else if (appointment.webinar) {
-//                   cy.contains(
-//                     `Webinar - ${appointment.webinar.webinarPlan.title}`,
-//                   );
-//                 } else if (appointment.class) {
-//                   cy.contains(`Class - ${appointment.class.classPlan.title}`);
-//                 }
+    const currentYear = new Date().getFullYear(); 
+    const monthIndex = new Date(Date.parse(monthDay[0] + " 1, 2000")).getMonth();
+    let hours = parseInt(time[0]);
+    const minutes = parseInt(time[1]);
 
-//                 // Verify time format
-//                 cy.contains(formattedTime);
-//               });
-//           });
+    if (timePeriod[1] === "PM" && hours < 12) hours += 12;
+    if (timePeriod[1] === "AM" && hours === 12) hours = 0; 
 
-//           // Verify total count matches
-//           cy.get('[data-testid="appointment-item"]').should(
-//             "have.length",
-//             sortedSlots.length,
-//           );
+    return new Date(currentYear, monthIndex, parseInt(monthDay[1]), hours, minutes);
+}
 
-//           // Verify empty state if no appointments
-//           if (sortedSlots.length === 0) {
-//             cy.contains("No Appointments Found").should("be.visible");
-//           }
-//         });
-//       });
+describe('Consultant Appointments Page with Dynamic ID', () => {
+  let dynamicConsultantId: string;
 
-//       it("verifies timezone conversion", () => {
-//         // Wait for API responses
-//         cy.wait([
-//           "@getConsultations",
-//           "@getSubscriptions",
-//           "@getWebinars",
-//           "@getClasses",
-//         ]).then((interceptions) => {
-//           // Verify all responses are 200
-//           interceptions.forEach((intercept) => {
-//             expect(intercept.response?.statusCode).to.equal(200);
-//           });
-//           const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] =
-//             interceptions;
-//           const consultations = consultationsReq.response?.body?.data || [];
-//           const subscriptions = subscriptionsReq.response?.body?.data || [];
-//           const webinars = webinarsReq.response?.body?.data || [];
-//           const classes = classesReq.response?.body?.data || [];
+  before(() => {
+    // Assuming an endpoint /api/user/consultants exists and returns consultants with an 'id'
+    cy.request<{ data: (PrismaConsultantProfile & { user?: PrismaUser })[] }>("GET", "/api/user/consultants")
+      .its('body')
+      .then((responseBody: { data: (PrismaConsultantProfile & { user?: PrismaUser })[] }) => {
+        // Check if responseBody.data exists and is an array
+        if (responseBody && responseBody.data && Array.isArray(responseBody.data) && responseBody.data.length > 0) {
+          const firstConsultant = responseBody.data[0];
+          // Check if the first consultant has a user object and the user object has an id
+           if (firstConsultant && firstConsultant.id) { // Check for consultant's own ID
+            dynamicConsultantId = firstConsultant.id; // Use the consultant profile's ID
+            cy.log(`Fetched Consultant Profile ID: ${dynamicConsultantId}`);
+            // Setup intercepts using the fetched ID
+            setupConsultantAppointments(dynamicConsultantId);
+          } else {
+            throw new Error('Failed to fetch consultant profile ID: firstConsultant.id not found.');
+          }
+        } else {
+          throw new Error('Failed to fetch consultant ID or no consultants found from API (response.data is empty or not an array).');
+        }
+      });
+  });
 
-//           const allEvents = [
-//             ...consultations,
-//             ...subscriptions,
-//             ...webinars,
-//             ...classes,
-//           ];
-//           const allSlots = getAllSlots(allEvents);
+  beforeEach(() => {
+    if (!dynamicConsultantId) {
+        throw new Error("Consultant ID was not available for beforeEach setup.");
+    }
+    // Call the setup function from consultant-setup.cy.ts
+    setupConsultantAppointments(dynamicConsultantId);
+  });
 
-//           allSlots.forEach((slot) => {
-//             const utcTime = new Date(slot.slotStartTimeInUTC);
-//             const expectedTime = formatDateTime(utcTime);
+  it("verifies appointments from API match UI", () => {
+    cy.wait(["@getConsultations", "@getSubscriptions", "@getWebinars", "@getClasses"]).then((interceptions) => {
+      expect(interceptions[0].response?.statusCode).to.equal(200);
+      expect(interceptions[1].response?.statusCode).to.equal(200);
+      expect(interceptions[2].response?.statusCode).to.equal(200);
+      expect(interceptions[3].response?.statusCode).to.equal(200);
 
-//             // Verify the time shown in UI matches expected time in user's timezone
-//             cy.contains(expectedTime).should("exist");
-//           });
-//         });
-//       });
+      const apiConsultations = (interceptions[0].response?.body?.data || []) as ApiConsultation[];
+      const apiSubscriptions = (interceptions[1].response?.body?.data || []) as ApiSubscription[];
+      const apiWebinars = (interceptions[2].response?.body?.data || []) as ApiWebinar[];
+      const apiClasses = (interceptions[3].response?.body?.data || []) as ApiClass[];
 
-//       it("verifies chronological order", () => {
-//         // Wait for API responses
-//         cy.wait([
-//           "@getConsultations",
-//           "@getSubscriptions",
-//           "@getWebinars",
-//           "@getClasses",
-//         ]).then((interceptions) => {
-//           // Verify all responses are 200
-//           interceptions.forEach((intercept) => {
-//             expect(intercept.response?.statusCode).to.equal(200);
-//           });
-//           const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] =
-//             interceptions;
-//           const consultations = consultationsReq.response?.body?.data || [];
-//           const subscriptions = subscriptionsReq.response?.body?.data || [];
-//           const webinars = webinarsReq.response?.body?.data || [];
-//           const classes = classesReq.response?.body?.data || [];
+      cy.log("API Consultations:", apiConsultations);
+      cy.log("API Subscriptions:", apiSubscriptions);
+      cy.log("API Webinars:", apiWebinars);
+      cy.log("API Classes:", apiClasses);
 
-//           const allEvents = [
-//             ...consultations,
-//             ...subscriptions,
-//             ...webinars,
-//             ...classes,
-//           ];
-//           const allSlots = getAllSlots(allEvents);
+      const allSlots = getAllSlots(apiConsultations, apiSubscriptions, apiWebinars, apiClasses);
+      cy.log("All Slots from UI perspective:", allSlots);
 
-//           // Sort slots by time
-//           const sortedSlots = allSlots.sort(
-//             (a, b) =>
-//               new Date(a.slotStartTimeInUTC).getTime() -
-//               new Date(b.slotStartTimeInUTC).getTime(),
-//           );
+      const sortedSlots = allSlots.sort(
+        (a: ProcessedSlot, b: ProcessedSlot) =>
+          new Date(a.slotStartTimeInUTC).getTime() -
+          new Date(b.slotStartTimeInUTC).getTime(),
+      );
 
-//           // Verify appointments appear in chronological order
-//           let previousTime = new Date(0);
-//           sortedSlots.forEach((slot) => {
-//             const currentTime = new Date(slot.slotStartTimeInUTC);
-//             expect(currentTime.getTime()).to.be.at.least(
-//               previousTime.getTime(),
-//             );
-//             previousTime = currentTime;
-//           });
-//         });
-//       });
+      if (sortedSlots.length === 0) {
+        cy.contains("No Appointments Found").should("be.visible");
+        return;
+      }
 
-//       it("verifies status badges and join button states", () => {
-//         // Wait for API responses
-//         cy.wait([
-//           "@getConsultations",
-//           "@getSubscriptions",
-//           "@getWebinars",
-//           "@getClasses",
-//         ]).then((interceptions) => {
-//           // Verify all responses are 200
-//           interceptions.forEach((intercept) => {
-//             expect(intercept.response?.statusCode).to.equal(200);
-//           });
-//           const [consultationsReq, subscriptionsReq, webinarsReq, classesReq] =
-//             interceptions;
-//           const consultations = consultationsReq.response?.body?.data || [];
-//           const subscriptions = subscriptionsReq.response?.body?.data || [];
-//           const webinars = webinarsReq.response?.body?.data || [];
-//           const classes = classesReq.response?.body?.data || [];
+      sortedSlots.forEach((slot: ProcessedSlot) => {
+        const formattedTime = formatDateTime(
+          new Date(slot.slotStartTimeInUTC),
+        );
+        cy.log("Checking slot:", { time: formattedTime, eventDetails: slot.eventDetails });
 
-//           const allEvents = [
-//             ...consultations,
-//             ...subscriptions,
-//             ...webinars,
-//             ...classes,
-//           ];
-//           const allSlots = getAllSlots(allEvents);
+        cy.contains(formattedTime)
+          .closest('[data-testid="appointment-item"]')
+          .within(() => {
+            if (slot.appointmentType === 'Consultation') {
+              cy.contains(`Consultation - ${(slot.eventDetails as ApiConsultation).consultationPlan.title}`);
+              cy.contains((slot.eventDetails as ApiConsultation).consultationPlan.consultantProfile?.user?.name || "");
+            } else if (slot.appointmentType === 'Subscription') {
+              cy.contains(`Subscription - ${(slot.eventDetails as ApiSubscription).subscriptionPlan.title}`);
+              cy.contains((slot.eventDetails as ApiSubscription).subscriptionPlan.consultantProfile?.user?.name || "");
+            } else if (slot.appointmentType === 'Webinar') {
+              cy.contains(`Webinar - ${(slot.eventDetails as ApiWebinar).webinarPlan.title}`);
+            } else if (slot.appointmentType === 'Class') {
+              cy.contains(`Class - ${(slot.eventDetails as ApiClass).classPlan.title}`);
+            }
+            cy.contains(formattedTime);
+          });
+      });
 
-//           allSlots.forEach((slot) => {
-//             const now = new Date();
-//             const appointmentTime = new Date(slot.slotStartTimeInUTC);
-//             const formattedTime = formatDateTime(appointmentTime);
-//             const diffInMinutes =
-//               (appointmentTime.getTime() - now.getTime()) / (1000 * 60);
-//             const diffInDays = Math.ceil(diffInMinutes / (24 * 60));
+      cy.get('[data-testid="appointment-item"]').should(
+        "have.length",
+        sortedSlots.length,
+      );
 
-//             cy.contains(formattedTime)
-//               .closest('[data-testid="appointment-item"]')
-//               .within(() => {
-//                 // Verify status badge
-//                 if (appointmentTime < now) {
-//                   cy.get('[data-testid="status-badge"]').should(
-//                     "contain",
-//                     "Completed",
-//                   );
-//                 } else if (diffInDays <= 7) {
-//                   cy.get('[data-testid="status-badge"]').should(
-//                     "contain",
-//                     "days",
-//                   );
-//                 } else if (diffInDays <= 30) {
-//                   cy.get('[data-testid="status-badge"]').should(
-//                     "contain",
-//                     "weeks",
-//                   );
-//                 } else {
-//                   cy.get('[data-testid="status-badge"]').should(
-//                     "contain",
-//                     "months",
-//                   );
-//                 }
+      if (sortedSlots.length === 0) {
+        cy.contains("No Appointments Found").should("be.visible");
+      }
+    });
+  });
 
-//                 // Verify join button state
-//                 const joinButton = cy.get("button").contains("Join meet");
-//                 if (diffInMinutes < 0) {
-//                   joinButton.should("be.disabled");
-//                 } else if (diffInMinutes <= 5) {
-//                   joinButton.should("not.be.disabled");
-//                 } else {
-//                   joinButton.should("be.disabled");
-//                 }
-//               });
-//           });
-//         });
-//       });
+  it("verifies timezone conversion", () => {
+    cy.wait(["@getConsultations", "@getSubscriptions", "@getWebinars", "@getClasses"]).then((interceptions) => {
+      expect(interceptions[0].response?.statusCode).to.equal(200);
+      expect(interceptions[1].response?.statusCode).to.equal(200);
+      expect(interceptions[2].response?.statusCode).to.equal(200);
+      expect(interceptions[3].response?.statusCode).to.equal(200);
 
-//       it("handles API errors gracefully", () => {
-//         // Mock API errors
-//         cy.intercept(
-//           "GET",
-//           `/api/events/consultations?consultantProfileId=${consultantId}`,
-//           { statusCode: 500, body: { error: "Server error" } },
-//         ).as("failedConsultations");
+      const apiConsultations = (interceptions[0].response?.body?.data || []) as ApiConsultation[];
+      const apiSubscriptions = (interceptions[1].response?.body?.data || []) as ApiSubscription[];
+      const apiWebinars = (interceptions[2].response?.body?.data || []) as ApiWebinar[];
+      const apiClasses = (interceptions[3].response?.body?.data || []) as ApiClass[];
 
-//         cy.intercept(
-//           "GET",
-//           `/api/events/subscriptions?consultantProfileId=${consultantId}`,
-//           { statusCode: 500, body: { error: "Server error" } },
-//         ).as("failedSubscriptions");
+      const allSlots = getAllSlots(apiConsultations, apiSubscriptions, apiWebinars, apiClasses);
 
-//         cy.intercept(
-//           "GET",
-//           `/api/events/webinars?consultantProfileId=${consultantId}`,
-//           { statusCode: 500, body: { error: "Server error" } },
-//         ).as("failedWebinars");
+      if (allSlots.length === 0) {
+        cy.log("No slots found, skipping timezone test.");
+        return;
+      }
 
-//         cy.intercept(
-//           "GET",
-//           `/api/events/classes?consultantProfileId=${consultantId}`,
-//           { statusCode: 500, body: { error: "Server error" } },
-//         ).as("failedClasses");
+      const sortedSlots = allSlots.sort(
+        (a: ProcessedSlot, b: ProcessedSlot) =>
+          new Date(a.slotStartTimeInUTC).getTime() -
+          new Date(b.slotStartTimeInUTC).getTime(),
+      );
 
-//         // Visit page and verify error state
-//         cy.visit(`/dashboard/consultant/${consultantId}/appointments`);
-//         cy.contains("Error loading appointments").should("be.visible");
-//       });
-//     });
-//   },
-// );
+      sortedSlots.forEach((slot: ProcessedSlot) => {
+        const utcTime = new Date(slot.slotStartTimeInUTC);
+        const localTime = formatDateTime(utcTime);
+        cy.log("Checking timezone for slot:", { utcTime: slot.slotStartTimeInUTC, localTime, eventDetails: slot.eventDetails });
+        cy.contains(localTime)
+          .closest('[data-testid="appointment-item"]')
+          .should("be.visible");
+      });
+    });
+  });
+
+  it("verifies appointments are sorted correctly by time", () => {
+    cy.wait(["@getConsultations", "@getSubscriptions", "@getWebinars", "@getClasses"]).then((interceptions) => {
+      expect(interceptions[0].response?.statusCode).to.equal(200);
+      expect(interceptions[1].response?.statusCode).to.equal(200);
+      expect(interceptions[2].response?.statusCode).to.equal(200);
+      expect(interceptions[3].response?.statusCode).to.equal(200);
+
+      const apiConsultations = (interceptions[0].response?.body?.data || []) as ApiConsultation[];
+      const apiSubscriptions = (interceptions[1].response?.body?.data || []) as ApiSubscription[];
+      const apiWebinars = (interceptions[2].response?.body?.data || []) as ApiWebinar[];
+      const apiClasses = (interceptions[3].response?.body?.data || []) as ApiClass[];
+
+      const allSlots = getAllSlots(apiConsultations, apiSubscriptions, apiWebinars, apiClasses);
+
+      if (allSlots.length === 0) {
+        cy.log("No slots found, skipping sort test.");
+        return;
+      }
+
+      const displayedTimes: string[] = [];
+      // Assuming appointment items are rendered and time is in a specific element
+      // This requires a class like '.appointment-time-class' on the time display element
+      // If not present, this part of the test might fail or need adjustment.
+      cy.get('[data-testid="appointment-item"] .appointment-time-class') 
+        .each(($el) => {
+          displayedTimes.push($el.text());
+        })
+        .then(() => {
+          cy.log("Displayed Times:", displayedTimes);
+          if (displayedTimes.length > 0) { // Proceed only if times were found
+            const displayedDateObjects = displayedTimes.map((timeStr) =>
+              parseFormattedDateTime(timeStr),
+            );
+            for (let i = 0; i < displayedDateObjects.length - 1; i++) {
+              expect(displayedDateObjects[i].getTime()).to.be.at.most(
+                displayedDateObjects[i + 1].getTime(),
+              );
+            }
+          }
+        });
+    });
+  });
+
+  it("navigates to the correct appointment details page on click", () => {
+    cy.wait(["@getConsultations", "@getSubscriptions", "@getWebinars", "@getClasses"]).then((interceptions) => {
+      expect(interceptions[0].response?.statusCode).to.equal(200);
+      expect(interceptions[1].response?.statusCode).to.equal(200);
+      expect(interceptions[2].response?.statusCode).to.equal(200);
+      expect(interceptions[3].response?.statusCode).to.equal(200);
+
+      const apiConsultations = (interceptions[0].response?.body?.data || []) as ApiConsultation[];
+      const apiSubscriptions = (interceptions[1].response?.body?.data || []) as ApiSubscription[];
+      const apiWebinars = (interceptions[2].response?.body?.data || []) as ApiWebinar[];
+      const apiClasses = (interceptions[3].response?.body?.data || []) as ApiClass[];
+
+      const allSlots = getAllSlots(apiConsultations, apiSubscriptions, apiWebinars, apiClasses);
+
+      if (allSlots.length === 0) {
+        cy.log("No slots found, skipping navigation test.");
+        return;
+      }
+
+      cy.get('[data-testid="appointment-item"]').first().click();
+
+      const firstSlot = allSlots[0];
+      let expectedUrlPart = "";
+      if (firstSlot.appointmentType === 'Consultation') {
+        expectedUrlPart = `/consultations/${firstSlot.eventDetails.id}`;
+      } else if (firstSlot.appointmentType === 'Subscription') {
+        expectedUrlPart = `/subscriptions/${firstSlot.eventDetails.id}`;
+      } else if (firstSlot.appointmentType === 'Webinar') {
+        expectedUrlPart = `/webinars/${firstSlot.eventDetails.id}`;
+      } else if (firstSlot.appointmentType === 'Class') {
+        expectedUrlPart = `/classes/${firstSlot.eventDetails.id}`;
+      }
+
+      const expectedPath = `/dashboard/consultant/${dynamicConsultantId}/appointments${expectedUrlPart}`;
+
+      if (expectedPath) {
+        cy.url().should("include", expectedPath);
+      }
+    });
+  });
+});

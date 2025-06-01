@@ -51,6 +51,8 @@ export default [
         expect: true,
         beforeEach: true,
         afterEach: true,
+        before: true,
+        after: true,
       },
     },
     plugins: {
