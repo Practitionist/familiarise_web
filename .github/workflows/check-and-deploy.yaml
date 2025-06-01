@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
       RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
       RAZORPAY_SECRET: ${{ secrets.RAZORPAY_SECRET }}
       STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
