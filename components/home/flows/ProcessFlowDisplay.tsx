@@ -3,19 +3,19 @@
 import React from "react";
 import { motion } from "framer-motion";
 
-export interface ProcessStepProps {
-  number: number;
-  title: string;
-  description: string;
-  isLast?: boolean;
+export interface ProcessFlowStepProps {
+  readonly number: number;
+  readonly title: string;
+  readonly description: string;
+  readonly isLast?: boolean;
 }
 
-export function ProcessStep({
+export function ProcessFlowDisplay({
   number,
   title,
   description,
   isLast = false,
-}: ProcessStepProps) {
+}: ProcessFlowStepProps) {
   return (
     <div className="relative">
       <motion.div
