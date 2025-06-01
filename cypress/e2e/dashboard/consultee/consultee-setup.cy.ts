@@ -1,6 +1,5 @@
 /// <reference types="cypress" />
 
-
 // Shared setup function
 export function setupConsulteeDashboard(consulteeId: string, route?: string) {
   // Create logs directory and initialize info.json if needed

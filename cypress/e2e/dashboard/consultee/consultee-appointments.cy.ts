@@ -69,12 +69,17 @@ function getEventType(event: Slot["event"]): EventType {
 }
 
 // Helper function to find a valid consultee ID by checking against the API
-function findValidConsulteeId(consultees: any[], index = 0): Cypress.Chainable<string> {
+function findValidConsulteeId(
+  consultees: any[],
+  index = 0,
+): Cypress.Chainable<string> {
   if (index >= consultees.length) {
     // After checking all candidates, if none are valid, throw an error.
     // This will fail the test run, indicating a problem with test data.
     return cy.then(() => {
-      throw new Error('No valid consultee ID found after checking all candidates from /api/user/consultees. Test data may be inconsistent.');
+      throw new Error(
+        "No valid consultee ID found after checking all candidates from /api/user/consultees. Test data may be inconsistent.",
+      );
     });
   }
 
@@ -82,23 +87,33 @@ function findValidConsulteeId(consultees: any[], index = 0): Cypress.Chainable<s
   // Ensure the consultee object and its user.id property exist
   if (consultee && consultee.user && consultee.user.id) {
     const potentialId = consultee.user.id;
-    cy.log(`Attempting to validate consultee ID: ${potentialId} (index ${index})`);
-    return cy.request({
-      method: 'GET',
-      url: `/api/user/${potentialId}`,
-      failOnStatusCode: false // Prevent Cypress from failing the test on a 404 for this specific request
-    }).then(response => {
-      if (response.status === 200) {
-        cy.log(`Successfully validated Consultee ID: ${potentialId} at index ${index}.`);
-        return potentialId; // ID is valid, return it
-      } else {
-        cy.log(`Consultee ID ${potentialId} (index ${index}) is invalid (API returned status: ${response.status}). Trying next.`);
-        return findValidConsulteeId(consultees, index + 1); // Try the next consultee
-      }
-    });
+    cy.log(
+      `Attempting to validate consultee ID: ${potentialId} (index ${index})`,
+    );
+    return cy
+      .request({
+        method: "GET",
+        url: `/api/user/${potentialId}`,
+        failOnStatusCode: false, // Prevent Cypress from failing the test on a 404 for this specific request
+      })
+      .then((response) => {
+        if (response.status === 200) {
+          cy.log(
+            `Successfully validated Consultee ID: ${potentialId} at index ${index}.`,
+          );
+          return potentialId; // ID is valid, return it
+        } else {
+          cy.log(
+            `Consultee ID ${potentialId} (index ${index}) is invalid (API returned status: ${response.status}). Trying next.`,
+          );
+          return findValidConsulteeId(consultees, index + 1); // Try the next consultee
+        }
+      });
   } else {
     // If the consultee object is malformed or missing user.id, skip it and try the next one.
-    cy.log(`Consultee data at index ${index} is malformed or missing user.id. Trying next.`);
+    cy.log(
+      `Consultee data at index ${index} is malformed or missing user.id. Trying next.`,
+    );
     return findValidConsulteeId(consultees, index + 1);
   }
 }
@@ -111,21 +126,23 @@ function formatTimeForOverview(date: Date): string {
   return `${hour}:${minute} ${period}`;
 }
 
-describe('Consultee Appointments Page with Dynamic ID', () => {
+describe("Consultee Appointments Page with Dynamic ID", () => {
   let dynamicConsulteeId: string;
 
   before(() => {
-    cy.request('GET', '/api/user/consultees?limit=5') // Fetch top 5 potential consultees
-      .its('body')
+    cy.request("GET", "/api/user/consultees?limit=5") // Fetch top 5 potential consultees
+      .its("body")
       .then((consultees: any[]) => {
         if (!consultees || consultees.length === 0) {
           // This will fail the test run if no consultees are returned at all.
-          throw new Error('No consultees found from API /api/user/consultees. Cannot proceed with tests.');
+          throw new Error(
+            "No consultees found from API /api/user/consultees. Cannot proceed with tests.",
+          );
         }
         // Attempt to find a valid consultee ID from the fetched list
         return findValidConsulteeId(consultees);
       })
-      .then(validId => {
+      .then((validId) => {
         // This .then() executes only if findValidConsulteeId successfully returns an ID.
         // If findValidConsulteeId throws an error (e.g., no valid ID found), this block will not be reached,
         // and the test setup will fail, which is the desired behavior.
@@ -137,7 +154,7 @@ describe('Consultee Appointments Page with Dynamic ID', () => {
 
   beforeEach(() => {
     if (!dynamicConsulteeId) {
-        throw new Error("Consultee ID was not available for beforeEach setup.");
+      throw new Error("Consultee ID was not available for beforeEach setup.");
     }
     cy.exec("mkdir -p cypress/logs");
     cy.writeFile("cypress/logs/info.json", []);
@@ -180,7 +197,7 @@ describe('Consultee Appointments Page with Dynamic ID', () => {
                 timestamp: new Date().toISOString(),
                 type: "total_slots",
                 count: allSlots.length,
-                consulteeId: dynamicConsulteeId, 
+                consulteeId: dynamicConsulteeId,
               },
             ]);
 
@@ -206,7 +223,7 @@ describe('Consultee Appointments Page with Dynamic ID', () => {
                     slots.length,
                   ]),
                 ),
-                consulteeId: dynamicConsulteeId, 
+                consulteeId: dynamicConsulteeId,
               },
             ]);
 
@@ -250,16 +267,12 @@ describe('Consultee Appointments Page with Dynamic ID', () => {
                             const startTime = new Date(
                               slotData.slotStartTimeInUTC,
                             );
-                            const endTime = new Date(
-                              slotData.slotEndTimeInUTC,
-                            );
+                            const endTime = new Date(slotData.slotEndTimeInUTC);
                             const expectedTimeRange = `${formatTimeForOverview(
                               startTime,
                             )} - ${formatTimeForOverview(endTime)}`;
 
-                            cy.contains(expectedTimeRange).should(
-                              "be.visible",
-                            );
+                            cy.contains(expectedTimeRange).should("be.visible");
                           });
                         },
                       );
@@ -344,9 +357,7 @@ describe('Consultee Appointments Page with Dynamic ID', () => {
                   title = slotData.event.classPlan.title;
                 }
 
-                cy.get(".rbc-event-content")
-                  .contains(title)
-                  .should("exist");
+                cy.get(".rbc-event-content").contains(title).should("exist");
               });
             }
             verifyMonth();

@@ -77,12 +77,17 @@ function getAllSlots(events: any[]): Slot[] {
 }
 
 // Helper function to find a valid consultee ID by checking against the API
-function findValidConsulteeId(consultees: any[], index = 0): Cypress.Chainable<string> {
+function findValidConsulteeId(
+  consultees: any[],
+  index = 0,
+): Cypress.Chainable<string> {
   if (index >= consultees.length) {
     // After checking all candidates, if none are valid, throw an error.
     // This will fail the test run, indicating a problem with test data.
     return cy.then(() => {
-      throw new Error('No valid consultee ID found after checking all candidates from /api/user/consultees. Test data may be inconsistent.');
+      throw new Error(
+        "No valid consultee ID found after checking all candidates from /api/user/consultees. Test data may be inconsistent.",
+      );
     });
   }
 
@@ -90,23 +95,33 @@ function findValidConsulteeId(consultees: any[], index = 0): Cypress.Chainable<s
   // Ensure the consultee object and its user.id property exist
   if (consultee && consultee.user && consultee.user.id) {
     const potentialId = consultee.user.id;
-    cy.log(`Attempting to validate consultee ID: ${potentialId} (index ${index})`);
-    return cy.request({
-      method: 'GET',
-      url: `/api/user/${potentialId}`,
-      failOnStatusCode: false // Prevent Cypress from failing the test on a 404 for this specific request
-    }).then(response => {
-      if (response.status === 200) {
-        cy.log(`Successfully validated Consultee ID: ${potentialId} at index ${index}.`);
-        return potentialId; // ID is valid, return it
-      } else {
-        cy.log(`Consultee ID ${potentialId} (index ${index}) is invalid (API returned status: ${response.status}). Trying next.`);
-        return findValidConsulteeId(consultees, index + 1); // Try the next consultee
-      }
-    });
+    cy.log(
+      `Attempting to validate consultee ID: ${potentialId} (index ${index})`,
+    );
+    return cy
+      .request({
+        method: "GET",
+        url: `/api/user/${potentialId}`,
+        failOnStatusCode: false, // Prevent Cypress from failing the test on a 404 for this specific request
+      })
+      .then((response) => {
+        if (response.status === 200) {
+          cy.log(
+            `Successfully validated Consultee ID: ${potentialId} at index ${index}.`,
+          );
+          return potentialId; // ID is valid, return it
+        } else {
+          cy.log(
+            `Consultee ID ${potentialId} (index ${index}) is invalid (API returned status: ${response.status}). Trying next.`,
+          );
+          return findValidConsulteeId(consultees, index + 1); // Try the next consultee
+        }
+      });
   } else {
     // If the consultee object is malformed or missing user.id, skip it and try the next one.
-    cy.log(`Consultee data at index ${index} is malformed or missing user.id. Trying next.`);
+    cy.log(
+      `Consultee data at index ${index} is malformed or missing user.id. Trying next.`,
+    );
     return findValidConsulteeId(consultees, index + 1);
   }
 }
@@ -115,7 +130,7 @@ function getMonthYearString(date: Date): string {
   return date.toLocaleString("default", { month: "long", year: "numeric" });
 }
 
-describe('Consultee Home Page with Dynamic ID', () => {
+describe("Consultee Home Page with Dynamic ID", () => {
   let dynamicConsulteeId: string;
 
   // Helper function to click next/prev month and wait
@@ -126,10 +141,10 @@ describe('Consultee Home Page with Dynamic ID', () => {
 
   // "Private" recursive helper for navigateCalendarToMonth
   function _attemptCalendarNavigation(
-    targetMonthString: string, 
-    targetDate: Date, 
-    maxAttempts: number, 
-    currentAttempt: number
+    targetMonthString: string,
+    targetDate: Date,
+    maxAttempts: number,
+    currentAttempt: number,
   ): Cypress.Chainable<null> {
     if (currentAttempt > maxAttempts) {
       throw new Error(
@@ -143,46 +158,76 @@ describe('Consultee Home Page with Dynamic ID', () => {
       .invoke("text")
       .then((currentDisplayedMonth) => {
         if (currentDisplayedMonth.trim() === targetMonthString) {
-          return cy.wrap(null); 
+          return cy.wrap(null);
         }
-        
+
         const currentParts = currentDisplayedMonth.trim().split(" ");
         const currentMonthName = currentParts[0];
         const currentYear = parseInt(currentParts[1], 10);
-        
+
         const monthMap: { [key: string]: number } = {
-          January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
-          July: 6, August: 7, September: 8, October: 9, November: 10, December: 11
+          January: 0,
+          February: 1,
+          March: 2,
+          April: 3,
+          May: 4,
+          June: 5,
+          July: 6,
+          August: 7,
+          September: 8,
+          October: 9,
+          November: 10,
+          December: 11,
         };
         const currentMonthIndex = monthMap[currentMonthName];
 
         const targetMonthIndex = targetDate.getMonth();
         const targetYear = targetDate.getFullYear();
 
-        if (currentYear < targetYear || (currentYear === targetYear && currentMonthIndex < targetMonthIndex)) {
+        if (
+          currentYear < targetYear ||
+          (currentYear === targetYear && currentMonthIndex < targetMonthIndex)
+        ) {
           navigateOneStep("next");
-        } else if (currentYear > targetYear || (currentYear === targetYear && currentMonthIndex > targetMonthIndex)) {
+        } else if (
+          currentYear > targetYear ||
+          (currentYear === targetYear && currentMonthIndex > targetMonthIndex)
+        ) {
           navigateOneStep("prev");
         } else {
           // This case implies current month/year are same as target, but string didn't match.
           // This could happen with subtle formatting differences or if targetMonthString is invalid.
           // To prevent infinite loops, we'll try 'prev' as a default action if not strictly less.
           // Ideally, this state indicates an issue with targetMonthString or month display consistency.
-          navigateOneStep("prev"); 
+          navigateOneStep("prev");
         }
-        return _attemptCalendarNavigation(targetMonthString, targetDate, maxAttempts, currentAttempt + 1);
+        return _attemptCalendarNavigation(
+          targetMonthString,
+          targetDate,
+          maxAttempts,
+          currentAttempt + 1,
+        );
       });
   }
 
   // Helper function to navigate calendar to a target month string
-  function navigateCalendarToMonth(targetMonthString: string, targetDate: Date, maxAttempts = 12): Cypress.Chainable<null> {
-    return _attemptCalendarNavigation(targetMonthString, targetDate, maxAttempts, 1); // Initial call
+  function navigateCalendarToMonth(
+    targetMonthString: string,
+    targetDate: Date,
+    maxAttempts = 12,
+  ): Cypress.Chainable<null> {
+    return _attemptCalendarNavigation(
+      targetMonthString,
+      targetDate,
+      maxAttempts,
+      1,
+    ); // Initial call
   }
 
   // Recursive helper to process months sequentially for the monthly view test
   function processSingleMonthRecursively(
-    index: number, 
-    allMonths: { date: Date; slots: Slot[] }[]
+    index: number,
+    allMonths: { date: Date; slots: Slot[] }[],
   ): Cypress.Chainable<null> {
     if (index >= allMonths.length) {
       return cy.wrap(null); // All months processed
@@ -209,36 +254,42 @@ describe('Consultee Home Page with Dynamic ID', () => {
             '[data-testid^="webinar-"], [data-testid^="class-"], [data-testid^="consultation-"], [data-testid^="subscription-"]',
           )
           .should("have.length", slots.length);
-        
+
         // Recursively call for the next month
         return processSingleMonthRecursively(index + 1, allMonths);
       });
   }
 
   before(() => {
-    cy.request('GET', '/api/user/consultees?limit=5') // Fetch top 5 potential consultees
-      .its('body')
+    cy.request("GET", "/api/user/consultees?limit=5") // Fetch top 5 potential consultees
+      .its("body")
       .then((consultees: any[]) => {
         if (!consultees || consultees.length === 0) {
           // This will fail the test run if no consultees are returned at all.
-          throw new Error('No consultees found from API /api/user/consultees. Cannot proceed with tests.');
+          throw new Error(
+            "No consultees found from API /api/user/consultees. Cannot proceed with tests.",
+          );
         }
         // Attempt to find a valid consultee ID from the fetched list
         return findValidConsulteeId(consultees);
       })
-      .then(validId => {
+      .then((validId) => {
         // This .then() executes only if findValidConsulteeId successfully returns an ID.
         // If findValidConsulteeId throws an error (e.g., no valid ID found), this block will not be reached,
         // and the test setup will fail, which is the desired behavior.
         dynamicConsulteeId = validId;
         // dynamicConsulteeId is now set with a validated ID and can be used in beforeEach and tests.
-        cy.log(`Using validated Consultee ID for Home Page tests: ${dynamicConsulteeId}`);
+        cy.log(
+          `Using validated Consultee ID for Home Page tests: ${dynamicConsulteeId}`,
+        );
       });
   });
 
   beforeEach(() => {
     if (!dynamicConsulteeId) {
-      throw new Error("Consultee ID was not available for beforeEach setup in Home Page tests.");
+      throw new Error(
+        "Consultee ID was not available for beforeEach setup in Home Page tests.",
+      );
     }
     setupConsulteeDashboard(dynamicConsulteeId, "home");
   });
