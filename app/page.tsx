@@ -22,7 +22,7 @@ import { ProcessFlowDisplay, ProcessFlowStepProps } from "@/components/home/flow
 import { OFFERINGS } from "@/constants/homePageData";
 import { ImageType } from "@/hooks/useImages"; // Assuming ImageType is still relevant from useImages
 import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
-import { renderImage, renderLCPImage } from "@/utils/image";
+import { renderLCPImage } from "@/utils/image";
 
 import type { TConsultantProfile } from "@/types/consultant";
 import type { ReviewWithProfiles } from "@/types/review";
@@ -494,7 +494,7 @@ export default function Home() {
                 </Link>
               </div>
               <div className="flex justify-center">
-                {renderImage(images, 1, "/placeholder.svg", 550, 310)}
+                {renderLCPImage(images, 1, "/placeholder.svg", 550, 310)}
               </div>
             </div>
           </div>
@@ -518,7 +518,7 @@ export default function Home() {
                 </ul>
               </div>
               <div className="flex justify-center items-center">
-                {renderImage(images, 2, "/placeholder.svg", 550, 310)}
+                {renderLCPImage(images, 2, "/placeholder.svg", 550, 310)}
               </div>
             </div>
           </div>
@@ -539,7 +539,7 @@ export default function Home() {
               </div>
             </div>
             <div className="w-full max-w-[1600px] mx-auto overflow-hidden">
-              {renderImage(images, 3, "/placeholder.svg", 1300, 867)}
+              {renderLCPImage(images, 3, "/placeholder.svg", 1300, 867)}
             </div>
           </div>
         </section>
