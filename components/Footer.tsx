@@ -8,7 +8,9 @@ import {
   FaLinkedin,
   FaTwitter,
 } from "react-icons/fa";
-import familiariselogo from "../public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
+// Using public path for Next.js static asset
+const familiariselogo =
+  "/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import micromatch from "micromatch";
@@ -35,13 +37,19 @@ const Footer: React.FC = () => {
   return (
     <footer className="flex flex-col items-center justify-center p-5 bg-black text-white mt-auto">
       <div className="w-full flex justify-center pb-5">
-        {/* Replace with your company logo */}
-        <Image
-          src={familiariselogo}
-          alt="Company Logo"
-          width={50}
-          height={60}
-        />
+        {/* Responsive company logo using fill */}
+        <div
+          className="relative h-[60px] w-auto"
+          style={{ minWidth: 120, maxWidth: 320 }}
+        >
+          <Image
+            src={familiariselogo}
+            alt="Company Logo"
+            fill
+            className="object-contain"
+            sizes="(max-width: 320px) 100vw, 320px"
+          />
+        </div>
       </div>
       <div className="flex justify-between w-full max-w-6xl">
         <div className="flex flex-col w-1/5">

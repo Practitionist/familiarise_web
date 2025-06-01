@@ -6,8 +6,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import familiariselogo from "../public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
-import defaultUserImage from "../public/avif/static/assets/default-profile.avif";
+// Using public path for Next.js static asset
+const familiariselogo =
+  "/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
+// Using public path for Next.js static asset
+const defaultUserImage = "/avif/static/assets/default-profile.avif";
 
 const Navbar = () => {
   const router = useRouter();
@@ -185,7 +188,18 @@ const Navbar = () => {
       >
         <div className="flex justify-between items-center">
           <Link href="/">
-            <Image src={familiariselogo} alt="Familiarise Logo" height={60} />
+            <div
+              className="relative h-[60px] w-auto"
+              style={{ minWidth: 120, maxWidth: 320 }}
+            >
+              <Image
+                src={familiariselogo}
+                alt="Familiarise Logo"
+                fill
+                className="object-contain"
+                sizes="(max-width: 320px) 100vw, 320px"
+              />
+            </div>
           </Link>
           <div className="lg:hidden">
             <button
@@ -233,7 +247,18 @@ const Navbar = () => {
           >
             {/* Header */}
             <div className="flex justify-between items-center p-6 border-b border-gray-100">
-              <Image src={familiariselogo} alt="Familiarise Logo" height={40} />
+              <div
+                className="relative h-[40px] w-auto"
+                style={{ minWidth: 80, maxWidth: 200 }}
+              >
+                <Image
+                  src={familiariselogo}
+                  alt="Familiarise Logo"
+                  fill
+                  className="object-contain"
+                  sizes="(max-width: 200px) 100vw, 200px"
+                />
+              </div>
               <button
                 onClick={closeMenu}
                 className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
