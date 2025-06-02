@@ -887,40 +887,34 @@ export default function Home() {
             style={pageStyles["featured-marquee-container"]}
           >
             <div style={pageStyles["featured-marquee-track"]}>
-              {isLoading ? (
-                Array.from({ length: 10 }, (_, index) => (
-                  <ExpertLoadingSkeleton key={`skeleton-expert-${index}`} />
-                ))
-              ) : experts.length > 0 ? (
-                <>
-                  {/* Render multiple sets for marquee effect */}
-                  {experts.map((expert) => (
-                    <ExpertCard key={expert.id} expert={expert} />
-                  ))}
-                  {experts.map((expert) => (
-                    <ExpertCard
-                      key={`${expert.id}-marquee-2`}
-                      expert={expert}
-                    />
-                  ))}
-                  {experts.map((expert) => (
-                    <ExpertCard
-                      key={`${expert.id}-marquee-3`}
-                      expert={expert}
-                    />
-                  ))}
-                  {experts.map((expert) => (
-                    <ExpertCard
-                      key={`${expert.id}-marquee-4`}
-                      expert={expert}
-                    />
-                  ))}
-                </>
-              ) : (
-                <p className="text-center text-gray-500">
-                  No featured experts available at the moment.
-                </p>
-              )}
+              {isLoading
+                ? Array.from({ length: 10 }, (_, index) => (
+                    <ExpertLoadingSkeleton key={`skeleton-expert-${index}`} />
+                  ))
+                : (() => {
+                    if (experts.length > 0) {
+                      return (
+                        <>
+                          {/* Render multiple sets for marquee effect */}
+                          {Array.from({ length: 4 }).flatMap(
+                            (_, marqueeSetIndex) =>
+                              experts.map((expert) => (
+                                <ExpertCard
+                                  key={`${expert.id}-marquee-${marqueeSetIndex + 1}`}
+                                  expert={expert}
+                                />
+                              )),
+                          )}
+                        </>
+                      );
+                    } else {
+                      return (
+                        <p className="text-center text-gray-500">
+                          No featured experts available at the moment.
+                        </p>
+                      );
+                    }
+                  })()}
             </div>
           </div>
         </section>
