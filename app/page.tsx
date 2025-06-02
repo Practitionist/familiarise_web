@@ -1,5 +1,7 @@
 "use client";
 
+import useSWR from 'swr';
+
 import { AnimatePresence, motion } from "framer-motion";
 import { Star, StarHalf, User } from "lucide-react";
 import Link from "next/link";
@@ -81,7 +83,7 @@ const pageStyles = {
 
 // --- Helper Components --- 
 
-function RatingStars({ rating }: { rating: number }) {
+function RatingStars({ rating }: Readonly<{ rating: number }>) {
   const fullStars = Math.floor(rating);
   const hasHalfStar = rating % 1 >= 0.5;
   return (
@@ -95,15 +97,26 @@ function RatingStars({ rating }: { rating: number }) {
   );
 }
 
-function ExpertCard({ expert, className = "" }: { expert: TConsultantProfile; className?: string }) {
+function ExpertCard({ expert, className = "" }: Readonly<{ expert: TConsultantProfile; className?: string }>) {
+  const [isAvatarLoaded, setIsAvatarLoaded] = useState(false);
   return (
     <Link href={`/explore/experts/${expert.id}`} className={`block hover:no-underline flex-shrink-0 w-[280px] ${className}`}>
       <Card className="hover:shadow-lg transition-shadow duration-300 hover:-translate-y-0.5 h-full mx-3">
         <CardHeader className="space-y-3">
-          <Avatar className="mx-auto h-16 w-16">
-            <AvatarImage src={expert.user.image || "/placeholder-user.jpg"} alt={expert.user.name || "Expert"} />
-            <AvatarFallback><User className="h-8 w-8" /></AvatarFallback>
-          </Avatar>
+          <div className="relative mx-auto h-16 w-16">
+            {!isAvatarLoaded && (
+              <div className="absolute inset-0 h-16 w-16 rounded-full bg-gray-300 animate-pulse" />
+            )}
+            <Avatar className={`mx-auto h-16 w-16 ${isAvatarLoaded ? 'opacity-100' : 'opacity-0'} transition-opacity duration-300`}>
+              <AvatarImage
+                src={expert.user.image ?? "/placeholder-user.jpg"}
+                alt={expert.user.name ?? "Expert"}
+                onLoad={() => setIsAvatarLoaded(true)}
+                onError={() => setIsAvatarLoaded(true)} // Also set to true on error to show fallback
+              />
+              <AvatarFallback><User className="h-8 w-8" /></AvatarFallback>
+            </Avatar>
+          </div>
           <h3 className="text-lg font-semibold text-center line-clamp-1">{expert.user.name}</h3>
           <RatingStars rating={expert.rating} />
         </CardHeader>
@@ -354,51 +367,85 @@ const BlurryBackground = () => {
   );
 };
 
+// Define a custom error type for fetcher
+interface FetchError extends Error {
+  info?: any; // Keep 'any' for info as it can be diverse, or define a more specific type if known
+  status?: number;
+}
+
+// Fetcher function for useSWR (expects API to return { data: [...] })
+const fetcher = async <T = unknown>(url: string): Promise<T> => {
+  const res = await fetch(url);
+  if (!res.ok) {
+    const error: FetchError = new Error('An error occurred while fetching the data.');
+    try {
+      error.info = await res.json();
+    } catch (_e) { // Renamed 'e' to '_e' as it's not used
+      error.info = await res.text(); // Fallback if response is not JSON
+    }
+    error.status = res.status;
+    throw error;
+  }
+  const jsonData = await res.json();
+  return jsonData.data as T; // Modify if your API structure is different, ensure type assertion is safe
+};
+
+// Specific fetcher for Supabase storage images
+const supabaseImagesFetcher = async (
+  keyArray: [string, string, string] // e.g., ['supabase_landing_images', "assets", "images/landing-page"]
+): Promise<ImageType[]> => {
+  const [_key, bucket, path] = keyArray;
+  // Ensure fetchImagesFromSupabaseStorage is correctly imported and available in this scope
+  const imageData = await fetchImagesFromSupabaseStorage(bucket, path);
+  return imageData || []; // Default to empty array if null/undefined
+};
+
+// Optimized SWR configuration for a SaaS landing page
+const swrOptions = {
+  revalidateOnFocus: false,
+  revalidateOnReconnect: false,
+  refreshInterval: 0, // Disable polling, landing page data is not typically real-time
+  shouldRetryOnError: true, // Retry on error for critical data
+  errorRetryCount: 2, // Number of retry attempts
+  dedupingInterval: 5000, // 5 seconds to prevent duplicate requests for the same key
+  keepPreviousData: true, // Show stale data while revalidating, prevents UI flashes
+};
+
 export default function Home() {
-  const [images, setImages] = useState<ImageType[]>([]);
-  const [experts, setExperts] = useState<TConsultantProfile[]>([]);
-  const [reviews, setReviews] = useState<ReviewWithProfiles[]>([]);
-  const [loading, setLoading] = useState(true);
+  // SWR hooks for data fetching
+  const { data: imagesData, error: imagesError, isLoading: isLoadingImages } = useSWR<ImageType[]>(
+    ['supabase_landing_images', "assets", "images/landing-page"],
+    supabaseImagesFetcher,
+    swrOptions
+  );
 
+  const { data: expertsData, error: expertsError, isLoading: isLoadingExperts } = useSWR<TConsultantProfile[]>(
+    "/api/user/consultants?limit=10",
+    fetcher,
+    swrOptions
+  );
+
+  const { data: reviewsData, error: reviewsError, isLoading: isLoadingReviews } = useSWR<ReviewWithProfiles[]>(
+    "/api/user/reviews?rating=4",
+    fetcher,
+    swrOptions
+  );
+
+  // Provide default empty arrays for rendering and downstream logic
+  const images: ImageType[] = imagesData || [];
+  const experts: TConsultantProfile[] = expertsData || [];
+  const reviews: ReviewWithProfiles[] = reviewsData || []; // This 'reviews' will be used by displayReviews
+
+  // Combined loading state for initial page load, mimics previous global 'loading'
+  // Individual isLoadingImages, isLoadingExperts, isLoadingReviews can be used for per-section skeletons if needed.
+  const isLoading = isLoadingImages || isLoadingExperts || isLoadingReviews;
+
+  // Log errors from SWR. Ensure useEffect is imported from 'react'.
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        const [imageData, expertsResponse, reviewsResponse] = await Promise.all([
-          fetchImagesFromSupabaseStorage("assets", "images/landing-page"),      
-          fetch("/api/user/consultants?limit=10"),
-          fetch("/api/user/reviews?rating=4"),
-        ]);
-
-        setImages(imageData || []);
-
-        if (expertsResponse.ok) {
-          const expertsData = await expertsResponse.json();
-          if (expertsData?.data) setExperts(expertsData.data);
-        } else {
-          console.error("Failed to fetch experts");
-          setExperts([]);
-        }
-
-        if (reviewsResponse.ok) {
-          const reviewsData = await reviewsResponse.json();
-          if (reviewsData?.data) setReviews(reviewsData.data);
-        } else {
-          console.error("Failed to fetch reviews");
-          setReviews([]);
-        }
-
-      } catch (error) {
-        console.error("Error fetching page data:", error);
-        setImages([]);
-        setExperts([]);
-        setReviews([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
-  }, []);
+    if (imagesError) console.error("SWR - Failed to fetch images:", imagesError);
+    if (expertsError) console.error("SWR - Failed to fetch experts:", expertsError);
+    if (reviewsError) console.error("SWR - Failed to fetch reviews:", reviewsError);
+  }, [imagesError, expertsError, reviewsError]);
 
   // For Testimonials marquee effect
   const displayReviews = reviews.length >= 4 ? reviews : [...reviews, ...reviews, ...reviews, ...reviews]; // Ensure enough for smooth scroll
@@ -555,15 +602,18 @@ export default function Home() {
           </div>
           <div className="w-full overflow-hidden" style={pageStyles['featured-marquee-container']}>
             <div style={pageStyles['featured-marquee-track']}>
-              {loading ? (
+              {isLoading ? (
                 Array.from({ length: 10 }, (_, index) => <ExpertLoadingSkeleton key={`skeleton-expert-${index}`} />)
-              ) : (
+              ) : experts.length > 0 ? (
                 <>
+                  {/* Render multiple sets for marquee effect */}
                   {experts.map((expert) => <ExpertCard key={expert.id} expert={expert} />)}
-                  {experts.map((expert) => <ExpertCard key={`${expert.id}-2`} expert={expert} />)}
-                  {experts.map((expert) => <ExpertCard key={`${expert.id}-3`} expert={expert} />)}
-                  {experts.map((expert) => <ExpertCard key={`${expert.id}-4`} expert={expert} />)}
+                  {experts.map((expert) => <ExpertCard key={`${expert.id}-marquee-2`} expert={expert} />)}
+                  {experts.map((expert) => <ExpertCard key={`${expert.id}-marquee-3`} expert={expert} />)}
+                  {experts.map((expert) => <ExpertCard key={`${expert.id}-marquee-4`} expert={expert} />)}
                 </>
+              ) : (
+                <p className="text-center text-gray-500">No featured experts available at the moment.</p>
               )}
             </div>
           </div>
@@ -586,7 +636,7 @@ export default function Home() {
         <section key="testimonials-section" className="py-16 overflow-hidden relative">
           <div className="absolute inset-0 opacity-30" style={{ backgroundImage: `radial-gradient(circle at 1px 1px, rgb(0 0 0 / 0.05) 1px, transparent 0)`, backgroundSize: "40px 40px" }} />
           <div className="container mx-auto px-4 relative"><h2 className="text-3xl font-bold text-center mb-16">What Our Users Say</h2></div>
-          {loading && reviews.length === 0 ? <TestimonialLoadingSkeleton /> : (
+          {isLoading && reviews.length === 0 ? <TestimonialLoadingSkeleton /> : (
             <div className="space-y-12">
               <div className="relative py-4">
                 <div style={pageStyles['testimonials-marqueeContainer']}>
