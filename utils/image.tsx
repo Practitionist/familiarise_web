@@ -1,10 +1,10 @@
 import Image from "next/image";
-import { ImageType } from "@/hooks/useImages";
+import type { SupabaseImageFile } from "@/lib/supabase";
 
 type ImagePriority = "high" | "low" | "auto";
 
 export function renderImage(
-  images: ImageType[],
+  images: SupabaseImageFile[],
   index: number,
   fallback: string,
   width: number,
@@ -13,7 +13,14 @@ export function renderImage(
   sizes?: string,
 ) {
   const image = images[index];
-  const src = image ? image.url : fallback;
+  let src = fallback;
+  if (image) {
+    if (image.transformedUrl && image.transformedUrl !== image.url) {
+      src = image.transformedUrl;
+    } else {
+      src = image.url;
+    }
+  }
   const alt = image ? image.name : "Placeholder image";
 
   return (
@@ -38,7 +45,7 @@ export function renderImage(
 
 // Helper function for optimizing hero/LCP images
 export function renderLCPImage(
-  images: ImageType[],
+  images: SupabaseImageFile[],
   index: number,
   fallback: string,
   width: number,
@@ -49,7 +56,7 @@ export function renderLCPImage(
 
 // Helper function for optimizing below-the-fold images
 export function renderLazyImage(
-  images: ImageType[],
+  images: SupabaseImageFile[],
   index: number,
   fallback: string,
   width: number,
