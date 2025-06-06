@@ -4,12 +4,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> },
+  { params }: { params: Promise<{ classPlanId: string }> },
 ) {
   try {
-    const { classId } = await params;
+    const { classPlanId } = await params;
     const classPlan = await prisma.classPlan.findUniqueOrThrow({
-      where: { id: classId },
+      where: { id: classPlanId },
       include: {
         consultantProfile: {
           include: {
@@ -32,7 +32,12 @@ export async function GET(
       },
     });
 
-    return NextResponse.json({ data: classPlan }, { status: 200 });
+    const enhancedClassPlan = {
+      ...classPlan,
+      type: "class" as const,
+      imageUrl: "/images/placeholder-class.png", // Using placeholder as no specific image field exists on ClassPlan model
+    };
+    return NextResponse.json({ data: enhancedClassPlan }, { status: 200 });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -53,10 +58,10 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> },
+  { params }: { params: Promise<{ classPlanId: string }> },
 ) {
   try {
-    const { classId } = await params;
+    const { classPlanId } = await params;
     const body = await request.json();
 
     // Input validation
@@ -106,7 +111,7 @@ export async function PUT(
     }
 
     const classPlan = await prisma.classPlan.update({
-      where: { id: classId },
+      where: { id: classPlanId },
       data: {
         title: body.title,
         description: body.description,
@@ -188,14 +193,14 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> },
+  { params }: { params: Promise<{ classPlanId: string }> },
 ) {
   try {
-    const { classId } = await params;
+    const { classPlanId } = await params;
 
     // Check if there are any associated classes
     const associatedClasses = await prisma.class.findMany({
-      where: { classPlanId: classId },
+      where: { classPlanId: classPlanId },
     });
 
     if (associatedClasses.length > 0) {
@@ -206,7 +211,7 @@ export async function DELETE(
     }
 
     const classPlan = await prisma.classPlan.delete({
-      where: { id: classId },
+      where: { id: classPlanId },
       include: {
         consultantProfile: {
           include: {

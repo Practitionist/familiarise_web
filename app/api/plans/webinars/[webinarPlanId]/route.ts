@@ -4,12 +4,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> },
+  { params }: { params: Promise<{ webinarPlanId: string }> },
 ) {
   try {
-    const { webinarId } = await params;
+    const { webinarPlanId } = await params;
     const webinarPlan = await prisma.webinarPlan.findUniqueOrThrow({
-      where: { id: webinarId },
+      where: { id: webinarPlanId },
       include: {
         consultantProfile: {
           include: {
@@ -26,7 +26,24 @@ export async function GET(
             tags: true,
           },
         },
-        webinars: true,
+        webinars: {
+          include: {
+            appointment: {
+              include: {
+                slotsOfAppointment: {
+                  include: {
+                    user: true, // or select specific fields
+                  },
+                },
+                payment: true,
+              },
+            },
+            // Include other necessary fields/relations for each Webinar instance if needed
+            // For example, if WebinarDetails needs 'status' or 'meetingRoom' from the Webinar instance:
+            // status: true,
+            // meetingRoom: true,
+          },
+        },
         topics: true,
       },
     });
@@ -52,10 +69,10 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> },
+  { params }: { params: Promise<{ webinarPlanId: string }> },
 ) {
   try {
-    const { webinarId } = await params;
+    const { webinarPlanId } = await params;
     const body = await request.json();
 
     // Input validation
@@ -81,7 +98,7 @@ export async function PUT(
     }
 
     const webinarPlan = await prisma.webinarPlan.update({
-      where: { id: webinarId },
+      where: { id: webinarPlanId },
       data: {
         title: body.title,
         description: body.description,
@@ -146,14 +163,14 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> },
+  { params }: { params: Promise<{ webinarPlanId: string }> },
 ) {
   try {
-    const { webinarId } = await params;
+    const { webinarPlanId } = await params;
 
     // Check if there are any associated webinars
     const associatedWebinars = await prisma.webinar.findMany({
-      where: { webinarPlanId: webinarId },
+      where: { webinarPlanId: webinarPlanId },
     });
 
     if (associatedWebinars.length > 0) {
@@ -164,7 +181,7 @@ export async function DELETE(
     }
 
     const webinarPlan = await prisma.webinarPlan.delete({
-      where: { id: webinarId },
+      where: { id: webinarPlanId },
       include: {
         consultantProfile: {
           include: {
