@@ -42,28 +42,47 @@ export function ClientWebinarRegistration({
     }
   };
 
-  let buttonText = `Pay $${price} ${currency ?? "USD"} & Register Now`;
-  let buttonDisabled = false;
-  let sessionInfoText = "No upcoming sessions scheduled yet.";
-
-  if (sessionStatus === "Completed") {
-    buttonText = "Session Ended";
-    buttonDisabled = true;
-    sessionInfoText = "This webinar has ended.";
-  } else if (sessionStatus === "Happening Now") {
-    buttonText = "Session in Progress"; // Or "Join Now" if applicable
-    buttonDisabled = true; // Disable registration once session starts, or handle joining
-    sessionInfoText = "This webinar is currently in progress.";
-  } else if (sessionStatus === "Upcoming" && nextSessionDate) {
-    sessionInfoText = `Next session starts on ${new Date(nextSessionDate).toLocaleString(
+  let sessionInfoText: string;
+  if (nextSessionDate) {
+    const formattedDate = new Date(nextSessionDate).toLocaleString(
       undefined,
       {
         dateStyle: "long",
         timeStyle: "short",
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      },
-    )}`;
+      }
+    );
+    if (sessionStatus === "Completed") {
+      sessionInfoText = `Session ended: ${formattedDate}`;
+    } else if (sessionStatus === "Happening Now") {
+      sessionInfoText = `Session started: ${formattedDate}`;
+    } else if (sessionStatus === "Upcoming") {
+      sessionInfoText = `Next session: ${formattedDate}`;
+    } else { // "To be announced" but has a nextSessionDate (edge case) or other unhandled status
+      sessionInfoText = `Scheduled: ${formattedDate}`;
+    }
+  } else if (sessionStatus === "Completed") {
+    sessionInfoText = "This webinar has ended.";
+  } else if (sessionStatus === "Happening Now") {
+    sessionInfoText = "This webinar is currently in progress.";
+  } else { // Fallback for !nextSessionDate and status is "Upcoming" or "To be announced"
+    sessionInfoText = "Session time to be announced.";
   }
+
+  // Logic for buttonText and buttonDisabled
+  let buttonText = `Pay $${price} ${currency ?? "USD"} & Register Now`;
+  let buttonDisabled = false;
+
+  if (sessionStatus === "Completed") {
+    buttonText = "Session Ended";
+    buttonDisabled = true;
+  } else if (sessionStatus === "Happening Now") {
+    buttonText = "Session in Progress";
+    buttonDisabled = true;
+  }
+  // Note: If sessionStatus is "To be announced" and there's no nextSessionDate,
+  // the button will still say "Pay & Register Now" and be enabled by default.
+  // Additional logic could be added here if registration should be disabled for "To be announced" status.
 
 
   if (!isLoggedIn) {
