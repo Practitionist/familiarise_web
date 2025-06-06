@@ -15,7 +15,9 @@ type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;
 };
 
-export function ClientClassRegistration({ plan }: ClientClassRegistrationProps) {
+export function ClientClassRegistration({
+  plan,
+}: ClientClassRegistrationProps) {
   const { id: classId, price, classes } = plan; // Removed language
   const startDate = classes?.[0]?.startDate; // Corrected to startDate
   const { data: session } = useSession();

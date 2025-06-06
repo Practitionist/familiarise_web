@@ -15,7 +15,10 @@ import {
 } from "lucide-react";
 import { ClientClassRegistration } from "./ClientClassRegistration";
 import type { Topic } from "@prisma/client";
-import { generateProgramImageUrl, ClassPlanProgram } from "@/app/explore/programs/utils";
+import {
+  generateProgramImageUrl,
+  ClassPlanProgram,
+} from "@/app/explore/programs/utils";
 
 type FeatureItemProps = {
   icon: React.ReactNode;
@@ -186,9 +189,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                         plan.consultantProfile?.user?.image ??
                         "/placeholder-user.jpg"
                       }
-                      alt={
-                        plan.consultantProfile?.user?.name ?? "Instructor"
-                      }
+                      alt={plan.consultantProfile?.user?.name ?? "Instructor"}
                       fill
                       className="object-cover"
                     />

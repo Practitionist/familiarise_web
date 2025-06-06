@@ -11,7 +11,11 @@ import {
 import { Button } from "@/components/ui/button";
 
 // Redefine SessionStatus (or import if moved to a shared file)
-type SessionStatus = "Upcoming" | "Happening Now" | "Completed" | "To be announced";
+type SessionStatus =
+  | "Upcoming"
+  | "Happening Now"
+  | "Completed"
+  | "To be announced";
 
 type ClientWebinarRegistrationProps = {
   webinarPlanId: string; // Renamed from webinarId
@@ -44,28 +48,27 @@ export function ClientWebinarRegistration({
 
   let sessionInfoText: string;
   if (nextSessionDate) {
-    const formattedDate = new Date(nextSessionDate).toLocaleString(
-      undefined,
-      {
-        dateStyle: "long",
-        timeStyle: "short",
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      }
-    );
+    const formattedDate = new Date(nextSessionDate).toLocaleString(undefined, {
+      dateStyle: "long",
+      timeStyle: "short",
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
     if (sessionStatus === "Completed") {
       sessionInfoText = `Session ended: ${formattedDate}`;
     } else if (sessionStatus === "Happening Now") {
       sessionInfoText = `Session started: ${formattedDate}`;
     } else if (sessionStatus === "Upcoming") {
       sessionInfoText = `Next session: ${formattedDate}`;
-    } else { // "To be announced" but has a nextSessionDate (edge case) or other unhandled status
+    } else {
+      // "To be announced" but has a nextSessionDate (edge case) or other unhandled status
       sessionInfoText = `Scheduled: ${formattedDate}`;
     }
   } else if (sessionStatus === "Completed") {
     sessionInfoText = "This webinar has ended.";
   } else if (sessionStatus === "Happening Now") {
     sessionInfoText = "This webinar is currently in progress.";
-  } else { // Fallback for !nextSessionDate and status is "Upcoming" or "To be announced"
+  } else {
+    // Fallback for !nextSessionDate and status is "Upcoming" or "To be announced"
     sessionInfoText = "Session time to be announced.";
   }
 
@@ -83,7 +86,6 @@ export function ClientWebinarRegistration({
   // Note: If sessionStatus is "To be announced" and there's no nextSessionDate,
   // the button will still say "Pay & Register Now" and be enabled by default.
   // Additional logic could be added here if registration should be disabled for "To be announced" status.
-
 
   if (!isLoggedIn) {
     // For non-logged in users, the button primarily serves to redirect to sign-in.
@@ -110,7 +112,9 @@ export function ClientWebinarRegistration({
           <Button
             onClick={handleRegistration} // This redirects to sign-in
             className="w-full bg-black hover:bg-gray-800"
-            disabled={sessionStatus === "Completed" || sessionStatus === "Happening Now"} // Disable if not upcoming
+            disabled={
+              sessionStatus === "Completed" || sessionStatus === "Happening Now"
+            } // Disable if not upcoming
           >
             {signInButtonText}
           </Button>
@@ -125,9 +129,7 @@ export function ClientWebinarRegistration({
         <CardTitle>Join Webinar</CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-gray-600 mb-4">
-          {sessionInfoText}
-        </p>
+        <p className="text-sm text-gray-600 mb-4">{sessionInfoText}</p>
       </CardContent>
       <CardFooter>
         <Button

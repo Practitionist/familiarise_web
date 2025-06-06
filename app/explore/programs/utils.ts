@@ -8,7 +8,14 @@ export function generateProgramImageUrl(
 }
 
 import useSWRInfinite from "swr/infinite";
-import type { Prisma, ClassPlan as PrismaClassPlan, WebinarPlan as PrismaWebinarPlan, Topic, ClassContent, Class as PrismaClass } from "@prisma/client";
+import type {
+  Prisma,
+  ClassPlan as PrismaClassPlan,
+  WebinarPlan as PrismaWebinarPlan,
+  Topic,
+  ClassContent,
+  Class as PrismaClass,
+} from "@prisma/client";
 
 export type ProgramType = "all" | "class" | "webinar";
 
@@ -21,7 +28,9 @@ export type ApiMeta = {
 
 export type ClassPlanProgram = PrismaClassPlan & {
   classContents: ClassContent[];
-  consultantProfile?: Prisma.ConsultantProfileGetPayload<{ include: { user: { select: { id: true, name: true, image: true } } } }> | null;
+  consultantProfile?: Prisma.ConsultantProfileGetPayload<{
+    include: { user: { select: { id: true; name: true; image: true } } };
+  }> | null;
   topics: Topic[];
   classes: PrismaClass[];
   type: "class";
@@ -29,7 +38,9 @@ export type ClassPlanProgram = PrismaClassPlan & {
 };
 
 export type WebinarPlanProgram = PrismaWebinarPlan & {
-  consultantProfile?: Prisma.ConsultantProfileGetPayload<{ include: { user: { select: { id: true, name: true, image: true } } } }> | null;
+  consultantProfile?: Prisma.ConsultantProfileGetPayload<{
+    include: { user: { select: { id: true; name: true; image: true } } };
+  }> | null;
   topics: Topic[];
   type: "webinar";
   imageUrl: string;
@@ -41,7 +52,9 @@ export function isClassProgram(program: Program): program is ClassPlanProgram {
   return program.type === "class";
 }
 
-export function isWebinarProgram(program: Program): program is WebinarPlanProgram {
+export function isWebinarProgram(
+  program: Program,
+): program is WebinarPlanProgram {
   return program.type === "webinar";
 }
 
@@ -53,32 +66,66 @@ const fetcher = (url: string) => fetch(url).then((res) => res.json());
 export function usePrograms(programType: ProgramType) {
   const getKey = (
     pageIndex: number,
-    previousPageData: { programs: Program[]; classMeta?: ApiMeta; webinarMeta?: ApiMeta } | null,
+    previousPageData: {
+      programs: Program[];
+      classMeta?: ApiMeta;
+      webinarMeta?: ApiMeta;
+    } | null,
   ) => {
-    if (pageIndex > 0 && previousPageData && !previousPageData.programs?.length) {
+    if (
+      pageIndex > 0 &&
+      previousPageData &&
+      !previousPageData.programs?.length
+    ) {
       // If it's not the first fetch (pageIndex > 0) and the last fetch returned no programs
       let noMoreClassPages = true;
       let noMoreWebinarPages = true;
 
-      if (programType === 'all' || programType === 'class') {
-        noMoreClassPages = previousPageData.classMeta ? previousPageData.classMeta.page >= previousPageData.classMeta.totalPages : true;
+      if (programType === "all" || programType === "class") {
+        noMoreClassPages = previousPageData.classMeta
+          ? previousPageData.classMeta.page >=
+            previousPageData.classMeta.totalPages
+          : true;
       }
-      if (programType === 'all' || programType === 'webinar') {
-        noMoreWebinarPages = previousPageData.webinarMeta ? previousPageData.webinarMeta.page >= previousPageData.webinarMeta.totalPages : true;
+      if (programType === "all" || programType === "webinar") {
+        noMoreWebinarPages = previousPageData.webinarMeta
+          ? previousPageData.webinarMeta.page >=
+            previousPageData.webinarMeta.totalPages
+          : true;
       }
 
-      if (programType === 'class' && noMoreClassPages) return null;
-      if (programType === 'webinar' && noMoreWebinarPages) return null;
-      if (programType === 'all' && noMoreClassPages && noMoreWebinarPages) return null;
+      if (programType === "class" && noMoreClassPages) return null;
+      if (programType === "webinar" && noMoreWebinarPages) return null;
+      if (programType === "all" && noMoreClassPages && noMoreWebinarPages)
+        return null;
     }
     // Special case: if total items are 0, totalPages might be 0. First fetch (pageIndex=0) should still proceed.
     // If previousPageData exists (so it's not the first call to getKey for SWR's setup) and meta indicates 0 total items for a type, stop for that type.
     if (previousPageData) {
-        if (programType === 'class' && previousPageData.classMeta && previousPageData.classMeta.total === 0 && previousPageData.classMeta.totalPages === 0) return null;
-        if (programType === 'webinar' && previousPageData.webinarMeta && previousPageData.webinarMeta.total === 0 && previousPageData.webinarMeta.totalPages === 0) return null;
-        if (programType === 'all' && 
-            previousPageData.classMeta && previousPageData.classMeta.total === 0 && previousPageData.classMeta.totalPages === 0 &&
-            previousPageData.webinarMeta && previousPageData.webinarMeta.total === 0 && previousPageData.webinarMeta.totalPages === 0) return null;
+      if (
+        programType === "class" &&
+        previousPageData.classMeta &&
+        previousPageData.classMeta.total === 0 &&
+        previousPageData.classMeta.totalPages === 0
+      )
+        return null;
+      if (
+        programType === "webinar" &&
+        previousPageData.webinarMeta &&
+        previousPageData.webinarMeta.total === 0 &&
+        previousPageData.webinarMeta.totalPages === 0
+      )
+        return null;
+      if (
+        programType === "all" &&
+        previousPageData.classMeta &&
+        previousPageData.classMeta.total === 0 &&
+        previousPageData.classMeta.totalPages === 0 &&
+        previousPageData.webinarMeta &&
+        previousPageData.webinarMeta.total === 0 &&
+        previousPageData.webinarMeta.totalPages === 0
+      )
+        return null;
     }
 
     const requests = [];
@@ -106,7 +153,10 @@ export function usePrograms(programType: ProgramType) {
         let combinedPrograms: Program[] = [];
         let classMeta, webinarMeta;
 
-        if ((programType === "all" || programType === "class") && responses[0]) {
+        if (
+          (programType === "all" || programType === "class") &&
+          responses[0]
+        ) {
           const classResponse = responses[0];
           classMeta = classResponse.meta;
           if (classResponse.data) {
@@ -146,7 +196,7 @@ export function usePrograms(programType: ProgramType) {
       },
     );
 
-  const programs = data ? data.map(d => d.programs).flat() : [];
+  const programs = data ? data.map((d) => d.programs).flat() : [];
 
   const lastPageData = data ? data[data.length - 1] : null;
   let hasMoreClasses = false;
@@ -155,31 +205,40 @@ export function usePrograms(programType: ProgramType) {
   if (lastPageData) {
     if (programType === "all" || programType === "class") {
       if (lastPageData.classMeta) {
-        hasMoreClasses = lastPageData.classMeta.page < lastPageData.classMeta.totalPages;
-      } else if (lastPageData.programs?.some(p => p.type === 'class')) {
+        hasMoreClasses =
+          lastPageData.classMeta.page < lastPageData.classMeta.totalPages;
+      } else if (lastPageData.programs?.some((p) => p.type === "class")) {
         // Fallback if meta is missing but we received classes
-        const classesInLastFetch = lastPageData.programs.filter(p => p.type === 'class').length;
+        const classesInLastFetch = lastPageData.programs.filter(
+          (p) => p.type === "class",
+        ).length;
         hasMoreClasses = classesInLastFetch >= ITEMS_PER_PAGE; // True if full page or more
       }
     }
     if (programType === "all" || programType === "webinar") {
       if (lastPageData.webinarMeta) {
-        hasMoreWebinars = lastPageData.webinarMeta.page < lastPageData.webinarMeta.totalPages;
-      } else if (lastPageData.programs?.some(p => p.type === 'webinar')) {
+        hasMoreWebinars =
+          lastPageData.webinarMeta.page < lastPageData.webinarMeta.totalPages;
+      } else if (lastPageData.programs?.some((p) => p.type === "webinar")) {
         // Fallback if meta is missing but we received webinars
-        const webinarsInLastFetch = lastPageData.programs.filter(p => p.type === 'webinar').length;
+        const webinarsInLastFetch = lastPageData.programs.filter(
+          (p) => p.type === "webinar",
+        ).length;
         hasMoreWebinars = webinarsInLastFetch >= ITEMS_PER_PAGE; // True if full page or more
       }
     }
   } else {
     // If no data has been loaded yet, assume there's more, unless specific type is chosen and has no items initially
-    hasMoreClasses = (programType === "all" || programType === "class");
-    hasMoreWebinars = (programType === "all" || programType === "webinar");
+    hasMoreClasses = programType === "all" || programType === "class";
+    hasMoreWebinars = programType === "all" || programType === "webinar";
   }
-  
-  const hasMore = (programType === "class") ? hasMoreClasses :
-                  (programType === "webinar") ? hasMoreWebinars :
-                  (hasMoreClasses || hasMoreWebinars);
+
+  const hasMore =
+    programType === "class"
+      ? hasMoreClasses
+      : programType === "webinar"
+        ? hasMoreWebinars
+        : hasMoreClasses || hasMoreWebinars;
 
   return {
     programs,
@@ -235,5 +294,5 @@ export function filterAndSortPrograms(
 export function getUniqueLevels(programs: Program[]) {
   return Array.from(
     new Set(programs.map((program: Program) => program.level)),
-  ).filter(level => level != null) as string[];
+  ).filter((level) => level != null) as string[];
 }

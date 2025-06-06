@@ -31,15 +31,15 @@ export type WebinarPlanData = Prisma.WebinarPlanGetPayload<{
           include: {
             slotsOfAppointment: {
               include: {
-                user: true,
-              },
-            },
-            payment: true,
-          },
-        },
+                user: true;
+              };
+            };
+            payment: true;
+          };
+        };
         // Include other necessary fields from the Webinar model itself if needed by WebinarDetails
         // e.g., status: true, meetingRoom: true (if meetingRoom is a direct relation of Webinar)
-      },
+      };
     };
     // Ensure all fields accessed from 'plan' in the JSX are included here
     // For example, learningOutcomes is usually part of WebinarPlan model directly
@@ -63,7 +63,11 @@ const FeatureItem = ({ icon, label, value }: FeatureItemProps) => (
 );
 
 // Add a type for session status
-type SessionStatus = "Upcoming" | "Happening Now" | "Completed" | "To be announced";
+type SessionStatus =
+  | "Upcoming"
+  | "Happening Now"
+  | "Completed"
+  | "To be announced";
 
 interface WebinarDetailsProps {
   readonly plan: WebinarPlanData; // This is webinarData.webinarPlan
@@ -74,27 +78,39 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
   let sessionStatus: SessionStatus = "To be announced";
   let formattedNextSessionDisplay = "To be announced"; // Used for display under FeatureItem
 
-  if (nextSession && plan.durationInHours !== null && plan.durationInHours !== undefined) {
+  if (
+    nextSession &&
+    plan.durationInHours !== null &&
+    plan.durationInHours !== undefined
+  ) {
     const sessionStart = new Date(nextSession); // nextSession is slotStartTimeInUTC
     const durationInMilliseconds = plan.durationInHours * 60 * 60 * 1000;
-    const sessionEnd = new Date(sessionStart.getTime() + durationInMilliseconds);
+    const sessionEnd = new Date(
+      sessionStart.getTime() + durationInMilliseconds,
+    );
     const now = new Date();
 
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     if (now > sessionEnd) {
       sessionStatus = "Completed";
-      formattedNextSessionDisplay = `Ended on ${sessionEnd.toLocaleString(undefined, {
-        dateStyle: "long",
-        timeStyle: "short",
-        timeZone,
-      })}`;
+      formattedNextSessionDisplay = `Ended on ${sessionEnd.toLocaleString(
+        undefined,
+        {
+          dateStyle: "long",
+          timeStyle: "short",
+          timeZone,
+        },
+      )}`;
     } else if (now >= sessionStart && now <= sessionEnd) {
       sessionStatus = "Happening Now";
-      formattedNextSessionDisplay = `Ends at ${sessionEnd.toLocaleTimeString(undefined, {
-        timeStyle: "short",
-        timeZone,
-      })}`;
+      formattedNextSessionDisplay = `Ends at ${sessionEnd.toLocaleTimeString(
+        undefined,
+        {
+          timeStyle: "short",
+          timeZone,
+        },
+      )}`;
     } else if (now < sessionStart) {
       sessionStatus = "Upcoming";
       formattedNextSessionDisplay = sessionStart.toLocaleString(undefined, {
@@ -106,11 +122,14 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
   } else if (nextSession) {
     // Case where duration is null/undefined but nextSession exists
     sessionStatus = "Upcoming"; // Default to upcoming if only start time is known
-    formattedNextSessionDisplay = new Date(nextSession).toLocaleString(undefined, {
-      dateStyle: "long",
-      timeStyle: "short",
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    });
+    formattedNextSessionDisplay = new Date(nextSession).toLocaleString(
+      undefined,
+      {
+        dateStyle: "long",
+        timeStyle: "short",
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      },
+    );
   }
 
   return (
@@ -139,7 +158,12 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
                 <div className="grid grid-cols-2 gap-4 mb-6">
                   <FeatureItem
                     icon={<CalendarIcon />}
-                    label={sessionStatus === "Happening Now" || sessionStatus === "Completed" ? "Status" : "Next Session"}
+                    label={
+                      sessionStatus === "Happening Now" ||
+                      sessionStatus === "Completed"
+                        ? "Status"
+                        : "Next Session"
+                    }
                     value={formattedNextSessionDisplay}
                   />
                   <FeatureItem
@@ -190,13 +214,13 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
                     </h2>
                     {/* Ensure learningOutcomes is part of WebinarPlanData type or WebinarPlan model */}
                     {plan.learningOutcomes && (
-                    <ul className="list-disc list-inside text-gray-600 space-y-1">
-                      {plan.learningOutcomes.map(
-                        (outcome: string, _index: number) => (
-                          <li key={outcome}>{outcome}</li>
-                        ),
-                      )}
-                    </ul>
+                      <ul className="list-disc list-inside text-gray-600 space-y-1">
+                        {plan.learningOutcomes.map(
+                          (outcome: string, _index: number) => (
+                            <li key={outcome}>{outcome}</li>
+                          ),
+                        )}
+                      </ul>
                     )}
                   </div>
 
@@ -230,9 +254,7 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
                         plan.consultantProfile?.user?.image ??
                         "/placeholder-user.jpg"
                       }
-                      alt={
-                        plan.consultantProfile?.user?.name ?? "Instructor"
-                      }
+                      alt={plan.consultantProfile?.user?.name ?? "Instructor"}
                       fill
                       className="object-cover"
                     />
