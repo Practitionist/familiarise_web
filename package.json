@@ -123,7 +123,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@eslint/js": "^9.17.0",
+    "@eslint/js": "^9.28.0",
     "@next/bundle-analyzer": "^15.3.3",
     "@testing-library/cypress": "^10.0.2",
     "@testing-library/dom": "^10.4.0",
