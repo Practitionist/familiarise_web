@@ -96,7 +96,7 @@
     "micromatch": "^4.0.8",
     "next": "15.3.0",
     "next-auth": "^4.24.11",
-    "nodemailer": "^6.10.1",
+    "nodemailer": "^7.0.3",
     "npm": "^11.0.0",
     "prettier": "^3.4.2",
     "prompt-sync": "^4.2.0",
