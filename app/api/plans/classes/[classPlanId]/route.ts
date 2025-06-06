@@ -26,7 +26,15 @@ export async function GET(
             tags: true,
           },
         },
-        classes: true,
+        classes: {
+          include: {
+            appointments: {
+              include: {
+                slotsOfAppointment: true,
+              },
+            },
+          },
+        },
         topics: true,
         classContents: true,
       },

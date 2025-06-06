@@ -2,15 +2,14 @@
 
 import { use, useEffect, useState } from "react";
 import { redirect } from "next/navigation";
-import { ClassDetails } from "./components/ClassDetails";
-import { ClassPlanProgram } from "../../../utils";
+import { ClassDetails, type ClassPlanDetailsData } from "./components/ClassDetails";
 
 export default function ClassDetailsPage({
   params,
 }: Readonly<{
   params: Promise<{ classPlanId: string }>;
 }>) {
-  const [classPlan, setClassPlan] = useState<ClassPlanProgram | null>(null);
+  const [classPlan, setClassPlan] = useState<ClassPlanDetailsData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const resolvedParams = use(params);
   const classPlanId = resolvedParams.classPlanId;
