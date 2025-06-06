@@ -97,7 +97,7 @@
     "next": "15.3.0",
     "next-auth": "^4.24.11",
     "nodemailer": "^6.10.1",
-    "npm": "^11.0.0",
+    "npm": "^11.4.1",
     "prettier": "^3.4.2",
     "prompt-sync": "^4.2.0",
     "razorpay": "^2.9.5",
