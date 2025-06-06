@@ -414,85 +414,78 @@ const faqItems = [
       "We use a collaborative approach, working closely with your team to understand your business and develop effective solutions.",
   },
 ];
-// BlurryBackground component (Chronological Section Coverage)
 const BlurryBackground = () => {
   return (
     <div className="absolute inset-0 -z-10 overflow-hidden bg-transparent">
-      {" "}
       {/* === HERO SECTION === */}
-      {/* Hero top coverage */}
-      <div className="absolute -top-32 -left-32 -z-10 h-[400px] w-[400px] rounded-full bg-gradient-to-br from-pink-400 to-purple-500 opacity-35 blur-3xl animate-blob animation-delay-1000"></div>{" "}
-      <div className="absolute -top-32 -right-32 -z-10 h-[400px] w-[400px] rounded-full bg-gradient-to-bl from-teal-300 to-blue-400 opacity-35 blur-3xl animate-blob animation-delay-3000"></div>{" "}
-      <div className="absolute -top-40 left-1/2 -z-10 h-[450px] w-[450px] -translate-x-1/2 rounded-full bg-gradient-to-b from-cyan-300 to-indigo-400 opacity-30 blur-3xl animate-blob animation-delay-2500"></div>{" "}
-      {/* Hero center coverage around main image */}
-      <div className="absolute top-1/6 left-1/4 -z-10 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-[#ff80b5] to-[#9089fc] opacity-25 blur-3xl animate-blob animation-delay-2000"></div>{" "}
-      <div className="absolute top-1/6 right-1/4 -z-10 h-[450px] w-[450px] translate-x-1/2 rounded-full bg-gradient-to-tl from-amber-300 to-orange-400 opacity-25 blur-3xl animate-blob animation-delay-4000"></div>{" "}
-      {/* Hero bottom edge coverage (ADJUSTED) 10,15,20,25,30*/}
-      <div className="absolute top-[20%] left-1/6 -z-10 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-300 to-teal-400 opacity-25 blur-3xl animate-blob animation-delay-5000"></div>{" "}
-      <div className="absolute top-[25%] right-1/6 -z-10 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-rose-300 to-pink-400 opacity-25 blur-3xl animate-blob animation-delay-6000"></div>{" "}
-      <div className="absolute top-[30%] left-1/6 -z-10 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-300 to-teal-400 opacity-25 blur-3xl animate-blob animation-delay-5000"></div>{" "}
-      <div className="absolute top-[35%] right-1/6 -z-10 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-rose-300 to-pink-400 opacity-25 blur-3xl animate-blob animation-delay-6000"></div>{" "}
-      <div className="absolute top-[40%] left-1/6 -z-10 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-300 to-teal-400 opacity-25 blur-3xl animate-blob animation-delay-5000"></div>{" "}
-      {/* Hero bottom corners - filling the empty spaces (ADJUSTED) */}
-      <div className="absolute top-[38%] -left-32 -z-10 h-[600px] w-[600px] rounded-full bg-gradient-to-tr from-violet-200 to-purple-300 opacity-30 blur-3xl animate-blob animation-delay-1500"></div>{" "}
-      <div className="absolute top-[38%] -right-32 -z-10 h-[600px] w-[600px] rounded-full bg-gradient-to-tl from-sky-200 to-blue-300 opacity-30 blur-3xl animate-blob animation-delay-3500"></div>{" "}
-      {/* Hero bottom edge coverage (ADJUSTED) */}
-      <div className="absolute top-[48%] left-1/6 -z-10 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-200 to-teal-300 opacity-25 blur-3xl animate-blob animation-delay-5000"></div>{" "}
-      <div className="absolute top-[48%] right-1/6 -z-10 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-rose-200 to-pink-300 opacity-25 blur-3xl animate-blob animation-delay-6000"></div>{" "}
-      {/* === TRANSFORM CAREER SECTION === */}
-      {/* Upper-mid section coverage (ADJUSTED) */}
-      <div className="absolute top-[55%] -left-12 -z-10 h-[300px] w-[300px] rounded-full bg-gradient-to-r from-green-200 to-cyan-300 opacity-35 blur-3xl animate-blob animation-delay-500"></div>{" "}
-      <div className="absolute top-[55%] -right-12 -z-10 h-[300px] w-[300px] rounded-full bg-gradient-to-l from-blue-200 to-green-300 opacity-35 blur-3xl animate-blob animation-delay-3200"></div>{" "}
-      <div className="absolute top-[60%] -left-24 -z-10 h-[300px] w-[300px] -translate-y-1/2 rounded-full bg-gradient-to-r from-cyan-200 to-sky-300 opacity-30 blur-3xl animate-blob animation-delay-4800"></div>{" "}
-      <div className="absolute top-[65%] left-1/3 -z-10 h-[700px] w-[700px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-r from-purple-200 to-pink-300 opacity-25 blur-3xl animate-blob animation-delay-7000"></div>{" "}
-      <div className="absolute top-[57%] left-[15%] -z-10 h-[350px] w-[350px] rounded-full bg-gradient-to-br from-emerald-200 to-green-400 opacity-30 blur-3xl animate-blob animation-delay-6000"></div>
-      <div className="absolute top-[61%] right-[20%] -z-10 h-[250px] w-[250px] rounded-full bg-gradient-to-tl from-rose-200 to-red-300 opacity-25 blur-3xl animate-blob animation-delay-7500"></div>
+      <div className="absolute -top-32 -left-48 h-[400px] w-[400px] rounded-full bg-gradient-to-br from-pink-500 to-purple-600 opacity-50 blur-3xl animate-blob animation-delay-1000"></div>
+      <div className="absolute -top-32 -right-48 h-[400px] w-[400px] rounded-full bg-gradient-to-bl from-teal-400 to-blue-500 opacity-50 blur-3xl animate-blob animation-delay-3000"></div>
+      <div className="absolute -top-40 left-1/2 h-[450px] w-[450px] -translate-x-1/3 rounded-full bg-gradient-to-b from-cyan-400 to-indigo-500 opacity-50 blur-3xl animate-blob animation-delay-2500"></div>
+      <div className="absolute top-1/6 left-1/4 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-[#ff5ca0] to-[#7b73fc] opacity-45 blur-3xl animate-blob animation-delay-2000"></div>
+      <div className="absolute top-1/6 right-1/4 h-[450px] w-[450px] translate-x-1/2 rounded-full bg-gradient-to-tl from-amber-400 to-orange-500 opacity-45 blur-3xl animate-blob animation-delay-4000"></div>
+      <div className="absolute top-[20%] left-1/6 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-400 to-teal-500 opacity-45 blur-3xl animate-blob animation-delay-5000"></div>
+      <div className="absolute top-[25%] right-1/6 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-rose-400 to-pink-500 opacity-45 blur-3xl animate-blob animation-delay-6000"></div>
+      <div className="absolute top-[32%] left-1/5 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-400 to-teal-500 opacity-45 blur-3xl animate-blob animation-delay-5000"></div>
+      <div className="absolute top-[37%] right-1/5 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-rose-400 to-pink-500 opacity-45 blur-3xl animate-blob animation-delay-6000"></div>
+      <div className="absolute top-[42%] left-1/4 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-400 to-teal-500 opacity-45 blur-3xl animate-blob animation-delay-5000"></div>
+      <div className="absolute top-[36%] -left-48 h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-violet-200 to-purple-300 opacity-45 blur-3xl animate-blob animation-delay-1500"></div>
+      <div className="absolute top-[36%] -right-48 h-[500px] w-[500px] rounded-full bg-gradient-to-tl from-sky-200 to-blue-300 opacity-45 blur-3xl animate-blob animation-delay-3500"></div>
+      <div className="absolute top-[48%] left-1/6 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-200 to-teal-300 opacity-45 blur-3xl animate-blob animation-delay-5000"></div>
+      <div className="absolute top-[48%] right-1/6 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-rose-200 to-pink-300 opacity-45 blur-3xl animate-blob animation-delay-6000"></div>
+
+      {/* === TRANSFORM YOUR CAREER SECTION === */}
+      <div className="absolute top-[55%] -left-12 h-[300px] w-[300px] rounded-full bg-gradient-to-r from-green-200 to-cyan-300 opacity-55 blur-3xl animate-blob animation-delay-500"></div>
+      <div className="absolute top-[55%] -right-12 h-[300px] w-[300px] rounded-full bg-gradient-to-l from-blue-200 to-green-300 opacity-55 blur-3xl animate-blob animation-delay-3200"></div>
+      <div className="absolute top-[60%] -left-24 h-[300px] w-[300px] -translate-y-1/2 rounded-full bg-gradient-to-r from-cyan-200 to-sky-300 opacity-50 blur-3xl animate-blob animation-delay-4800"></div>
+      <div className="absolute top-[65%] left-1/3 h-[700px] w-[700px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-r from-purple-200 to-pink-300 opacity-45 blur-3xl animate-blob animation-delay-7000"></div>
+      <div className="absolute top-[57%] left-[15%] h-[350px] w-[350px] rounded-full bg-gradient-to-br from-emerald-200 to-green-400 opacity-50 blur-3xl animate-blob animation-delay-6000"></div>
+      <div className="absolute top-[61%] right-[20%] h-[250px] w-[250px] rounded-full bg-gradient-to-tl from-rose-200 to-red-300 opacity-45 blur-3xl animate-blob animation-delay-7500"></div>
+
       {/* === UNLOCK POTENTIAL SECTION === */}
-      {/* Mid-section blobs for content coverage */}
-      <div className="absolute top-[72%] -left-56 -z-10 h-[350px] w-[350px] rounded-full bg-gradient-to-r from-sky-400 to-indigo-500 opacity-30 blur-3xl animate-blob animation-delay-1500"></div>{" "}
-      <div className="absolute top-[78%] -right-56 -z-10 h-[350px] w-[350px] rounded-full bg-gradient-to-l from-rose-400 to-fuchsia-500 opacity-30 blur-3xl animate-blob animation-delay-3500"></div>{" "}
-      <div className="absolute top-[75%] left-1/2 -z-10 h-[300px] w-[300px] -translate-x-1/4 -translate-y-1/4 rounded-full bg-gradient-to-tr from-yellow-300 to-orange-400 opacity-35 blur-3xl animate-blob animation-delay-8000"></div>{" "}
-      <div className="absolute top-[74%] left-[10%] -z-10 h-[400px] w-[400px] rounded-full bg-gradient-to-bl from-cyan-300 to-sky-500 opacity-25 blur-3xl animate-blob animation-delay-5500"></div>
-      <div className="absolute top-[77%] right-[5%] -z-10 h-[300px] w-[300px] rounded-full bg-gradient-to-tr from-pink-300 to-purple-400 opacity-30 blur-3xl animate-blob animation-delay-9000"></div>
+      <div className="absolute top-[72%] -left-56 h-[350px] w-[350px] rounded-full bg-gradient-to-r from-sky-400 to-indigo-500 opacity-50 blur-3xl animate-blob animation-delay-1500"></div>
+      <div className="absolute top-[78%] -right-56 h-[350px] w-[350px] rounded-full bg-gradient-to-l from-rose-400 to-fuchsia-500 opacity-50 blur-3xl animate-blob animation-delay-3500"></div>
+      <div className="absolute top-[75%] left-1/2 h-[300px] w-[300px] -translate-x-1/4 -translate-y-1/4 rounded-full bg-gradient-to-tr from-yellow-300 to-orange-400 opacity-55 blur-3xl animate-blob animation-delay-8000"></div>
+      <div className="absolute top-[74%] left-[10%] h-[400px] w-[400px] rounded-full bg-gradient-to-bl from-cyan-300 to-sky-500 opacity-45 blur-3xl animate-blob animation-delay-5500"></div>
+      <div className="absolute top-[77%] right-[5%] h-[300px] w-[300px] rounded-full bg-gradient-to-tr from-pink-300 to-purple-400 opacity-50 blur-3xl animate-blob animation-delay-9000"></div>
+
       {/* === BEST EXPERTS SECTION === */}
-      {/* Coverage for experts showcase */}
-      <div className="absolute top-2/3 -right-48 -z-10 h-[300px] w-[300px] -translate-y-1/2 rounded-full bg-gradient-to-l from-pink-300 to-orange-300 opacity-30 blur-3xl animate-blob animation-delay-2200"></div>{" "}
-      <div className="absolute top-2/3 left-1/4 -z-10 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-gradient-to-br from-purple-300 to-pink-400 opacity-30 blur-3xl animate-blob animation-delay-9500"></div>{" "}
+      <div className="absolute top-2/3 -right-48 h-[300px] w-[300px] -translate-y-1/2 rounded-full bg-gradient-to-l from-pink-300 to-orange-300 opacity-50 blur-3xl animate-blob animation-delay-2200"></div>
+      <div className="absolute top-2/3 left-1/4 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-gradient-to-br from-purple-300 to-pink-400 opacity-50 blur-3xl animate-blob animation-delay-9500"></div>
+
       {/* === FEATURED EXPERTS SECTION === */}
-      {/* Marquee section ambient lighting */}
-      <div className="absolute top-3/4 right-1/4 -z-10 h-[450px] w-[450px] translate-x-1/2 rounded-full bg-gradient-to-tl from-orange-300 to-yellow-400 opacity-30 blur-3xl animate-blob animation-delay-10000"></div>{" "}
-      <div className="absolute top-3/5 -right-32 -z-10 h-[400px] w-[400px] rounded-full bg-gradient-to-l from-red-200 to-rose-300 opacity-30 blur-3xl animate-blob animation-delay-11000"></div>{" "}
+      <div className="absolute top-3/4 right-1/4 h-[450px] w-[450px] translate-x-1/2 rounded-full bg-gradient-to-tl from-orange-300 to-yellow-400 opacity-50 blur-3xl animate-blob animation-delay-10000"></div>
+      <div className="absolute top-3/5 -right-32 h-[400px] w-[400px] rounded-full bg-gradient-to-l from-red-200 to-rose-300 opacity-50 blur-3xl animate-blob animation-delay-11000"></div>
+
       {/* === OFFERINGS SECTION === */}
-      {/* Grid section support */}
-      <div className="absolute bottom-1/3 left-1/2 -translate-x-1/2 -z-10 h-[350px] w-[350px] rounded-full bg-gradient-to-t from-cyan-200 to-blue-300 opacity-30 blur-3xl animate-blob animation-delay-5500"></div>{" "}
-      <div className="absolute bottom-1/3 left-1/2 -z-10 h-[600px] w-[600px] -translate-x-1/2 rounded-full bg-gradient-to-t from-green-300 to-teal-400 opacity-25 blur-3xl animate-blob animation-delay-10500"></div>{" "}
-      <div className="absolute bottom-1/4 right-1/3 -z-10 h-[600px] w-[600px] translate-x-1/2 translate-y-1/2 rounded-full bg-gradient-to-l from-teal-200 to-cyan-300 opacity-25 blur-3xl animate-blob animation-delay-7500"></div>{" "}
+      <div className="absolute bottom-1/3 left-1/2 -translate-x-1/2 h-[350px] w-[350px] rounded-full bg-gradient-to-t from-cyan-200 to-blue-300 opacity-50 blur-3xl animate-blob animation-delay-5500"></div>
+      <div className="absolute bottom-1/3 left-1/2 -translate-x-1/3 h-[600px] w-[600px] rounded-full bg-gradient-to-t from-green-300 to-teal-400 opacity-45 blur-3xl animate-blob animation-delay-10500"></div>
+      <div className="absolute bottom-1/4 right-1/3 translate-x-1/2 translate-y-1/2 h-[600px] w-[600px] rounded-full bg-gradient-to-l from-teal-200 to-cyan-300 opacity-45 blur-3xl animate-blob animation-delay-7500"></div>
+
       {/* === TESTIMONIALS SECTION === */}
-      {/* Marquee testimonials ambient coverage */}
-      <div className="absolute -bottom-1/4 right-1/4 -z-10 h-[500px] w-[500px] translate-x-1/2 rounded-full bg-gradient-to-tr from-[#facc15] to-[#fb923c] opacity-30 blur-3xl animate-blob animation-delay-4000"></div>{" "}
-      <div className="absolute -bottom-32 -left-32 -z-10 h-[400px] w-[400px] rounded-full bg-gradient-to-tr from-lime-300 to-green-400 opacity-30 blur-3xl animate-blob animation-delay-5000"></div>{" "}
-      <div className="absolute -bottom-32 -right-32 -z-10 h-[400px] w-[400px] rounded-full bg-gradient-to-tl from-orange-300 to-red-400 opacity-30 blur-3xl animate-blob animation-delay-6000"></div>{" "}
+      <div className="absolute -bottom-1/4 right-1/4 h-[500px] w-[500px] translate-x-1/2 rounded-full bg-gradient-to-tr from-[#facc15] to-[#fb923c] opacity-50 blur-3xl animate-blob animation-delay-4000"></div>
+      <div className="absolute -bottom-32 -left-32 h-[400px] w-[400px] rounded-full bg-gradient-to-tr from-lime-300 to-green-400 opacity-50 blur-3xl animate-blob animation-delay-5000"></div>
+      <div className="absolute -bottom-32 -right-32 h-[400px] w-[400px] rounded-full bg-gradient-to-tl from-orange-300 to-red-400 opacity-50 blur-3xl animate-blob animation-delay-6000"></div>
+
       {/* === HOW PROCESS WORKS SECTION === */}
-      {/* Process flow section coverage */}
-      <div className="absolute -bottom-40 left-1/2 -z-10 h-[450px] w-[450px] -translate-x-1/2 rounded-full bg-gradient-to-t from-amber-300 to-yellow-500 opacity-30 blur-3xl animate-blob animation-delay-4500"></div>{" "}
-      <div className="absolute -bottom-60 left-1/2 -z-10 h-[600px] w-[600px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-green-300 to-yellow-400 opacity-25 blur-3xl animate-blob animation-delay-1000"></div>{" "}
-      <div className="absolute -bottom-80 left-1/3 -z-10 h-[700px] w-[700px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-lime-200 to-teal-400 opacity-30 blur-3xl animate-blob animation-delay-3800"></div>{" "}
-      <div className="absolute -bottom-80 right-1/3 -z-10 h-[700px] w-[700px] translate-x-1/2 rounded-full bg-gradient-to-tl from-sky-300 to-indigo-400 opacity-30 blur-3xl animate-blob animation-delay-5200"></div>{" "}
+      <div className="absolute -bottom-40 left-1/2 h-[450px] w-[450px] -translate-x-1/2 rounded-full bg-gradient-to-t from-amber-300 to-yellow-500 opacity-50 blur-3xl animate-blob animation-delay-4500"></div>
+      <div className="absolute -bottom-60 left-1/2 h-[600px] w-[600px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-green-300 to-yellow-400 opacity-45 blur-3xl animate-blob animation-delay-1000"></div>
+      <div className="absolute -bottom-80 left-1/3 h-[700px] w-[700px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-lime-200 to-teal-400 opacity-50 blur-3xl animate-blob animation-delay-3800"></div>
+      <div className="absolute -bottom-80 right-1/3 h-[700px] w-[700px] translate-x-1/2 rounded-full bg-gradient-to-tl from-sky-300 to-indigo-400 opacity-50 blur-3xl animate-blob animation-delay-5200"></div>
+
       {/* === JOIN COMMUNITY SECTION === */}
-      {/* Community section ambient lighting */}
-      <div className="absolute top-[78%] -left-32 -z-10 h-[400px] w-[400px] rounded-full bg-gradient-to-tr from-teal-300 to-cyan-400 opacity-30 blur-3xl animate-blob animation-delay-6500"></div>{" "}
-      <div className="absolute top-[78%] -right-32 -z-10 h-[450px] w-[450px] rounded-full bg-gradient-to-tl from-purple-300 to-indigo-400 opacity-30 blur-3xl animate-blob animation-delay-7200"></div>{" "}
-      <div className="absolute bottom-0 left-1/4 -z-10 h-[400px] w-[400px] rounded-full bg-gradient-to-tr from-blue-300 to-indigo-400 opacity-25 blur-3xl animate-blob animation-delay-9000"></div>{" "}
+      <div className="absolute top-[78%] -left-32 h-[400px] w-[400px] rounded-full bg-gradient-to-tr from-teal-300 to-cyan-400 opacity-50 blur-3xl animate-blob animation-delay-6500"></div>
+      <div className="absolute top-[78%] -right-32 h-[450px] w-[450px] rounded-full bg-gradient-to-tl from-purple-300 to-indigo-400 opacity-50 blur-3xl animate-blob animation-delay-7200"></div>
+      <div className="absolute bottom-0 left-1/4 h-[400px] w-[400px] rounded-full bg-gradient-to-tr from-blue-300 to-indigo-400 opacity-45 blur-3xl animate-blob animation-delay-9000"></div>
+
       {/* === FAQ SECTION === */}
-      {/* FAQ section coverage */}
-      <div className="absolute top-[82%] left-1/2 -translate-x-1/2 -z-10 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-25 blur-3xl animate-blob animation-delay-8200"></div>{" "}
-      <div className="absolute top-[86%] left-1/2 -translate-x-1/2 -z-10 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-25 blur-3xl animate-blob animation-delay-8200"></div>{" "}
-      <div className="absolute top-[92%] left-1/2 -translate-x-1/2 -z-10 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-25 blur-3xl animate-blob animation-delay-8200"></div>{" "}
-      <div className="absolute top-[98%] left-1/2 -translate-x-1/2 -z-10 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-25 blur-3xl animate-blob animation-delay-8200"></div>{" "}
-      <div className="absolute -bottom-96 left-1/2 -z-10 h-[800px] w-[800px] -translate-x-1/2 rounded-full bg-gradient-to-t from-green-200 to-cyan-300 opacity-25 blur-3xl animate-blob animation-delay-1800"></div>{" "}
+      <div className="absolute top-[82%] left-1/2 -translate-x-1/2 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-45 blur-3xl animate-blob animation-delay-8200"></div>
+      <div className="absolute top-[86%] left-1/2 -translate-x-1/4 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-45 blur-3xl animate-blob animation-delay-8200"></div>
+      <div className="absolute top-[92%] left-1/2 -translate-x-3/4 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-45 blur-3xl animate-blob animation-delay-8200"></div>
+      <div className="absolute top-[98%] left-1/2 -translate-x-1/2 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-45 blur-3xl animate-blob animation-delay-8200"></div>
+      <div className="absolute -bottom-96 left-1/2 h-[800px] w-[800px] -translate-x-1/2 rounded-full bg-gradient-to-t from-green-200 to-cyan-300 opacity-45 blur-3xl animate-blob animation-delay-1800"></div>
+
       {/* === NEWSLETTER SECTION === */}
-      {/* Bottom newsletter section (black background - minimal ambient) */}
-      <div className="absolute -bottom-40 left-1/2 -z-10 h-[450px] w-[450px] -translate-x-1/2 rounded-full bg-gradient-to-t from-gray-800 to-gray-600 opacity-15 blur-3xl animate-blob animation-delay-4500"></div>{" "}
+      <div className="absolute -bottom-40 left-1/2 h-[450px] w-[450px] -translate-x-1/2 rounded-full bg-gradient-to-t from-gray-800 to-gray-600 opacity-35 blur-3xl animate-blob animation-delay-4500"></div>
     </div>
   );
 };
@@ -848,7 +841,7 @@ export default function Home() {
                 <div className="space-x-4">
                   <Link
                     href="#"
-                    className="inline-flex h-9 items-center justify-center rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-gray-50 shadow transition-colors hover:bg-gray-900/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 disabled:pointer-events-none disabled:opacity-50 dark:bg-gray-50 dark:text-gray-900 dark:hover:bg-gray-50/90 dark:focus-visible:ring-gray-300"
+                    className="inline-flex h-9 items-center justify-center rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-gray-50 shadow transition-colors hover:bg-gray-900/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 disabled:pointer-events-none disabled:opacity-55 dark:bg-gray-50 dark:text-gray-900 dark:hover:bg-gray-50/90 dark:focus-visible:ring-gray-300"
                   >
                     Get Started
                   </Link>
@@ -947,7 +940,7 @@ export default function Home() {
           className="py-16 overflow-hidden relative"
         >
           <div
-            className="absolute inset-0 opacity-30"
+            className="absolute inset-0 opacity-50"
             style={{
               backgroundImage: `radial-gradient(circle at 1px 1px, rgb(0 0 0 / 0.05) 1px, transparent 0)`,
               backgroundSize: "40px 40px",

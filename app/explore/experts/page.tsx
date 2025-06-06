@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { TConsultantProfile } from "@/types/consultant";
 import { FiltersSection } from "./components/FiltersSection";
 import { ConsultantCard } from "./components/ConsultantCard";
@@ -23,7 +23,11 @@ function FindExperts() {
   );
   const [sortBy, setSortBy] = useState<SortOption>("nameAsc");
 
-  const { metadata, isLoading: isLoadingMetadata } = useConsultantsMetadata();
+  const {
+    metadata,
+    isLoading: isLoadingMetadata,
+    refresh: _refreshMetadata,
+  } = useConsultantsMetadata();
 
   const {
     consultants,
@@ -31,6 +35,8 @@ function FindExperts() {
     isLoadingMore,
     hasMore,
     loadMore,
+    prefetchNextPage,
+    refresh: refreshConsultants,
   } = useConsultants({
     selectedDomain,
     selectedSubdomain,
@@ -49,16 +55,25 @@ function FindExperts() {
       observer.current = new IntersectionObserver((entries) => {
         if (entries[0].isIntersecting && hasMore) {
           loadMore();
+          // Prefetch the next page when we're near the end
+          prefetchNextPage();
         }
       });
 
       if (node) observer.current.observe(node);
     },
-    [isLoadingMore, hasMore, loadMore],
+    [isLoadingMore, hasMore, loadMore, prefetchNextPage],
   );
 
   // Group consultants by domain
   const groupedConsultants = groupConsultantsByDomain(consultants);
+
+  // Prefetch next page when component mounts or filters change
+  useEffect(() => {
+    if (!isLoadingConsultants && hasMore) {
+      prefetchNextPage();
+    }
+  }, [isLoadingConsultants, hasMore, prefetchNextPage]);
 
   if (isLoadingMetadata) {
     return (
@@ -92,7 +107,19 @@ function FindExperts() {
         setExperienceYears={setExperienceYears}
       />
 
-      <SearchBar onSearch={setSearchTerm} onSort={setSortBy} sortBy={sortBy} />
+      <SearchBar
+        onSearch={(term) => {
+          setSearchTerm(term);
+          // Reset to first page when search changes
+          refreshConsultants();
+        }}
+        onSort={(option) => {
+          setSortBy(option);
+          // Reset to first page when sort changes
+          refreshConsultants();
+        }}
+        sortBy={sortBy}
+      />
 
       <div className="space-y-4 min-h-[400px] relative">
         {isLoadingConsultants ? (
