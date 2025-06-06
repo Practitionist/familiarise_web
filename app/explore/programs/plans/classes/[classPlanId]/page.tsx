@@ -2,7 +2,10 @@
 
 import { use, useEffect, useState } from "react";
 import { redirect } from "next/navigation";
-import { ClassDetails, type ClassPlanDetailsData } from "./components/ClassDetails";
+import {
+  ClassDetails,
+  type ClassPlanDetailsData,
+} from "./components/ClassDetails";
 
 export default function ClassDetailsPage({
   params,

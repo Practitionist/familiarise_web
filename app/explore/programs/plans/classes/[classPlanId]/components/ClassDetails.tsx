@@ -14,7 +14,13 @@ import {
   Award,
 } from "lucide-react";
 import { ClientClassRegistration } from "./ClientClassRegistration";
-import type { Prisma, Class as PrismaClass, Appointment as PrismaAppointment, SlotOfAppointment as PrismaSlotOfAppointment, Topic } from "@prisma/client";
+import type {
+  Prisma,
+  Class as PrismaClass,
+  Appointment as PrismaAppointment,
+  SlotOfAppointment as PrismaSlotOfAppointment,
+  Topic,
+} from "@prisma/client";
 import {
   generateProgramImageUrl,
   // ClassPlanProgram, // We are defining a more specific type below
@@ -28,28 +34,34 @@ type ClassSessionWithSchedule = PrismaClass & {
 };
 
 // Define the main data structure for the class details page
-export type ClassPlanDetailsData = Omit<Prisma.ClassPlanGetPayload<{
-  include: {
-    consultantProfile: {
-      include: {
-        user: { select: { id: true; name: true; image: true } };
-        domain: true;
-        subDomains: true;
-        tags: true;
+export type ClassPlanDetailsData = Omit<
+  Prisma.ClassPlanGetPayload<{
+    include: {
+      consultantProfile: {
+        include: {
+          user: { select: { id: true; name: true; image: true } };
+          domain: true;
+          subDomains: true;
+          tags: true;
+        };
       };
+      // classes: true, // We will override this in the Omit<..., "classes"> & { classes: ... }
+      topics: true;
+      classContents: true;
     };
-    // classes: true, // We will override this in the Omit<..., "classes"> & { classes: ... }
-    topics: true;
-    classContents: true;
-  };
-}>, "classes"> & { // Omit the original 'classes' to replace it with our detailed one
+  }>,
+  "classes"
+> & {
+  // Omit the original 'classes' to replace it with our detailed one
   classes: ClassSessionWithSchedule[];
   type: "class"; // Keep the type literal for consistency if needed
   imageUrl: string; // Keep imageUrl if used by ClassDetails
 };
 
 // Helper function for badge variant based on session status
-const getBadgeVariant = (currentStatus: string): "outline" | "destructive" | "default" => {
+const getBadgeVariant = (
+  currentStatus: string,
+): "outline" | "destructive" | "default" => {
   if (currentStatus === "Completed") return "outline";
   if (currentStatus === "Happening Now") return "destructive";
   return "default";
@@ -214,57 +226,104 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                     {plan.classes && plan.classes.length > 0 ? (
                       <div className="space-y-4">
                         {plan.classes.map((classInstance, classIndex) => (
-                          <div key={classInstance.id} className="p-4 border rounded-lg bg-gray-50">
-                            <h3 className="font-medium text-lg mb-2">
-                              {`Class Session ${classIndex + 1}`}
-                            </h3>
-                            {classInstance.appointments && classInstance.appointments.length > 0 ? (
+                          <div
+                            key={classInstance.id}
+                            className="p-4 border rounded-lg bg-gray-50"
+                          >
+                            {plan.classes.length > 1 && (
+                              <h3 className="font-medium text-lg mb-2">
+                                {`Class Session ${classIndex + 1}`}
+                              </h3>
+                            )}
+                            {classInstance.appointments &&
+                            classInstance.appointments.length > 0 ? (
                               classInstance.appointments.map((appointment) => (
-                                <div key={appointment.id} className="space-y-1 mb-2">
-                                  {appointment.slotsOfAppointment && appointment.slotsOfAppointment.length > 0 ? (
-                                    appointment.slotsOfAppointment.map((slot, slotIndex) => {
-                                      const startTime = new Date(slot.slotStartTimeInUTC);
-                                      const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                                      const formattedStartTime = new Intl.DateTimeFormat(navigator.language, {
-                                        dateStyle: 'full',
-                                        timeStyle: 'long',
-                                        timeZone: userTimeZone,
-                                      }).format(startTime);
+                                <div
+                                  key={appointment.id}
+                                  className="space-y-1 mb-2"
+                                >
+                                  {appointment.slotsOfAppointment &&
+                                  appointment.slotsOfAppointment.length > 0 ? (
+                                    appointment.slotsOfAppointment.map(
+                                      (slot, slotIndex) => {
+                                        const startTime = new Date(
+                                          slot.slotStartTimeInUTC,
+                                        );
+                                        const userTimeZone =
+                                          Intl.DateTimeFormat().resolvedOptions()
+                                            .timeZone;
+                                        const formattedStartTime =
+                                          new Intl.DateTimeFormat(
+                                            navigator.language,
+                                            {
+                                              dateStyle: "full",
+                                              timeStyle: "long",
+                                              timeZone: userTimeZone,
+                                            },
+                                          ).format(startTime);
 
-                                      // Basic status determination (can be expanded)
-                                      const now = new Date();
-                                      const endTime = slot.slotEndTimeInUTC ? new Date(slot.slotEndTimeInUTC) : null;
-                                      let status = "Upcoming";
-                                      if (endTime && now > endTime) {
-                                        status = "Completed";
-                                      } else if (now >= startTime && (!endTime || now < endTime)) {
-                                        status = "Happening Now";
-                                      }
+                                        // Basic status determination (can be expanded)
+                                        const now = new Date();
+                                        const endTime = slot.slotEndTimeInUTC
+                                          ? new Date(slot.slotEndTimeInUTC)
+                                          : null;
+                                        let status = "Upcoming";
+                                        if (endTime && now > endTime) {
+                                          status = "Completed";
+                                        } else if (
+                                          now >= startTime &&
+                                          (!endTime || now < endTime)
+                                        ) {
+                                          status = "Happening Now";
+                                        }
 
-                                                                            return (
-                                        <div key={slot.id} className="text-sm text-gray-700 pl-4">
-                                          <div> {/* Changed from <p> to <div> */}
-                                            <strong>Slot {slotIndex + 1}:</strong> {formattedStartTime} <Badge variant={getBadgeVariant(status)} className="ml-2">{status}</Badge>
+                                        return (
+                                          <div
+                                            key={slot.id}
+                                            className="text-sm text-gray-700 pl-4"
+                                          >
+                                            <div>
+                                              {" "}
+                                              {/* Changed from <p> to <div> */}
+                                              <strong>
+                                                Session {slotIndex + 1}:
+                                              </strong>{" "}
+                                              {formattedStartTime}{" "}
+                                              <Badge
+                                                variant={getBadgeVariant(
+                                                  status,
+                                                )}
+                                                className="ml-2"
+                                              >
+                                                {status}
+                                              </Badge>
+                                            </div>
                                           </div>
-                                        </div>
-                                      );
-                                    })
+                                        );
+                                      },
+                                    )
                                   ) : (
-                                    <p className="text-sm text-gray-500 pl-4">No specific time slots scheduled for this session yet.</p>
+                                    <p className="text-sm text-gray-500 pl-4">
+                                      No specific time slots scheduled for this
+                                      session yet.
+                                    </p>
                                   )}
                                 </div>
                               ))
                             ) : (
-                              <p className="text-sm text-gray-500">Schedule to be announced for this class session.</p>
+                              <p className="text-sm text-gray-500">
+                                Schedule to be announced for this class session.
+                              </p>
                             )}
                           </div>
                         ))}
                       </div>
                     ) : (
-                      <p className="text-gray-600">Class schedule to be announced.</p>
+                      <p className="text-gray-600">
+                        Class schedule to be announced.
+                      </p>
                     )}
                   </div>
-
                 </div>
               </CardContent>
             </Card>
