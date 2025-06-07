@@ -90,12 +90,13 @@ export default function ClassCheckoutPage({
           process.env.NODE_ENV === "development" ||
           process.env.NODE_ENV === "test"
         ) {
-          const response = await fetch("/api/register/class", {
+          const response = await fetch("/api/checkout", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
+              type: "class",
               classPlanId: resolvedParams.classPlanId,
               discountCode: parsedParams.data.discountCode,
               paymentGateway: gateway,
@@ -111,19 +112,18 @@ export default function ClassCheckoutPage({
         }
 
         // In production, proceed with payment gateway checkout
-        const response = await fetch(
-          `/api/checkout/class/${gateway.toLowerCase()}`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              classPlanId: resolvedParams.classPlanId,
-              discountCode: parsedParams.data.discountCode,
-            }),
+        const response = await fetch("/api/checkout", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
-        );
+          body: JSON.stringify({
+            type: "class",
+            classPlanId: resolvedParams.classPlanId,
+            discountCode: parsedParams.data.discountCode,
+            paymentGateway: gateway,
+          }),
+        });
 
         if (!response.ok) {
           throw new Error("Checkout failed");

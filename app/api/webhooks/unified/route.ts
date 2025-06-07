@@ -1,0 +1,219 @@
+import { NextRequest, NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import { PaymentStatus, RequestStatus, WebinarStatus, ClassStatus } from "@prisma/client";
+import Stripe from "stripe";
+import { verifyRazorpayWebhook } from "@/lib/payment";
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: "2024-06-20",
+});
+
+export async function POST(req: NextRequest) {
+  try {
+    const contentType = req.headers.get("content-type");
+    const userAgent = req.headers.get("user-agent");
+    
+    // Determine payment gateway based on headers
+    let paymentGateway: "STRIPE" | "RAZORPAY" | null = null;
+    
+    if (userAgent?.includes("Stripe")) {
+      paymentGateway = "STRIPE";
+    } else if (req.headers.get("x-razorpay-signature")) {
+      paymentGateway = "RAZORPAY";
+    }
+
+    if (!paymentGateway) {
+      return NextResponse.json({ error: "Unknown payment gateway" }, { status: 400 });
+    }
+
+    const body = await req.text();
+
+    // Handle different payment gateways
+    switch (paymentGateway) {
+      case "STRIPE":
+        return await handleStripeWebhook(req, body);
+      case "RAZORPAY":
+        return await handleRazorpayWebhook(req, body);
+      default:
+        return NextResponse.json({ error: "Unsupported payment gateway" }, { status: 400 });
+    }
+  } catch (error) {
+    console.error("Webhook error:", error);
+    return NextResponse.json({ error: "Webhook handler failed" }, { status: 500 });
+  }
+}
+
+async function handleStripeWebhook(req: NextRequest, body: string) {
+  const signature = req.headers.get("stripe-signature");
+  
+  if (!signature) {
+    return NextResponse.json({ error: "No Stripe signature found" }, { status: 400 });
+  }
+
+  try {
+    const event = stripe.webhooks.constructEvent(
+      body,
+      signature,
+      process.env.STRIPE_WEBHOOK_SECRET!
+    );
+
+    if (event.type === "payment_intent.succeeded") {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+      await handlePaymentSuccess(paymentIntent.id, paymentIntent.receipt_email || undefined);
+    }
+
+    if (event.type === "payment_intent.payment_failed") {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+      await handlePaymentFailure(paymentIntent.id);
+    }
+
+    return NextResponse.json({ received: true });
+  } catch (error) {
+    console.error("Stripe webhook error:", error);
+    return NextResponse.json({ error: "Stripe webhook failed" }, { status: 400 });
+  }
+}
+
+async function handleRazorpayWebhook(req: NextRequest, body: string) {
+  const signature = req.headers.get("x-razorpay-signature");
+  
+  if (!signature) {
+    return NextResponse.json({ error: "No Razorpay signature found" }, { status: 400 });
+  }
+
+  try {
+    const isValid = verifyRazorpayWebhook(
+      body,
+      signature,
+      process.env.RAZORPAY_WEBHOOK_SECRET!
+    );
+
+    if (!isValid) {
+      return NextResponse.json({ error: "Invalid Razorpay signature" }, { status: 400 });
+    }
+
+    const event = JSON.parse(body);
+
+    if (event.event === "payment.captured") {
+      const payment = event.payload.payment.entity;
+      await handlePaymentSuccess(payment.order_id, payment.email);
+    }
+
+    if (event.event === "payment.failed") {
+      const payment = event.payload.payment.entity;
+      await handlePaymentFailure(payment.order_id);
+    }
+
+    return NextResponse.json({ received: true });
+  } catch (error) {
+    console.error("Razorpay webhook error:", error);
+    return NextResponse.json({ error: "Razorpay webhook failed" }, { status: 400 });
+  }
+}
+
+async function handlePaymentSuccess(paymentIntentId: string, receiptEmail?: string) {
+  await prisma.$transaction(async (tx) => {
+    // Find and update payment
+    const payment = await tx.payment.findFirst({
+      where: { paymentIntent: paymentIntentId },
+      include: {
+        appointment: {
+          include: {
+            consultation: true,
+            subscription: true,
+            webinar: true,
+            class: true,
+          },
+        },
+      },
+    });
+
+    if (!payment) {
+      throw new Error("Payment not found");
+    }
+
+    // Update payment status
+    await tx.payment.update({
+      where: { id: payment.id },
+      data: {
+        paymentStatus: PaymentStatus.SUCCEEDED,
+        receiptUrl: receiptEmail ? `receipt_${receiptEmail}` : undefined,
+      },
+    });
+
+    // Make slots non-tentative
+    await tx.slotOfAppointment.updateMany({
+      where: { appointmentId: payment.appointmentId },
+      data: { isTentative: false },
+    });
+
+    // Update appointment status based on type
+    const appointment = payment.appointment;
+    
+    if (appointment.consultation) {
+      await tx.consultation.update({
+        where: { id: appointment.consultation.id },
+        data: { requestStatus: RequestStatus.APPROVED },
+      });
+    }
+
+    if (appointment.subscription) {
+      await tx.subscription.update({
+        where: { id: appointment.subscription.id },
+        data: { requestStatus: RequestStatus.APPROVED },
+      });
+    }
+
+    if (appointment.webinar) {
+      await tx.webinar.update({
+        where: { id: appointment.webinar.id },
+        data: { status: WebinarStatus.SCHEDULED },
+      });
+    }
+
+    if (appointment.class) {
+      await tx.class.update({
+        where: { id: appointment.class.id },
+        data: { status: ClassStatus.SCHEDULED },
+      });
+    }
+  });
+}
+
+async function handlePaymentFailure(paymentIntentId: string) {
+  await prisma.$transaction(async (tx) => {
+    // Find and update payment
+    const payment = await tx.payment.findFirst({
+      where: { paymentIntent: paymentIntentId },
+    });
+
+    if (!payment) {
+      throw new Error("Payment not found");
+    }
+
+    // Update payment status
+    await tx.payment.update({
+      where: { id: payment.id },
+      data: { paymentStatus: PaymentStatus.FAILED },
+    });
+
+    // Delete tentative slots (cancel booking)
+    await tx.slotOfAppointment.deleteMany({
+      where: { 
+        appointmentId: payment.appointmentId,
+        isTentative: true,
+      },
+    });
+
+    // Delete the appointment if no slots remain
+    const remainingSlots = await tx.slotOfAppointment.count({
+      where: { appointmentId: payment.appointmentId },
+    });
+
+    if (remainingSlots === 0) {
+      await tx.appointment.delete({
+        where: { id: payment.appointmentId },
+      });
+    }
+  });
+} 

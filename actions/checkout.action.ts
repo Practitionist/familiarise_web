@@ -1,0 +1,526 @@
+"use server";
+
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
+import prisma from "@/lib/prisma";
+import { z } from "zod";
+import { 
+  AppointmentsType, 
+  PaymentStatus, 
+  RequestStatus,
+  WebinarStatus,
+  ClassStatus 
+} from "@prisma/client";
+import { createPaymentIntent } from "@/lib/payment";
+
+// Unified checkout schema (same as API route)
+const unifiedCheckoutSchema = z.object({
+  appointmentType: z.enum(["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS"]),
+  planId: z.string(),
+  eventId: z.string().optional(),
+  slotStartTimeInUTC: z.string().datetime().optional(),
+  slotEndTimeInUTC: z.string().datetime().optional(),
+  slotOfAvailabilityWeeklyId: z.string().optional(),
+  slotOfAvailabilityCustomId: z.string().optional(),
+  discountCode: z.string().optional(),
+  paymentGateway: z.enum(["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"]),
+  notes: z.string().optional(),
+}).refine((data) => {
+  if (["CONSULTATION", "SUBSCRIPTION"].includes(data.appointmentType)) {
+    return data.slotStartTimeInUTC && data.slotEndTimeInUTC;
+  }
+  return true;
+}, {
+  message: "Consultation and subscription require slot timing"
+}).refine((data) => {
+  if (["WEBINAR", "CLASS"].includes(data.appointmentType)) {
+    return data.eventId;
+  }
+  return true;
+}, {
+  message: "Webinar and class require eventId"
+});
+
+type CheckoutInput = z.infer<typeof unifiedCheckoutSchema>;
+
+export async function checkoutAction(data: CheckoutInput) {
+  try {
+    // Check authentication
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return { error: "Unauthorized" };
+    }
+
+    // Validate input
+    const validatedData = unifiedCheckoutSchema.parse(data);
+
+    // Check if payment should be skipped
+    const skipPayment = process.env.SKIP_PAYMENT === "true";
+
+    // Start transaction
+    const result = await prisma.$transaction(async (tx) => {
+      let appointment;
+      let plan;
+      let amount = 0;
+
+      // Get user profile
+      const user = await tx.user.findUnique({
+        where: { id: session.user.id },
+        include: {
+          consulteeProfile: true,
+        },
+      });
+
+      if (!user?.consulteeProfile) {
+        throw new Error("User profile not found");
+      }
+
+      // Handle different appointment types
+      switch (validatedData.appointmentType) {
+        case "CONSULTATION":
+          ({ appointment, plan, amount } = await handleConsultationCheckout(
+            tx, validatedData, user.consulteeProfile.id, skipPayment
+          ));
+          break;
+
+        case "SUBSCRIPTION":
+          ({ appointment, plan, amount } = await handleSubscriptionCheckout(
+            tx, validatedData, user.consulteeProfile.id, skipPayment
+          ));
+          break;
+
+        case "WEBINAR":
+          ({ appointment, plan, amount } = await handleWebinarCheckout(
+            tx, validatedData, user.id, skipPayment
+          ));
+          break;
+
+        case "CLASS":
+          ({ appointment, plan, amount } = await handleClassCheckout(
+            tx, validatedData, user.id, skipPayment
+          ));
+          break;
+
+        default:
+          throw new Error("Invalid appointment type");
+      }
+
+      // Apply discount if provided
+      let discountCodeId = null;
+      if (validatedData.discountCode) {
+        const discount = await tx.discountCode.findUnique({
+          where: { code: validatedData.discountCode },
+        });
+        
+        if (discount) {
+          discountCodeId = discount.id;
+          amount = discount.discountType === "PERCENTAGE"
+            ? amount * (1 - discount.discountValue / 100)
+            : Math.max(0, amount - discount.discountValue);
+        }
+      }
+
+      // Handle payment processing
+      if (skipPayment) {
+        // Create successful payment record for skipped payment
+        await tx.payment.create({
+          data: {
+            amount,
+            currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
+            paymentMethod: "SKIPPED",
+            paymentIntent: `skip_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+            paymentGateway: validatedData.paymentGateway,
+            paymentStatus: PaymentStatus.SUCCEEDED,
+            user: { connect: { id: session.user.id } },
+            appointment: { connect: { id: appointment.id } },
+            discountCode: discountCodeId ? { connect: { id: discountCodeId } } : undefined,
+          },
+        });
+
+        // Immediately confirm the appointment
+        await confirmAppointment(tx, appointment.id, validatedData.appointmentType);
+
+        return {
+          success: true,
+          message: "Appointment booked successfully (payment skipped)",
+          appointmentId: appointment.id,
+          skipPayment: true,
+        };
+      } else {
+        // Create payment intent/order
+        let paymentResponse;
+        
+        paymentResponse = await createPaymentIntent({
+          amount,
+          currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
+          metadata: {
+            appointmentId: appointment.id,
+            userId: session.user.id,
+            appointmentType: validatedData.appointmentType,
+          },
+          paymentGateway: validatedData.paymentGateway,
+        });
+
+        // Create payment record
+        await tx.payment.create({
+          data: {
+            amount,
+            currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
+            paymentMethod: "CARD",
+            paymentIntent: paymentResponse.id,
+            paymentGateway: validatedData.paymentGateway,
+            paymentStatus: PaymentStatus.PENDING,
+            user: { connect: { id: session.user.id } },
+            appointment: { connect: { id: appointment.id } },
+            discountCode: discountCodeId ? { connect: { id: discountCodeId } } : undefined,
+          },
+        });
+
+        return {
+          success: true,
+          paymentIntent: paymentResponse,
+          appointmentId: appointment.id,
+          amount,
+          currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
+        };
+      }
+    });
+
+    return result;
+  } catch (error) {
+    console.error("Checkout error:", error);
+    return {
+      error: error instanceof Error ? error.message : "Checkout failed",
+    };
+  }
+}
+
+// Helper functions (copied from API route)
+async function handleConsultationCheckout(
+  tx: any, 
+  data: CheckoutInput, 
+  consulteeProfileId: string,
+  skipPayment: boolean
+) {
+  const plan = await tx.consultationPlan.findUnique({
+    where: { id: data.planId },
+    include: {
+      consultantProfile: {
+        include: {
+          user: true,
+        },
+      },
+    },
+  });
+
+  if (!plan) {
+    throw new Error("Consultation plan not found");
+  }
+
+  // Check slot availability
+  await validateSlotAvailability(tx, data);
+
+  // Create consultation
+  const consultation = await tx.consultation.create({
+    data: {
+      consultationPlan: { connect: { id: plan.id } },
+      requestStatus: skipPayment ? RequestStatus.APPROVED : RequestStatus.PENDING,
+      requestedBy: { connect: { id: consulteeProfileId } },
+      requestNotes: data.notes,
+      directlyBooked: true,
+    },
+  });
+
+  // Create appointment
+  const appointment = await tx.appointment.create({
+    data: {
+      appointmentType: AppointmentsType.CONSULTATION,
+      consultation: { connect: { id: consultation.id } },
+      slotsOfAppointment: {
+        create: {
+          slotStartTimeInUTC: new Date(data.slotStartTimeInUTC!),
+          slotEndTimeInUTC: new Date(data.slotEndTimeInUTC!),
+          isTentative: !skipPayment,
+        },
+      },
+    },
+  });
+
+  return { appointment, plan, amount: plan.price };
+}
+
+async function handleSubscriptionCheckout(
+  tx: any, 
+  data: CheckoutInput, 
+  consulteeProfileId: string,
+  skipPayment: boolean
+) {
+  const plan = await tx.subscriptionPlan.findUnique({
+    where: { id: data.planId },
+    include: {
+      consultantProfile: {
+        include: {
+          user: true,
+        },
+      },
+    },
+  });
+
+  if (!plan) {
+    throw new Error("Subscription plan not found");
+  }
+
+  // Check slot availability
+  await validateSlotAvailability(tx, data);
+
+  // Calculate subscription end date
+  const startDate = new Date();
+  const endDate = new Date(startDate);
+  endDate.setMonth(endDate.getMonth() + plan.durationInMonths);
+
+  // Create subscription
+  const subscription = await tx.subscription.create({
+    data: {
+      subscriptionPlan: { connect: { id: plan.id } },
+      requestStatus: skipPayment ? RequestStatus.APPROVED : RequestStatus.PENDING,
+      requestedBy: { connect: { id: consulteeProfileId } },
+      requestNotes: data.notes,
+      startDate,
+      endDate,
+    },
+  });
+
+  // Create appointment
+  const appointment = await tx.appointment.create({
+    data: {
+      appointmentType: AppointmentsType.SUBSCRIPTION,
+      subscription: { connect: { id: subscription.id } },
+      slotsOfAppointment: {
+        create: {
+          slotStartTimeInUTC: new Date(data.slotStartTimeInUTC!),
+          slotEndTimeInUTC: new Date(data.slotEndTimeInUTC!),
+          isTentative: !skipPayment,
+        },
+      },
+    },
+  });
+
+  return { appointment, plan, amount: plan.price };
+}
+
+async function handleWebinarCheckout(
+  tx: any, 
+  data: CheckoutInput, 
+  userId: string,
+  skipPayment: boolean
+) {
+  const webinar = await tx.webinar.findUnique({
+    where: { id: data.eventId },
+    include: {
+      webinarPlan: true,
+      waitlist: true,
+      appointment: {
+        include: {
+          slotsOfAppointment: true,
+        },
+      },
+    },
+  });
+
+  if (!webinar) {
+    throw new Error("Webinar not found");
+  }
+
+  const plan = webinar.webinarPlan;
+  const currentParticipants = webinar.appointment?.slotsOfAppointment?.length || 0;
+
+  // Check if max participants reached
+  if (currentParticipants >= plan.maxParticipants) {
+    if (skipPayment) {
+      // Add to waitlist
+      await tx.waitlist.create({
+        data: {
+          user: { connect: { id: userId } },
+          webinar: { connect: { id: webinar.id } },
+        },
+      });
+      
+      throw new Error("Webinar is full. Added to waitlist.");
+    } else {
+      throw new Error("Webinar is full");
+    }
+  }
+
+  // Create appointment (reuse existing one or create new)
+  let appointment = webinar.appointment;
+  if (!appointment) {
+    appointment = await tx.appointment.create({
+      data: {
+        appointmentType: AppointmentsType.WEBINAR,
+        webinar: { connect: { id: webinar.id } },
+      },
+    });
+  }
+
+  // Add user to webinar
+  await tx.slotOfAppointment.create({
+    data: {
+      appointment: { connect: { id: appointment.id } },
+      slotStartTimeInUTC: webinar.appointment?.slotsOfAppointment[0]?.slotStartTimeInUTC || new Date(),
+      slotEndTimeInUTC: webinar.appointment?.slotsOfAppointment[0]?.slotEndTimeInUTC || new Date(),
+      isTentative: !skipPayment,
+      user: {
+        connect: { id: userId },
+      },
+    },
+  });
+
+  return { appointment, plan, amount: plan.price };
+}
+
+async function handleClassCheckout(
+  tx: any, 
+  data: CheckoutInput, 
+  userId: string,
+  skipPayment: boolean
+) {
+  const classInstance = await tx.class.findUnique({
+    where: { id: data.eventId },
+    include: {
+      classPlan: true,
+      waitlist: true,
+      appointments: {
+        include: {
+          slotsOfAppointment: true,
+        },
+      },
+    },
+  });
+
+  if (!classInstance) {
+    throw new Error("Class not found");
+  }
+
+  const plan = classInstance.classPlan;
+  const currentParticipants = classInstance.appointments.reduce(
+    (total: number, apt: any) => total + apt.slotsOfAppointment.length, 
+    0
+  );
+
+  // Check if max participants reached
+  if (currentParticipants >= plan.maxParticipants) {
+    if (skipPayment) {
+      // Add to waitlist
+      await tx.waitlist.create({
+        data: {
+          user: { connect: { id: userId } },
+          class: { connect: { id: classInstance.id } },
+        },
+      });
+      
+      throw new Error("Class is full. Added to waitlist.");
+    } else {
+      throw new Error("Class is full");
+    }
+  }
+
+  // Create appointment for class
+  const appointment = await tx.appointment.create({
+    data: {
+      appointmentType: AppointmentsType.CLASS,
+      class: { connect: { id: classInstance.id } },
+      slotsOfAppointment: {
+        create: {
+          slotStartTimeInUTC: classInstance.startDate || new Date(),
+          slotEndTimeInUTC: classInstance.endDate || new Date(),
+          isTentative: !skipPayment,
+          user: {
+            connect: { id: userId },
+          },
+        },
+      },
+    },
+  });
+
+  return { appointment, plan, amount: plan.price };
+}
+
+async function validateSlotAvailability(tx: any, data: CheckoutInput) {
+  if (!data.slotStartTimeInUTC || !data.slotEndTimeInUTC) return;
+
+  // Check for overlapping appointments
+  const existingBooking = await tx.slotOfAppointment.findFirst({
+    where: {
+      AND: [
+        {
+          OR: [
+            {
+              AND: [
+                { slotStartTimeInUTC: { lte: new Date(data.slotStartTimeInUTC) } },
+                { slotEndTimeInUTC: { gt: new Date(data.slotStartTimeInUTC) } },
+              ],
+            },
+            {
+              AND: [
+                { slotStartTimeInUTC: { lt: new Date(data.slotEndTimeInUTC) } },
+                { slotEndTimeInUTC: { gte: new Date(data.slotEndTimeInUTC) } },
+              ],
+            },
+          ],
+        },
+        { isTentative: false },
+      ],
+    },
+  });
+
+  if (existingBooking) {
+    throw new Error("Time slot is already booked");
+  }
+}
+
+async function confirmAppointment(tx: any, appointmentId: string, appointmentType: string) {
+  // Make slot non-tentative
+  await tx.slotOfAppointment.updateMany({
+    where: { appointmentId },
+    data: { isTentative: false },
+  });
+
+  // Update specific appointment type status
+  const appointment = await tx.appointment.findUnique({
+    where: { id: appointmentId },
+    include: {
+      consultation: true,
+      subscription: true,
+      webinar: true,
+      class: true,
+    },
+  });
+
+  if (appointment?.consultation) {
+    await tx.consultation.update({
+      where: { id: appointment.consultation.id },
+      data: { requestStatus: RequestStatus.APPROVED },
+    });
+  }
+
+  if (appointment?.subscription) {
+    await tx.subscription.update({
+      where: { id: appointment.subscription.id },
+      data: { requestStatus: RequestStatus.APPROVED },
+    });
+  }
+
+  if (appointment?.webinar) {
+    await tx.webinar.update({
+      where: { id: appointment.webinar.id },
+      data: { status: WebinarStatus.SCHEDULED },
+    });
+  }
+
+  if (appointment?.class) {
+    await tx.class.update({
+      where: { id: appointment.class.id },
+      data: { status: ClassStatus.SCHEDULED },
+    });
+  }
+} 

@@ -49,12 +49,13 @@ export default function WebinarCheckoutPage({
           process.env.NODE_ENV === "development" ||
           process.env.NODE_ENV === "test"
         ) {
-          const response = await fetch("/api/register/webinar", {
+          const response = await fetch("/api/checkout", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
+              type: "webinar",
               webinarId: resolvedParams.webinarId,
               paymentGateway: gateway,
             }),
@@ -69,18 +70,17 @@ export default function WebinarCheckoutPage({
         }
 
         // In production, proceed with payment gateway checkout
-        const response = await fetch(
-          `/api/checkout/webinar/${gateway.toLowerCase()}`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              webinarId: resolvedParams.webinarId,
-            }),
+        const response = await fetch("/api/checkout", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
-        );
+          body: JSON.stringify({
+            type: "webinar",
+            webinarId: resolvedParams.webinarId,
+            paymentGateway: gateway,
+          }),
+        });
 
         if (!response.ok) {
           throw new Error("Checkout failed");

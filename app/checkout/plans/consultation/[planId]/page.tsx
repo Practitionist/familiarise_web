@@ -130,12 +130,13 @@ export default function ConsultationCheckoutPage({
           process.env.NODE_ENV === "development" ||
           process.env.NODE_ENV === "test"
         ) {
-          const response = await fetch("/api/register/consultation", {
+          const response = await fetch("/api/checkout", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
+              type: "consultation",
               consultationPlanId: resolvedParams.planId,
               slotOfAvailabilityWeeklyId:
                 parsedParams.data.slotOfAvailabilityWeeklyId,
@@ -158,25 +159,24 @@ export default function ConsultationCheckoutPage({
         }
 
         // In production, proceed with payment gateway checkout
-        const response = await fetch(
-          `/api/checkout/consultation/${gateway.toLowerCase()}`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              consultationPlanId: resolvedParams.planId,
-              slotOfAvailabilityWeeklyId:
-                parsedParams.data.slotOfAvailabilityWeeklyId,
-              slotOfAvailabilityCustomId:
-                parsedParams.data.slotOfAvailabilityCustomId,
-              slotStartTimeInUTC: parsedParams.data.slotStartTimeInUTC,
-              slotEndTimeInUTC: parsedParams.data.slotEndTimeInUTC,
-              discountCode: parsedParams.data.discountCode,
-            }),
+        const response = await fetch("/api/checkout", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
-        );
+          body: JSON.stringify({
+            type: "consultation",
+            consultationPlanId: resolvedParams.planId,
+            slotOfAvailabilityWeeklyId:
+              parsedParams.data.slotOfAvailabilityWeeklyId,
+            slotOfAvailabilityCustomId:
+              parsedParams.data.slotOfAvailabilityCustomId,
+            slotStartTimeInUTC: parsedParams.data.slotStartTimeInUTC,
+            slotEndTimeInUTC: parsedParams.data.slotEndTimeInUTC,
+            discountCode: parsedParams.data.discountCode,
+            paymentGateway: gateway,
+          }),
+        });
 
         if (!response.ok) {
           throw new Error("Checkout failed");

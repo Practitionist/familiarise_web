@@ -204,3 +204,20 @@ export function convertAmountToSmallestUnit(
 
   return Math.round(amount * (multipliers[currency] || 100));
 }
+
+// Simple Razorpay webhook verification helper for backward compatibility
+export function verifyRazorpayWebhook(
+  body: string,
+  signature: string,
+  secret: string
+): boolean {
+  try {
+    const shasum = crypto.createHmac("sha256", secret);
+    shasum.update(body);
+    const digest = shasum.digest("hex");
+    return digest === signature;
+  } catch (error) {
+    console.error("Razorpay webhook verification failed:", error);
+    return false;
+  }
+}

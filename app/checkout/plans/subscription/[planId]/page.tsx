@@ -69,12 +69,13 @@ export default function SubscriptionCheckoutPage({
           process.env.NODE_ENV === "development" ||
           process.env.NODE_ENV === "test"
         ) {
-          const response = await fetch("/api/register/subscription", {
+          const response = await fetch("/api/checkout", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
+              type: "subscription",
               subscriptionPlanId: resolvedParams.planId,
               discountCode: parsedParams.data.discountCode,
               paymentGateway: gateway,
@@ -90,19 +91,18 @@ export default function SubscriptionCheckoutPage({
         }
 
         // In production, proceed with payment gateway checkout
-        const response = await fetch(
-          `/api/checkout/subscription/${gateway.toLowerCase()}`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              subscriptionPlanId: resolvedParams.planId,
-              discountCode: parsedParams.data.discountCode,
-            }),
+        const response = await fetch("/api/checkout", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
-        );
+          body: JSON.stringify({
+            type: "subscription",
+            subscriptionPlanId: resolvedParams.planId,
+            discountCode: parsedParams.data.discountCode,
+            paymentGateway: gateway,
+          }),
+        });
 
         if (!response.ok) {
           throw new Error("Checkout failed");
