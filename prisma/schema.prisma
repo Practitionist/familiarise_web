@@ -12,20 +12,20 @@ datasource db {
 ////////////////////////////////////////// DO NOT EDIT //////////////////////////////////////////
 
 model User {
-  id                  String    @id @default(cuid())
-  name                String?
-  email               String?   @unique
-  emailVerified       DateTime?
-  image               String?
-  phone               String?   @unique
-  address             String?
-  password            String?
-  passwordResetToken  String?   @unique
+  id                   String    @id @default(cuid())
+  name                 String?
+  email                String?   @unique
+  emailVerified        DateTime?
+  image                String?
+  phone                String?   @unique
+  address              String?
+  password             String?
+  passwordResetToken   String?   @unique
   passwordResetExpires DateTime?
-  onlineStatus        Boolean   @default(false)
-  currentTimezone     String?
-  onboardingCompleted Boolean?  @default(false)
-  role                UserRole? @default(CONSULTEE)
+  onlineStatus         Boolean   @default(false)
+  currentTimezone      String?
+  onboardingCompleted  Boolean?  @default(false)
+  role                 UserRole? @default(CONSULTEE)
 
   cookiePreferences       CookiePreference?
   notificationPreferences NotificationPreference?
@@ -47,8 +47,11 @@ model User {
   supportTickets   SupportTicket[]
   supportResponses SupportResponse[]
 
-  accounts Account[] // NextAuth Accounts
-  sessions Session[] // NextAuth Sessions
+  accounts            Account[] // NextAuth Accounts
+  sessions            Session[] // NextAuth Sessions
+  ClassRegistration   ClassRegistration[]
+  WebinarRegistration WebinarRegistration[]
+  Order               Order[]
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -425,6 +428,7 @@ model Consultation {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  Order     Order?
 }
 
 model SubscriptionPlan {
@@ -472,6 +476,7 @@ model Subscription {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  Order     Order?
 }
 
 enum RequestStatus {
@@ -503,8 +508,9 @@ model WebinarPlan {
   consultantProfileId String?
   webinars            Webinar[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  WebinarRegistration WebinarRegistration[]
 }
 
 model Webinar {
@@ -518,8 +524,9 @@ model Webinar {
 
   appointment Appointment?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  WebinarRegistration WebinarRegistration[]
 
   @@index([webinarPlanId])
 }
@@ -556,8 +563,9 @@ model ClassPlan {
   consultantProfileId String?
   classes             Class[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  ClassRegistration ClassRegistration[]
 }
 
 model Class {
@@ -574,8 +582,9 @@ model Class {
 
   appointments Appointment[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  ClassRegistration ClassRegistration[]
 
   @@index([classPlanId])
 }
@@ -620,8 +629,6 @@ model Appointment {
 
   class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classId String?
-
-  payment Payment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -715,26 +722,151 @@ enum Platform {
 
 ////////////////////////////////////////////// PAYMENT STUFF ////////////////////////////////////////////////////
 
-model Payment {
-  id             String         @id @default(uuid())
-  amount         Int
-  currency       String
-  description    String?
-  receiptUrl     String?
-  paymentMethod  String
-  paymentIntent  String         @unique
-  paymentGateway PaymentGateway
-  paymentStatus  PaymentStatus
+// Old Payment model removed to make way for the new Order-centric Payment model below.
 
-  user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  userId         String
-  appointment    Appointment   @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  appointmentId  String        @unique
-  discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id], onUpdate: Cascade, onDelete: SetNull)
-  discountCodeId String?
+enum ProductType {
+  CLASS
+  WEBINAR
+  CONSULTATION
+  SUBSCRIPTION
+}
+
+enum OrderStatus {
+  PENDING_USER_ACTION
+  AWAITING_PAYMENT
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+model ClassRegistration {
+  id          String     @id @default(cuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  classId     String? // Link to your Class model id
+  class       Class?     @relation(fields: [classId], references: [id], onDelete: SetNull)
+  classPlanId String? // Link to your ClassPlan model id
+  classPlan   ClassPlan? @relation(fields: [classPlanId], references: [id], onDelete: SetNull)
+
+  orderId String @unique
+  order   Order  @relation(name: "OrderToClassRegistration", fields: [orderId], references: [id], onDelete: Cascade)
+
+  status String // Example: "CONFIRMED", "CANCELLED_BY_USER", "WAITLISTED_PENDING_PAYMENT"
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([classId])
+  @@index([classPlanId])
+}
+
+model WebinarRegistration {
+  id            String       @id @default(cuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  webinarId     String? // Link to your Webinar model id
+  webinar       Webinar?     @relation(fields: [webinarId], references: [id], onDelete: SetNull)
+  webinarPlanId String? // Link to your WebinarPlan model id
+  webinarPlan   WebinarPlan? @relation(fields: [webinarPlanId], references: [id], onDelete: SetNull)
+
+  orderId String @unique
+  order   Order  @relation(name: "OrderToWebinarRegistration", fields: [orderId], references: [id], onDelete: Cascade)
+
+  status String // Example: "CONFIRMED", "CANCELLED_BY_USER"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([webinarId])
+  @@index([webinarPlanId])
+}
+
+model Order {
+  id                     String          @id @default(cuid())
+  orderNumber            String          @unique @default(cuid())
+  userId                 String
+  user                   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  totalAmount            Int
+  discountAmount         Int             @default(0)
+  finalAmount            Int
+  currency               String
+  status                 OrderStatus     @default(PENDING_USER_ACTION)
+  paymentGatewayUsed     PaymentGateway?
+  gatewayContext         Json?
+  primaryPaymentIntentId String?         @unique
+  discountCodeId         String?
+  discountCode           DiscountCode?   @relation(fields: [discountCodeId], references: [id], onDelete: SetNull)
+
+  consultationId        String?              @unique
+  consultation          Consultation?        @relation(fields: [consultationId], references: [id], onDelete: SetNull)
+  subscriptionId        String?              @unique
+  subscription          Subscription?        @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  classRegistrationId   String?              @unique
+  classRegistration     ClassRegistration?   @relation(name: "OrderToClassRegistration")
+  webinarRegistrationId String?              @unique
+  webinarRegistration   WebinarRegistration? @relation(name: "OrderToWebinarRegistration")
+
+  items     OrderItem[]
+  payments  Payment[]
+  notes     String?
+  expiresAt DateTime?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([primaryPaymentIntentId])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id           String      @id @default(cuid())
+  orderId      String
+  order        Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productType  ProductType
+  planId       String
+  planTitle    String
+  planSnapshot Json?
+  quantity     Int         @default(1)
+  unitPrice    Int
+  finalPrice   Int
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([orderId])
+  @@index([planId, productType])
+}
+
+// Revised Payment Model
+model Payment {
+  id              String         @id @default(cuid())
+  orderId         String?
+  order           Order?         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount          Int
+  currency        String
+  paymentGateway  PaymentGateway
+  paymentIntent   String         @unique
+  paymentMethod   String?
+  paymentStatus   PaymentStatus
+  description     String?
+  receiptUrl      String?
+  gatewayResponse Json?
+  errorCode       String?
+  errorMessage    String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([orderId])
+  @@index([userId])
+  @@index([paymentIntent])
+  @@index([paymentGateway, paymentStatus])
 }
 
 enum PaymentGateway {
@@ -742,7 +874,7 @@ enum PaymentGateway {
   RAZORPAY
   LEMON_SQUEEZY
   XFLOW
-  CARD
+  CARD // Assuming CARD might be a generic type if not a specific gateway
 }
 
 enum PaymentStatus {
@@ -757,8 +889,8 @@ model DiscountCode {
   description   String
   discountType  DiscountType
   discountValue Float
- 
-  Payment Payment[]
+
+  orders Order[] // Changed from Payment[] to Order[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -767,7 +899,7 @@ model DiscountCode {
 enum DiscountType {
   PERCENTAGE
   FIXED_AMOUNT
-  FREE_SHIPPING
+  FREE_SHIPPING // Kept this if it's still relevant, otherwise can be removed
 }
 
 //////////////////////////////////////////////////// ENUMS ////////////////////////////////////////////////////
