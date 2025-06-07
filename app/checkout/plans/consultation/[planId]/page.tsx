@@ -202,7 +202,20 @@ export default function ConsultationCheckoutPage({
           }
 
           const data = await response.json();
-          window.location.href = "/dashboard/consultee";
+          
+          // Show success toast
+          toast({
+            title: "✅ Consultation Booked Successfully!",
+            description: data.skipPayment 
+              ? "Your consultation has been confirmed. Check your dashboard for details."
+              : "Payment processed successfully. Your consultation is confirmed.",
+            variant: "default",
+          });
+          
+          // Redirect after a short delay to let user see the toast
+          setTimeout(() => {
+            window.location.href = "/dashboard/consultee";
+          }, 2000);
           return;
         }
 

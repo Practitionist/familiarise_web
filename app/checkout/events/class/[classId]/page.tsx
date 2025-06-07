@@ -126,7 +126,21 @@ export default function ClassCheckoutPage({
             throw new Error(errorMessage);
           }
 
-          window.location.href = "/dashboard/consultee";
+          const data = await response.json();
+          
+          // Show success toast
+          toast({
+            title: "✅ Class Registration Successful!",
+            description: data.skipPayment 
+              ? "You're registered for the class. Check your dashboard for details."
+              : "Payment processed successfully. You're registered for the class.",
+            variant: "default",
+          });
+          
+          // Redirect after a short delay to let user see the toast
+          setTimeout(() => {
+            window.location.href = "/dashboard/consultee";
+          }, 2000);
           return;
         }
 

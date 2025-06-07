@@ -138,7 +138,21 @@ export default function SubscriptionCheckoutPage({
             throw new Error(errorMessage);
           }
 
-          window.location.href = "/dashboard/consultee";
+          const data = await response.json();
+          
+          // Show success toast
+          toast({
+            title: "✅ Subscription Activated Successfully!",
+            description: data.skipPayment 
+              ? "Your subscription is now active. Check your dashboard for details."
+              : "Payment processed successfully. Your subscription is now active.",
+            variant: "default",
+          });
+          
+          // Redirect after a short delay to let user see the toast
+          setTimeout(() => {
+            window.location.href = "/dashboard/consultee";
+          }, 2000);
           return;
         }
 
