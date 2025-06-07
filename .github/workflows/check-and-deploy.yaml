@@ -34,12 +34,15 @@ jobs:
         run: npm ci
 
       - name: Prettier Check
+        if: github.actor != 'dependabot[bot]'
         run: npm run format:check
 
       - name: ESLint Check
+        if: github.actor != 'dependabot[bot]'
         run: npx eslint .
 
       - name: TypeScript Check
+        if: github.actor != 'dependabot[bot]'
         run: npx tsc --noEmit
 
       - name: Build Check

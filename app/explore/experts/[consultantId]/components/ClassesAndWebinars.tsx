@@ -93,7 +93,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
           variant="outline"
           className="w-full mt-auto cursor-pointer transition-colors duration-300 hover:bg-black hover:text-white"
           onClick={() =>
-            router.push(`/explore/programs/classes/${classPlan.id}`)
+            router.push(`/explore/programs/plans/classes/${classPlan.id}`)
           }
         >
           Register Now
@@ -167,7 +167,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
           variant="outline"
           className="w-full mt-auto cursor-pointer transition-colors duration-300 hover:bg-black hover:text-white"
           onClick={() =>
-            router.push(`/explore/programs/webinars/${webinarPlan.id}`)
+            router.push(`/explore/programs/plans/webinars/${webinarPlan.id}`)
           }
         >
           Register Now

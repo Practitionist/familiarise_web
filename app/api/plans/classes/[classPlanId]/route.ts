@@ -1,15 +1,15 @@
 import prisma from "@/lib/prisma";
-import { Prisma } from "@prisma/client";
+import { Prisma, PlanEmailSupport } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> },
+  { params }: { params: Promise<{ classPlanId: string }> },
 ) {
   try {
-    const { webinarId } = await params;
-    const webinarPlan = await prisma.webinarPlan.findUniqueOrThrow({
-      where: { id: webinarId },
+    const { classPlanId } = await params;
+    const classPlan = await prisma.classPlan.findUniqueOrThrow({
+      where: { id: classPlanId },
       include: {
         consultantProfile: {
           include: {
@@ -26,25 +26,39 @@ export async function GET(
             tags: true,
           },
         },
-        webinars: true,
+        classes: {
+          include: {
+            appointments: {
+              include: {
+                slotsOfAppointment: true,
+              },
+            },
+          },
+        },
         topics: true,
+        classContents: true,
       },
     });
 
-    return NextResponse.json({ data: webinarPlan }, { status: 200 });
+    const enhancedClassPlan = {
+      ...classPlan,
+      type: "class" as const,
+      imageUrl: "/images/placeholder-class.png", // Using placeholder as no specific image field exists on ClassPlan model
+    };
+    return NextResponse.json({ data: enhancedClassPlan }, { status: 200 });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
     ) {
       return NextResponse.json(
-        { error: "Webinar plan not found" },
+        { error: "Class plan not found" },
         { status: 404 },
       );
     }
-    console.error("Error fetching webinar plan:", error);
+    console.error("Error fetching class plan:", error);
     return NextResponse.json(
-      { error: "An error occurred while fetching the webinar plan" },
+      { error: "An error occurred while fetching the class plan" },
       { status: 500 },
     );
   }
@@ -52,14 +66,14 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> },
+  { params }: { params: Promise<{ classPlanId: string }> },
 ) {
   try {
-    const { webinarId } = await params;
+    const { classPlanId } = await params;
     const body = await request.json();
 
     // Input validation
-    if (body.durationInHours && body.durationInHours <= 0) {
+    if (body.durationInMonths && body.durationInMonths <= 0) {
       return NextResponse.json(
         { error: "Duration must be a positive number" },
         { status: 400 },
@@ -73,6 +87,20 @@ export async function PUT(
       );
     }
 
+    if (body.callsPerWeek && body.callsPerWeek < 0) {
+      return NextResponse.json(
+        { error: "Calls per week must be a non-negative number" },
+        { status: 400 },
+      );
+    }
+
+    if (body.videoMeetings && body.videoMeetings < 0) {
+      return NextResponse.json(
+        { error: "Video meetings must be a non-negative number" },
+        { status: 400 },
+      );
+    }
+
     if (body.maxParticipants && body.maxParticipants <= 0) {
       return NextResponse.json(
         { error: "Maximum participants must be a positive number" },
@@ -80,13 +108,26 @@ export async function PUT(
       );
     }
 
-    const webinarPlan = await prisma.webinarPlan.update({
-      where: { id: webinarId },
+    if (
+      body.emailSupport &&
+      !Object.values(PlanEmailSupport).includes(body.emailSupport)
+    ) {
+      return NextResponse.json(
+        { error: "Invalid email support value" },
+        { status: 400 },
+      );
+    }
+
+    const classPlan = await prisma.classPlan.update({
+      where: { id: classPlanId },
       data: {
         title: body.title,
         description: body.description,
-        durationInHours: body.durationInHours,
-        price: body.price ? Math.round(body.price) : undefined, // Ensure price is an integer
+        durationInMonths: body.durationInMonths,
+        price: body.price,
+        callsPerWeek: body.callsPerWeek,
+        videoMeetings: body.videoMeetings,
+        emailSupport: body.emailSupport as PlanEmailSupport,
         maxParticipants: body.maxParticipants,
         language: body.language,
         level: body.level,
@@ -103,6 +144,19 @@ export async function PUT(
               set: body.topicIds.map((id: string) => ({ id })),
             }
           : undefined,
+        classContents: body.classContents
+          ? {
+              deleteMany: {},
+              create: body.classContents.map((content: any) => ({
+                title: content.title,
+                description: content.description,
+                contentType: content.contentType,
+                contentUrl: content.contentUrl,
+                order: content.order,
+                hoursAllotted: content.hoursAllotted,
+              })),
+            }
+          : undefined,
       },
       include: {
         consultantProfile: {
@@ -120,25 +174,26 @@ export async function PUT(
             tags: true,
           },
         },
-        webinars: true,
+        classes: true,
         topics: true,
+        classContents: true,
       },
     });
 
-    return NextResponse.json({ data: webinarPlan }, { status: 200 });
+    return NextResponse.json({ data: classPlan }, { status: 200 });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
     ) {
       return NextResponse.json(
-        { error: "Webinar plan not found" },
+        { error: "Class plan not found" },
         { status: 404 },
       );
     }
-    console.error("Error updating webinar plan:", error);
+    console.error("Error updating class plan:", error);
     return NextResponse.json(
-      { error: "An error occurred while updating the webinar plan" },
+      { error: "An error occurred while updating the class plan" },
       { status: 500 },
     );
   }
@@ -146,25 +201,25 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> },
+  { params }: { params: Promise<{ classPlanId: string }> },
 ) {
   try {
-    const { webinarId } = await params;
+    const { classPlanId } = await params;
 
-    // Check if there are any associated webinars
-    const associatedWebinars = await prisma.webinar.findMany({
-      where: { webinarPlanId: webinarId },
+    // Check if there are any associated classes
+    const associatedClasses = await prisma.class.findMany({
+      where: { classPlanId: classPlanId },
     });
 
-    if (associatedWebinars.length > 0) {
+    if (associatedClasses.length > 0) {
       return NextResponse.json(
-        { error: "Cannot delete webinar plan with associated webinars" },
+        { error: "Cannot delete class plan with associated classes" },
         { status: 400 },
       );
     }
 
-    const webinarPlan = await prisma.webinarPlan.delete({
-      where: { id: webinarId },
+    const classPlan = await prisma.classPlan.delete({
+      where: { id: classPlanId },
       include: {
         consultantProfile: {
           include: {
@@ -182,23 +237,24 @@ export async function DELETE(
           },
         },
         topics: true,
+        classContents: true,
       },
     });
 
-    return NextResponse.json({ data: webinarPlan }, { status: 200 });
+    return NextResponse.json({ data: classPlan }, { status: 200 });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
     ) {
       return NextResponse.json(
-        { error: "Webinar plan not found" },
+        { error: "Class plan not found" },
         { status: 404 },
       );
     }
-    console.error("Error deleting webinar plan:", error);
+    console.error("Error deleting class plan:", error);
     return NextResponse.json(
-      { error: "An error occurred while deleting the webinar plan" },
+      { error: "An error occurred while deleting the class plan" },
       { status: 500 },
     );
   }

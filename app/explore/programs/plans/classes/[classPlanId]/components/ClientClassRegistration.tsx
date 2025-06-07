@@ -9,20 +9,17 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ClassPlanProgram } from "@/app/explore/programs/utils";
 
 type ClientClassRegistrationProps = {
-  classId: string;
-  price: number;
-  startDate?: Date;
-  language?: string | null;
+  readonly plan: ClassPlanProgram;
 };
 
 export function ClientClassRegistration({
-  classId,
-  price,
-  startDate,
-  language,
+  plan,
 }: ClientClassRegistrationProps) {
+  const { id: classId, price, classes } = plan; // Removed language
+  const startDate = classes?.[0]?.startDate; // Corrected to startDate
   const { data: session } = useSession();
   const isLoggedIn = !!session?.user;
 

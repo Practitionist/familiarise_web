@@ -2,36 +2,38 @@
 
 import { use, useEffect, useState } from "react";
 import { redirect } from "next/navigation";
-import { ClassDetails } from "./components/ClassDetails";
-import type { TClass } from "@/types/appointment";
+import {
+  ClassDetails,
+  type ClassPlanDetailsData,
+} from "./components/ClassDetails";
 
 export default function ClassDetailsPage({
   params,
 }: Readonly<{
-  params: Promise<{ classId: string }>;
+  params: Promise<{ classPlanId: string }>;
 }>) {
-  const [classData, setClassData] = useState<TClass | null>(null);
+  const [classPlan, setClassPlan] = useState<ClassPlanDetailsData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const resolvedParams = use(params);
-  const classId = resolvedParams.classId;
+  const classPlanId = resolvedParams.classPlanId;
 
   useEffect(() => {
-    const fetchClassData = async () => {
+    const fetchClassPlanData = async () => {
       try {
-        const response = await fetch(`/api/events/classes/${classId}`);
-        if (!response.ok) throw new Error("Failed to fetch class data");
+        const response = await fetch(`/api/plans/classes/${classPlanId}`);
+        if (!response.ok) throw new Error("Failed to fetch class plan data");
         const resJson = await response.json();
-        setClassData(resJson.data);
+        setClassPlan(resJson.data);
       } catch (error) {
-        console.error("Error fetching class data:", error);
+        console.error("Error fetching class plan data:", error);
         redirect("/explore/programs/classes");
       } finally {
         setIsLoading(false);
       }
     };
 
-    fetchClassData();
-  }, [classId]);
+    fetchClassPlanData();
+  }, [classPlanId]);
 
   if (isLoading) {
     return (
@@ -41,7 +43,7 @@ export default function ClassDetailsPage({
     );
   }
 
-  if (!classData) return null;
+  if (!classPlan) return null;
 
-  return <ClassDetails classData={classData} />;
+  return <ClassDetails plan={classPlan} />;
 }

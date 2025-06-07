@@ -49,10 +49,10 @@ export default function Programs() {
   );
 
   const handleProgramClick = (item: Program) => {
-    if (item.type === "class") {
-      router.push(`/explore/programs/classes/${item.id}`);
+    if (isClassProgram(item)) {
+      router.push(`/explore/programs/plans/classes/${item.id}`);
     } else {
-      router.push(`/explore/programs/webinars/${item.id}`);
+      router.push(`/explore/programs/plans/webinars/${item.id}`);
     }
   };
 
@@ -234,7 +234,7 @@ export default function Programs() {
 
       {viewMode === "grid" ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredAndSortedPrograms.map((item, index) => (
+          {filteredAndSortedPrograms.map((item: Program, index: number) => (
             <div
               key={item.id}
               ref={
@@ -252,15 +252,11 @@ export default function Programs() {
               }}
               tabIndex={0}
               role="button"
-              aria-label={`View details for ${isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title}`}
+              aria-label={`View details for ${item.title}`}
             >
               <Image
                 src={item.imageUrl}
-                alt={
-                  isClassProgram(item)
-                    ? item.classPlan.title
-                    : item.webinarPlan.title
-                }
+                alt={item.title}
                 width={600}
                 height={400}
                 className="w-full h-48 object-cover"
@@ -269,9 +265,7 @@ export default function Programs() {
               <div className="p-6">
                 <div className="flex justify-between items-start mb-3">
                   <h3 className="text-lg font-semibold text-gray-900">
-                    {isClassProgram(item)
-                      ? item.classPlan.title
-                      : item.webinarPlan.title}
+                    {item.title}
                   </h3>
                   <output
                     className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
@@ -281,16 +275,11 @@ export default function Programs() {
                   </output>
                 </div>
                 <p className="text-gray-600 text-sm mb-4 line-clamp-2">
-                  {isClassProgram(item)
-                    ? item.classPlan.description
-                    : item.webinarPlan.description}
+                  {item.description}
                 </p>
                 <div className="flex items-center justify-between">
                   <div className="text-gray-900 font-semibold">
-                    $
-                    {isClassProgram(item)
-                      ? item.classPlan.price
-                      : item.webinarPlan.price}
+                    $${item.price}
                   </div>
                   <Button
                     variant="outline"
@@ -310,7 +299,7 @@ export default function Programs() {
         </div>
       ) : (
         <div className="space-y-4">
-          {filteredAndSortedPrograms.map((item, index) => (
+          {filteredAndSortedPrograms.map((item: Program, index: number) => (
             <div
               key={item.id}
               ref={
@@ -328,15 +317,11 @@ export default function Programs() {
               }}
               tabIndex={0}
               role="button"
-              aria-label={`View details for ${isClassProgram(item) ? item.classPlan.title : item.webinarPlan.title}`}
+              aria-label={`View details for ${item.title}`}
             >
               <Image
                 src={item.imageUrl}
-                alt={
-                  isClassProgram(item)
-                    ? item.classPlan.title
-                    : item.webinarPlan.title
-                }
+                alt={item.title}
                 width={200}
                 height={150}
                 className="w-48 object-cover"
@@ -345,9 +330,7 @@ export default function Programs() {
               <div className="p-6 flex-1">
                 <div className="flex justify-between items-start mb-3">
                   <h3 className="text-lg font-semibold text-gray-900">
-                    {isClassProgram(item)
-                      ? item.classPlan.title
-                      : item.webinarPlan.title}
+                    {item.title}
                   </h3>
                   <output
                     className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
@@ -357,16 +340,11 @@ export default function Programs() {
                   </output>
                 </div>
                 <p className="text-gray-600 text-sm mb-4 line-clamp-2">
-                  {isClassProgram(item)
-                    ? item.classPlan.description
-                    : item.webinarPlan.description}
+                  {item.description}
                 </p>
                 <div className="flex items-center justify-between">
                   <div className="text-gray-900 font-semibold">
-                    $
-                    {isClassProgram(item)
-                      ? item.classPlan.price
-                      : item.webinarPlan.price}
+                    $${item.price}
                   </div>
                   <Button
                     variant="outline"
