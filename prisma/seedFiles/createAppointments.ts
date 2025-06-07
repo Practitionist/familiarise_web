@@ -13,6 +13,7 @@ import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./createUsers";
 
 const NUM_APPOINTMENTS = 500;
+const BATCH_SIZE = 10; // Process appointments in smaller batches
 
 // Distribution helpers
 const getAppointmentType = (index: number): AppointmentsType => {
@@ -182,10 +183,13 @@ const createSubscriptionAppointment = (
   endDate: Date,
   numSlots: number,
 ): Prisma.AppointmentCreateInput => {
+  // Limit slots to prevent transaction timeout
+  const limitedSlots = Math.min(numSlots, 6); 
+  
   return {
     appointmentType: AppointmentsType.SUBSCRIPTION,
     slotsOfAppointment: {
-      create: Array.from({ length: numSlots }, (_, index) => {
+      create: Array.from({ length: limitedSlots }, (_, index) => {
         const slotStart = new Date(
           startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000,
         );
@@ -199,7 +203,7 @@ const createSubscriptionAppointment = (
           slotEndTimeInUTC: slotEnd,
           isTentative: defaultStatus === RequestStatus.PENDING,
           meetingSession: createMeetingSessionData(
-            isPastAppointment && index === numSlots - 1,
+            isPastAppointment && index === limitedSlots - 1,
           ),
         };
       }),
@@ -211,12 +215,12 @@ const createSubscriptionAppointment = (
             id: faker.helpers.arrayElement(subscriptionPlans).id,
           },
         },
-        startDate: startDate,
-        endDate: endDate,
         requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
         requestStatus: defaultStatus,
         requestedAt: new Date(),
         requestNotes: faker.lorem.sentence(),
+        startDate,
+        endDate,
         feedbackFromConsultee: isPastAppointment
           ? faker.lorem.paragraph()
           : null,
@@ -239,6 +243,9 @@ const createWebinarAppointment = async (
   slotStartTimeInUTC: Date,
   slotEndTimeInUTC: Date,
 ): Promise<Prisma.AppointmentCreateInput> => {
+  // Limit waitlist size to prevent transaction timeout
+  const waitlistSize = Math.min(faker.number.int({ min: 0, max: 3 }), 3);
+  
   return {
     appointmentType: AppointmentsType.WEBINAR,
     slotsOfAppointment: {
@@ -263,11 +270,12 @@ const createWebinarAppointment = async (
         feedbackSummary: isPastAppointment ? faker.lorem.paragraph() : null,
         waitlist: isPastAppointment
           ? undefined
-          : {
+          : waitlistSize > 0
+          ? {
               create: Array.from(
                 new Set(
                   Array.from(
-                    { length: faker.number.int({ min: 0, max: 5 }) },
+                    { length: waitlistSize },
                     () => faker.helpers.arrayElement(consultees).id,
                   ),
                 ),
@@ -276,7 +284,8 @@ const createWebinarAppointment = async (
                   connect: { id: userId },
                 },
               })),
-            },
+            }
+          : undefined,
       },
     },
   };
@@ -291,10 +300,14 @@ const createClassAppointment = async (
   endDate: Date,
   numSlots: number,
 ): Promise<Prisma.AppointmentCreateInput> => {
+  // Limit slots and waitlist to prevent transaction timeout
+  const limitedSlots = Math.min(numSlots, 4);
+  const waitlistSize = Math.min(faker.number.int({ min: 0, max: 3 }), 3);
+  
   return {
     appointmentType: AppointmentsType.CLASS,
     slotsOfAppointment: {
-      create: Array.from({ length: numSlots }, (_, index) => {
+      create: Array.from({ length: limitedSlots }, (_, index) => {
         const slotStart = new Date(
           startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000,
         );
@@ -308,7 +321,7 @@ const createClassAppointment = async (
           slotEndTimeInUTC: slotEnd,
           isTentative: false,
           meetingSession: createMeetingSessionData(
-            isPastAppointment && index === numSlots - 1,
+            isPastAppointment && index === limitedSlots - 1,
           ),
         };
       }),
@@ -324,17 +337,18 @@ const createClassAppointment = async (
           ? ClassStatus.COMPLETED
           : faker.helpers.arrayElement(Object.values(ClassStatus)),
         recordingUrls: Array.from(
-          { length: faker.number.int({ min: 0, max: 5 }) },
+          { length: faker.number.int({ min: 0, max: 3 }) }, // Reduced from 5 to 3
           () => faker.internet.url(),
         ),
         feedbackSummary: isPastAppointment ? faker.lorem.paragraph() : null,
         waitlist: isPastAppointment
           ? undefined
-          : {
+          : waitlistSize > 0
+          ? {
               create: Array.from(
                 new Set(
                   Array.from(
-                    { length: faker.number.int({ min: 0, max: 5 }) },
+                    { length: waitlistSize },
                     () => faker.helpers.arrayElement(consultees).id,
                   ),
                 ),
@@ -343,31 +357,26 @@ const createClassAppointment = async (
                   connect: { id: userId },
                 },
               })),
-            },
+            }
+          : undefined,
       },
     },
   };
 };
 
-export async function createAppointments(consultees: UserWithProfiles[]) {
-  console.log(`Creating ${NUM_APPOINTMENTS} appointments...`);
-  const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
-    take: NUM_APPOINTMENTS / 2,
-  });
-  const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
-    take: NUM_APPOINTMENTS / 2,
-  });
-  const consultationPlans = await prisma.consultationPlan.findMany();
-  const subscriptionPlans = await prisma.subscriptionPlan.findMany();
-  const webinarPlans = await prisma.webinarPlan.findMany();
-  const classPlans = await prisma.classPlan.findMany();
-
-  const allSlots: SlotData[] = [
-    ...weeklySlots.map((slot) => ({ type: "weekly" as const, slot })),
-    ...customSlots.map((slot) => ({ type: "custom" as const, slot })),
-  ];
-
-  for (let i = 0; i < NUM_APPOINTMENTS; i++) {
+async function createAppointmentBatch(
+  consultees: UserWithProfiles[],
+  allSlots: SlotData[],
+  consultationPlans: any[],
+  subscriptionPlans: any[],
+  webinarPlans: any[],
+  classPlans: any[],
+  startIndex: number,
+  batchSize: number,
+): Promise<number> {
+  let successCount = 0;
+  
+  for (let i = startIndex; i < Math.min(startIndex + batchSize, NUM_APPOINTMENTS); i++) {
     const consultee = consultees[i % consultees.length];
     const slotData = allSlots[i];
 
@@ -389,10 +398,8 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
       const { startDate, endDate, isPastAppointment } = getAppointmentDate(now);
       const defaultStatus = getAppointmentStatus(i, isPastAppointment);
       const numSlots = getNumSlots(appointmentType);
+      
       // Extract just the time pattern (hours and minutes) from the slot
-      // Weekly slots use next occurrence of each day, but we only care about the time pattern
-      // Custom slots use specific dates, but again we just want the time pattern
-      // This way we can apply these times to any date for the appointment
       const slotTime = slotData.slot;
       const startHours = slotTime.slotStartTimeInUTC.getUTCHours();
       const startMinutes = slotTime.slotStartTimeInUTC.getUTCMinutes();
@@ -462,7 +469,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
           break;
       }
 
-      // Execute transaction with increased timeout
+      // Execute transaction with increased timeout (60 seconds)
       await prisma.$transaction(
         async (tx) => {
           await tx.appointment.create({
@@ -470,17 +477,71 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
           });
         },
         {
-          timeout: 10000, // Increase timeout to 10 seconds
+          timeout: 60000, // Increased to 60 seconds
         },
       );
+      
+      successCount++;
     } catch (error) {
       console.error(
-        `Failed to create appointment for consultee ${consultee.id}. Error details:`,
+        `Failed to create appointment ${i + 1} for consultee ${consultee.id}. Error details:`,
         error instanceof Error ? error.message : String(error),
       );
     }
-    if ((i + 1) % 20 === 0 || i === NUM_APPOINTMENTS - 1) {
-      console.log(`Created ${i + 1} appointments`);
+  }
+  
+  return successCount;
+}
+
+export async function createAppointments(consultees: UserWithProfiles[]) {
+  console.log(`Creating ${NUM_APPOINTMENTS} appointments in batches of ${BATCH_SIZE}...`);
+  
+  // Fetch all required data upfront
+  const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
+    take: NUM_APPOINTMENTS / 2,
+  });
+  const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
+    take: NUM_APPOINTMENTS / 2,
+  });
+  const consultationPlans = await prisma.consultationPlan.findMany();
+  const subscriptionPlans = await prisma.subscriptionPlan.findMany();
+  const webinarPlans = await prisma.webinarPlan.findMany();
+  const classPlans = await prisma.classPlan.findMany();
+
+  const allSlots: SlotData[] = [
+    ...weeklySlots.map((slot) => ({ type: "weekly" as const, slot })),
+    ...customSlots.map((slot) => ({ type: "custom" as const, slot })),
+  ];
+
+  let totalCreated = 0;
+  
+  // Process appointments in batches
+  for (let batchStart = 0; batchStart < NUM_APPOINTMENTS; batchStart += BATCH_SIZE) {
+    const batchEnd = Math.min(batchStart + BATCH_SIZE, NUM_APPOINTMENTS);
+    console.log(`Processing appointments ${batchStart + 1} to ${batchEnd}...`);
+    
+    const batchCount = await createAppointmentBatch(
+      consultees,
+      allSlots,
+      consultationPlans,
+      subscriptionPlans,
+      webinarPlans,
+      classPlans,
+      batchStart,
+      BATCH_SIZE,
+    );
+    
+    totalCreated += batchCount;
+    
+    if ((batchEnd) % 20 === 0 || batchEnd === NUM_APPOINTMENTS) {
+      console.log(`Created ${totalCreated} appointments successfully (processed ${batchEnd} total)`);
+    }
+    
+    // Small delay between batches to prevent overwhelming the database
+    if (batchEnd < NUM_APPOINTMENTS) {
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
   }
+  
+  console.log(`Finished creating appointments. Successfully created ${totalCreated} out of ${NUM_APPOINTMENTS} requested.`);
 }
