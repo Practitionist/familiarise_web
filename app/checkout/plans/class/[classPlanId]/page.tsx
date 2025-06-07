@@ -115,7 +115,55 @@ export default function ClassCheckoutPage({
           });
 
           if (!response.ok) {
-            throw new Error("Registration failed");
+            const errorData = await response.json();
+            const errorMessage = errorData.error || "Registration failed";
+            const errorType = errorData.errorType || "UNKNOWN_ERROR";
+            
+            // Show specific toast based on error type
+            switch (errorType) {
+              case "PAYMENT_CONFIG_ERROR":
+                toast({
+                  title: "Payment System Error",
+                  description: "Payment system unavailable. Please contact support.",
+                  variant: "destructive",
+                });
+                break;
+              case "PAYMENT_PROCESSING_ERROR":
+                toast({
+                  title: "Payment Error",
+                  description: "Payment processing error. Please try again later.",
+                  variant: "destructive",
+                });
+                break;
+              case "DATABASE_ERROR":
+                toast({
+                  title: "System Error",
+                  description: "System error. Please try again.",
+                  variant: "destructive",
+                });
+                break;
+              case "NOT_FOUND_ERROR":
+                toast({
+                  title: "Not Found",
+                  description: errorMessage,
+                  variant: "destructive",
+                });
+                break;
+              case "AVAILABILITY_ERROR":
+                toast({
+                  title: "Registration Unavailable",
+                  description: errorMessage,
+                  variant: "destructive",
+                });
+                break;
+              default:
+                toast({
+                  title: "Registration Failed",
+                  description: errorMessage,
+                  variant: "destructive",
+                });
+            }
+            throw new Error(errorMessage);
           }
 
           window.location.href = "/dashboard/consultee";
@@ -138,7 +186,55 @@ export default function ClassCheckoutPage({
         });
 
         if (!response.ok) {
-          throw new Error("Checkout failed");
+          const errorData = await response.json();
+          const errorMessage = errorData.error || "Checkout failed";
+          const errorType = errorData.errorType || "UNKNOWN_ERROR";
+          
+          // Show specific toast based on error type for production flow
+          switch (errorType) {
+            case "PAYMENT_CONFIG_ERROR":
+              toast({
+                title: "Payment System Error",
+                description: "Payment system unavailable. Please contact support.",
+                variant: "destructive",
+              });
+              break;
+            case "PAYMENT_PROCESSING_ERROR":
+              toast({
+                title: "Payment Error",
+                description: "Payment processing error. Please try again later.",
+                variant: "destructive",
+              });
+              break;
+            case "DATABASE_ERROR":
+              toast({
+                title: "System Error",
+                description: "System error. Please try again.",
+                variant: "destructive",
+              });
+              break;
+            case "NOT_FOUND_ERROR":
+              toast({
+                title: "Not Found",
+                description: errorMessage,
+                variant: "destructive",
+              });
+              break;
+            case "AVAILABILITY_ERROR":
+              toast({
+                title: "Registration Unavailable",
+                description: errorMessage,
+                variant: "destructive",
+              });
+              break;
+            default:
+              toast({
+                title: "Checkout Failed",
+                description: errorMessage,
+                variant: "destructive",
+              });
+          }
+          throw new Error(errorMessage);
         }
 
         const data = await response.json();

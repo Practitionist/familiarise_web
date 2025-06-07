@@ -76,6 +76,25 @@ export async function createPaymentIntent({
     throw new Error(`Unsupported payment gateway: ${paymentGateway}`);
   } catch (error) {
     console.error("Payment intent creation failed:", error);
+    
+    // Provide more specific error messages
+    if (error instanceof Error) {
+      // Stripe errors
+      if (error.message.includes("Invalid API key") || error.message.includes("api_key")) {
+        throw new Error("Authentication failed - Invalid Stripe API key");
+      }
+      if (error.message.includes("testmode") || error.message.includes("livemode")) {
+        throw new Error("Authentication failed - API key mode mismatch");
+      }
+      // Razorpay errors  
+      if (error.message.includes("BAD_REQUEST_ERROR")) {
+        throw new Error("Authentication failed - Invalid Razorpay credentials");
+      }
+      if (error.message.includes("GATEWAY_ERROR")) {
+        throw new Error("Payment gateway temporarily unavailable");
+      }
+    }
+    
     throw new Error("Failed to create payment intent");
   }
 }

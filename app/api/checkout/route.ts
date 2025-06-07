@@ -190,8 +190,46 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error("Checkout error:", error);
+    
+    // Provide specific error messages for different types of failures
+    let errorMessage = "Checkout failed";
+    let errorType = "UNKNOWN_ERROR";
+    
+    if (error instanceof Error) {
+      // Payment gateway authentication errors
+      if (error.message.includes("Authentication failed") || error.message.includes("Invalid API key")) {
+        errorMessage = "Payment gateway configuration error. Please contact support.";
+        errorType = "PAYMENT_CONFIG_ERROR";
+      }
+      // Prisma/Database errors
+      else if (error.message.includes("Prisma") || error.message.includes("database")) {
+        errorMessage = "Database error. Please try again or contact support.";
+        errorType = "DATABASE_ERROR";
+      }
+      // Validation errors
+      else if (error.message.includes("not found")) {
+        errorMessage = error.message;
+        errorType = "NOT_FOUND_ERROR";
+      }
+      // Slot availability errors
+      else if (error.message.includes("slot") || error.message.includes("availability")) {
+        errorMessage = error.message;
+        errorType = "AVAILABILITY_ERROR";
+      }
+      // Payment intent creation errors
+      else if (error.message.includes("Failed to create payment intent")) {
+        errorMessage = "Payment processing unavailable. Please try again later or contact support.";
+        errorType = "PAYMENT_PROCESSING_ERROR";
+      }
+      else {
+        errorMessage = error.message;
+      }
+    }
+    
     return NextResponse.json({
-      error: error instanceof Error ? error.message : "Checkout failed",
+      error: errorMessage,
+      errorType,
+      timestamp: new Date().toISOString(),
     }, { status: 400 });
   }
 }
