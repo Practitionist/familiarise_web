@@ -13,20 +13,36 @@ import { useToast } from "@/components/ui/use-toast";
 import { z } from "zod";
 import { loadStripe } from "@stripe/stripe-js";
 
-import type { WebinarPlan, ConsultantProfile, User, Domain, SubDomain, Tag as PrismaTag, Topic as PrismaTopic, Webinar as PrismaWebinar, Appointment, SlotOfAppointment, ConsultantReview } from "@prisma/client";
+import type {
+  WebinarPlan,
+  ConsultantProfile,
+  User,
+  Domain,
+  SubDomain,
+  Tag as PrismaTag,
+  Topic as PrismaTopic,
+  Webinar as PrismaWebinar,
+  Appointment,
+  SlotOfAppointment,
+  ConsultantReview,
+} from "@prisma/client";
 
 // Define a type for the fetched WebinarPlan data
 export type CheckoutWebinarPlanData = WebinarPlan & {
-  consultantProfile: (ConsultantProfile & {
-    user: User;
-    domain: Domain | null;
-    subDomains: SubDomain[];
-    tags: PrismaTag[];
-  }) | null;
+  consultantProfile:
+    | (ConsultantProfile & {
+        user: User;
+        domain: Domain | null;
+        subDomains: SubDomain[];
+        tags: PrismaTag[];
+      })
+    | null;
   webinars: (PrismaWebinar & {
-    appointment: (Appointment & {
-      slotsOfAppointment: SlotOfAppointment[];
-    }) | null; // appointment can be null for a webinar instance
+    appointment:
+      | (Appointment & {
+          slotsOfAppointment: SlotOfAppointment[];
+        })
+      | null; // appointment can be null for a webinar instance
   })[];
   topics: PrismaTopic[];
   type: "webinar";
@@ -172,7 +188,8 @@ export default function WebinarCheckoutPage({
 
         const data = await response.json();
 
-        if (!data.data?.consultantProfile?.user) { // Adjusted path for direct WebinarPlan data
+        if (!data.data?.consultantProfile?.user) {
+          // Adjusted path for direct WebinarPlan data
           throw new Error("Consultant details not found");
         }
 
@@ -231,7 +248,8 @@ export default function WebinarCheckoutPage({
   // Let's assume the planDetails itself is the primary subject for checkout.
   // const nextSession = planDetails?.webinars?.[0]?.appointment?.slotsOfAppointment?.[0];
 
-  if (!planData || !planDetails || !consultantDetails || !userDetails) { // nextSession might not be strictly required for checkout page display
+  if (!planData || !planDetails || !consultantDetails || !userDetails) {
+    // nextSession might not be strictly required for checkout page display
     return (
       <div className="flex items-center justify-center h-screen">
         <p>Essential webinar data is missing. Please try again later.</p>
@@ -272,9 +290,7 @@ export default function WebinarCheckoutPage({
                     <p className="font-medium text-gray-800">
                       {userDetails.name}
                     </p>
-                    <p className="text-sm text-gray-500">
-                      {userDetails.email}
-                    </p>
+                    <p className="text-sm text-gray-500">{userDetails.email}</p>
                   </div>
                 </div>
                 <p className="text-gray-600 text-sm mb-4">
@@ -310,7 +326,10 @@ export default function WebinarCheckoutPage({
                     type="text"
                     placeholder="Enter discount code"
                     className="w-full"
-                  defaultValue={resolvedSearchParams.discountCode as string | undefined} />
+                    defaultValue={
+                      resolvedSearchParams.discountCode as string | undefined
+                    }
+                  />
                 </div>
               </div>
             </div>
@@ -322,20 +341,27 @@ export default function WebinarCheckoutPage({
                 Select Payment Method
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                {[ "STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW" ].map((gateway) => (
-                  <Button
-                    key={gateway}
-                    variant="outline"
-                    className="w-full h-20 text-lg flex flex-col items-center justify-center hover:bg-blue-50 transition-colors duration-150"
-                    onClick={() =>
-                      handleCheckout(
-                        gateway as "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW",
-                      )
-                    }
-                  >
-                    {gateway.charAt(0).toUpperCase() + gateway.slice(1).toLowerCase()}
-                  </Button>
-                ))}
+                {["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"].map(
+                  (gateway) => (
+                    <Button
+                      key={gateway}
+                      variant="outline"
+                      className="w-full h-20 text-lg flex flex-col items-center justify-center hover:bg-blue-50 transition-colors duration-150"
+                      onClick={() =>
+                        handleCheckout(
+                          gateway as
+                            | "STRIPE"
+                            | "RAZORPAY"
+                            | "LEMON_SQUEEZY"
+                            | "XFLOW",
+                        )
+                      }
+                    >
+                      {gateway.charAt(0).toUpperCase() +
+                        gateway.slice(1).toLowerCase()}
+                    </Button>
+                  ),
+                )}
               </div>
             </div>
 

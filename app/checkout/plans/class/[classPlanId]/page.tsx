@@ -12,17 +12,32 @@ import { useToast } from "@/components/ui/use-toast";
 import { z } from "zod";
 import { loadStripe } from "@stripe/stripe-js";
 
-import type { ClassPlan, ConsultantProfile, User, Domain, SubDomain, Tag as PrismaTag, ClassContent, Topic as PrismaTopic, Class as PrismaClass, Appointment, SlotOfAppointment, ConsultantReview } from "@prisma/client";
+import type {
+  ClassPlan,
+  ConsultantProfile,
+  User,
+  Domain,
+  SubDomain,
+  Tag as PrismaTag,
+  ClassContent,
+  Topic as PrismaTopic,
+  Class as PrismaClass,
+  Appointment,
+  SlotOfAppointment,
+  ConsultantReview,
+} from "@prisma/client";
 
 // Define a type for the fetched ClassPlan data, similar to ClassPlanDetailsData but tailored for checkout if needed
 // For now, let's assume the API returns a structure compatible with a detailed ClassPlan
 export type CheckoutClassPlanData = ClassPlan & {
-  consultantProfile: (ConsultantProfile & {
-    user: User;
-    domain: Domain | null;
-    subDomains: SubDomain[];
-    tags: PrismaTag[];
-  }) | null;
+  consultantProfile:
+    | (ConsultantProfile & {
+        user: User;
+        domain: Domain | null;
+        subDomains: SubDomain[];
+        tags: PrismaTag[];
+      })
+    | null;
   classes: (PrismaClass & {
     appointments: (Appointment & {
       slotsOfAppointment: SlotOfAppointment[];
@@ -172,7 +187,8 @@ export default function ClassCheckoutPage({
 
         const data = await response.json();
 
-        if (!data.data?.consultantProfile?.user) { // Adjusted path for direct ClassPlan data
+        if (!data.data?.consultantProfile?.user) {
+          // Adjusted path for direct ClassPlan data
           throw new Error("Consultant details not found");
         }
 
@@ -253,8 +269,12 @@ export default function ClassCheckoutPage({
                 <div className="flex items-center mb-4">
                   <Avatar className="h-12 w-12 mr-3">
                     <AvatarImage
-                      src={planDetails.consultantProfile?.user.image ?? undefined}
-                      alt={planDetails.consultantProfile?.user.name ?? "Consultant"}
+                      src={
+                        planDetails.consultantProfile?.user.image ?? undefined
+                      }
+                      alt={
+                        planDetails.consultantProfile?.user.name ?? "Consultant"
+                      }
                     />
                     <AvatarFallback>
                       {planDetails.consultantProfile?.user.name
@@ -308,7 +328,9 @@ export default function ClassCheckoutPage({
                     type="text"
                     placeholder="Enter discount code"
                     className="w-full"
-                    defaultValue={resolvedSearchParams.discountCode as string | undefined}
+                    defaultValue={
+                      resolvedSearchParams.discountCode as string | undefined
+                    }
                   />
                 </div>
               </div>
@@ -321,21 +343,28 @@ export default function ClassCheckoutPage({
                 Select Payment Method
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                {[ "STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW" ].map((gateway) => (
-                  <Button
-                    key={gateway}
-                    variant="outline"
-                    className="w-full h-20 text-lg flex flex-col items-center justify-center hover:bg-blue-50 transition-colors duration-150"
-                    onClick={() =>
-                      handleCheckout(
-                        gateway as "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW",
-                      )
-                    }
-                  >
-                    {/* You can add icons here if you have them */}
-                    {gateway.charAt(0).toUpperCase() + gateway.slice(1).toLowerCase()}
-                  </Button>
-                ))}
+                {["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"].map(
+                  (gateway) => (
+                    <Button
+                      key={gateway}
+                      variant="outline"
+                      className="w-full h-20 text-lg flex flex-col items-center justify-center hover:bg-blue-50 transition-colors duration-150"
+                      onClick={() =>
+                        handleCheckout(
+                          gateway as
+                            | "STRIPE"
+                            | "RAZORPAY"
+                            | "LEMON_SQUEEZY"
+                            | "XFLOW",
+                        )
+                      }
+                    >
+                      {/* You can add icons here if you have them */}
+                      {gateway.charAt(0).toUpperCase() +
+                        gateway.slice(1).toLowerCase()}
+                    </Button>
+                  ),
+                )}
               </div>
             </div>
 
