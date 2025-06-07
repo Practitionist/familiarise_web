@@ -51,6 +51,10 @@ export default function ClassCheckoutPage({
           throw new Error("Invalid class parameters");
         }
 
+        if (!planData?.data?.classPlan?.id) {
+          throw new Error("Class plan not found");
+        }
+
         // In development or test mode, directly create the class registration
         if (
           process.env.NODE_ENV === "development" ||
@@ -62,8 +66,9 @@ export default function ClassCheckoutPage({
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              type: "class",
-              classId: resolvedParams.classId,
+              appointmentType: "CLASS",
+              planId: planData.data.classPlan.id,
+              eventId: resolvedParams.classId,
               discountCode: parsedParams.data.discountCode,
               paymentGateway: gateway,
             }),
@@ -84,8 +89,9 @@ export default function ClassCheckoutPage({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            type: "class",
-            classId: resolvedParams.classId,
+            appointmentType: "CLASS",
+            planId: planData.data.classPlan.id,
+            eventId: resolvedParams.classId,
             discountCode: parsedParams.data.discountCode,
             paymentGateway: gateway,
           }),
@@ -136,7 +142,7 @@ export default function ClassCheckoutPage({
         });
       }
     },
-    [resolvedParams, resolvedSearchParams, toast],
+    [resolvedParams, resolvedSearchParams, planData, toast],
   );
 
   useEffect(() => {

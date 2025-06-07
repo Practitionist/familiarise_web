@@ -136,8 +136,8 @@ export default function ConsultationCheckoutPage({
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              type: "consultation",
-              consultationPlanId: resolvedParams.planId,
+              appointmentType: "CONSULTATION",
+              planId: resolvedParams.planId,
               slotOfAvailabilityWeeklyId:
                 parsedParams.data.slotOfAvailabilityWeeklyId,
               slotOfAvailabilityCustomId:
@@ -165,8 +165,8 @@ export default function ConsultationCheckoutPage({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            type: "consultation",
-            consultationPlanId: resolvedParams.planId,
+            appointmentType: "CONSULTATION",
+            planId: resolvedParams.planId,
             slotOfAvailabilityWeeklyId:
               parsedParams.data.slotOfAvailabilityWeeklyId,
             slotOfAvailabilityCustomId:

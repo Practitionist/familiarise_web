@@ -85,6 +85,16 @@ export default function WebinarCheckoutPage({
           throw new Error("Invalid webinar parameters");
         }
 
+        if (!planData?.data?.id) {
+          throw new Error("Webinar plan not found");
+        }
+
+        // Get the first available webinar instance from the plan
+        const availableWebinar = planData.data.webinars?.[0];
+        if (!availableWebinar) {
+          throw new Error("No webinar instances available for this plan");
+        }
+
         // In development or test mode, directly create the webinar registration
         if (
           process.env.NODE_ENV === "development" ||
@@ -96,8 +106,9 @@ export default function WebinarCheckoutPage({
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              type: "webinar",
-              webinarPlanId: resolvedParams.webinarPlanId,
+              appointmentType: "WEBINAR",
+              planId: planData.data.id,
+              eventId: availableWebinar.id,
               discountCode: parsedParams.data.discountCode,
               paymentGateway: gateway,
             }),
@@ -118,8 +129,9 @@ export default function WebinarCheckoutPage({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            type: "webinar",
-            webinarPlanId: resolvedParams.webinarPlanId,
+            appointmentType: "WEBINAR",
+            planId: planData.data.id,
+            eventId: availableWebinar.id,
             discountCode: parsedParams.data.discountCode,
             paymentGateway: gateway,
           }),
@@ -172,7 +184,7 @@ export default function WebinarCheckoutPage({
         });
       }
     },
-    [resolvedParams.webinarPlanId, resolvedSearchParams, toast],
+    [resolvedParams.webinarPlanId, resolvedSearchParams, planData, toast],
   );
 
   useEffect(() => {

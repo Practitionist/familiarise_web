@@ -15,6 +15,7 @@ const ROUTES = {
     "/dashboard/**",
     "/settings/**",
     "/profile/**",
+    "/checkout/**",
   ],
   PUBLIC_AUTH_ROUTES: ["/auth/**"],
   PRIVATE_API: ["/api/inngest/**"],
@@ -113,12 +114,9 @@ const handleDashboardRedirect = (
  * Middleware function to handle authentication and authorization for routes.
  */
 export async function middleware(req: NextRequest): Promise<NextResponse> {
-  // Bypass middleware in test mode
-  if (
-    process.env.NODE_ENV === "test" ||
-    process.env.NODE_ENV === "development"
-  ) {
-    console.warn("Bypassing middleware in development or test mode");
+  // Bypass middleware in test mode only
+  if (process.env.NODE_ENV === "test") {
+    console.warn("Bypassing middleware in test mode");
     return NextResponse.next();
   }
 

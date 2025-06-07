@@ -75,8 +75,12 @@ export default function SubscriptionCheckoutPage({
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              type: "subscription",
-              subscriptionPlanId: resolvedParams.planId,
+              appointmentType: "SUBSCRIPTION",
+              planId: resolvedParams.planId,
+              // TODO: Add proper slot selection UI for subscriptions
+              // For now, use placeholder times that will be scheduled later
+              slotStartTimeInUTC: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Tomorrow
+              slotEndTimeInUTC: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString(), // Tomorrow + 1 hour
               discountCode: parsedParams.data.discountCode,
               paymentGateway: gateway,
             }),
@@ -97,8 +101,12 @@ export default function SubscriptionCheckoutPage({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            type: "subscription",
-            subscriptionPlanId: resolvedParams.planId,
+            appointmentType: "SUBSCRIPTION",
+            planId: resolvedParams.planId,
+            // TODO: Add proper slot selection UI for subscriptions
+            // For now, use placeholder times that will be scheduled later
+            slotStartTimeInUTC: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Tomorrow
+            slotEndTimeInUTC: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString(), // Tomorrow + 1 hour
             discountCode: parsedParams.data.discountCode,
             paymentGateway: gateway,
           }),

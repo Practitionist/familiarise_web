@@ -44,6 +44,10 @@ export default function WebinarCheckoutPage({
   const handleCheckout = useCallback(
     async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
       try {
+        if (!planData?.data?.webinarPlan?.id) {
+          throw new Error("Webinar plan not found");
+        }
+
         // In development or test mode, directly create the webinar registration
         if (
           process.env.NODE_ENV === "development" ||
@@ -55,8 +59,9 @@ export default function WebinarCheckoutPage({
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              type: "webinar",
-              webinarId: resolvedParams.webinarId,
+              appointmentType: "WEBINAR",
+              planId: planData.data.webinarPlan.id,
+              eventId: resolvedParams.webinarId,
               paymentGateway: gateway,
             }),
           });
@@ -76,8 +81,9 @@ export default function WebinarCheckoutPage({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            type: "webinar",
-            webinarId: resolvedParams.webinarId,
+            appointmentType: "WEBINAR",
+            planId: planData.data.webinarPlan.id,
+            eventId: resolvedParams.webinarId,
             paymentGateway: gateway,
           }),
         });
@@ -128,7 +134,7 @@ export default function WebinarCheckoutPage({
         });
       }
     },
-    [resolvedParams.webinarId, toast],
+    [resolvedParams.webinarId, planData, toast],
   );
 
   useEffect(() => {
