@@ -184,8 +184,8 @@ const createSubscriptionAppointment = (
   numSlots: number,
 ): Prisma.AppointmentCreateInput => {
   // Limit slots to prevent transaction timeout
-  const limitedSlots = Math.min(numSlots, 6); 
-  
+  const limitedSlots = Math.min(numSlots, 6);
+
   return {
     appointmentType: AppointmentsType.SUBSCRIPTION,
     slotsOfAppointment: {
@@ -245,7 +245,7 @@ const createWebinarAppointment = async (
 ): Promise<Prisma.AppointmentCreateInput> => {
   // Limit waitlist size to prevent transaction timeout
   const waitlistSize = Math.min(faker.number.int({ min: 0, max: 3 }), 3);
-  
+
   return {
     appointmentType: AppointmentsType.WEBINAR,
     slotsOfAppointment: {
@@ -271,21 +271,21 @@ const createWebinarAppointment = async (
         waitlist: isPastAppointment
           ? undefined
           : waitlistSize > 0
-          ? {
-              create: Array.from(
-                new Set(
-                  Array.from(
-                    { length: waitlistSize },
-                    () => faker.helpers.arrayElement(consultees).id,
+            ? {
+                create: Array.from(
+                  new Set(
+                    Array.from(
+                      { length: waitlistSize },
+                      () => faker.helpers.arrayElement(consultees).id,
+                    ),
                   ),
-                ),
-              ).map((userId) => ({
-                user: {
-                  connect: { id: userId },
-                },
-              })),
-            }
-          : undefined,
+                ).map((userId) => ({
+                  user: {
+                    connect: { id: userId },
+                  },
+                })),
+              }
+            : undefined,
       },
     },
   };
@@ -303,7 +303,7 @@ const createClassAppointment = async (
   // Limit slots and waitlist to prevent transaction timeout
   const limitedSlots = Math.min(numSlots, 4);
   const waitlistSize = Math.min(faker.number.int({ min: 0, max: 3 }), 3);
-  
+
   return {
     appointmentType: AppointmentsType.CLASS,
     slotsOfAppointment: {
@@ -344,21 +344,21 @@ const createClassAppointment = async (
         waitlist: isPastAppointment
           ? undefined
           : waitlistSize > 0
-          ? {
-              create: Array.from(
-                new Set(
-                  Array.from(
-                    { length: waitlistSize },
-                    () => faker.helpers.arrayElement(consultees).id,
+            ? {
+                create: Array.from(
+                  new Set(
+                    Array.from(
+                      { length: waitlistSize },
+                      () => faker.helpers.arrayElement(consultees).id,
+                    ),
                   ),
-                ),
-              ).map((userId) => ({
-                user: {
-                  connect: { id: userId },
-                },
-              })),
-            }
-          : undefined,
+                ).map((userId) => ({
+                  user: {
+                    connect: { id: userId },
+                  },
+                })),
+              }
+            : undefined,
       },
     },
   };
@@ -375,8 +375,12 @@ async function createAppointmentBatch(
   batchSize: number,
 ): Promise<number> {
   let successCount = 0;
-  
-  for (let i = startIndex; i < Math.min(startIndex + batchSize, NUM_APPOINTMENTS); i++) {
+
+  for (
+    let i = startIndex;
+    i < Math.min(startIndex + batchSize, NUM_APPOINTMENTS);
+    i++
+  ) {
     const consultee = consultees[i % consultees.length];
     const slotData = allSlots[i];
 
@@ -398,7 +402,7 @@ async function createAppointmentBatch(
       const { startDate, endDate, isPastAppointment } = getAppointmentDate(now);
       const defaultStatus = getAppointmentStatus(i, isPastAppointment);
       const numSlots = getNumSlots(appointmentType);
-      
+
       // Extract just the time pattern (hours and minutes) from the slot
       const slotTime = slotData.slot;
       const startHours = slotTime.slotStartTimeInUTC.getUTCHours();
@@ -480,7 +484,7 @@ async function createAppointmentBatch(
           timeout: 60000, // Increased to 60 seconds
         },
       );
-      
+
       successCount++;
     } catch (error) {
       console.error(
@@ -489,13 +493,15 @@ async function createAppointmentBatch(
       );
     }
   }
-  
+
   return successCount;
 }
 
 export async function createAppointments(consultees: UserWithProfiles[]) {
-  console.log(`Creating ${NUM_APPOINTMENTS} appointments in batches of ${BATCH_SIZE}...`);
-  
+  console.log(
+    `Creating ${NUM_APPOINTMENTS} appointments in batches of ${BATCH_SIZE}...`,
+  );
+
   // Fetch all required data upfront
   const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
     take: NUM_APPOINTMENTS / 2,
@@ -514,12 +520,16 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   ];
 
   let totalCreated = 0;
-  
+
   // Process appointments in batches
-  for (let batchStart = 0; batchStart < NUM_APPOINTMENTS; batchStart += BATCH_SIZE) {
+  for (
+    let batchStart = 0;
+    batchStart < NUM_APPOINTMENTS;
+    batchStart += BATCH_SIZE
+  ) {
     const batchEnd = Math.min(batchStart + BATCH_SIZE, NUM_APPOINTMENTS);
     console.log(`Processing appointments ${batchStart + 1} to ${batchEnd}...`);
-    
+
     const batchCount = await createAppointmentBatch(
       consultees,
       allSlots,
@@ -530,18 +540,22 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
       batchStart,
       BATCH_SIZE,
     );
-    
+
     totalCreated += batchCount;
-    
-    if ((batchEnd) % 20 === 0 || batchEnd === NUM_APPOINTMENTS) {
-      console.log(`Created ${totalCreated} appointments successfully (processed ${batchEnd} total)`);
+
+    if (batchEnd % 20 === 0 || batchEnd === NUM_APPOINTMENTS) {
+      console.log(
+        `Created ${totalCreated} appointments successfully (processed ${batchEnd} total)`,
+      );
     }
-    
+
     // Small delay between batches to prevent overwhelming the database
     if (batchEnd < NUM_APPOINTMENTS) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
-  
-  console.log(`Finished creating appointments. Successfully created ${totalCreated} out of ${NUM_APPOINTMENTS} requested.`);
+
+  console.log(
+    `Finished creating appointments. Successfully created ${totalCreated} out of ${NUM_APPOINTMENTS} requested.`,
+  );
 }

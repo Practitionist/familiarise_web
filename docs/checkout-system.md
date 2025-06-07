@@ -5,6 +5,7 @@ This document describes the new unified checkout system that consolidates paymen
 ## Overview
 
 The new system provides:
+
 - **Single API Route**: `/api/checkout` handles all appointment types
 - **Server Action**: `checkoutAction` for easy frontend integration
 - **Skip Payment Mode**: For development and testing
@@ -35,18 +36,19 @@ RAZORPAY_WEBHOOK_SECRET=...
 **Endpoint**: `POST /api/checkout`
 
 **Request Body**:
+
 ```typescript
 {
   appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
   planId: string; // Plan ID for the service
   eventId?: string; // Required for WEBINAR and CLASS
-  
+
   // Required for CONSULTATION and SUBSCRIPTION
   slotStartTimeInUTC?: string; // ISO datetime
   slotEndTimeInUTC?: string; // ISO datetime
   slotOfAvailabilityWeeklyId?: string;
   slotOfAvailabilityCustomId?: string;
-  
+
   discountCode?: string;
   paymentGateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW";
   notes?: string;
@@ -54,6 +56,7 @@ RAZORPAY_WEBHOOK_SECRET=...
 ```
 
 **Response (Skip Payment Mode)**:
+
 ```typescript
 {
   success: true;
@@ -64,6 +67,7 @@ RAZORPAY_WEBHOOK_SECRET=...
 ```
 
 **Response (Payment Required)**:
+
 ```typescript
 {
   success: true;
@@ -85,7 +89,7 @@ const result = await checkoutAction({
   slotStartTimeInUTC: "2024-01-15T10:00:00Z",
   slotEndTimeInUTC: "2024-01-15T11:00:00Z",
   paymentGateway: "STRIPE",
-  discountCode: "SAVE10"
+  discountCode: "SAVE10",
 });
 
 if (result.error) {
@@ -102,12 +106,14 @@ if (result.error) {
 ## Appointment Type Handling
 
 ### Consultation & Subscription
+
 - **Status**: Creates `PENDING` request (requires consultant approval)
 - **Skip Payment**: Immediately approved (`APPROVED` status)
 - **Timing**: Requires slot timing information
 - **Validation**: Checks for slot conflicts
 
 ### Webinar & Class
+
 - **Status**: Confirms appointment immediately
 - **Skip Payment**: Immediately confirmed
 - **Capacity**: Checks max participants
@@ -116,6 +122,7 @@ if (result.error) {
 ## Webhook Configuration
 
 Configure your payment gateway webhooks to point to:
+
 - **Unified Handler**: `/api/webhooks/unified`
 
 The system automatically detects the payment gateway and processes accordingly.
@@ -123,11 +130,13 @@ The system automatically detects the payment gateway and processes accordingly.
 ### Webhook Events Handled
 
 **Stripe**:
+
 - `payment_intent.succeeded` → Confirms appointment
 - `payment_intent.payment_failed` → Cancels tentative booking
 
 **Razorpay**:
-- `payment.captured` → Confirms appointment  
+
+- `payment.captured` → Confirms appointment
 - `payment.failed` → Cancels tentative booking
 
 ## Transaction Safety
@@ -175,15 +184,15 @@ All checkout flows now use the unified endpoint:
 
 ```typescript
 // Unified approach for all appointment types
-const response = await fetch('/api/checkout', {
-  method: 'POST',
+const response = await fetch("/api/checkout", {
+  method: "POST",
   body: JSON.stringify({
-    type: 'consultation', // or 'subscription', 'webinar', 'class'
-    consultationPlanId: 'plan_123',
-    slotStartTimeInUTC: '2024-01-15T10:00:00Z',
-    slotEndTimeInUTC: '2024-01-15T11:00:00Z',
-    paymentGateway: 'STRIPE'
-  })
+    type: "consultation", // or 'subscription', 'webinar', 'class'
+    consultationPlanId: "plan_123",
+    slotStartTimeInUTC: "2024-01-15T10:00:00Z",
+    slotEndTimeInUTC: "2024-01-15T11:00:00Z",
+    paymentGateway: "STRIPE",
+  }),
 });
 ```
 
@@ -207,7 +216,7 @@ const result = await checkoutAction({
   appointmentType: "WEBINAR",
   planId: "webinar_plan_123",
   eventId: "webinar_456",
-  paymentGateway: "STRIPE"
+  paymentGateway: "STRIPE",
 });
 
 // Result will have skipPayment: true
@@ -222,9 +231,9 @@ For webinars/classes at capacity with skip payment:
 // If webinar is full
 const result = await checkoutAction({
   appointmentType: "WEBINAR",
-  planId: "webinar_plan_123", 
+  planId: "webinar_plan_123",
   eventId: "full_webinar_456",
-  paymentGateway: "STRIPE"
+  paymentGateway: "STRIPE",
 });
 
 // Result.error: "Webinar is full. Added to waitlist."
@@ -235,8 +244,9 @@ const result = await checkoutAction({
 The existing schema supports the unified system. No migrations required.
 
 Key relationships:
+
 - `Payment.appointmentId` → `Appointment.id`
-- `Payment.discountCodeId` → `DiscountCode.id` 
+- `Payment.discountCodeId` → `DiscountCode.id`
 - Appointment types handled via discriminated union
 
 ## Benefits
@@ -247,4 +257,4 @@ Key relationships:
 4. **Transaction Safety**: Atomic operations with rollback
 5. **Maintainability**: Single codebase vs multiple routes
 6. **Type Safety**: Strong TypeScript typing throughout
-7. **Enhanced Payment Library**: Uses comprehensive `lib/payment.ts` with unified interfaces for all payment gateways 
+7. **Enhanced Payment Library**: Uses comprehensive `lib/payment.ts` with unified interfaces for all payment gateways

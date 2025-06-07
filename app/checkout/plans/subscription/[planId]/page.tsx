@@ -79,8 +79,12 @@ export default function SubscriptionCheckoutPage({
               planId: resolvedParams.planId,
               // TODO: Add proper slot selection UI for subscriptions
               // For now, use placeholder times that will be scheduled later
-              slotStartTimeInUTC: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Tomorrow
-              slotEndTimeInUTC: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString(), // Tomorrow + 1 hour
+              slotStartTimeInUTC: new Date(
+                Date.now() + 24 * 60 * 60 * 1000,
+              ).toISOString(), // Tomorrow
+              slotEndTimeInUTC: new Date(
+                Date.now() + 25 * 60 * 60 * 1000,
+              ).toISOString(), // Tomorrow + 1 hour
               discountCode: parsedParams.data.discountCode,
               paymentGateway: gateway,
             }),
@@ -90,20 +94,22 @@ export default function SubscriptionCheckoutPage({
             const errorData = await response.json();
             const errorMessage = errorData.error || "Subscription failed";
             const errorType = errorData.errorType || "UNKNOWN_ERROR";
-            
+
             // Show specific toast based on error type
             switch (errorType) {
               case "PAYMENT_CONFIG_ERROR":
                 toast({
                   title: "Payment System Error",
-                  description: "Payment system unavailable. Please contact support.",
+                  description:
+                    "Payment system unavailable. Please contact support.",
                   variant: "destructive",
                 });
                 break;
               case "PAYMENT_PROCESSING_ERROR":
                 toast({
                   title: "Payment Error",
-                  description: "Payment processing error. Please try again later.",
+                  description:
+                    "Payment processing error. Please try again later.",
                   variant: "destructive",
                 });
                 break;
@@ -139,16 +145,16 @@ export default function SubscriptionCheckoutPage({
           }
 
           const data = await response.json();
-          
+
           // Show success toast
           toast({
             title: "✅ Subscription Activated Successfully!",
-            description: data.skipPayment 
+            description: data.skipPayment
               ? "Your subscription is now active. Check your dashboard for details."
               : "Payment processed successfully. Your subscription is now active.",
             variant: "default",
           });
-          
+
           // Redirect after a short delay to let user see the toast
           setTimeout(() => {
             window.location.href = "/dashboard/consultee";
@@ -167,8 +173,12 @@ export default function SubscriptionCheckoutPage({
             planId: resolvedParams.planId,
             // TODO: Add proper slot selection UI for subscriptions
             // For now, use placeholder times that will be scheduled later
-            slotStartTimeInUTC: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Tomorrow
-            slotEndTimeInUTC: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString(), // Tomorrow + 1 hour
+            slotStartTimeInUTC: new Date(
+              Date.now() + 24 * 60 * 60 * 1000,
+            ).toISOString(), // Tomorrow
+            slotEndTimeInUTC: new Date(
+              Date.now() + 25 * 60 * 60 * 1000,
+            ).toISOString(), // Tomorrow + 1 hour
             discountCode: parsedParams.data.discountCode,
             paymentGateway: gateway,
           }),
@@ -178,20 +188,22 @@ export default function SubscriptionCheckoutPage({
           const errorData = await response.json();
           const errorMessage = errorData.error || "Checkout failed";
           const errorType = errorData.errorType || "UNKNOWN_ERROR";
-          
+
           // Show specific toast based on error type for production flow
           switch (errorType) {
             case "PAYMENT_CONFIG_ERROR":
               toast({
                 title: "Payment System Error",
-                description: "Payment system unavailable. Please contact support.",
+                description:
+                  "Payment system unavailable. Please contact support.",
                 variant: "destructive",
               });
               break;
             case "PAYMENT_PROCESSING_ERROR":
               toast({
                 title: "Payment Error",
-                description: "Payment processing error. Please try again later.",
+                description:
+                  "Payment processing error. Please try again later.",
                 variant: "destructive",
               });
               break;

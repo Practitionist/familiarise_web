@@ -9,6 +9,7 @@ This guide covers how to monitor webhook activity, track success notifications, 
 ### Implementation Status ✅
 
 All checkout pages now display success toast notifications with:
+
 - ✅ Clear success indicators (green checkmark)
 - ✅ Appropriate messaging for skip payment vs real payment
 - ✅ 2-second delay before redirect to allow users to see the toast
@@ -48,12 +49,14 @@ console.log(`🔔 [Gateway] Webhook Event: ${event.type}`, {
 ### Tracked Events
 
 #### Stripe Events
+
 - ✅ `payment_intent.succeeded` - Payment completed
-- ❌ `payment_intent.payment_failed` - Payment failed  
+- ❌ `payment_intent.payment_failed` - Payment failed
 - ✅ `invoice.payment_succeeded` - Subscription payment
 - 🆕 `customer.subscription.created` - New subscription
 
-#### Razorpay Events  
+#### Razorpay Events
+
 - ✅ `payment.captured` - Payment completed
 - ❌ `payment.failed` - Payment failed
 - ✅ `order.paid` - Order payment completed
@@ -65,6 +68,7 @@ console.log(`🔔 [Gateway] Webhook Event: ${event.type}`, {
 ### Method 1: Server Logs (Recommended)
 
 #### Development Environment
+
 ```bash
 # In your development terminal, look for webhook logs
 npm run dev
@@ -75,6 +79,7 @@ npm run dev
 ```
 
 #### Production Environment
+
 ```bash
 # Check your hosting platform logs (Vercel, Heroku, etc.)
 # Or use your logging service (LogRocket, Sentry, etc.)
@@ -85,13 +90,15 @@ npm run dev
 ### Method 2: Payment Gateway Dashboards
 
 #### Stripe Dashboard
+
 1. Go to https://dashboard.stripe.com/webhooks
 2. Click on your webhook endpoint
 3. View **"Recent events"** tab
 4. Check **"Attempts"** for delivery status
 5. Look for HTTP 200 responses (success)
 
-#### Razorpay Dashboard  
+#### Razorpay Dashboard
+
 1. Go to https://dashboard.razorpay.com/webhooks
 2. Select your webhook endpoint
 3. Check **"Logs"** section
@@ -101,23 +108,25 @@ npm run dev
 ### Method 3: Database Checks
 
 #### Verify Booking Status Updates
+
 ```sql
 -- Check recent consultation bookings
-SELECT id, requestStatus, createdAt, updatedAt 
-FROM Consultation 
-ORDER BY createdAt DESC 
+SELECT id, requestStatus, createdAt, updatedAt
+FROM Consultation
+ORDER BY createdAt DESC
 LIMIT 10;
 
 -- Check payment records
 SELECT id, paymentStatus, paymentGateway, amount, createdAt
-FROM Payment 
-ORDER BY createdAt DESC 
+FROM Payment
+ORDER BY createdAt DESC
 LIMIT 10;
 ```
 
 ### Method 4: Test Webhook Endpoints Directly
 
 #### Test Stripe Webhook
+
 ```bash
 # Use Stripe CLI to forward events (development)
 stripe listen --forward-to localhost:3000/api/webhooks/stripe
@@ -127,6 +136,7 @@ stripe trigger payment_intent.succeeded
 ```
 
 #### Test Razorpay Webhook
+
 ```bash
 # Use ngrok for local testing
 ngrok http 3000
@@ -140,36 +150,44 @@ ngrok http 3000
 ### Common Problems
 
 #### 1. Webhook Not Receiving Events
+
 **Symptoms**: No logs in console, no webhook attempts in dashboard
 
 **Solutions**:
+
 - ✅ Verify webhook URL is correct in payment gateway dashboard
 - ✅ Check if webhook URL is publicly accessible (not localhost)
 - ✅ Ensure webhook endpoint is deployed and running
 - ✅ Verify webhook is enabled in gateway dashboard
 
 #### 2. Webhook Authentication Failing
+
 **Symptoms**: 400/401 errors in webhook attempts
 
 **Solutions**:
+
 - ✅ Check `STRIPE_WEBHOOK_SECRET` environment variable
-- ✅ Check `RAZORPAY_WEBHOOK_SECRET` environment variable  
+- ✅ Check `RAZORPAY_WEBHOOK_SECRET` environment variable
 - ✅ Regenerate webhook secrets if necessary
 - ✅ Verify signature verification logic
 
 #### 3. Webhook Events Not Processing
+
 **Symptoms**: 200 responses but no business logic execution
 
 **Solutions**:
+
 - ✅ Check event type handling in webhook endpoint
 - ✅ Verify metadata/notes contain required booking information
 - ✅ Check database connection and permissions
 - ✅ Review error logs for unhandled exceptions
 
 #### 4. Development vs Production Issues
+
 **Symptoms**: Works locally but not in production
 
 **Solutions**:
+
 - ✅ Verify environment variables are set in production
 - ✅ Check production webhook URL configuration
 - ✅ Ensure SSL certificate is valid
@@ -196,24 +214,28 @@ SKIP_PAYMENT=true # Remove for production
 ## Best Practices
 
 ### 1. Webhook Security
+
 - ✅ Always verify webhook signatures
 - ✅ Use HTTPS for webhook URLs
 - ✅ Keep webhook secrets secure
 - ✅ Implement idempotency for webhook processing
 
 ### 2. Error Handling
+
 - ✅ Log all webhook events with detailed context
 - ✅ Handle webhook retries gracefully
 - ✅ Implement dead letter queues for failed events
 - ✅ Monitor webhook failure rates
 
 ### 3. Testing
+
 - ✅ Test webhook endpoints in development
 - ✅ Use test payment methods before going live
 - ✅ Verify webhook processing with real payments
 - ✅ Test edge cases (failed payments, timeouts)
 
 ### 4. Monitoring
+
 - ✅ Set up alerts for webhook failures
 - ✅ Monitor payment success rates
 - ✅ Track booking status updates
@@ -224,7 +246,7 @@ SKIP_PAYMENT=true # Remove for production
 ### Your webhooks are working correctly if:
 
 1. ✅ **Console logs show webhook events** with proper formatting
-2. ✅ **Payment gateway dashboards show successful deliveries** (HTTP 200)  
+2. ✅ **Payment gateway dashboards show successful deliveries** (HTTP 200)
 3. ✅ **Database records are updated** (booking status, payment status)
 4. ✅ **Users see success toast notifications** before redirect
 5. ✅ **Email confirmations are sent** (if implemented)
@@ -241,13 +263,15 @@ SKIP_PAYMENT=true # Remove for production
 ## Quick Testing Checklist
 
 ### Skip Payment Mode (Development)
+
 1. Set `SKIP_PAYMENT=true`
 2. Complete checkout flow
 3. Verify success toast appears
 4. Check dashboard for booking
 5. Review console logs
 
-### Real Payment Mode  
+### Real Payment Mode
+
 1. Set `SKIP_PAYMENT=false`
 2. Use test payment credentials
 3. Complete payment flow
@@ -256,11 +280,13 @@ SKIP_PAYMENT=true # Remove for production
 6. Test with different payment methods
 
 ### All Event Types
+
 - [ ] Consultation booking
-- [ ] Subscription activation  
+- [ ] Subscription activation
 - [ ] Webinar registration
 - [ ] Class registration
 
 ### Both Payment Gateways
+
 - [ ] Stripe integration
-- [ ] Razorpay integration 
+- [ ] Razorpay integration

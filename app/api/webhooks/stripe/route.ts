@@ -7,10 +7,13 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.text();
     const signature = req.headers.get("stripe-signature")!;
-    
+
     if (!process.env.STRIPE_WEBHOOK_SECRET) {
       console.error("STRIPE_WEBHOOK_SECRET not configured");
-      return NextResponse.json({ error: "Webhook secret not configured" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Webhook secret not configured" },
+        { status: 500 },
+      );
     }
 
     let event: Stripe.Event;
@@ -19,7 +22,7 @@ export async function POST(req: NextRequest) {
       event = stripeClient.webhooks.constructEvent(
         body,
         signature,
-        process.env.STRIPE_WEBHOOK_SECRET
+        process.env.STRIPE_WEBHOOK_SECRET,
       );
     } catch (err) {
       console.error("Webhook signature verification failed:", err);
@@ -43,7 +46,7 @@ export async function POST(req: NextRequest) {
           currency: paymentIntent.currency,
           metadata: paymentIntent.metadata,
         });
-        
+
         // Update booking status if metadata contains booking info
         if (paymentIntent.metadata.bookingId) {
           try {
@@ -51,7 +54,10 @@ export async function POST(req: NextRequest) {
               where: { id: paymentIntent.metadata.bookingId },
               data: { requestStatus: "APPROVED" },
             });
-            console.log("✅ Booking confirmed:", paymentIntent.metadata.bookingId);
+            console.log(
+              "✅ Booking confirmed:",
+              paymentIntent.metadata.bookingId,
+            );
           } catch (error) {
             console.error("Failed to update booking:", error);
           }
@@ -83,7 +89,9 @@ export async function POST(req: NextRequest) {
           id: subscription.id,
           customer: subscription.customer,
           status: subscription.status,
-          billing_cycle_anchor: new Date(subscription.billing_cycle_anchor * 1000).toISOString(),
+          billing_cycle_anchor: new Date(
+            subscription.billing_cycle_anchor * 1000,
+          ).toISOString(),
           start_date: new Date(subscription.start_date * 1000).toISOString(),
         });
         break;
@@ -97,7 +105,7 @@ export async function POST(req: NextRequest) {
     console.error("Webhook error:", error);
     return NextResponse.json(
       { error: "Webhook handler failed" },
-      { status: 500 }
+      { status: 500 },
     );
   }
-} 
+}

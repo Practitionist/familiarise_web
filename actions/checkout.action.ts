@@ -4,42 +4,56 @@ import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { z } from "zod";
-import { 
-  AppointmentsType, 
-  PaymentStatus, 
+import {
+  AppointmentsType,
+  PaymentStatus,
   RequestStatus,
   WebinarStatus,
-  ClassStatus 
+  ClassStatus,
 } from "@prisma/client";
 import { createPaymentIntent } from "@/lib/payment";
 
 // Unified checkout schema (same as API route)
-const unifiedCheckoutSchema = z.object({
-  appointmentType: z.enum(["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS"]),
-  planId: z.string(),
-  eventId: z.string().optional(),
-  slotStartTimeInUTC: z.string().datetime().optional(),
-  slotEndTimeInUTC: z.string().datetime().optional(),
-  slotOfAvailabilityWeeklyId: z.string().optional(),
-  slotOfAvailabilityCustomId: z.string().optional(),
-  discountCode: z.string().optional(),
-  paymentGateway: z.enum(["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"]),
-  notes: z.string().optional(),
-}).refine((data) => {
-  if (["CONSULTATION", "SUBSCRIPTION"].includes(data.appointmentType)) {
-    return data.slotStartTimeInUTC && data.slotEndTimeInUTC;
-  }
-  return true;
-}, {
-  message: "Consultation and subscription require slot timing"
-}).refine((data) => {
-  if (["WEBINAR", "CLASS"].includes(data.appointmentType)) {
-    return data.eventId;
-  }
-  return true;
-}, {
-  message: "Webinar and class require eventId"
-});
+const unifiedCheckoutSchema = z
+  .object({
+    appointmentType: z.enum([
+      "CONSULTATION",
+      "SUBSCRIPTION",
+      "WEBINAR",
+      "CLASS",
+    ]),
+    planId: z.string(),
+    eventId: z.string().optional(),
+    slotStartTimeInUTC: z.string().datetime().optional(),
+    slotEndTimeInUTC: z.string().datetime().optional(),
+    slotOfAvailabilityWeeklyId: z.string().optional(),
+    slotOfAvailabilityCustomId: z.string().optional(),
+    discountCode: z.string().optional(),
+    paymentGateway: z.enum(["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"]),
+    notes: z.string().optional(),
+  })
+  .refine(
+    (data) => {
+      if (["CONSULTATION", "SUBSCRIPTION"].includes(data.appointmentType)) {
+        return data.slotStartTimeInUTC && data.slotEndTimeInUTC;
+      }
+      return true;
+    },
+    {
+      message: "Consultation and subscription require slot timing",
+    },
+  )
+  .refine(
+    (data) => {
+      if (["WEBINAR", "CLASS"].includes(data.appointmentType)) {
+        return data.eventId;
+      }
+      return true;
+    },
+    {
+      message: "Webinar and class require eventId",
+    },
+  );
 
 type CheckoutInput = z.infer<typeof unifiedCheckoutSchema>;
 
@@ -79,25 +93,37 @@ export async function checkoutAction(data: CheckoutInput) {
       switch (validatedData.appointmentType) {
         case "CONSULTATION":
           ({ appointment, plan, amount } = await handleConsultationCheckout(
-            tx, validatedData, user.consulteeProfile.id, skipPayment
+            tx,
+            validatedData,
+            user.consulteeProfile.id,
+            skipPayment,
           ));
           break;
 
         case "SUBSCRIPTION":
           ({ appointment, plan, amount } = await handleSubscriptionCheckout(
-            tx, validatedData, user.consulteeProfile.id, skipPayment
+            tx,
+            validatedData,
+            user.consulteeProfile.id,
+            skipPayment,
           ));
           break;
 
         case "WEBINAR":
           ({ appointment, plan, amount } = await handleWebinarCheckout(
-            tx, validatedData, user.id, skipPayment
+            tx,
+            validatedData,
+            user.id,
+            skipPayment,
           ));
           break;
 
         case "CLASS":
           ({ appointment, plan, amount } = await handleClassCheckout(
-            tx, validatedData, user.id, skipPayment
+            tx,
+            validatedData,
+            user.id,
+            skipPayment,
           ));
           break;
 
@@ -111,12 +137,13 @@ export async function checkoutAction(data: CheckoutInput) {
         const discount = await tx.discountCode.findUnique({
           where: { code: validatedData.discountCode },
         });
-        
+
         if (discount) {
           discountCodeId = discount.id;
-          amount = discount.discountType === "PERCENTAGE"
-            ? amount * (1 - discount.discountValue / 100)
-            : Math.max(0, amount - discount.discountValue);
+          amount =
+            discount.discountType === "PERCENTAGE"
+              ? amount * (1 - discount.discountValue / 100)
+              : Math.max(0, amount - discount.discountValue);
         }
       }
 
@@ -126,19 +153,26 @@ export async function checkoutAction(data: CheckoutInput) {
         await tx.payment.create({
           data: {
             amount,
-            currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
+            currency:
+              validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
             paymentMethod: "SKIPPED",
             paymentIntent: `skip_${Date.now()}_${Math.random().toString(36).substring(7)}`,
             paymentGateway: validatedData.paymentGateway,
             paymentStatus: PaymentStatus.SUCCEEDED,
             user: { connect: { id: session.user.id } },
             appointment: { connect: { id: appointment.id } },
-            discountCode: discountCodeId ? { connect: { id: discountCodeId } } : undefined,
+            discountCode: discountCodeId
+              ? { connect: { id: discountCodeId } }
+              : undefined,
           },
         });
 
         // Immediately confirm the appointment
-        await confirmAppointment(tx, appointment.id, validatedData.appointmentType);
+        await confirmAppointment(
+          tx,
+          appointment.id,
+          validatedData.appointmentType,
+        );
 
         return {
           success: true,
@@ -149,7 +183,7 @@ export async function checkoutAction(data: CheckoutInput) {
       } else {
         // Create payment intent/order
         let paymentResponse;
-        
+
         paymentResponse = await createPaymentIntent({
           amount,
           currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
@@ -165,14 +199,17 @@ export async function checkoutAction(data: CheckoutInput) {
         await tx.payment.create({
           data: {
             amount,
-            currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
+            currency:
+              validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
             paymentMethod: "CARD",
             paymentIntent: paymentResponse.id,
             paymentGateway: validatedData.paymentGateway,
             paymentStatus: PaymentStatus.PENDING,
             user: { connect: { id: session.user.id } },
             appointment: { connect: { id: appointment.id } },
-            discountCode: discountCodeId ? { connect: { id: discountCodeId } } : undefined,
+            discountCode: discountCodeId
+              ? { connect: { id: discountCodeId } }
+              : undefined,
           },
         });
 
@@ -197,10 +234,10 @@ export async function checkoutAction(data: CheckoutInput) {
 
 // Helper functions (copied from API route)
 async function handleConsultationCheckout(
-  tx: any, 
-  data: CheckoutInput, 
+  tx: any,
+  data: CheckoutInput,
   consulteeProfileId: string,
-  skipPayment: boolean
+  skipPayment: boolean,
 ) {
   const plan = await tx.consultationPlan.findUnique({
     where: { id: data.planId },
@@ -224,7 +261,9 @@ async function handleConsultationCheckout(
   const consultation = await tx.consultation.create({
     data: {
       consultationPlan: { connect: { id: plan.id } },
-      requestStatus: skipPayment ? RequestStatus.APPROVED : RequestStatus.PENDING,
+      requestStatus: skipPayment
+        ? RequestStatus.APPROVED
+        : RequestStatus.PENDING,
       requestedBy: { connect: { id: consulteeProfileId } },
       requestNotes: data.notes,
       directlyBooked: true,
@@ -250,10 +289,10 @@ async function handleConsultationCheckout(
 }
 
 async function handleSubscriptionCheckout(
-  tx: any, 
-  data: CheckoutInput, 
+  tx: any,
+  data: CheckoutInput,
   consulteeProfileId: string,
-  skipPayment: boolean
+  skipPayment: boolean,
 ) {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },
@@ -282,7 +321,9 @@ async function handleSubscriptionCheckout(
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlan: { connect: { id: plan.id } },
-      requestStatus: skipPayment ? RequestStatus.APPROVED : RequestStatus.PENDING,
+      requestStatus: skipPayment
+        ? RequestStatus.APPROVED
+        : RequestStatus.PENDING,
       requestedBy: { connect: { id: consulteeProfileId } },
       requestNotes: data.notes,
       startDate,
@@ -309,10 +350,10 @@ async function handleSubscriptionCheckout(
 }
 
 async function handleWebinarCheckout(
-  tx: any, 
-  data: CheckoutInput, 
+  tx: any,
+  data: CheckoutInput,
   userId: string,
-  skipPayment: boolean
+  skipPayment: boolean,
 ) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
@@ -332,7 +373,8 @@ async function handleWebinarCheckout(
   }
 
   const plan = webinar.webinarPlan;
-  const currentParticipants = webinar.appointment?.slotsOfAppointment?.length || 0;
+  const currentParticipants =
+    webinar.appointment?.slotsOfAppointment?.length || 0;
 
   // Check if max participants reached
   if (currentParticipants >= plan.maxParticipants) {
@@ -344,7 +386,7 @@ async function handleWebinarCheckout(
           webinar: { connect: { id: webinar.id } },
         },
       });
-      
+
       throw new Error("Webinar is full. Added to waitlist.");
     } else {
       throw new Error("Webinar is full");
@@ -366,8 +408,12 @@ async function handleWebinarCheckout(
   await tx.slotOfAppointment.create({
     data: {
       appointment: { connect: { id: appointment.id } },
-      slotStartTimeInUTC: webinar.appointment?.slotsOfAppointment[0]?.slotStartTimeInUTC || new Date(),
-      slotEndTimeInUTC: webinar.appointment?.slotsOfAppointment[0]?.slotEndTimeInUTC || new Date(),
+      slotStartTimeInUTC:
+        webinar.appointment?.slotsOfAppointment[0]?.slotStartTimeInUTC ||
+        new Date(),
+      slotEndTimeInUTC:
+        webinar.appointment?.slotsOfAppointment[0]?.slotEndTimeInUTC ||
+        new Date(),
       isTentative: !skipPayment,
       user: {
         connect: { id: userId },
@@ -379,10 +425,10 @@ async function handleWebinarCheckout(
 }
 
 async function handleClassCheckout(
-  tx: any, 
-  data: CheckoutInput, 
+  tx: any,
+  data: CheckoutInput,
   userId: string,
-  skipPayment: boolean
+  skipPayment: boolean,
 ) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
@@ -403,8 +449,8 @@ async function handleClassCheckout(
 
   const plan = classInstance.classPlan;
   const currentParticipants = classInstance.appointments.reduce(
-    (total: number, apt: any) => total + apt.slotsOfAppointment.length, 
-    0
+    (total: number, apt: any) => total + apt.slotsOfAppointment.length,
+    0,
   );
 
   // Check if max participants reached
@@ -417,7 +463,7 @@ async function handleClassCheckout(
           class: { connect: { id: classInstance.id } },
         },
       });
-      
+
       throw new Error("Class is full. Added to waitlist.");
     } else {
       throw new Error("Class is full");
@@ -456,7 +502,11 @@ async function validateSlotAvailability(tx: any, data: CheckoutInput) {
           OR: [
             {
               AND: [
-                { slotStartTimeInUTC: { lte: new Date(data.slotStartTimeInUTC) } },
+                {
+                  slotStartTimeInUTC: {
+                    lte: new Date(data.slotStartTimeInUTC),
+                  },
+                },
                 { slotEndTimeInUTC: { gt: new Date(data.slotStartTimeInUTC) } },
               ],
             },
@@ -478,7 +528,11 @@ async function validateSlotAvailability(tx: any, data: CheckoutInput) {
   }
 }
 
-async function confirmAppointment(tx: any, appointmentId: string, appointmentType: string) {
+async function confirmAppointment(
+  tx: any,
+  appointmentId: string,
+  appointmentType: string,
+) {
   // Make slot non-tentative
   await tx.slotOfAppointment.updateMany({
     where: { appointmentId },
@@ -523,4 +577,4 @@ async function confirmAppointment(tx: any, appointmentId: string, appointmentTyp
       data: { status: ClassStatus.SCHEDULED },
     });
   }
-} 
+}

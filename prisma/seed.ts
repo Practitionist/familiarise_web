@@ -27,40 +27,42 @@ async function seed() {
 
     console.log("Creating consultation plans...");
     await createConsultationPlans(consultants);
-    
+
     console.log("Creating subscription plans...");
     await createSubscriptionPlans(consultants);
-    
+
     console.log("Creating webinar plans...");
     await createWebinarPlans(consultants);
-    
+
     console.log("Creating class plans...");
     await createClassPlans(consultants);
-    
+
     console.log("Creating slots of availability...");
     await createSlotsOfAvailability(consultants);
-    
+
     console.log("Creating topics...");
     await createTopics();
-    
+
     console.log("Creating appointments (this may take a while)...");
     await createAppointments(consultees);
-    
+
     console.log("Creating newsletters...");
     await createNewsletters();
-    
+
     console.log("Creating consultant reviews...");
     await createConsultantReviews(consultants, consultees);
-    
+
     console.log("Creating discount codes...");
     await createDiscountCodes();
-    
+
     console.log("Creating payments...");
     await createPayments(users);
 
     const endTime = Date.now();
     const timeElapsed = (endTime - startTime) / 1000; // time in seconds
-    console.log(`✅ Seed data inserted successfully in ${timeElapsed} seconds.`);
+    console.log(
+      `✅ Seed data inserted successfully in ${timeElapsed} seconds.`,
+    );
   } catch (error) {
     console.error("❌ Error during seed process:", error);
     throw error;

@@ -6,10 +6,13 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.text();
     const signature = req.headers.get("x-razorpay-signature");
-    
+
     if (!process.env.RAZORPAY_WEBHOOK_SECRET) {
       console.error("RAZORPAY_WEBHOOK_SECRET not configured");
-      return NextResponse.json({ error: "Webhook secret not configured" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Webhook secret not configured" },
+        { status: 500 },
+      );
     }
 
     // Verify webhook signature
@@ -21,7 +24,10 @@ export async function POST(req: NextRequest) {
 
       if (signature !== expectedSignature) {
         console.error("Razorpay webhook signature verification failed");
-        return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
+        return NextResponse.json(
+          { error: "Invalid signature" },
+          { status: 400 },
+        );
       }
     }
 
@@ -47,12 +53,15 @@ export async function POST(req: NextRequest) {
           notes: payment.notes,
           status: payment.status,
         });
-        
+
         // Update booking status if notes contain booking info
         if (payment.notes && payment.notes.bookingId) {
           try {
             // Note: Update based on your actual booking table structure
-            console.log("✅ Booking confirmed via Razorpay:", payment.notes.bookingId);
+            console.log(
+              "✅ Booking confirmed via Razorpay:",
+              payment.notes.bookingId,
+            );
           } catch (error) {
             console.error("Failed to update booking:", error);
           }
@@ -87,7 +96,9 @@ export async function POST(req: NextRequest) {
         console.log("✅ Subscription charged:", {
           id: subscription.id,
           status: subscription.status,
-          current_start: new Date(subscription.current_start * 1000).toISOString(),
+          current_start: new Date(
+            subscription.current_start * 1000,
+          ).toISOString(),
           current_end: new Date(subscription.current_end * 1000).toISOString(),
           notes: subscription.notes,
         });
@@ -112,7 +123,7 @@ export async function POST(req: NextRequest) {
     console.error("Razorpay webhook error:", error);
     return NextResponse.json(
       { error: "Webhook handler failed" },
-      { status: 500 }
+      { status: 500 },
     );
   }
-} 
+}

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { PaymentStatus, RequestStatus, WebinarStatus, ClassStatus } from "@prisma/client";
+import {
+  PaymentStatus,
+  RequestStatus,
+  WebinarStatus,
+  ClassStatus,
+} from "@prisma/client";
 import Stripe from "stripe";
 import { stripeClient, verifyRazorpayWebhook } from "@/lib/payment";
 
@@ -8,10 +13,10 @@ export async function POST(req: NextRequest) {
   try {
     const contentType = req.headers.get("content-type");
     const userAgent = req.headers.get("user-agent");
-    
+
     // Determine payment gateway based on headers
     let paymentGateway: "STRIPE" | "RAZORPAY" | null = null;
-    
+
     if (userAgent?.includes("Stripe")) {
       paymentGateway = "STRIPE";
     } else if (req.headers.get("x-razorpay-signature")) {
@@ -19,7 +24,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (!paymentGateway) {
-      return NextResponse.json({ error: "Unknown payment gateway" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Unknown payment gateway" },
+        { status: 400 },
+      );
     }
 
     const body = await req.text();
@@ -31,19 +39,28 @@ export async function POST(req: NextRequest) {
       case "RAZORPAY":
         return await handleRazorpayWebhook(req, body);
       default:
-        return NextResponse.json({ error: "Unsupported payment gateway" }, { status: 400 });
+        return NextResponse.json(
+          { error: "Unsupported payment gateway" },
+          { status: 400 },
+        );
     }
   } catch (error) {
     console.error("Webhook error:", error);
-    return NextResponse.json({ error: "Webhook handler failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Webhook handler failed" },
+      { status: 500 },
+    );
   }
 }
 
 async function handleStripeWebhook(req: NextRequest, body: string) {
   const signature = req.headers.get("stripe-signature");
-  
+
   if (!signature) {
-    return NextResponse.json({ error: "No Stripe signature found" }, { status: 400 });
+    return NextResponse.json(
+      { error: "No Stripe signature found" },
+      { status: 400 },
+    );
   }
 
   try {
@@ -51,7 +68,7 @@ async function handleStripeWebhook(req: NextRequest, body: string) {
     const event = stripeClient.webhooks.constructEvent(
       body,
       signature,
-      process.env.STRIPE_WEBHOOK_SECRET!
+      process.env.STRIPE_WEBHOOK_SECRET!,
     );
 
     console.log(`[Stripe Webhook] Received event: ${event.type}`);
@@ -61,7 +78,10 @@ async function handleStripeWebhook(req: NextRequest, body: string) {
       case "payment_intent.succeeded":
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
         console.log(`[Stripe] Payment succeeded: ${paymentIntent.id}`);
-        await handlePaymentSuccess(paymentIntent.id, paymentIntent.receipt_email || undefined);
+        await handlePaymentSuccess(
+          paymentIntent.id,
+          paymentIntent.receipt_email || undefined,
+        );
         break;
 
       case "payment_intent.payment_failed":
@@ -73,7 +93,9 @@ async function handleStripeWebhook(req: NextRequest, body: string) {
       case "payment_intent.created":
       case "payment_intent.requires_action":
         // Log but don't process these intermediate states
-        console.log(`[Stripe] Intermediate event ${event.type} for ${event.data.object.id}`);
+        console.log(
+          `[Stripe] Intermediate event ${event.type} for ${event.data.object.id}`,
+        );
         break;
 
       default:
@@ -90,20 +112,26 @@ async function handleStripeWebhook(req: NextRequest, body: string) {
 
 async function handleRazorpayWebhook(req: NextRequest, body: string) {
   const signature = req.headers.get("x-razorpay-signature");
-  
+
   if (!signature) {
-    return NextResponse.json({ error: "No Razorpay signature found" }, { status: 400 });
+    return NextResponse.json(
+      { error: "No Razorpay signature found" },
+      { status: 400 },
+    );
   }
 
   try {
     const isValid = verifyRazorpayWebhook(
       body,
       signature,
-      process.env.RAZORPAY_WEBHOOK_SECRET!
+      process.env.RAZORPAY_WEBHOOK_SECRET!,
     );
 
     if (!isValid) {
-      return NextResponse.json({ error: "Invalid Razorpay signature" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid Razorpay signature" },
+        { status: 400 },
+      );
     }
 
     const event = JSON.parse(body);
@@ -113,9 +141,14 @@ async function handleRazorpayWebhook(req: NextRequest, body: string) {
     switch (event.event) {
       case "payment.captured":
         const capturedPayment = event.payload.payment.entity;
-        console.log(`[Razorpay] Payment captured: ${capturedPayment.id} for order: ${capturedPayment.order_id}`);
+        console.log(
+          `[Razorpay] Payment captured: ${capturedPayment.id} for order: ${capturedPayment.order_id}`,
+        );
         // Use order_id as payment intent for Razorpay (this is what we store in our Payment table)
-        await handlePaymentSuccess(capturedPayment.order_id, capturedPayment.email);
+        await handlePaymentSuccess(
+          capturedPayment.order_id,
+          capturedPayment.email,
+        );
         break;
 
       case "order.paid":
@@ -128,13 +161,17 @@ async function handleRazorpayWebhook(req: NextRequest, body: string) {
 
       case "payment.failed":
         const failedPayment = event.payload.payment.entity;
-        console.log(`[Razorpay] Payment failed: ${failedPayment.id} for order: ${failedPayment.order_id}`);
+        console.log(
+          `[Razorpay] Payment failed: ${failedPayment.id} for order: ${failedPayment.order_id}`,
+        );
         await handlePaymentFailure(failedPayment.order_id);
         break;
 
       case "payment.authorized":
         // Payment authorized but not captured yet - just log
-        console.log(`[Razorpay] Payment authorized: ${event.payload.payment.entity.id}`);
+        console.log(
+          `[Razorpay] Payment authorized: ${event.payload.payment.entity.id}`,
+        );
         break;
 
       default:
@@ -145,11 +182,17 @@ async function handleRazorpayWebhook(req: NextRequest, body: string) {
     return NextResponse.json({ received: true });
   } catch (error) {
     console.error("Razorpay webhook error:", error);
-    return NextResponse.json({ error: "Razorpay webhook failed" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Razorpay webhook failed" },
+      { status: 400 },
+    );
   }
 }
 
-async function handlePaymentSuccess(paymentIntentId: string, receiptEmail?: string) {
+async function handlePaymentSuccess(
+  paymentIntentId: string,
+  receiptEmail?: string,
+) {
   await prisma.$transaction(async (tx) => {
     // Find and update payment
     const payment = await tx.payment.findFirst({
@@ -187,7 +230,7 @@ async function handlePaymentSuccess(paymentIntentId: string, receiptEmail?: stri
 
     // Update appointment status based on type
     const appointment = payment.appointment;
-    
+
     if (appointment.consultation) {
       await tx.consultation.update({
         where: { id: appointment.consultation.id },
@@ -237,7 +280,7 @@ async function handlePaymentFailure(paymentIntentId: string) {
 
     // Delete tentative slots (cancel booking)
     await tx.slotOfAppointment.deleteMany({
-      where: { 
+      where: {
         appointmentId: payment.appointmentId,
         isTentative: true,
       },
@@ -254,4 +297,4 @@ async function handlePaymentFailure(paymentIntentId: string) {
       });
     }
   });
-} 
+}

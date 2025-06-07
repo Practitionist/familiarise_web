@@ -153,20 +153,22 @@ export default function ConsultationCheckoutPage({
             const errorData = await response.json();
             const errorMessage = errorData.error || "Booking failed";
             const errorType = errorData.errorType || "UNKNOWN_ERROR";
-            
+
             // Show specific toast based on error type
             switch (errorType) {
               case "PAYMENT_CONFIG_ERROR":
                 toast({
                   title: "Payment System Error",
-                  description: "Payment system unavailable. Please contact support.",
+                  description:
+                    "Payment system unavailable. Please contact support.",
                   variant: "destructive",
                 });
                 break;
               case "PAYMENT_PROCESSING_ERROR":
                 toast({
                   title: "Payment Error",
-                  description: "Payment processing error. Please try again later.",
+                  description:
+                    "Payment processing error. Please try again later.",
                   variant: "destructive",
                 });
                 break;
@@ -202,16 +204,16 @@ export default function ConsultationCheckoutPage({
           }
 
           const data = await response.json();
-          
+
           // Show success toast
           toast({
             title: "✅ Consultation Booked Successfully!",
-            description: data.skipPayment 
+            description: data.skipPayment
               ? "Your consultation has been confirmed. Check your dashboard for details."
               : "Payment processed successfully. Your consultation is confirmed.",
             variant: "default",
           });
-          
+
           // Redirect after a short delay to let user see the toast
           setTimeout(() => {
             window.location.href = "/dashboard/consultee";
@@ -243,20 +245,22 @@ export default function ConsultationCheckoutPage({
           const errorData = await response.json();
           const errorMessage = errorData.error || "Checkout failed";
           const errorType = errorData.errorType || "UNKNOWN_ERROR";
-          
+
           // Show specific toast based on error type for production flow
           switch (errorType) {
             case "PAYMENT_CONFIG_ERROR":
               toast({
                 title: "Payment System Error",
-                description: "Payment system unavailable. Please contact support.",
+                description:
+                  "Payment system unavailable. Please contact support.",
                 variant: "destructive",
               });
               break;
             case "PAYMENT_PROCESSING_ERROR":
               toast({
                 title: "Payment Error",
-                description: "Payment processing error. Please try again later.",
+                description:
+                  "Payment processing error. Please try again later.",
                 variant: "destructive",
               });
               break;
