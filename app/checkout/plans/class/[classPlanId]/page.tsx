@@ -8,7 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { fetchReviews } from "@/lib/user";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useEffect, useState, useCallback } from "react";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 import { loadStripe } from "@stripe/stripe-js";
 
