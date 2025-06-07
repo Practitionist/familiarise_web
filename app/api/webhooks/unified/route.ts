@@ -2,11 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { PaymentStatus, RequestStatus, WebinarStatus, ClassStatus } from "@prisma/client";
 import Stripe from "stripe";
-import { verifyRazorpayWebhook } from "@/lib/payment";
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-06-20",
-});
+import { stripeClient, verifyRazorpayWebhook } from "@/lib/payment";
 
 export async function POST(req: NextRequest) {
   try {
@@ -52,7 +48,7 @@ async function handleStripeWebhook(req: NextRequest, body: string) {
 
   try {
     // Use official Stripe webhook verification
-    const event = stripe.webhooks.constructEvent(
+    const event = stripeClient.webhooks.constructEvent(
       body,
       signature,
       process.env.STRIPE_WEBHOOK_SECRET!

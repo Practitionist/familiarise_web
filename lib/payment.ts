@@ -4,8 +4,8 @@ import { PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 
 // Initialize payment clients
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-06-20",
+export const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: "2025-05-28.basil",
 });
 
 export const razorpay = new Razorpay({
@@ -40,7 +40,7 @@ export async function createPaymentIntent({
 }: PaymentIntentParams): Promise<PaymentIntent> {
   try {
     if (paymentGateway === "STRIPE") {
-      const intent = await stripe.paymentIntents.create({
+      const intent = await stripeClient.paymentIntents.create({
         amount: Math.round(amount * 100), // Convert to cents
         currency,
         metadata,
@@ -114,7 +114,7 @@ export async function validatePaymentWebhook(
 
   try {
     if (req.headers.get("stripe-signature")) {
-      const event = stripe.webhooks.constructEvent(
+      const event = stripeClient.webhooks.constructEvent(
         body,
         signature,
         process.env.STRIPE_WEBHOOK_SECRET!,
@@ -158,7 +158,7 @@ export async function cancelPaymentIntent(
   try {
     if (paymentIntentId.startsWith("pi_")) {
       // Stripe payment intent
-      await stripe.paymentIntents.cancel(paymentIntentId);
+      await stripeClient.paymentIntents.cancel(paymentIntentId);
     } else {
       // For Razorpay, we can only cancel an order if it's still pending
       const order = await razorpay.orders.fetchPayments(paymentIntentId);
@@ -181,7 +181,7 @@ export async function initiateRefund(
   try {
     if (paymentIntentId.startsWith("pi_")) {
       // Stripe refund
-      await stripe.refunds.create({
+      await stripeClient.refunds.create({
         payment_intent: paymentIntentId,
         amount: amount ? Math.round(amount * 100) : undefined,
       });

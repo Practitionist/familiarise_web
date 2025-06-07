@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import prisma from "@/lib/prisma";
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-06-20",
-});
+import { stripeClient } from "@/lib/payment";
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,7 +16,7 @@ export async function POST(req: NextRequest) {
     let event: Stripe.Event;
 
     try {
-      event = stripe.webhooks.constructEvent(
+      event = stripeClient.webhooks.constructEvent(
         body,
         signature,
         process.env.STRIPE_WEBHOOK_SECRET
@@ -74,7 +71,7 @@ export async function POST(req: NextRequest) {
         const invoice = event.data.object as Stripe.Invoice;
         console.log("✅ Invoice payment succeeded:", {
           id: invoice.id,
-          subscription: invoice.subscription,
+          subscription_id: invoice.parent?.subscription_details?.subscription,
           amount_paid: invoice.amount_paid,
           customer: invoice.customer,
         });
@@ -86,8 +83,8 @@ export async function POST(req: NextRequest) {
           id: subscription.id,
           customer: subscription.customer,
           status: subscription.status,
-          current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
-          current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+          billing_cycle_anchor: new Date(subscription.billing_cycle_anchor * 1000).toISOString(),
+          start_date: new Date(subscription.start_date * 1000).toISOString(),
         });
         break;
 
