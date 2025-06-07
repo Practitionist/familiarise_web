@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { PaymentStatus, OrderStatus, ProductType, Prisma } from "@prisma/client";
+import { PaymentStatus, OrderStatus, ProductType, Prisma, AppointmentsType, RequestStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 
@@ -9,6 +9,21 @@ interface RazorpayPayment {
   notes: Record<string, string>;
   receipt_url?: string;
 }
+
+// Define Plan Snapshot Interfaces (similar to Stripe webhook)
+interface ConsultationPlanSnapshot {
+  slotId?: string;
+  consultationId?: string;
+}
+
+interface WebinarPlanSnapshot {
+  webinarId?: string;
+}
+
+interface ClassPlanSnapshot {
+  classId?: string;
+}
+
 
 interface RazorpayWebhookEvent {
   event: string;
@@ -92,22 +107,177 @@ export async function POST(req: Request) {
         // 3. Process OrderItems for fulfillment
         for (const item of order.items) {
           switch (item.productType) {
-            case ProductType.CONSULTATION:
-              // TODO: Implement Consultation Booking Logic
-              console.log(`TODO: Fulfill consultation for order item ${item.id}, plan ${item.planId}`);
+            case ProductType.CONSULTATION: {
+              const planSnapshot = item.planSnapshot;
+              if (planSnapshot && typeof planSnapshot === 'object') {
+                const typedPlanSnapshot = planSnapshot as ConsultationPlanSnapshot;
+                const slotId = typedPlanSnapshot.slotId;
+                let consultationId = typedPlanSnapshot.consultationId;
+
+                if (!slotId) {
+                  console.error(`Razorpay Webhook: slotId missing in planSnapshot for consultation OrderItem ${item.id} in Order ${order.id}. Skipping fulfillment.`);
+                  continue;
+                }
+
+                const appointment = await tx.appointment.create({
+                  data: { appointmentType: AppointmentsType.CONSULTATION },
+                });
+                const appointmentId = appointment.id;
+
+                await tx.slotOfAppointment.update({
+                  where: { id: slotId },
+                  data: {
+                    appointmentId: appointmentId
+                  },
+                });
+
+                if (consultationId) {
+                  await tx.consultation.update({
+                    where: { id: consultationId },
+                    data: {
+                      appointment: { connect: { id: appointmentId } },
+                      requestStatus: RequestStatus.APPROVED,
+                      Order: { connect: { id: order.id } },
+                    },
+                  });
+                } else {
+                  const newConsultation = await tx.consultation.create({
+                    data: {
+                      consultationPlanId: item.planId,
+                      requestedById: order.userId, // Assuming consulteeProfile.id can be derived or is same as userId
+                      appointment: { connect: { id: appointmentId } },
+                      requestStatus: RequestStatus.APPROVED,
+                      directlyBooked: true,
+                      Order: { connect: { id: order.id } },
+                    },
+                  });
+                  consultationId = newConsultation.id;
+                }
+
+                await tx.appointment.update({
+                    where: { id: appointmentId },
+                    data: { consultationId: consultationId },
+                });
+                console.log(`Razorpay Webhook: Consultation OrderItem ${item.id} (Consultation ${consultationId}, Appointment ${appointmentId}) for Order ${order.id} fulfilled.`);
+              } else {
+                console.error(`Razorpay Webhook: planSnapshot missing for consultation OrderItem ${item.id} in Order ${order.id}. Skipping.`);
+              }
               break;
-            case ProductType.CLASS:
-              // TODO: Implement Class Registration Logic
-              console.log(`TODO: Fulfill class registration for order item ${item.id}, plan ${item.planId}`);
+            }
+            case ProductType.CLASS: {
+              const planSnapshot = item.planSnapshot;
+              if (planSnapshot && typeof planSnapshot === 'object') {
+                const typedPlanSnapshot = planSnapshot as ClassPlanSnapshot;
+                const classId = typedPlanSnapshot.classId;
+
+                if (!classId) {
+                  console.error(`Razorpay Webhook: classId missing in planSnapshot for class OrderItem ${item.id} in Order ${order.id}. Skipping fulfillment.`);
+                  continue;
+                }
+
+                const classRegistration = await tx.classRegistration.create({
+                  data: {
+                    userId: order.userId,
+                    classId: classId,
+                    classPlanId: item.planId,
+                    orderId: order.id,
+                    status: "CONFIRMED",
+                  },
+                });
+
+                await tx.order.update({
+                  where: { id: order.id },
+                  data: { classRegistrationId: classRegistration.id },
+                });
+
+                console.log(`Razorpay Webhook: ClassRegistration ${classRegistration.id} for Order ${order.id}, Item ${item.id} (Class ${classId}) fulfilled.`);
+              } else {
+                console.error(`Razorpay Webhook: planSnapshot missing for class OrderItem ${item.id} in Order ${order.id}. Skipping.`);
+              }
               break;
-            case ProductType.WEBINAR:
-              // TODO: Implement Webinar Registration Logic
-              console.log(`TODO: Fulfill webinar registration for order item ${item.id}, plan ${item.planId}`);
+            }
+            case ProductType.WEBINAR: {
+              const planSnapshot = item.planSnapshot;
+              if (planSnapshot && typeof planSnapshot === 'object') {
+                const typedPlanSnapshot = planSnapshot as WebinarPlanSnapshot;
+                const webinarId = typedPlanSnapshot.webinarId;
+
+                if (!webinarId) {
+                  console.error(`Razorpay Webhook: webinarId missing in planSnapshot for webinar OrderItem ${item.id} in Order ${order.id}. Skipping fulfillment.`);
+                  continue;
+                }
+
+                const webinarRegistration = await tx.webinarRegistration.create({
+                  data: {
+                    userId: order.userId,
+                    webinarId: webinarId,
+                    webinarPlanId: item.planId,
+                    orderId: order.id,
+                    status: "CONFIRMED",
+                  },
+                });
+
+                await tx.order.update({
+                  where: { id: order.id },
+                  data: { webinarRegistrationId: webinarRegistration.id },
+                });
+
+                console.log(`Razorpay Webhook: WebinarRegistration ${webinarRegistration.id} for Order ${order.id}, Item ${item.id} (Webinar ${webinarId}) fulfilled.`);
+              } else {
+                console.error(`Razorpay Webhook: planSnapshot missing for webinar OrderItem ${item.id} in Order ${order.id}. Skipping.`);
+              }
               break;
-            case ProductType.SUBSCRIPTION:
-              // TODO: Implement Subscription Activation Logic
-              console.log(`TODO: Fulfill subscription for order item ${item.id}, plan ${item.planId}`);
+            }
+            case ProductType.SUBSCRIPTION: {
+              const subscriptionPlan = await tx.subscriptionPlan.findUnique({
+                where: { id: item.planId },
+              });
+
+              if (!subscriptionPlan) {
+                console.error(`Razorpay Webhook: SubscriptionPlan not found for ID ${item.planId} in OrderItem ${item.id}, Order ${order.id}. Skipping fulfillment.`);
+                continue;
+              }
+
+              const startDate = new Date();
+              const endDate = new Date(startDate);
+              endDate.setMonth(startDate.getMonth() + subscriptionPlan.durationInMonths);
+
+              // Ensure consulteeProfile exists for the user
+              const consulteeProfile = await tx.consulteeProfile.findUnique({
+                where: { userId: order.userId },
+              });
+
+              if (!consulteeProfile) {
+                // Potentially create one if it's guaranteed a user always has/needs one upon subscription
+                // For now, we'll log an error if not found, as per Stripe webhook's implicit assumption
+                console.error(`Razorpay Webhook: ConsulteeProfile not found for userId ${order.userId} when creating subscription for Order ${order.id}. Skipping.`);
+                // Or, create if business logic dictates:
+                // consulteeProfile = await tx.consulteeProfile.create({
+                //   data: { userId: order.userId, /* other required fields */ }
+                // });
+                // console.log(`Razorpay Webhook: Created ConsulteeProfile ${consulteeProfile.id} for User ${order.userId}`);
+                continue; // If profile is strictly required and not found/created
+              }
+
+              const subscription = await tx.subscription.create({
+                data: {
+                  requestedById: consulteeProfile.id, // Correct: Link to ConsulteeProfile via requestedById
+                  subscriptionPlanId: item.planId,
+                  Order: { connect: { id: order.id } }, // Correct: Relate to Order model
+                  startDate: startDate,
+                  endDate: endDate,
+                  requestStatus: RequestStatus.APPROVED, // Correct: Use RequestStatus enum
+                },
+              });
+
+              await tx.order.update({
+                where: { id: order.id },
+                data: { subscriptionId: subscription.id },
+              });
+
+              console.log(`Razorpay Webhook: Subscription ${subscription.id} for Order ${order.id}, Item ${item.id} (Plan ${item.planId}) fulfilled. Ends on ${endDate.toISOString()}`);
               break;
+            }
             default:
               console.warn(`Razorpay Webhook: Unknown product type ${item.productType} for order item ${item.id}`);
           }
