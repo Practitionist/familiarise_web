@@ -51,26 +51,44 @@ async function handleStripeWebhook(req: NextRequest, body: string) {
   }
 
   try {
+    // Use official Stripe webhook verification
     const event = stripe.webhooks.constructEvent(
       body,
       signature,
       process.env.STRIPE_WEBHOOK_SECRET!
     );
 
-    if (event.type === "payment_intent.succeeded") {
-      const paymentIntent = event.data.object as Stripe.PaymentIntent;
-      await handlePaymentSuccess(paymentIntent.id, paymentIntent.receipt_email || undefined);
-    }
+    console.log(`[Stripe Webhook] Received event: ${event.type}`);
 
-    if (event.type === "payment_intent.payment_failed") {
-      const paymentIntent = event.data.object as Stripe.PaymentIntent;
-      await handlePaymentFailure(paymentIntent.id);
+    // Handle events according to official Stripe documentation
+    switch (event.type) {
+      case "payment_intent.succeeded":
+        const paymentIntent = event.data.object as Stripe.PaymentIntent;
+        console.log(`[Stripe] Payment succeeded: ${paymentIntent.id}`);
+        await handlePaymentSuccess(paymentIntent.id, paymentIntent.receipt_email || undefined);
+        break;
+
+      case "payment_intent.payment_failed":
+        const failedPaymentIntent = event.data.object as Stripe.PaymentIntent;
+        console.log(`[Stripe] Payment failed: ${failedPaymentIntent.id}`);
+        await handlePaymentFailure(failedPaymentIntent.id);
+        break;
+
+      case "payment_intent.created":
+      case "payment_intent.requires_action":
+        // Log but don't process these intermediate states
+        console.log(`[Stripe] Intermediate event ${event.type} for ${event.data.object.id}`);
+        break;
+
+      default:
+        console.log(`[Stripe] Unhandled event type: ${event.type}`);
+        break;
     }
 
     return NextResponse.json({ received: true });
   } catch (error) {
-    console.error("Stripe webhook error:", error);
-    return NextResponse.json({ error: "Stripe webhook failed" }, { status: 400 });
+    console.error("[Stripe Webhook] Verification failed:", error);
+    return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 }
 
@@ -93,15 +111,39 @@ async function handleRazorpayWebhook(req: NextRequest, body: string) {
     }
 
     const event = JSON.parse(body);
+    console.log(`[Razorpay Webhook] Received event: ${event.event}`);
 
-    if (event.event === "payment.captured") {
-      const payment = event.payload.payment.entity;
-      await handlePaymentSuccess(payment.order_id, payment.email);
-    }
+    // Handle different Razorpay event types according to official documentation
+    switch (event.event) {
+      case "payment.captured":
+        const capturedPayment = event.payload.payment.entity;
+        console.log(`[Razorpay] Payment captured: ${capturedPayment.id} for order: ${capturedPayment.order_id}`);
+        // Use order_id as payment intent for Razorpay (this is what we store in our Payment table)
+        await handlePaymentSuccess(capturedPayment.order_id, capturedPayment.email);
+        break;
 
-    if (event.event === "payment.failed") {
-      const payment = event.payload.payment.entity;
-      await handlePaymentFailure(payment.order_id);
+      case "order.paid":
+        const paidOrder = event.payload.order.entity;
+        const paidPayment = event.payload.payment?.entity;
+        console.log(`[Razorpay] Order paid: ${paidOrder.id}`);
+        // Use order_id for order.paid events
+        await handlePaymentSuccess(paidOrder.id, paidPayment?.email);
+        break;
+
+      case "payment.failed":
+        const failedPayment = event.payload.payment.entity;
+        console.log(`[Razorpay] Payment failed: ${failedPayment.id} for order: ${failedPayment.order_id}`);
+        await handlePaymentFailure(failedPayment.order_id);
+        break;
+
+      case "payment.authorized":
+        // Payment authorized but not captured yet - just log
+        console.log(`[Razorpay] Payment authorized: ${event.payload.payment.entity.id}`);
+        break;
+
+      default:
+        console.log(`[Razorpay] Unhandled event type: ${event.event}`);
+        break;
     }
 
     return NextResponse.json({ received: true });
