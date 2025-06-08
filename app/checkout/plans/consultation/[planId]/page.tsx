@@ -77,6 +77,8 @@ export default function ConsultationCheckoutPage({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
+  const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
+  const [processingGateway, setProcessingGateway] = useState<string | null>(null);
 
   // Fetch slot details
   useEffect(() => {
@@ -269,7 +271,16 @@ export default function ConsultationCheckoutPage({
 
   const handleCheckout = useCallback(
     async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
+      // Prevent double-clicks and multiple simultaneous requests
+      if (isCheckoutProcessing) {
+        return;
+      }
+
       try {
+        // Set loading state
+        setIsCheckoutProcessing(true);
+        setProcessingGateway(gateway);
+
         // Validate params first
         const parsedParams = consultationSchema.safeParse(resolvedSearchParams);
         if (!parsedParams.success) {
@@ -298,9 +309,13 @@ export default function ConsultationCheckoutPage({
             variant: "destructive",
           });
         }
+      } finally {
+        // Always reset loading state
+        setIsCheckoutProcessing(false);
+        setProcessingGateway(null);
       }
     },
-    [resolvedParams, resolvedSearchParams, toast],
+    [resolvedParams, resolvedSearchParams, toast, isCheckoutProcessing],
   );
 
   useEffect(() => {
@@ -594,8 +609,16 @@ export default function ConsultationCheckoutPage({
                   <Button
                     variant="outline"
                     onClick={() => handleCheckout(gateway.gateway)}
+                    disabled={isCheckoutProcessing}
                   >
-                    Pay with {gateway.name}
+                    {isCheckoutProcessing && processingGateway === gateway.gateway ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                        Processing...
+                      </>
+                    ) : (
+                      `Pay with ${gateway.name}`
+                    )}
                   </Button>
                 </div>
               </CardContent>

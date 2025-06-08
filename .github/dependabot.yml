@@ -9,13 +9,16 @@ updates:
       time: "09:00"
       timezone: "Asia/Kolkata"
     target-branch: "dev"
+    vendor: true
+    rebase-strategy: "auto"
     labels:
       - "dependencies"
       - "npm"
       - "auto-merge-candidate"
-    versioning-strategy: "auto"
+    versioning-strategy: "increase"
     allow:
       - dependency-type: "direct"
+      - dependency-type: "indirect"
     ignore:
       - dependency-name: "@types/*"
         update-types: ["version-update:semver-patch"]
@@ -28,6 +31,7 @@ updates:
         update-types: ["version-update:semver-patch"]
     commit-message:
       prefix: "chore(deps)"
+      prefix-development: "chore(dev-deps)"
       include: "scope"
     reviewers:
       - "kaustavghosh"
@@ -179,29 +183,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-
-  - package-ecosystem: "npm"
-    directory: "/"
-    open-pull-requests-limit: 5
-    schedule:
-      interval: "monthly"
-      day: "monday"
-      time: "10:00"
-      timezone: "Asia/Kolkata"
-    target-branch: "dev"
-    labels:
-      - "dependencies"
-      - "dev-dependencies"
-      - "low-priority"
-    allow:
-      - dependency-type: "development"
-    commit-message:
-      prefix: "chore(dev-deps)"
-      include: "scope"
-    reviewers:
-      - "kaustavghosh"
-    
-    groups:
+          
       # DEV - TypeScript & Types
       typescript-types:
         patterns:
@@ -211,7 +193,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-          
+        
       # DEV - Linting & Code Quality
       linting:
         patterns:
@@ -222,7 +204,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-          
+        
       # DEV - Testing
       testing:
         patterns:
@@ -233,7 +215,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-          
+        
       # DEV - Build Tools
       build-tools:
         patterns:
@@ -246,7 +228,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-          
+        
       # DEV - Development Utilities
       dev-utilities:
         patterns:
@@ -256,9 +238,12 @@ updates:
           - "dotenv"
           - "enquirer"
           - "prompt-sync"
+          - "@faker-js/faker"
         update-types:
           - "minor"
           - "patch"
+
+
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -298,13 +283,14 @@ updates:
 # - Utilities: Date functions, validation, animations
 # - React Components: Day picker, sliders, etc.
 # 
-# DEV DEPENDENCIES (Monthly):
+# DEV DEPENDENCIES (Weekly, managed via grouping):
 # - TypeScript, ESLint, Testing, Build tools
+# - These are grouped separately for easy identification
 # 
 # 🗓️ SCHEDULING:
-# - Production dependencies: Weekly on Mondays 9 AM
-# - Development dependencies: Monthly on Mondays 10 AM  
+# - All NPM dependencies: Weekly on Mondays 9 AM
 # - GitHub Actions: Monthly on Fridays
+# - Production deps get priority in review process
 # 
 # 🏷️ LABELING SYSTEM:
 # - auto-merge-candidate: For safe patch updates
