@@ -76,6 +76,160 @@ export default function WebinarCheckoutPage({
   const [_reviews, _setReviews] = useState<ConsultantReview[]>([]);
   const { toast } = useToast();
 
+  // Common error handling logic
+  const handleApiError = (errorData: any) => {
+    const errorMessage = errorData.error || "Operation failed";
+    const errorType = errorData.errorType || "UNKNOWN_ERROR";
+
+    const errorMessages = {
+      PAYMENT_CONFIG_ERROR: {
+        title: "Payment System Error",
+        description: "Payment system unavailable. Please contact support.",
+      },
+      PAYMENT_PROCESSING_ERROR: {
+        title: "Payment Error",
+        description: "Payment processing error. Please try again later.",
+      },
+      DATABASE_ERROR: {
+        title: "System Error",
+        description: "System error. Please try again.",
+      },
+      NOT_FOUND_ERROR: {
+        title: "Not Found",
+        description: errorMessage,
+      },
+      AVAILABILITY_ERROR: {
+        title: "Registration Unavailable",
+        description: errorMessage,
+      },
+      UNKNOWN_ERROR: {
+        title: "Operation Failed",
+        description: errorMessage,
+      },
+    };
+
+    const error = errorMessages[errorType as keyof typeof errorMessages] || errorMessages.UNKNOWN_ERROR;
+    
+    toast({
+      title: error.title,
+      description: error.description,
+      variant: "destructive",
+    });
+  };
+
+  // Common API request logic
+  const makeCheckoutRequest = async (parsedParams: any, gateway: string) => {
+    if (!planData?.data?.id) {
+      throw new Error("Webinar plan not found");
+    }
+
+    // Get the first available webinar instance from the plan
+    const availableWebinar = planData.data.webinars?.[0];
+    if (!availableWebinar) {
+      throw new Error("No webinar instances available for this plan");
+    }
+
+    return fetch("/api/checkout", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        appointmentType: "WEBINAR",
+        planId: planData.data.id,
+        eventId: availableWebinar.id,
+        discountCode: parsedParams.data.discountCode,
+        paymentGateway: gateway,
+      }),
+    });
+  };
+
+  // Common success handling logic
+  const handleCheckoutSuccess = (data: any, isDevMode: boolean = false) => {
+    if (isDevMode) {
+      // Development mode - direct registration success
+      toast({
+        title: "✅ Webinar Registration Successful!",
+        description: data.skipPayment
+          ? "You're registered for the webinar. Check your dashboard for details."
+          : "Payment processed successfully. You're registered for the webinar.",
+        variant: "default",
+      });
+
+      // Redirect after a short delay
+      setTimeout(() => {
+        window.location.href = "/dashboard/consultee";
+      }, 2000);
+    } else {
+      // Production mode - payment initiated success
+      toast({
+        title: "🚀 Payment Initiated!",
+        description: "Redirecting to secure payment gateway. Complete your payment to confirm the registration.",
+        variant: "default",
+      });
+    }
+  };
+
+  // Development workflow - direct registration
+  const handleDevCheckout = async (parsedParams: any, gateway: string) => {
+    const response = await makeCheckoutRequest(parsedParams, gateway);
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      handleApiError(errorData);
+      throw new Error(errorData.error || "Registration failed");
+    }
+
+    const data = await response.json();
+    handleCheckoutSuccess(data, true);
+  };
+
+  // Production workflow - payment gateway processing
+  const handleProdCheckout = async (parsedParams: any, gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
+    const response = await makeCheckoutRequest(parsedParams, gateway);
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      handleApiError(errorData);
+      throw new Error(errorData.error || "Checkout failed");
+    }
+
+    const data = await response.json();
+    
+    // Show success toast before redirecting
+    handleCheckoutSuccess(data, false);
+
+    // Small delay to let user see the toast before redirect
+    setTimeout(async () => {
+      // Handle gateway-specific responses
+      switch (gateway) {
+        case "STRIPE": {
+          const stripeInstance = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
+          if (!stripeInstance) {
+            throw new Error("Failed to load Stripe");
+          }
+          await stripeInstance.confirmPayment({
+            clientSecret: data.clientSecret,
+            confirmParams: {
+              return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
+            },
+          });
+          break;
+        }
+
+        case "RAZORPAY": {
+          window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
+          break;
+        }
+        case "LEMON_SQUEEZY":
+        case "XFLOW": {
+          window.location.href = data.checkoutUrl;
+          break;
+        }
+      }
+    }, 1000);
+  };
+
   const handleCheckout = useCallback(
     async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
       try {
@@ -85,217 +239,25 @@ export default function WebinarCheckoutPage({
           throw new Error("Invalid webinar parameters");
         }
 
-        if (!planData?.data?.id) {
-          throw new Error("Webinar plan not found");
-        }
-
-        // Get the first available webinar instance from the plan
-        const availableWebinar = planData.data.webinars?.[0];
-        if (!availableWebinar) {
-          throw new Error("No webinar instances available for this plan");
-        }
-
-        // In development or test mode, directly create the webinar registration
-        if (
-          process.env.NODE_ENV === "development" ||
-          process.env.NODE_ENV === "test"
-        ) {
-          const response = await fetch("/api/checkout", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              appointmentType: "WEBINAR",
-              planId: planData.data.id,
-              eventId: availableWebinar.id,
-              discountCode: parsedParams.data.discountCode,
-              paymentGateway: gateway,
-            }),
-          });
-
-          if (!response.ok) {
-            const errorData = await response.json();
-            const errorMessage = errorData.error || "Registration failed";
-            const errorType = errorData.errorType || "UNKNOWN_ERROR";
-
-            // Show specific toast based on error type
-            switch (errorType) {
-              case "PAYMENT_CONFIG_ERROR":
-                toast({
-                  title: "Payment System Error",
-                  description:
-                    "Payment system unavailable. Please contact support.",
-                  variant: "destructive",
-                });
-                break;
-              case "PAYMENT_PROCESSING_ERROR":
-                toast({
-                  title: "Payment Error",
-                  description:
-                    "Payment processing error. Please try again later.",
-                  variant: "destructive",
-                });
-                break;
-              case "DATABASE_ERROR":
-                toast({
-                  title: "System Error",
-                  description: "System error. Please try again.",
-                  variant: "destructive",
-                });
-                break;
-              case "NOT_FOUND_ERROR":
-                toast({
-                  title: "Not Found",
-                  description: errorMessage,
-                  variant: "destructive",
-                });
-                break;
-              case "AVAILABILITY_ERROR":
-                toast({
-                  title: "Registration Unavailable",
-                  description: errorMessage,
-                  variant: "destructive",
-                });
-                break;
-              default:
-                toast({
-                  title: "Registration Failed",
-                  description: errorMessage,
-                  variant: "destructive",
-                });
-            }
-            throw new Error(errorMessage);
-          }
-
-          const data = await response.json();
-
-          // Show success toast
-          toast({
-            title: "✅ Webinar Registration Successful!",
-            description: data.skipPayment
-              ? "You're registered for the webinar. Check your dashboard for details."
-              : "Payment processed successfully. You're registered for the webinar.",
-            variant: "default",
-          });
-
-          // Redirect after a short delay to let user see the toast
-          setTimeout(() => {
-            window.location.href = "/dashboard/consultee";
-          }, 2000);
-          return;
-        }
-
-        // In production, proceed with payment gateway checkout
-        const response = await fetch("/api/checkout", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            appointmentType: "WEBINAR",
-            planId: planData.data.id,
-            eventId: availableWebinar.id,
-            discountCode: parsedParams.data.discountCode,
-            paymentGateway: gateway,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          const errorMessage = errorData.error || "Checkout failed";
-          const errorType = errorData.errorType || "UNKNOWN_ERROR";
-
-          // Show specific toast based on error type for production flow
-          switch (errorType) {
-            case "PAYMENT_CONFIG_ERROR":
-              toast({
-                title: "Payment System Error",
-                description:
-                  "Payment system unavailable. Please contact support.",
-                variant: "destructive",
-              });
-              break;
-            case "PAYMENT_PROCESSING_ERROR":
-              toast({
-                title: "Payment Error",
-                description:
-                  "Payment processing error. Please try again later.",
-                variant: "destructive",
-              });
-              break;
-            case "DATABASE_ERROR":
-              toast({
-                title: "System Error",
-                description: "System error. Please try again.",
-                variant: "destructive",
-              });
-              break;
-            case "NOT_FOUND_ERROR":
-              toast({
-                title: "Not Found",
-                description: errorMessage,
-                variant: "destructive",
-              });
-              break;
-            case "AVAILABILITY_ERROR":
-              toast({
-                title: "Registration Unavailable",
-                description: errorMessage,
-                variant: "destructive",
-              });
-              break;
-            default:
-              toast({
-                title: "Checkout Failed",
-                description: errorMessage,
-                variant: "destructive",
-              });
-          }
-          throw new Error(errorMessage);
-        }
-
-        const data = await response.json();
-
-        // Handle gateway-specific responses
-        switch (gateway) {
-          case "STRIPE": {
-            // Load Stripe.js and redirect to checkout
-            const stripeInstance = await loadStripe(
-              process.env.NEXT_PUBLIC_STRIPE_KEY!,
-            );
-            if (!stripeInstance) {
-              throw new Error("Failed to load Stripe");
-            }
-            await stripeInstance.confirmPayment({
-              clientSecret: data.clientSecret,
-              confirmParams: {
-                return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
-              },
-            });
-            break;
-          }
-
-          case "RAZORPAY": {
-            // Redirect to Razorpay checkout
-            window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
-            break;
-          }
-          case "LEMON_SQUEEZY":
-          case "XFLOW": {
-            // Direct URL redirect
-            window.location.href = data.checkoutUrl;
-            break;
-          }
+        // Route to appropriate workflow based on environment
+        const isDevelopment = process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+        
+        if (isDevelopment) {
+          await handleDevCheckout(parsedParams, gateway);
+        } else {
+          await handleProdCheckout(parsedParams, gateway);
         }
       } catch (error) {
         console.error("Checkout error:", error);
-        toast({
-          title: "Checkout Failed",
-          description:
-            error instanceof Error ? error.message : "Please try again",
-          variant: "destructive",
-        });
+        
+        // Only show generic error if it wasn't already handled
+        if (!(error instanceof Error && error.message.includes("failed"))) {
+          toast({
+            title: "Checkout Failed",
+            description: error instanceof Error ? error.message : "Please try again",
+            variant: "destructive",
+          });
+        }
       }
     },
     [resolvedParams.webinarPlanId, resolvedSearchParams, planData, toast],
