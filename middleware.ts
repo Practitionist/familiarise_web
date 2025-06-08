@@ -10,10 +10,15 @@ const URLS = {
 
 // Simplified route patterns for better performance
 const ROUTE_PATTERNS = {
-  
   // Use simple string checks instead of micromatch for better performance
   PRIVATE_PREFIXES: [],
-  PROTECTED_PREFIXES: ["/form/", "/dashboard/", "/settings/", "/profile/", "/checkout/"],
+  PROTECTED_PREFIXES: [
+    "/form/",
+    "/dashboard/",
+    "/settings/",
+    "/profile/",
+    "/checkout/",
+  ],
   PUBLIC_AUTH_PREFIXES: ["/auth/"],
 
   PRIVATE_API_PREFIXES: ["/api/inngest/"],
@@ -38,14 +43,17 @@ interface Token {
 }
 
 // Cache for token verification to reduce repeated JWT parsing
-const tokenCache = new Map<string, { token: Token | null; timestamp: number }>();
+const tokenCache = new Map<
+  string,
+  { token: Token | null; timestamp: number }
+>();
 const CACHE_TTL = 60 * 1000; // 1 minute cache
 
 /**
  * Fast route matching using string prefix checks instead of glob patterns
  */
 const matchesAnyPrefix = (pathname: string, prefixes: string[]): boolean => {
-  return prefixes.some(prefix => pathname.startsWith(prefix));
+  return prefixes.some((prefix) => pathname.startsWith(prefix));
 };
 
 /**
@@ -53,23 +61,24 @@ const matchesAnyPrefix = (pathname: string, prefixes: string[]): boolean => {
  */
 const getCachedToken = async (req: NextRequest): Promise<Token | null> => {
   const authHeader = req.headers.get("authorization");
-  const sessionCookie = req.cookies.get("next-auth.session-token")?.value || 
-                       req.cookies.get("__Secure-next-auth.session-token")?.value;
-  
+  const sessionCookie =
+    req.cookies.get("next-auth.session-token")?.value ||
+    req.cookies.get("__Secure-next-auth.session-token")?.value;
+
   const cacheKey = authHeader || sessionCookie || "anonymous";
   const cached = tokenCache.get(cacheKey);
-  
+
   // Return cached token if still valid
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
     return cached.token;
   }
-  
+
   // Fetch new token
   const token = (await getToken({ req })) as Token | null;
-  
+
   // Cache the result
   tokenCache.set(cacheKey, { token, timestamp: Date.now() });
-  
+
   // Clean old cache entries periodically
   if (tokenCache.size > 1000) {
     const cutoff = Date.now() - CACHE_TTL;
@@ -79,7 +88,7 @@ const getCachedToken = async (req: NextRequest): Promise<Token | null> => {
       }
     });
   }
-  
+
   return token;
 };
 
@@ -87,7 +96,8 @@ const getCachedToken = async (req: NextRequest): Promise<Token | null> => {
  * Get the correct dashboard URL based on user role and profile
  */
 const getDashboardUrl = (token: Token): string => {
-  const { role, consultantProfileId, consulteeProfileId, staffProfileId } = token;
+  const { role, consultantProfileId, consulteeProfileId, staffProfileId } =
+    token;
 
   if (role === "CONSULTANT" && consultantProfileId) {
     return `/dashboard/consultant/${consultantProfileId}/home`;
@@ -181,8 +191,11 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     if (pathname.startsWith("/dashboard/") && token) {
       const correctDashboardUrl = getDashboardUrl(token);
       const baseDashboardUrl = correctDashboardUrl.replace("/home", "");
-      
-      if (!pathname.startsWith(baseDashboardUrl) && pathname !== correctDashboardUrl) {
+
+      if (
+        !pathname.startsWith(baseDashboardUrl) &&
+        pathname !== correctDashboardUrl
+      ) {
         return NextResponse.redirect(new URL(correctDashboardUrl, req.url));
       }
     }

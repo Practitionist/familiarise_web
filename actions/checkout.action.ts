@@ -10,6 +10,7 @@ import {
   RequestStatus,
   WebinarStatus,
   ClassStatus,
+  Prisma,
 } from "@prisma/client";
 import { createPaymentIntent } from "@/lib/payment";
 
@@ -234,7 +235,7 @@ export async function checkoutAction(data: CheckoutInput) {
 
 // Helper functions (copied from API route)
 async function handleConsultationCheckout(
-  tx: any,
+  tx: Prisma.TransactionClient,
   data: CheckoutInput,
   consulteeProfileId: string,
   skipPayment: boolean,

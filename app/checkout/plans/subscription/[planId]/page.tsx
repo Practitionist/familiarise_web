@@ -87,8 +87,10 @@ export default function SubscriptionCheckoutPage({
       },
     };
 
-    const error = errorMessages[errorType as keyof typeof errorMessages] || errorMessages.UNKNOWN_ERROR;
-    
+    const error =
+      errorMessages[errorType as keyof typeof errorMessages] ||
+      errorMessages.UNKNOWN_ERROR;
+
     toast({
       title: error.title,
       description: error.description,
@@ -108,8 +110,12 @@ export default function SubscriptionCheckoutPage({
         planId: resolvedParams.planId,
         // TODO: Add proper slot selection UI for subscriptions
         // For now, use placeholder times that will be scheduled later
-        slotStartTimeInUTC: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Tomorrow
-        slotEndTimeInUTC: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString(), // Tomorrow + 1 hour
+        slotStartTimeInUTC: new Date(
+          Date.now() + 24 * 60 * 60 * 1000,
+        ).toISOString(), // Tomorrow
+        slotEndTimeInUTC: new Date(
+          Date.now() + 25 * 60 * 60 * 1000,
+        ).toISOString(), // Tomorrow + 1 hour
         discountCode: parsedParams.data.discountCode,
         paymentGateway: gateway,
       }),
@@ -136,7 +142,8 @@ export default function SubscriptionCheckoutPage({
       // Production mode - payment initiated success
       toast({
         title: "🚀 Payment Initiated!",
-        description: "Redirecting to secure payment gateway. Complete your payment to activate the subscription.",
+        description:
+          "Redirecting to secure payment gateway. Complete your payment to activate the subscription.",
         variant: "default",
       });
     }
@@ -157,7 +164,10 @@ export default function SubscriptionCheckoutPage({
   };
 
   // Production workflow - payment gateway processing
-  const handleProdCheckout = async (parsedParams: any, gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
+  const handleProdCheckout = async (
+    parsedParams: any,
+    gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW",
+  ) => {
     const response = await makeCheckoutRequest(parsedParams, gateway);
 
     if (!response.ok) {
@@ -167,7 +177,7 @@ export default function SubscriptionCheckoutPage({
     }
 
     const data = await response.json();
-    
+
     // Show success toast before redirecting
     handleCheckoutSuccess(data, false);
 
@@ -207,8 +217,10 @@ export default function SubscriptionCheckoutPage({
         }
 
         // Route to appropriate workflow based on environment
-        const isDevelopment = process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
-        
+        const isDevelopment =
+          process.env.NODE_ENV === "development" ||
+          process.env.NODE_ENV === "test";
+
         if (isDevelopment) {
           await handleDevCheckout(parsedParams, gateway);
         } else {
@@ -216,12 +228,13 @@ export default function SubscriptionCheckoutPage({
         }
       } catch (error) {
         console.error("Checkout error:", error);
-        
+
         // Only show generic error if it wasn't already handled
         if (!(error instanceof Error && error.message.includes("failed"))) {
           toast({
             title: "Checkout Failed",
-            description: error instanceof Error ? error.message : "Please try again",
+            description:
+              error instanceof Error ? error.message : "Please try again",
             variant: "destructive",
           });
         }

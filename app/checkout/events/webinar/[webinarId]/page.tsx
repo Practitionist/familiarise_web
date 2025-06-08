@@ -73,8 +73,10 @@ export default function WebinarCheckoutPage({
       },
     };
 
-    const error = errorMessages[errorType as keyof typeof errorMessages] || errorMessages.UNKNOWN_ERROR;
-    
+    const error =
+      errorMessages[errorType as keyof typeof errorMessages] ||
+      errorMessages.UNKNOWN_ERROR;
+
     toast({
       title: error.title,
       description: error.description,
@@ -122,7 +124,8 @@ export default function WebinarCheckoutPage({
       // Production mode - payment initiated success
       toast({
         title: "🚀 Payment Initiated!",
-        description: "Redirecting to secure payment gateway. Complete your payment to confirm the registration.",
+        description:
+          "Redirecting to secure payment gateway. Complete your payment to confirm the registration.",
         variant: "default",
       });
     }
@@ -143,7 +146,9 @@ export default function WebinarCheckoutPage({
   };
 
   // Production workflow - payment gateway processing
-  const handleProdCheckout = async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
+  const handleProdCheckout = async (
+    gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW",
+  ) => {
     const response = await makeCheckoutRequest(gateway);
 
     if (!response.ok) {
@@ -153,7 +158,7 @@ export default function WebinarCheckoutPage({
     }
 
     const data = await response.json();
-    
+
     // Show success toast before redirecting
     handleCheckoutSuccess(data, false);
 
@@ -162,7 +167,9 @@ export default function WebinarCheckoutPage({
       // Handle gateway-specific responses
       switch (gateway) {
         case "STRIPE": {
-          const stripeInstance = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
+          const stripeInstance = await loadStripe(
+            process.env.NEXT_PUBLIC_STRIPE_KEY!,
+          );
           if (!stripeInstance) {
             throw new Error("Failed to load Stripe");
           }
@@ -191,8 +198,10 @@ export default function WebinarCheckoutPage({
     async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
       try {
         // Route to appropriate workflow based on environment
-        const isDevelopment = process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
-        
+        const isDevelopment =
+          process.env.NODE_ENV === "development" ||
+          process.env.NODE_ENV === "test";
+
         if (isDevelopment) {
           await handleDevCheckout(gateway);
         } else {
@@ -200,12 +209,13 @@ export default function WebinarCheckoutPage({
         }
       } catch (error) {
         console.error("Checkout error:", error);
-        
+
         // Only show generic error if it wasn't already handled
         if (!(error instanceof Error && error.message.includes("failed"))) {
           toast({
             title: "Checkout Failed",
-            description: error instanceof Error ? error.message : "Please try again",
+            description:
+              error instanceof Error ? error.message : "Please try again",
             variant: "destructive",
           });
         }

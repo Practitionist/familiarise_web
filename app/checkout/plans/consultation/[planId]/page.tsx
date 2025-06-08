@@ -149,8 +149,10 @@ export default function ConsultationCheckoutPage({
       },
     };
 
-    const error = errorMessages[errorType as keyof typeof errorMessages] || errorMessages.UNKNOWN_ERROR;
-    
+    const error =
+      errorMessages[errorType as keyof typeof errorMessages] ||
+      errorMessages.UNKNOWN_ERROR;
+
     toast({
       title: error.title,
       description: error.description,
@@ -168,8 +170,10 @@ export default function ConsultationCheckoutPage({
       body: JSON.stringify({
         appointmentType: "CONSULTATION",
         planId: resolvedParams.planId,
-        slotOfAvailabilityWeeklyId: parsedParams.data.slotOfAvailabilityWeeklyId,
-        slotOfAvailabilityCustomId: parsedParams.data.slotOfAvailabilityCustomId,
+        slotOfAvailabilityWeeklyId:
+          parsedParams.data.slotOfAvailabilityWeeklyId,
+        slotOfAvailabilityCustomId:
+          parsedParams.data.slotOfAvailabilityCustomId,
         slotStartTimeInUTC: parsedParams.data.slotStartTimeInUTC,
         slotEndTimeInUTC: parsedParams.data.slotEndTimeInUTC,
         discountCode: parsedParams.data.discountCode,
@@ -198,7 +202,8 @@ export default function ConsultationCheckoutPage({
       // Production mode - payment initiated success
       toast({
         title: "🚀 Payment Initiated!",
-        description: "Redirecting to secure payment gateway. Complete your payment to confirm the consultation.",
+        description:
+          "Redirecting to secure payment gateway. Complete your payment to confirm the consultation.",
         variant: "default",
       });
     }
@@ -219,7 +224,10 @@ export default function ConsultationCheckoutPage({
   };
 
   // Production workflow - payment gateway processing
-  const handleProdCheckout = async (parsedParams: any, gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
+  const handleProdCheckout = async (
+    parsedParams: any,
+    gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW",
+  ) => {
     const response = await makeCheckoutRequest(parsedParams, gateway);
 
     if (!response.ok) {
@@ -229,7 +237,7 @@ export default function ConsultationCheckoutPage({
     }
 
     const data = await response.json();
-    
+
     // Show success toast before redirecting
     handleCheckoutSuccess(data, false);
 
@@ -269,8 +277,10 @@ export default function ConsultationCheckoutPage({
         }
 
         // Route to appropriate workflow based on environment
-        const isDevelopment = process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
-        
+        const isDevelopment =
+          process.env.NODE_ENV === "development" ||
+          process.env.NODE_ENV === "test";
+
         if (isDevelopment) {
           await handleDevCheckout(parsedParams, gateway);
         } else {
@@ -278,12 +288,13 @@ export default function ConsultationCheckoutPage({
         }
       } catch (error) {
         console.error("Checkout error:", error);
-        
+
         // Only show generic error if it wasn't already handled
         if (!(error instanceof Error && error.message.includes("failed"))) {
           toast({
             title: "Checkout Failed",
-            description: error instanceof Error ? error.message : "Please try again",
+            description:
+              error instanceof Error ? error.message : "Please try again",
             variant: "destructive",
           });
         }
