@@ -9,7 +9,7 @@ import { fetchReviews } from "@/lib/user";
 import type { ConsultantReview } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useEffect, useState, useCallback } from "react";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 import { loadStripe } from "@stripe/stripe-js";
 
@@ -40,103 +40,219 @@ export default function ClassCheckoutPage({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [_reviews, _setReviews] = useState<ConsultantReview[]>([]);
+  const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
+  const [processingGateway, setProcessingGateway] = useState<string | null>(
+    null,
+  );
   const { toast } = useToast();
+
+  // Common error handling logic
+  const handleApiError = (errorData: any) => {
+    const errorMessage = errorData.error || "Operation failed";
+    const errorType = errorData.errorType || "UNKNOWN_ERROR";
+
+    const errorMessages = {
+      PAYMENT_CONFIG_ERROR: {
+        title: "Payment System Error",
+        description: "Payment system unavailable. Please contact support.",
+      },
+      PAYMENT_PROCESSING_ERROR: {
+        title: "Payment Error",
+        description: "Payment processing error. Please try again later.",
+      },
+      DATABASE_ERROR: {
+        title: "System Error",
+        description: "System error. Please try again.",
+      },
+      NOT_FOUND_ERROR: {
+        title: "Not Found",
+        description: errorMessage,
+      },
+      AVAILABILITY_ERROR: {
+        title: "Registration Unavailable",
+        description: errorMessage,
+      },
+      UNKNOWN_ERROR: {
+        title: "Operation Failed",
+        description: errorMessage,
+      },
+    };
+
+    const error =
+      errorMessages[errorType as keyof typeof errorMessages] ||
+      errorMessages.UNKNOWN_ERROR;
+
+    toast({
+      title: error.title,
+      description: error.description,
+      variant: "destructive",
+    });
+  };
+
+  // Common API request logic
+  const makeCheckoutRequest = async (parsedParams: any, gateway: string) => {
+    if (!planData?.data?.classPlan?.id) {
+      throw new Error("Class plan not found");
+    }
+
+    return fetch("/api/checkout", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        appointmentType: "CLASS",
+        planId: planData.data.classPlan.id,
+        eventId: resolvedParams.classId,
+        discountCode: parsedParams.data.discountCode,
+        paymentGateway: gateway,
+      }),
+    });
+  };
+
+  // Common success handling logic
+  const handleCheckoutSuccess = (data: any, isDevMode: boolean = false) => {
+    if (isDevMode) {
+      // Development mode - direct registration success
+      toast({
+        title: "✅ Class Registration Successful!",
+        description: data.skipPayment
+          ? "You're registered for the class. Check your dashboard for details."
+          : "Payment processed successfully. You're registered for the class.",
+        variant: "default",
+      });
+
+      // Redirect after a short delay
+      setTimeout(() => {
+        window.location.href = "/dashboard/consultee";
+      }, 2000);
+    } else {
+      // Production mode - payment initiated success
+      toast({
+        title: "🚀 Payment Initiated!",
+        description:
+          "Redirecting to secure payment gateway. Complete your payment to confirm the registration.",
+        variant: "default",
+      });
+    }
+  };
+
+  // Development workflow - direct registration
+  const handleDevCheckout = async (parsedParams: any, gateway: string) => {
+    const response = await makeCheckoutRequest(parsedParams, gateway);
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      handleApiError(errorData);
+      throw new Error(errorData.error || "Registration failed");
+    }
+
+    const data = await response.json();
+    handleCheckoutSuccess(data, true);
+  };
+
+  // Production workflow - payment gateway processing
+  const handleProdCheckout = async (
+    parsedParams: any,
+    gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW",
+  ) => {
+    const response = await makeCheckoutRequest(parsedParams, gateway);
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      handleApiError(errorData);
+      throw new Error(errorData.error || "Checkout failed");
+    }
+
+    const data = await response.json();
+
+    // Show success toast before redirecting
+    handleCheckoutSuccess(data, false);
+
+    // Small delay to let user see the toast before redirect
+    setTimeout(async () => {
+      // Handle gateway-specific responses
+      switch (gateway) {
+        case "STRIPE":
+          const stripeInstance = await loadStripe(
+            process.env.NEXT_PUBLIC_STRIPE_KEY!,
+          );
+          if (!stripeInstance) {
+            throw new Error("Failed to load Stripe");
+          }
+          await stripeInstance.confirmPayment({
+            clientSecret: data.clientSecret,
+            confirmParams: {
+              return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
+            },
+          });
+          break;
+
+        case "RAZORPAY":
+          window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
+          break;
+
+        case "LEMON_SQUEEZY":
+        case "XFLOW":
+          window.location.href = data.checkoutUrl;
+          break;
+      }
+    }, 1000);
+  };
 
   const handleCheckout = useCallback(
     async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
+      // Prevent double-clicks and multiple simultaneous requests
+      if (isCheckoutProcessing) {
+        return;
+      }
+
       try {
+        // Set loading state
+        setIsCheckoutProcessing(true);
+        setProcessingGateway(gateway);
+
         // Validate params first
         const parsedParams = classSchema.safeParse(resolvedSearchParams);
         if (!parsedParams.success) {
           throw new Error("Invalid class parameters");
         }
 
-        // In development or test mode, directly create the class registration
-        if (
+        // Route to appropriate workflow based on environment
+        const isDevelopment =
           process.env.NODE_ENV === "development" ||
-          process.env.NODE_ENV === "test"
-        ) {
-          const response = await fetch("/api/register/class", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              classId: resolvedParams.classId,
-              discountCode: parsedParams.data.discountCode,
-              paymentGateway: gateway,
-            }),
-          });
+          process.env.NODE_ENV === "test";
 
-          if (!response.ok) {
-            throw new Error("Registration failed");
-          }
-
-          window.location.href = "/dashboard/consultee";
-          return;
-        }
-
-        // In production, proceed with payment gateway checkout
-        const response = await fetch(
-          `/api/checkout/class/${gateway.toLowerCase()}`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              classId: resolvedParams.classId,
-              discountCode: parsedParams.data.discountCode,
-            }),
-          },
-        );
-
-        if (!response.ok) {
-          throw new Error("Checkout failed");
-        }
-
-        const data = await response.json();
-
-        // Handle gateway-specific responses
-        switch (gateway) {
-          case "STRIPE":
-            // Load Stripe.js and redirect to checkout
-            const stripeInstance = await loadStripe(
-              process.env.NEXT_PUBLIC_STRIPE_KEY!,
-            );
-            if (!stripeInstance) {
-              throw new Error("Failed to load Stripe");
-            }
-            await stripeInstance.confirmPayment({
-              clientSecret: data.clientSecret,
-              confirmParams: {
-                return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
-              },
-            });
-            break;
-
-          case "RAZORPAY":
-            // Redirect to Razorpay checkout
-            window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
-            break;
-
-          case "LEMON_SQUEEZY":
-          case "XFLOW":
-            // Direct URL redirect
-            window.location.href = data.checkoutUrl;
-            break;
+        if (isDevelopment) {
+          await handleDevCheckout(parsedParams, gateway);
+        } else {
+          await handleProdCheckout(parsedParams, gateway);
         }
       } catch (error) {
         console.error("Checkout error:", error);
-        toast({
-          title: "Checkout Failed",
-          description:
-            error instanceof Error ? error.message : "Please try again",
-          variant: "destructive",
-        });
+
+        // Only show generic error if it wasn't already handled
+        if (!(error instanceof Error && error.message.includes("failed"))) {
+          toast({
+            title: "Checkout Failed",
+            description:
+              error instanceof Error ? error.message : "Please try again",
+            variant: "destructive",
+          });
+        }
+      } finally {
+        // Always reset loading state
+        setIsCheckoutProcessing(false);
+        setProcessingGateway(null);
       }
     },
-    [resolvedParams, resolvedSearchParams, toast],
+    [
+      resolvedParams,
+      resolvedSearchParams,
+      planData,
+      toast,
+      isCheckoutProcessing,
+    ],
   );
 
   useEffect(() => {
@@ -467,8 +583,17 @@ export default function ClassCheckoutPage({
                   <Button
                     variant="outline"
                     onClick={() => handleCheckout(gateway.gateway)}
+                    disabled={isCheckoutProcessing}
                   >
-                    Pay with {gateway.name}
+                    {isCheckoutProcessing &&
+                    processingGateway === gateway.gateway ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                        Processing...
+                      </>
+                    ) : (
+                      `Pay with ${gateway.name}`
+                    )}
                   </Button>
                 </div>
               </CardContent>

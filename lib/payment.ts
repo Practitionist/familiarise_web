@@ -4,8 +4,8 @@ import { PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 
 // Initialize payment clients
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-06-20",
+export const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: "2025-05-28.basil",
 });
 
 export const razorpay = new Razorpay({
@@ -40,7 +40,7 @@ export async function createPaymentIntent({
 }: PaymentIntentParams): Promise<PaymentIntent> {
   try {
     if (paymentGateway === "STRIPE") {
-      const intent = await stripe.paymentIntents.create({
+      const intent = await stripeClient.paymentIntents.create({
         amount: Math.round(amount * 100), // Convert to cents
         currency,
         metadata,
@@ -76,6 +76,31 @@ export async function createPaymentIntent({
     throw new Error(`Unsupported payment gateway: ${paymentGateway}`);
   } catch (error) {
     console.error("Payment intent creation failed:", error);
+
+    // Provide more specific error messages
+    if (error instanceof Error) {
+      // Stripe errors
+      if (
+        error.message.includes("Invalid API key") ||
+        error.message.includes("api_key")
+      ) {
+        throw new Error("Authentication failed - Invalid Stripe API key");
+      }
+      if (
+        error.message.includes("testmode") ||
+        error.message.includes("livemode")
+      ) {
+        throw new Error("Authentication failed - API key mode mismatch");
+      }
+      // Razorpay errors
+      if (error.message.includes("BAD_REQUEST_ERROR")) {
+        throw new Error("Authentication failed - Invalid Razorpay credentials");
+      }
+      if (error.message.includes("GATEWAY_ERROR")) {
+        throw new Error("Payment gateway temporarily unavailable");
+      }
+    }
+
     throw new Error("Failed to create payment intent");
   }
 }
@@ -95,7 +120,7 @@ export async function validatePaymentWebhook(
 
   try {
     if (req.headers.get("stripe-signature")) {
-      const event = stripe.webhooks.constructEvent(
+      const event = stripeClient.webhooks.constructEvent(
         body,
         signature,
         process.env.STRIPE_WEBHOOK_SECRET!,
@@ -139,7 +164,7 @@ export async function cancelPaymentIntent(
   try {
     if (paymentIntentId.startsWith("pi_")) {
       // Stripe payment intent
-      await stripe.paymentIntents.cancel(paymentIntentId);
+      await stripeClient.paymentIntents.cancel(paymentIntentId);
     } else {
       // For Razorpay, we can only cancel an order if it's still pending
       const order = await razorpay.orders.fetchPayments(paymentIntentId);
@@ -162,7 +187,7 @@ export async function initiateRefund(
   try {
     if (paymentIntentId.startsWith("pi_")) {
       // Stripe refund
-      await stripe.refunds.create({
+      await stripeClient.refunds.create({
         payment_intent: paymentIntentId,
         amount: amount ? Math.round(amount * 100) : undefined,
       });
@@ -203,4 +228,21 @@ export function convertAmountToSmallestUnit(
   };
 
   return Math.round(amount * (multipliers[currency] || 100));
+}
+
+// Simple Razorpay webhook verification helper for backward compatibility
+export function verifyRazorpayWebhook(
+  body: string,
+  signature: string,
+  secret: string,
+): boolean {
+  try {
+    const shasum = crypto.createHmac("sha256", secret);
+    shasum.update(body);
+    const digest = shasum.digest("hex");
+    return digest === signature;
+  } catch (error) {
+    console.error("Razorpay webhook verification failed:", error);
+    return false;
+  }
 }

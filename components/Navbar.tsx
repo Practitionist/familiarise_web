@@ -1,14 +1,12 @@
 "use client";
 import { motion } from "framer-motion";
-import micromatch from "micromatch";
+
 import { signOut, useSession } from "next-auth/react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-// Using public path for Next.js static asset
-const familiariselogo =
-  "/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
+import familiariseLogoTransparent from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 // Using public path for Next.js static asset
 const defaultUserImage = "/avif/static/assets/default-profile.avif";
 
@@ -65,19 +63,14 @@ const Navbar = () => {
   };
 
   // Check if the current route should exclude navbar
-  const apiRoutes = ["/api/**"];
-  const publicAuthRoutes = ["/auth/**"];
-  const formRoutes = ["/form/**"];
-  const checkoutRoutes = ["/checkout/**"];
-  const dashboardRoutes = ["/dashboard/**"];
-  const meetingRoutes = ["/meetings/**"];
   const excludeNavbar =
-    micromatch.isMatch(pathname, apiRoutes) ||
-    micromatch.isMatch(pathname, publicAuthRoutes) ||
-    micromatch.isMatch(pathname, formRoutes) ||
-    micromatch.isMatch(pathname, checkoutRoutes) ||
-    micromatch.isMatch(pathname, dashboardRoutes) ||
-    micromatch.isMatch(pathname, meetingRoutes);
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/auth/") ||
+    pathname.startsWith("/form/") ||
+    pathname.startsWith("/checkout/") ||
+    pathname.startsWith("/dashboard/") ||
+    pathname.startsWith("/meetings/");
+
   if (excludeNavbar) return null;
 
   // Navigation links data
@@ -193,7 +186,7 @@ const Navbar = () => {
               style={{ minWidth: 120, maxWidth: 320 }}
             >
               <Image
-                src={familiariselogo}
+                src={familiariseLogoTransparent}
                 alt="Familiarise Logo"
                 fill
                 className="object-contain"
@@ -252,7 +245,7 @@ const Navbar = () => {
                 style={{ minWidth: 80, maxWidth: 200 }}
               >
                 <Image
-                  src={familiariselogo}
+                  src={familiariseLogoTransparent}
                   alt="Familiarise Logo"
                   fill
                   className="object-contain"

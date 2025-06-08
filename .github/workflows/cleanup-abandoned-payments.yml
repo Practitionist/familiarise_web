@@ -1,0 +1,40 @@
+name: Cleanup Abandoned Payments
+
+on:
+  schedule:
+    # Run every 15 minutes
+    - cron: "*/15 * * * *"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  cleanup-abandoned-payments:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run abandoned payment cleanup
+        run: npx ts-node jobs/cleanup-abandoned-payments.ts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          LEMON_SQUEEZY_API_KEY: ${{ secrets.LEMON_SQUEEZY_API_KEY }}
+          XFLOW_SECRET_KEY: ${{ secrets.XFLOW_SECRET_KEY }}
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Abandoned payment cleanup failed"
+          # Add notification logic here (Slack, email, etc.)

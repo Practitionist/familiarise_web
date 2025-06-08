@@ -380,6 +380,7 @@ model SlotOfAppointment {
   updatedAt DateTime @updatedAt
 
   @@index([appointmentId])
+  @@index([isTentative, appointmentId])
 }
 
 //////////////////////////////////////////////////// PRICING PLANS ////////////////////////////////////////////////////
@@ -725,6 +726,7 @@ model Payment {
   paymentIntent  String         @unique
   paymentGateway PaymentGateway
   paymentStatus  PaymentStatus
+  expiresAt      DateTime?      // For tracking payment intent expiration
 
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
@@ -735,6 +737,8 @@ model Payment {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([expiresAt, paymentStatus])
 }
 
 enum PaymentGateway {
