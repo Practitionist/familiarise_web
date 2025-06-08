@@ -256,7 +256,7 @@ async function handleConsultationCheckout(
   }
 
   // Check slot availability
-  await validateSlotAvailability(tx, data);
+  await validateSlotAvailability(tx, data, consulteeProfileId);
 
   // Create consultation
   const consultation = await tx.consultation.create({
@@ -311,7 +311,7 @@ async function handleSubscriptionCheckout(
   }
 
   // Check slot availability
-  await validateSlotAvailability(tx, data);
+  await validateSlotAvailability(tx, data, consulteeProfileId);
 
   // Calculate subscription end date
   const startDate = new Date();
@@ -492,10 +492,13 @@ async function handleClassCheckout(
   return { appointment, plan, amount: plan.price };
 }
 
-async function validateSlotAvailability(tx: any, data: CheckoutInput) {
+async function validateSlotAvailability(tx: any, data: CheckoutInput, userId?: string) {
   if (!data.slotStartTimeInUTC || !data.slotEndTimeInUTC) return;
 
-  // Check for overlapping appointments
+  const slotStart = new Date(data.slotStartTimeInUTC);
+  const slotEnd = new Date(data.slotEndTimeInUTC);
+
+  // 1. Check for confirmed overlapping appointments (existing logic)
   const existingBooking = await tx.slotOfAppointment.findFirst({
     where: {
       AND: [
@@ -503,29 +506,138 @@ async function validateSlotAvailability(tx: any, data: CheckoutInput) {
           OR: [
             {
               AND: [
-                {
-                  slotStartTimeInUTC: {
-                    lte: new Date(data.slotStartTimeInUTC),
-                  },
-                },
-                { slotEndTimeInUTC: { gt: new Date(data.slotStartTimeInUTC) } },
+                { slotStartTimeInUTC: { lte: slotStart } },
+                { slotEndTimeInUTC: { gt: slotStart } },
               ],
             },
             {
               AND: [
-                { slotStartTimeInUTC: { lt: new Date(data.slotEndTimeInUTC) } },
-                { slotEndTimeInUTC: { gte: new Date(data.slotEndTimeInUTC) } },
+                { slotStartTimeInUTC: { lt: slotEnd } },
+                { slotEndTimeInUTC: { gte: slotEnd } },
               ],
             },
           ],
         },
-        { isTentative: false },
+        { isTentative: false }, // Only confirmed bookings
       ],
     },
   });
 
   if (existingBooking) {
     throw new Error("Time slot is already booked");
+  }
+
+  // 2. Check for duplicate tentative bookings by the same user (NEW)
+  if (userId) {
+    const recentAttempt = await tx.slotOfAppointment.findFirst({
+      where: {
+        AND: [
+          {
+            OR: [
+              {
+                AND: [
+                  { slotStartTimeInUTC: { lte: slotStart } },
+                  { slotEndTimeInUTC: { gt: slotStart } },
+                ],
+              },
+              {
+                AND: [
+                  { slotStartTimeInUTC: { lt: slotEnd } },
+                  { slotEndTimeInUTC: { gte: slotEnd } },
+                ],
+              },
+            ],
+          },
+          { isTentative: true },
+          { 
+            appointment: {
+              payment: {
+                some: {
+                  AND: [
+                    { userId: userId },
+                    { paymentStatus: "PENDING" },
+                    {
+                      OR: [
+                        { expiresAt: { gt: new Date() } }, // Not yet expired
+                        { 
+                          AND: [
+                            { expiresAt: null }, // No expiration set
+                            { createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) } } // Within 5 min
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+        ],
+      },
+      include: {
+        appointment: {
+          include: {
+            payment: true
+          }
+        }
+      }
+    });
+
+    if (recentAttempt) {
+      throw new Error("You already have a pending booking for this time slot. Please complete your current payment or wait a few minutes to try again.");
+    }
+  }
+
+  // 3. Check for excessive tentative bookings in general (rate limiting)
+  const tentativeCount = await tx.slotOfAppointment.count({
+    where: {
+      AND: [
+        {
+          OR: [
+            {
+              AND: [
+                { slotStartTimeInUTC: { lte: slotStart } },
+                { slotEndTimeInUTC: { gt: slotStart } },
+              ],
+            },
+            {
+              AND: [
+                { slotStartTimeInUTC: { lt: slotEnd } },
+                { slotEndTimeInUTC: { gte: slotEnd } },
+              ],
+            },
+          ],
+        },
+        { isTentative: true },
+        { 
+          appointment: {
+            payment: {
+              some: {
+                AND: [
+                  { paymentStatus: "PENDING" },
+                  {
+                    OR: [
+                      { expiresAt: { gt: new Date() } }, // Not yet expired
+                      { 
+                        AND: [
+                          { expiresAt: null }, // No expiration set
+                          { createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) } } // Within 30 min
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+      ],
+    },
+  });
+
+  // Allow max 3 pending attempts for the same slot (prevents spam)
+  if (tentativeCount >= 3) {
+    throw new Error("This time slot is temporarily unavailable due to high demand. Please try again later.");
   }
 }
 

@@ -266,10 +266,21 @@ async function handlePaymentFailure(paymentIntentId: string) {
     // Find and update payment
     const payment = await tx.payment.findFirst({
       where: { paymentIntent: paymentIntentId },
+      include: {
+        appointment: {
+          include: {
+            consultation: true,
+            subscription: true,
+            webinar: true,
+            class: true,
+          }
+        }
+      }
     });
 
     if (!payment) {
-      throw new Error("Payment not found");
+      console.warn(`Payment not found for intent: ${paymentIntentId}`);
+      return;
     }
 
     // Update payment status
@@ -278,23 +289,41 @@ async function handlePaymentFailure(paymentIntentId: string) {
       data: { paymentStatus: PaymentStatus.FAILED },
     });
 
-    // Delete tentative slots (cancel booking)
-    await tx.slotOfAppointment.deleteMany({
-      where: {
-        appointmentId: payment.appointmentId,
-        isTentative: true,
-      },
-    });
+    // Use the same rollback logic as immediate failures
+    const appointment = payment.appointment;
+    
+    // Remove tentative slots for webinar/class (many-to-many relationships)
+    if (appointment.webinar || appointment.class) {
+      await tx.slotOfAppointment.deleteMany({
+        where: {
+          appointmentId: payment.appointmentId,
+          isTentative: true,
+        },
+      });
+    } else {
+      // For consultation/subscription, delete the entire appointment chain
+      if (appointment.consultation) {
+        await tx.consultation.delete({
+          where: { id: appointment.consultation.id },
+        });
+      }
 
-    // Delete the appointment if no slots remain
-    const remainingSlots = await tx.slotOfAppointment.count({
-      where: { appointmentId: payment.appointmentId },
-    });
+      if (appointment.subscription) {
+        await tx.subscription.delete({
+          where: { id: appointment.subscription.id },
+        });
+      }
 
-    if (remainingSlots === 0) {
+      // Delete slots and appointment
+      await tx.slotOfAppointment.deleteMany({
+        where: { appointmentId: payment.appointmentId },
+      });
+
       await tx.appointment.delete({
         where: { id: payment.appointmentId },
       });
     }
+
+    console.log(`Cleaned up failed payment appointment: ${payment.appointmentId}`);
   });
 }

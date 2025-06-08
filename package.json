@@ -32,6 +32,7 @@
     "scripts:suggest-code-splitting": "ts-node -P tsconfig.scripts.json scripts/suggest-code-splitting.ts",
     "scripts:diagnose-build": "ts-node -P tsconfig.scripts.json scripts/diagnose-build.ts",
     "scripts:update-postman": "npx ts-node scripts/typescript/update-postman-collection.ts",
+    "scripts:cleanup-abandoned-payments": "npx ts-node scripts/cleanup-abandoned-payments.ts",
     "start": "next start",
     "start-watch": "WATCHPACK_POLLING=true next start",
     "studio": "prisma studio",

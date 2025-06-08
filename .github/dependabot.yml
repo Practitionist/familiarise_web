@@ -2,116 +2,326 @@ version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/"
-    open-pull-requests-limit: 30
+    open-pull-requests-limit: 10
     schedule:
-      interval: "daily"
+      interval: "weekly"
+      day: "monday"
       time: "09:00"
       timezone: "Asia/Kolkata"
     target-branch: "dev"
     labels:
       - "dependencies"
       - "npm"
+      - "auto-merge-candidate"
     versioning-strategy: "auto"
     allow:
       - dependency-type: "direct"
     ignore:
       - dependency-name: "@types/*"
         update-types: ["version-update:semver-patch"]
+      # Ignore patch updates for specific dev tools to reduce noise
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-patch"]
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-patch"]
+      - dependency-name: "prettier"
+        update-types: ["version-update:semver-patch"]
     commit-message:
-      prefix: "chore"
+      prefix: "chore(deps)"
       include: "scope"
     reviewers:
       - "kaustavghosh"
-    # Group dependencies to reduce PR noise
+    assignees:
+      - "kaustavghosh"
+    milestone: 1
+    
     groups:
-      # Frontend framework dependencies
-      react:
+      # CRITICAL - Highest Priority
+      core-framework:
         patterns:
           - "react"
           - "react-dom"
+          - "next"
           - "@types/react"
           - "@types/react-dom"
         update-types:
           - "major"
           - "minor"
           - "patch"
-      # Next.js related dependencies
-      next-js:
+        
+      # CRITICAL - Security & Auth
+      auth-security:
         patterns:
-          - "next"
-          - "@next/*"
           - "next-auth"
+          - "@next-auth/*"
+          - "bcrypt"
+          - "bcryptjs"
         update-types:
+          - "major"
           - "minor"
           - "patch"
-      # UI component libraries
-      radix-ui:
-        patterns:
-          - "@radix-ui/*"
-        update-types:
-          - "minor"
-          - "patch"
-      # Database related dependencies
-      prisma:
+          
+      # CRITICAL - Database & Storage
+      database-storage:
         patterns:
           - "@prisma/*"
           - "prisma"
+          - "@supabase/*"
+          - "ioredis"
+          - "redlock"
         update-types:
+          - "major"
           - "minor"
           - "patch"
-      # Testing libraries
-      testing-libs:
+          
+      # HIGH - Payment Processing
+      payment:
         patterns:
-          - "@testing-library/*"
-          - "jest*"
-          - "cypress"
+          - "stripe"
+          - "@stripe/*"
+          - "razorpay"
         update-types:
+          - "major"
           - "minor"
           - "patch"
-      # Internationalization
-      next-intl:
-        patterns:
-          - "next-intl"
-          - "use-intl"
-        update-types:
-          - "minor"
-          - "patch"
-      # Stream related dependencies
-      stream-io:
+          
+      # HIGH - Stream & Communication
+      stream-communication:
         patterns:
           - "@stream-io/*"
           - "stream-chat*"
         update-types:
+          - "major"
           - "minor"
           - "patch"
-      # ESLint and code quality tools
-      linting:
+          
+      # MEDIUM - UI Framework & Components
+      ui-components:
         patterns:
-          - "eslint*"
-          - "prettier"
-          - "typescript-eslint"
+          - "@radix-ui/*"
+          - "lucide-react"
+          - "react-icons"
+          - "cmdk"
         update-types:
           - "minor"
           - "patch"
-      # Tailwind and styling
+          
+      # MEDIUM - Styling & CSS
       styling:
         patterns:
           - "tailwind*"
-          - "postcss*"
-          - "autoprefixer"
+          - "@tailwindcss/*"
+          - "class-variance-authority"
+          - "clsx"
+          - "tailwind-merge"
+          - "tailwindcss-animate"
+        update-types:
+          - "minor"
+          - "patch"
+          
+      # MEDIUM - State Management & Forms
+      state-forms:
+        patterns:
+          - "@reduxjs/toolkit"
+          - "react-redux"
+          - "react-hook-form"
+          - "@hookform/resolvers"
+        update-types:
+          - "minor"
+          - "patch"
+          
+      # MEDIUM - Email & Communication
+      email:
+        patterns:
+          - "@react-email/*"
+          - "react-email"
+          - "resend"
+          - "nodemailer"
+          - "@types/nodemailer"
+        update-types:
+          - "minor"
+          - "patch"
+          
+      # MEDIUM - Rate Limiting & Performance
+      performance:
+        patterns:
+          - "@upstash/*"
+          - "lru-cache"
+          - "swr"
+        update-types:
+          - "minor"
+          - "patch"
+          
+      # LOW - Utilities & Helpers
+      utilities:
+        patterns:
+          - "date-fns*"
+          - "uuid"
+          - "axios"
+          - "zod"
+          - "bad-words"
+          - "@types/bad-words"
+          - "chance"
+          - "@types/chance"
+          - "iso-639-1"
+          - "framer-motion"
+        update-types:
+          - "minor"
+          - "patch"
+          
+      # LOW - React UI Components
+      react-components:
+        patterns:
+          - "react-day-picker"
+          - "react-slick"
+          - "@types/react-slick"
+          - "slick-carousel"
         update-types:
           - "minor"
           - "patch"
 
-  # Add GitHub Actions updates
+  - package-ecosystem: "npm"
+    directory: "/"
+    open-pull-requests-limit: 5
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "10:00"
+      timezone: "Asia/Kolkata"
+    target-branch: "dev"
+    labels:
+      - "dependencies"
+      - "dev-dependencies"
+      - "low-priority"
+    allow:
+      - dependency-type: "development"
+    commit-message:
+      prefix: "chore(dev-deps)"
+      include: "scope"
+    reviewers:
+      - "kaustavghosh"
+    
+    groups:
+      # DEV - TypeScript & Types
+      typescript-types:
+        patterns:
+          - "typescript"
+          - "@types/*"
+          - "typescript-eslint"
+        update-types:
+          - "minor"
+          - "patch"
+          
+      # DEV - Linting & Code Quality
+      linting:
+        patterns:
+          - "eslint*"
+          - "prettier"
+          - "eslint-config-*"
+          - "eslint-plugin-*"
+        update-types:
+          - "minor"
+          - "patch"
+          
+      # DEV - Testing
+      testing:
+        patterns:
+          - "@testing-library/*"
+          - "jest*"
+          - "cypress"
+          - "start-server-and-test"
+        update-types:
+          - "minor"
+          - "patch"
+          
+      # DEV - Build Tools
+      build-tools:
+        patterns:
+          - "postcss"
+          - "autoprefixer"
+          - "tailwindcss"
+          - "@next/bundle-analyzer"
+          - "purgecss"
+          - "ts-node"
+        update-types:
+          - "minor"
+          - "patch"
+          
+      # DEV - Development Utilities
+      dev-utilities:
+        patterns:
+          - "chalk"
+          - "glob"
+          - "globals"
+          - "dotenv"
+          - "enquirer"
+          - "prompt-sync"
+        update-types:
+          - "minor"
+          - "patch"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
+      day: "friday"
     target-branch: "dev"
     labels:
       - "dependencies"
       - "github-actions"
+      - "infrastructure"
     commit-message:
-      prefix: "ci"
+      prefix: "ci(deps)"
       include: "scope"
+    reviewers:
+      - "kaustavghosh"
+
+# DEPENDABOT ORGANIZATION STRATEGY:
+# 
+# 📊 PR PRIORITIZATION:
+# CRITICAL (Weekly, High Priority):
+# - Core Framework (React, Next.js): Foundation dependencies
+# - Auth & Security: Authentication & encryption packages
+# - Database & Storage: Prisma, Supabase, Redis
+# - Payment: Stripe, Razorpay (business critical)
+# 
+# HIGH (Weekly, Medium Priority):
+# - Stream & Communication: Video/chat functionality
+# 
+# MEDIUM (Weekly, Lower Priority):  
+# - UI Components: Radix UI, icons, styling
+# - State & Forms: Redux, React Hook Form
+# - Email: React Email, Resend, Nodemailer
+# - Performance: Upstash, caching, SWR
+# 
+# LOW (Weekly, Lowest Priority):
+# - Utilities: Date functions, validation, animations
+# - React Components: Day picker, sliders, etc.
+# 
+# DEV DEPENDENCIES (Monthly):
+# - TypeScript, ESLint, Testing, Build tools
+# 
+# 🗓️ SCHEDULING:
+# - Production dependencies: Weekly on Mondays 9 AM
+# - Development dependencies: Monthly on Mondays 10 AM  
+# - GitHub Actions: Monthly on Fridays
+# 
+# 🏷️ LABELING SYSTEM:
+# - auto-merge-candidate: For safe patch updates
+# - low-priority: For dev dependencies
+# - infrastructure: For CI/CD updates
+# 
+# 📈 NOISE REDUCTION:
+# - Limited open PRs (10 for prod, 5 for dev)
+# - Grouped related dependencies together
+# - Ignored patch updates for dev tools
+# - Separate schedules for different dependency types
+#
+# 🎯 MILESTONE TRACKING:
+# - All dependency PRs assigned to milestone 1 for release planning
+#
+# 💡 TIPS FOR MANAGING:
+# - Use GitHub filters: is:pr label:dependencies
+# - Sort by priority labels: high-priority, low-priority
+# - Check milestone 1 for all dependency updates
+# - Auto-merge candidates can be merged quickly after CI passes
