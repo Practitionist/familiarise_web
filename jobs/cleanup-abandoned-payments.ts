@@ -1,14 +1,14 @@
 /**
  * Abandoned Payment Cleanup Job (GitHub Actions Version)
- * 
+ *
  * This job cleans up abandoned payments and appointments
  * that have exceeded their timeout periods.
- * 
+ *
  * Optimized for GitHub Actions CI/CD environment.
  * Runs every 15 minutes via scheduled workflow.
  */
 
-import { PrismaClient, PaymentStatus, PaymentGateway } from '@prisma/client';
+import { PrismaClient, PaymentStatus, PaymentGateway } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -23,22 +23,25 @@ interface CleanupResult {
 /**
  * Cancel payment intent with the appropriate payment gateway
  */
-async function cancelPaymentIntent(paymentIntent: string, gateway: PaymentGateway): Promise<void> {
+async function cancelPaymentIntent(
+  paymentIntent: string,
+  gateway: PaymentGateway,
+): Promise<void> {
   try {
     switch (gateway) {
       case PaymentGateway.STRIPE:
         if (process.env.STRIPE_SECRET_KEY) {
-          const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+          const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
           await stripe.paymentIntents.cancel(paymentIntent);
           console.log(`✅ Cancelled Stripe payment intent: ${paymentIntent}`);
         } else {
-          console.warn('⚠️ STRIPE_SECRET_KEY not configured');
+          console.warn("⚠️ STRIPE_SECRET_KEY not configured");
         }
         break;
 
       case PaymentGateway.RAZORPAY:
         if (process.env.RAZORPAY_KEY_SECRET && process.env.RAZORPAY_KEY_ID) {
-          const Razorpay = require('razorpay');
+          const Razorpay = require("razorpay");
           const razorpay = new Razorpay({
             key_id: process.env.RAZORPAY_KEY_ID,
             key_secret: process.env.RAZORPAY_KEY_SECRET,
@@ -46,26 +49,29 @@ async function cancelPaymentIntent(paymentIntent: string, gateway: PaymentGatewa
           await razorpay.payments.cancel(paymentIntent);
           console.log(`✅ Cancelled Razorpay payment: ${paymentIntent}`);
         } else {
-          console.warn('⚠️ RAZORPAY credentials not configured');
+          console.warn("⚠️ RAZORPAY credentials not configured");
         }
         break;
 
       case PaymentGateway.LEMON_SQUEEZY:
         if (process.env.LEMON_SQUEEZY_API_KEY) {
-          const response = await fetch(`https://api.lemonsqueezy.com/v1/payments/${paymentIntent}`, {
-            method: 'DELETE',
-            headers: {
-              'Authorization': `Bearer ${process.env.LEMON_SQUEEZY_API_KEY}`,
-              'Content-Type': 'application/json',
+          const response = await fetch(
+            `https://api.lemonsqueezy.com/v1/payments/${paymentIntent}`,
+            {
+              method: "DELETE",
+              headers: {
+                Authorization: `Bearer ${process.env.LEMON_SQUEEZY_API_KEY}`,
+                "Content-Type": "application/json",
+              },
             },
-          });
+          );
           if (response.ok) {
             console.log(`✅ Cancelled Lemon Squeezy payment: ${paymentIntent}`);
           } else {
             throw new Error(`HTTP ${response.status}`);
           }
         } else {
-          console.warn('⚠️ LEMON_SQUEEZY_API_KEY not configured');
+          console.warn("⚠️ LEMON_SQUEEZY_API_KEY not configured");
         }
         break;
 
@@ -74,7 +80,7 @@ async function cancelPaymentIntent(paymentIntent: string, gateway: PaymentGatewa
           // Add Xflow cancellation logic here
           console.log(`✅ Cancelled Xflow payment: ${paymentIntent}`);
         } else {
-          console.warn('⚠️ XFLOW_SECRET_KEY not configured');
+          console.warn("⚠️ XFLOW_SECRET_KEY not configured");
         }
         break;
 
@@ -82,8 +88,12 @@ async function cancelPaymentIntent(paymentIntent: string, gateway: PaymentGatewa
         console.warn(`⚠️ Unknown payment gateway: ${gateway}`);
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`❌ Failed to cancel ${gateway} payment intent ${paymentIntent}:`, errorMessage);
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    console.error(
+      `❌ Failed to cancel ${gateway} payment intent ${paymentIntent}:`,
+      errorMessage,
+    );
     throw error;
   }
 }
@@ -92,14 +102,14 @@ async function cancelPaymentIntent(paymentIntent: string, gateway: PaymentGatewa
  * Main cleanup function optimized for GitHub Actions
  */
 async function cleanupAbandonedPayments(): Promise<CleanupResult> {
-  console.log('🧹 Starting abandoned payment cleanup job...');
-  
+  console.log("🧹 Starting abandoned payment cleanup job...");
+
   const result: CleanupResult = {
     success: false,
     cleanedCount: 0,
     errorCount: 0,
     totalProcessed: 0,
-    errors: []
+    errors: [],
   };
 
   try {
@@ -110,40 +120,46 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
           some: {
             AND: [
               { paymentStatus: PaymentStatus.PENDING },
-              { 
+              {
                 OR: [
                   { expiresAt: { lt: new Date() } }, // Explicitly expired
-                  { 
+                  {
                     AND: [
                       { expiresAt: null }, // No expiration set (legacy)
-                      { createdAt: { lt: new Date(Date.now() - 30 * 60 * 1000) } } // 30 min fallback
-                    ]
-                  }
-                ]
-              }
-            ]
-          }
+                      {
+                        createdAt: {
+                          lt: new Date(Date.now() - 30 * 60 * 1000),
+                        },
+                      }, // 30 min fallback
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
         },
         slotsOfAppointment: {
           some: {
-            isTentative: true
-          }
-        }
+            isTentative: true,
+          },
+        },
       },
       include: {
         payment: {
-          where: { paymentStatus: PaymentStatus.PENDING }
+          where: { paymentStatus: PaymentStatus.PENDING },
         },
         consultation: true,
         subscription: true,
         webinar: true,
         class: true,
-        slotsOfAppointment: true
-      }
+        slotsOfAppointment: true,
+      },
     });
 
     result.totalProcessed = abandonedAppointments.length;
-    console.log(`📊 Found ${abandonedAppointments.length} abandoned appointments to clean up`);
+    console.log(
+      `📊 Found ${abandonedAppointments.length} abandoned appointments to clean up`,
+    );
 
     // Process each abandoned appointment
     for (const appointment of abandonedAppointments) {
@@ -152,17 +168,28 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
           // Cancel payment intents
           for (const payment of appointment.payment) {
             try {
-              await cancelPaymentIntent(payment.paymentIntent, payment.paymentGateway);
-              
+              await cancelPaymentIntent(
+                payment.paymentIntent,
+                payment.paymentGateway,
+              );
+
               // Update payment status to FAILED (cancelled payments are considered failed)
               await tx.payment.update({
                 where: { id: payment.id },
-                data: { paymentStatus: PaymentStatus.FAILED }
+                data: { paymentStatus: PaymentStatus.FAILED },
               });
             } catch (paymentError) {
-              const errorMessage = paymentError instanceof Error ? paymentError.message : 'Unknown error';
-              console.warn(`⚠️ Failed to cancel payment intent ${payment.paymentIntent}:`, errorMessage);
-              result.errors.push(`Payment cancellation failed for ${payment.paymentIntent}: ${errorMessage}`);
+              const errorMessage =
+                paymentError instanceof Error
+                  ? paymentError.message
+                  : "Unknown error";
+              console.warn(
+                `⚠️ Failed to cancel payment intent ${payment.paymentIntent}:`,
+                errorMessage,
+              );
+              result.errors.push(
+                `Payment cancellation failed for ${payment.paymentIntent}: ${errorMessage}`,
+              );
               // Continue cleanup even if payment cancellation fails
             }
           }
@@ -172,62 +199,75 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
             await tx.slotOfAppointment.deleteMany({
               where: {
                 appointmentId: appointment.id,
-                isTentative: true
-              }
+                isTentative: true,
+              },
             });
-            console.log(`🗑️ Cleaned up tentative slots for ${appointment.webinar ? 'webinar' : 'class'} appointment: ${appointment.id}`);
+            console.log(
+              `🗑️ Cleaned up tentative slots for ${appointment.webinar ? "webinar" : "class"} appointment: ${appointment.id}`,
+            );
           }
-          
+
           // For consultation/subscription, check if any non-tentative slots exist
           else if (appointment.consultation || appointment.subscription) {
             const confirmedSlots = await tx.slotOfAppointment.count({
               where: {
                 appointmentId: appointment.id,
-                isTentative: false
-              }
+                isTentative: false,
+              },
             });
 
             if (confirmedSlots === 0) {
               // Safe to delete the entire appointment and its relationships
               await tx.slotOfAppointment.deleteMany({
-                where: { appointmentId: appointment.id }
+                where: { appointmentId: appointment.id },
               });
 
               if (appointment.consultation) {
                 await tx.consultation.delete({
-                  where: { id: appointment.consultation.id }
+                  where: { id: appointment.consultation.id },
                 });
               } else if (appointment.subscription) {
                 await tx.subscription.delete({
-                  where: { id: appointment.subscription.id }
+                  where: { id: appointment.subscription.id },
                 });
               }
 
               await tx.appointment.delete({
-                where: { id: appointment.id }
+                where: { id: appointment.id },
               });
-              console.log(`🗑️ Deleted entire abandoned ${appointment.consultation ? 'consultation' : 'subscription'} appointment: ${appointment.id}`);
+              console.log(
+                `🗑️ Deleted entire abandoned ${appointment.consultation ? "consultation" : "subscription"} appointment: ${appointment.id}`,
+              );
             } else {
               // Only remove tentative slots
               await tx.slotOfAppointment.deleteMany({
                 where: {
                   appointmentId: appointment.id,
-                  isTentative: true
-                }
+                  isTentative: true,
+                },
               });
-              console.log(`🗑️ Cleaned up tentative slots for ${appointment.consultation ? 'consultation' : 'subscription'} appointment: ${appointment.id}`);
+              console.log(
+                `🗑️ Cleaned up tentative slots for ${appointment.consultation ? "consultation" : "subscription"} appointment: ${appointment.id}`,
+              );
             }
           }
         });
 
         result.cleanedCount++;
-        console.log(`✅ Successfully cleaned up appointment: ${appointment.id}`);
-
+        console.log(
+          `✅ Successfully cleaned up appointment: ${appointment.id}`,
+        );
       } catch (error) {
         result.errorCount++;
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        console.error(`❌ Failed to clean up appointment ${appointment.id}:`, errorMessage);
-        result.errors.push(`Appointment cleanup failed for ${appointment.id}: ${errorMessage}`);
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        console.error(
+          `❌ Failed to clean up appointment ${appointment.id}:`,
+          errorMessage,
+        );
+        result.errors.push(
+          `Appointment cleanup failed for ${appointment.id}: ${errorMessage}`,
+        );
       }
     }
 
@@ -236,14 +276,18 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
 
     // Summary for GitHub Actions logs
     console.log(`\n📈 Cleanup Job Summary:`);
-    console.log(`   ✅ Successfully cleaned: ${result.cleanedCount} appointments`);
+    console.log(
+      `   ✅ Successfully cleaned: ${result.cleanedCount} appointments`,
+    );
     console.log(`   ❌ Failed to clean: ${result.errorCount} appointments`);
     console.log(`   📊 Total processed: ${result.totalProcessed} appointments`);
-    console.log(`   🎯 Success rate: ${((result.cleanedCount / result.totalProcessed) * 100).toFixed(1)}%`);
+    console.log(
+      `   🎯 Success rate: ${((result.cleanedCount / result.totalProcessed) * 100).toFixed(1)}%`,
+    );
 
     if (result.errorCount > 0) {
       console.warn(`⚠️ ${result.errorCount} appointments failed to clean up`);
-      console.warn('Errors encountered:');
+      console.warn("Errors encountered:");
       result.errors.forEach((error, index) => {
         console.warn(`   ${index + 1}. ${error}`);
       });
@@ -253,16 +297,18 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
     if (process.env.GITHUB_ACTIONS) {
       console.log(`::set-output name=cleaned_count::${result.cleanedCount}`);
       console.log(`::set-output name=error_count::${result.errorCount}`);
-      console.log(`::set-output name=total_processed::${result.totalProcessed}`);
+      console.log(
+        `::set-output name=total_processed::${result.totalProcessed}`,
+      );
       console.log(`::set-output name=success::${result.success}`);
     }
-
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('❌ Cleanup job failed:', errorMessage);
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    console.error("❌ Cleanup job failed:", errorMessage);
     result.errors.push(`Job failed: ${errorMessage}`);
     result.success = false;
-    
+
     // Fail the GitHub Action if critical error
     if (process.env.GITHUB_ACTIONS) {
       console.log(`::set-output name=success::false`);
@@ -281,23 +327,24 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
 async function main(): Promise<void> {
   const startTime = Date.now();
   console.log(`🚀 Starting cleanup job at ${new Date().toISOString()}`);
-  
+
   try {
     const result = await cleanupAbandonedPayments();
-    
+
     const duration = (Date.now() - startTime) / 1000;
     console.log(`⏱️ Job completed in ${duration.toFixed(2)} seconds`);
-    
+
     if (result.success) {
-      console.log('🎉 Cleanup job completed successfully');
+      console.log("🎉 Cleanup job completed successfully");
       process.exit(0);
     } else {
-      console.error('❌ Cleanup job completed with errors');
+      console.error("❌ Cleanup job completed with errors");
       process.exit(1);
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('💥 Cleanup job failed:', errorMessage);
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    console.error("💥 Cleanup job failed:", errorMessage);
     process.exit(1);
   }
 }

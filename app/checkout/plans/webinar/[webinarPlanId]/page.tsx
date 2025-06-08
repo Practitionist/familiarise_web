@@ -75,7 +75,9 @@ export default function WebinarCheckoutPage({
   const [error, setError] = useState<string | null>(null);
   const [_reviews, _setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
-  const [processingGateway, setProcessingGateway] = useState<string | null>(null);
+  const [processingGateway, setProcessingGateway] = useState<string | null>(
+    null,
+  );
   const { toast } = useToast();
 
   // Common error handling logic
@@ -286,7 +288,13 @@ export default function WebinarCheckoutPage({
         setProcessingGateway(null);
       }
     },
-    [resolvedParams.webinarPlanId, resolvedSearchParams, planData, toast, isCheckoutProcessing],
+    [
+      resolvedParams.webinarPlanId,
+      resolvedSearchParams,
+      planData,
+      toast,
+      isCheckoutProcessing,
+    ],
   );
 
   useEffect(() => {

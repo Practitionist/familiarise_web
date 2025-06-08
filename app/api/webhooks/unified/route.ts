@@ -273,9 +273,9 @@ async function handlePaymentFailure(paymentIntentId: string) {
             subscription: true,
             webinar: true,
             class: true,
-          }
-        }
-      }
+          },
+        },
+      },
     });
 
     if (!payment) {
@@ -291,7 +291,7 @@ async function handlePaymentFailure(paymentIntentId: string) {
 
     // Use the same rollback logic as immediate failures
     const appointment = payment.appointment;
-    
+
     // Remove tentative slots for webinar/class (many-to-many relationships)
     if (appointment.webinar || appointment.class) {
       await tx.slotOfAppointment.deleteMany({
@@ -324,6 +324,8 @@ async function handlePaymentFailure(paymentIntentId: string) {
       });
     }
 
-    console.log(`Cleaned up failed payment appointment: ${payment.appointmentId}`);
+    console.log(
+      `Cleaned up failed payment appointment: ${payment.appointmentId}`,
+    );
   });
 }

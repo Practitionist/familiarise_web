@@ -1,7 +1,7 @@
 #!/usr/bin/env ts-node
 
-import { execSync } from 'child_process';
-import chalk from 'chalk';
+import { execSync } from "child_process";
+import chalk from "chalk";
 
 interface ScriptOptions {
   dryRun?: boolean;
@@ -17,38 +17,41 @@ class DependabotCleaner {
       dryRun: false,
       force: false,
       verbose: false,
-      ...options
+      ...options,
     };
   }
 
-  private log(message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') {
-    if (!this.options.verbose && type === 'info') return;
-    
+  private log(
+    message: string,
+    type: "info" | "success" | "warning" | "error" = "info",
+  ) {
+    if (!this.options.verbose && type === "info") return;
+
     const colors = {
       info: chalk.blue,
       success: chalk.green,
       warning: chalk.yellow,
-      error: chalk.red
+      error: chalk.red,
     };
-    
+
     console.log(colors[type](`[${type.toUpperCase()}] ${message}`));
   }
 
   private exec(command: string): string {
     try {
       if (this.options.dryRun) {
-        this.log(`DRY RUN: ${command}`, 'warning');
-        return '';
+        this.log(`DRY RUN: ${command}`, "warning");
+        return "";
       }
-      
-      this.log(`Executing: ${command}`, 'info');
-      return execSync(command, { encoding: 'utf8' }).trim();
+
+      this.log(`Executing: ${command}`, "info");
+      return execSync(command, { encoding: "utf8" }).trim();
     } catch (error) {
-      this.log(`Failed to execute: ${command}`, 'error');
+      this.log(`Failed to execute: ${command}`, "error");
       if (error instanceof Error) {
-        this.log(error.message, 'error');
+        this.log(error.message, "error");
       }
-      return '';
+      return "";
     }
   }
 
@@ -59,11 +62,11 @@ class DependabotCleaner {
     try {
       const output = this.exec('git branch --format="%(refname:short)"');
       return output
-        .split('\n')
-        .filter(branch => branch.includes('dependabot/'))
-        .filter(branch => branch.trim() !== '');
+        .split("\n")
+        .filter((branch) => branch.includes("dependabot/"))
+        .filter((branch) => branch.trim() !== "");
     } catch {
-      this.log('No local dependabot branches found', 'info');
+      this.log("No local dependabot branches found", "info");
       return [];
     }
   }
@@ -75,13 +78,13 @@ class DependabotCleaner {
     try {
       const output = this.exec('git branch -r --format="%(refname:short)"');
       return output
-        .split('\n')
-        .filter(branch => branch.includes('dependabot/'))
-        .filter(branch => branch.startsWith('origin/'))
-        .map(branch => branch.replace('origin/', ''))
-        .filter(branch => branch.trim() !== '');
+        .split("\n")
+        .filter((branch) => branch.includes("dependabot/"))
+        .filter((branch) => branch.startsWith("origin/"))
+        .map((branch) => branch.replace("origin/", ""))
+        .filter((branch) => branch.trim() !== "");
     } catch {
-      this.log('No remote dependabot branches found', 'info');
+      this.log("No remote dependabot branches found", "info");
       return [];
     }
   }
@@ -91,18 +94,18 @@ class DependabotCleaner {
    */
   private deleteLocalBranches(branches: string[]): void {
     if (branches.length === 0) {
-      this.log('No local dependabot branches to delete', 'info');
+      this.log("No local dependabot branches to delete", "info");
       return;
     }
 
-    this.log(`Found ${branches.length} local dependabot branches`, 'info');
-    
-    branches.forEach(branch => {
-      const forceFlag = this.options.force ? '-D' : '-d';
+    this.log(`Found ${branches.length} local dependabot branches`, "info");
+
+    branches.forEach((branch) => {
+      const forceFlag = this.options.force ? "-D" : "-d";
       const success = this.exec(`git branch ${forceFlag} "${branch}"`);
-      
+
       if (success !== null) {
-        this.log(`Deleted local branch: ${branch}`, 'success');
+        this.log(`Deleted local branch: ${branch}`, "success");
       }
     });
   }
@@ -112,17 +115,17 @@ class DependabotCleaner {
    */
   private deleteRemoteBranches(branches: string[]): void {
     if (branches.length === 0) {
-      this.log('No remote dependabot branches to delete', 'info');
+      this.log("No remote dependabot branches to delete", "info");
       return;
     }
 
-    this.log(`Found ${branches.length} remote dependabot branches`, 'info');
-    
-    branches.forEach(branch => {
+    this.log(`Found ${branches.length} remote dependabot branches`, "info");
+
+    branches.forEach((branch) => {
       const success = this.exec(`git push origin --delete "${branch}"`);
-      
+
       if (success !== null) {
-        this.log(`Deleted remote branch: ${branch}`, 'success');
+        this.log(`Deleted remote branch: ${branch}`, "success");
       }
     });
   }
@@ -132,10 +135,10 @@ class DependabotCleaner {
    */
   private validateGitRepo(): boolean {
     try {
-      this.exec('git rev-parse --git-dir');
+      this.exec("git rev-parse --git-dir");
       return true;
     } catch {
-      this.log('Not in a git repository!', 'error');
+      this.log("Not in a git repository!", "error");
       return false;
     }
   }
@@ -145,9 +148,9 @@ class DependabotCleaner {
    */
   private getCurrentBranch(): string {
     try {
-      return this.exec('git branch --show-current');
+      return this.exec("git branch --show-current");
     } catch {
-      return '';
+      return "";
     }
   }
 
@@ -155,8 +158,8 @@ class DependabotCleaner {
    * Main cleanup function
    */
   public async cleanup(): Promise<void> {
-    console.log(chalk.cyan.bold('🧹 Dependabot Branch Cleaner'));
-    console.log(chalk.gray('Cleaning up dependabot branches and PRs\n'));
+    console.log(chalk.cyan.bold("🧹 Dependabot Branch Cleaner"));
+    console.log(chalk.gray("Cleaning up dependabot branches and PRs\n"));
 
     // Validate git repository
     if (!this.validateGitRepo()) {
@@ -165,57 +168,71 @@ class DependabotCleaner {
 
     // Get current branch
     const currentBranch = this.getCurrentBranch();
-    this.log(`Current branch: ${currentBranch}`, 'info');
+    this.log(`Current branch: ${currentBranch}`, "info");
 
     // Fetch latest remote info
-    this.log('Fetching latest remote information...', 'info');
-    this.exec('git fetch --prune');
+    this.log("Fetching latest remote information...", "info");
+    this.exec("git fetch --prune");
 
     // Get dependabot branches
     const localBranches = this.getLocalDependabotBranches();
     const remoteBranches = this.getRemoteDependabotBranches();
 
     // Filter out current branch (safety check)
-    const safeLocalBranches = localBranches.filter(branch => branch !== currentBranch);
-    const safeRemoteBranches = remoteBranches.filter(branch => branch !== currentBranch);
+    const safeLocalBranches = localBranches.filter(
+      (branch) => branch !== currentBranch,
+    );
+    const safeRemoteBranches = remoteBranches.filter(
+      (branch) => branch !== currentBranch,
+    );
 
     if (this.options.dryRun) {
-      console.log(chalk.yellow('\n🔍 DRY RUN MODE - No changes will be made\n'));
+      console.log(
+        chalk.yellow("\n🔍 DRY RUN MODE - No changes will be made\n"),
+      );
     }
 
     // Summary
-    console.log(chalk.bold('\n📊 Cleanup Summary:'));
+    console.log(chalk.bold("\n📊 Cleanup Summary:"));
     console.log(`Local dependabot branches: ${safeLocalBranches.length}`);
     console.log(`Remote dependabot branches: ${safeRemoteBranches.length}`);
 
     if (safeLocalBranches.length > 0) {
-      console.log(chalk.gray('\nLocal branches to delete:'));
-      safeLocalBranches.forEach(branch => console.log(chalk.gray(`  - ${branch}`)));
+      console.log(chalk.gray("\nLocal branches to delete:"));
+      safeLocalBranches.forEach((branch) =>
+        console.log(chalk.gray(`  - ${branch}`)),
+      );
     }
 
     if (safeRemoteBranches.length > 0) {
-      console.log(chalk.gray('\nRemote branches to delete:'));
-      safeRemoteBranches.forEach(branch => console.log(chalk.gray(`  - ${branch}`)));
+      console.log(chalk.gray("\nRemote branches to delete:"));
+      safeRemoteBranches.forEach((branch) =>
+        console.log(chalk.gray(`  - ${branch}`)),
+      );
     }
 
     if (safeLocalBranches.length === 0 && safeRemoteBranches.length === 0) {
-      console.log(chalk.green('\n✅ No dependabot branches found to clean up!'));
+      console.log(
+        chalk.green("\n✅ No dependabot branches found to clean up!"),
+      );
       return;
     }
 
     // Confirm deletion (unless dry run)
     if (!this.options.dryRun && !this.options.force) {
-      console.log(chalk.yellow('\nPress Ctrl+C to cancel, or Enter to continue...'));
+      console.log(
+        chalk.yellow("\nPress Ctrl+C to cancel, or Enter to continue..."),
+      );
       // In a real scenario, you might want to add readline here for confirmation
     }
 
-    console.log(chalk.cyan('\n🗑️  Starting cleanup...\n'));
+    console.log(chalk.cyan("\n🗑️  Starting cleanup...\n"));
 
     // Delete branches
     this.deleteLocalBranches(safeLocalBranches);
     this.deleteRemoteBranches(safeRemoteBranches);
 
-    console.log(chalk.green.bold('\n✅ Cleanup completed successfully!'));
+    console.log(chalk.green.bold("\n✅ Cleanup completed successfully!"));
   }
 }
 
@@ -224,11 +241,11 @@ class DependabotCleaner {
  */
 function parseArgs(): ScriptOptions {
   const args = process.argv.slice(2);
-  
+
   return {
-    dryRun: args.includes('--dry-run') || args.includes('-n'),
-    force: args.includes('--force') || args.includes('-f'),
-    verbose: args.includes('--verbose') || args.includes('-v')
+    dryRun: args.includes("--dry-run") || args.includes("-n"),
+    force: args.includes("--force") || args.includes("-f"),
+    verbose: args.includes("--verbose") || args.includes("-v"),
   };
 }
 
@@ -237,7 +254,7 @@ function parseArgs(): ScriptOptions {
  */
 function showHelp(): void {
   console.log(`
-${chalk.cyan.bold('Dependabot Branch Cleaner')}
+${chalk.cyan.bold("Dependabot Branch Cleaner")}
 
 Usage: ts-node scripts/delete-dependabot-prs.ts [options]
 
@@ -264,20 +281,22 @@ Examples:
  */
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  
-  if (args.includes('--help') || args.includes('-h')) {
+
+  if (args.includes("--help") || args.includes("-h")) {
     showHelp();
     return;
   }
 
   const options = parseArgs();
   const cleaner = new DependabotCleaner(options);
-  
+
   try {
     await cleaner.cleanup();
   } catch (error) {
-    console.error(chalk.red.bold('\n❌ Script failed:'));
-    console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+    console.error(chalk.red.bold("\n❌ Script failed:"));
+    console.error(
+      chalk.red(error instanceof Error ? error.message : String(error)),
+    );
     process.exit(1);
   }
 }

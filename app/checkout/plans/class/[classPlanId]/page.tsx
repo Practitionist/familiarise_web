@@ -75,7 +75,9 @@ export default function ClassCheckoutPage({
   const [error, setError] = useState<string | null>(null);
   const [_reviews, _setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
-  const [processingGateway, setProcessingGateway] = useState<string | null>(null);
+  const [processingGateway, setProcessingGateway] = useState<string | null>(
+    null,
+  );
   const { toast } = useToast();
 
   // Common error handling logic
@@ -285,7 +287,13 @@ export default function ClassCheckoutPage({
         setProcessingGateway(null);
       }
     },
-    [resolvedParams, resolvedSearchParams, planData, toast, isCheckoutProcessing],
+    [
+      resolvedParams,
+      resolvedSearchParams,
+      planData,
+      toast,
+      isCheckoutProcessing,
+    ],
   );
 
   useEffect(() => {

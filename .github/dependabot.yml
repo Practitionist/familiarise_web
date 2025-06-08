@@ -37,7 +37,7 @@ updates:
     assignees:
       - "kaustavghosh"
     milestone: 1
-    
+
     groups:
       # CRITICAL - Highest Priority
       core-framework:
@@ -51,7 +51,7 @@ updates:
           - "major"
           - "minor"
           - "patch"
-        
+
       # CRITICAL - Security & Auth
       auth-security:
         patterns:
@@ -63,7 +63,7 @@ updates:
           - "major"
           - "minor"
           - "patch"
-          
+
       # CRITICAL - Database & Storage
       database-storage:
         patterns:
@@ -76,7 +76,7 @@ updates:
           - "major"
           - "minor"
           - "patch"
-          
+
       # HIGH - Payment Processing
       payment:
         patterns:
@@ -87,7 +87,7 @@ updates:
           - "major"
           - "minor"
           - "patch"
-          
+
       # HIGH - Stream & Communication
       stream-communication:
         patterns:
@@ -97,7 +97,7 @@ updates:
           - "major"
           - "minor"
           - "patch"
-          
+
       # MEDIUM - UI Framework & Components
       ui-components:
         patterns:
@@ -108,7 +108,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-          
+
       # MEDIUM - Styling & CSS
       styling:
         patterns:
@@ -121,7 +121,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-          
+
       # MEDIUM - State Management & Forms
       state-forms:
         patterns:
@@ -132,7 +132,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-          
+
       # MEDIUM - Email & Communication
       email:
         patterns:
@@ -144,7 +144,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-          
+
       # MEDIUM - Rate Limiting & Performance
       performance:
         patterns:
@@ -154,7 +154,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-          
+
       # LOW - Utilities & Helpers
       utilities:
         patterns:
@@ -171,7 +171,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-          
+
       # LOW - React UI Components
       react-components:
         patterns:
@@ -182,7 +182,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-          
+
       # DEV - TypeScript & Types
       typescript-types:
         patterns:
@@ -192,7 +192,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-        
+
       # DEV - Linting & Code Quality
       linting:
         patterns:
@@ -203,7 +203,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-        
+
       # DEV - Testing
       testing:
         patterns:
@@ -214,7 +214,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-        
+
       # DEV - Build Tools
       build-tools:
         patterns:
@@ -227,7 +227,7 @@ updates:
         update-types:
           - "minor"
           - "patch"
-        
+
       # DEV - Development Utilities
       dev-utilities:
         patterns:
@@ -241,8 +241,6 @@ updates:
         update-types:
           - "minor"
           - "patch"
-
-
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -259,43 +257,42 @@ updates:
       include: "scope"
     reviewers:
       - "kaustavghosh"
-
 # DEPENDABOT ORGANIZATION STRATEGY:
-# 
+#
 # 📊 PR PRIORITIZATION:
 # CRITICAL (Weekly, High Priority):
 # - Core Framework (React, Next.js): Foundation dependencies
 # - Auth & Security: Authentication & encryption packages
 # - Database & Storage: Prisma, Supabase, Redis
 # - Payment: Stripe, Razorpay (business critical)
-# 
+#
 # HIGH (Weekly, Medium Priority):
 # - Stream & Communication: Video/chat functionality
-# 
-# MEDIUM (Weekly, Lower Priority):  
+#
+# MEDIUM (Weekly, Lower Priority):
 # - UI Components: Radix UI, icons, styling
 # - State & Forms: Redux, React Hook Form
 # - Email: React Email, Resend, Nodemailer
 # - Performance: Upstash, caching, SWR
-# 
+#
 # LOW (Weekly, Lowest Priority):
 # - Utilities: Date functions, validation, animations
 # - React Components: Day picker, sliders, etc.
-# 
+#
 # DEV DEPENDENCIES (Weekly, managed via grouping):
 # - TypeScript, ESLint, Testing, Build tools
 # - These are grouped separately for easy identification
-# 
+#
 # 🗓️ SCHEDULING:
 # - All NPM dependencies: Weekly on Mondays 9 AM
 # - GitHub Actions: Monthly on Fridays
 # - Production deps get priority in review process
-# 
+#
 # 🏷️ LABELING SYSTEM:
 # - auto-merge-candidate: For safe patch updates
 # - low-priority: For dev dependencies
 # - infrastructure: For CI/CD updates
-# 
+#
 # 📈 NOISE REDUCTION:
 # - Limited open PRs (10 for prod, 5 for dev)
 # - Grouped related dependencies together

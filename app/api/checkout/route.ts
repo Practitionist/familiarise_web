@@ -625,7 +625,11 @@ async function handleClassCheckout(
   return { appointment, plan, amount: plan.price };
 }
 
-async function validateSlotAvailability(tx: any, data: CheckoutInput, userId?: string) {
+async function validateSlotAvailability(
+  tx: any,
+  data: CheckoutInput,
+  userId?: string,
+) {
   if (!data.slotStartTimeInUTC || !data.slotEndTimeInUTC) return;
 
   const slotStart = new Date(data.slotStartTimeInUTC);
@@ -682,7 +686,7 @@ async function validateSlotAvailability(tx: any, data: CheckoutInput, userId?: s
             ],
           },
           { isTentative: true },
-          { 
+          {
             appointment: {
               payment: {
                 some: {
@@ -692,32 +696,38 @@ async function validateSlotAvailability(tx: any, data: CheckoutInput, userId?: s
                     {
                       OR: [
                         { expiresAt: { gt: new Date() } }, // Not yet expired
-                        { 
+                        {
                           AND: [
                             { expiresAt: null }, // No expiration set
-                            { createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) } } // Within 5 min
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                }
-              }
-            }
+                            {
+                              createdAt: {
+                                gte: new Date(Date.now() - 5 * 60 * 1000),
+                              },
+                            }, // Within 5 min
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
           },
         ],
       },
       include: {
         appointment: {
           include: {
-            payment: true
-          }
-        }
-      }
+            payment: true,
+          },
+        },
+      },
     });
 
     if (recentAttempt) {
-      throw new Error("You already have a pending booking for this time slot. Please complete your current payment or wait a few minutes to try again.");
+      throw new Error(
+        "You already have a pending booking for this time slot. Please complete your current payment or wait a few minutes to try again.",
+      );
     }
   }
 
@@ -742,7 +752,7 @@ async function validateSlotAvailability(tx: any, data: CheckoutInput, userId?: s
           ],
         },
         { isTentative: true },
-        { 
+        {
           appointment: {
             payment: {
               some: {
@@ -751,18 +761,22 @@ async function validateSlotAvailability(tx: any, data: CheckoutInput, userId?: s
                   {
                     OR: [
                       { expiresAt: { gt: new Date() } }, // Not yet expired
-                      { 
+                      {
                         AND: [
                           { expiresAt: null }, // No expiration set
-                          { createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) } } // Within 30 min
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              }
-            }
-          }
+                          {
+                            createdAt: {
+                              gte: new Date(Date.now() - 30 * 60 * 1000),
+                            },
+                          }, // Within 30 min
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
         },
       ],
     },
@@ -770,7 +784,9 @@ async function validateSlotAvailability(tx: any, data: CheckoutInput, userId?: s
 
   // Allow max 3 pending attempts for the same slot (prevents spam)
   if (tentativeCount >= 3) {
-    throw new Error("This time slot is temporarily unavailable due to high demand. Please try again later.");
+    throw new Error(
+      "This time slot is temporarily unavailable due to high demand. Please try again later.",
+    );
   }
 }
 

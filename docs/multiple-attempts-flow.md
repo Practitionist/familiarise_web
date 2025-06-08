@@ -13,18 +13,18 @@ graph TD
     A[Attempt 1: User starts checkout] --> B{Slot Availability Check}
     B -->|No conflicts| C[Create tentative appointment 1]
     C --> D[User exits/crashes]
-    
+
     E[Attempt 2: User tries again] --> F{Enhanced Validation}
     F -->|User has recent pending?| G[Block: "Complete current payment"]
     F -->|Timeout passed?| H[Allow new attempt]
-    H --> I[Create tentative appointment 2] 
+    H --> I[Create tentative appointment 2]
     I --> J[User exits/crashes again]
-    
+
     K[Attempt 3: After timeout] --> L{Enhanced Validation}
     L -->|Clear to proceed| M[Create tentative appointment 3]
     M --> N[User completes payment ✅]
     N --> O[Appointment 3 confirmed]
-    
+
     P[Cleanup Job Runs] --> Q[Remove appointments 1 & 2]
 ```
 
@@ -45,15 +45,16 @@ const recentAttempt = await tx.slotOfAppointment.findFirst({
         some: {
           userId: userId,
           paymentStatus: "PENDING",
-          createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) } // 5 min window
-        }
-      }
-    }
-  }
+          createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) }, // 5 min window
+        },
+      },
+    },
+  },
 });
 ```
 
 **User Experience**:
+
 - **Attempt 1**: ✅ Creates tentative booking
 - **Attempt 2** (within 5 min): ❌ "You already have a pending booking for this time slot. Please complete your current payment or wait a few minutes to try again."
 - **Attempt 3** (after 5 min): ✅ Allowed to try again
@@ -63,7 +64,7 @@ const recentAttempt = await tx.slotOfAppointment.findFirst({
 **Problem Solved**: Prevents slot spam and ensures availability for other users.
 
 ```typescript
-// Check for excessive tentative bookings 
+// Check for excessive tentative bookings
 const tentativeCount = await tx.slotOfAppointment.count({
   where: {
     // Same slot overlap logic
@@ -72,19 +73,22 @@ const tentativeCount = await tx.slotOfAppointment.count({
       payment: {
         some: {
           paymentStatus: "PENDING",
-          createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) } // 30 min window
-        }
-      }
-    }
-  }
+          createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) }, // 30 min window
+        },
+      },
+    },
+  },
 });
 
 if (tentativeCount >= 3) {
-  throw new Error("This time slot is temporarily unavailable due to high demand. Please try again later.");
+  throw new Error(
+    "This time slot is temporarily unavailable due to high demand. Please try again later.",
+  );
 }
 ```
 
 **System Protection**:
+
 - Max **3 pending attempts** per slot within 30 minutes
 - Prevents slot hoarding and system abuse
 - Ensures fair access for all users
@@ -101,8 +105,8 @@ const abandonedAppointments = await prisma.appointment.findMany({
   where: {
     createdAt: { lt: abandonedThreshold },
     slotsOfAppointment: { some: { isTentative: true } },
-    payment: { some: { paymentStatus: "PENDING" } }
-  }
+    payment: { some: { paymentStatus: "PENDING" } },
+  },
 });
 
 // For each abandoned appointment:
@@ -119,7 +123,7 @@ const abandonedAppointments = await prisma.appointment.findMany({
 10:00 AM - User starts booking 2:00 PM slot
 10:01 AM - Payment gateway loads, user's phone dies
 10:05 AM - User tries again → BLOCKED ("complete current payment")
-10:07 AM - User tries again → BLOCKED (still within 5-min window)  
+10:07 AM - User tries again → BLOCKED (still within 5-min window)
 10:12 AM - User tries again → ✅ ALLOWED (5-min timeout passed)
 10:13 AM - Payment succeeds → Appointment confirmed
 10:30 AM - Cleanup job runs → Removes first two abandoned attempts
@@ -130,14 +134,16 @@ const abandonedAppointments = await prisma.appointment.findMany({
 ### **User-Friendly Feedback**
 
 1. **Duplicate Attempt (within 5 min)**:
+
    ```
-   "You already have a pending booking for this time slot. 
+   "You already have a pending booking for this time slot.
    Please complete your current payment or wait a few minutes to try again."
    ```
 
 2. **Slot Under High Demand**:
+
    ```
-   "This time slot is temporarily unavailable due to high demand. 
+   "This time slot is temporarily unavailable due to high demand.
    Please try again later."
    ```
 
@@ -149,18 +155,21 @@ const abandonedAppointments = await prisma.appointment.findMany({
 ## **Benefits** 🎯
 
 ### **For Users**
+
 - **Clear feedback** on why booking failed
 - **Prevents confusion** from multiple pending payments
 - **Fair access** to popular time slots
 - **Graceful retry** mechanism after reasonable timeout
 
 ### **For System**
+
 - **Prevents resource leakage** from abandoned bookings
 - **Reduces database bloat** with automatic cleanup
 - **Protects against abuse** with rate limiting
 - **Maintains data consistency** across payment flows
 
 ### **For Business**
+
 - **Reduces support tickets** from confused users
 - **Prevents overbooking** scenarios
 - **Improves conversion rates** with better UX
@@ -188,10 +197,10 @@ const abandonedAppointments = await prisma.appointment.findMany({
 
 ```typescript
 // Time windows (easily configurable)
-const USER_RETRY_TIMEOUT = 5 * 60 * 1000;      // 5 minutes
-const SLOT_RATE_LIMIT_WINDOW = 30 * 60 * 1000; // 30 minutes  
+const USER_RETRY_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+const SLOT_RATE_LIMIT_WINDOW = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_ABANDONMENT_AGE = 30 * 60 * 1000; // 30 minutes
-const MAX_PENDING_ATTEMPTS_PER_SLOT = 3;       // 3 attempts
+const MAX_PENDING_ATTEMPTS_PER_SLOT = 3; // 3 attempts
 
 // These can be moved to environment variables for easy tuning
 ```
@@ -227,4 +236,4 @@ CLEANUP_JOB_INTERVAL_MINUTES=15
 - **Cleanup job performance** under high load
 - **Database transaction conflicts** under pressure
 
-This enhanced system provides **robust protection** against the multiple failed attempts scenario while maintaining **excellent user experience** and **system reliability**. 
+This enhanced system provides **robust protection** against the multiple failed attempts scenario while maintaining **excellent user experience** and **system reliability**.

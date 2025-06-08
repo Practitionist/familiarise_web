@@ -78,7 +78,9 @@ export default function ConsultationCheckoutPage({
   const [error, setError] = useState<string | null>(null);
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
-  const [processingGateway, setProcessingGateway] = useState<string | null>(null);
+  const [processingGateway, setProcessingGateway] = useState<string | null>(
+    null,
+  );
 
   // Fetch slot details
   useEffect(() => {
@@ -611,7 +613,8 @@ export default function ConsultationCheckoutPage({
                     onClick={() => handleCheckout(gateway.gateway)}
                     disabled={isCheckoutProcessing}
                   >
-                    {isCheckoutProcessing && processingGateway === gateway.gateway ? (
+                    {isCheckoutProcessing &&
+                    processingGateway === gateway.gateway ? (
                       <>
                         <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
                         Processing...

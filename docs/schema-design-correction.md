@@ -6,7 +6,7 @@
 
 **Answer**: Yes, this was **poor database design** with redundant fields.
 
-## **The Problem** 
+## **The Problem**
 
 ### **Before (Redundant Design)**
 
@@ -55,7 +55,7 @@ model Payment {
 
 1. **Single Source of Truth**: Expiration tracked only in `Payment` model
 2. **Logical Placement**: Payment expiration belongs with payment data
-3. **Data Integrity**: No risk of field inconsistency  
+3. **Data Integrity**: No risk of field inconsistency
 4. **Simpler Queries**: Clear which field to use
 5. **Better Performance**: Less storage and index overhead
 
@@ -69,7 +69,7 @@ model Appointment {
   appointmentType    AppointmentsType
   slotsOfAppointment SlotOfAppointment[]
 - paymentExpiresAt   DateTime?          // ❌ Removed redundant field
-  
+
   payment Payment[]
   // ...
 - @@index([paymentExpiresAt])           // ❌ Removed redundant index
@@ -105,21 +105,21 @@ const abandonedAppointments = await prisma.appointment.findMany({
       some: {
         AND: [
           { paymentStatus: "PENDING" },
-          { 
+          {
             OR: [
               { expiresAt: { lt: new Date() } }, // Explicitly expired
-              { 
+              {
                 AND: [
                   { expiresAt: null }, // No expiration set (legacy)
-                  { createdAt: { lt: abandonedThreshold } } // Fallback to creation time
-                ]
-              }
-            ]
-          }
-        ]
-      }
-    }
-  }
+                  { createdAt: { lt: abandonedThreshold } }, // Fallback to creation time
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
+  },
 });
 ```
 
@@ -139,37 +139,43 @@ const recentAttempt = await tx.slotOfAppointment.findFirst({
             {
               OR: [
                 { expiresAt: { gt: new Date() } }, // Not yet expired
-                { 
+                {
                   AND: [
                     { expiresAt: null }, // No expiration set (legacy)
-                    { createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) } }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      }
-    }
-  }
+                    {
+                      createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    },
+  },
 });
 ```
 
 ## **Database Design Principles Applied** 📚
 
 ### **1. Normalization**
+
 - **Rule**: Don't store the same data in multiple places
 - **Applied**: Expiration data only in `Payment` model
 
-### **2. Single Source of Truth** 
+### **2. Single Source of Truth**
+
 - **Rule**: Each piece of data should have one authoritative location
 - **Applied**: `Payment.expiresAt` is the only expiration field
 
 ### **3. Logical Data Placement**
+
 - **Rule**: Store data where it logically belongs
 - **Applied**: Payment expiration belongs with payment records
 
 ### **4. Referential Integrity**
+
 - **Rule**: Use relationships instead of duplication
 - **Applied**: Query payment expiration through appointment → payment relationship
 
@@ -178,23 +184,25 @@ const recentAttempt = await tx.slotOfAppointment.findFirst({
 ### **For Existing Systems**
 
 1. **Data Migration** (if needed):
+
    ```sql
    -- If paymentExpiresAt had data, migrate to Payment.expiresAt
-   UPDATE "Payment" 
+   UPDATE "Payment"
    SET "expiresAt" = (
-     SELECT "paymentExpiresAt" 
-     FROM "Appointment" 
+     SELECT "paymentExpiresAt"
+     FROM "Appointment"
      WHERE "Appointment"."id" = "Payment"."appointmentId"
    )
-   WHERE "expiresAt" IS NULL 
+   WHERE "expiresAt" IS NULL
      AND EXISTS (
-       SELECT 1 FROM "Appointment" 
-       WHERE "Appointment"."id" = "Payment"."appointmentId" 
+       SELECT 1 FROM "Appointment"
+       WHERE "Appointment"."id" = "Payment"."appointmentId"
          AND "paymentExpiresAt" IS NOT NULL
      );
    ```
 
 2. **Schema Update**:
+
    ```sql
    -- Remove redundant field and index
    DROP INDEX IF EXISTS "Appointment_paymentExpiresAt_idx";
@@ -204,20 +212,24 @@ const recentAttempt = await tx.slotOfAppointment.findFirst({
 3. **Application Update**: Update all queries to use `Payment.expiresAt`
 
 ### **For New Systems**
+
 - ✅ Start with clean schema (no redundant fields)
 - ✅ Implement proper indexing on `Payment.expiresAt`
 
 ## **Performance Benefits** ⚡
 
 ### **Storage Savings**
+
 - **Removed Field**: 8 bytes per appointment record
 - **Removed Index**: Reduced index storage and maintenance
 
 ### **Query Simplification**
+
 - **Before**: Confusion about which expiration field to use
 - **After**: Clear, single field for all payment expiration queries
 
 ### **Maintenance Reduction**
+
 - **Before**: Risk of fields getting out of sync
 - **After**: Single field to manage
 
@@ -229,4 +241,4 @@ const recentAttempt = await tx.slotOfAppointment.findFirst({
 4. **Use relationships** instead of duplicating data
 5. **Regular schema reviews** help catch design issues early
 
-This correction demonstrates the importance of **careful schema design** and the benefits of **eliminating redundancy** for better **data integrity**, **performance**, and **maintainability**. 
+This correction demonstrates the importance of **careful schema design** and the benefits of **eliminating redundancy** for better **data integrity**, **performance**, and **maintainability**.

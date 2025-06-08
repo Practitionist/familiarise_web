@@ -3,13 +3,13 @@ name: Cleanup Abandoned Payments
 on:
   schedule:
     # Run every 15 minutes
-    - cron: '*/15 * * * *'
+    - cron: "*/15 * * * *"
   workflow_dispatch: # Allow manual triggering
 
 jobs:
   cleanup-abandoned-payments:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -17,8 +17,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
+          node-version: "18"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
@@ -37,4 +37,4 @@ jobs:
         if: failure()
         run: |
           echo "Abandoned payment cleanup failed"
-          # Add notification logic here (Slack, email, etc.) 
+          # Add notification logic here (Slack, email, etc.)

@@ -9,13 +9,13 @@ This system provides **two versions** of abandoned payment cleanup:
 
 ## **Key Differences**
 
-| Feature | Local Script | GitHub Actions Job |
-|---------|-------------|-------------------|
-| **Purpose** | Testing & Manual | Automated Cleanup |
-| **Output** | Console logs | Structured results + GitHub outputs |
-| **Error Handling** | Basic | Enhanced with error collection |
-| **Execution** | On-demand | Scheduled (every 15 minutes) |
-| **Environment** | Local development | CI/CD environment |
+| Feature            | Local Script      | GitHub Actions Job                  |
+| ------------------ | ----------------- | ----------------------------------- |
+| **Purpose**        | Testing & Manual  | Automated Cleanup                   |
+| **Output**         | Console logs      | Structured results + GitHub outputs |
+| **Error Handling** | Basic             | Enhanced with error collection      |
+| **Execution**      | On-demand         | Scheduled (every 15 minutes)        |
+| **Environment**    | Local development | CI/CD environment                   |
 
 ---
 
@@ -24,6 +24,7 @@ This system provides **two versions** of abandoned payment cleanup:
 ### **File**: `scripts/cleanup-abandoned-payments.ts`
 
 **Usage:**
+
 ```bash
 # Run via npm script
 npm run scripts:cleanup-abandoned-payments
@@ -33,12 +34,14 @@ npx ts-node scripts/cleanup-abandoned-payments.ts
 ```
 
 ### **Features:**
+
 - ✅ Manual execution for testing
 - ✅ Simple console output
 - ✅ Perfect for development/debugging
 - ✅ No GitHub Actions dependencies
 
 ### **Environment Variables Required:**
+
 ```bash
 DATABASE_URL=your_database_url
 STRIPE_SECRET_KEY=sk_test_...        # Optional
@@ -55,10 +58,12 @@ XFLOW_SECRET_KEY=...                 # Optional
 ### **File**: `jobs/cleanup-abandoned-payments.ts`
 
 **Triggered by:**
+
 - ⏰ **Scheduled**: Every 15 minutes via cron
 - 🔧 **Manual**: GitHub Actions "Run workflow" button
 
 ### **Enhanced Features:**
+
 - ✅ **Structured Results**: Returns `CleanupResult` object
 - ✅ **Error Collection**: Tracks all errors for reporting
 - ✅ **GitHub Outputs**: Sets workflow outputs for monitoring
@@ -67,13 +72,14 @@ XFLOW_SECRET_KEY=...                 # Optional
 - ✅ **Graceful Failure**: Non-critical errors don't fail the job
 
 ### **GitHub Actions Workflow**: `.github/workflows/cleanup-abandoned-payments.yml`
+
 ```yaml
 name: Cleanup Abandoned Payments
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # Every 15 minutes
-  workflow_dispatch:        # Manual trigger
+    - cron: "*/15 * * * *" # Every 15 minutes
+  workflow_dispatch: # Manual trigger
 
 jobs:
   cleanup-abandoned-payments:
@@ -82,8 +88,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
+          node-version: "18"
+          cache: "npm"
       - run: npm ci
       - run: npx ts-node jobs/cleanup-abandoned-payments.ts
         env:
@@ -103,7 +109,7 @@ Go to `Settings` > `Secrets and variables` > `Actions` and add:
 DATABASE_URL                 # Required - Your production database URL
 STRIPE_SECRET_KEY           # Optional - For Stripe payment cancellation
 RAZORPAY_KEY_ID            # Optional - For Razorpay cancellation
-RAZORPAY_KEY_SECRET        # Optional - For Razorpay cancellation  
+RAZORPAY_KEY_SECRET        # Optional - For Razorpay cancellation
 LEMON_SQUEEZY_API_KEY      # Optional - For Lemon Squeezy cancellation
 XFLOW_SECRET_KEY           # Optional - For Xflow cancellation
 ```
@@ -117,11 +123,13 @@ XFLOW_SECRET_KEY           # Optional - For Xflow cancellation
 ### **3. Monitor Job Execution**
 
 **GitHub Actions UI:**
+
 - Go to `Actions` tab in your repository
 - Look for "Cleanup Abandoned Payments" workflow
 - View logs and execution history
 
 **Job Outputs:**
+
 ```bash
 cleaned_count=5      # Number of successfully cleaned appointments
 error_count=0        # Number of failed cleanups
@@ -136,6 +144,7 @@ success=true         # Overall job success status
 ### **Cleanup Logic:**
 
 1. **Find Abandoned Appointments**:
+
    ```typescript
    // Appointments with pending payments that are either:
    // - Explicitly expired (expiresAt < now)
@@ -144,6 +153,7 @@ success=true         # Overall job success status
    ```
 
 2. **Cancel Payment Intents**:
+
    ```typescript
    // For each payment gateway:
    // - Stripe: stripe.paymentIntents.cancel()
@@ -153,9 +163,10 @@ success=true         # Overall job success status
    ```
 
 3. **Update Payment Status**:
+
    ```typescript
    // Mark payments as FAILED (cancelled = failed)
-   paymentStatus: PaymentStatus.FAILED
+   paymentStatus: PaymentStatus.FAILED;
    ```
 
 4. **Clean Up Database**:
@@ -177,6 +188,7 @@ success=true         # Overall job success status
 ## **Testing & Debugging** 🧪
 
 ### **Test Locally:**
+
 ```bash
 # 1. Set up .env file with test credentials
 echo "DATABASE_URL=your_test_db_url" > .env
@@ -188,15 +200,17 @@ npm run scripts:cleanup-abandoned-payments
 ```
 
 ### **Test GitHub Actions:**
+
 1. Go to `Actions` tab in GitHub
-2. Select "Cleanup Abandoned Payments" workflow  
+2. Select "Cleanup Abandoned Payments" workflow
 3. Click "Run workflow" button
 4. Monitor logs in real-time
 
 ### **Common Issues:**
 
 **Issue**: TypeScript compilation errors
-**Solution**: 
+**Solution**:
+
 ```bash
 npm install @types/node ts-node typescript --save-dev
 ```
@@ -212,6 +226,7 @@ npm install @types/node ts-node typescript --save-dev
 ## **Monitoring & Alerts** 📊
 
 ### **Success Monitoring:**
+
 ```bash
 # Check cleanup job outputs
 cleaned_count > 0     # Appointments were cleaned
@@ -222,10 +237,12 @@ success = true        # Job completed successfully
 ### **Set Up Alerts:**
 
 **Option 1: GitHub Actions Email Notifications**
+
 - Enable in repository settings
 - Get notified on workflow failures
 
 **Option 2: Slack Integration**
+
 ```yaml
 # Add to workflow after cleanup step
 - name: Notify Slack on failure
@@ -237,15 +254,16 @@ success = true        # Job completed successfully
 ```
 
 **Option 3: Custom Webhooks**
+
 ```typescript
 // Add to job version
 if (result.errorCount > 0) {
   await fetch(process.env.ALERT_WEBHOOK_URL, {
-    method: 'POST',
+    method: "POST",
     body: JSON.stringify({
       message: `Cleanup job had ${result.errorCount} errors`,
-      errors: result.errors
-    })
+      errors: result.errors,
+    }),
   });
 }
 ```
@@ -255,15 +273,18 @@ if (result.errorCount > 0) {
 ## **Performance Considerations** ⚡
 
 ### **Job Frequency:**
+
 - **Current**: Every 15 minutes
 - **Adjustable**: Modify cron schedule in workflow
 
 ### **Database Impact:**
+
 - **Minimal**: Uses efficient queries with proper indexing
 - **Transaction-based**: Prevents partial updates
 - **Batched processing**: Handles large volumes gracefully
 
 ### **Resource Usage:**
+
 - **GitHub Actions**: ~30-60 seconds execution time
 - **Database**: Minimal connection time with automatic disconnect
 - **Memory**: Low footprint with streaming queries
@@ -273,16 +294,19 @@ if (result.errorCount > 0) {
 ## **Security Best Practices** 🔒
 
 ### **1. Secrets Management**
+
 - ✅ All API keys stored as GitHub Secrets
 - ✅ No credentials in code or logs
 - ✅ Environment-specific configurations
 
 ### **2. Database Access**
+
 - ✅ Read-only access where possible
 - ✅ Transaction-based operations
 - ✅ Proper connection management
 
 ### **3. Error Handling**
+
 - ✅ No sensitive data in error messages
 - ✅ Graceful failure handling
 - ✅ Comprehensive audit logging
@@ -294,14 +318,17 @@ if (result.errorCount > 0) {
 ### **Common Scenarios:**
 
 **Scenario 1**: Job reports "0 appointments found"
+
 - ✅ **Normal**: No abandoned payments to clean
 - ✅ **Check**: Verify payment expiration logic is correct
 
 **Scenario 2**: Payment cancellation fails
+
 - ⚠️ **Action**: Check API credentials and connectivity
 - ✅ **Impact**: Database cleanup still proceeds
 
 **Scenario 3**: Database transaction fails
+
 - ❌ **Action**: Check database connectivity and permissions
 - ❌ **Impact**: No cleanup occurs, manual intervention needed
 
@@ -318,4 +345,4 @@ npx prisma studio
 # Go to Actions tab > Select workflow run > View logs
 ```
 
-This comprehensive setup provides robust, automated cleanup with excellent monitoring and debugging capabilities! 🎉 
+This comprehensive setup provides robust, automated cleanup with excellent monitoring and debugging capabilities! 🎉

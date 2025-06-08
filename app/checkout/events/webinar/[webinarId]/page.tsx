@@ -40,7 +40,9 @@ export default function WebinarCheckoutPage({
   const [error, setError] = useState<string | null>(null);
   const [_reviews, _setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
-  const [processingGateway, setProcessingGateway] = useState<string | null>(null);
+  const [processingGateway, setProcessingGateway] = useState<string | null>(
+    null,
+  );
   const { toast } = useToast();
 
   // Common error handling logic
@@ -533,7 +535,8 @@ export default function WebinarCheckoutPage({
                     onClick={() => handleCheckout(gateway.gateway)}
                     disabled={isCheckoutProcessing}
                   >
-                    {isCheckoutProcessing && processingGateway === gateway.gateway ? (
+                    {isCheckoutProcessing &&
+                    processingGateway === gateway.gateway ? (
                       <>
                         <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
                         Processing...

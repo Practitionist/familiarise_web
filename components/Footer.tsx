@@ -11,25 +11,19 @@ import {
 import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import micromatch from "micromatch";
-
-const apiRoutes = ["/api/**"];
-const publicAuthRoutes = ["/auth/**"];
-const formRoutes = ["/form/**"];
-const checkoutRoutes = ["/checkout/**"];
-const dashboardRoutes = ["/dashboard/**"];
-const meetingRoutes = ["/meetings/**"];
 
 const Footer: React.FC = () => {
   const pathname = usePathname();
 
+  // Routes where footer should be hidden
   const excludeFooter =
-    micromatch.isMatch(pathname, apiRoutes) ||
-    micromatch.isMatch(pathname, publicAuthRoutes) ||
-    micromatch.isMatch(pathname, formRoutes) ||
-    micromatch.isMatch(pathname, checkoutRoutes) ||
-    micromatch.isMatch(pathname, dashboardRoutes) ||
-    micromatch.isMatch(pathname, meetingRoutes);
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/auth/") ||
+    pathname.startsWith("/form/") ||
+    pathname.startsWith("/checkout/") ||
+    pathname.startsWith("/dashboard/") ||
+    pathname.startsWith("/meetings/");
+
   if (excludeFooter) return null;
 
   return (

@@ -57,8 +57,8 @@ name: Cleanup Abandoned Payments
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # Every 15 minutes
-  workflow_dispatch:  # Allow manual trigger
+    - cron: "*/15 * * * *" # Every 15 minutes
+  workflow_dispatch: # Allow manual trigger
 
 jobs:
   cleanup:
@@ -78,7 +78,7 @@ jobs:
 The cleanup job identifies abandoned appointments by:
 
 1. **Age Check**: Appointments created more than 30 minutes ago
-2. **Status Check**: Has tentative slots (`isTentative: true`)  
+2. **Status Check**: Has tentative slots (`isTentative: true`)
 3. **Payment Check**: Has pending payments (`paymentStatus: "PENDING"`)
 
 ### Cleanup Process
@@ -180,6 +180,6 @@ WHERE a.createdAt < NOW() - INTERVAL '30 minutes'
 Before implementing:
 
 1. **Database Backup**: Ensure regular backups are in place
-2. **Test Environment**: Test cleanup logic in staging first  
+2. **Test Environment**: Test cleanup logic in staging first
 3. **Gradual Rollout**: Start with longer timeout (e.g., 60 minutes) then reduce
 4. **Monitoring**: Set up alerts for cleanup job failures
