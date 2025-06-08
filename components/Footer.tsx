@@ -8,9 +8,7 @@ import {
   FaLinkedin,
   FaTwitter,
 } from "react-icons/fa";
-// Using public path for Next.js static asset
-const familiariselogo =
-  "/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
+import familiariseLogoWhite from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_white.avif";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import micromatch from "micromatch";
@@ -43,7 +41,7 @@ const Footer: React.FC = () => {
           style={{ minWidth: 120, maxWidth: 320 }}
         >
           <Image
-            src={familiariselogo}
+            src={familiariseLogoWhite}
             alt="Company Logo"
             fill
             className="object-contain"

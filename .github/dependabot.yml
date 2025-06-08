@@ -9,7 +9,6 @@ updates:
       time: "09:00"
       timezone: "Asia/Kolkata"
     target-branch: "dev"
-    vendor: true
     rebase-strategy: "auto"
     labels:
       - "dependencies"

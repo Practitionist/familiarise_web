@@ -6,9 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-// Using public path for Next.js static asset
-const familiariselogo =
-  "/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
+import familiariseLogoTransparent from "@/public/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif";
 // Using public path for Next.js static asset
 const defaultUserImage = "/avif/static/assets/default-profile.avif";
 
@@ -193,7 +191,7 @@ const Navbar = () => {
               style={{ minWidth: 120, maxWidth: 320 }}
             >
               <Image
-                src={familiariselogo}
+                src={familiariseLogoTransparent}
                 alt="Familiarise Logo"
                 fill
                 className="object-contain"
@@ -252,7 +250,7 @@ const Navbar = () => {
                 style={{ minWidth: 80, maxWidth: 200 }}
               >
                 <Image
-                  src={familiariselogo}
+                  src={familiariseLogoTransparent}
                   alt="Familiarise Logo"
                   fill
                   className="object-contain"
