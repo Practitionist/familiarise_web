@@ -218,15 +218,66 @@ export default function ClassCheckoutPage({
           throw new Error("Invalid class parameters");
         }
 
-        // Route to appropriate workflow based on environment
-        const isDevelopment =
-          process.env.NODE_ENV === "development" ||
-          process.env.NODE_ENV === "test";
+        // Make single API call - backend decides dev vs prod flow
+        const response = await makeCheckoutRequest(parsedParams, gateway);
 
-        if (isDevelopment) {
-          await handleDevCheckout(parsedParams, gateway);
+        if (!response.ok) {
+          const errorData = await response.json();
+          handleApiError(errorData);
+          throw new Error(errorData.error || "Checkout failed");
+        }
+
+        const data = await response.json();
+
+        // Handle response based on what backend returns
+        if (data.skipPayment) {
+          // Development mode - direct booking success
+          toast({
+            title: "✅ Class Enrollment Complete!",
+            description:
+              "You're now enrolled in the class. Check your dashboard for details.",
+            variant: "default",
+          });
+
+          // Redirect after a short delay
+          setTimeout(() => {
+            window.location.href = "/dashboard/consultee";
+          }, 2000);
         } else {
-          await handleProdCheckout(parsedParams, gateway);
+          // Production mode - payment initiated success
+          toast({
+            title: "🚀 Payment Initiated!",
+            description:
+              "Redirecting to secure payment gateway. Complete your payment to enroll in the class.",
+            variant: "default",
+          });
+
+          // Small delay to let user see the toast before redirect
+          setTimeout(async () => {
+            // Handle gateway-specific responses
+            switch (gateway) {
+              case "STRIPE":
+                const stripe = await loadStripe(
+                  process.env.NEXT_PUBLIC_STRIPE_KEY!,
+                );
+                await stripe?.confirmPayment({
+                  clientSecret: data.paymentIntent.client_secret,
+                  confirmParams: {
+                    return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                  },
+                });
+                break;
+
+              case "RAZORPAY":
+                window.location.href = `/checkout/razorpay?order_id=${data.paymentIntent.id}`;
+                break;
+
+              case "LEMON_SQUEEZY":
+              case "XFLOW":
+                window.location.href = data.paymentIntent.client_secret;
+                break;
+            }
+          }, 1000);
         }
       } catch (error) {
         console.error("Checkout error:", error);

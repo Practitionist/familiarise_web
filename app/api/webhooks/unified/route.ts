@@ -81,6 +81,7 @@ async function handleStripeWebhook(req: NextRequest, body: string) {
         await handlePaymentSuccess(
           paymentIntent.id,
           paymentIntent.receipt_email || undefined,
+          paymentIntent.metadata,
         );
         break;
 
@@ -148,6 +149,7 @@ async function handleRazorpayWebhook(req: NextRequest, body: string) {
         await handlePaymentSuccess(
           capturedPayment.order_id,
           capturedPayment.email,
+          capturedPayment.notes || {},
         );
         break;
 
@@ -156,7 +158,11 @@ async function handleRazorpayWebhook(req: NextRequest, body: string) {
         const paidPayment = event.payload.payment?.entity;
         console.log(`[Razorpay] Order paid: ${paidOrder.id}`);
         // Use order_id for order.paid events
-        await handlePaymentSuccess(paidOrder.id, paidPayment?.email);
+        await handlePaymentSuccess(
+          paidOrder.id,
+          paidPayment?.email,
+          paidOrder.notes || {},
+        );
         break;
 
       case "payment.failed":
@@ -192,12 +198,14 @@ async function handleRazorpayWebhook(req: NextRequest, body: string) {
 async function handlePaymentSuccess(
   paymentIntentId: string,
   receiptEmail?: string,
+  metadata: any = {},
 ) {
   await prisma.$transaction(async (tx) => {
     // Find and update payment
     const payment = await tx.payment.findFirst({
       where: { paymentIntent: paymentIntentId },
       include: {
+        user: { include: { consulteeProfile: true } },
         appointment: {
           include: {
             consultation: true,
@@ -210,7 +218,11 @@ async function handlePaymentSuccess(
     });
 
     if (!payment) {
-      throw new Error("Payment not found");
+      throw new Error(`Payment not found for intent: ${paymentIntentId}`);
+    }
+
+    if (!payment.user.consulteeProfile) {
+      throw new Error(`User profile not found for payment: ${payment.id}`);
     }
 
     // Update payment status
@@ -222,42 +234,72 @@ async function handlePaymentSuccess(
       },
     });
 
-    // Make slots non-tentative
-    await tx.slotOfAppointment.updateMany({
-      where: { appointmentId: payment.appointmentId },
-      data: { isTentative: false },
-    });
+    let appointmentId = payment.appointmentId;
 
-    // Update appointment status based on type
-    const appointment = payment.appointment;
+    // If no appointment exists, create one from metadata
+    if (!appointmentId) {
+      console.log("Creating appointment from webhook metadata");
+      appointmentId = await createAppointmentFromMetadata(
+        tx,
+        payment,
+        metadata,
+      );
 
-    if (appointment.consultation) {
-      await tx.consultation.update({
-        where: { id: appointment.consultation.id },
-        data: { requestStatus: RequestStatus.APPROVED },
+      // Link payment to the new appointment
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: { appointmentId },
       });
     }
 
-    if (appointment.subscription) {
-      await tx.subscription.update({
-        where: { id: appointment.subscription.id },
-        data: { requestStatus: RequestStatus.APPROVED },
+    if (appointmentId) {
+      // Make slots non-tentative
+      await tx.slotOfAppointment.updateMany({
+        where: { appointmentId },
+        data: { isTentative: false },
       });
+
+      // Update appointment status based on type
+      const appointment = await tx.appointment.findUnique({
+        where: { id: appointmentId },
+        include: {
+          consultation: true,
+          subscription: true,
+          webinar: true,
+          class: true,
+        },
+      });
+
+      if (appointment?.consultation) {
+        await tx.consultation.update({
+          where: { id: appointment.consultation.id },
+          data: { requestStatus: RequestStatus.PENDING }, // Keep as PENDING for consultant approval
+        });
+      }
+
+      if (appointment?.subscription) {
+        await tx.subscription.update({
+          where: { id: appointment.subscription.id },
+          data: { requestStatus: RequestStatus.PENDING }, // Keep as PENDING for consultant approval
+        });
+      }
+
+      if (appointment?.webinar) {
+        await tx.webinar.update({
+          where: { id: appointment.webinar.id },
+          data: { status: WebinarStatus.SCHEDULED },
+        });
+      }
+
+      if (appointment?.class) {
+        await tx.class.update({
+          where: { id: appointment.class.id },
+          data: { status: ClassStatus.SCHEDULED },
+        });
+      }
     }
 
-    if (appointment.webinar) {
-      await tx.webinar.update({
-        where: { id: appointment.webinar.id },
-        data: { status: WebinarStatus.SCHEDULED },
-      });
-    }
-
-    if (appointment.class) {
-      await tx.class.update({
-        where: { id: appointment.class.id },
-        data: { status: ClassStatus.SCHEDULED },
-      });
-    }
+    console.log(`✅ Payment processed successfully: ${payment.id}`);
   });
 }
 
@@ -290,42 +332,173 @@ async function handlePaymentFailure(paymentIntentId: string) {
     });
 
     // Use the same rollback logic as immediate failures
-    const appointment = payment.appointment;
+    if (payment.appointment) {
+      const appointment = payment.appointment;
 
-    // Remove tentative slots for webinar/class (many-to-many relationships)
-    if (appointment.webinar || appointment.class) {
-      await tx.slotOfAppointment.deleteMany({
-        where: {
-          appointmentId: payment.appointmentId,
-          isTentative: true,
-        },
-      });
-    } else {
-      // For consultation/subscription, delete the entire appointment chain
-      if (appointment.consultation) {
-        await tx.consultation.delete({
-          where: { id: appointment.consultation.id },
-        });
+      // Remove tentative slots for webinar/class (many-to-many relationships)
+      if (appointment.webinar || appointment.class) {
+        if (payment.appointmentId) {
+          await tx.slotOfAppointment.deleteMany({
+            where: {
+              appointmentId: payment.appointmentId,
+              isTentative: true,
+            },
+          });
+        }
+      } else {
+        // For consultation/subscription, delete the entire appointment chain
+        if (appointment.consultation) {
+          await tx.consultation.delete({
+            where: { id: appointment.consultation.id },
+          });
+        }
+
+        if (appointment.subscription) {
+          await tx.subscription.delete({
+            where: { id: appointment.subscription.id },
+          });
+        }
+
+        // Delete slots and appointment
+        if (payment.appointmentId) {
+          await tx.slotOfAppointment.deleteMany({
+            where: { appointmentId: payment.appointmentId },
+          });
+
+          await tx.appointment.delete({
+            where: { id: payment.appointmentId },
+          });
+        }
       }
-
-      if (appointment.subscription) {
-        await tx.subscription.delete({
-          where: { id: appointment.subscription.id },
-        });
-      }
-
-      // Delete slots and appointment
-      await tx.slotOfAppointment.deleteMany({
-        where: { appointmentId: payment.appointmentId },
-      });
-
-      await tx.appointment.delete({
-        where: { id: payment.appointmentId },
-      });
     }
 
     console.log(
       `Cleaned up failed payment appointment: ${payment.appointmentId}`,
     );
   });
+}
+
+// Helper function to create appointment from metadata
+async function createAppointmentFromMetadata(
+  tx: any,
+  payment: any,
+  metadata: any,
+): Promise<string> {
+  const { type, planId, eventId, slotIds, title, description, consultantId } =
+    metadata;
+
+  console.log("Creating appointment from metadata:", {
+    type,
+    planId,
+    eventId,
+    slotIds,
+  });
+
+  if (!type || !slotIds) {
+    throw new Error("Missing required metadata for appointment creation");
+  }
+
+  const slotIdArray =
+    typeof slotIds === "string" ? slotIds.split(",") : slotIds;
+
+  // Create the appointment
+  const appointment = await tx.appointment.create({
+    data: {
+      userId: payment.userId,
+      title: title || `${type} Appointment`,
+      description: description || "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+  });
+
+  // Create slot associations
+  for (const slotId of slotIdArray) {
+    await tx.slotOfAppointment.create({
+      data: {
+        slotId: slotId.trim(),
+        appointmentId: appointment.id,
+        isTentative: false, // Will be set to false after payment success
+      },
+    });
+  }
+
+  // Create type-specific records
+  switch (type) {
+    case "consultation":
+      if (!planId) throw new Error("Missing planId for consultation");
+      await tx.consultation.create({
+        data: {
+          appointmentId: appointment.id,
+          consultationPlanId: planId,
+          requestStatus: RequestStatus.PENDING,
+        },
+      });
+      break;
+
+    case "subscription":
+      if (!planId) throw new Error("Missing planId for subscription");
+      await tx.subscription.create({
+        data: {
+          appointmentId: appointment.id,
+          subscriptionPlanId: planId,
+          requestStatus: RequestStatus.PENDING,
+        },
+      });
+      break;
+
+    case "webinar":
+      if (eventId) {
+        // Event-based webinar
+        await tx.webinar.create({
+          data: {
+            appointmentId: appointment.id,
+            webinarEventId: eventId,
+            status: WebinarStatus.SCHEDULED,
+          },
+        });
+      } else if (planId) {
+        // Plan-based webinar
+        await tx.webinar.create({
+          data: {
+            appointmentId: appointment.id,
+            webinarPlanId: planId,
+            status: WebinarStatus.SCHEDULED,
+          },
+        });
+      } else {
+        throw new Error("Missing eventId or planId for webinar");
+      }
+      break;
+
+    case "class":
+      if (eventId) {
+        // Event-based class
+        await tx.class.create({
+          data: {
+            appointmentId: appointment.id,
+            classEventId: eventId,
+            status: ClassStatus.SCHEDULED,
+          },
+        });
+      } else if (planId) {
+        // Plan-based class
+        await tx.class.create({
+          data: {
+            appointmentId: appointment.id,
+            classPlanId: planId,
+            status: ClassStatus.SCHEDULED,
+          },
+        });
+      } else {
+        throw new Error("Missing eventId or planId for class");
+      }
+      break;
+
+    default:
+      throw new Error(`Unknown appointment type: ${type}`);
+  }
+
+  console.log(`✅ Created ${type} appointment: ${appointment.id}`);
+  return appointment.id;
 }

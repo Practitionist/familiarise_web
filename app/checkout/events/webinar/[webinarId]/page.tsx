@@ -210,15 +210,66 @@ export default function WebinarCheckoutPage({
         setIsCheckoutProcessing(true);
         setProcessingGateway(gateway);
 
-        // Route to appropriate workflow based on environment
-        const isDevelopment =
-          process.env.NODE_ENV === "development" ||
-          process.env.NODE_ENV === "test";
+        // Make single API call - backend decides dev vs prod flow
+        const response = await makeCheckoutRequest(gateway);
 
-        if (isDevelopment) {
-          await handleDevCheckout(gateway);
+        if (!response.ok) {
+          const errorData = await response.json();
+          handleApiError(errorData);
+          throw new Error(errorData.error || "Checkout failed");
+        }
+
+        const data = await response.json();
+
+        // Handle response based on what backend returns
+        if (data.skipPayment) {
+          // Development mode - direct booking success
+          toast({
+            title: "✅ Webinar Registration Complete!",
+            description:
+              "You're now registered for the webinar. Check your dashboard for details.",
+            variant: "default",
+          });
+
+          // Redirect after a short delay
+          setTimeout(() => {
+            window.location.href = "/dashboard/consultee";
+          }, 2000);
         } else {
-          await handleProdCheckout(gateway);
+          // Production mode - payment initiated success
+          toast({
+            title: "🚀 Payment Initiated!",
+            description:
+              "Redirecting to secure payment gateway. Complete your payment to register for the webinar.",
+            variant: "default",
+          });
+
+          // Small delay to let user see the toast before redirect
+          setTimeout(async () => {
+            // Handle gateway-specific responses
+            switch (gateway) {
+              case "STRIPE":
+                const stripe = await loadStripe(
+                  process.env.NEXT_PUBLIC_STRIPE_KEY!,
+                );
+                await stripe?.confirmPayment({
+                  clientSecret: data.paymentIntent.client_secret,
+                  confirmParams: {
+                    return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                  },
+                });
+                break;
+
+              case "RAZORPAY":
+                window.location.href = `/checkout/razorpay?order_id=${data.paymentIntent.id}`;
+                break;
+
+              case "LEMON_SQUEEZY":
+              case "XFLOW":
+                window.location.href = data.paymentIntent.client_secret;
+                break;
+            }
+          }, 1000);
         }
       } catch (error) {
         console.error("Checkout error:", error);

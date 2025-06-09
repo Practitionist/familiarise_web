@@ -75,238 +75,13 @@ export async function POST(req: NextRequest) {
     // Check if payment should be skipped (for development/testing)
     const skipPayment = process.env.SKIP_PAYMENT === "true";
 
-    let appointmentId: string;
-    let amount: number;
-    let currency: string;
-
-    // Step 1: Create appointment and related records in database transaction
-    // This ensures all DB operations are atomic and can rollback together
-    const dbResult = await prisma.$transaction(
-      async (tx) => {
-        let appointment;
-        let plan;
-        let calculatedAmount = 0;
-
-        // Get user profile based on appointment type
-        const user = await tx.user.findUnique({
-          where: { id: session.user.id },
-          include: {
-            consulteeProfile: true,
-          },
-        });
-
-        if (!user?.consulteeProfile) {
-          throw new Error("User profile not found");
-        }
-
-        // Handle different appointment types
-        switch (validatedData.appointmentType) {
-          case "CONSULTATION":
-            ({
-              appointment,
-              plan,
-              amount: calculatedAmount,
-            } = await handleConsultationCheckout(
-              tx,
-              validatedData,
-              user.consulteeProfile.id,
-              skipPayment,
-            ));
-            break;
-
-          case "SUBSCRIPTION":
-            ({
-              appointment,
-              plan,
-              amount: calculatedAmount,
-            } = await handleSubscriptionCheckout(
-              tx,
-              validatedData,
-              user.consulteeProfile.id,
-              skipPayment,
-            ));
-            break;
-
-          case "WEBINAR":
-            ({
-              appointment,
-              plan,
-              amount: calculatedAmount,
-            } = await handleWebinarCheckout(
-              tx,
-              validatedData,
-              user.id,
-              skipPayment,
-            ));
-            break;
-
-          case "CLASS":
-            ({
-              appointment,
-              plan,
-              amount: calculatedAmount,
-            } = await handleClassCheckout(
-              tx,
-              validatedData,
-              user.id,
-              skipPayment,
-            ));
-            break;
-
-          default:
-            throw new Error("Invalid appointment type");
-        }
-
-        // Apply discount if provided
-        let discountCodeId = null;
-        if (validatedData.discountCode) {
-          const discount = await tx.discountCode.findUnique({
-            where: { code: validatedData.discountCode },
-          });
-
-          if (discount) {
-            discountCodeId = discount.id;
-            calculatedAmount =
-              discount.discountType === "PERCENTAGE"
-                ? calculatedAmount * (1 - discount.discountValue / 100)
-                : Math.max(0, calculatedAmount - discount.discountValue);
-          }
-        }
-
-        // For skipped payments, handle everything in the transaction
-        if (skipPayment) {
-          // Create successful payment record for skipped payment
-          await tx.payment.create({
-            data: {
-              amount: calculatedAmount,
-              currency:
-                validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
-              paymentMethod: "SKIPPED",
-              paymentIntent: `skip_${Date.now()}_${Math.random().toString(36).substring(7)}`,
-              paymentGateway: validatedData.paymentGateway,
-              paymentStatus: PaymentStatus.SUCCEEDED,
-              userId: session.user.id,
-              appointmentId: appointment.id,
-              discountCodeId,
-            },
-          });
-
-          // Immediately confirm the appointment
-          await confirmAppointment(
-            tx,
-            appointment.id,
-            validatedData.appointmentType,
-          );
-
-          return {
-            skipPayment: true,
-            appointmentId: appointment.id,
-            amount: calculatedAmount,
-            currency:
-              validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
-            discountCodeId,
-          };
-        }
-
-        // For real payments, just return the data needed for external API call
-        return {
-          skipPayment: false,
-          appointmentId: appointment.id,
-          amount: calculatedAmount,
-          currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
-          discountCodeId,
-        };
-      },
-      {
-        // Add transaction options for better error handling
-        maxWait: 10000, // 10 seconds max wait
-        timeout: 30000, // 30 seconds timeout
-      },
-    );
-
-    // If payment was skipped, return success immediately
-    if (dbResult.skipPayment) {
-      return NextResponse.json({
-        success: true,
-        message: "Appointment booked successfully (payment skipped)",
-        appointmentId: dbResult.appointmentId,
-        skipPayment: true,
-      });
+    if (skipPayment) {
+      // DEVELOPMENT FLOW: Create appointment first, then skip payment
+      return await handleDevelopmentCheckout(validatedData, session.user.id);
+    } else {
+      // PRODUCTION FLOW: Create payment first, then appointment ONLY after payment succeeds
+      return await handleProductionCheckout(validatedData, session.user.id);
     }
-
-    // Step 2: For real payments, make external API call outside transaction
-    appointmentId = dbResult.appointmentId;
-    amount = dbResult.amount;
-    currency = dbResult.currency;
-
-    let paymentResponse;
-    try {
-      // External API call happens outside the database transaction
-      paymentResponse = await createPaymentIntent({
-        amount,
-        currency,
-        metadata: {
-          appointmentId,
-          userId: session.user.id,
-          appointmentType: validatedData.appointmentType,
-        },
-        paymentGateway: validatedData.paymentGateway,
-      });
-    } catch (paymentError) {
-      // If payment intent creation fails, rollback the appointment
-      console.error("Payment intent creation failed:", paymentError);
-
-      try {
-        await rollbackAppointment(appointmentId, validatedData.appointmentType);
-      } catch (rollbackError) {
-        console.error("Failed to rollback appointment:", rollbackError);
-      }
-
-      throw new Error(
-        "Failed to create payment intent. Appointment has been cancelled.",
-      );
-    }
-
-    // Step 3: Create payment record in a separate transaction
-    try {
-      await prisma.payment.create({
-        data: {
-          amount,
-          currency,
-          paymentMethod: "CARD",
-          paymentIntent: paymentResponse.id,
-          paymentGateway: validatedData.paymentGateway,
-          paymentStatus: PaymentStatus.PENDING,
-          userId: session.user.id,
-          appointmentId,
-          discountCodeId: dbResult.discountCodeId,
-          expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes from now
-        },
-      });
-    } catch (paymentRecordError) {
-      console.error("Failed to create payment record:", paymentRecordError);
-
-      // Try to rollback both the payment intent and the appointment
-      try {
-        // Note: You might want to implement payment intent cancellation here
-        // depending on your payment gateway's API
-        await rollbackAppointment(appointmentId, validatedData.appointmentType);
-      } catch (rollbackError) {
-        console.error("Failed to rollback appointment:", rollbackError);
-      }
-
-      throw new Error(
-        "Failed to record payment information. Appointment has been cancelled.",
-      );
-    }
-
-    return NextResponse.json({
-      success: true,
-      paymentIntent: paymentResponse,
-      appointmentId,
-      amount,
-      currency,
-    });
   } catch (error) {
     console.error("Checkout error:", error);
 
@@ -364,6 +139,398 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+}
+
+// Development flow - create appointment first, then skip payment
+async function handleDevelopmentCheckout(
+  validatedData: CheckoutInput,
+  userId: string,
+) {
+  let appointmentId: string;
+  let amount: number;
+  let currency: string;
+
+  // Create appointment and related records in database transaction
+  const dbResult = await prisma.$transaction(
+    async (tx) => {
+      let appointment;
+      let plan;
+      let calculatedAmount = 0;
+
+      // Get user profile based on appointment type
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        include: {
+          consulteeProfile: true,
+        },
+      });
+
+      if (!user?.consulteeProfile) {
+        throw new Error("User profile not found");
+      }
+
+      // Handle different appointment types
+      switch (validatedData.appointmentType) {
+        case "CONSULTATION":
+          ({
+            appointment,
+            plan,
+            amount: calculatedAmount,
+          } = await handleConsultationCheckout(
+            tx,
+            validatedData,
+            user.consulteeProfile.id,
+            true, // skipPayment = true for dev
+          ));
+          break;
+
+        case "SUBSCRIPTION":
+          ({
+            appointment,
+            plan,
+            amount: calculatedAmount,
+          } = await handleSubscriptionCheckout(
+            tx,
+            validatedData,
+            user.consulteeProfile.id,
+            true, // skipPayment = true for dev
+          ));
+          break;
+
+        case "WEBINAR":
+          ({
+            appointment,
+            plan,
+            amount: calculatedAmount,
+          } = await handleWebinarCheckout(
+            tx,
+            validatedData,
+            userId,
+            true, // skipPayment = true for dev
+          ));
+          break;
+
+        case "CLASS":
+          ({
+            appointment,
+            plan,
+            amount: calculatedAmount,
+          } = await handleClassCheckout(
+            tx,
+            validatedData,
+            userId,
+            true, // skipPayment = true for dev
+          ));
+          break;
+
+        default:
+          throw new Error("Invalid appointment type");
+      }
+
+      // Apply discount if provided
+      let discountCodeId = null;
+      if (validatedData.discountCode) {
+        const discount = await tx.discountCode.findUnique({
+          where: { code: validatedData.discountCode },
+        });
+
+        if (discount) {
+          discountCodeId = discount.id;
+          calculatedAmount =
+            discount.discountType === "PERCENTAGE"
+              ? calculatedAmount * (1 - discount.discountValue / 100)
+              : Math.max(0, calculatedAmount - discount.discountValue);
+        }
+      }
+
+      // Create successful payment record for skipped payment
+      await tx.payment.create({
+        data: {
+          amount: calculatedAmount,
+          currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
+          paymentMethod: "SKIPPED",
+          paymentIntent: `skip_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+          paymentGateway: validatedData.paymentGateway,
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          userId: userId,
+          appointmentId: appointment.id,
+          discountCodeId,
+        },
+      });
+
+      // Immediately confirm the appointment
+      await confirmAppointment(
+        tx,
+        appointment.id,
+        validatedData.appointmentType,
+      );
+
+      return {
+        appointmentId: appointment.id,
+        amount: calculatedAmount,
+        currency: validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD",
+      };
+    },
+    {
+      maxWait: 10000, // 10 seconds max wait
+      timeout: 30000, // 30 seconds timeout
+    },
+  );
+
+  return NextResponse.json({
+    success: true,
+    message: "Appointment booked successfully (payment skipped)",
+    appointmentId: dbResult.appointmentId,
+    skipPayment: true,
+  });
+}
+
+// Production flow - create payment first, then appointment ONLY after payment succeeds
+async function handleProductionCheckout(
+  validatedData: CheckoutInput,
+  userId: string,
+) {
+  // Step 1: Calculate amount and validate data (without creating appointment)
+  const { amount, currency, discountCodeId } = await calculateAmountAndValidate(
+    validatedData,
+    userId,
+  );
+
+  // Step 2: Create payment intent first (external API call)
+  let paymentResponse;
+  try {
+    paymentResponse = await createPaymentIntent({
+      amount,
+      currency,
+      metadata: {
+        appointmentId: "pending", // Will be created after payment
+        appointmentType: validatedData.appointmentType,
+        userId: userId,
+        planId: validatedData.planId,
+        slotStartTimeInUTC: validatedData.slotStartTimeInUTC || "",
+        slotEndTimeInUTC: validatedData.slotEndTimeInUTC || "",
+        slotOfAvailabilityWeeklyId:
+          validatedData.slotOfAvailabilityWeeklyId || "",
+        slotOfAvailabilityCustomId:
+          validatedData.slotOfAvailabilityCustomId || "",
+        discountCode: validatedData.discountCode || "",
+        notes: validatedData.notes || "",
+        ...(validatedData.eventId && { eventId: validatedData.eventId }),
+      },
+      paymentGateway: validatedData.paymentGateway,
+    });
+  } catch (paymentError) {
+    console.error("Payment intent creation failed:", paymentError);
+    throw new Error("Failed to create payment intent. Please try again later.");
+  }
+
+  // Step 3: Create ONLY payment record (no appointment yet)
+  try {
+    await prisma.payment.create({
+      data: {
+        amount,
+        currency,
+        paymentMethod: "CARD",
+        paymentIntent: paymentResponse.id,
+        paymentGateway: validatedData.paymentGateway,
+        paymentStatus: PaymentStatus.PENDING,
+        userId: userId,
+        appointmentId: null, // No appointment created yet
+        discountCodeId,
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes from now
+      },
+    });
+
+    console.log(
+      `💳 Payment intent created: ${paymentResponse.id} - Waiting for payment completion`,
+    );
+
+    return NextResponse.json({
+      success: true,
+      paymentIntent: paymentResponse,
+      message: "Payment intent created. Complete payment to book appointment.",
+      amount,
+      currency,
+    });
+  } catch (dbError) {
+    console.error("Failed to create payment record:", dbError);
+
+    // Try to cancel the payment intent since DB operation failed
+    try {
+      console.log(
+        `Payment intent ${paymentResponse.id} should be cancelled due to DB failure`,
+      );
+      // Note: You might want to implement payment intent cancellation here
+    } catch (cancelError) {
+      console.error("Failed to cancel payment intent:", cancelError);
+    }
+
+    throw new Error("Failed to record payment information. Please try again.");
+  }
+}
+
+// Helper function to calculate amount and validate without creating appointment
+async function calculateAmountAndValidate(
+  validatedData: CheckoutInput,
+  userId: string,
+) {
+  return await prisma.$transaction(async (tx) => {
+    let amount = 0;
+    let plan;
+
+    // Get user profile
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      include: {
+        consulteeProfile: true,
+      },
+    });
+
+    if (!user?.consulteeProfile) {
+      throw new Error("User profile not found");
+    }
+
+    // Get plan and validate availability without creating records
+    switch (validatedData.appointmentType) {
+      case "CONSULTATION":
+        plan = await tx.consultationPlan.findUnique({
+          where: { id: validatedData.planId },
+          include: {
+            consultantProfile: {
+              include: {
+                user: true,
+              },
+            },
+          },
+        });
+
+        if (!plan) {
+          throw new Error("Consultation plan not found");
+        }
+
+        // Check slot availability
+        await validateSlotAvailability(
+          tx,
+          validatedData,
+          user.consulteeProfile.id,
+        );
+        amount = plan.price;
+        break;
+
+      case "SUBSCRIPTION":
+        plan = await tx.subscriptionPlan.findUnique({
+          where: { id: validatedData.planId },
+          include: {
+            consultantProfile: {
+              include: {
+                user: true,
+              },
+            },
+          },
+        });
+
+        if (!plan) {
+          throw new Error("Subscription plan not found");
+        }
+
+        // Check slot availability
+        await validateSlotAvailability(
+          tx,
+          validatedData,
+          user.consulteeProfile.id,
+        );
+        amount = plan.price;
+        break;
+
+      case "WEBINAR":
+        if (!validatedData.eventId) {
+          throw new Error("Event ID is required for webinar");
+        }
+        const webinar = await tx.webinar.findUnique({
+          where: { id: validatedData.eventId },
+          include: {
+            webinarPlan: true,
+            appointment: {
+              include: {
+                slotsOfAppointment: true,
+              },
+            },
+          },
+        });
+
+        if (!webinar) {
+          throw new Error("Webinar not found");
+        }
+
+        plan = webinar.webinarPlan;
+        const currentWebinarParticipants =
+          webinar.appointment?.slotsOfAppointment?.length || 0;
+
+        if (currentWebinarParticipants >= plan.maxParticipants) {
+          throw new Error("Webinar is full");
+        }
+
+        amount = plan.price;
+        break;
+
+      case "CLASS":
+        if (!validatedData.eventId) {
+          throw new Error("Event ID is required for class");
+        }
+        const classInstance = await tx.class.findUnique({
+          where: { id: validatedData.eventId },
+          include: {
+            classPlan: true,
+            appointments: {
+              include: {
+                slotsOfAppointment: true,
+              },
+            },
+          },
+        });
+
+        if (!classInstance) {
+          throw new Error("Class not found");
+        }
+
+        plan = classInstance.classPlan;
+        const currentClassParticipants = classInstance.appointments.reduce(
+          (total: number, apt: any) => total + apt.slotsOfAppointment.length,
+          0,
+        );
+
+        if (currentClassParticipants >= plan.maxParticipants) {
+          throw new Error("Class is full");
+        }
+
+        amount = plan.price;
+        break;
+
+      default:
+        throw new Error("Invalid appointment type");
+    }
+
+    // Apply discount if provided
+    let discountCodeId = null;
+    if (validatedData.discountCode) {
+      const discount = await tx.discountCode.findUnique({
+        where: { code: validatedData.discountCode },
+      });
+
+      if (discount) {
+        discountCodeId = discount.id;
+        amount =
+          discount.discountType === "PERCENTAGE"
+            ? amount * (1 - discount.discountValue / 100)
+            : Math.max(0, amount - discount.discountValue);
+      }
+    }
+
+    const currency =
+      validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD";
+
+    return { amount, currency, discountCodeId };
+  });
 }
 
 // Helper functions for different appointment types
@@ -838,84 +1005,5 @@ async function confirmAppointment(
       where: { id: appointment.class.id },
       data: { status: ClassStatus.SCHEDULED },
     });
-  }
-}
-
-// Function to rollback appointment when external operations fail
-async function rollbackAppointment(
-  appointmentId: string,
-  appointmentType: string,
-) {
-  try {
-    await prisma.$transaction(
-      async (tx) => {
-        // Get appointment with related data
-        const appointment = await tx.appointment.findUnique({
-          where: { id: appointmentId },
-          include: {
-            consultation: true,
-            subscription: true,
-            webinar: true,
-            class: true,
-            slotsOfAppointment: true,
-          },
-        });
-
-        if (!appointment) {
-          console.warn(`Appointment ${appointmentId} not found for rollback`);
-          return;
-        }
-
-        // Remove user from slots for webinar/class (many-to-many relationships)
-        if (appointmentType === "WEBINAR" || appointmentType === "CLASS") {
-          // For webinar/class, we need to remove the user connection rather than delete the appointment
-          await tx.slotOfAppointment.deleteMany({
-            where: {
-              appointmentId,
-              isTentative: true, // Only remove tentative bookings
-            },
-          });
-        } else {
-          // For consultation/subscription, delete the entire appointment chain
-
-          // Delete consultation if exists
-          if (appointment.consultation) {
-            await tx.consultation.delete({
-              where: { id: appointment.consultation.id },
-            });
-          }
-
-          // Delete subscription if exists
-          if (appointment.subscription) {
-            await tx.subscription.delete({
-              where: { id: appointment.subscription.id },
-            });
-          }
-
-          // Delete slots and appointment
-          await tx.slotOfAppointment.deleteMany({
-            where: { appointmentId },
-          });
-
-          await tx.appointment.delete({
-            where: { id: appointmentId },
-          });
-        }
-
-        console.log(`Successfully rolled back appointment ${appointmentId}`);
-      },
-      {
-        timeout: 10000, // 10 second timeout for rollback
-      },
-    );
-  } catch (rollbackError) {
-    const errorMessage =
-      rollbackError instanceof Error ? rollbackError.message : "Unknown error";
-    console.error(
-      `Failed to rollback appointment ${appointmentId}:`,
-      rollbackError,
-    );
-    // Re-throw to let the caller know rollback failed
-    throw new Error(`Rollback failed: ${errorMessage}`);
   }
 }

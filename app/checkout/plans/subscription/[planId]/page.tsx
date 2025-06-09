@@ -126,91 +126,6 @@ export default function SubscriptionCheckoutPage({
     });
   };
 
-  // Common success handling logic
-  const handleCheckoutSuccess = (data: any, isDevMode: boolean = false) => {
-    if (isDevMode) {
-      // Development mode - direct subscription success
-      toast({
-        title: "✅ Subscription Activated Successfully!",
-        description: data.skipPayment
-          ? "Your subscription is now active. Check your dashboard for details."
-          : "Payment processed successfully. Your subscription is now active.",
-        variant: "default",
-      });
-
-      // Redirect after a short delay
-      setTimeout(() => {
-        window.location.href = "/dashboard/consultee";
-      }, 2000);
-    } else {
-      // Production mode - payment initiated success
-      toast({
-        title: "🚀 Payment Initiated!",
-        description:
-          "Redirecting to secure payment gateway. Complete your payment to activate the subscription.",
-        variant: "default",
-      });
-    }
-  };
-
-  // Development workflow - direct subscription
-  const handleDevCheckout = async (parsedParams: any, gateway: string) => {
-    const response = await makeCheckoutRequest(parsedParams, gateway);
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      handleApiError(errorData);
-      throw new Error(errorData.error || "Subscription failed");
-    }
-
-    const data = await response.json();
-    handleCheckoutSuccess(data, true);
-  };
-
-  // Production workflow - payment gateway processing
-  const handleProdCheckout = async (
-    parsedParams: any,
-    gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW",
-  ) => {
-    const response = await makeCheckoutRequest(parsedParams, gateway);
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      handleApiError(errorData);
-      throw new Error(errorData.error || "Checkout failed");
-    }
-
-    const data = await response.json();
-
-    // Show success toast before redirecting
-    handleCheckoutSuccess(data, false);
-
-    // Small delay to let user see the toast before redirect
-    setTimeout(async () => {
-      // Handle gateway-specific responses
-      switch (gateway) {
-        case "STRIPE":
-          const stripe = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
-          await stripe?.confirmPayment({
-            clientSecret: data.clientSecret,
-            confirmParams: {
-              return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
-            },
-          });
-          break;
-
-        case "RAZORPAY":
-          window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
-          break;
-
-        case "LEMON_SQUEEZY":
-        case "XFLOW":
-          window.location.href = data.checkoutUrl;
-          break;
-      }
-    }, 1000);
-  };
-
   const handleCheckout = useCallback(
     async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
       // Prevent double-clicks and multiple simultaneous requests
@@ -229,15 +144,66 @@ export default function SubscriptionCheckoutPage({
           throw new Error("Invalid subscription parameters");
         }
 
-        // Route to appropriate workflow based on environment
-        const isDevelopment =
-          process.env.NODE_ENV === "development" ||
-          process.env.NODE_ENV === "test";
+        // Make single API call - backend decides dev vs prod flow
+        const response = await makeCheckoutRequest(parsedParams, gateway);
 
-        if (isDevelopment) {
-          await handleDevCheckout(parsedParams, gateway);
+        if (!response.ok) {
+          const errorData = await response.json();
+          handleApiError(errorData);
+          throw new Error(errorData.error || "Checkout failed");
+        }
+
+        const data = await response.json();
+
+        // Handle response based on what backend returns
+        if (data.skipPayment) {
+          // Development mode - direct subscription success
+          toast({
+            title: "✅ Subscription Activated Successfully!",
+            description:
+              "Your subscription is now active. Check your dashboard for details.",
+            variant: "default",
+          });
+
+          // Redirect after a short delay
+          setTimeout(() => {
+            window.location.href = "/dashboard/consultee";
+          }, 2000);
         } else {
-          await handleProdCheckout(parsedParams, gateway);
+          // Production mode - payment initiated success
+          toast({
+            title: "🚀 Payment Initiated!",
+            description:
+              "Redirecting to secure payment gateway. Complete your payment to activate the subscription.",
+            variant: "default",
+          });
+
+          // Small delay to let user see the toast before redirect
+          setTimeout(async () => {
+            // Handle gateway-specific responses
+            switch (gateway) {
+              case "STRIPE":
+                const stripe = await loadStripe(
+                  process.env.NEXT_PUBLIC_STRIPE_KEY!,
+                );
+                await stripe?.confirmPayment({
+                  clientSecret: data.paymentIntent.client_secret,
+                  confirmParams: {
+                    return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                  },
+                });
+                break;
+
+              case "RAZORPAY":
+                window.location.href = `/checkout/razorpay?order_id=${data.paymentIntent.id}`;
+                break;
+
+              case "LEMON_SQUEEZY":
+              case "XFLOW":
+                window.location.href = data.paymentIntent.client_secret; // This would be the checkout URL for these gateways
+                break;
+            }
+          }, 1000);
         }
       } catch (error) {
         console.error("Checkout error:", error);

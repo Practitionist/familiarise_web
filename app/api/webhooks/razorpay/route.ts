@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
+import { PaymentStatus, RequestStatus } from "@prisma/client";
 
 export async function POST(req: NextRequest) {
   try {
@@ -44,69 +45,114 @@ export async function POST(req: NextRequest) {
     // Handle different event types
     switch (event.event) {
       case "payment.captured":
-        const payment = event.payload.payment.entity;
-        console.log("✅ Payment captured:", {
-          id: payment.id,
-          amount: payment.amount,
-          currency: payment.currency,
-          order_id: payment.order_id,
-          notes: payment.notes,
-          status: payment.status,
+      case "order.paid":
+        // Both events indicate successful payment
+        const paymentEntity =
+          event.payload.payment?.entity || event.payload.order?.entity;
+        const orderId = paymentEntity.order_id || paymentEntity.id;
+
+        console.log("✅ Razorpay payment successful:", {
+          id: paymentEntity.id,
+          order_id: orderId,
+          amount: paymentEntity.amount,
+          currency: paymentEntity.currency,
+          status: paymentEntity.status,
         });
 
-        // Update booking status if notes contain booking info
-        if (payment.notes && payment.notes.bookingId) {
-          try {
-            // Note: Update based on your actual booking table structure
-            console.log(
-              "✅ Booking confirmed via Razorpay:",
-              payment.notes.bookingId,
-            );
-          } catch (error) {
-            console.error("Failed to update booking:", error);
+        try {
+          // Find payment record by order_id (which we store as paymentIntent)
+          const payment = await prisma.payment.findUnique({
+            where: { paymentIntent: orderId },
+            include: { user: { include: { consulteeProfile: true } } },
+          });
+
+          if (!payment) {
+            console.error("Payment record not found for order:", orderId);
+            break;
           }
+
+          if (!payment.user.consulteeProfile) {
+            console.error("User profile not found for payment:", payment.id);
+            break;
+          }
+
+          // Update payment status
+          await prisma.payment.update({
+            where: { id: payment.id },
+            data: { paymentStatus: PaymentStatus.SUCCEEDED },
+          });
+
+          // Create appointment from metadata if not exists
+          if (!payment.appointmentId) {
+            // For Razorpay, we need to get metadata from payment notes or reconstruct from stored data
+            // Since Razorpay doesn't have built-in metadata like Stripe, we'll need to store
+            // appointment details in the payment record or use notes
+            console.log(
+              "Creating appointment for Razorpay payment:",
+              payment.id,
+            );
+            await createAppointmentFromPayment(payment);
+          } else {
+            // Confirm existing appointment
+            await confirmExistingAppointment(payment.appointmentId);
+          }
+
+          console.log("✅ Razorpay payment processed successfully");
+        } catch (error) {
+          console.error("Failed to process Razorpay payment:", error);
         }
         break;
 
       case "payment.failed":
         const failedPayment = event.payload.payment.entity;
-        console.log("❌ Payment failed:", {
+        const failedOrderId = failedPayment.order_id;
+
+        console.log("❌ Razorpay payment failed:", {
           id: failedPayment.id,
-          order_id: failedPayment.order_id,
+          order_id: failedOrderId,
           error_code: failedPayment.error_code,
           error_description: failedPayment.error_description,
-          notes: failedPayment.notes,
         });
-        break;
 
-      case "order.paid":
-        const order = event.payload.order.entity;
-        console.log("✅ Order paid:", {
-          id: order.id,
-          amount: order.amount,
-          amount_paid: order.amount_paid,
-          currency: order.currency,
-          status: order.status,
-          notes: order.notes,
-        });
+        try {
+          // Find and update payment record
+          const payment = await prisma.payment.findUnique({
+            where: { paymentIntent: failedOrderId },
+            include: { appointment: true },
+          });
+
+          if (payment) {
+            await prisma.payment.update({
+              where: { id: payment.id },
+              data: { paymentStatus: PaymentStatus.FAILED },
+            });
+
+            // Cleanup failed payment appointment if exists
+            if (payment.appointment) {
+              await cleanupFailedPaymentAppointment(payment.appointment.id);
+            }
+          }
+        } catch (error) {
+          console.error("Failed to process Razorpay payment failure:", error);
+        }
         break;
 
       case "subscription.charged":
         const subscription = event.payload.subscription.entity;
-        console.log("✅ Subscription charged:", {
+        console.log("✅ Razorpay subscription charged:", {
           id: subscription.id,
           status: subscription.status,
           current_start: new Date(
             subscription.current_start * 1000,
           ).toISOString(),
           current_end: new Date(subscription.current_end * 1000).toISOString(),
-          notes: subscription.notes,
         });
+        // Handle subscription renewals if needed
         break;
 
       case "subscription.activated":
         const activatedSub = event.payload.subscription.entity;
-        console.log("🆕 Subscription activated:", {
+        console.log("🆕 Razorpay subscription activated:", {
           id: activatedSub.id,
           status: activatedSub.status,
           plan_id: activatedSub.plan_id,
@@ -126,4 +172,117 @@ export async function POST(req: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+// Helper function to create appointment from payment record
+async function createAppointmentFromPayment(payment: any) {
+  await prisma.$transaction(async (tx) => {
+    // For Razorpay, we need to determine the appointment type and details
+    // This might require storing additional data in the payment record
+    // For now, we'll implement a basic version
+
+    console.log(
+      "Creating appointment for Razorpay payment - implementation needed",
+    );
+
+    // TODO: Implement appointment creation based on stored payment data
+    // This would require storing appointment metadata in the payment record
+    // or finding another way to reconstruct the booking details
+
+    // For now, just log that this needs implementation
+    console.warn(
+      "Razorpay appointment creation needs implementation - metadata not available",
+    );
+  });
+}
+
+// Helper function to confirm existing appointment
+async function confirmExistingAppointment(appointmentId: string) {
+  await prisma.$transaction(async (tx) => {
+    // Make slots non-tentative
+    await tx.slotOfAppointment.updateMany({
+      where: { appointmentId },
+      data: { isTentative: false },
+    });
+
+    // Update appointment status
+    const appointment = await tx.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        consultation: true,
+        subscription: true,
+        webinar: true,
+        class: true,
+      },
+    });
+
+    if (appointment?.consultation) {
+      await tx.consultation.update({
+        where: { id: appointment.consultation.id },
+        data: { requestStatus: RequestStatus.PENDING }, // Keep as PENDING for consultant approval
+      });
+    }
+
+    if (appointment?.subscription) {
+      await tx.subscription.update({
+        where: { id: appointment.subscription.id },
+        data: { requestStatus: RequestStatus.PENDING }, // Keep as PENDING for consultant approval
+      });
+    }
+
+    if (appointment?.webinar) {
+      await tx.webinar.update({
+        where: { id: appointment.webinar.id },
+        data: { status: "SCHEDULED" },
+      });
+    }
+
+    if (appointment?.class) {
+      await tx.class.update({
+        where: { id: appointment.class.id },
+        data: { status: "SCHEDULED" },
+      });
+    }
+  });
+}
+
+// Helper function to cleanup failed payment appointments
+async function cleanupFailedPaymentAppointment(appointmentId: string) {
+  await prisma.$transaction(async (tx) => {
+    const appointment = await tx.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        consultation: true,
+        subscription: true,
+        webinar: true,
+        class: true,
+      },
+    });
+
+    if (!appointment) return;
+
+    // Delete associated records
+    if (appointment.consultation) {
+      await tx.consultation.delete({
+        where: { id: appointment.consultation.id },
+      });
+    }
+
+    if (appointment.subscription) {
+      await tx.subscription.delete({
+        where: { id: appointment.subscription.id },
+      });
+    }
+
+    // Delete slots and appointment
+    await tx.slotOfAppointment.deleteMany({
+      where: { appointmentId },
+    });
+
+    await tx.appointment.delete({
+      where: { id: appointmentId },
+    });
+
+    console.log(`Cleaned up failed payment appointment: ${appointmentId}`);
+  });
 }
