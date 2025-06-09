@@ -5,17 +5,23 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
+import {
+  CheckoutInput,
+  checkoutResponseSchema,
+  consultationSearchParamsSchema,
+  createCheckoutData
+} from "@/schemas/checkout";
 import {
   ConsultantProfile,
   ConsultantReview,
   ConsultationPlan,
+  PaymentGateway,
 } from "@prisma/client";
-import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useEffect, useState, useCallback } from "react";
-import { useToast } from "@/hooks/use-toast";
-import { z } from "zod";
 import { loadStripe } from "@stripe/stripe-js";
+import { CreditCard as CreditCardIcon } from "lucide-react";
+import { use, useCallback, useEffect, useState } from "react";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
   consultantProfile: ConsultantProfile & {
@@ -32,32 +38,7 @@ type ConsultationResponse = {
   data: ConsultationPlanWithConsultant;
 };
 
-const consultationSchema = z
-  .object({
-    slotOfAvailabilityWeeklyId: z.string().optional(),
-    slotOfAvailabilityCustomId: z.string().optional(),
-    slotStartTimeInUTC: z.string().datetime(),
-    slotEndTimeInUTC: z.string().datetime(),
-    discountCode: z.string().optional(),
-  })
-  .refine(
-    (data) =>
-      (data.slotOfAvailabilityWeeklyId && !data.slotOfAvailabilityCustomId) ||
-      (!data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId),
-    {
-      message:
-        "Exactly one of slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
-      path: ["slotOfAvailabilityWeeklyId", "slotOfAvailabilityCustomId"],
-    },
-  )
-  .refine(
-    (data) =>
-      new Date(data.slotStartTimeInUTC) < new Date(data.slotEndTimeInUTC),
-    {
-      message: "Start time must be before end time",
-      path: ["slotStartTime", "slotEndTime"],
-    },
-  );
+// Using the shared consultation schema from utils/payments.ts
 
 type PageProps = {
   params: Promise<{ planId: string }>;
@@ -165,24 +146,13 @@ export default function ConsultationCheckoutPage({
   };
 
   // Common API request logic
-  const makeCheckoutRequest = async (parsedParams: any, gateway: string) => {
+  const makeCheckoutRequest = async (checkoutData: CheckoutInput, gateway: string) => {
     return fetch("/api/checkout", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        appointmentType: "CONSULTATION",
-        planId: resolvedParams.planId,
-        slotOfAvailabilityWeeklyId:
-          parsedParams.data.slotOfAvailabilityWeeklyId,
-        slotOfAvailabilityCustomId:
-          parsedParams.data.slotOfAvailabilityCustomId,
-        slotStartTimeInUTC: parsedParams.data.slotStartTimeInUTC,
-        slotEndTimeInUTC: parsedParams.data.slotEndTimeInUTC,
-        discountCode: parsedParams.data.discountCode,
-        paymentGateway: gateway,
-      }),
+      body: JSON.stringify(checkoutData),
     });
   };
 
@@ -198,14 +168,24 @@ export default function ConsultationCheckoutPage({
         setIsCheckoutProcessing(true);
         setProcessingGateway(gateway);
 
-        // Validate params first
-        const parsedParams = consultationSchema.safeParse(resolvedSearchParams);
-        if (!parsedParams.success) {
-          throw new Error("Invalid booking parameters");
+        // Validate search params first
+        const searchParamsValidation = consultationSearchParamsSchema.safeParse(resolvedSearchParams);
+        if (!searchParamsValidation.success) {
+          const issues = searchParamsValidation.error.issues;
+          const missingFields = issues.map((issue) => issue.path[0]).join(", ");
+          throw new Error(`Invalid booking parameters: ${missingFields}`);
         }
 
+        // Create validated checkout data
+        const checkoutData = createCheckoutData(
+          "CONSULTATION",
+          resolvedParams.planId,
+          searchParamsValidation.data,
+          gateway as PaymentGateway
+        );
+
         // Make single API call - backend decides dev vs prod flow
-        const response = await makeCheckoutRequest(parsedParams, gateway);
+        const response = await makeCheckoutRequest(checkoutData, gateway);
 
         if (!response.ok) {
           const errorData = await response.json();
@@ -214,6 +194,12 @@ export default function ConsultationCheckoutPage({
         }
 
         const data = await response.json();
+        
+        // Validate response using schema
+        const validatedResponse = checkoutResponseSchema.safeParse(data);
+        if (!validatedResponse.success) {
+          throw new Error("Invalid response format from server");
+        }
 
         // Handle response based on what backend returns
         if (data.skipPayment) {
@@ -290,12 +276,12 @@ export default function ConsultationCheckoutPage({
     async function fetchEventData() {
       setIsLoading(true);
       try {
-        const parsedParams = consultationSchema.safeParse(resolvedSearchParams);
-
-        if (!parsedParams.success) {
-          const issues = parsedParams.error.issues;
-          const missingFields = issues.map((issue) => issue.path[0]).join(", ");
-          throw new Error(`Missing required fields: ${missingFields}`);
+        // Validate search params using Zod schema
+        const searchParamsValidation = consultationSearchParamsSchema.safeParse(resolvedSearchParams);
+        if (!searchParamsValidation.success) {
+          const issues = searchParamsValidation.error.issues;
+          const errorMessage = issues.map(issue => issue.message).join(', ');
+          throw new Error(`Validation failed: ${errorMessage}`);
         }
 
         const endpoint = `/api/plans/consultations/${resolvedParams.planId}`;
