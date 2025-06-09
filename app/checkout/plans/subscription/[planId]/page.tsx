@@ -5,17 +5,23 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
+import {
+  CheckoutInput,
+  checkoutResponseSchema,
+  subscriptionSearchParamsSchema,
+  createCheckoutData
+} from "@/schemas/checkout";
 import {
   ConsultantProfile,
   ConsultantReview,
   SubscriptionPlan,
+  PaymentGateway,
 } from "@prisma/client";
-import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useEffect, useState, useCallback } from "react";
-import { useToast } from "@/hooks/use-toast";
-import { z } from "zod";
 import { loadStripe } from "@stripe/stripe-js";
+import { CreditCard as CreditCardIcon } from "lucide-react";
+import { use, useCallback, useEffect, useState } from "react";
 
 type SubscriptionPlanWithConsultant = SubscriptionPlan & {
   consultantProfile: ConsultantProfile & {
@@ -31,10 +37,6 @@ type SubscriptionPlanWithConsultant = SubscriptionPlan & {
 type SubscriptionResponse = {
   data: SubscriptionPlanWithConsultant;
 };
-
-const subscriptionSchema = z.object({
-  discountCode: z.string().optional(),
-});
 
 type PageProps = {
   params: Promise<{ planId: string }>;
@@ -103,31 +105,18 @@ export default function SubscriptionCheckoutPage({
   };
 
   // Common API request logic
-  const makeCheckoutRequest = async (parsedParams: any, gateway: string) => {
+  const makeCheckoutRequest = async (checkoutData: CheckoutInput) => {
     return fetch("/api/checkout", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        appointmentType: "SUBSCRIPTION",
-        planId: resolvedParams.planId,
-        // TODO: Add proper slot selection UI for subscriptions
-        // For now, use placeholder times that will be scheduled later
-        slotStartTimeInUTC: new Date(
-          Date.now() + 24 * 60 * 60 * 1000,
-        ).toISOString(), // Tomorrow
-        slotEndTimeInUTC: new Date(
-          Date.now() + 25 * 60 * 60 * 1000,
-        ).toISOString(), // Tomorrow + 1 hour
-        discountCode: parsedParams.data.discountCode,
-        paymentGateway: gateway,
-      }),
+      body: JSON.stringify(checkoutData),
     });
   };
 
   const handleCheckout = useCallback(
-    async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
+    async (gateway: PaymentGateway) => {
       // Prevent double-clicks and multiple simultaneous requests
       if (isCheckoutProcessing) {
         return;
@@ -138,14 +127,34 @@ export default function SubscriptionCheckoutPage({
         setIsCheckoutProcessing(true);
         setProcessingGateway(gateway);
 
-        // Validate params first
-        const parsedParams = subscriptionSchema.safeParse(resolvedSearchParams);
-        if (!parsedParams.success) {
+        // Validate search params using the shared schema
+        const searchParamsValidation = subscriptionSearchParamsSchema.safeParse(resolvedSearchParams);
+        if (!searchParamsValidation.success) {
           throw new Error("Invalid subscription parameters");
         }
 
-        // Make single API call - backend decides dev vs prod flow
-        const response = await makeCheckoutRequest(parsedParams, gateway);
+        if (!planData?.data?.id) {
+          throw new Error("Subscription plan not found");
+        }
+
+        // Create checkout data using the shared utility
+        const checkoutData = createCheckoutData({
+          appointmentType: "SUBSCRIPTION",
+          planId: planData.data.id,
+          // TODO: Add proper slot selection UI for subscriptions
+          // For now, use placeholder times that will be scheduled later
+          slotStartTimeInUTC: new Date(
+            Date.now() + 24 * 60 * 60 * 1000,
+          ).toISOString(), // Tomorrow
+          slotEndTimeInUTC: new Date(
+            Date.now() + 25 * 60 * 60 * 1000,
+          ).toISOString(), // Tomorrow + 1 hour
+          discountCode: searchParamsValidation.data.discountCode,
+          paymentGateway: gateway,
+        });
+
+        // Make API call - backend decides dev vs prod flow
+        const response = await makeCheckoutRequest(checkoutData);
 
         if (!response.ok) {
           const errorData = await response.json();
@@ -153,77 +162,93 @@ export default function SubscriptionCheckoutPage({
           throw new Error(errorData.error || "Checkout failed");
         }
 
-        const data = await response.json();
+        const rawData = await response.json();
+        
+        // Validate response using schema
+        const validationResult = checkoutResponseSchema.safeParse(rawData);
+        if (!validationResult.success) {
+          console.error("Invalid checkout response:", validationResult.error);
+          throw new Error("Invalid response from server");
+        }
+
+        const data = validationResult.data;
 
         // Handle response based on what backend returns
-        if (data.skipPayment) {
-          // Development mode - direct subscription success
-          toast({
-            title: "✅ Subscription Activated Successfully!",
-            description:
-              "Your subscription is now active. Check your dashboard for details.",
-            variant: "default",
-          });
+        if (data.success) {
+          if (data.skipPayment) {
+            // Development mode - direct subscription success
+            toast({
+              title: "✅ Subscription Activated Successfully!",
+              description:
+                "Your subscription is now active. Check your dashboard for details.",
+              variant: "default",
+            });
 
-          // Redirect after a short delay
-          setTimeout(() => {
-            window.location.href = "/dashboard/consultee";
-          }, 2000);
+            // Redirect after a short delay
+            setTimeout(() => {
+              window.location.href = "/dashboard/consultee";
+            }, 2000);
+          } else {
+            // Production mode - payment initiated success
+            toast({
+              title: "🚀 Payment Initiated!",
+              description:
+                "Redirecting to secure payment gateway. Complete your payment to activate the subscription.",
+              variant: "default",
+            });
+
+            // Small delay to let user see the toast before redirect
+            setTimeout(async () => {
+              // Handle gateway-specific responses
+              switch (gateway) {
+                case "STRIPE":
+                  const stripe = await loadStripe(
+                    process.env.NEXT_PUBLIC_STRIPE_KEY!,
+                  );
+                  await stripe?.confirmPayment({
+                    clientSecret: data.clientSecret!,
+                    confirmParams: {
+                      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                    },
+                  });
+                  break;
+
+                case "RAZORPAY":
+                  window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
+                  break;
+
+                case "LEMON_SQUEEZY":
+                case "XFLOW":
+                  if (data.checkoutUrl) {
+                    window.location.href = data.checkoutUrl;
+                  }
+                  break;
+              }
+            }, 1000);
+          }
         } else {
-          // Production mode - payment initiated success
-          toast({
-            title: "🚀 Payment Initiated!",
-            description:
-              "Redirecting to secure payment gateway. Complete your payment to activate the subscription.",
-            variant: "default",
-          });
-
-          // Small delay to let user see the toast before redirect
-          setTimeout(async () => {
-            // Handle gateway-specific responses
-            switch (gateway) {
-              case "STRIPE":
-                const stripe = await loadStripe(
-                  process.env.NEXT_PUBLIC_STRIPE_KEY!,
-                );
-                await stripe?.confirmPayment({
-                  clientSecret: data.paymentIntent.client_secret,
-                  confirmParams: {
-                    return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
-                  },
-                });
-                break;
-
-              case "RAZORPAY":
-                window.location.href = `/checkout/razorpay?order_id=${data.paymentIntent.id}`;
-                break;
-
-              case "LEMON_SQUEEZY":
-              case "XFLOW":
-                window.location.href = data.paymentIntent.client_secret; // This would be the checkout URL for these gateways
-                break;
-            }
-          }, 1000);
+          handleApiError({ error: data.error, errorType: data.errorType });
         }
       } catch (error) {
         console.error("Checkout error:", error);
-
-        // Only show generic error if it wasn't already handled
-        if (!(error instanceof Error && error.message.includes("failed"))) {
+        if (error instanceof Error) {
           toast({
             title: "Checkout Failed",
-            description:
-              error instanceof Error ? error.message : "Please try again",
+            description: error.message,
             variant: "destructive",
           });
         }
       } finally {
-        // Always reset loading state
         setIsCheckoutProcessing(false);
         setProcessingGateway(null);
       }
     },
-    [resolvedParams, resolvedSearchParams, toast, isCheckoutProcessing],
+    [
+      isCheckoutProcessing,
+      resolvedSearchParams,
+      planData?.data?.id,
+      toast,
+    ],
   );
 
   useEffect(() => {

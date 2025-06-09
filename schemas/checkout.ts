@@ -158,12 +158,16 @@ export const checkoutSuccessResponseSchema = z.object({
   appointmentId: z.string(),
   paymentIntentId: z.string().optional(),
   clientSecret: z.string().optional(),
+  orderId: z.string().optional(),
+  checkoutUrl: z.string().optional(),
   message: z.string().optional(),
+  skipPayment: z.boolean().optional(),
 });
 
 export const checkoutErrorResponseSchema = z.object({
   success: z.literal(false),
   error: z.string(),
+  errorType: z.string().optional(),
   details: z.any().optional(),
 });
 
@@ -203,16 +207,28 @@ export const validateSearchParamsForAppointmentType = (
   }
 };
 
-export const createCheckoutData = (
-  appointmentType: AppointmentsType,
-  planId: string,
-  searchParams: SearchParams,
-  paymentGateway: PaymentGateway
-): CheckoutInput => {
+export const createCheckoutData = (params: {
+  appointmentType: AppointmentsType;
+  planId: string;
+  paymentGateway: PaymentGateway;
+  eventId?: string;
+  slotStartTimeInUTC?: string;
+  slotEndTimeInUTC?: string;
+  slotOfAvailabilityWeeklyId?: string;
+  slotOfAvailabilityCustomId?: string;
+  discountCode?: string;
+  notes?: string;
+}): CheckoutInput => {
   return {
-    appointmentType,
-    planId,
-    paymentGateway,
-    ...searchParams,
+    appointmentType: params.appointmentType,
+    planId: params.planId,
+    paymentGateway: params.paymentGateway,
+    eventId: params.eventId,
+    slotStartTimeInUTC: params.slotStartTimeInUTC,
+    slotEndTimeInUTC: params.slotEndTimeInUTC,
+    slotOfAvailabilityWeeklyId: params.slotOfAvailabilityWeeklyId,
+    slotOfAvailabilityCustomId: params.slotOfAvailabilityCustomId,
+    discountCode: params.discountCode,
+    notes: params.notes,
   };
 };

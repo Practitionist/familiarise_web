@@ -5,23 +5,27 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { fetchReviews } from "@/lib/user";
-import type { ConsultantReview } from "@prisma/client";
-import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useEffect, useState, useCallback } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { z } from "zod";
+import { fetchReviews } from "@/lib/user";
+import {
+  CheckoutInput,
+  checkoutResponseSchema,
+  webinarSearchParamsSchema,
+  createCheckoutData
+} from "@/schemas/checkout";
+import {
+  PaymentGateway,
+} from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";
+import { CreditCard as CreditCardIcon } from "lucide-react";
+import { use, useCallback, useEffect, useState } from "react";
 
 import type { TWebinar } from "@/types/appointment";
+import type { ConsultantReview } from "@prisma/client";
 
 type WebinarResponse = {
   data: TWebinar;
 };
-
-const webinarSchema = z.object({
-  discountCode: z.string().optional(),
-});
 
 type PageProps = {
   params: Promise<{ webinarId: string }>;
@@ -34,6 +38,7 @@ export default function WebinarCheckoutPage({
 }: Readonly<PageProps>) {
   // Next.js 15 Synchronous params and searchParams
   const resolvedParams = use(params);
+  const resolvedSearchParams = use(searchParams);
 
   const [planData, setPlanData] = useState<WebinarResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -89,22 +94,13 @@ export default function WebinarCheckoutPage({
   };
 
   // Common API request logic
-  const makeCheckoutRequest = async (gateway: string) => {
-    if (!planData?.data?.webinarPlan?.id) {
-      throw new Error("Webinar plan not found");
-    }
-
+  const makeCheckoutRequest = async (checkoutData: CheckoutInput) => {
     return fetch("/api/checkout", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        appointmentType: "WEBINAR",
-        planId: planData.data.webinarPlan.id,
-        eventId: resolvedParams.webinarId,
-        paymentGateway: gateway,
-      }),
+      body: JSON.stringify(checkoutData),
     });
   };
 
@@ -135,25 +131,12 @@ export default function WebinarCheckoutPage({
     }
   };
 
-  // Development workflow - direct registration
-  const handleDevCheckout = async (gateway: string) => {
-    const response = await makeCheckoutRequest(gateway);
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      handleApiError(errorData);
-      throw new Error(errorData.error || "Registration failed");
-    }
-
-    const data = await response.json();
-    handleCheckoutSuccess(data, true);
-  };
-
   // Production workflow - payment gateway processing
   const handleProdCheckout = async (
-    gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW",
+    checkoutData: CheckoutInput,
+    gateway: PaymentGateway,
   ) => {
-    const response = await makeCheckoutRequest(gateway);
+    const response = await makeCheckoutRequest(checkoutData);
 
     if (!response.ok) {
       const errorData = await response.json();
@@ -161,45 +144,60 @@ export default function WebinarCheckoutPage({
       throw new Error(errorData.error || "Checkout failed");
     }
 
-    const data = await response.json();
+    const rawData = await response.json();
+    
+    // Validate response using schema
+    const validationResult = checkoutResponseSchema.safeParse(rawData);
+    if (!validationResult.success) {
+      console.error("Invalid checkout response:", validationResult.error);
+      throw new Error("Invalid response from server");
+    }
 
-    // Show success toast before redirecting
-    handleCheckoutSuccess(data, false);
+    const data = validationResult.data;
 
-    // Small delay to let user see the toast before redirect
-    setTimeout(async () => {
-      // Handle gateway-specific responses
-      switch (gateway) {
-        case "STRIPE": {
-          const stripeInstance = await loadStripe(
-            process.env.NEXT_PUBLIC_STRIPE_KEY!,
-          );
-          if (!stripeInstance) {
-            throw new Error("Failed to load Stripe");
+    if (data.success) {
+      // Show success toast before redirecting
+      handleCheckoutSuccess(data, false);
+
+      // Small delay to let user see the toast before redirect
+      setTimeout(async () => {
+        // Handle gateway-specific responses
+        switch (gateway) {
+          case "STRIPE": {
+            const stripeInstance = await loadStripe(
+              process.env.NEXT_PUBLIC_STRIPE_KEY!,
+            );
+            if (!stripeInstance) {
+              throw new Error("Failed to load Stripe");
+            }
+            await stripeInstance.confirmPayment({
+              clientSecret: data.clientSecret!,
+              confirmParams: {
+                return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+              },
+            });
+            break;
           }
-          await stripeInstance.confirmPayment({
-            clientSecret: data.clientSecret,
-            confirmParams: {
-              return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
-            },
-          });
-          break;
+
+          case "RAZORPAY":
+            window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
+            break;
+
+          case "LEMON_SQUEEZY":
+          case "XFLOW":
+            if (data.checkoutUrl) {
+              window.location.href = data.checkoutUrl;
+            }
+            break;
         }
-
-        case "RAZORPAY":
-          window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
-          break;
-
-        case "LEMON_SQUEEZY":
-        case "XFLOW":
-          window.location.href = data.checkoutUrl;
-          break;
-      }
-    }, 1000);
+      }, 1000);
+    } else {
+      handleApiError({ error: data.error, errorType: data.errorType });
+    }
   };
 
   const handleCheckout = useCallback(
-    async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
+    async (gateway: PaymentGateway) => {
       // Prevent double-clicks and multiple simultaneous requests
       if (isCheckoutProcessing) {
         return;
@@ -210,86 +208,48 @@ export default function WebinarCheckoutPage({
         setIsCheckoutProcessing(true);
         setProcessingGateway(gateway);
 
-        // Make single API call - backend decides dev vs prod flow
-        const response = await makeCheckoutRequest(gateway);
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          handleApiError(errorData);
-          throw new Error(errorData.error || "Checkout failed");
+        // Validate search params using the shared schema
+        const searchParamsValidation = webinarSearchParamsSchema.safeParse(resolvedSearchParams);
+        if (!searchParamsValidation.success) {
+          throw new Error("Invalid webinar parameters");
         }
 
-        const data = await response.json();
-
-        // Handle response based on what backend returns
-        if (data.skipPayment) {
-          // Development mode - direct booking success
-          toast({
-            title: "✅ Webinar Registration Complete!",
-            description:
-              "You're now registered for the webinar. Check your dashboard for details.",
-            variant: "default",
-          });
-
-          // Redirect after a short delay
-          setTimeout(() => {
-            window.location.href = "/dashboard/consultee";
-          }, 2000);
-        } else {
-          // Production mode - payment initiated success
-          toast({
-            title: "🚀 Payment Initiated!",
-            description:
-              "Redirecting to secure payment gateway. Complete your payment to register for the webinar.",
-            variant: "default",
-          });
-
-          // Small delay to let user see the toast before redirect
-          setTimeout(async () => {
-            // Handle gateway-specific responses
-            switch (gateway) {
-              case "STRIPE":
-                const stripe = await loadStripe(
-                  process.env.NEXT_PUBLIC_STRIPE_KEY!,
-                );
-                await stripe?.confirmPayment({
-                  clientSecret: data.paymentIntent.client_secret,
-                  confirmParams: {
-                    return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
-                  },
-                });
-                break;
-
-              case "RAZORPAY":
-                window.location.href = `/checkout/razorpay?order_id=${data.paymentIntent.id}`;
-                break;
-
-              case "LEMON_SQUEEZY":
-              case "XFLOW":
-                window.location.href = data.paymentIntent.client_secret;
-                break;
-            }
-          }, 1000);
+        if (!planData?.data?.webinarPlan?.id) {
+          throw new Error("Webinar plan not found");
         }
+
+        // Create checkout data using the shared utility
+        const checkoutData = createCheckoutData({
+          appointmentType: "WEBINAR",
+          planId: planData.data.webinarPlan.id,
+          eventId: resolvedParams.webinarId,
+          discountCode: searchParamsValidation.data.discountCode,
+          paymentGateway: gateway,
+        });
+
+        // Handle production checkout flow
+        await handleProdCheckout(checkoutData, gateway);
       } catch (error) {
         console.error("Checkout error:", error);
-
-        // Only show generic error if it wasn't already handled
-        if (!(error instanceof Error && error.message.includes("failed"))) {
+        if (error instanceof Error) {
           toast({
             title: "Checkout Failed",
-            description:
-              error instanceof Error ? error.message : "Please try again",
+            description: error.message,
             variant: "destructive",
           });
         }
       } finally {
-        // Always reset loading state
         setIsCheckoutProcessing(false);
         setProcessingGateway(null);
       }
     },
-    [resolvedParams.webinarId, planData, toast, isCheckoutProcessing],
+    [
+      isCheckoutProcessing,
+      resolvedSearchParams,
+      planData?.data?.webinarPlan?.id,
+      resolvedParams.webinarId,
+      toast,
+    ],
   );
 
   useEffect(() => {

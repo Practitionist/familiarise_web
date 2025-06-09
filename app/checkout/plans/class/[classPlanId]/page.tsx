@@ -5,12 +5,20 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { fetchReviews } from "@/lib/user";
-import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useEffect, useState, useCallback } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { z } from "zod";
+import { fetchReviews } from "@/lib/user";
+import {
+  CheckoutInput,
+  checkoutResponseSchema,
+  classSearchParamsSchema,
+  createCheckoutData
+} from "@/schemas/checkout";
+import {
+  PaymentGateway,
+} from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";
+import { CreditCard as CreditCardIcon } from "lucide-react";
+import { use, useCallback, useEffect, useState } from "react";
 
 import type {
   ClassPlan,
@@ -52,10 +60,6 @@ export type CheckoutClassPlanData = ClassPlan & {
 type PlanResponse = {
   data: CheckoutClassPlanData;
 };
-
-const classSchema = z.object({
-  discountCode: z.string().optional(),
-});
 
 type PageProps = {
   params: Promise<{ classPlanId: string }>;
@@ -124,29 +128,13 @@ export default function ClassCheckoutPage({
   };
 
   // Common API request logic
-  const makeCheckoutRequest = async (parsedParams: any, gateway: string) => {
-    if (!planData?.data?.id) {
-      throw new Error("Class plan not found");
-    }
-
-    // Get the first available class instance from the plan
-    const availableClass = planData.data.classes?.[0];
-    if (!availableClass) {
-      throw new Error("No class instances available for this plan");
-    }
-
+  const makeCheckoutRequest = async (checkoutData: CheckoutInput) => {
     return fetch("/api/checkout", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        appointmentType: "CLASS",
-        planId: planData.data.id,
-        eventId: availableClass.id,
-        discountCode: parsedParams.data.discountCode,
-        paymentGateway: gateway,
-      }),
+      body: JSON.stringify(checkoutData),
     });
   };
 
@@ -177,26 +165,12 @@ export default function ClassCheckoutPage({
     }
   };
 
-  // Development workflow - direct registration
-  const handleDevCheckout = async (parsedParams: any, gateway: string) => {
-    const response = await makeCheckoutRequest(parsedParams, gateway);
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      handleApiError(errorData);
-      throw new Error(errorData.error || "Registration failed");
-    }
-
-    const data = await response.json();
-    handleCheckoutSuccess(data, true);
-  };
-
   // Production workflow - payment gateway processing
   const handleProdCheckout = async (
-    parsedParams: any,
-    gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW",
+    checkoutData: CheckoutInput,
+    gateway: PaymentGateway,
   ) => {
-    const response = await makeCheckoutRequest(parsedParams, gateway);
+    const response = await makeCheckoutRequest(checkoutData);
 
     if (!response.ok) {
       const errorData = await response.json();
@@ -204,45 +178,59 @@ export default function ClassCheckoutPage({
       throw new Error(errorData.error || "Checkout failed");
     }
 
-    const data = await response.json();
+    const rawData = await response.json();
+    
+    // Validate response using schema
+    const validationResult = checkoutResponseSchema.safeParse(rawData);
+    if (!validationResult.success) {
+      console.error("Invalid checkout response:", validationResult.error);
+      throw new Error("Invalid response from server");
+    }
 
-    // Show success toast before redirecting
-    handleCheckoutSuccess(data, false);
+    const data = validationResult.data;
 
-    // Small delay to let user see the toast before redirect
-    setTimeout(async () => {
-      // Handle gateway-specific responses
-      switch (gateway) {
-        case "STRIPE": {
-          const stripeInstance = await loadStripe(
-            process.env.NEXT_PUBLIC_STRIPE_KEY!,
-          );
-          if (!stripeInstance) {
-            throw new Error("Failed to load Stripe");
-          }
-          await stripeInstance.confirmPayment({
-            clientSecret: data.clientSecret,
-            confirmParams: {
-              return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
-            },
-          });
-          break;
+    if (data.success) {
+      // Show success toast before redirecting
+      handleCheckoutSuccess(data, false);
+
+      // Small delay to let user see the toast before redirect
+      setTimeout(async () => {
+        // Handle gateway-specific responses
+        switch (gateway) {
+          case "STRIPE":
+            const stripeInstance = await loadStripe(
+              process.env.NEXT_PUBLIC_STRIPE_KEY!,
+            );
+            if (!stripeInstance) {
+              throw new Error("Failed to load Stripe");
+            }
+            await stripeInstance.confirmPayment({
+              clientSecret: data.clientSecret!,
+              confirmParams: {
+                return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+              },
+            });
+            break;
+
+          case "RAZORPAY":
+            window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
+            break;
+
+          case "LEMON_SQUEEZY":
+          case "XFLOW":
+            if (data.checkoutUrl) {
+              window.location.href = data.checkoutUrl;
+            }
+            break;
         }
-        case "RAZORPAY": {
-          window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
-          break;
-        }
-        case "LEMON_SQUEEZY":
-        case "XFLOW": {
-          window.location.href = data.checkoutUrl;
-          break;
-        }
-      }
-    }, 1000);
+      }, 1000);
+    } else {
+      handleApiError({ error: data.error, errorType: data.errorType });
+    }
   };
 
   const handleCheckout = useCallback(
-    async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
+    async (gateway: PaymentGateway) => {
       // Prevent double-clicks and multiple simultaneous requests
       if (isCheckoutProcessing) {
         return;
@@ -253,101 +241,53 @@ export default function ClassCheckoutPage({
         setIsCheckoutProcessing(true);
         setProcessingGateway(gateway);
 
-        // Validate params first
-        const parsedParams = classSchema.safeParse(resolvedSearchParams);
-        if (!parsedParams.success) {
+        // Validate search params using the shared schema
+        const searchParamsValidation = classSearchParamsSchema.safeParse(resolvedSearchParams);
+        if (!searchParamsValidation.success) {
           throw new Error("Invalid class parameters");
         }
 
-        // Make single API call - backend decides dev vs prod flow
-        const response = await makeCheckoutRequest(parsedParams, gateway);
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          handleApiError(errorData);
-          throw new Error(errorData.error || "Checkout failed");
+        if (!planData?.data?.id) {
+          throw new Error("Class plan not found");
         }
 
-        const data = await response.json();
-
-        // Handle response based on what backend returns
-        if (data.skipPayment) {
-          // Development mode - direct booking success
-          toast({
-            title: "✅ Class Enrollment Complete!",
-            description:
-              "You're now enrolled in the class. Check your dashboard for details.",
-            variant: "default",
-          });
-
-          // Redirect after a short delay
-          setTimeout(() => {
-            window.location.href = "/dashboard/consultee";
-          }, 2000);
-        } else {
-          // Production mode - payment initiated success
-          toast({
-            title: "🚀 Payment Initiated!",
-            description:
-              "Redirecting to secure payment gateway. Complete your payment to enroll in the class.",
-            variant: "default",
-          });
-
-          // Small delay to let user see the toast before redirect
-          setTimeout(async () => {
-            // Handle gateway-specific responses
-            switch (gateway) {
-              case "STRIPE": {
-                const stripeInstance = await loadStripe(
-                  process.env.NEXT_PUBLIC_STRIPE_KEY!,
-                );
-                if (!stripeInstance) {
-                  throw new Error("Failed to load Stripe");
-                }
-                await stripeInstance.confirmPayment({
-                  clientSecret: data.paymentIntent.client_secret,
-                  confirmParams: {
-                    return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
-                  },
-                });
-                break;
-              }
-              case "RAZORPAY": {
-                window.location.href = `/checkout/razorpay?order_id=${data.paymentIntent.id}`;
-                break;
-              }
-              case "LEMON_SQUEEZY":
-              case "XFLOW": {
-                window.location.href = data.paymentIntent.client_secret;
-                break;
-              }
-            }
-          }, 1000);
+        // Get the first available class instance from the plan
+        const availableClass = planData.data.classes?.[0];
+        if (!availableClass) {
+          throw new Error("No class instances available for this plan");
         }
+
+        // Create checkout data using the shared utility
+        const checkoutData = createCheckoutData({
+          appointmentType: "CLASS",
+          planId: planData.data.id,
+          eventId: availableClass.id,
+          discountCode: searchParamsValidation.data.discountCode,
+          paymentGateway: gateway,
+        });
+
+        // Handle production checkout flow
+        await handleProdCheckout(checkoutData, gateway);
       } catch (error) {
         console.error("Checkout error:", error);
-
-        // Only show generic error if it wasn't already handled
-        if (!(error instanceof Error && error.message.includes("failed"))) {
+        if (error instanceof Error) {
           toast({
             title: "Checkout Failed",
-            description:
-              error instanceof Error ? error.message : "Please try again",
+            description: error.message,
             variant: "destructive",
           });
         }
       } finally {
-        // Always reset loading state
         setIsCheckoutProcessing(false);
         setProcessingGateway(null);
       }
     },
     [
-      resolvedParams,
-      resolvedSearchParams,
-      planData,
-      toast,
       isCheckoutProcessing,
+      resolvedSearchParams,
+      planData?.data?.id,
+      planData?.data?.classes,
+      toast,
     ],
   );
 
@@ -527,13 +467,7 @@ export default function ClassCheckoutPage({
                       variant="outline"
                       className="w-full h-20 text-lg flex flex-col items-center justify-center hover:bg-blue-50 transition-colors duration-150"
                       onClick={() =>
-                        handleCheckout(
-                          gateway as
-                            | "STRIPE"
-                            | "RAZORPAY"
-                            | "LEMON_SQUEEZY"
-                            | "XFLOW",
-                        )
+                        handleCheckout(gateway as PaymentGateway)
                       }
                       disabled={isCheckoutProcessing}
                     >
