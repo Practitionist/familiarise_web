@@ -177,12 +177,17 @@ export default function ConsultationCheckoutPage({
         }
 
         // Create validated checkout data
-        const checkoutData = createCheckoutData(
-          "CONSULTATION",
-          resolvedParams.planId,
-          searchParamsValidation.data,
-          gateway as PaymentGateway
-        );
+        const checkoutData = createCheckoutData({
+          appointmentType: "CONSULTATION",
+          planId: resolvedParams.planId,
+          paymentGateway: gateway as PaymentGateway,
+          slotStartTimeInUTC: searchParamsValidation.data.slotStartTimeInUTC,
+          slotEndTimeInUTC: searchParamsValidation.data.slotEndTimeInUTC,
+          slotOfAvailabilityWeeklyId: searchParamsValidation.data.slotOfAvailabilityWeeklyId,
+          slotOfAvailabilityCustomId: searchParamsValidation.data.slotOfAvailabilityCustomId,
+          discountCode: searchParamsValidation.data.discountCode,
+          notes: searchParamsValidation.data.notes,
+        });
 
         // Make single API call - backend decides dev vs prod flow
         const response = await makeCheckoutRequest(checkoutData, gateway);
