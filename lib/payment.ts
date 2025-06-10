@@ -105,59 +105,6 @@ export async function createPaymentIntent({
   }
 }
 
-export async function validatePaymentWebhook(
-  req: Request,
-): Promise<{ type: string; metadata: Record<string, string> }> {
-  const signature =
-    req.headers.get("stripe-signature") ||
-    req.headers.get("x-razorpay-signature");
-
-  if (!signature) {
-    throw new Error("No signature found in webhook request");
-  }
-
-  const body = await req.text();
-
-  try {
-    if (req.headers.get("stripe-signature")) {
-      const event = stripeClient.webhooks.constructEvent(
-        body,
-        signature,
-        process.env.STRIPE_WEBHOOK_SECRET!,
-      );
-
-      if ("metadata" in event.data.object) {
-        return {
-          type: event.type,
-          metadata: event.data.object.metadata as Record<string, string>,
-        };
-      }
-      throw new Error("No metadata found in Stripe event");
-    } else {
-      // Validate Razorpay signature
-      const shasum = crypto.createHmac(
-        "sha256",
-        process.env.RAZORPAY_WEBHOOK_SECRET!,
-      );
-      shasum.update(body);
-      const digest = shasum.digest("hex");
-
-      if (digest !== signature) {
-        throw new Error("Invalid Razorpay signature");
-      }
-
-      const event = JSON.parse(body);
-      return {
-        type: event.event,
-        metadata: event.payload.payment.entity.notes,
-      };
-    }
-  } catch (error) {
-    console.error("Webhook validation failed:", error);
-    throw new Error("Invalid webhook signature");
-  }
-}
-
 export async function cancelPaymentIntent(
   paymentIntentId: string,
   reason: string = "requested_by_customer",
@@ -251,21 +198,4 @@ export function convertAmountToSmallestUnit(
   };
 
   return Math.round(amount * (multipliers[currency] || 100));
-}
-
-// Simple Razorpay webhook verification helper for backward compatibility
-export function verifyRazorpayWebhook(
-  body: string,
-  signature: string,
-  secret: string,
-): boolean {
-  try {
-    const shasum = crypto.createHmac("sha256", secret);
-    shasum.update(body);
-    const digest = shasum.digest("hex");
-    return digest === signature;
-  } catch (error) {
-    console.error("Razorpay webhook verification failed:", error);
-    return false;
-  }
 }
