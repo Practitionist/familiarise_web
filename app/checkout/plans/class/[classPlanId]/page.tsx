@@ -19,6 +19,7 @@ import {
 import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useCallback, useEffect, useState } from "react";
+import RazorpayCheckout from "../../../components/RazorpayCheckout";
 
 import type {
   ClassPlan,
@@ -212,11 +213,7 @@ export default function ClassCheckoutPage({
             });
             break;
 
-          case "RAZORPAY":
-            window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
-            break;
-
-          case "LEMON_SQUEEZY":
+              case "LEMON_SQUEEZY":
           case "XFLOW":
             if (data.checkoutUrl) {
               window.location.href = data.checkoutUrl;
@@ -461,27 +458,61 @@ export default function ClassCheckoutPage({
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                 {["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"].map(
-                  (gateway) => (
-                    <Button
-                      key={gateway}
-                      variant="outline"
-                      className="w-full h-20 text-lg flex flex-col items-center justify-center hover:bg-blue-50 transition-colors duration-150"
-                      onClick={() =>
-                        handleCheckout(gateway as PaymentGateway)
-                      }
-                      disabled={isCheckoutProcessing}
-                    >
-                      {isCheckoutProcessing && processingGateway === gateway ? (
-                        <>
-                          <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                          Processing...
-                        </>
-                      ) : (
-                        gateway.charAt(0).toUpperCase() +
-                        gateway.slice(1).toLowerCase()
-                      )}
-                    </Button>
-                  ),
+                  (gateway) =>
+                    gateway === "RAZORPAY" ? (
+                      <RazorpayCheckout
+                        key={gateway}
+                        checkoutData={createCheckoutData({
+                          appointmentType: "CLASS",
+                          planId: planDetails.id,
+                          eventId: planDetails.classes[0].id,
+                          paymentGateway: "RAZORPAY",
+                          discountCode: Array.isArray(
+                            resolvedSearchParams.discountCode,
+                          )
+                            ? resolvedSearchParams.discountCode[0]
+                            : resolvedSearchParams.discountCode,
+                        })}
+                        onPaymentSuccess={(response: {
+                          razorpay_payment_id: string;
+                        }) => {
+                          toast({
+                            title: "Payment Successful",
+                            description: `Payment ID: ${response.razorpay_payment_id}`,
+                          });
+                          window.location.href = "/dashboard/consultee";
+                        }}
+                        onPaymentError={(error: { description: string }) => {
+                          toast({
+                            title: "Payment Failed",
+                            description:
+                              error.description || "An unknown error occurred",
+                            variant: "destructive",
+                          });
+                        }}
+                      />
+                    ) : (
+                      <Button
+                        key={gateway}
+                        variant="outline"
+                        className="w-full h-20 text-lg flex flex-col items-center justify-center hover:bg-blue-50 transition-colors duration-150"
+                        onClick={() =>
+                          handleCheckout(gateway as PaymentGateway)
+                        }
+                        disabled={isCheckoutProcessing}
+                      >
+                        {isCheckoutProcessing &&
+                        processingGateway === gateway ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                            Processing...
+                          </>
+                        ) : (
+                          gateway.charAt(0).toUpperCase() +
+                          gateway.slice(1).toLowerCase()
+                        )}
+                      </Button>
+                    ),
                 )}
               </div>
             </div>

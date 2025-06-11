@@ -20,6 +20,7 @@ import {
   PaymentGateway,
 } from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";
+import RazorpayCheckout from "../../../components/RazorpayCheckout";
 
 import type { TClass } from "@/types/appointment";
 
@@ -176,10 +177,6 @@ export default function ClassCheckoutPage({
                 return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
               },
             });
-            break;
-
-          case "RAZORPAY":
-            window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
             break;
 
           case "LEMON_SQUEEZY":
@@ -576,21 +573,54 @@ export default function ClassCheckoutPage({
                       </div>
                     </div>
                   </div>
-                  <Button
-                    variant="outline"
-                    onClick={() => handleCheckout(gateway.gateway)}
-                    disabled={isCheckoutProcessing}
-                  >
-                    {isCheckoutProcessing &&
-                    processingGateway === gateway.gateway ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                        Processing...
-                      </>
-                    ) : (
-                      `Pay with ${gateway.name}`
-                    )}
-                  </Button>
+                  {gateway.gateway === "RAZORPAY" && planData ? (
+                    <RazorpayCheckout
+                      checkoutData={createCheckoutData({
+                        appointmentType: "CLASS",
+                        planId: planData.data.classPlan.id,
+                        eventId: resolvedParams.classId,
+                        paymentGateway: "RAZORPAY",
+                        discountCode: Array.isArray(
+                          resolvedSearchParams.discountCode,
+                        )
+                          ? resolvedSearchParams.discountCode[0]
+                          : resolvedSearchParams.discountCode,
+                      })}
+                      onPaymentSuccess={(response: {
+                        razorpay_payment_id: string;
+                      }) => {
+                        toast({
+                          title: "Payment Successful",
+                          description: `Payment ID: ${response.razorpay_payment_id}`,
+                        });
+                        window.location.href = "/dashboard/consultee";
+                      }}
+                      onPaymentError={(error: { description: string }) => {
+                        toast({
+                          title: "Payment Failed",
+                          description:
+                            error.description || "An unknown error occurred",
+                          variant: "destructive",
+                        });
+                      }}
+                    />
+                  ) : (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleCheckout(gateway.gateway)}
+                      disabled={isCheckoutProcessing}
+                    >
+                      {isCheckoutProcessing &&
+                      processingGateway === gateway.gateway ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                          Processing...
+                        </>
+                      ) : (
+                        `Pay with ${gateway.name}`
+                      )}
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>

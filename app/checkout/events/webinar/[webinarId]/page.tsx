@@ -19,6 +19,7 @@ import {
 import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useCallback, useEffect, useState } from "react";
+import RazorpayCheckout from "../../../components/RazorpayCheckout";
 
 import type { TWebinar } from "@/types/appointment";
 import type { ConsultantReview } from "@prisma/client";
@@ -178,10 +179,6 @@ export default function WebinarCheckoutPage({
             });
             break;
           }
-
-          case "RAZORPAY":
-            window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
-            break;
 
           case "LEMON_SQUEEZY":
           case "XFLOW":
@@ -541,21 +538,54 @@ export default function WebinarCheckoutPage({
                       </div>
                     </div>
                   </div>
-                  <Button
-                    variant="outline"
-                    onClick={() => handleCheckout(gateway.gateway)}
-                    disabled={isCheckoutProcessing}
-                  >
-                    {isCheckoutProcessing &&
-                    processingGateway === gateway.gateway ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                        Processing...
-                      </>
-                    ) : (
-                      `Pay with ${gateway.name}`
-                    )}
-                  </Button>
+                  {gateway.gateway === "RAZORPAY" && planData ? (
+                    <RazorpayCheckout
+                      checkoutData={createCheckoutData({
+                        appointmentType: "WEBINAR",
+                        planId: planData.data.webinarPlan.id,
+                        eventId: resolvedParams.webinarId,
+                        paymentGateway: "RAZORPAY",
+                        discountCode: Array.isArray(
+                          resolvedSearchParams.discountCode,
+                        )
+                          ? resolvedSearchParams.discountCode[0]
+                          : resolvedSearchParams.discountCode,
+                      })}
+                      onPaymentSuccess={(response: {
+                        razorpay_payment_id: string;
+                      }) => {
+                        toast({
+                          title: "Payment Successful",
+                          description: `Payment ID: ${response.razorpay_payment_id}`,
+                        });
+                        window.location.href = "/dashboard/consultee";
+                      }}
+                      onPaymentError={(error: { description: string }) => {
+                        toast({
+                          title: "Payment Failed",
+                          description:
+                            error.description || "An unknown error occurred",
+                          variant: "destructive",
+                        });
+                      }}
+                    />
+                  ) : (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleCheckout(gateway.gateway)}
+                      disabled={isCheckoutProcessing}
+                    >
+                      {isCheckoutProcessing &&
+                      processingGateway === gateway.gateway ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                          Processing...
+                        </>
+                      ) : (
+                        `Pay with ${gateway.name}`
+                      )}
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>

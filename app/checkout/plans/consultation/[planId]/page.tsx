@@ -22,6 +22,7 @@ import {
 import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useCallback, useEffect, useState } from "react";
+import RazorpayCheckout from "../../../components/RazorpayCheckout";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
   consultantProfile: ConsultantProfile & {
@@ -243,10 +244,6 @@ export default function ConsultationCheckoutPage({
                     return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
                   },
                 });
-                break;
-
-              case "RAZORPAY":
-                window.location.href = `/checkout/razorpay?order_id=${data.paymentIntent.id}`;
                 break;
 
               case "LEMON_SQUEEZY":
@@ -565,21 +562,76 @@ export default function ConsultationCheckoutPage({
                       </div>
                     </div>
                   </div>
-                  <Button
-                    variant="outline"
-                    onClick={() => handleCheckout(gateway.gateway)}
-                    disabled={isCheckoutProcessing}
-                  >
-                    {isCheckoutProcessing &&
-                    processingGateway === gateway.gateway ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                        Processing...
-                      </>
-                    ) : (
-                      `Pay with ${gateway.name}`
-                    )}
-                  </Button>
+                  {gateway.gateway === "RAZORPAY" ? (
+                    <RazorpayCheckout
+                      checkoutData={createCheckoutData({
+                        appointmentType: "CONSULTATION",
+                        planId: resolvedParams.planId,
+                        paymentGateway: "RAZORPAY",
+                        slotStartTimeInUTC: Array.isArray(
+                          resolvedSearchParams.slotStartTimeInUTC,
+                        )
+                          ? resolvedSearchParams.slotStartTimeInUTC[0]
+                          : resolvedSearchParams.slotStartTimeInUTC,
+                        slotEndTimeInUTC: Array.isArray(
+                          resolvedSearchParams.slotEndTimeInUTC,
+                        )
+                          ? resolvedSearchParams.slotEndTimeInUTC[0]
+                          : resolvedSearchParams.slotEndTimeInUTC,
+                        slotOfAvailabilityWeeklyId: Array.isArray(
+                          resolvedSearchParams.slotOfAvailabilityWeeklyId,
+                        )
+                          ? resolvedSearchParams.slotOfAvailabilityWeeklyId[0]
+                          : resolvedSearchParams.slotOfAvailabilityWeeklyId,
+                        slotOfAvailabilityCustomId: Array.isArray(
+                          resolvedSearchParams.slotOfAvailabilityCustomId,
+                        )
+                          ? resolvedSearchParams.slotOfAvailabilityCustomId[0]
+                          : resolvedSearchParams.slotOfAvailabilityCustomId,
+                        discountCode: Array.isArray(
+                          resolvedSearchParams.discountCode,
+                        )
+                          ? resolvedSearchParams.discountCode[0]
+                          : resolvedSearchParams.discountCode,
+                        notes: Array.isArray(resolvedSearchParams.notes)
+                          ? resolvedSearchParams.notes[0]
+                          : resolvedSearchParams.notes,
+                      })}
+                      onPaymentSuccess={(response: {
+                        razorpay_payment_id: string;
+                      }) => {
+                        toast({
+                          title: "Payment Successful",
+                          description: `Payment ID: ${response.razorpay_payment_id}`,
+                        });
+                        window.location.href = "/dashboard/consultee";
+                      }}
+                      onPaymentError={(error: { description: string }) => {
+                        toast({
+                          title: "Payment Failed",
+                          description:
+                            error.description || "An unknown error occurred",
+                          variant: "destructive",
+                        });
+                      }}
+                    />
+                  ) : (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleCheckout(gateway.gateway)}
+                      disabled={isCheckoutProcessing}
+                    >
+                      {isCheckoutProcessing &&
+                      processingGateway === gateway.gateway ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                          Processing...
+                        </>
+                      ) : (
+                        `Pay with ${gateway.name}`
+                      )}
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
