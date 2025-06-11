@@ -96,7 +96,9 @@ export const razorpayBaseEventSchema = z.object({
 export type RazorpayPaymentCapturedEvent = z.infer<
   typeof razorpayPaymentCapturedEventSchema
 >;
-export type RazorpayOrderPaidEvent = z.infer<typeof razorpayOrderPaidEventSchema>;
+export type RazorpayOrderPaidEvent = z.infer<
+  typeof razorpayOrderPaidEventSchema
+>;
 export type RazorpayPaymentFailedEvent = z.infer<
   typeof razorpayPaymentFailedEventSchema
 >;

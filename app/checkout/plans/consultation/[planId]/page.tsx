@@ -11,7 +11,7 @@ import {
   CheckoutInput,
   checkoutResponseSchema,
   consultationSearchParamsSchema,
-  createCheckoutData
+  createCheckoutData,
 } from "@/schemas/checkout";
 import {
   ConsultantProfile,
@@ -148,7 +148,10 @@ export default function ConsultationCheckoutPage({
   };
 
   // Common API request logic
-  const makeCheckoutRequest = async (checkoutData: CheckoutInput, gateway: string) => {
+  const makeCheckoutRequest = async (
+    checkoutData: CheckoutInput,
+    gateway: string,
+  ) => {
     return fetch("/api/checkout", {
       method: "POST",
       headers: {
@@ -171,7 +174,8 @@ export default function ConsultationCheckoutPage({
         setProcessingGateway(gateway);
 
         // Validate search params first
-        const searchParamsValidation = consultationSearchParamsSchema.safeParse(resolvedSearchParams);
+        const searchParamsValidation =
+          consultationSearchParamsSchema.safeParse(resolvedSearchParams);
         if (!searchParamsValidation.success) {
           const issues = searchParamsValidation.error.issues;
           const missingFields = issues.map((issue) => issue.path[0]).join(", ");
@@ -185,8 +189,10 @@ export default function ConsultationCheckoutPage({
           paymentGateway: gateway as PaymentGateway,
           slotStartTimeInUTC: searchParamsValidation.data.slotStartTimeInUTC,
           slotEndTimeInUTC: searchParamsValidation.data.slotEndTimeInUTC,
-          slotOfAvailabilityWeeklyId: searchParamsValidation.data.slotOfAvailabilityWeeklyId,
-          slotOfAvailabilityCustomId: searchParamsValidation.data.slotOfAvailabilityCustomId,
+          slotOfAvailabilityWeeklyId:
+            searchParamsValidation.data.slotOfAvailabilityWeeklyId,
+          slotOfAvailabilityCustomId:
+            searchParamsValidation.data.slotOfAvailabilityCustomId,
           discountCode: searchParamsValidation.data.discountCode,
           notes: searchParamsValidation.data.notes,
         });
@@ -201,7 +207,7 @@ export default function ConsultationCheckoutPage({
         }
 
         const data = await response.json();
-        
+
         // Validate response using schema
         const validatedResponse = checkoutResponseSchema.safeParse(data);
         if (!validatedResponse.success) {
@@ -285,10 +291,11 @@ export default function ConsultationCheckoutPage({
       setIsLoading(true);
       try {
         // Validate search params using Zod schema
-        const searchParamsValidation = consultationSearchParamsSchema.safeParse(resolvedSearchParams);
+        const searchParamsValidation =
+          consultationSearchParamsSchema.safeParse(resolvedSearchParams);
         if (!searchParamsValidation.success) {
           const issues = searchParamsValidation.error.issues;
-          const errorMessage = issues.map(issue => issue.message).join(', ');
+          const errorMessage = issues.map((issue) => issue.message).join(", ");
           throw new Error(`Validation failed: ${errorMessage}`);
         }
 
@@ -659,7 +666,9 @@ export default function ConsultationCheckoutPage({
                       onPaymentSuccess={(response: any) => {
                         toast({
                           title: "Payment Successful",
-                          description: response.message || "Payment completed successfully",
+                          description:
+                            response.message ||
+                            "Payment completed successfully",
                         });
                         window.location.href = "/dashboard/consultee";
                       }}
@@ -667,7 +676,9 @@ export default function ConsultationCheckoutPage({
                         toast({
                           title: "Payment Failed",
                           description:
-                            error.message || error.description || "An unknown error occurred",
+                            error.message ||
+                            error.description ||
+                            "An unknown error occurred",
                           variant: "destructive",
                         });
                       }}

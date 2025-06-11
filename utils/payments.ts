@@ -1,9 +1,6 @@
 import { createPaymentIntent } from "@/lib/payment";
 import prisma from "@/lib/prisma";
-import {
-  CheckoutInput,
-  checkoutSchema
-} from "@/schemas/checkout";
+import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
 import {
   AppointmentsType,
   ClassStatus,
@@ -34,30 +31,39 @@ export class PaymentIntentManager {
   }) {
     try {
       const paymentResponse = await createPaymentIntent(params);
-      
+
       // Track the intent for potential cleanup
       this.activeIntents.set(paymentResponse.id, params.metadata.userId);
-      
+
       return paymentResponse;
     } catch (error) {
       console.error("Payment intent creation failed:", error);
-      throw new Error("Failed to create payment intent. Please try again later.");
+      throw new Error(
+        "Failed to create payment intent. Please try again later.",
+      );
     }
   }
 
-  static async cancelIntent(intentId: string, reason: string = "Database operation failed") {
+  static async cancelIntent(
+    intentId: string,
+    reason: string = "Database operation failed",
+  ) {
     try {
       // TODO: Implement gateway-specific cancellation
       // For now, we'll import the payment library and cancel
       const { cancelPaymentIntent } = await import("@/lib/payment");
-      
+
       if (typeof cancelPaymentIntent === "function") {
         await cancelPaymentIntent(intentId, reason);
-        console.log(`🚫 Payment intent cancelled: ${intentId} - Reason: ${reason}`);
+        console.log(
+          `🚫 Payment intent cancelled: ${intentId} - Reason: ${reason}`,
+        );
       } else {
-        console.warn(`⚠️ Payment intent cancellation not implemented for intent: ${intentId}`);
+        console.warn(
+          `⚠️ Payment intent cancellation not implemented for intent: ${intentId}`,
+        );
       }
-      
+
       // Remove from tracking
       this.activeIntents.delete(intentId);
     } catch (error) {
@@ -112,7 +118,11 @@ export async function calculateAmountAndValidate(
           throw new Error("Consultation plan not found");
         }
 
-        await validateSlotAvailability(tx, validatedData, user.consulteeProfile.id);
+        await validateSlotAvailability(
+          tx,
+          validatedData,
+          user.consulteeProfile.id,
+        );
         amount = plan.price;
         break;
 
@@ -132,7 +142,11 @@ export async function calculateAmountAndValidate(
           throw new Error("Subscription plan not found");
         }
 
-        await validateSlotAvailability(tx, validatedData, user.consulteeProfile.id);
+        await validateSlotAvailability(
+          tx,
+          validatedData,
+          user.consulteeProfile.id,
+        );
         amount = plan.price;
         break;
 
@@ -220,7 +234,8 @@ export async function calculateAmountAndValidate(
       }
     }
 
-    const currency = validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD";
+    const currency =
+      validatedData.paymentGateway === "RAZORPAY" ? "INR" : "USD";
 
     return { amount, currency, discountCodeId };
   });
@@ -421,7 +436,9 @@ export async function handleConsultationCheckout(
   const consultation = await tx.consultation.create({
     data: {
       consultationPlanId: plan.id,
-      requestStatus: skipPayment ? RequestStatus.APPROVED : RequestStatus.PENDING,
+      requestStatus: skipPayment
+        ? RequestStatus.APPROVED
+        : RequestStatus.PENDING,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
       directlyBooked: true,
@@ -479,7 +496,9 @@ export async function handleSubscriptionCheckout(
   const subscription = await tx.subscription.create({
     data: {
       subscriptionPlanId: plan.id,
-      requestStatus: skipPayment ? RequestStatus.APPROVED : RequestStatus.PENDING,
+      requestStatus: skipPayment
+        ? RequestStatus.APPROVED
+        : RequestStatus.PENDING,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
       startDate,
@@ -529,7 +548,8 @@ export async function handleWebinarCheckout(
   }
 
   const plan = webinar.webinarPlan;
-  const currentParticipants = webinar.appointment?.slotsOfAppointment?.length || 0;
+  const currentParticipants =
+    webinar.appointment?.slotsOfAppointment?.length || 0;
 
   // Check if max participants reached
   if (currentParticipants >= plan.maxParticipants) {
@@ -564,9 +584,11 @@ export async function handleWebinarCheckout(
     data: {
       appointmentId: appointment.id,
       slotStartTimeInUTC:
-        webinar.appointment?.slotsOfAppointment[0]?.slotStartTimeInUTC || new Date(),
+        webinar.appointment?.slotsOfAppointment[0]?.slotStartTimeInUTC ||
+        new Date(),
       slotEndTimeInUTC:
-        webinar.appointment?.slotsOfAppointment[0]?.slotEndTimeInUTC || new Date(),
+        webinar.appointment?.slotsOfAppointment[0]?.slotEndTimeInUTC ||
+        new Date(),
       isTentative: !skipPayment,
       user: {
         connect: { id: userId },
@@ -720,8 +742,10 @@ export async function handleProductionCheckout(
         planId: validatedData.planId,
         slotStartTimeInUTC: validatedData.slotStartTimeInUTC || "",
         slotEndTimeInUTC: validatedData.slotEndTimeInUTC || "",
-        slotOfAvailabilityWeeklyId: validatedData.slotOfAvailabilityWeeklyId || "",
-        slotOfAvailabilityCustomId: validatedData.slotOfAvailabilityCustomId || "",
+        slotOfAvailabilityWeeklyId:
+          validatedData.slotOfAvailabilityWeeklyId || "",
+        slotOfAvailabilityCustomId:
+          validatedData.slotOfAvailabilityCustomId || "",
         discountCode: validatedData.discountCode || "",
         notes: validatedData.notes || "",
         ...(validatedData.eventId && { eventId: validatedData.eventId }),
@@ -767,7 +791,7 @@ export async function handleProductionCheckout(
     // CRITICAL: Cancel the payment intent since DB operation failed
     await PaymentIntentManager.cleanup(
       paymentResponse.id,
-      "Database operation failed - preventing orphaned payment intent"
+      "Database operation failed - preventing orphaned payment intent",
     );
 
     throw new Error("Failed to record payment information. Please try again.");

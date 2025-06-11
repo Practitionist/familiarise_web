@@ -52,14 +52,13 @@ export const stripePaymentIntentSucceededEventSchema =
   });
 
 // Payment Intent Failed event
-export const stripePaymentIntentFailedEventSchema = stripeBaseEventSchema.extend(
-  {
+export const stripePaymentIntentFailedEventSchema =
+  stripeBaseEventSchema.extend({
     type: z.literal("payment_intent.payment_failed"),
     data: z.object({
       object: paymentIntentSchema,
     }),
-  },
-);
+  });
 
 // Invoice Paid event
 export const stripeInvoicePaidEventSchema = stripeBaseEventSchema.extend({
@@ -76,8 +75,8 @@ export const stripeInvoicePaidEventSchema = stripeBaseEventSchema.extend({
 });
 
 // Subscription Created event
-export const stripeSubscriptionCreatedEventSchema = stripeBaseEventSchema.extend(
-  {
+export const stripeSubscriptionCreatedEventSchema =
+  stripeBaseEventSchema.extend({
     type: z.literal("customer.subscription.created"),
     data: z.object({
       object: z.object({
@@ -89,8 +88,7 @@ export const stripeSubscriptionCreatedEventSchema = stripeBaseEventSchema.extend
         start_date: z.number(),
       }),
     }),
-  },
-);
+  });
 
 export type StripePaymentIntentSucceededEvent = z.infer<
   typeof stripePaymentIntentSucceededEventSchema

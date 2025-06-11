@@ -14,7 +14,9 @@ export function loadScript(src: string): Promise<boolean> {
 }
 
 // Common error handling logic for checkout pages
-export function createHandleApiError(toast: ReturnType<typeof useToast>["toast"]) {
+export function createHandleApiError(
+  toast: ReturnType<typeof useToast>["toast"],
+) {
   return (errorData: any) => {
     const errorMessage = errorData.error || "Operation failed";
     const errorType = errorData.errorType || "UNKNOWN_ERROR";
@@ -59,7 +61,9 @@ export function createHandleApiError(toast: ReturnType<typeof useToast>["toast"]
 }
 
 // Common API request logic for checkout
-export async function makeCheckoutRequest(checkoutData: CheckoutInput): Promise<Response> {
+export async function makeCheckoutRequest(
+  checkoutData: CheckoutInput,
+): Promise<Response> {
   return fetch("/api/checkout", {
     method: "POST",
     headers: {
@@ -72,7 +76,7 @@ export async function makeCheckoutRequest(checkoutData: CheckoutInput): Promise<
 // Common success handling logic for different appointment types
 export function createHandleCheckoutSuccess(
   toast: ReturnType<typeof useToast>["toast"],
-  appointmentType: "CONSULTATION" | "WEBINAR" | "CLASS" | "SUBSCRIPTION"
+  appointmentType: "CONSULTATION" | "WEBINAR" | "CLASS" | "SUBSCRIPTION",
 ) {
   return (data: any, isDevMode: boolean = false) => {
     const typeMessages = {
@@ -130,7 +134,7 @@ export async function handleProductionCheckout(
   checkoutData: CheckoutInput,
   gateway: PaymentGateway,
   handleApiError: (errorData: any) => void,
-  handleCheckoutSuccess: (data: any, isDevMode?: boolean) => void
+  handleCheckoutSuccess: (data: any, isDevMode?: boolean) => void,
 ): Promise<void> {
   const response = await makeCheckoutRequest(checkoutData);
 
@@ -141,7 +145,7 @@ export async function handleProductionCheckout(
   }
 
   const rawData = await response.json();
-  
+
   // Validate response using schema
   const validationResult = checkoutResponseSchema.safeParse(rawData);
   if (!validationResult.success) {
@@ -213,7 +217,7 @@ export const paymentGateways = [
 
 // Default success and error handlers for StripeCheckout component
 export function createStripeCheckoutHandlers(
-  toast: ReturnType<typeof useToast>["toast"]
+  toast: ReturnType<typeof useToast>["toast"],
 ) {
   return {
     onPaymentSuccess: (response: any) => {
@@ -235,7 +239,7 @@ export function createStripeCheckoutHandlers(
 
 // Default success and error handlers for RazorpayCheckout component
 export function createRazorpayCheckoutHandlers(
-  toast: ReturnType<typeof useToast>["toast"]
+  toast: ReturnType<typeof useToast>["toast"],
 ) {
   return {
     onPaymentSuccess: (response: { razorpay_payment_id: string }) => {

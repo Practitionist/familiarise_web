@@ -37,7 +37,10 @@ export async function verifyWebhookSignature(
       return { isValid: signature === expectedSignature, body };
     }
   } catch (error) {
-    console.error(`Webhook signature verification failed for ${gateway}:`, error);
+    console.error(
+      `Webhook signature verification failed for ${gateway}:`,
+      error,
+    );
     return { isValid: false, body };
   }
 }
@@ -54,13 +57,13 @@ export async function handlePaymentSuccess(
     });
 
     if (!payment) {
-      throw new Error(`Payment record not found for intent: ${paymentIntentId}`);
+      throw new Error(
+        `Payment record not found for intent: ${paymentIntentId}`,
+      );
     }
 
     if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
-      console.log(
-        `Payment ${paymentIntentId} has already been processed.`,
-      );
+      console.log(`Payment ${paymentIntentId} has already been processed.`);
       return;
     }
 
@@ -99,7 +102,9 @@ export async function handlePaymentFailure(paymentIntentId: string) {
     });
 
     if (!payment) {
-      console.warn(`Payment record not found for failed intent: ${paymentIntentId}`);
+      console.warn(
+        `Payment record not found for failed intent: ${paymentIntentId}`,
+      );
       return;
     }
 

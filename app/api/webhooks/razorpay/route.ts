@@ -21,7 +21,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { isValid, body } = await verifyWebhookSignature(req, secret, "razorpay");
+  const { isValid, body } = await verifyWebhookSignature(
+    req,
+    secret,
+    "razorpay",
+  );
   if (!isValid) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }

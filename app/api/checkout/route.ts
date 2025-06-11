@@ -1,6 +1,4 @@
-import {
-  checkoutSchema
-} from "@/schemas/checkout";
+import { checkoutSchema } from "@/schemas/checkout";
 import {
   handleDevelopmentCheckout,
   handleProductionCheckout,
@@ -26,11 +24,17 @@ export async function POST(req: NextRequest) {
 
     if (skipPayment) {
       // DEVELOPMENT FLOW: Create appointment first, then skip payment
-      const result = await handleDevelopmentCheckout(validatedData, session.user.id);
+      const result = await handleDevelopmentCheckout(
+        validatedData,
+        session.user.id,
+      );
       return NextResponse.json(result);
     } else {
       // PRODUCTION FLOW: Create payment first, then appointment ONLY after payment succeeds
-      const result = await handleProductionCheckout(validatedData, session.user.id);
+      const result = await handleProductionCheckout(
+        validatedData,
+        session.user.id,
+      );
       return NextResponse.json(result);
     }
   } catch (error) {

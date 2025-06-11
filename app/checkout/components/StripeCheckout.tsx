@@ -29,8 +29,8 @@ export default function StripeCheckout({
     setIsProcessing(true);
     try {
       if (!stripePromise) {
-        const errorMsg = !stripeKey 
-          ? "Stripe publishable key (NEXT_PUBLIC_STRIPE_KEY) is not configured" 
+        const errorMsg = !stripeKey
+          ? "Stripe publishable key (NEXT_PUBLIC_STRIPE_KEY) is not configured"
           : "Stripe failed to initialize";
         toast({
           title: "Configuration Error",
@@ -46,7 +46,8 @@ export default function StripeCheckout({
       if (!stripe) {
         toast({
           title: "Error",
-          description: "Stripe failed to load. Please check your internet connection or disable ad blockers.",
+          description:
+            "Stripe failed to load. Please check your internet connection or disable ad blockers.",
           variant: "destructive",
         });
         onPaymentError({ message: "Stripe failed to load" });
@@ -55,7 +56,7 @@ export default function StripeCheckout({
 
       // Make API call to create checkout session/payment intent
       console.log("Making checkout request with data:", checkoutData);
-      
+
       const response = await fetch("/api/checkout", {
         method: "POST",
         headers: {
@@ -75,7 +76,7 @@ export default function StripeCheckout({
 
       const rawData = await response.json();
       console.log("Checkout API response:", rawData);
-      
+
       // Validate response using schema
       const validationResult = checkoutResponseSchema.safeParse(rawData);
       if (!validationResult.success) {
@@ -104,7 +105,11 @@ export default function StripeCheckout({
         window.location.href = data.checkoutUrl;
       } else if (data.paymentIntent?.client_secret) {
         // For Stripe, client_secret now contains the checkout URL
-        if (data.paymentIntent.client_secret.startsWith('https://checkout.stripe.com')) {
+        if (
+          data.paymentIntent.client_secret.startsWith(
+            "https://checkout.stripe.com",
+          )
+        ) {
           window.location.href = data.paymentIntent.client_secret;
         } else {
           // Fallback for other formats
@@ -112,7 +117,7 @@ export default function StripeCheckout({
         }
       } else if (data.clientSecret) {
         // Direct client_secret field
-        if (data.clientSecret.startsWith('https://checkout.stripe.com')) {
+        if (data.clientSecret.startsWith("https://checkout.stripe.com")) {
           window.location.href = data.clientSecret;
         } else {
           // Legacy Payment Intent format (shouldn't happen with new implementation)
@@ -127,7 +132,8 @@ export default function StripeCheckout({
       }
     } catch (error) {
       onPaymentError({
-        message: error instanceof Error ? error.message : "An unknown error occurred",
+        message:
+          error instanceof Error ? error.message : "An unknown error occurred",
       });
     } finally {
       setIsProcessing(false);

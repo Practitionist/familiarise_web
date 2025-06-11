@@ -11,7 +11,7 @@ import {
   CheckoutInput,
   checkoutResponseSchema,
   subscriptionSearchParamsSchema,
-  createCheckoutData
+  createCheckoutData,
 } from "@/schemas/checkout";
 import {
   ConsultantProfile,
@@ -98,7 +98,8 @@ export default function SubscriptionCheckoutPage({
         setProcessingGateway(gateway);
 
         // Validate search params using the shared schema
-        const searchParamsValidation = subscriptionSearchParamsSchema.safeParse(resolvedSearchParams);
+        const searchParamsValidation =
+          subscriptionSearchParamsSchema.safeParse(resolvedSearchParams);
         if (!searchParamsValidation.success) {
           throw new Error("Invalid subscription parameters");
         }
@@ -133,7 +134,7 @@ export default function SubscriptionCheckoutPage({
         }
 
         const rawData = await response.json();
-        
+
         // Validate response using schema
         const validationResult = checkoutResponseSchema.safeParse(rawData);
         if (!validationResult.success) {
@@ -209,12 +210,7 @@ export default function SubscriptionCheckoutPage({
         setProcessingGateway(null);
       }
     },
-    [
-      isCheckoutProcessing,
-      resolvedSearchParams,
-      planData?.data?.id,
-      toast,
-    ],
+    [isCheckoutProcessing, resolvedSearchParams, planData?.data?.id, toast],
   );
 
   useEffect(() => {

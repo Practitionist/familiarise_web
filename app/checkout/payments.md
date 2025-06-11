@@ -7,17 +7,20 @@ The Familiarize platform implements a comprehensive payment system that supports
 ## Architecture Components
 
 ### 1. Frontend Components
+
 - **StripeCheckout.tsx**: Handles Stripe payment processing with @stripe/stripe-js
-- **RazorpayCheckout.tsx**: Manages Razorpay payment flows 
+- **RazorpayCheckout.tsx**: Manages Razorpay payment flows
 - **Checkout Pages**: Type-specific checkout flows for different appointment types
 - **Utils**: Centralized utility functions for common checkout operations
 
 ### 2. API Routes
+
 - **`/api/checkout`**: Main checkout endpoint that orchestrates payment creation
 - **`/api/webhooks/stripe`**: Handles Stripe payment confirmation webhooks
 - **`/api/webhooks/razorpay`**: Processes Razorpay payment notifications
 
 ### 3. Core Libraries
+
 - **`lib/payment.ts`**: Payment gateway abstraction layer
 - **`utils/payments.ts`**: Business logic for appointment creation and validation
 - **`app/api/webhooks/utils.ts`**: Shared webhook processing utilities
@@ -29,6 +32,7 @@ The Familiarize platform implements a comprehensive payment system that supports
 The system supports two distinct flows:
 
 1. **Development Flow** (`SKIP_PAYMENT=true`):
+
    - Creates appointments immediately without payment
    - Used for testing and development
 
@@ -46,32 +50,32 @@ graph TD
     A[User Selects Plan] --> B[Frontend Checkout Page]
     B --> C[User Selects Payment Gateway]
     C --> D{Development Mode?}
-    
+
     D -->|Yes| E[Skip Payment Flow]
     D -->|No| F[Production Payment Flow]
-    
+
     E --> G[Create Appointment Directly]
     G --> H[Redirect to Success]
-    
+
     F --> I[Create Payment Intent]
     I --> J{Gateway Type?}
-    
+
     J -->|Stripe| K[Create Checkout Session]
     J -->|Razorpay| L[Create Order]
-    
+
     K --> M[Redirect to Stripe]
     L --> N[Show Razorpay Modal]
-    
+
     M --> O[Payment Success/Failure]
     N --> O
-    
+
     O --> P[Webhook Triggered]
     P --> Q[Process Payment Status]
     Q --> R{Payment Success?}
-    
+
     R -->|Yes| S[Create/Confirm Appointment]
     R -->|No| T[Cleanup & Mark Failed]
-    
+
     S --> U[Redirect to Success Page]
     T --> V[Redirect to Failure Page]
 ```
@@ -86,16 +90,16 @@ sequenceDiagram
     participant PG as Payment Gateway
     participant WH as Webhook
     participant DB as Database
-    
+
     U->>FE: Select Plan & Gateway
     FE->>API: POST /api/checkout
-    
+
     Note over API: Validate user session
     Note over API: Validate plan availability
-    
+
     API->>DB: Create Payment Record
     API->>PG: Create Payment Intent
-    
+
     alt Stripe
         PG-->>API: Checkout Session URL
         API-->>FE: {checkoutUrl}
@@ -107,10 +111,10 @@ sequenceDiagram
         FE->>U: Show Razorpay Modal
         U->>PG: Complete Payment
     end
-    
+
     PG->>WH: Payment Success/Failure
     WH->>DB: Update Payment Status
-    
+
     alt Payment Success
         WH->>DB: Create/Confirm Appointment
         WH->>DB: Update Slot Availability
@@ -119,7 +123,7 @@ sequenceDiagram
         WH->>DB: Mark Payment Failed
         WH->>DB: Cleanup Resources
     end
-    
+
     U->>FE: Redirected to Success/Failure Page
 ```
 
@@ -129,35 +133,35 @@ sequenceDiagram
 graph TD
     A[Webhook Received] --> B[Verify Signature]
     B --> C{Signature Valid?}
-    
+
     C -->|No| D[Return 400 Error]
     C -->|Yes| E[Parse Event Data]
-    
+
     E --> F{Event Type?}
-    
+
     F -->|payment_intent.succeeded<br/>payment.captured| G[Handle Success]
     F -->|payment_intent.payment_failed<br/>payment.failed| H[Handle Failure]
     F -->|Other| I[Log & Ignore]
-    
+
     G --> J[Find Payment Record]
     J --> K{Payment Found?}
-    
+
     K -->|No| L[Log Error & Return]
     K -->|Yes| M{Already Processed?}
-    
+
     M -->|Yes| N[Return Success]
     M -->|No| O[Update Payment Status]
-    
+
     O --> P{Appointment Exists?}
-    
+
     P -->|Yes| Q[Confirm Existing Appointment]
     P -->|No| R[Create New Appointment]
-    
+
     Q --> S[Update Slot Status]
     R --> S
     S --> T[Send Notifications]
     T --> U[Return Success]
-    
+
     H --> V[Find Payment Record]
     V --> W[Mark Payment Failed]
     W --> X[Cleanup Appointment]
@@ -169,6 +173,7 @@ graph TD
 ### Frontend Components
 
 #### StripeCheckout Component
+
 ```typescript
 interface CheckoutInput {
   appointmentType: AppointmentsType;
@@ -183,6 +188,7 @@ interface CheckoutInput {
 ```
 
 **Key Features:**
+
 - Loads Stripe.js dynamically
 - Handles both Payment Intents and Checkout Sessions
 - Implements proper error handling with toast notifications
@@ -190,7 +196,9 @@ interface CheckoutInput {
 - Validates API responses using Zod schemas
 
 #### RazorpayCheckout Component
+
 **Key Features:**
+
 - Loads Razorpay SDK dynamically
 - Handles payment modal display
 - Implements proper error handling
@@ -200,13 +208,16 @@ interface CheckoutInput {
 ### API Endpoints
 
 #### POST /api/checkout
+
 **Responsibilities:**
+
 - Session authentication validation
 - Request body validation using Zod schemas
 - Route to development or production flow
 - Error handling with specific error types
 
 **Request Schema:**
+
 ```typescript
 const checkoutSchema = z.object({
   appointmentType: z.enum(["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS"]),
@@ -215,12 +226,19 @@ const checkoutSchema = z.object({
   slotStartTimeInUTC: z.string().optional(),
   slotEndTimeInUTC: z.string().optional(),
   notes: z.string().optional(),
-  paymentGateway: z.enum(["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW", "CARD"]),
+  paymentGateway: z.enum([
+    "STRIPE",
+    "RAZORPAY",
+    "LEMON_SQUEEZY",
+    "XFLOW",
+    "CARD",
+  ]),
   slotOfAvailabilityWeeklyId: z.string().optional(),
 });
 ```
 
 **Response Types:**
+
 ```typescript
 // Development Response
 {
@@ -239,22 +257,28 @@ const checkoutSchema = z.object({
 ```
 
 #### POST /api/webhooks/stripe
+
 **Supported Events:**
+
 - `payment_intent.succeeded`: Payment completed successfully
 - `payment_intent.payment_failed`: Payment failed
 
 **Security:**
+
 - Verifies webhook signature using Stripe's SDK
 - Validates event schema using Zod
 - Implements idempotency to prevent duplicate processing
 
 #### POST /api/webhooks/razorpay
+
 **Supported Events:**
+
 - `payment.captured`: Payment captured successfully
 - `order.paid`: Order payment completed
 - `payment.failed`: Payment failed
 
 **Security:**
+
 - Verifies webhook signature using HMAC SHA256
 - Validates event schema using Zod
 - Implements idempotency to prevent duplicate processing
@@ -262,12 +286,15 @@ const checkoutSchema = z.object({
 ### Core Business Logic
 
 #### Payment Intent Management
+
 The `PaymentIntentManager` class provides:
+
 - **Intent Creation**: Creates payment intents with proper metadata
 - **Cleanup**: Cancels payment intents on database failures
 - **Tracking**: Maintains active intents for potential cleanup
 
 #### Appointment Creation Logic
+
 ```typescript
 // Supports multiple appointment types
 switch (appointmentType) {
@@ -287,6 +314,7 @@ switch (appointmentType) {
 ```
 
 #### Slot Availability Validation
+
 - Validates time slot conflicts
 - Checks consultant availability
 - Prevents double booking
@@ -295,6 +323,7 @@ switch (appointmentType) {
 ## Database Schema Integration
 
 ### Payment Table
+
 ```sql
 model Payment {
   id                String         @id @default(cuid())
@@ -311,6 +340,7 @@ model Payment {
 ```
 
 ### Appointment State Management
+
 - **PENDING**: Appointment created, awaiting payment
 - **CONFIRMED**: Payment successful, appointment confirmed
 - **CANCELLED**: Payment failed or appointment cancelled
@@ -318,6 +348,7 @@ model Payment {
 ## Error Handling Strategy
 
 ### Error Types
+
 1. **Authentication Errors**: Invalid API keys, session issues
 2. **Validation Errors**: Invalid request data, missing fields
 3. **Business Logic Errors**: Slot unavailable, plan not found
@@ -325,6 +356,7 @@ model Payment {
 5. **Database Errors**: Transaction failures, connection issues
 
 ### Error Recovery
+
 - **Payment Intent Cleanup**: Automatic cancellation on database failures
 - **Webhook Idempotency**: Prevents duplicate processing
 - **Transaction Rollback**: Ensures data consistency
@@ -333,6 +365,7 @@ model Payment {
 ## Configuration
 
 ### Environment Variables
+
 ```env
 # Payment Gateways
 STRIPE_SECRET_KEY=sk_test_...
@@ -349,6 +382,7 @@ SKIP_PAYMENT=false  # Set to true for development
 ```
 
 ### Security Best Practices
+
 1. **Webhook Signature Verification**: All webhooks verify signatures
 2. **Environment Separation**: Separate keys for test/production
 3. **Secure Metadata**: Sensitive data not stored in payment metadata
@@ -358,11 +392,13 @@ SKIP_PAYMENT=false  # Set to true for development
 ## Testing Strategy
 
 ### Development Mode
+
 - Set `SKIP_PAYMENT=true` to bypass payment processing
 - Creates appointments directly for testing flows
 - Maintains all business logic validation
 
 ### Production Testing
+
 - Use test API keys for both Stripe and Razorpay
 - Test webhook endpoints using ngrok or similar tools
 - Verify error handling with invalid data
@@ -371,12 +407,14 @@ SKIP_PAYMENT=false  # Set to true for development
 ## Monitoring and Observability
 
 ### Logging Strategy
+
 - Payment intent creation/cancellation
 - Webhook event processing
 - Error conditions with context
 - Performance metrics for database transactions
 
 ### Health Checks
+
 - Payment gateway connectivity
 - Webhook endpoint availability
 - Database connection status
@@ -385,6 +423,7 @@ SKIP_PAYMENT=false  # Set to true for development
 ## Future Enhancements
 
 ### Planned Features
+
 1. **Additional Payment Gateways**: Lemon Squeezy, XFlow integration
 2. **Recurring Payments**: Automatic subscription renewals
 3. **Partial Refunds**: Pro-rated cancellation handling
@@ -392,6 +431,7 @@ SKIP_PAYMENT=false  # Set to true for development
 5. **Multi-currency Support**: Dynamic currency conversion
 
 ### Scalability Considerations
+
 - Database connection pooling
 - Webhook processing queue
 - Payment intent cleanup jobs
@@ -399,4 +439,4 @@ SKIP_PAYMENT=false  # Set to true for development
 
 ---
 
-*This documentation provides a comprehensive overview of the Familiarize payment system. For implementation details, refer to the individual component files and API route handlers.*
+_This documentation provides a comprehensive overview of the Familiarize payment system. For implementation details, refer to the individual component files and API route handlers._

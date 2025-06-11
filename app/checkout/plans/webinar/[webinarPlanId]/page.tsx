@@ -11,11 +11,9 @@ import {
   CheckoutInput,
   checkoutResponseSchema,
   webinarSearchParamsSchema,
-  createCheckoutData
+  createCheckoutData,
 } from "@/schemas/checkout";
-import {
-  PaymentGateway,
-} from "@prisma/client";
+import { PaymentGateway } from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useCallback, useEffect, useState } from "react";
@@ -112,7 +110,8 @@ export default function WebinarCheckoutPage({
         setProcessingGateway(gateway);
 
         // Validate search params using the shared schema
-        const searchParamsValidation = webinarSearchParamsSchema.safeParse(resolvedSearchParams);
+        const searchParamsValidation =
+          webinarSearchParamsSchema.safeParse(resolvedSearchParams);
         if (!searchParamsValidation.success) {
           throw new Error("Invalid webinar parameters");
         }
@@ -131,7 +130,12 @@ export default function WebinarCheckoutPage({
         });
 
         // Handle production checkout flow using the utility
-        await handleProductionCheckout(checkoutData, gateway, handleApiError, handleCheckoutSuccess);
+        await handleProductionCheckout(
+          checkoutData,
+          gateway,
+          handleApiError,
+          handleCheckoutSuccess,
+        );
       } catch (error) {
         console.error("Checkout error:", error);
         if (error instanceof Error) {

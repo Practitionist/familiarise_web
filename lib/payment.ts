@@ -60,7 +60,7 @@ export async function createPaymentIntent({
     if (paymentGateway === "STRIPE") {
       // Create a Checkout Session instead of Payment Intent for better UX
       const session = await stripeClient.checkout.sessions.create({
-        payment_method_types: ['card'],
+        payment_method_types: ["card"],
         line_items: [
           {
             price_data: {
@@ -74,7 +74,7 @@ export async function createPaymentIntent({
             quantity: 1,
           },
         ],
-        mode: 'payment',
+        mode: "payment",
         success_url: `${getBaseUrl()}/checkout/checkout-success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${getBaseUrl()}/checkout/checkout-failure`,
         metadata,
@@ -85,7 +85,7 @@ export async function createPaymentIntent({
         client_secret: session.url!, // Use checkout URL as client_secret
         amount: amount,
         currency: currency,
-        status: session.status || 'open',
+        status: session.status || "open",
       };
     } else if (paymentGateway === "RAZORPAY") {
       const order = await razorpay.orders.create({
@@ -144,17 +144,26 @@ export async function cancelPaymentIntent(
     if (paymentIntentId.startsWith("pi_")) {
       // Stripe payment intent
       await stripeClient.paymentIntents.cancel(paymentIntentId, {
-        cancellation_reason: reason === "requested_by_customer" ? "requested_by_customer" : "abandoned",
+        cancellation_reason:
+          reason === "requested_by_customer"
+            ? "requested_by_customer"
+            : "abandoned",
       });
-      console.log(`✅ Stripe payment intent cancelled: ${paymentIntentId} - Reason: ${reason}`);
+      console.log(
+        `✅ Stripe payment intent cancelled: ${paymentIntentId} - Reason: ${reason}`,
+      );
     } else if (paymentIntentId.startsWith("cs_")) {
       // Stripe checkout session - can't be cancelled directly, but we can expire it
       try {
         await stripeClient.checkout.sessions.expire(paymentIntentId);
-        console.log(`✅ Stripe checkout session expired: ${paymentIntentId} - Reason: ${reason}`);
+        console.log(
+          `✅ Stripe checkout session expired: ${paymentIntentId} - Reason: ${reason}`,
+        );
       } catch (expireError) {
         // If session can't be expired (already completed/expired), that's fine
-        console.log(`✅ Stripe checkout session was already expired/completed: ${paymentIntentId}`);
+        console.log(
+          `✅ Stripe checkout session was already expired/completed: ${paymentIntentId}`,
+        );
       }
     } else if (paymentIntentId.startsWith("order_")) {
       // For Razorpay, we can only cancel an order if it's still pending
@@ -162,31 +171,43 @@ export async function cancelPaymentIntent(
         const order = await razorpay.orders.fetchPayments(paymentIntentId);
         if (order.count === 0) {
           // No payments made yet, we can safely ignore
-          console.log(`✅ Razorpay order had no payments, safe to ignore: ${paymentIntentId}`);
+          console.log(
+            `✅ Razorpay order had no payments, safe to ignore: ${paymentIntentId}`,
+          );
           return;
         }
-        console.warn(`⚠️ Cannot cancel Razorpay order with existing payments: ${paymentIntentId}`);
+        console.warn(
+          `⚠️ Cannot cancel Razorpay order with existing payments: ${paymentIntentId}`,
+        );
       } catch (fetchError) {
         // If we can't fetch payments, assume it's safe to ignore
-        console.log(`✅ Razorpay order fetch failed (likely safe to ignore): ${paymentIntentId}`);
+        console.log(
+          `✅ Razorpay order fetch failed (likely safe to ignore): ${paymentIntentId}`,
+        );
         return;
       }
     } else {
       // For other payment gateways (LEMON_SQUEEZY, XFLOW), we'll need to implement
-      console.warn(`⚠️ Payment intent cancellation not implemented for: ${paymentIntentId}`);
+      console.warn(
+        `⚠️ Payment intent cancellation not implemented for: ${paymentIntentId}`,
+      );
       return;
     }
   } catch (error) {
     console.error(`Failed to cancel payment intent ${paymentIntentId}:`, error);
-    
+
     // Don't throw here - cancellation failure shouldn't break the main flow
     // This is a cleanup operation and should be best-effort
     if (error instanceof Error && error.message.includes("already_cancelled")) {
-      console.log(`✅ Payment intent was already cancelled: ${paymentIntentId}`);
+      console.log(
+        `✅ Payment intent was already cancelled: ${paymentIntentId}`,
+      );
       return;
     }
-    
-    console.warn(`⚠️ Failed to cancel payment intent ${paymentIntentId}, but continuing...`);
+
+    console.warn(
+      `⚠️ Failed to cancel payment intent ${paymentIntentId}, but continuing...`,
+    );
   }
 }
 

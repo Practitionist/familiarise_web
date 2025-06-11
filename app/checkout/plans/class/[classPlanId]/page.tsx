@@ -11,11 +11,9 @@ import {
   CheckoutInput,
   checkoutResponseSchema,
   classSearchParamsSchema,
-  createCheckoutData
+  createCheckoutData,
 } from "@/schemas/checkout";
-import {
-  PaymentGateway,
-} from "@prisma/client";
+import { PaymentGateway } from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useCallback, useEffect, useState } from "react";
@@ -113,7 +111,8 @@ export default function ClassCheckoutPage({
         setProcessingGateway(gateway);
 
         // Validate search params using the shared schema
-        const searchParamsValidation = classSearchParamsSchema.safeParse(resolvedSearchParams);
+        const searchParamsValidation =
+          classSearchParamsSchema.safeParse(resolvedSearchParams);
         if (!searchParamsValidation.success) {
           throw new Error("Invalid class parameters");
         }
@@ -132,7 +131,12 @@ export default function ClassCheckoutPage({
         });
 
         // Handle production checkout flow using the utility
-        await handleProductionCheckout(checkoutData, gateway, handleApiError, handleCheckoutSuccess);
+        await handleProductionCheckout(
+          checkoutData,
+          gateway,
+          handleApiError,
+          handleCheckoutSuccess,
+        );
       } catch (error) {
         console.error("Checkout error:", error);
         if (error instanceof Error) {

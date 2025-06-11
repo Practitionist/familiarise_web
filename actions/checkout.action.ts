@@ -2,10 +2,7 @@
 
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
-import {
-  checkoutSchema,
-  CheckoutInput,
-} from "@/schemas/checkout";
+import { checkoutSchema, CheckoutInput } from "@/schemas/checkout";
 import {
   handleDevelopmentCheckout,
   handleProductionCheckout,

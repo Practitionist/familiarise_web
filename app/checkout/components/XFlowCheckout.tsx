@@ -39,7 +39,7 @@ const XFlowCheckout: React.FC<XFlowCheckoutProps> = ({
   const loadXFlowScript = (): Promise<boolean> => {
     return new Promise((resolve, reject) => {
       // Check if XFlow is already loaded
-      if (typeof window.XFlow === 'object') {
+      if (typeof window.XFlow === "object") {
         resolve(true);
         return;
       }
@@ -58,7 +58,10 @@ const XFlowCheckout: React.FC<XFlowCheckoutProps> = ({
 
     try {
       // Development mode skip payment
-      if (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_SKIP_PAYMENT === "true") {
+      if (
+        process.env.NODE_ENV === "development" &&
+        process.env.NEXT_PUBLIC_SKIP_PAYMENT === "true"
+      ) {
         toast({
           title: "Development Mode",
           description: "Payment skipped in development mode",
@@ -93,13 +96,13 @@ const XFlowCheckout: React.FC<XFlowCheckoutProps> = ({
       } else if (validatedData.success && validatedData.clientSecret) {
         // Handle embedded XFlow checkout if supported
         await loadXFlowScript();
-        
-                 if (window.XFlow) {
-           window.XFlow.checkout({
-             public_key: process.env.NEXT_PUBLIC_XFLOW_PUBLIC_KEY || "",
-             amount: validatedData.amount || 0,
-             currency: validatedData.currency || "NGN", // Default to Nigerian Naira for XFlow
-             email: "", // Will be provided by backend in actual implementation
+
+        if (window.XFlow) {
+          window.XFlow.checkout({
+            public_key: process.env.NEXT_PUBLIC_XFLOW_PUBLIC_KEY || "",
+            amount: validatedData.amount || 0,
+            currency: validatedData.currency || "NGN", // Default to Nigerian Naira for XFlow
+            email: "", // Will be provided by backend in actual implementation
             callback: (response) => {
               if (response.status === "success") {
                 toast({
@@ -118,23 +121,26 @@ const XFlowCheckout: React.FC<XFlowCheckoutProps> = ({
         } else {
           throw new Error("XFlow SDK not available");
         }
-             } else {
-         const errorMessage = !validatedData.success ? validatedData.error : "Failed to create checkout session";
-         throw new Error(errorMessage);
-       }
+      } else {
+        const errorMessage = !validatedData.success
+          ? validatedData.error
+          : "Failed to create checkout session";
+        throw new Error(errorMessage);
+      }
     } catch (error) {
       console.error("XFlow checkout error:", error);
-      
-      const errorMessage = error instanceof Error 
-        ? error.message 
-        : "An unexpected error occurred during checkout";
-      
+
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "An unexpected error occurred during checkout";
+
       toast({
         title: "Payment Error",
         description: errorMessage,
         variant: "destructive",
       });
-      
+
       onError(errorMessage);
     } finally {
       setIsProcessing(false);

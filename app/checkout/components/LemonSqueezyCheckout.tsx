@@ -36,7 +36,7 @@ const LemonSqueezyCheckout: React.FC<LemonSqueezyCheckoutProps> = ({
   const loadLemonSqueezyScript = (): Promise<boolean> => {
     return new Promise((resolve, reject) => {
       // Check if Lemon Squeezy is already loaded
-      if (typeof window.createLemonSqueezy === 'function') {
+      if (typeof window.createLemonSqueezy === "function") {
         resolve(true);
         return;
       }
@@ -44,7 +44,8 @@ const LemonSqueezyCheckout: React.FC<LemonSqueezyCheckoutProps> = ({
       const script = document.createElement("script");
       script.src = "https://app.lemonsqueezy.com/js/lemon.js";
       script.onload = () => resolve(true);
-      script.onerror = () => reject(new Error("Failed to load Lemon Squeezy SDK"));
+      script.onerror = () =>
+        reject(new Error("Failed to load Lemon Squeezy SDK"));
       document.body.appendChild(script);
     });
   };
@@ -70,7 +71,9 @@ const LemonSqueezyCheckout: React.FC<LemonSqueezyCheckoutProps> = ({
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || "Failed to create checkout session");
+        throw new Error(
+          errorData.message || "Failed to create checkout session",
+        );
       }
 
       const data = await response.json();
@@ -79,7 +82,7 @@ const LemonSqueezyCheckout: React.FC<LemonSqueezyCheckoutProps> = ({
       if (validatedData.success && validatedData.checkoutUrl) {
         // Initialize Lemon Squeezy
         const LemonSqueezy = window.createLemonSqueezy();
-        
+
         LemonSqueezy.Setup({
           eventHandler: (event) => {
             if (event.event === "Checkout.Success") {
@@ -113,15 +116,17 @@ const LemonSqueezyCheckout: React.FC<LemonSqueezyCheckoutProps> = ({
     } catch (error) {
       setIsProcessing(false);
       console.error("Lemon Squeezy checkout error:", error);
-      
+
       let errorMessage = "Payment processing failed";
       if (error instanceof Error) {
         if (error.message.includes("Network")) {
-          errorMessage = "Network error. Please check your connection and try again.";
+          errorMessage =
+            "Network error. Please check your connection and try again.";
         } else if (error.message.includes("Failed to load")) {
           errorMessage = "Failed to load payment processor. Please try again.";
         } else if (error.message.includes("not implemented")) {
-          errorMessage = "Lemon Squeezy payments are not available yet. Please try another payment method.";
+          errorMessage =
+            "Lemon Squeezy payments are not available yet. Please try another payment method.";
         } else {
           errorMessage = error.message;
         }
@@ -145,7 +150,10 @@ const LemonSqueezyCheckout: React.FC<LemonSqueezyCheckoutProps> = ({
   };
 
   // Development mode skip payment
-  if (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_SKIP_PAYMENT === "true") {
+  if (
+    process.env.NODE_ENV === "development" &&
+    process.env.NEXT_PUBLIC_SKIP_PAYMENT === "true"
+  ) {
     return (
       <Button
         onClick={handleSkipPayment}
@@ -171,7 +179,7 @@ const LemonSqueezyCheckout: React.FC<LemonSqueezyCheckoutProps> = ({
       ) : (
         <>
           <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" />
           </svg>
           Pay with Lemon Squeezy
         </>

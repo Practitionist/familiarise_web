@@ -35,7 +35,8 @@ export async function POST(req: NextRequest) {
 
     switch (eventType) {
       case "payment_intent.succeeded":
-        const succeededEvent = stripePaymentIntentSucceededEventSchema.parse(event);
+        const succeededEvent =
+          stripePaymentIntentSucceededEventSchema.parse(event);
         await handlePaymentSuccess(
           succeededEvent.data.object.id,
           succeededEvent.data.object.metadata || {},
