@@ -20,6 +20,15 @@ import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useCallback, useEffect, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
+import StripeCheckout from "../../../components/StripeCheckout";
+import {
+  createHandleApiError,
+  createHandleCheckoutSuccess,
+  handleProductionCheckout,
+  paymentGateways,
+  createStripeCheckoutHandlers,
+  createRazorpayCheckoutHandlers,
+} from "../../utils";
 
 import type {
   ClassPlan,
@@ -85,146 +94,11 @@ export default function ClassCheckoutPage({
   );
   const { toast } = useToast();
 
-  // Common error handling logic
-  const handleApiError = (errorData: any) => {
-    const errorMessage = errorData.error || "Operation failed";
-    const errorType = errorData.errorType || "UNKNOWN_ERROR";
-
-    const errorMessages = {
-      PAYMENT_CONFIG_ERROR: {
-        title: "Payment System Error",
-        description: "Payment system unavailable. Please contact support.",
-      },
-      PAYMENT_PROCESSING_ERROR: {
-        title: "Payment Error",
-        description: "Payment processing error. Please try again later.",
-      },
-      DATABASE_ERROR: {
-        title: "System Error",
-        description: "System error. Please try again.",
-      },
-      NOT_FOUND_ERROR: {
-        title: "Not Found",
-        description: errorMessage,
-      },
-      AVAILABILITY_ERROR: {
-        title: "Registration Unavailable",
-        description: errorMessage,
-      },
-      UNKNOWN_ERROR: {
-        title: "Operation Failed",
-        description: errorMessage,
-      },
-    };
-
-    const error =
-      errorMessages[errorType as keyof typeof errorMessages] ||
-      errorMessages.UNKNOWN_ERROR;
-
-    toast({
-      title: error.title,
-      description: error.description,
-      variant: "destructive",
-    });
-  };
-
-  // Common API request logic
-  const makeCheckoutRequest = async (checkoutData: CheckoutInput) => {
-    return fetch("/api/checkout", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(checkoutData),
-    });
-  };
-
-  // Common success handling logic
-  const handleCheckoutSuccess = (data: any, isDevMode: boolean = false) => {
-    if (isDevMode) {
-      // Development mode - direct registration success
-      toast({
-        title: "✅ Class Registration Successful!",
-        description: data.skipPayment
-          ? "You're registered for the class. Check your dashboard for details."
-          : "Payment processed successfully. You're registered for the class.",
-        variant: "default",
-      });
-
-      // Redirect after a short delay
-      setTimeout(() => {
-        window.location.href = "/dashboard/consultee";
-      }, 2000);
-    } else {
-      // Production mode - payment initiated success
-      toast({
-        title: "🚀 Payment Initiated!",
-        description:
-          "Redirecting to secure payment gateway. Complete your payment to confirm the registration.",
-        variant: "default",
-      });
-    }
-  };
-
-  // Production workflow - payment gateway processing
-  const handleProdCheckout = async (
-    checkoutData: CheckoutInput,
-    gateway: PaymentGateway,
-  ) => {
-    const response = await makeCheckoutRequest(checkoutData);
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      handleApiError(errorData);
-      throw new Error(errorData.error || "Checkout failed");
-    }
-
-    const rawData = await response.json();
-    
-    // Validate response using schema
-    const validationResult = checkoutResponseSchema.safeParse(rawData);
-    if (!validationResult.success) {
-      console.error("Invalid checkout response:", validationResult.error);
-      throw new Error("Invalid response from server");
-    }
-
-    const data = validationResult.data;
-
-    if (data.success) {
-      // Show success toast before redirecting
-      handleCheckoutSuccess(data, false);
-
-      // Small delay to let user see the toast before redirect
-      setTimeout(async () => {
-        // Handle gateway-specific responses
-        switch (gateway) {
-          case "STRIPE":
-            const stripeInstance = await loadStripe(
-              process.env.NEXT_PUBLIC_STRIPE_KEY!,
-            );
-            if (!stripeInstance) {
-              throw new Error("Failed to load Stripe");
-            }
-            await stripeInstance.confirmPayment({
-              clientSecret: data.clientSecret!,
-              confirmParams: {
-                return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
-              },
-            });
-            break;
-
-              case "LEMON_SQUEEZY":
-          case "XFLOW":
-            if (data.checkoutUrl) {
-              window.location.href = data.checkoutUrl;
-            }
-            break;
-        }
-      }, 1000);
-    } else {
-      handleApiError({ error: data.error, errorType: data.errorType });
-    }
-  };
+  // Create utility functions using the toast instance
+  const handleApiError = createHandleApiError(toast);
+  const handleCheckoutSuccess = createHandleCheckoutSuccess(toast, "CLASS");
+  const stripeHandlers = createStripeCheckoutHandlers(toast);
+  const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   const handleCheckout = useCallback(
     async (gateway: PaymentGateway) => {
@@ -248,23 +122,17 @@ export default function ClassCheckoutPage({
           throw new Error("Class plan not found");
         }
 
-        // Get the first available class instance from the plan
-        const availableClass = planData.data.classes?.[0];
-        if (!availableClass) {
-          throw new Error("No class instances available for this plan");
-        }
-
         // Create checkout data using the shared utility
         const checkoutData = createCheckoutData({
           appointmentType: "CLASS",
           planId: planData.data.id,
-          eventId: availableClass.id,
+          eventId: resolvedParams.classPlanId,
           discountCode: searchParamsValidation.data.discountCode,
           paymentGateway: gateway,
         });
 
-        // Handle production checkout flow
-        await handleProdCheckout(checkoutData, gateway);
+        // Handle production checkout flow using the utility
+        await handleProductionCheckout(checkoutData, gateway, handleApiError, handleCheckoutSuccess);
       } catch (error) {
         console.error("Checkout error:", error);
         if (error instanceof Error) {
@@ -283,7 +151,9 @@ export default function ClassCheckoutPage({
       isCheckoutProcessing,
       resolvedSearchParams,
       planData?.data?.id,
-      planData?.data?.classes,
+      resolvedParams.classPlanId,
+      handleApiError,
+      handleCheckoutSuccess,
       toast,
     ],
   );
@@ -457,63 +327,75 @@ export default function ClassCheckoutPage({
                 Select Payment Method
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                {["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"].map(
-                  (gateway) =>
-                    gateway === "RAZORPAY" ? (
-                      <RazorpayCheckout
-                        key={gateway}
-                        checkoutData={createCheckoutData({
-                          appointmentType: "CLASS",
-                          planId: planDetails.id,
-                          eventId: planDetails.classes[0].id,
-                          paymentGateway: "RAZORPAY",
-                          discountCode: Array.isArray(
-                            resolvedSearchParams.discountCode,
-                          )
-                            ? resolvedSearchParams.discountCode[0]
-                            : resolvedSearchParams.discountCode,
-                        })}
-                        onPaymentSuccess={(response: {
-                          razorpay_payment_id: string;
-                        }) => {
-                          toast({
-                            title: "Payment Successful",
-                            description: `Payment ID: ${response.razorpay_payment_id}`,
-                          });
-                          window.location.href = "/dashboard/consultee";
-                        }}
-                        onPaymentError={(error: { description: string }) => {
-                          toast({
-                            title: "Payment Failed",
-                            description:
-                              error.description || "An unknown error occurred",
-                            variant: "destructive",
-                          });
-                        }}
-                      />
-                    ) : (
-                      <Button
-                        key={gateway}
-                        variant="outline"
-                        className="w-full h-20 text-lg flex flex-col items-center justify-center hover:bg-blue-50 transition-colors duration-150"
-                        onClick={() =>
-                          handleCheckout(gateway as PaymentGateway)
-                        }
-                        disabled={isCheckoutProcessing}
-                      >
-                        {isCheckoutProcessing &&
-                        processingGateway === gateway ? (
-                          <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                            Processing...
-                          </>
+                {paymentGateways.map((gateway) => (
+                  <Card
+                    key={gateway.gateway}
+                    className="p-4 hover:shadow-md transition-shadow cursor-pointer"
+                  >
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium flex items-center gap-2">
+                        <CreditCardIcon className="h-4 w-4" />
+                        {gateway.name}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <p className="text-xs text-gray-600 mb-4">
+                        {gateway.description}
+                      </p>
+                      <div className="flex justify-center">
+                        {gateway.gateway === "STRIPE" ? (
+                          <StripeCheckout
+                            checkoutData={createCheckoutData({
+                              appointmentType: "CLASS",
+                              planId: planDetails.id,
+                              eventId: planDetails.classes[0].id,
+                              paymentGateway: "STRIPE",
+                              discountCode: Array.isArray(
+                                resolvedSearchParams.discountCode,
+                              )
+                                ? resolvedSearchParams.discountCode[0]
+                                : resolvedSearchParams.discountCode,
+                            })}
+                            onPaymentSuccess={stripeHandlers.onPaymentSuccess}
+                            onPaymentError={stripeHandlers.onPaymentError}
+                          />
+                        ) : gateway.gateway === "RAZORPAY" ? (
+                          <RazorpayCheckout
+                            checkoutData={createCheckoutData({
+                              appointmentType: "CLASS",
+                              planId: planDetails.id,
+                              eventId: planDetails.classes[0].id,
+                              paymentGateway: "RAZORPAY",
+                              discountCode: Array.isArray(
+                                resolvedSearchParams.discountCode,
+                              )
+                                ? resolvedSearchParams.discountCode[0]
+                                : resolvedSearchParams.discountCode,
+                            })}
+                            onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
+                            onPaymentError={razorpayHandlers.onPaymentError}
+                          />
                         ) : (
-                          gateway.charAt(0).toUpperCase() +
-                          gateway.slice(1).toLowerCase()
+                          <Button
+                            variant="outline"
+                            onClick={() => handleCheckout(gateway.gateway)}
+                            disabled={isCheckoutProcessing}
+                          >
+                            {isCheckoutProcessing &&
+                            processingGateway === gateway.gateway ? (
+                              <>
+                                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                                Processing...
+                              </>
+                            ) : (
+                              `Pay with ${gateway.name}`
+                            )}
+                          </Button>
                         )}
-                      </Button>
-                    ),
-                )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
             </div>
 

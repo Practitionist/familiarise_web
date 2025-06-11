@@ -155,13 +155,20 @@ export const paymentMetadataSchema = z.object({
 // Response schemas
 export const checkoutSuccessResponseSchema = z.object({
   success: z.literal(true),
-  appointmentId: z.string(),
+  appointmentId: z.string().optional(), // Optional for production flow
   paymentIntentId: z.string().optional(),
   clientSecret: z.string().optional(),
   orderId: z.string().optional(),
   checkoutUrl: z.string().optional(),
   message: z.string().optional(),
   skipPayment: z.boolean().optional(),
+  // Production flow fields
+  paymentIntent: z.object({
+    id: z.string(),
+    client_secret: z.string().optional(), // Can be Payment Intent secret or Checkout URL
+  }).optional(),
+  amount: z.number().optional(),
+  currency: z.string().optional(),
 });
 
 export const checkoutErrorResponseSchema = z.object({

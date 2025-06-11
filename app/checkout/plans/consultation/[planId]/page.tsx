@@ -23,6 +23,7 @@ import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useCallback, useEffect, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
+import StripeCheckout from "../../../components/StripeCheckout";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
   consultantProfile: ConsultantProfile & {
@@ -241,9 +242,14 @@ export default function ConsultationCheckoutPage({
                 await stripe?.confirmPayment({
                   clientSecret: data.paymentIntent.client_secret,
                   confirmParams: {
-                    return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
+                    return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
                   },
                 });
+                break;
+
+              case "RAZORPAY":
+                // Razorpay is handled by the RazorpayCheckout component
+                // This case shouldn't be reached since Razorpay has its own component
                 break;
 
               case "LEMON_SQUEEZY":
@@ -611,6 +617,57 @@ export default function ConsultationCheckoutPage({
                           title: "Payment Failed",
                           description:
                             error.description || "An unknown error occurred",
+                          variant: "destructive",
+                        });
+                      }}
+                    />
+                  ) : gateway.gateway === "STRIPE" ? (
+                    <StripeCheckout
+                      checkoutData={createCheckoutData({
+                        appointmentType: "CONSULTATION",
+                        planId: resolvedParams.planId,
+                        paymentGateway: "STRIPE",
+                        slotStartTimeInUTC: Array.isArray(
+                          resolvedSearchParams.slotStartTimeInUTC,
+                        )
+                          ? resolvedSearchParams.slotStartTimeInUTC[0]
+                          : resolvedSearchParams.slotStartTimeInUTC,
+                        slotEndTimeInUTC: Array.isArray(
+                          resolvedSearchParams.slotEndTimeInUTC,
+                        )
+                          ? resolvedSearchParams.slotEndTimeInUTC[0]
+                          : resolvedSearchParams.slotEndTimeInUTC,
+                        slotOfAvailabilityWeeklyId: Array.isArray(
+                          resolvedSearchParams.slotOfAvailabilityWeeklyId,
+                        )
+                          ? resolvedSearchParams.slotOfAvailabilityWeeklyId[0]
+                          : resolvedSearchParams.slotOfAvailabilityWeeklyId,
+                        slotOfAvailabilityCustomId: Array.isArray(
+                          resolvedSearchParams.slotOfAvailabilityCustomId,
+                        )
+                          ? resolvedSearchParams.slotOfAvailabilityCustomId[0]
+                          : resolvedSearchParams.slotOfAvailabilityCustomId,
+                        discountCode: Array.isArray(
+                          resolvedSearchParams.discountCode,
+                        )
+                          ? resolvedSearchParams.discountCode[0]
+                          : resolvedSearchParams.discountCode,
+                        notes: Array.isArray(resolvedSearchParams.notes)
+                          ? resolvedSearchParams.notes[0]
+                          : resolvedSearchParams.notes,
+                      })}
+                      onPaymentSuccess={(response: any) => {
+                        toast({
+                          title: "Payment Successful",
+                          description: response.message || "Payment completed successfully",
+                        });
+                        window.location.href = "/dashboard/consultee";
+                      }}
+                      onPaymentError={(error: any) => {
+                        toast({
+                          title: "Payment Failed",
+                          description:
+                            error.message || error.description || "An unknown error occurred",
                           variant: "destructive",
                         });
                       }}

@@ -3,6 +3,24 @@ import Razorpay from "razorpay";
 import { PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 
+// Helper function to get the base URL for payment redirects
+const getBaseUrl = () => {
+  // For server-side operations in Next.js, we need to use absolute URLs
+  // First try to get the base URL from environment variables
+  if (process.env.NEXT_PUBLIC_SITE_URL) {
+    return `https://${process.env.NEXT_PUBLIC_SITE_URL}`;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return process.env.NEXT_PUBLIC_APP_URL;
+  }
+
+  // Default to localhost for development
+  return "http://localhost:3000";
+};
+
 // Initialize payment clients
 export const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2025-05-28.basil",
@@ -40,21 +58,34 @@ export async function createPaymentIntent({
 }: PaymentIntentParams): Promise<PaymentIntent> {
   try {
     if (paymentGateway === "STRIPE") {
-      const intent = await stripeClient.paymentIntents.create({
-        amount: Math.round(amount * 100), // Convert to cents
-        currency,
+      // Create a Checkout Session instead of Payment Intent for better UX
+      const session = await stripeClient.checkout.sessions.create({
+        payment_method_types: ['card'],
+        line_items: [
+          {
+            price_data: {
+              currency,
+              product_data: {
+                name: `${metadata.appointmentType} Appointment`,
+                description: `Appointment booking for ${metadata.appointmentType}`,
+              },
+              unit_amount: Math.round(amount * 100), // Convert to cents
+            },
+            quantity: 1,
+          },
+        ],
+        mode: 'payment',
+        success_url: `${getBaseUrl()}/checkout/checkout-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${getBaseUrl()}/checkout/checkout-failure`,
         metadata,
-        automatic_payment_methods: {
-          enabled: true,
-        },
       });
 
       return {
-        id: intent.id,
-        client_secret: intent.client_secret!,
-        amount: intent.amount / 100, // Convert back to whole currency
-        currency: intent.currency,
-        status: intent.status,
+        id: session.id,
+        client_secret: session.url!, // Use checkout URL as client_secret
+        amount: amount,
+        currency: currency,
+        status: session.status || 'open',
       };
     } else if (paymentGateway === "RAZORPAY") {
       const order = await razorpay.orders.create({
@@ -116,6 +147,15 @@ export async function cancelPaymentIntent(
         cancellation_reason: reason === "requested_by_customer" ? "requested_by_customer" : "abandoned",
       });
       console.log(`✅ Stripe payment intent cancelled: ${paymentIntentId} - Reason: ${reason}`);
+    } else if (paymentIntentId.startsWith("cs_")) {
+      // Stripe checkout session - can't be cancelled directly, but we can expire it
+      try {
+        await stripeClient.checkout.sessions.expire(paymentIntentId);
+        console.log(`✅ Stripe checkout session expired: ${paymentIntentId} - Reason: ${reason}`);
+      } catch (expireError) {
+        // If session can't be expired (already completed/expired), that's fine
+        console.log(`✅ Stripe checkout session was already expired/completed: ${paymentIntentId}`);
+      }
     } else if (paymentIntentId.startsWith("order_")) {
       // For Razorpay, we can only cancel an order if it's still pending
       try {

@@ -23,6 +23,13 @@ import { loadStripe } from "@stripe/stripe-js";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { use, useCallback, useEffect, useState } from "react";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
+import StripeCheckout from "../../../components/StripeCheckout";
+import {
+  createHandleApiError,
+  paymentGateways,
+  createStripeCheckoutHandlers,
+  createRazorpayCheckoutHandlers,
+} from "../../utils";
 
 type SubscriptionPlanWithConsultant = SubscriptionPlan & {
   consultantProfile: ConsultantProfile & {
@@ -62,48 +69,10 @@ export default function SubscriptionCheckoutPage({
   );
   const { toast } = useToast();
 
-  // Common error handling logic
-  const handleApiError = (errorData: any) => {
-    const errorMessage = errorData.error || "Operation failed";
-    const errorType = errorData.errorType || "UNKNOWN_ERROR";
-
-    const errorMessages = {
-      PAYMENT_CONFIG_ERROR: {
-        title: "Payment System Error",
-        description: "Payment system unavailable. Please contact support.",
-      },
-      PAYMENT_PROCESSING_ERROR: {
-        title: "Payment Error",
-        description: "Payment processing error. Please try again later.",
-      },
-      DATABASE_ERROR: {
-        title: "System Error",
-        description: "System error. Please try again.",
-      },
-      NOT_FOUND_ERROR: {
-        title: "Not Found",
-        description: errorMessage,
-      },
-      AVAILABILITY_ERROR: {
-        title: "Booking Unavailable",
-        description: errorMessage,
-      },
-      UNKNOWN_ERROR: {
-        title: "Operation Failed",
-        description: errorMessage,
-      },
-    };
-
-    const error =
-      errorMessages[errorType as keyof typeof errorMessages] ||
-      errorMessages.UNKNOWN_ERROR;
-
-    toast({
-      title: error.title,
-      description: error.description,
-      variant: "destructive",
-    });
-  };
+  // Create utility functions using the toast instance
+  const handleApiError = createHandleApiError(toast);
+  const stripeHandlers = createStripeCheckoutHandlers(toast);
+  const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   // Common API request logic
   const makeCheckoutRequest = async (checkoutData: CheckoutInput) => {
@@ -471,78 +440,51 @@ export default function SubscriptionCheckoutPage({
             </div>
           </div>
           {/* Payment Gateway Cards */}
-          {[
-            {
-              name: "Stripe",
-              description: "International payments in USD",
-              gateway: "STRIPE" as const,
-            },
-            {
-              name: "Razorpay",
-              description: "Indian payments in INR",
-              gateway: "RAZORPAY" as const,
-            },
-            {
-              name: "Lemon Squeezy",
-              description: "Global payments in USD",
-              gateway: "LEMON_SQUEEZY" as const,
-            },
-            {
-              name: "Xflow",
-              description: "Secure payments in USD",
-              gateway: "XFLOW" as const,
-            },
-          ].map((gateway) => (
-            <Card key={gateway.name}>
-              <CardHeader>
-                <CardTitle>{gateway.name}</CardTitle>
+          {paymentGateways.map((gateway) => (
+            <Card
+              key={gateway.gateway}
+              className="p-4 hover:shadow-md transition-shadow cursor-pointer"
+            >
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <CreditCardIcon className="h-4 w-4" />
+                  {gateway.name}
+                </CardTitle>
               </CardHeader>
-              <CardContent className="grid gap-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <CreditCardIcon className="w-8 h-8" />
-                    <div>
-                      <div className="font-semibold">Credit/Debit Card</div>
-                      <div className="text-sm text-muted-foreground">
-                        {gateway.description}
-                      </div>
-                    </div>
-                  </div>
-                  {gateway.gateway === "RAZORPAY" && planData ? (
-                    <RazorpayCheckout
+              <CardContent className="pt-0">
+                <p className="text-xs text-gray-600 mb-4">
+                  {gateway.description}
+                </p>
+                <div className="flex justify-center">
+                  {gateway.gateway === "STRIPE" ? (
+                    <StripeCheckout
                       checkoutData={createCheckoutData({
                         appointmentType: "SUBSCRIPTION",
-                        planId: planData.data.id,
-                        paymentGateway: "RAZORPAY",
-                        slotStartTimeInUTC: new Date(
-                          Date.now() + 24 * 60 * 60 * 1000,
-                        ).toISOString(), // Tomorrow
-                        slotEndTimeInUTC: new Date(
-                          Date.now() + 25 * 60 * 60 * 1000,
-                        ).toISOString(), // Tomorrow + 1 hour
+                        planId: planData?.data?.id || "",
+                        paymentGateway: "STRIPE",
                         discountCode: Array.isArray(
                           resolvedSearchParams.discountCode,
                         )
                           ? resolvedSearchParams.discountCode[0]
                           : resolvedSearchParams.discountCode,
                       })}
-                      onPaymentSuccess={(response: {
-                        razorpay_payment_id: string;
-                      }) => {
-                        toast({
-                          title: "Payment Successful",
-                          description: `Payment ID: ${response.razorpay_payment_id}`,
-                        });
-                        window.location.href = "/dashboard/consultee";
-                      }}
-                      onPaymentError={(error: { description: string }) => {
-                        toast({
-                          title: "Payment Failed",
-                          description:
-                            error.description || "An unknown error occurred",
-                          variant: "destructive",
-                        });
-                      }}
+                      onPaymentSuccess={stripeHandlers.onPaymentSuccess}
+                      onPaymentError={stripeHandlers.onPaymentError}
+                    />
+                  ) : gateway.gateway === "RAZORPAY" ? (
+                    <RazorpayCheckout
+                      checkoutData={createCheckoutData({
+                        appointmentType: "SUBSCRIPTION",
+                        planId: planData?.data?.id || "",
+                        paymentGateway: "RAZORPAY",
+                        discountCode: Array.isArray(
+                          resolvedSearchParams.discountCode,
+                        )
+                          ? resolvedSearchParams.discountCode[0]
+                          : resolvedSearchParams.discountCode,
+                      })}
+                      onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
+                      onPaymentError={razorpayHandlers.onPaymentError}
                     />
                   ) : (
                     <Button
