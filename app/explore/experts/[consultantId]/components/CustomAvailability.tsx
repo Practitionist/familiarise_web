@@ -1,71 +1,89 @@
 import React from "react";
 
-interface CustomSlot {
+interface ProcessedSlot {
   id: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  localStartTime: string;
+  localEndTime: string;
+  originalSlot: any;
+}
+
+interface DayWithSlots {
+  date: Date;
+  slots: ProcessedSlot[];
 }
 
 interface CustomAvailabilityProps {
-  slots: CustomSlot[];
-  onSlotSelect: (slot: CustomSlot) => void;
+  days: DayWithSlots[];
+  onSlotSelect: (slot: any) => void;
   selectedSlotId?: string;
 }
 
-const formatDateTime = (isoString: string): { date: string; time: string } => {
-  try {
-    const date = new Date(isoString);
-    if (isNaN(date.getTime())) {
-      throw new Error("Invalid date");
+// Helper function to round 59 minutes to next hour
+const roundTime = (timeString: string): string => {
+  // Parse time like "4:59 PM" or "11:59 AM"
+  const timeRegex = /(\d{1,2}):(\d{2})\s*(AM|PM)/i;
+  const match = timeString.match(timeRegex);
+  
+  if (!match) return timeString;
+  
+  let hours = parseInt(match[1]);
+  const minutes = parseInt(match[2]);
+  const period = match[3].toUpperCase();
+  
+  // Round 59 minutes to next hour
+  if (minutes === 59) {
+    hours += 1;
+    
+    // Handle hour overflow and AM/PM transition
+    if (period === "AM" && hours === 12) {
+      return "12:00 PM";
+    } else if (period === "PM" && hours === 12) {
+      return "12:00 AM";
+    } else if (hours > 12) {
+      return `${hours - 12}:00 ${period}`;
+    } else {
+      return `${hours}:00 ${period}`;
     }
-    return {
-      date: date.toLocaleDateString(undefined, {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-      }),
-      time: date.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: true,
-      }),
-    };
-  } catch (error) {
-    console.error("Error formatting datetime:", error);
-    return { date: "Invalid Date", time: "Invalid Time" };
   }
+  
+  return timeString;
+};
+
+// Helper function to convert time string to minutes for sorting
+const timeToMinutes = (timeString: string): number => {
+  const timeRegex = /(\d{1,2}):(\d{2})\s*(AM|PM)/i;
+  const match = timeString.match(timeRegex);
+  
+  if (!match) return 0;
+  
+  let hours = parseInt(match[1]);
+  const minutes = parseInt(match[2]);
+  const period = match[3].toUpperCase();
+  
+  // Convert to 24-hour format
+  if (period === "AM" && hours === 12) {
+    hours = 0;
+  } else if (period === "PM" && hours !== 12) {
+    hours += 12;
+  }
+  
+  return hours * 60 + minutes;
 };
 
 export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
-  slots,
+  days,
   onSlotSelect,
   selectedSlotId,
 }) => {
-  // Get the next 7 days
-  const today = new Date();
-  const next7Days = Array.from({ length: 7 }, (_, i) => {
-    const date = new Date(today);
-    date.setDate(today.getDate() + i);
-    return date;
-  });
-
-  // Group slots by date
-  const slotsByDate = next7Days.map((date) => {
-    const dateStr = date.toDateString();
-    return {
-      date,
-      slots: slots
-        .filter((slot) => {
-          const slotDate = new Date(slot.slotStartTimeInUTC);
-          return slotDate.toDateString() === dateStr;
-        })
-        .sort((a, b) => {
-          const timeA = new Date(a.slotStartTimeInUTC).getTime();
-          const timeB = new Date(b.slotStartTimeInUTC).getTime();
-          return timeA - timeB;
-        }),
-    };
-  });
+  // Sort slots chronologically for each day
+  const sortedDays = React.useMemo(() => {
+    return days.map(day => ({
+      ...day,
+      slots: day.slots.slice().sort((a, b) => {
+        return timeToMinutes(a.localStartTime) - timeToMinutes(b.localStartTime);
+      })
+    }));
+  }, [days]);
 
   return (
     <div className="bg-white rounded-lg shadow-lg p-8 border border-gray-200">
@@ -73,7 +91,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
         Custom Availability
       </h3>
       <div className="grid grid-cols-7 gap-6 mb-6">
-        {slotsByDate.map(({ date }) => (
+        {sortedDays.map(({ date }) => (
           <div key={date.toISOString()} className="text-center">
             <div className="text-sm font-semibold text-gray-700">
               {date.toLocaleDateString(undefined, { weekday: "short" })}
@@ -88,28 +106,23 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
         ))}
       </div>
       <div className="grid grid-cols-7 gap-6">
-        {slotsByDate.map(({ date, slots: daySlots }) => (
+        {sortedDays.map(({ date, slots: daySlots }) => (
           <div key={date.toISOString()} className="space-y-3">
-            {daySlots.map((slot) => {
-              const start = formatDateTime(slot.slotStartTimeInUTC);
-              const end = formatDateTime(slot.slotEndTimeInUTC);
-
-              return (
-                <div
-                  key={slot.id}
-                  className={`bg-green-50 rounded-md p-2 cursor-pointer ${
-                    selectedSlotId === slot.id
-                      ? "bg-green-200"
-                      : "hover:bg-green-100"
-                  } transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center`}
-                  onClick={() => onSlotSelect(slot)}
-                >
-                  <div className="text-xs font-medium text-green-700">
-                    {start.time} - {end.time}
-                  </div>
+            {daySlots.map((slot) => (
+              <div
+                key={slot.id}
+                className={`bg-green-50 rounded-md p-2 cursor-pointer ${
+                  selectedSlotId === slot.id
+                    ? "bg-green-200"
+                    : "hover:bg-green-100"
+                } transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center`}
+                onClick={() => onSlotSelect(slot.originalSlot)}
+              >
+                <div className="text-xs font-medium text-green-700">
+                  {roundTime(slot.localStartTime)} - {roundTime(slot.localEndTime)}
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         ))}
       </div>

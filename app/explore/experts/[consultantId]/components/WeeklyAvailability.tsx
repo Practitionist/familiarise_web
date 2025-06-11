@@ -1,27 +1,73 @@
 import React from "react";
 import { DayOfWeek } from "@prisma/client";
-import {
-  convertUTCToLocalDate,
-  formatTime as formatTimeUtil,
-  isSlotRelevantForDay,
-} from "../utils";
 
-interface WeeklySlot {
+interface ProcessedSlot {
   id: string;
-  dayOfWeekforStartTimeInUTC: DayOfWeek;
-  slotStartTimeInUTC: string;
-  dayOfWeekforEndTimeInUTC: DayOfWeek;
-  slotEndTimeInUTC: string;
+  localStartTime: string;
+  localEndTime: string;
+  originalSlot: any;
 }
 
 interface WeeklyAvailabilityProps {
-  slots: WeeklySlot[];
-  onSlotSelect: (slot: WeeklySlot) => void;
+  slotsByDay: Record<DayOfWeek, ProcessedSlot[]>;
+  onSlotSelect: (slot: any) => void;
   selectedSlotId?: string;
 }
 
+// Helper function to round 59 minutes to next hour
+const roundTime = (timeString: string): string => {
+  // Parse time like "4:59 PM" or "11:59 AM"
+  const timeRegex = /(\d{1,2}):(\d{2})\s*(AM|PM)/i;
+  const match = timeString.match(timeRegex);
+  
+  if (!match) return timeString;
+  
+  let hours = parseInt(match[1]);
+  const minutes = parseInt(match[2]);
+  const period = match[3].toUpperCase();
+  
+  // Round 59 minutes to next hour
+  if (minutes === 59) {
+    hours += 1;
+    
+    // Handle hour overflow and AM/PM transition
+    if (period === "AM" && hours === 12) {
+      return "12:00 PM";
+    } else if (period === "PM" && hours === 12) {
+      return "12:00 AM";
+    } else if (hours > 12) {
+      return `${hours - 12}:00 ${period}`;
+    } else {
+      return `${hours}:00 ${period}`;
+    }
+  }
+  
+  return timeString;
+};
+
+// Helper function to convert time string to minutes for sorting
+const timeToMinutes = (timeString: string): number => {
+  const timeRegex = /(\d{1,2}):(\d{2})\s*(AM|PM)/i;
+  const match = timeString.match(timeRegex);
+  
+  if (!match) return 0;
+  
+  let hours = parseInt(match[1]);
+  const minutes = parseInt(match[2]);
+  const period = match[3].toUpperCase();
+  
+  // Convert to 24-hour format
+  if (period === "AM" && hours === 12) {
+    hours = 0;
+  } else if (period === "PM" && hours !== 12) {
+    hours += 12;
+  }
+  
+  return hours * 60 + minutes;
+};
+
 export const WeeklyAvailability: React.FC<WeeklyAvailabilityProps> = ({
-  slots,
+  slotsByDay,
   onSlotSelect,
   selectedSlotId,
 }) => {
@@ -36,64 +82,18 @@ export const WeeklyAvailability: React.FC<WeeklyAvailabilityProps> = ({
   ];
   const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-  // Get browser's timezone
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  console.log("Using timezone:", timezone);
-
-  // Group slots by day and sort by time
-  const slotsByDay = daysOfWeek.map((day) => {
-    // Get slots that are relevant for this day
-    const daySlots = slots.filter((slot) =>
-      isSlotRelevantForDay(slot, day, timezone),
-    );
-
-    // Process each slot to handle timezone and overnight slots
-    const processedSlots = daySlots.map((slot) => {
-      // Use a reference date for consistent conversion
-      const referenceDate = new Date();
-      referenceDate.setHours(0, 0, 0, 0);
-
-      // Convert UTC times to local
-      const startDateTime = convertUTCToLocalDate(
-        slot.slotStartTimeInUTC,
-        referenceDate,
-        timezone,
-      );
-      let endDateTime = convertUTCToLocalDate(
-        slot.slotEndTimeInUTC,
-        referenceDate,
-        timezone,
-      );
-
-      // If this slot crosses midnight
-      if (
-        slot.dayOfWeekforStartTimeInUTC !== slot.dayOfWeekforEndTimeInUTC ||
-        endDateTime <= startDateTime ||
-        (endDateTime.getHours() === 0 && endDateTime.getMinutes() === 0)
-      ) {
-        endDateTime = new Date(endDateTime);
-        endDateTime.setDate(endDateTime.getDate() + 1);
-      }
-
-      return {
-        ...slot,
-        localStartTime: formatTimeUtil(startDateTime, timezone),
-        localEndTime: formatTimeUtil(endDateTime, timezone),
-      };
+  // Sort slots chronologically for each day
+  const sortedSlotsByDay = React.useMemo(() => {
+    const sorted: Record<DayOfWeek, ProcessedSlot[]> = {} as Record<DayOfWeek, ProcessedSlot[]>;
+    
+    daysOfWeek.forEach(day => {
+      sorted[day] = (slotsByDay[day] || []).slice().sort((a, b) => {
+        return timeToMinutes(a.localStartTime) - timeToMinutes(b.localStartTime);
+      });
     });
-
-    // Sort slots by start time
-    const sortedSlots = processedSlots.sort((a, b) => {
-      const timeA = new Date(`1970-01-01 ${a.localStartTime}`).getTime();
-      const timeB = new Date(`1970-01-01 ${b.localStartTime}`).getTime();
-      return timeA - timeB;
-    });
-
-    return {
-      day,
-      slots: sortedSlots,
-    };
-  });
+    
+    return sorted;
+  }, [slotsByDay]);
 
   return (
     <div className="bg-white rounded-lg shadow-lg p-8 border border-gray-200">
@@ -111,20 +111,20 @@ export const WeeklyAvailability: React.FC<WeeklyAvailabilityProps> = ({
         ))}
       </div>
       <div className="grid grid-cols-7 gap-6">
-        {slotsByDay.map(({ day, slots: daySlots }) => (
+        {daysOfWeek.map((day) => (
           <div key={day} className="space-y-3">
-            {daySlots.map((slot) => (
+            {sortedSlotsByDay[day]?.map((slot) => (
               <div
-                key={`${slot.id}-${slot.localStartTime}-${slot.localEndTime}`}
+                key={`${slot.id}-${slot.localStartTime}`}
                 className={`bg-blue-50 rounded-md p-2 cursor-pointer ${
                   selectedSlotId === slot.id
                     ? "bg-blue-200"
                     : "hover:bg-blue-100"
                 } transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center`}
-                onClick={() => onSlotSelect(slot)}
+                onClick={() => onSlotSelect(slot.originalSlot)}
               >
                 <div className="text-xs font-medium text-blue-700">
-                  {slot.localStartTime} - {slot.localEndTime}
+                  {roundTime(slot.localStartTime)} - {roundTime(slot.localEndTime)}
                 </div>
               </div>
             ))}

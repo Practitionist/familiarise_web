@@ -1,3 +1,5 @@
+"use client";
+
 import { CalendarIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,7 +27,7 @@ import {
   defaultConsultationOptions,
   defaultSubscriptionOptions,
 } from "../defaults";
-import { breakDownSlotsByDuration, formatTime } from "../utils";
+import { formatTime } from "../utils";
 import { TSlotTiming } from "@/types/slots";
 
 interface PricingToggleProps {
@@ -78,26 +80,53 @@ export default function PricingToggle({
       (opt) =>
         opt.title.toLowerCase().replace(" ", "-") === activeConsultationOption,
     );
-    return option && option.duration
-      ? parseInt(option.duration.split(" ")[0])
-      : 1;
+    return option ? parseInt(option.duration.split(" ")[0], 10) : 1;
   }, [activeConsultationOption, consultationOptions]);
 
-  // Sort and break down slot timings by duration
+  // Filter and break down slots by selected duration
   const availableSlots = useMemo(() => {
-    if (!selectedDate || !slotTimings.length) return [];
+    if (!slotTimings || slotTimings.length === 0) return [];
+    
+    // First, break down the slots by the selected duration
+    const brokenDownSlots: (TSlotTiming & { isAllocated: boolean })[] = [];
+    
+    slotTimings.forEach((slot) => {
+      const start = new Date(slot.slotStartTimeInUTC);
+      const end = new Date(slot.slotEndTimeInUTC);
+      const durationInMillis = selectedDuration * 60 * 60 * 1000;
 
-    const selectedDay = selectedDate.getDay();
-
-    // First filter slots for the selected day
-    const daySlots = slotTimings.filter((slot) => {
-      const slotDate = new Date(slot.slotStartTimeInUTC);
-      return slotDate.getDay() === selectedDay;
+      let currentStart = start;
+      while (currentStart.getTime() + durationInMillis <= end.getTime()) {
+        const currentEnd = new Date(currentStart.getTime() + durationInMillis);
+        
+        brokenDownSlots.push({
+          ...slot,
+          slotId: `${slot.slotOfAvailabilityId}-${currentStart.getTime()}`,
+          slotStartTimeInUTC: currentStart.toISOString(),
+          slotEndTimeInUTC: currentEnd.toISOString(),
+          localStartTime: currentStart.toLocaleTimeString('en-US', { 
+            hour: 'numeric', 
+            minute: 'numeric', 
+            hour12: true 
+          }),
+          localEndTime: currentEnd.toLocaleTimeString('en-US', { 
+            hour: 'numeric', 
+            minute: 'numeric', 
+            hour12: true 
+          }),
+                     // Keep the original allocation status for this specific time window
+           isAllocated: slot.isAllocated || false,
+        });
+        
+        currentStart = currentEnd;
+      }
     });
 
-    // Then break down the slots based on the selected duration
-    return breakDownSlotsByDuration(daySlots, selectedDuration);
-  }, [slotTimings, selectedDate, selectedDuration]);
+    // Sort chronologically
+    return brokenDownSlots.sort((a, b) => 
+      new Date(a.slotStartTimeInUTC).getTime() - new Date(b.slotStartTimeInUTC).getTime()
+    );
+  }, [slotTimings, selectedDuration]);
 
   const handleBookNowClick = () => {
     const today = new Date();
@@ -265,15 +294,17 @@ export default function PricingToggle({
                                           ),
                                         )
                                       }
-                                      className="text-white hover:text-gray-300"
                                     >
                                       &lt;
                                     </Button>
-                                    <span className="text-lg font-medium">
-                                      {currentDate.toLocaleString("default", {
-                                        month: "long",
-                                        year: "numeric",
-                                      })}
+                                    <span className="font-semibold">
+                                      {currentDate.toLocaleString(
+                                        "default",
+                                        {
+                                          month: "long",
+                                          year: "numeric",
+                                        },
+                                      )}
                                     </span>
                                     <Button
                                       variant="ghost"
@@ -286,93 +317,84 @@ export default function PricingToggle({
                                           ),
                                         )
                                       }
-                                      className="text-white hover:text-gray-300"
                                     >
                                       &gt;
                                     </Button>
                                   </div>
-                                  <div className="grid grid-cols-7 gap-2 text-center">
-                                    {[
-                                      "Su",
-                                      "Mo",
-                                      "Tu",
-                                      "We",
-                                      "Th",
-                                      "Fr",
-                                      "Sa",
-                                    ].map((day) => (
-                                      <div
-                                        key={`header-${day}`}
-                                        className="text-sm font-medium text-gray-400"
-                                      >
-                                        {day}
-                                      </div>
-                                    ))}
+                                  <div className="grid grid-cols-7 gap-2 text-center text-sm text-gray-400 mb-2">
+                                    <div>Su</div>
+                                    <div>Mo</div>
+                                    <div>Tu</div>
+                                    <div>We</div>
+                                    <div>Th</div>
+                                    <div>Fr</div>
+                                    <div>Sa</div>
+                                  </div>
+                                  <div className="grid grid-cols-7 gap-1">
                                     {renderCalendar()}
                                   </div>
                                 </div>
                               </div>
 
-                              {/* Time Slots Section */}
+                              {/* Available Slots Section */}
                               <div>
                                 <h3 className="text-lg font-semibold mb-4 flex items-center">
                                   <ClockIcon className="mr-2 h-5 w-5" />{" "}
-                                  Available {option.duration} Slots
+                                  Available {selectedDuration} hour Slots
                                 </h3>
-                                <div className="bg-gray-800/60 p-4 rounded-lg h-[400px] overflow-y-auto">
+                                <div className="grid grid-cols-1 gap-2.5 max-h-[280px] overflow-y-auto pr-2">
                                   {availableSlots.length > 0 ? (
-                                    <div className="grid grid-cols-1 gap-2">
-                                      {availableSlots.map((slot) => (
-                                        <Button
-                                          key={`slot-${slot.slotId}`}
-                                          variant={
-                                            selectedSlot?.slotId === slot.slotId
-                                              ? "secondary"
-                                              : "outline"
-                                          }
-                                          onClick={() => setSelectedSlot(slot)}
-                                          className={`w-full justify-center text-sm py-3 ${
-                                            selectedSlot?.slotId === slot.slotId
-                                              ? "bg-gray-700 text-white border-gray-600"
-                                              : "bg-gray-800 text-white border-gray-700 hover:bg-gray-700/50"
-                                          }`}
+                                    availableSlots.map((slot, index) => {
+                                      const isSelected = selectedSlot?.slotId === slot.slotId &&
+                                        selectedSlot?.localStartTime === slot.localStartTime;
+
+                                      const isAllocated = slot.isAllocated;
+
+                                      return (
+                                        <button
+                                          key={`${slot.slotId}-${index}`}
+                                          disabled={isAllocated}
+                                          className={`w-full justify-center p-3 text-sm font-medium transition-all duration-200 rounded-lg text-left
+                                            ${isSelected
+                                              ? "bg-white text-black shadow-md"
+                                              : isAllocated
+                                                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 cursor-not-allowed"
+                                                  : "bg-gray-800/60 text-gray-200 border border-gray-700/50 hover:bg-gray-700/80"
+                                            }`}
+                                          onClick={() => {
+                                            if (!isAllocated) {
+                                              setSelectedSlot(slot);
+                                            }
+                                          }}
                                         >
-                                          {slot.localStartTime} -{" "}
-                                          {slot.localEndTime}
-                                        </Button>
-                                      ))}
-                                    </div>
+                                          <div className="flex items-center">
+                                            <ClockIcon className="mr-3 h-4 w-4 opacity-80" />
+                                            <span>
+                                              {slot.localStartTime} - {slot.localEndTime}
+                                            </span>
+                                            {isAllocated && (
+                                              <span className="ml-auto text-xs font-semibold">(Booked)</span>
+                                            )}
+                                          </div>
+                                        </button>
+                                      );
+                                    })
                                   ) : (
-                                    <div className="flex flex-col items-center justify-center h-full text-center">
-                                      <ClockIcon className="w-12 h-12 text-gray-500 mb-2" />
-                                      <p className="text-gray-400">
-                                        No available {option.duration} slots for
-                                        this date.
-                                        <br />
-                                        Please select a different date.
-                                      </p>
-                                    </div>
+                                    <p className="text-gray-400 text-sm">
+                                      No available slots for the selected
+                                      date.
+                                    </p>
                                   )}
                                 </div>
                               </div>
                             </div>
-
-                            <div className="flex justify-end gap-3 p-6 bg-gray-800/60">
-                              <DialogTrigger asChild>
-                                <Button
-                                  variant="outline"
-                                  className="text-white border-gray-700 hover:bg-gray-700/50"
-                                >
-                                  Cancel
-                                </Button>
-                              </DialogTrigger>
+                            <div className="bg-gray-800/50 px-6 py-4 flex justify-end rounded-b-lg">
                               <Button
-                                variant="default"
+                                className="w-full sm:w-auto"
                                 onClick={handleConsultationBooking}
-                                disabled={!selectedDate || !selectedSlot}
-                                className="bg-white text-black hover:bg-gray-100"
+                                disabled={!selectedSlot || selectedSlot.isAllocated}
                               >
-                                Book Consultation
+                                Continue to Checkout
                               </Button>
                             </div>
                           </DialogContent>
@@ -405,7 +427,7 @@ export default function PricingToggle({
                         : "text-gray-300 hover:text-white hover:bg-gray-700/30"
                     } px-5 py-2 rounded-lg font-medium transition-all duration-200 ease-out`}
                   >
-                    {option.title.split(" ")[0]} {option.title.split(" ")[1]}
+                    {option.title}
                   </TabsTrigger>
                 ))}
               </TabsList>
@@ -442,9 +464,6 @@ export default function PricingToggle({
                       <CardContent className="space-y-6">
                         <div className="text-5xl font-bold text-white">
                           ${option.price}
-                          <span className="text-xl text-gray-300">
-                            /{option.duration}
-                          </span>
                         </div>
                         <div className="space-y-2">
                           <p className="text-white">Includes:</p>
@@ -478,7 +497,7 @@ export default function PricingToggle({
                           className="w-full bg-white text-black hover:bg-gray-100 transition-colors duration-300"
                           onClick={() => handleSubscriptionBooking(option)}
                         >
-                          Subscribe
+                          Choose Plan
                         </Button>
                       </CardContent>
                     </Card>
