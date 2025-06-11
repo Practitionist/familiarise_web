@@ -3,6 +3,24 @@ import Razorpay from "razorpay";
 import { PaymentGateway } from "@prisma/client";
 import crypto from "crypto";
 
+// Helper function to get the base URL for payment redirects
+const getBaseUrl = () => {
+  // For server-side operations in Next.js, we need to use absolute URLs
+  // First try to get the base URL from environment variables
+  if (process.env.NEXT_PUBLIC_SITE_URL) {
+    return `https://${process.env.NEXT_PUBLIC_SITE_URL}`;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return process.env.NEXT_PUBLIC_APP_URL;
+  }
+
+  // Default to localhost for development
+  return "http://localhost:3000";
+};
+
 // Initialize payment clients
 export const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2025-05-28.basil",
@@ -40,21 +58,34 @@ export async function createPaymentIntent({
 }: PaymentIntentParams): Promise<PaymentIntent> {
   try {
     if (paymentGateway === "STRIPE") {
-      const intent = await stripeClient.paymentIntents.create({
-        amount: Math.round(amount * 100), // Convert to cents
-        currency,
+      // Create a Checkout Session instead of Payment Intent for better UX
+      const session = await stripeClient.checkout.sessions.create({
+        payment_method_types: ["card"],
+        line_items: [
+          {
+            price_data: {
+              currency,
+              product_data: {
+                name: `${metadata.appointmentType} Appointment`,
+                description: `Appointment booking for ${metadata.appointmentType}`,
+              },
+              unit_amount: Math.round(amount * 100), // Convert to cents
+            },
+            quantity: 1,
+          },
+        ],
+        mode: "payment",
+        success_url: `${getBaseUrl()}/checkout/checkout-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${getBaseUrl()}/checkout/checkout-failure`,
         metadata,
-        automatic_payment_methods: {
-          enabled: true,
-        },
       });
 
       return {
-        id: intent.id,
-        client_secret: intent.client_secret!,
-        amount: intent.amount / 100, // Convert back to whole currency
-        currency: intent.currency,
-        status: intent.status,
+        id: session.id,
+        client_secret: session.url!, // Use checkout URL as client_secret
+        amount: amount,
+        currency: currency,
+        status: session.status || "open",
       };
     } else if (paymentGateway === "RAZORPAY") {
       const order = await razorpay.orders.create({
@@ -105,78 +136,78 @@ export async function createPaymentIntent({
   }
 }
 
-export async function validatePaymentWebhook(
-  req: Request,
-): Promise<{ type: string; metadata: Record<string, string> }> {
-  const signature =
-    req.headers.get("stripe-signature") ||
-    req.headers.get("x-razorpay-signature");
-
-  if (!signature) {
-    throw new Error("No signature found in webhook request");
-  }
-
-  const body = await req.text();
-
-  try {
-    if (req.headers.get("stripe-signature")) {
-      const event = stripeClient.webhooks.constructEvent(
-        body,
-        signature,
-        process.env.STRIPE_WEBHOOK_SECRET!,
-      );
-
-      if ("metadata" in event.data.object) {
-        return {
-          type: event.type,
-          metadata: event.data.object.metadata as Record<string, string>,
-        };
-      }
-      throw new Error("No metadata found in Stripe event");
-    } else {
-      // Validate Razorpay signature
-      const shasum = crypto.createHmac(
-        "sha256",
-        process.env.RAZORPAY_WEBHOOK_SECRET!,
-      );
-      shasum.update(body);
-      const digest = shasum.digest("hex");
-
-      if (digest !== signature) {
-        throw new Error("Invalid Razorpay signature");
-      }
-
-      const event = JSON.parse(body);
-      return {
-        type: event.event,
-        metadata: event.payload.payment.entity.notes,
-      };
-    }
-  } catch (error) {
-    console.error("Webhook validation failed:", error);
-    throw new Error("Invalid webhook signature");
-  }
-}
-
 export async function cancelPaymentIntent(
   paymentIntentId: string,
+  reason: string = "requested_by_customer",
 ): Promise<void> {
   try {
     if (paymentIntentId.startsWith("pi_")) {
       // Stripe payment intent
-      await stripeClient.paymentIntents.cancel(paymentIntentId);
-    } else {
+      await stripeClient.paymentIntents.cancel(paymentIntentId, {
+        cancellation_reason:
+          reason === "requested_by_customer"
+            ? "requested_by_customer"
+            : "abandoned",
+      });
+      console.log(
+        `✅ Stripe payment intent cancelled: ${paymentIntentId} - Reason: ${reason}`,
+      );
+    } else if (paymentIntentId.startsWith("cs_")) {
+      // Stripe checkout session - can't be cancelled directly, but we can expire it
+      try {
+        await stripeClient.checkout.sessions.expire(paymentIntentId);
+        console.log(
+          `✅ Stripe checkout session expired: ${paymentIntentId} - Reason: ${reason}`,
+        );
+      } catch (expireError) {
+        // If session can't be expired (already completed/expired), that's fine
+        console.log(
+          `✅ Stripe checkout session was already expired/completed: ${paymentIntentId}`,
+        );
+      }
+    } else if (paymentIntentId.startsWith("order_")) {
       // For Razorpay, we can only cancel an order if it's still pending
-      const order = await razorpay.orders.fetchPayments(paymentIntentId);
-      if (order.count === 0) {
-        // No payments made yet, we can safely ignore
+      try {
+        const order = await razorpay.orders.fetchPayments(paymentIntentId);
+        if (order.count === 0) {
+          // No payments made yet, we can safely ignore
+          console.log(
+            `✅ Razorpay order had no payments, safe to ignore: ${paymentIntentId}`,
+          );
+          return;
+        }
+        console.warn(
+          `⚠️ Cannot cancel Razorpay order with existing payments: ${paymentIntentId}`,
+        );
+      } catch (fetchError) {
+        // If we can't fetch payments, assume it's safe to ignore
+        console.log(
+          `✅ Razorpay order fetch failed (likely safe to ignore): ${paymentIntentId}`,
+        );
         return;
       }
-      throw new Error("Cannot cancel Razorpay payment after initiation");
+    } else {
+      // For other payment gateways (LEMON_SQUEEZY, XFLOW), we'll need to implement
+      console.warn(
+        `⚠️ Payment intent cancellation not implemented for: ${paymentIntentId}`,
+      );
+      return;
     }
   } catch (error) {
-    console.error("Failed to cancel payment intent:", error);
-    throw new Error("Failed to cancel payment");
+    console.error(`Failed to cancel payment intent ${paymentIntentId}:`, error);
+
+    // Don't throw here - cancellation failure shouldn't break the main flow
+    // This is a cleanup operation and should be best-effort
+    if (error instanceof Error && error.message.includes("already_cancelled")) {
+      console.log(
+        `✅ Payment intent was already cancelled: ${paymentIntentId}`,
+      );
+      return;
+    }
+
+    console.warn(
+      `⚠️ Failed to cancel payment intent ${paymentIntentId}, but continuing...`,
+    );
   }
 }
 
@@ -228,21 +259,4 @@ export function convertAmountToSmallestUnit(
   };
 
   return Math.round(amount * (multipliers[currency] || 100));
-}
-
-// Simple Razorpay webhook verification helper for backward compatibility
-export function verifyRazorpayWebhook(
-  body: string,
-  signature: string,
-  secret: string,
-): boolean {
-  try {
-    const shasum = crypto.createHmac("sha256", secret);
-    shasum.update(body);
-    const digest = shasum.digest("hex");
-    return digest === signature;
-  } catch (error) {
-    console.error("Razorpay webhook verification failed:", error);
-    return false;
-  }
 }

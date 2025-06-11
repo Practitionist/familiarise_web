@@ -1,108 +1,60 @@
 import { NextRequest, NextResponse } from "next/server";
-import Stripe from "stripe";
-import prisma from "@/lib/prisma";
-import { stripeClient } from "@/lib/payment";
+import {
+  handlePaymentFailure,
+  handlePaymentSuccess,
+  verifyWebhookSignature,
+} from "../utils";
+import {
+  stripeBaseEventSchema,
+  stripePaymentIntentSucceededEventSchema,
+  stripePaymentIntentFailedEventSchema,
+} from "../../../../schemas/webhooks/stripe";
 
 export async function POST(req: NextRequest) {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!secret) {
+    console.error("STRIPE_WEBHOOK_SECRET not configured");
+    return NextResponse.json(
+      { error: "Webhook secret not configured" },
+      { status: 500 },
+    );
+  }
+
+  const { isValid, body } = await verifyWebhookSignature(req, secret, "stripe");
+  if (!isValid) {
+    return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
+  }
+
   try {
-    const body = await req.text();
-    const signature = req.headers.get("stripe-signature")!;
+    const event = JSON.parse(body);
+    const { type: eventType } = stripeBaseEventSchema.parse(event);
 
-    if (!process.env.STRIPE_WEBHOOK_SECRET) {
-      console.error("STRIPE_WEBHOOK_SECRET not configured");
-      return NextResponse.json(
-        { error: "Webhook secret not configured" },
-        { status: 500 },
-      );
-    }
-
-    let event: Stripe.Event;
-
-    try {
-      event = stripeClient.webhooks.constructEvent(
-        body,
-        signature,
-        process.env.STRIPE_WEBHOOK_SECRET,
-      );
-    } catch (err) {
-      console.error("Webhook signature verification failed:", err);
-      return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
-    }
-
-    // Log all webhook events
-    console.log(`🔔 Stripe Webhook Event: ${event.type}`, {
-      id: event.id,
-      created: new Date(event.created * 1000).toISOString(),
-      data: event.data.object,
+    console.log(`🔔 Stripe Webhook Event: ${eventType}`, {
+      payload: event.data.object,
     });
 
-    // Handle different event types
-    switch (event.type) {
+    switch (eventType) {
       case "payment_intent.succeeded":
-        const paymentIntent = event.data.object as Stripe.PaymentIntent;
-        console.log("✅ Payment succeeded:", {
-          id: paymentIntent.id,
-          amount: paymentIntent.amount,
-          currency: paymentIntent.currency,
-          metadata: paymentIntent.metadata,
-        });
-
-        // Update booking status if metadata contains booking info
-        if (paymentIntent.metadata.bookingId) {
-          try {
-            await prisma.consultation.update({
-              where: { id: paymentIntent.metadata.bookingId },
-              data: { requestStatus: "APPROVED" },
-            });
-            console.log(
-              "✅ Booking confirmed:",
-              paymentIntent.metadata.bookingId,
-            );
-          } catch (error) {
-            console.error("Failed to update booking:", error);
-          }
-        }
+        const succeededEvent =
+          stripePaymentIntentSucceededEventSchema.parse(event);
+        await handlePaymentSuccess(
+          succeededEvent.data.object.id,
+          succeededEvent.data.object.metadata || {},
+        );
         break;
 
       case "payment_intent.payment_failed":
-        const failedPayment = event.data.object as Stripe.PaymentIntent;
-        console.log("❌ Payment failed:", {
-          id: failedPayment.id,
-          last_payment_error: failedPayment.last_payment_error,
-          metadata: failedPayment.metadata,
-        });
-        break;
-
-      case "invoice.payment_succeeded":
-        const invoice = event.data.object as Stripe.Invoice;
-        console.log("✅ Invoice payment succeeded:", {
-          id: invoice.id,
-          subscription_id: invoice.parent?.subscription_details?.subscription,
-          amount_paid: invoice.amount_paid,
-          customer: invoice.customer,
-        });
-        break;
-
-      case "customer.subscription.created":
-        const subscription = event.data.object as Stripe.Subscription;
-        console.log("🆕 Subscription created:", {
-          id: subscription.id,
-          customer: subscription.customer,
-          status: subscription.status,
-          billing_cycle_anchor: new Date(
-            subscription.billing_cycle_anchor * 1000,
-          ).toISOString(),
-          start_date: new Date(subscription.start_date * 1000).toISOString(),
-        });
+        const failedEvent = stripePaymentIntentFailedEventSchema.parse(event);
+        await handlePaymentFailure(failedEvent.data.object.id);
         break;
 
       default:
-        console.log(`📄 Unhandled event type: ${event.type}`);
+        console.log(`📄 Unhandled Stripe event type: ${eventType}`);
     }
 
-    return NextResponse.json({ received: true });
+    return NextResponse.json({ status: "ok" });
   } catch (error) {
-    console.error("Webhook error:", error);
+    console.error("Stripe webhook error:", error);
     return NextResponse.json(
       { error: "Webhook handler failed" },
       { status: 500 },
