@@ -304,8 +304,6 @@ export default function ExpertProfile(
 
           <ConsultantAvailability
             consultantDetails={consultantDetails}
-            selectedSlot={selectedSlot}
-            setSelectedSlot={setSelectedSlot}
             timezone={timezone || "UTC"}
           />
         </div>
