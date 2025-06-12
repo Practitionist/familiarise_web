@@ -235,9 +235,12 @@ export default function ExpertProfile(
       currentDate.getMonth(),
       1,
     ).getDay();
+    
+    // Adjust for Monday as first day of week (0 = Monday, 1 = Tuesday, etc.)
+    const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
     const days = [];
 
-    for (let i = 0; i < firstDayOfMonth; i++) {
+    for (let i = 0; i < adjustedFirstDay; i++) {
       days.push(<div key={`empty-${i}`} className="p-2"></div>);
     }
 

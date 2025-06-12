@@ -3,11 +3,18 @@ import { TSlotTiming } from "@/types/slots";
 import { DayOfWeek } from "@prisma/client";
 import { roundTime, timeToMinutes } from "../utils/time";
 
+// Better typing for original slot data
+type OriginalSlotData = {
+  id: string;
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
+};
+
 interface ProcessedSlot {
   id: string;
   localStartTime: string;
   localEndTime: string;
-  originalSlot: any;
+  originalSlot: OriginalSlotData;
   isAllocated?: boolean;
   slotStartTimeInUTC?: string;
   slotEndTimeInUTC?: string;
@@ -61,7 +68,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
       dayOfWeek: dayMap[date.getDay()],
       slotStartTimeInUTC: slot.slotStartTimeInUTC || date.toISOString(),
       slotEndTimeInUTC: slot.slotEndTimeInUTC || date.toISOString(),
-      slotOfAvailabilityId: slot.originalSlot?.id || slot.id,
+      slotOfAvailabilityId: slot.originalSlot.id,
       slotOfAppointmentId: "",
       localStartTime: slot.localStartTime,
       localEndTime: slot.localEndTime,
@@ -101,7 +108,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                   slot.isAllocated
                     ? "bg-red-50 border border-red-200 cursor-not-allowed"
                     : selectedSlotId === slot.id
-                      ? "bg-green-200"
+                    ? "bg-green-200"
                       : "bg-green-50 hover:bg-green-100"
                 }`}
                 onClick={() => !slot.isAllocated && handleSlotClick(slot, date)}

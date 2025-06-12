@@ -48,8 +48,25 @@ export async function GET(
         slotsOfAvailabilityWeekly: true,
         slotsOfAvailabilityCustom: {
           where: {
-            slotStartTimeInUTC: { gte: startDate },
-            slotEndTimeInUTC: { lte: endDate },
+            // Use comprehensive overlap check for custom slots to match appointment logic
+            OR: [
+              {
+                slotStartTimeInUTC: {
+                  gte: startDate,
+                  lt: endDate,
+                },
+              },
+              {
+                slotEndTimeInUTC: {
+                  gt: startDate,
+                  lte: endDate,
+                },
+              },
+              {
+                slotStartTimeInUTC: { lte: startDate },
+                slotEndTimeInUTC: { gte: endDate },
+              },
+            ],
           },
         },
       },
@@ -107,16 +124,13 @@ export async function GET(
       },
     });
 
-    // Extract appointment slots
-    const appointmentSlots: AppointmentSlot[] = [];
-    appointments.forEach((appt) => {
-      appt.slotsOfAppointment.forEach((slot) => {
-        appointmentSlots.push({
-          slotStartTimeInUTC: slot.slotStartTimeInUTC,
-          slotEndTimeInUTC: slot.slotEndTimeInUTC,
-        });
-      });
-    });
+    // Extract appointment slots using flatMap for conciseness
+    const appointmentSlots: AppointmentSlot[] = appointments.flatMap((appt) =>
+      appt.slotsOfAppointment.map((slot) => ({
+        slotStartTimeInUTC: slot.slotStartTimeInUTC,
+        slotEndTimeInUTC: slot.slotEndTimeInUTC,
+      })),
+    );
 
     // Convert to utility interfaces
     const weeklySlots: WeeklySlot[] = consultant.slotsOfAvailabilityWeekly.map(
@@ -138,6 +152,8 @@ export async function GET(
     );
 
     // Process all slots using the unified utility
+    // Note: Allow both weekly and custom slots to be processed regardless of scheduleType
+    // to support cases where consultants with weekly schedules add one-off custom availability
     const slotsByDate = processAvailabilitySlots(
       weeklySlots,
       customSlots,

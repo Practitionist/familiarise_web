@@ -91,15 +91,14 @@ export default function PricingToggle({
 
   // Break down slots by selected duration using the utility function
   const availableSlots = useMemo(() => {
-    if (!slotTimings || slotTimings.length === 0 || !timezone) {
+    if (!slotTimings || slotTimings.length === 0 || !timezone || !selectedDate) {
       return [];
     }
 
-    // Main page already filters slots for the selected date, so we don't need to filter again
     // Convert to the format expected by breakDownSlotsByDuration
     const slotsWithAllocation = slotTimings.map((slot) => ({
       ...slot,
-      isAllocated: (slot as any).isAllocated || false,
+      isAllocated: slot.isAllocated || false,
     }));
 
     // Use the utility function to break down slots by duration
@@ -110,8 +109,9 @@ export default function PricingToggle({
       timezone,
     );
 
+    // Return all slots (both available and allocated) - the UI will handle them differently
     return brokenDownSlots;
-  }, [slotTimings, selectedDuration, timezone]);
+  }, [slotTimings, selectedDuration, timezone, selectedDate]);
 
   const handleRequestForApproval = async () => {
     if (!selectedSlot || !consultantDetails) {
@@ -378,8 +378,8 @@ export default function PricingToggle({
                                     </Button>
                                     <span className="font-semibold">
                                       {currentDate.toLocaleString("default", {
-                                        month: "long",
-                                        year: "numeric",
+                                          month: "long",
+                                          year: "numeric",
                                       })}
                                     </span>
                                     <Button
@@ -398,13 +398,13 @@ export default function PricingToggle({
                                     </Button>
                                   </div>
                                   <div className="grid grid-cols-7 gap-2 text-center text-sm text-gray-400 mb-2">
-                                    <div>Su</div>
                                     <div>Mo</div>
                                     <div>Tu</div>
                                     <div>We</div>
                                     <div>Th</div>
                                     <div>Fr</div>
                                     <div>Sa</div>
+                                    <div>Su</div>
                                   </div>
                                   <div className="grid grid-cols-7 gap-1">
                                     {renderCalendar()}
@@ -431,19 +431,17 @@ export default function PricingToggle({
                                       return (
                                         <button
                                           key={`${slot.slotId}-${index}`}
-                                          disabled={isAllocated}
+                                          disabled={false} // Allow clicking on all slots
                                           className={`w-full justify-center p-3 text-sm font-medium transition-all duration-200 rounded-lg text-left
                                             ${
                                               isSelected
-                                                ? "bg-white text-black shadow-md"
-                                                : isAllocated
-                                                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 cursor-not-allowed"
+                                              ? "bg-white text-black shadow-md"
+                                              : isAllocated
+                                                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20"
                                                   : "bg-gray-800/60 text-gray-200 border border-gray-700/50 hover:bg-gray-700/80"
                                             }`}
                                           onClick={() => {
-                                            if (!isAllocated) {
-                                              setSelectedSlot(slot);
-                                            }
+                                            setSelectedSlot(slot); // Allow selecting any slot
                                           }}
                                         >
                                           <div className="flex items-center">

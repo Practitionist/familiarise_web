@@ -1,5 +1,7 @@
 import { DayOfWeek } from "@prisma/client";
 import { TWeeklySlot, TCustomSlot, TSlotTiming } from "@/types/slots";
+import { format } from "date-fns";
+import { toZonedTime } from "date-fns-tz";
 
 export const dayMap: Record<number, DayOfWeek> = {
   0: DayOfWeek.SUNDAY,
@@ -51,26 +53,19 @@ export function normalizeCustomSlot(slot: TCustomSlot): TCustomSlot & {
 }
 
 export function formatTime(
-  date: string | Date,
+  date: Date,
   timezone?: string | null,
 ): string {
-  const dateObj = typeof date === "string" ? new Date(date) : date;
-
-  try {
-    return new Intl.DateTimeFormat("en-US", {
-      hour: "numeric",
-      minute: "numeric",
-      hour12: true,
-      timeZone: timezone || undefined,
-    }).format(dateObj);
-  } catch (_) {
-    console.warn("Error formatting time");
-    return dateObj.toLocaleTimeString("en-US", {
+  if (!timezone) {
+    return date.toLocaleTimeString("en-US", {
       hour: "numeric",
       minute: "numeric",
       hour12: true,
     });
   }
+
+  const zonedDate = toZonedTime(date, timezone);
+  return format(zonedDate, "h:mm a");
 }
 
 export function getLocalDay(date: Date, timezone?: string | null): number {
@@ -180,45 +175,4 @@ export function mergeOverlappingSlots(
 
     return [...acc, curr];
   }, []);
-}
-
-export function breakDownSlotsByDuration(
-  slots: TSlotTiming[],
-  durationInHours: number,
-  timezone?: string | null,
-): TSlotTiming[] {
-  const brokenDownSlots: TSlotTiming[] = [];
-  if (!slots || slots.length === 0) return brokenDownSlots;
-
-  slots.forEach((slot) => {
-    const start = new Date(slot.slotStartTimeInUTC);
-    const end = new Date(slot.slotEndTimeInUTC);
-    const durationInMillis = durationInHours * 60 * 60 * 1000;
-
-    let currentStart = start;
-    while (currentStart.getTime() + durationInMillis <= end.getTime()) {
-      const currentEnd = new Date(currentStart.getTime() + durationInMillis);
-      brokenDownSlots.push({
-        ...slot,
-        slotId: `${slot.slotId}-${currentStart.getTime()}`,
-        slotStartTimeInUTC: currentStart.toISOString(),
-        slotEndTimeInUTC: currentEnd.toISOString(),
-        localStartTime: new Date(currentStart).toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "numeric",
-          hour12: true,
-          timeZone: timezone || undefined,
-        }),
-        localEndTime: new Date(currentEnd).toLocaleTimeString("en-US", {
-          hour: "numeric",
-          minute: "numeric",
-          hour12: true,
-          timeZone: timezone || undefined,
-        }),
-      });
-      currentStart = currentEnd;
-    }
-  });
-
-  return brokenDownSlots;
 }

@@ -3,123 +3,124 @@ import { DayOfWeek } from "@prisma/client";
 import { TSlotTiming } from "@/types/slots";
 import { roundTime, timeToMinutes } from "../utils/time";
 
+// Better typing for original slot data
+type OriginalSlotData = {
+  id: string;
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
+};
+
 interface ProcessedSlot {
   id: string;
   localStartTime: string;
   localEndTime: string;
-  originalSlot: any;
+  originalSlot: OriginalSlotData;
   isAllocated?: boolean;
+  bookingStatus?: 'available' | 'partially-booked' | 'fully-booked';
   slotStartTimeInUTC?: string;
   slotEndTimeInUTC?: string;
   type?: "WEEKLY" | "CUSTOM";
 }
 
+type ProcessedSlotsByDay = Record<DayOfWeek, ProcessedSlot[]>;
+
 interface WeeklyAvailabilityProps {
-  slotsByDay: Record<DayOfWeek, ProcessedSlot[]>;
+  slotsByDay: ProcessedSlotsByDay;
   onSlotSelect: (slot: TSlotTiming) => void;
   selectedSlotId?: string;
 }
 
-export const WeeklyAvailability: React.FC<WeeklyAvailabilityProps> = ({
+export function WeeklyAvailability({
   slotsByDay,
   onSlotSelect,
   selectedSlotId,
-}) => {
-  const daysOfWeek = [
-    DayOfWeek.MONDAY,
-    DayOfWeek.TUESDAY,
-    DayOfWeek.WEDNESDAY,
-    DayOfWeek.THURSDAY,
-    DayOfWeek.FRIDAY,
-    DayOfWeek.SATURDAY,
-    DayOfWeek.SUNDAY,
+}: WeeklyAvailabilityProps) {
+  const dayNames: DayOfWeek[] = [
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+    "SUNDAY",
   ];
-  const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-  // Sort slots chronologically for each day
-  const sortedSlotsByDay = React.useMemo(() => {
-    const sorted: Record<DayOfWeek, ProcessedSlot[]> = {} as Record<
-      DayOfWeek,
-      ProcessedSlot[]
-    >;
-
-    daysOfWeek.forEach((day) => {
-      sorted[day] = (slotsByDay[day] || []).slice().sort((a, b) => {
-        return (
-          timeToMinutes(a.localStartTime) - timeToMinutes(b.localStartTime)
-        );
-      });
-    });
-
-    return sorted;
-  }, [slotsByDay]);
-
-  const handleSlotClick = (slot: ProcessedSlot, dayOfWeek: DayOfWeek) => {
-    // Create a proper TSlotTiming object instead of passing raw slot data
-    const slotTiming: TSlotTiming = {
+  const handleSlotClick = (slot: ProcessedSlot) => {
+    const timing: TSlotTiming = {
       slotId: slot.id,
-      dateInISO: slot.slotStartTimeInUTC || new Date().toISOString(),
-      dayOfWeek: dayOfWeek,
-      slotStartTimeInUTC: slot.slotStartTimeInUTC || new Date().toISOString(),
-      slotEndTimeInUTC: slot.slotEndTimeInUTC || new Date().toISOString(),
-      slotOfAvailabilityId: slot.originalSlot?.id || slot.id,
+      dateInISO: slot.slotStartTimeInUTC || "",
+      dayOfWeek: dayNames.find((day) =>
+        slotsByDay[day]?.some((s) => s.id === slot.id),
+      ) as DayOfWeek,
+      slotStartTimeInUTC: slot.slotStartTimeInUTC || "",
+      slotEndTimeInUTC: slot.slotEndTimeInUTC || "",
+      slotOfAvailabilityId: slot.originalSlot.id,
       slotOfAppointmentId: "",
       localStartTime: slot.localStartTime,
       localEndTime: slot.localEndTime,
-      type: slot.type || "WEEKLY",
+      type: slot.type,
     };
-
-    onSlotSelect(slotTiming);
+    onSlotSelect(timing);
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-lg p-8 border border-gray-200">
-      <h3 className="text-2xl font-semibold mb-6 text-center text-gray-800">
-        Weekly Availability
-      </h3>
-      <div className="grid grid-cols-7 gap-6 mb-6">
-        {dayLabels.map((day) => (
-          <div
-            key={day}
-            className="text-center text-sm font-semibold text-gray-700"
-          >
-            {day}
+    <div className="grid grid-cols-7 gap-4">
+      {dayNames.map((day) => (
+        <div key={day} className="space-y-2">
+          <h4 className="font-medium text-sm text-gray-700">
+            {day.charAt(0) + day.slice(1).toLowerCase()}
+          </h4>
+          <div className="space-y-1">
+            {slotsByDay[day]?.length > 0 ? (
+              // Sort slots chronologically within each day
+              slotsByDay[day]
+                .sort((a, b) => {
+                  const timeA = timeToMinutes(roundTime(a.localStartTime));
+                  const timeB = timeToMinutes(roundTime(b.localStartTime));
+                  return timeA - timeB;
+                })
+                .map((slot) => {
+                  const isSelected = selectedSlotId === slot.id;
+                  const bookingStatus = slot.bookingStatus || 'available';
+                  const isFullyBooked = bookingStatus === 'fully-booked';
+                  const isPartiallyBooked = bookingStatus === 'partially-booked';
+
+                  return (
+                    <button
+                      key={slot.id}
+                      onClick={() => handleSlotClick(slot)}
+                      disabled={isFullyBooked}
+                      className={`w-full p-2 text-xs rounded transition-colors ${
+                        isSelected
+                          ? "bg-blue-500 text-white"
+                          : isFullyBooked
+                            ? "bg-gray-200 text-gray-500 cursor-not-allowed"
+                            : isPartiallyBooked
+                              ? "bg-amber-100 border border-amber-300 text-amber-800 hover:bg-amber-200"
+                              : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div>
+                          {roundTime(slot.localStartTime)} -{" "}
+                          {roundTime(slot.localEndTime)}
           </div>
-        ))}
+                        {isFullyBooked && (
+                          <div className="text-xs font-medium">Booked</div>
+                        )}
+                        {isPartiallyBooked && (
+                          <div className="text-xs font-medium">Partially Booked</div>
+                        )}
       </div>
-      <div className="grid grid-cols-7 gap-6">
-        {daysOfWeek.map((day) => (
-          <div key={day} className="space-y-3">
-            {sortedSlotsByDay[day]?.map((slot) => (
-              <div
-                key={`${slot.id}-${slot.localStartTime}`}
-                className={`rounded-md p-2 cursor-pointer transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center ${
-                  slot.isAllocated
-                    ? "bg-red-50 border border-red-200 cursor-not-allowed"
-                    : selectedSlotId === slot.id
-                      ? "bg-blue-200"
-                      : "bg-blue-50 hover:bg-blue-100"
-                }`}
-                onClick={() => !slot.isAllocated && handleSlotClick(slot, day)}
-              >
-                <div
-                  className={`text-xs font-medium ${
-                    slot.isAllocated ? "text-red-700" : "text-blue-700"
-                  }`}
-                >
-                  {roundTime(slot.localStartTime)} -{" "}
-                  {roundTime(slot.localEndTime)}
-                  {slot.isAllocated && (
-                    <div className="text-xs text-red-600 mt-1">
-                      Request for approval
-                    </div>
-                  )}
+                    </button>
+                  );
+                })
+            ) : (
+              <div className="text-xs text-gray-400 p-2">No slots</div>
+            )}
                 </div>
               </div>
             ))}
-          </div>
-        ))}
-      </div>
     </div>
   );
-};
+}

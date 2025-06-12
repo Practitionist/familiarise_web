@@ -1,23 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { DayOfWeek } from "@prisma/client";
-import { addDays, startOfDay, endOfDay } from "date-fns";
-import { toZonedTime } from "date-fns-tz";
-import {
-  processWeeklySlots,
-  splitSlotsByDay,
-  convertToSlotTimings,
-  groupSlotsByDate,
-  WeeklySlot,
-  dayMap,
-  dayToNumber,
-} from "@/utils/timeSlotsProcessing";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const consultantProfileId = searchParams.get("consultantProfileId");
-    const timezone = searchParams.get("timezone") || "UTC";
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = parseInt(searchParams.get("limit") || "10");
 
     if (!consultantProfileId) {
       return NextResponse.json(
@@ -26,78 +16,50 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
-      where: { consultantProfileId: consultantProfileId },
-    });
+    const skip = (page - 1) * limit;
 
-    // Convert to utility interface
-    const slotData: WeeklySlot[] = weeklySlots.map((slot) => ({
-      id: slot.id,
-      dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
-      slotStartTimeInUTC: slot.slotStartTimeInUTC,
-      dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
-      slotEndTimeInUTC: slot.slotEndTimeInUTC,
-    }));
+    const [weeklySlots, total] = await Promise.all([
+      prisma.slotOfAvailabilityWeekly.findMany({
+        where: {
+          consultantProfileId: consultantProfileId,
+        },
+        orderBy: [
+          { dayOfWeekforStartTimeInUTC: "asc" },
+          { slotStartTimeInUTC: "asc" },
+        ],
+        include: {
+          consultantProfile: {
+            select: {
+              id: true,
+              user: {
+                select: {
+                  name: true,
+                  email: true,
+                },
+              },
+            },
+          },
+        },
+        skip,
+        take: limit,
+      }),
+      prisma.slotOfAvailabilityWeekly.count({
+        where: { consultantProfileId: consultantProfileId },
+      }),
+    ]);
 
-    // Get current week range
-    const refDate = new Date();
-    const startOfTodayInTz = startOfDay(toZonedTime(refDate, timezone));
-    const startOfWeek = startOfTodayInTz;
-    const endOfWeek = addDays(startOfWeek, 7);
-
-    // Process slots using the unified utility
-    const processedSlots = processWeeklySlots(
-      slotData,
-      startOfWeek,
-      endOfWeek,
-      timezone,
-    );
-    const splitSlots = splitSlotsByDay(processedSlots, timezone);
-    const slotTimings = convertToSlotTimings(splitSlots, [], timezone); // No appointments for weekly view
-
-    // Group by day of week instead of date for weekly view
-    const slotsByDay: Record<
-      DayOfWeek,
+    return NextResponse.json(
       {
-        id: string;
-        localStartTime: string;
-        localEndTime: string;
-        originalSlot: any;
-      }[]
-    > = {
-      MONDAY: [],
-      TUESDAY: [],
-      WEDNESDAY: [],
-      THURSDAY: [],
-      FRIDAY: [],
-      SATURDAY: [],
-      SUNDAY: [],
-    };
-
-    slotTimings.forEach((slot) => {
-      const originalSlot = weeklySlots.find(
-        (s) => s.id === slot.slotOfAvailabilityId,
-      );
-      if (originalSlot) {
-        slotsByDay[slot.dayOfWeek].push({
-          id: slot.slotId,
-          localStartTime: slot.localStartTime,
-          localEndTime: slot.localEndTime,
-          originalSlot: originalSlot,
-        });
-      }
-    });
-
-    // Sort slots within each day
-    for (const day in slotsByDay) {
-      slotsByDay[day as DayOfWeek].sort((a, b) =>
-        a.localStartTime.localeCompare(b.localStartTime, undefined, {
-          numeric: true,
-        }),
-      );
-    }
-
-    return NextResponse.json({ data: slotsByDay }, { status: 200 });
+        data: weeklySlots,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      },
+      { status: 200 },
+    );
   } catch (error) {
     console.error("Error fetching weekly slots:", error);
     return NextResponse.json(

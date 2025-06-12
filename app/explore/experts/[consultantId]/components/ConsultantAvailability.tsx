@@ -14,11 +14,24 @@ interface ConsultantAvailabilityProps {
   timezone: string;
 }
 
-interface ProcessedSlot {
+// Better typing for slot types
+type WeeklySlotData = {
   id: string;
-  localStartTime: string;
-  localEndTime: string;
-  originalSlot: any;
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
+};
+
+type CustomSlotData = {
+  id: string;
+  slotStartTimeInUTC: string;
+  slotEndTimeInUTC: string;
+};
+
+interface ProcessedSlot {
+    id: string;
+    localStartTime: string;
+    localEndTime: string;
+  originalSlot: WeeklySlotData | CustomSlotData;
   isAllocated?: boolean;
   slotStartTimeInUTC?: string;
   slotEndTimeInUTC?: string;
@@ -39,7 +52,7 @@ export function ConsultantAvailability({
   timezone,
 }: ConsultantAvailabilityProps) {
   const [availabilityData, setAvailabilityData] = useState<
-    Record<string, (TSlotTiming & { isAllocated: boolean })[]>
+    Record<string, (TSlotTiming & { isAllocated: boolean; bookingStatus: 'available' | 'partially-booked' | 'fully-booked' })[]>
   >({});
   const [isLoading, setIsLoading] = useState(false);
 
@@ -103,10 +116,11 @@ export function ConsultantAvailability({
                 slotEndTimeInUTC: slot.slotEndTimeInUTC,
               },
               isAllocated: slot.isAllocated,
+              bookingStatus: slot.bookingStatus || 'available',
               slotStartTimeInUTC: slot.slotStartTimeInUTC,
               slotEndTimeInUTC: slot.slotEndTimeInUTC,
               type: "WEEKLY",
-            });
+            } as ProcessedSlot);
           });
       });
     }
@@ -115,11 +129,8 @@ export function ConsultantAvailability({
   }, [availabilityData, consultantDetails.scheduleType]);
 
   // Process data for CustomAvailability component (group by date)
+  // Note: Allow custom slots for all schedule types to support one-off availability
   const processedCustomSlots = useMemo((): DayWithSlots[] => {
-    if (consultantDetails.scheduleType === "WEEKLY") {
-      return [];
-    }
-
     const today = new Date();
     const days: DayWithSlots[] = Array.from({ length: 7 }, (_, i) => {
       const date = addDays(startOfDay(toZonedTime(today, timezone)), i);
@@ -146,7 +157,7 @@ export function ConsultantAvailability({
     });
 
     return days;
-  }, [availabilityData, consultantDetails.scheduleType, timezone]);
+  }, [availabilityData, timezone]);
 
   const handleSlotSelect = (slot: TSlotTiming) => {
     setSelectedSlot(slot);
