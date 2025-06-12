@@ -29,6 +29,7 @@ import {
 } from "../defaults";
 import { TSlotTiming } from "@/types/slots";
 import { breakDownSlotsByDuration } from "@/utils/timeSlotsProcessing";
+import { useToast } from "@/hooks/use-toast";
 
 interface PricingToggleProps {
   consultationOptions?: PricingOption[];
@@ -62,8 +63,10 @@ export default function PricingToggle({
   selectedSlot,
   setSelectedSlot,
   timezone,
+  consultantDetails,
 }: Readonly<PricingToggleProps>) {
   const { data: session } = useSession();
+  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("consultation");
   const [activeConsultationOption, setActiveConsultationOption] = useState(
     consultationOptions.length > 0
@@ -75,6 +78,7 @@ export default function PricingToggle({
       ? subscriptionOptions[0].title.toLowerCase().replace(" ", "-")
       : defaultSubscriptionOptions[0].title.toLowerCase().replace(" ", "-"),
   );
+  const [isRequestingApproval, setIsRequestingApproval] = useState(false);
 
   // Get the duration of the selected consultation option
   const selectedDuration = useMemo(() => {
@@ -108,6 +112,92 @@ export default function PricingToggle({
 
     return brokenDownSlots;
   }, [slotTimings, selectedDuration, timezone]);
+
+  const handleRequestForApproval = async () => {
+    if (!selectedSlot || !consultantDetails) {
+      toast({ title: "Please select a time slot", variant: "destructive" });
+      return;
+    }
+
+    if (!session?.user?.id) {
+      toast({ title: "Please sign in to request approval", variant: "destructive" });
+      return;
+    }
+
+    // Calculate duration in hours from slot times
+    const startTime = new Date(selectedSlot.slotStartTimeInUTC);
+    const endTime = new Date(selectedSlot.slotEndTimeInUTC);
+    const durationInHours =
+      (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
+
+    // Get the active consultation plan
+    const activePlan = consultantDetails.consultationPlans.find(
+      (plan: any) => plan.durationInHours === durationInHours,
+    );
+
+    if (!activePlan) {
+      toast({ title: "Invalid consultation plan", variant: "destructive" });
+      return;
+    }
+
+    setIsRequestingApproval(true);
+
+    try {
+      const requestBody: {
+        consultantProfileId: string;
+        slotStartTimeInUTC: string;
+        slotEndTimeInUTC: string;
+        consultationPlanId: string;
+        slotOfAvailabilityWeeklyId?: string;
+        slotOfAvailabilityCustomId?: string;
+      } = {
+        consultantProfileId: consultantDetails.id,
+        slotStartTimeInUTC: selectedSlot.slotStartTimeInUTC,
+        slotEndTimeInUTC: selectedSlot.slotEndTimeInUTC,
+        consultationPlanId: activePlan.id,
+      };
+
+      // Add the appropriate availability slot ID based on slot type
+      if ((selectedSlot as any).type === "WEEKLY") {
+        requestBody.slotOfAvailabilityWeeklyId = selectedSlot.slotOfAvailabilityId;
+      } else {
+        requestBody.slotOfAvailabilityCustomId = selectedSlot.slotOfAvailabilityId;
+      }
+
+      const response = await fetch("/api/slots/request-for-approval", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to submit request for approval");
+      }
+
+      toast({
+        title: "Request Submitted",
+        description: "Your request for approval has been submitted successfully. The consultant will review and respond soon.",
+        variant: "default",
+      });
+
+      // Clear the selected slot
+      setSelectedSlot(null);
+
+    } catch (error) {
+      console.error("Error requesting approval:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to submit request for approval",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRequestingApproval(false);
+    }
+  };
 
   const handleBookNowClick = () => {
     const today = new Date();
@@ -354,7 +444,7 @@ export default function PricingToggle({
                                               {slot.localStartTime} - {slot.localEndTime}
                                             </span>
                                             {isAllocated && (
-                                              <span className="ml-auto text-xs font-semibold">(Booked)</span>
+                                              <span className="ml-auto text-xs font-semibold">Request for approval</span>
                                             )}
                                           </div>
                                         </button>
@@ -372,10 +462,15 @@ export default function PricingToggle({
                             <div className="bg-gray-800/50 px-6 py-4 flex justify-end rounded-b-lg">
                               <Button
                                 className="w-full sm:w-auto"
-                                onClick={handleConsultationBooking}
-                                disabled={!selectedSlot || selectedSlot.isAllocated}
+                                onClick={selectedSlot?.isAllocated ? handleRequestForApproval : handleConsultationBooking}
+                                disabled={!selectedSlot || isRequestingApproval}
                               >
-                                Continue to Checkout
+                                {isRequestingApproval 
+                                  ? "Submitting..." 
+                                  : selectedSlot?.isAllocated 
+                                    ? "Request for Approval" 
+                                    : "Continue to Checkout"
+                                }
                               </Button>
                             </div>
                           </DialogContent>

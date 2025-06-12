@@ -478,6 +478,7 @@ model Subscription {
 enum RequestStatus {
   PENDING
   APPROVED
+  SCHEDULED
   REJECTED
   CANCELLED
   EXPIRED
