@@ -9,8 +9,6 @@ import { toZonedTime, format as formatTz } from "date-fns-tz";
 
 interface ConsultantAvailabilityProps {
   consultantDetails: TConsultantProfile;
-  selectedSlot: TSlotTiming | null;
-  setSelectedSlot: (slot: TSlotTiming | null) => void;
   timezone: string;
 }
 
@@ -33,6 +31,7 @@ interface ProcessedSlot {
   localEndTime: string;
   originalSlot: WeeklySlotData | CustomSlotData;
   isAllocated?: boolean;
+  bookingStatus?: "available" | "partially-booked" | "fully-booked";
   slotStartTimeInUTC?: string;
   slotEndTimeInUTC?: string;
   type?: "WEEKLY" | "CUSTOM";
@@ -47,8 +46,6 @@ type DayWithSlots = {
 
 export function ConsultantAvailability({
   consultantDetails,
-  selectedSlot,
-  setSelectedSlot,
   timezone,
 }: ConsultantAvailabilityProps) {
   const [availabilityData, setAvailabilityData] = useState<
@@ -154,6 +151,7 @@ export function ConsultantAvailability({
             slotEndTimeInUTC: slot.slotEndTimeInUTC,
           },
           isAllocated: slot.isAllocated,
+          bookingStatus: slot.bookingStatus || "available",
           slotStartTimeInUTC: slot.slotStartTimeInUTC,
           slotEndTimeInUTC: slot.slotEndTimeInUTC,
           type: "CUSTOM",
@@ -165,42 +163,42 @@ export function ConsultantAvailability({
     return days;
   }, [availabilityData, timezone]);
 
-  const handleSlotSelect = (slot: TSlotTiming) => {
-    setSelectedSlot(slot);
-  };
-
   if (isLoading) {
     return (
-      <div className="bg-white rounded-lg shadow-lg p-8 border border-gray-200">
-        <h3 className="text-xl font-semibold mb-4">Consultant Availability</h3>
-        <div className="flex items-center justify-center py-8">
-          <div className="text-gray-500">Loading availability...</div>
+      <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-8 backdrop-blur-sm relative">
+        <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl pointer-events-none" />
+        <div className="relative">
+          <h3 className="text-xl font-bold mb-4 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
+            Consultant Availability
+          </h3>
+          <div className="flex items-center justify-center py-8">
+            <div className="text-gray-500 flex items-center space-x-2">
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-500"></div>
+              <span>Loading availability...</span>
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div>
-      <h3 className="text-xl font-semibold mb-4">Consultant Availability</h3>
-      <p className="text-sm text-gray-600 mb-4">
-        {consultantDetails.scheduleType === "WEEKLY"
-          ? "Weekly schedule. Select a time slot to schedule a meeting."
-          : "Custom schedule for the next 7 days. Select a time slot to schedule a meeting."}
-      </p>
+    <div className="space-y-6">
+      <div className="text-center">
+        <h3 className="text-2xl font-bold mb-3 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
+          Consultant Availability
+        </h3>
+        <p className="text-sm text-gray-600 bg-gradient-to-br from-gray-50 to-white px-4 py-2 rounded-xl border border-gray-200/50 shadow-sm inline-block">
+          {consultantDetails.scheduleType === "WEEKLY"
+            ? "Weekly schedule. Use the 'Book Now' button to schedule a meeting."
+            : "Custom schedule for the next 7 days. Use the 'Book Now' button to schedule a meeting."}
+        </p>
+      </div>
 
       {consultantDetails.scheduleType === "WEEKLY" ? (
-        <WeeklyAvailability
-          slotsByDay={processedWeeklySlots}
-          onSlotSelect={handleSlotSelect}
-          selectedSlotId={selectedSlot?.slotId}
-        />
+        <WeeklyAvailability slotsByDay={processedWeeklySlots} />
       ) : (
-        <CustomAvailability
-          days={processedCustomSlots}
-          onSlotSelect={handleSlotSelect}
-          selectedSlotId={selectedSlot?.slotId}
-        />
+        <CustomAvailability days={processedCustomSlots} />
       )}
     </div>
   );
