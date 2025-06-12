@@ -43,11 +43,13 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
 }) => {
   // Sort slots chronologically for each day
   const sortedDays = React.useMemo(() => {
-    return days.map(day => ({
+    return days.map((day) => ({
       ...day,
       slots: day.slots.slice().sort((a, b) => {
-        return timeToMinutes(a.localStartTime) - timeToMinutes(b.localStartTime);
-      })
+        return (
+          timeToMinutes(a.localStartTime) - timeToMinutes(b.localStartTime)
+        );
+      }),
     }));
   }, [days]);
 
@@ -65,7 +67,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
       localEndTime: slot.localEndTime,
       type: slot.type || "CUSTOM",
     };
-    
+
     onSlotSelect(slotTiming);
   };
 
@@ -99,15 +101,18 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                   slot.isAllocated
                     ? "bg-red-50 border border-red-200 cursor-not-allowed"
                     : selectedSlotId === slot.id
-                    ? "bg-green-200"
-                    : "bg-green-50 hover:bg-green-100"
+                      ? "bg-green-200"
+                      : "bg-green-50 hover:bg-green-100"
                 }`}
                 onClick={() => !slot.isAllocated && handleSlotClick(slot, date)}
               >
-                <div className={`text-xs font-medium ${
-                  slot.isAllocated ? "text-red-700" : "text-green-700"
-                }`}>
-                  {roundTime(slot.localStartTime)} - {roundTime(slot.localEndTime)}
+                <div
+                  className={`text-xs font-medium ${
+                    slot.isAllocated ? "text-red-700" : "text-green-700"
+                  }`}
+                >
+                  {roundTime(slot.localStartTime)} -{" "}
+                  {roundTime(slot.localEndTime)}
                   {slot.isAllocated && (
                     <div className="text-xs text-red-600 mt-1">
                       Request for approval

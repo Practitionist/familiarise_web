@@ -203,8 +203,18 @@ export function breakDownSlotsByDuration(
         slotId: `${slot.slotId}-${currentStart.getTime()}`,
         slotStartTimeInUTC: currentStart.toISOString(),
         slotEndTimeInUTC: currentEnd.toISOString(),
-        localStartTime: new Date(currentStart).toLocaleTimeString('en-US', { hour: 'numeric', minute: 'numeric', hour12: true, timeZone: timezone || undefined }),
-        localEndTime: new Date(currentEnd).toLocaleTimeString('en-US', { hour: 'numeric', minute: 'numeric', hour12: true, timeZone: timezone || undefined }),
+        localStartTime: new Date(currentStart).toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "numeric",
+          hour12: true,
+          timeZone: timezone || undefined,
+        }),
+        localEndTime: new Date(currentEnd).toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "numeric",
+          hour12: true,
+          timeZone: timezone || undefined,
+        }),
       });
       currentStart = currentEnd;
     }

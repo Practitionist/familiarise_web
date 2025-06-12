@@ -10,7 +10,7 @@ import {
   groupSlotsByDate,
   WeeklySlot,
   dayMap,
-  dayToNumber
+  dayToNumber,
 } from "@/utils/timeSlotsProcessing";
 
 export async function GET(req: NextRequest) {
@@ -46,10 +46,15 @@ export async function GET(req: NextRequest) {
     const endOfWeek = addDays(startOfWeek, 7);
 
     // Process slots using the unified utility
-    const processedSlots = processWeeklySlots(slotData, startOfWeek, endOfWeek, timezone);
+    const processedSlots = processWeeklySlots(
+      slotData,
+      startOfWeek,
+      endOfWeek,
+      timezone,
+    );
     const splitSlots = splitSlotsByDay(processedSlots, timezone);
     const slotTimings = convertToSlotTimings(splitSlots, [], timezone); // No appointments for weekly view
-    
+
     // Group by day of week instead of date for weekly view
     const slotsByDay: Record<
       DayOfWeek,
@@ -70,7 +75,9 @@ export async function GET(req: NextRequest) {
     };
 
     slotTimings.forEach((slot) => {
-      const originalSlot = weeklySlots.find(s => s.id === slot.slotOfAvailabilityId);
+      const originalSlot = weeklySlots.find(
+        (s) => s.id === slot.slotOfAvailabilityId,
+      );
       if (originalSlot) {
         slotsByDay[slot.dayOfWeek].push({
           id: slot.slotId,

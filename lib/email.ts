@@ -9,7 +9,7 @@ let resendClient: Resend | null = null;
 
 function getResendClient(): Resend | null {
   const RESEND_API_KEY = process.env.RESEND_API_KEY;
-  
+
   if (!RESEND_API_KEY) {
     console.warn(
       "WARNING: RESEND_API_KEY is not defined. Email functionality will not work.",
@@ -20,7 +20,7 @@ function getResendClient(): Resend | null {
   if (!resendClient) {
     resendClient = new Resend(RESEND_API_KEY);
   }
-  
+
   return resendClient;
 }
 
@@ -43,7 +43,7 @@ export async function sendWelcomeEmail({
 }) {
   try {
     const resend = getResendClient();
-    
+
     // Check if Resend client is available
     if (!resend) {
       console.error(
@@ -93,7 +93,7 @@ export async function sendPasswordResetEmail({
 }) {
   try {
     const resend = getResendClient();
-    
+
     if (!resend) {
       console.error(
         "RESEND_API_KEY is not configured. Cannot send password reset email.",
@@ -139,7 +139,7 @@ export async function sendAccountLinkedEmail({
 }) {
   try {
     const resend = getResendClient();
-    
+
     if (!resend) {
       console.error(
         "RESEND_API_KEY is not configured. Cannot send account linked email.",

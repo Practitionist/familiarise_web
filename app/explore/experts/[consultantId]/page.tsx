@@ -111,19 +111,22 @@ export default function ExpertProfile(
           }
 
           const { data } = await response.json();
-          
+
           // Extract slots for the selected date specifically
           // Use local date formatting to avoid timezone shifts
           const year = selectedDate.getFullYear();
-          const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
-          const day = String(selectedDate.getDate()).padStart(2, '0');
+          const month = String(selectedDate.getMonth() + 1).padStart(2, "0");
+          const day = String(selectedDate.getDate()).padStart(2, "0");
           const selectedDateKey = `${year}-${month}-${day}`; // YYYY-MM-DD format
           const slotsForSelectedDate = data[selectedDateKey] || [];
-          
+
           console.log("Available dates in response:", Object.keys(data));
           console.log("Looking for date:", selectedDateKey);
-          console.log("Slots found for selected date:", slotsForSelectedDate.length);
-          
+          console.log(
+            "Slots found for selected date:",
+            slotsForSelectedDate.length,
+          );
+
           setSlotTimings(slotsForSelectedDate);
         } catch (error) {
           console.error("Error fetching slots:", error);

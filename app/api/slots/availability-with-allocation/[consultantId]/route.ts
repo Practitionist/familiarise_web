@@ -66,8 +66,16 @@ export async function GET(
     const appointments = await prisma.appointment.findMany({
       where: {
         OR: [
-          { consultation: { consultationPlan: { consultantProfileId: consultantId } } },
-          { subscription: { subscriptionPlan: { consultantProfileId: consultantId } } },
+          {
+            consultation: {
+              consultationPlan: { consultantProfileId: consultantId },
+            },
+          },
+          {
+            subscription: {
+              subscriptionPlan: { consultantProfileId: consultantId },
+            },
+          },
           { webinar: { webinarPlan: { consultantProfileId: consultantId } } },
           { class: { classPlan: { consultantProfileId: consultantId } } },
         ],
@@ -111,19 +119,23 @@ export async function GET(
     });
 
     // Convert to utility interfaces
-    const weeklySlots: WeeklySlot[] = consultant.slotsOfAvailabilityWeekly.map((slot) => ({
-      id: slot.id,
-      dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
-      slotStartTimeInUTC: slot.slotStartTimeInUTC,
-      dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
-      slotEndTimeInUTC: slot.slotEndTimeInUTC,
-    }));
+    const weeklySlots: WeeklySlot[] = consultant.slotsOfAvailabilityWeekly.map(
+      (slot) => ({
+        id: slot.id,
+        dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
+        slotStartTimeInUTC: slot.slotStartTimeInUTC,
+        dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
+        slotEndTimeInUTC: slot.slotEndTimeInUTC,
+      }),
+    );
 
-    const customSlots: CustomSlot[] = consultant.slotsOfAvailabilityCustom.map((slot) => ({
-      id: slot.id,
-      slotStartTimeInUTC: slot.slotStartTimeInUTC,
-      slotEndTimeInUTC: slot.slotEndTimeInUTC,
-    }));
+    const customSlots: CustomSlot[] = consultant.slotsOfAvailabilityCustom.map(
+      (slot) => ({
+        id: slot.id,
+        slotStartTimeInUTC: slot.slotStartTimeInUTC,
+        slotEndTimeInUTC: slot.slotEndTimeInUTC,
+      }),
+    );
 
     // Process all slots using the unified utility
     const slotsByDate = processAvailabilitySlots(
@@ -132,7 +144,7 @@ export async function GET(
       appointmentSlots,
       startDate,
       endDate,
-      timezone
+      timezone,
     );
 
     return NextResponse.json({ data: slotsByDate }, { status: 200 });
@@ -144,4 +156,3 @@ export async function GET(
     );
   }
 }
-

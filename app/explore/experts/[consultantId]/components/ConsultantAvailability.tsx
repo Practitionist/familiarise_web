@@ -25,10 +25,7 @@ interface ProcessedSlot {
   type?: "WEEKLY" | "CUSTOM";
 }
 
-type ProcessedSlotsByDay = Record<
-  DayOfWeek,
-  ProcessedSlot[]
->;
+type ProcessedSlotsByDay = Record<DayOfWeek, ProcessedSlot[]>;
 
 type DayWithSlots = {
   date: Date;
@@ -41,14 +38,16 @@ export function ConsultantAvailability({
   setSelectedSlot,
   timezone,
 }: ConsultantAvailabilityProps) {
-  const [availabilityData, setAvailabilityData] = useState<Record<string, (TSlotTiming & { isAllocated: boolean })[]>>({});
+  const [availabilityData, setAvailabilityData] = useState<
+    Record<string, (TSlotTiming & { isAllocated: boolean })[]>
+  >({});
   const [isLoading, setIsLoading] = useState(false);
 
   // Fetch unified availability data with allocation status
   useEffect(() => {
     const fetchAvailabilityData = async () => {
       if (!consultantDetails?.id || !timezone) return;
-      
+
       setIsLoading(true);
       try {
         // Fetch slots for the next 7 days to cover both weekly and custom availability
@@ -92,7 +91,7 @@ export function ConsultantAvailability({
     if (consultantDetails.scheduleType === "WEEKLY") {
       Object.entries(availabilityData).forEach(([dateStr, slots]) => {
         slots
-          .filter(slot => slot.type === "WEEKLY")
+          .filter((slot) => slot.type === "WEEKLY")
           .forEach((slot) => {
             slotsByDay[slot.dayOfWeek].push({
               id: slot.slotId,
@@ -125,9 +124,9 @@ export function ConsultantAvailability({
     const days: DayWithSlots[] = Array.from({ length: 7 }, (_, i) => {
       const date = addDays(startOfDay(toZonedTime(today, timezone)), i);
       const dateKey = formatTz(date, "yyyy-MM-dd", { timeZone: timezone });
-      
+
       const slots: ProcessedSlot[] = (availabilityData[dateKey] || [])
-        .filter(slot => slot.type === "CUSTOM")
+        .filter((slot) => slot.type === "CUSTOM")
         .map((slot) => ({
           id: slot.slotId,
           localStartTime: slot.localStartTime,

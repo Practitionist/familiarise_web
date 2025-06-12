@@ -38,14 +38,19 @@ export const WeeklyAvailability: React.FC<WeeklyAvailabilityProps> = ({
 
   // Sort slots chronologically for each day
   const sortedSlotsByDay = React.useMemo(() => {
-    const sorted: Record<DayOfWeek, ProcessedSlot[]> = {} as Record<DayOfWeek, ProcessedSlot[]>;
-    
-    daysOfWeek.forEach(day => {
+    const sorted: Record<DayOfWeek, ProcessedSlot[]> = {} as Record<
+      DayOfWeek,
+      ProcessedSlot[]
+    >;
+
+    daysOfWeek.forEach((day) => {
       sorted[day] = (slotsByDay[day] || []).slice().sort((a, b) => {
-        return timeToMinutes(a.localStartTime) - timeToMinutes(b.localStartTime);
+        return (
+          timeToMinutes(a.localStartTime) - timeToMinutes(b.localStartTime)
+        );
       });
     });
-    
+
     return sorted;
   }, [slotsByDay]);
 
@@ -63,7 +68,7 @@ export const WeeklyAvailability: React.FC<WeeklyAvailabilityProps> = ({
       localEndTime: slot.localEndTime,
       type: slot.type || "WEEKLY",
     };
-    
+
     onSlotSelect(slotTiming);
   };
 
@@ -92,15 +97,18 @@ export const WeeklyAvailability: React.FC<WeeklyAvailabilityProps> = ({
                   slot.isAllocated
                     ? "bg-red-50 border border-red-200 cursor-not-allowed"
                     : selectedSlotId === slot.id
-                    ? "bg-blue-200"
-                    : "bg-blue-50 hover:bg-blue-100"
+                      ? "bg-blue-200"
+                      : "bg-blue-50 hover:bg-blue-100"
                 }`}
                 onClick={() => !slot.isAllocated && handleSlotClick(slot, day)}
               >
-                <div className={`text-xs font-medium ${
-                  slot.isAllocated ? "text-red-700" : "text-blue-700"
-                }`}>
-                  {roundTime(slot.localStartTime)} - {roundTime(slot.localEndTime)}
+                <div
+                  className={`text-xs font-medium ${
+                    slot.isAllocated ? "text-red-700" : "text-blue-700"
+                  }`}
+                >
+                  {roundTime(slot.localStartTime)} -{" "}
+                  {roundTime(slot.localEndTime)}
                   {slot.isAllocated && (
                     <div className="text-xs text-red-600 mt-1">
                       Request for approval

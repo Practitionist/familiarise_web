@@ -72,11 +72,15 @@ export function ConsultationPricing({
   };
 
   const consultationOptions = formatPricingOptions(
-    consultantDetails.consultationPlans.sort((a, b) => a.durationInHours - b.durationInHours),
+    consultantDetails.consultationPlans.sort(
+      (a, b) => a.durationInHours - b.durationInHours,
+    ),
     "consultation",
   );
   const subscriptionOptions = formatPricingOptions(
-    consultantDetails.subscriptionPlans.sort((a, b) => a.durationInMonths - b.durationInMonths),
+    consultantDetails.subscriptionPlans.sort(
+      (a, b) => a.durationInMonths - b.durationInMonths,
+    ),
     "subscription",
   );
 

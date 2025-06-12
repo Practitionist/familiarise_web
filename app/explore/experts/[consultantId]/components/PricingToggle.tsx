@@ -94,10 +94,10 @@ export default function PricingToggle({
     if (!slotTimings || slotTimings.length === 0 || !timezone) {
       return [];
     }
-    
+
     // Main page already filters slots for the selected date, so we don't need to filter again
     // Convert to the format expected by breakDownSlotsByDuration
-    const slotsWithAllocation = slotTimings.map(slot => ({
+    const slotsWithAllocation = slotTimings.map((slot) => ({
       ...slot,
       isAllocated: (slot as any).isAllocated || false,
     }));
@@ -107,7 +107,7 @@ export default function PricingToggle({
       slotsWithAllocation,
       selectedDuration,
       [], // appointmentSlots - we'll rely on the isAllocated flag for now
-      timezone
+      timezone,
     );
 
     return brokenDownSlots;
@@ -120,7 +120,10 @@ export default function PricingToggle({
     }
 
     if (!session?.user?.id) {
-      toast({ title: "Please sign in to request approval", variant: "destructive" });
+      toast({
+        title: "Please sign in to request approval",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -159,9 +162,11 @@ export default function PricingToggle({
 
       // Add the appropriate availability slot ID based on slot type
       if ((selectedSlot as any).type === "WEEKLY") {
-        requestBody.slotOfAvailabilityWeeklyId = selectedSlot.slotOfAvailabilityId;
+        requestBody.slotOfAvailabilityWeeklyId =
+          selectedSlot.slotOfAvailabilityId;
       } else {
-        requestBody.slotOfAvailabilityCustomId = selectedSlot.slotOfAvailabilityId;
+        requestBody.slotOfAvailabilityCustomId =
+          selectedSlot.slotOfAvailabilityId;
       }
 
       const response = await fetch("/api/slots/request-for-approval", {
@@ -180,18 +185,21 @@ export default function PricingToggle({
 
       toast({
         title: "Request Submitted",
-        description: "Your request for approval has been submitted successfully. The consultant will review and respond soon.",
+        description:
+          "Your request for approval has been submitted successfully. The consultant will review and respond soon.",
         variant: "default",
       });
 
       // Clear the selected slot
       setSelectedSlot(null);
-
     } catch (error) {
       console.error("Error requesting approval:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to submit request for approval",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to submit request for approval",
         variant: "destructive",
       });
     } finally {
@@ -369,13 +377,10 @@ export default function PricingToggle({
                                       &lt;
                                     </Button>
                                     <span className="font-semibold">
-                                      {currentDate.toLocaleString(
-                                        "default",
-                                        {
-                                          month: "long",
-                                          year: "numeric",
-                                        },
-                                      )}
+                                      {currentDate.toLocaleString("default", {
+                                        month: "long",
+                                        year: "numeric",
+                                      })}
                                     </span>
                                     <Button
                                       variant="ghost"
@@ -416,8 +421,10 @@ export default function PricingToggle({
                                 <div className="grid grid-cols-1 gap-2.5 max-h-[280px] overflow-y-auto pr-2">
                                   {availableSlots.length > 0 ? (
                                     availableSlots.map((slot, index) => {
-                                      const isSelected = selectedSlot?.slotId === slot.slotId &&
-                                        selectedSlot?.localStartTime === slot.localStartTime;
+                                      const isSelected =
+                                        selectedSlot?.slotId === slot.slotId &&
+                                        selectedSlot?.localStartTime ===
+                                          slot.localStartTime;
 
                                       const isAllocated = slot.isAllocated;
 
@@ -426,9 +433,10 @@ export default function PricingToggle({
                                           key={`${slot.slotId}-${index}`}
                                           disabled={isAllocated}
                                           className={`w-full justify-center p-3 text-sm font-medium transition-all duration-200 rounded-lg text-left
-                                            ${isSelected
-                                              ? "bg-white text-black shadow-md"
-                                              : isAllocated
+                                            ${
+                                              isSelected
+                                                ? "bg-white text-black shadow-md"
+                                                : isAllocated
                                                   ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 cursor-not-allowed"
                                                   : "bg-gray-800/60 text-gray-200 border border-gray-700/50 hover:bg-gray-700/80"
                                             }`}
@@ -441,10 +449,13 @@ export default function PricingToggle({
                                           <div className="flex items-center">
                                             <ClockIcon className="mr-3 h-4 w-4 opacity-80" />
                                             <span>
-                                              {slot.localStartTime} - {slot.localEndTime}
+                                              {slot.localStartTime} -{" "}
+                                              {slot.localEndTime}
                                             </span>
                                             {isAllocated && (
-                                              <span className="ml-auto text-xs font-semibold">Request for approval</span>
+                                              <span className="ml-auto text-xs font-semibold">
+                                                Request for approval
+                                              </span>
                                             )}
                                           </div>
                                         </button>
@@ -452,8 +463,7 @@ export default function PricingToggle({
                                     })
                                   ) : (
                                     <p className="text-gray-400 text-sm">
-                                      No available slots for the selected
-                                      date.
+                                      No available slots for the selected date.
                                     </p>
                                   )}
                                 </div>
@@ -462,15 +472,18 @@ export default function PricingToggle({
                             <div className="bg-gray-800/50 px-6 py-4 flex justify-end rounded-b-lg">
                               <Button
                                 className="w-full sm:w-auto"
-                                onClick={selectedSlot?.isAllocated ? handleRequestForApproval : handleConsultationBooking}
+                                onClick={
+                                  selectedSlot?.isAllocated
+                                    ? handleRequestForApproval
+                                    : handleConsultationBooking
+                                }
                                 disabled={!selectedSlot || isRequestingApproval}
                               >
-                                {isRequestingApproval 
-                                  ? "Submitting..." 
-                                  : selectedSlot?.isAllocated 
-                                    ? "Request for Approval" 
-                                    : "Continue to Checkout"
-                                }
+                                {isRequestingApproval
+                                  ? "Submitting..."
+                                  : selectedSlot?.isAllocated
+                                    ? "Request for Approval"
+                                    : "Continue to Checkout"}
                               </Button>
                             </div>
                           </DialogContent>
