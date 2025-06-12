@@ -249,7 +249,7 @@ export function convertToSlotTimings(
 }
 
 /**
- * Break down slots by duration while preserving allocation information
+ * Break down slots by duration using sliding windows while preserving allocation information
  */
 export function breakDownSlotsByDuration(
   slots: (TSlotTiming & { isAllocated: boolean })[],
@@ -261,11 +261,16 @@ export function breakDownSlotsByDuration(
   
   if (!slots || slots.length === 0) return brokenDownSlots;
 
+  // Define sliding window interval (30 minutes)
+  const slidingIntervalMinutes = 30;
+  const slidingIntervalMillis = slidingIntervalMinutes * 60 * 1000;
+  const durationInMillis = durationInHours * 60 * 60 * 1000;
+
   slots.forEach((slot) => {
     const start = new Date(slot.slotStartTimeInUTC);
     const end = new Date(slot.slotEndTimeInUTC);
-    const durationInMillis = durationInHours * 60 * 60 * 1000;
 
+    // Generate sliding windows
     let currentStart = start;
     while (currentStart.getTime() + durationInMillis <= end.getTime()) {
       const currentEnd = new Date(currentStart.getTime() + durationInMillis);
@@ -283,7 +288,8 @@ export function breakDownSlotsByDuration(
         isAllocated: isSegmentAllocated,
       });
       
-      currentStart = currentEnd;
+      // Move to next sliding window (30-minute intervals)
+      currentStart = new Date(currentStart.getTime() + slidingIntervalMillis);
     }
   });
 
