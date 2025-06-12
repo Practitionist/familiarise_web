@@ -6,7 +6,7 @@ import {
   WeeklySlot,
   CustomSlot,
   AppointmentSlot,
-} from "@/lib/slotUtils";
+} from "@/utils/timeSlotsProcessing";
 
 export async function GET(
   req: NextRequest,

@@ -4,15 +4,8 @@ import { TConsultantProfile } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
 import { WeeklyAvailability } from "./WeeklyAvailability";
 import { CustomAvailability } from "./CustomAvailability";
-import {
-  normalizeWeeklySlot,
-  normalizeCustomSlot,
-  formatTime,
-  dayMap,
-  dayToNumber,
-} from "../utils";
-import { toZonedTime, fromZonedTime, format as formatTz } from "date-fns-tz";
-import { startOfDay, endOfDay, addDays, isBefore } from "date-fns";
+import { addDays, startOfDay, endOfDay } from "date-fns";
+import { toZonedTime, format as formatTz } from "date-fns-tz";
 
 interface ConsultantAvailabilityProps {
   consultantDetails: TConsultantProfile;
@@ -21,15 +14,26 @@ interface ConsultantAvailabilityProps {
   timezone: string;
 }
 
+interface ProcessedSlot {
+  id: string;
+  localStartTime: string;
+  localEndTime: string;
+  originalSlot: any;
+  isAllocated?: boolean;
+  slotStartTimeInUTC?: string;
+  slotEndTimeInUTC?: string;
+  type?: "WEEKLY" | "CUSTOM";
+}
+
 type ProcessedSlotsByDay = Record<
   DayOfWeek,
-  {
-    id: string;
-    localStartTime: string;
-    localEndTime: string;
-    originalSlot: any;
-  }[]
+  ProcessedSlot[]
 >;
+
+type DayWithSlots = {
+  date: Date;
+  slots: ProcessedSlot[];
+};
 
 export function ConsultantAvailability({
   consultantDetails,
@@ -37,8 +41,45 @@ export function ConsultantAvailability({
   setSelectedSlot,
   timezone,
 }: ConsultantAvailabilityProps) {
-  const [processedWeeklySlots, setProcessedWeeklySlots] =
-    useState<ProcessedSlotsByDay>({
+  const [availabilityData, setAvailabilityData] = useState<Record<string, (TSlotTiming & { isAllocated: boolean })[]>>({});
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Fetch unified availability data with allocation status
+  useEffect(() => {
+    const fetchAvailabilityData = async () => {
+      if (!consultantDetails?.id || !timezone) return;
+      
+      setIsLoading(true);
+      try {
+        // Fetch slots for the next 7 days to cover both weekly and custom availability
+        const today = new Date();
+        const startDateInUtc = startOfDay(today);
+        const endDateInUtc = endOfDay(addDays(today, 6));
+
+        const response = await fetch(
+          `/api/slots/availability-with-allocation/${consultantDetails.id}?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${timezone}`,
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch availability data");
+        }
+
+        const { data } = await response.json();
+        setAvailabilityData(data);
+      } catch (error) {
+        console.error("Error fetching availability data:", error);
+        setAvailabilityData({});
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchAvailabilityData();
+  }, [consultantDetails?.id, timezone]);
+
+  // Process data for WeeklyAvailability component (group by day of week)
+  const processedWeeklySlots = useMemo((): ProcessedSlotsByDay => {
+    const slotsByDay: ProcessedSlotsByDay = {
       MONDAY: [],
       TUESDAY: [],
       WEDNESDAY: [],
@@ -46,111 +87,82 @@ export function ConsultantAvailability({
       FRIDAY: [],
       SATURDAY: [],
       SUNDAY: [],
-    });
-
-  useEffect(() => {
-    const fetchWeeklyAvailability = async () => {
-      if (consultantDetails.scheduleType === "WEEKLY" && timezone) {
-        try {
-          const response = await fetch(
-            `/api/slots/availability/weekly?consultantProfileId=${consultantDetails.id}&timezone=${timezone}`,
-          );
-          if (!response.ok) {
-            throw new Error("Failed to fetch weekly availability");
-          }
-          const { data } = await response.json();
-          setProcessedWeeklySlots(data);
-        } catch (error) {
-          console.error("Error fetching weekly availability:", error);
-        }
-      }
     };
 
-    fetchWeeklyAvailability();
-  }, [consultantDetails.id, consultantDetails.scheduleType, timezone]);
+    if (consultantDetails.scheduleType === "WEEKLY") {
+      Object.entries(availabilityData).forEach(([dateStr, slots]) => {
+        slots
+          .filter(slot => slot.type === "WEEKLY")
+          .forEach((slot) => {
+            slotsByDay[slot.dayOfWeek].push({
+              id: slot.slotId,
+              localStartTime: slot.localStartTime,
+              localEndTime: slot.localEndTime,
+              originalSlot: {
+                id: slot.slotOfAvailabilityId,
+                slotStartTimeInUTC: slot.slotStartTimeInUTC,
+                slotEndTimeInUTC: slot.slotEndTimeInUTC,
+              },
+              isAllocated: slot.isAllocated,
+              slotStartTimeInUTC: slot.slotStartTimeInUTC,
+              slotEndTimeInUTC: slot.slotEndTimeInUTC,
+              type: "WEEKLY",
+            });
+          });
+      });
+    }
 
-  const processedCustomSlots = useMemo(() => {
+    return slotsByDay;
+  }, [availabilityData, consultantDetails.scheduleType]);
+
+  // Process data for CustomAvailability component (group by date)
+  const processedCustomSlots = useMemo((): DayWithSlots[] => {
+    if (consultantDetails.scheduleType === "WEEKLY") {
+      return [];
+    }
+
     const today = new Date();
-    const rangeStart = startOfDay(toZonedTime(today, timezone));
-    const rangeEnd = endOfDay(addDays(rangeStart, 6));
+    const days: DayWithSlots[] = Array.from({ length: 7 }, (_, i) => {
+      const date = addDays(startOfDay(toZonedTime(today, timezone)), i);
+      const dateKey = formatTz(date, "yyyy-MM-dd", { timeZone: timezone });
+      
+      const slots: ProcessedSlot[] = (availabilityData[dateKey] || [])
+        .filter(slot => slot.type === "CUSTOM")
+        .map((slot) => ({
+          id: slot.slotId,
+          localStartTime: slot.localStartTime,
+          localEndTime: slot.localEndTime,
+          originalSlot: {
+            id: slot.slotOfAvailabilityId,
+            slotStartTimeInUTC: slot.slotStartTimeInUTC,
+            slotEndTimeInUTC: slot.slotEndTimeInUTC,
+          },
+          isAllocated: slot.isAllocated,
+          slotStartTimeInUTC: slot.slotStartTimeInUTC,
+          slotEndTimeInUTC: slot.slotEndTimeInUTC,
+          type: "CUSTOM",
+        }));
 
-    const days: {
-      date: Date;
-      slots: {
-        id: string;
-        localStartTime: string;
-        localEndTime: string;
-        originalSlot: any;
-      }[];
-    }[] = Array.from({ length: 7 }, (_, i) => ({
-      date: addDays(rangeStart, i),
-      slots: [],
-    }));
-
-    const slotsByDate: Record<
-      string,
-      {
-        id: string;
-        localStartTime: string;
-        localEndTime: string;
-        originalSlot: any;
-      }[]
-    > = {};
-
-    consultantDetails.slotsOfAvailabilityCustom.forEach((slot) => {
-      const startUTC = new Date(slot.slotStartTimeInUTC);
-      const endUTC = new Date(slot.slotEndTimeInUTC);
-
-      if (
-        isBefore(endUTC, fromZonedTime(rangeStart, timezone)) ||
-        isBefore(fromZonedTime(rangeEnd, timezone), startUTC)
-      ) {
-        return;
-      }
-
-      let current = startUTC;
-      while (isBefore(current, endUTC)) {
-        const zonedCurrent = toZonedTime(current, timezone);
-        const dayStart = startOfDay(zonedCurrent);
-        const dateKey = formatTz(dayStart, "yyyy-MM-dd");
-
-        if (isBefore(dayStart, rangeStart) || !isBefore(dayStart, rangeEnd)) {
-            current = fromZonedTime(addDays(dayStart, 1), timezone);
-            continue;
-        }
-
-        const slotPartEnd = isBefore(endUTC, fromZonedTime(endOfDay(zonedCurrent), timezone))
-          ? endUTC
-          : fromZonedTime(endOfDay(zonedCurrent), timezone);
-
-        if (!slotsByDate[dateKey]) {
-          slotsByDate[dateKey] = [];
-        }
-
-        slotsByDate[dateKey].push({
-          id: `${slot.id}-${current.toISOString()}`,
-          localStartTime: formatTz(current, "p", { timeZone: timezone }),
-          localEndTime: formatTz(slotPartEnd, "p", { timeZone: timezone }),
-          originalSlot: slot,
-        });
-
-        current = fromZonedTime(addDays(dayStart, 1), timezone);
-      }
-    });
-    
-    days.forEach((day) => {
-      const dateKey = formatTz(day.date, "yyyy-MM-dd");
-      if (slotsByDate[dateKey]) {
-        day.slots = slotsByDate[dateKey].sort((a, b) =>
-          a.localStartTime.localeCompare(b.localStartTime, undefined, {
-            numeric: true,
-          }),
-        );
-      }
+      return { date, slots };
     });
 
     return days;
-  }, [consultantDetails.slotsOfAvailabilityCustom, timezone]);
+  }, [availabilityData, consultantDetails.scheduleType, timezone]);
+
+  const handleSlotSelect = (slot: TSlotTiming) => {
+    setSelectedSlot(slot);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="bg-white rounded-lg shadow-lg p-8 border border-gray-200">
+        <h3 className="text-xl font-semibold mb-4">Consultant Availability</h3>
+        <div className="flex items-center justify-center py-8">
+          <div className="text-gray-500">Loading availability...</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -164,39 +176,13 @@ export function ConsultantAvailability({
       {consultantDetails.scheduleType === "WEEKLY" ? (
         <WeeklyAvailability
           slotsByDay={processedWeeklySlots}
-          onSlotSelect={(slot) => {
-            // This logic might need adjustment based on how you want to handle selection
-            // For now, let's log it.
-            console.log("Selected original slot:", slot);
-          }}
+          onSlotSelect={handleSlotSelect}
           selectedSlotId={selectedSlot?.slotId}
         />
       ) : (
         <CustomAvailability
           days={processedCustomSlots}
-          onSlotSelect={(slot) => {
-            const normalizedSlot = normalizeCustomSlot(slot);
-            setSelectedSlot({
-              slotId: normalizedSlot.id,
-              dateInISO: new Date(
-                normalizedSlot.slotStartTimeInUTC,
-              ).toISOString(),
-              dayOfWeek:
-                dayMap[new Date(normalizedSlot.slotStartTimeInUTC).getDay()],
-              slotStartTimeInUTC: normalizedSlot.slotStartTimeInUTC,
-              slotEndTimeInUTC: normalizedSlot.slotEndTimeInUTC,
-              slotOfAvailabilityId: normalizedSlot.id,
-              slotOfAppointmentId: "",
-              localStartTime: formatTime(
-                normalizedSlot.slotStartTimeInUTC,
-                timezone,
-              ),
-              localEndTime: formatTime(
-                normalizedSlot.slotEndTimeInUTC,
-                timezone,
-              ),
-            });
-          }}
+          onSlotSelect={handleSlotSelect}
           selectedSlotId={selectedSlot?.slotId}
         />
       )}

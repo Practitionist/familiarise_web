@@ -11,7 +11,7 @@ import {
   WeeklySlot,
   dayMap,
   dayToNumber
-} from "@/lib/slotUtils";
+} from "@/utils/timeSlotsProcessing";
 
 export async function GET(req: NextRequest) {
   try {

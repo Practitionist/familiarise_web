@@ -41,7 +41,7 @@ export default function ExpertProfile(
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
   const { toast } = useToast();
@@ -111,9 +111,20 @@ export default function ExpertProfile(
           }
 
           const { data } = await response.json();
-          const dateKey = Object.keys(data)[0];
-          const slotsForDay = dateKey ? data[dateKey] : [];
-          setSlotTimings(slotsForDay);
+          
+          // Extract slots for the selected date specifically
+          // Use local date formatting to avoid timezone shifts
+          const year = selectedDate.getFullYear();
+          const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
+          const day = String(selectedDate.getDate()).padStart(2, '0');
+          const selectedDateKey = `${year}-${month}-${day}`; // YYYY-MM-DD format
+          const slotsForSelectedDate = data[selectedDateKey] || [];
+          
+          console.log("Available dates in response:", Object.keys(data));
+          console.log("Looking for date:", selectedDateKey);
+          console.log("Slots found for selected date:", slotsForSelectedDate.length);
+          
+          setSlotTimings(slotsForSelectedDate);
         } catch (error) {
           console.error("Error fetching slots:", error);
           toast({
@@ -314,6 +325,7 @@ export default function ExpertProfile(
         slotTimings={slotTimings}
         selectedSlot={selectedSlot}
         setSelectedSlot={setSelectedSlot}
+        timezone={timezone || "UTC"}
       />
     </div>
   );

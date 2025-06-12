@@ -27,8 +27,8 @@ import {
   defaultConsultationOptions,
   defaultSubscriptionOptions,
 } from "../defaults";
-import { formatTime } from "../utils";
 import { TSlotTiming } from "@/types/slots";
+import { breakDownSlotsByDuration } from "@/utils/timeSlotsProcessing";
 
 interface PricingToggleProps {
   consultationOptions?: PricingOption[];
@@ -45,6 +45,7 @@ interface PricingToggleProps {
   slotTimings: TSlotTiming[];
   selectedSlot: TSlotTiming | null;
   setSelectedSlot: (slot: TSlotTiming | null) => void;
+  timezone: string;
 }
 
 export default function PricingToggle({
@@ -60,6 +61,7 @@ export default function PricingToggle({
   slotTimings,
   selectedSlot,
   setSelectedSlot,
+  timezone,
 }: Readonly<PricingToggleProps>) {
   const { data: session } = useSession();
   const [activeTab, setActiveTab] = useState("consultation");
@@ -83,50 +85,29 @@ export default function PricingToggle({
     return option ? parseInt(option.duration.split(" ")[0], 10) : 1;
   }, [activeConsultationOption, consultationOptions]);
 
-  // Filter and break down slots by selected duration
+  // Break down slots by selected duration using the utility function
   const availableSlots = useMemo(() => {
-    if (!slotTimings || slotTimings.length === 0) return [];
+    if (!slotTimings || slotTimings.length === 0 || !timezone) {
+      return [];
+    }
     
-    // First, break down the slots by the selected duration
-    const brokenDownSlots: (TSlotTiming & { isAllocated: boolean })[] = [];
-    
-    slotTimings.forEach((slot) => {
-      const start = new Date(slot.slotStartTimeInUTC);
-      const end = new Date(slot.slotEndTimeInUTC);
-      const durationInMillis = selectedDuration * 60 * 60 * 1000;
+    // Main page already filters slots for the selected date, so we don't need to filter again
+    // Convert to the format expected by breakDownSlotsByDuration
+    const slotsWithAllocation = slotTimings.map(slot => ({
+      ...slot,
+      isAllocated: (slot as any).isAllocated || false,
+    }));
 
-      let currentStart = start;
-      while (currentStart.getTime() + durationInMillis <= end.getTime()) {
-        const currentEnd = new Date(currentStart.getTime() + durationInMillis);
-        
-        brokenDownSlots.push({
-          ...slot,
-          slotId: `${slot.slotOfAvailabilityId}-${currentStart.getTime()}`,
-          slotStartTimeInUTC: currentStart.toISOString(),
-          slotEndTimeInUTC: currentEnd.toISOString(),
-          localStartTime: currentStart.toLocaleTimeString('en-US', { 
-            hour: 'numeric', 
-            minute: 'numeric', 
-            hour12: true 
-          }),
-          localEndTime: currentEnd.toLocaleTimeString('en-US', { 
-            hour: 'numeric', 
-            minute: 'numeric', 
-            hour12: true 
-          }),
-                     // Keep the original allocation status for this specific time window
-           isAllocated: slot.isAllocated || false,
-        });
-        
-        currentStart = currentEnd;
-      }
-    });
-
-    // Sort chronologically
-    return brokenDownSlots.sort((a, b) => 
-      new Date(a.slotStartTimeInUTC).getTime() - new Date(b.slotStartTimeInUTC).getTime()
+    // Use the utility function to break down slots by duration
+    const brokenDownSlots = breakDownSlotsByDuration(
+      slotsWithAllocation,
+      selectedDuration,
+      [], // appointmentSlots - we'll rely on the isAllocated flag for now
+      timezone
     );
-  }, [slotTimings, selectedDuration]);
+
+    return brokenDownSlots;
+  }, [slotTimings, selectedDuration, timezone]);
 
   const handleBookNowClick = () => {
     const today = new Date();

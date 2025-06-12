@@ -1,10 +1,17 @@
 import React from "react";
+import { TSlotTiming } from "@/types/slots";
+import { DayOfWeek } from "@prisma/client";
+import { roundTime, timeToMinutes } from "../utils/time";
 
 interface ProcessedSlot {
   id: string;
   localStartTime: string;
   localEndTime: string;
   originalSlot: any;
+  isAllocated?: boolean;
+  slotStartTimeInUTC?: string;
+  slotEndTimeInUTC?: string;
+  type?: "WEEKLY" | "CUSTOM";
 }
 
 interface DayWithSlots {
@@ -14,60 +21,19 @@ interface DayWithSlots {
 
 interface CustomAvailabilityProps {
   days: DayWithSlots[];
-  onSlotSelect: (slot: any) => void;
+  onSlotSelect: (slot: TSlotTiming) => void;
   selectedSlotId?: string;
 }
 
-// Helper function to round 59 minutes to next hour
-const roundTime = (timeString: string): string => {
-  // Parse time like "4:59 PM" or "11:59 AM"
-  const timeRegex = /(\d{1,2}):(\d{2})\s*(AM|PM)/i;
-  const match = timeString.match(timeRegex);
-  
-  if (!match) return timeString;
-  
-  let hours = parseInt(match[1]);
-  const minutes = parseInt(match[2]);
-  const period = match[3].toUpperCase();
-  
-  // Round 59 minutes to next hour
-  if (minutes === 59) {
-    hours += 1;
-    
-    // Handle hour overflow and AM/PM transition
-    if (period === "AM" && hours === 12) {
-      return "12:00 PM";
-    } else if (period === "PM" && hours === 12) {
-      return "12:00 AM";
-    } else if (hours > 12) {
-      return `${hours - 12}:00 ${period}`;
-    } else {
-      return `${hours}:00 ${period}`;
-    }
-  }
-  
-  return timeString;
-};
-
-// Helper function to convert time string to minutes for sorting
-const timeToMinutes = (timeString: string): number => {
-  const timeRegex = /(\d{1,2}):(\d{2})\s*(AM|PM)/i;
-  const match = timeString.match(timeRegex);
-  
-  if (!match) return 0;
-  
-  let hours = parseInt(match[1]);
-  const minutes = parseInt(match[2]);
-  const period = match[3].toUpperCase();
-  
-  // Convert to 24-hour format
-  if (period === "AM" && hours === 12) {
-    hours = 0;
-  } else if (period === "PM" && hours !== 12) {
-    hours += 12;
-  }
-  
-  return hours * 60 + minutes;
+// Day mapping for TSlotTiming
+const dayMap: Record<number, DayOfWeek> = {
+  0: DayOfWeek.SUNDAY,
+  1: DayOfWeek.MONDAY,
+  2: DayOfWeek.TUESDAY,
+  3: DayOfWeek.WEDNESDAY,
+  4: DayOfWeek.THURSDAY,
+  5: DayOfWeek.FRIDAY,
+  6: DayOfWeek.SATURDAY,
 };
 
 export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
@@ -84,6 +50,24 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
       })
     }));
   }, [days]);
+
+  const handleSlotClick = (slot: ProcessedSlot, date: Date) => {
+    // Create a proper TSlotTiming object instead of passing raw slot data
+    const slotTiming: TSlotTiming = {
+      slotId: slot.id,
+      dateInISO: slot.slotStartTimeInUTC || date.toISOString(),
+      dayOfWeek: dayMap[date.getDay()],
+      slotStartTimeInUTC: slot.slotStartTimeInUTC || date.toISOString(),
+      slotEndTimeInUTC: slot.slotEndTimeInUTC || date.toISOString(),
+      slotOfAvailabilityId: slot.originalSlot?.id || slot.id,
+      slotOfAppointmentId: "",
+      localStartTime: slot.localStartTime,
+      localEndTime: slot.localEndTime,
+      type: slot.type || "CUSTOM",
+    };
+    
+    onSlotSelect(slotTiming);
+  };
 
   return (
     <div className="bg-white rounded-lg shadow-lg p-8 border border-gray-200">
@@ -111,15 +95,24 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
             {daySlots.map((slot) => (
               <div
                 key={slot.id}
-                className={`bg-green-50 rounded-md p-2 cursor-pointer ${
-                  selectedSlotId === slot.id
+                className={`rounded-md p-2 cursor-pointer transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center ${
+                  slot.isAllocated
+                    ? "bg-red-50 border border-red-200 cursor-not-allowed"
+                    : selectedSlotId === slot.id
                     ? "bg-green-200"
-                    : "hover:bg-green-100"
-                } transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center`}
-                onClick={() => onSlotSelect(slot.originalSlot)}
+                    : "bg-green-50 hover:bg-green-100"
+                }`}
+                onClick={() => !slot.isAllocated && handleSlotClick(slot, date)}
               >
-                <div className="text-xs font-medium text-green-700">
+                <div className={`text-xs font-medium ${
+                  slot.isAllocated ? "text-red-700" : "text-green-700"
+                }`}>
                   {roundTime(slot.localStartTime)} - {roundTime(slot.localEndTime)}
+                  {slot.isAllocated && (
+                    <div className="text-xs text-red-600 mt-1">
+                      Request for approval
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
