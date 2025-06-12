@@ -235,7 +235,7 @@ export default function ExpertProfile(
       currentDate.getMonth(),
       1,
     ).getDay();
-    
+
     // Adjust for Monday as first day of week (0 = Monday, 1 = Tuesday, etc.)
     const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
     const days = [];

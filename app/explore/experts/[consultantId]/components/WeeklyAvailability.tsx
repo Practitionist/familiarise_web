@@ -16,7 +16,7 @@ interface ProcessedSlot {
   localEndTime: string;
   originalSlot: OriginalSlotData;
   isAllocated?: boolean;
-  bookingStatus?: 'available' | 'partially-booked' | 'fully-booked';
+  bookingStatus?: "available" | "partially-booked" | "fully-booked";
   slotStartTimeInUTC?: string;
   slotEndTimeInUTC?: string;
   type?: "WEEKLY" | "CUSTOM";
@@ -81,9 +81,10 @@ export function WeeklyAvailability({
                 })
                 .map((slot) => {
                   const isSelected = selectedSlotId === slot.id;
-                  const bookingStatus = slot.bookingStatus || 'available';
-                  const isFullyBooked = bookingStatus === 'fully-booked';
-                  const isPartiallyBooked = bookingStatus === 'partially-booked';
+                  const bookingStatus = slot.bookingStatus || "available";
+                  const isFullyBooked = bookingStatus === "fully-booked";
+                  const isPartiallyBooked =
+                    bookingStatus === "partially-booked";
 
                   return (
                     <button
@@ -104,23 +105,25 @@ export function WeeklyAvailability({
                         <div>
                           {roundTime(slot.localStartTime)} -{" "}
                           {roundTime(slot.localEndTime)}
-          </div>
+                        </div>
                         {isFullyBooked && (
                           <div className="text-xs font-medium">Booked</div>
                         )}
                         {isPartiallyBooked && (
-                          <div className="text-xs font-medium">Partially Booked</div>
+                          <div className="text-xs font-medium">
+                            Partially Booked
+                          </div>
                         )}
-      </div>
+                      </div>
                     </button>
                   );
                 })
             ) : (
               <div className="text-xs text-gray-400 p-2">No slots</div>
             )}
-                </div>
-              </div>
-            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

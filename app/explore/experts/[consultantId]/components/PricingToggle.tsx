@@ -91,7 +91,12 @@ export default function PricingToggle({
 
   // Break down slots by selected duration using the utility function
   const availableSlots = useMemo(() => {
-    if (!slotTimings || slotTimings.length === 0 || !timezone || !selectedDate) {
+    if (
+      !slotTimings ||
+      slotTimings.length === 0 ||
+      !timezone ||
+      !selectedDate
+    ) {
       return [];
     }
 
@@ -378,8 +383,8 @@ export default function PricingToggle({
                                     </Button>
                                     <span className="font-semibold">
                                       {currentDate.toLocaleString("default", {
-                                          month: "long",
-                                          year: "numeric",
+                                        month: "long",
+                                        year: "numeric",
                                       })}
                                     </span>
                                     <Button
@@ -435,8 +440,8 @@ export default function PricingToggle({
                                           className={`w-full justify-center p-3 text-sm font-medium transition-all duration-200 rounded-lg text-left
                                             ${
                                               isSelected
-                                              ? "bg-white text-black shadow-md"
-                                              : isAllocated
+                                                ? "bg-white text-black shadow-md"
+                                                : isAllocated
                                                   ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20"
                                                   : "bg-gray-800/60 text-gray-200 border border-gray-700/50 hover:bg-gray-700/80"
                                             }`}

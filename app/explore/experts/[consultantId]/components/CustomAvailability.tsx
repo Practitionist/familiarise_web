@@ -108,7 +108,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                   slot.isAllocated
                     ? "bg-red-50 border border-red-200 cursor-not-allowed"
                     : selectedSlotId === slot.id
-                    ? "bg-green-200"
+                      ? "bg-green-200"
                       : "bg-green-50 hover:bg-green-100"
                 }`}
                 onClick={() => !slot.isAllocated && handleSlotClick(slot, date)}

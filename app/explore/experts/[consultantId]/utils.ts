@@ -52,10 +52,7 @@ export function normalizeCustomSlot(slot: TCustomSlot): TCustomSlot & {
   };
 }
 
-export function formatTime(
-  date: Date,
-  timezone?: string | null,
-): string {
+export function formatTime(date: Date, timezone?: string | null): string {
   if (!timezone) {
     return date.toLocaleTimeString("en-US", {
       hour: "numeric",

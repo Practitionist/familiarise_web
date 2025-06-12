@@ -28,9 +28,9 @@ type CustomSlotData = {
 };
 
 interface ProcessedSlot {
-    id: string;
-    localStartTime: string;
-    localEndTime: string;
+  id: string;
+  localStartTime: string;
+  localEndTime: string;
   originalSlot: WeeklySlotData | CustomSlotData;
   isAllocated?: boolean;
   slotStartTimeInUTC?: string;
@@ -52,7 +52,13 @@ export function ConsultantAvailability({
   timezone,
 }: ConsultantAvailabilityProps) {
   const [availabilityData, setAvailabilityData] = useState<
-    Record<string, (TSlotTiming & { isAllocated: boolean; bookingStatus: 'available' | 'partially-booked' | 'fully-booked' })[]>
+    Record<
+      string,
+      (TSlotTiming & {
+        isAllocated: boolean;
+        bookingStatus: "available" | "partially-booked" | "fully-booked";
+      })[]
+    >
   >({});
   const [isLoading, setIsLoading] = useState(false);
 
@@ -116,7 +122,7 @@ export function ConsultantAvailability({
                 slotEndTimeInUTC: slot.slotEndTimeInUTC,
               },
               isAllocated: slot.isAllocated,
-              bookingStatus: slot.bookingStatus || 'available',
+              bookingStatus: slot.bookingStatus || "available",
               slotStartTimeInUTC: slot.slotStartTimeInUTC,
               slotEndTimeInUTC: slot.slotEndTimeInUTC,
               type: "WEEKLY",
