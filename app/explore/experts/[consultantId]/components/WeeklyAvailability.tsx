@@ -1,136 +1,143 @@
 import React from "react";
 import { DayOfWeek } from "@prisma/client";
-import {
-  convertUTCToLocalDate,
-  formatTime as formatTimeUtil,
-  isSlotRelevantForDay,
-} from "../utils";
+import { TSlotTiming } from "@/types/slots";
+import { roundTime, timeToMinutes } from "../utils/time";
 
-interface WeeklySlot {
+// Better typing for original slot data
+type OriginalSlotData = {
   id: string;
-  dayOfWeekforStartTimeInUTC: DayOfWeek;
   slotStartTimeInUTC: string;
-  dayOfWeekforEndTimeInUTC: DayOfWeek;
   slotEndTimeInUTC: string;
+};
+
+interface ProcessedSlot {
+  id: string;
+  localStartTime: string;
+  localEndTime: string;
+  originalSlot: OriginalSlotData;
+  isAllocated?: boolean;
+  bookingStatus?: "available" | "partially-booked" | "fully-booked";
+  slotStartTimeInUTC?: string;
+  slotEndTimeInUTC?: string;
+  type?: "WEEKLY" | "CUSTOM";
 }
+
+type ProcessedSlotsByDay = Record<DayOfWeek, ProcessedSlot[]>;
 
 interface WeeklyAvailabilityProps {
-  slots: WeeklySlot[];
-  onSlotSelect: (slot: WeeklySlot) => void;
-  selectedSlotId?: string;
+  slotsByDay: ProcessedSlotsByDay;
 }
 
-export const WeeklyAvailability: React.FC<WeeklyAvailabilityProps> = ({
-  slots,
-  onSlotSelect,
-  selectedSlotId,
-}) => {
-  const daysOfWeek = [
-    DayOfWeek.MONDAY,
-    DayOfWeek.TUESDAY,
-    DayOfWeek.WEDNESDAY,
-    DayOfWeek.THURSDAY,
-    DayOfWeek.FRIDAY,
-    DayOfWeek.SATURDAY,
-    DayOfWeek.SUNDAY,
+export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
+  const dayNames: DayOfWeek[] = [
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+    "SUNDAY",
   ];
-  const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-  // Get browser's timezone
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  console.log("Using timezone:", timezone);
-
-  // Group slots by day and sort by time
-  const slotsByDay = daysOfWeek.map((day) => {
-    // Get slots that are relevant for this day
-    const daySlots = slots.filter((slot) =>
-      isSlotRelevantForDay(slot, day, timezone),
-    );
-
-    // Process each slot to handle timezone and overnight slots
-    const processedSlots = daySlots.map((slot) => {
-      // Use a reference date for consistent conversion
-      const referenceDate = new Date();
-      referenceDate.setHours(0, 0, 0, 0);
-
-      // Convert UTC times to local
-      const startDateTime = convertUTCToLocalDate(
-        slot.slotStartTimeInUTC,
-        referenceDate,
-        timezone,
-      );
-      let endDateTime = convertUTCToLocalDate(
-        slot.slotEndTimeInUTC,
-        referenceDate,
-        timezone,
-      );
-
-      // If this slot crosses midnight
-      if (
-        slot.dayOfWeekforStartTimeInUTC !== slot.dayOfWeekforEndTimeInUTC ||
-        endDateTime <= startDateTime ||
-        (endDateTime.getHours() === 0 && endDateTime.getMinutes() === 0)
-      ) {
-        endDateTime = new Date(endDateTime);
-        endDateTime.setDate(endDateTime.getDate() + 1);
-      }
-
-      return {
-        ...slot,
-        localStartTime: formatTimeUtil(startDateTime, timezone),
-        localEndTime: formatTimeUtil(endDateTime, timezone),
-      };
+  // Get the date for booked slots in user timezone
+  const getBookedSlotDate = (slot: ProcessedSlot) => {
+    if (!slot.slotStartTimeInUTC) return "";
+    const date = new Date(slot.slotStartTimeInUTC);
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
     });
-
-    // Sort slots by start time
-    const sortedSlots = processedSlots.sort((a, b) => {
-      const timeA = new Date(`1970-01-01 ${a.localStartTime}`).getTime();
-      const timeB = new Date(`1970-01-01 ${b.localStartTime}`).getTime();
-      return timeA - timeB;
-    });
-
-    return {
-      day,
-      slots: sortedSlots,
-    };
-  });
+  };
 
   return (
-    <div className="bg-white rounded-lg shadow-lg p-8 border border-gray-200">
-      <h3 className="text-2xl font-semibold mb-6 text-center text-gray-800">
-        Weekly Availability
-      </h3>
-      <div className="grid grid-cols-7 gap-6 mb-6">
-        {dayLabels.map((day) => (
-          <div
-            key={day}
-            className="text-center text-sm font-semibold text-gray-700"
-          >
-            {day}
-          </div>
-        ))}
-      </div>
-      <div className="grid grid-cols-7 gap-6">
-        {slotsByDay.map(({ day, slots: daySlots }) => (
-          <div key={day} className="space-y-3">
-            {daySlots.map((slot) => (
-              <div
-                key={`${slot.id}-${slot.localStartTime}-${slot.localEndTime}`}
-                className={`bg-blue-50 rounded-md p-2 cursor-pointer ${
-                  selectedSlotId === slot.id
-                    ? "bg-blue-200"
-                    : "hover:bg-blue-100"
-                } transition-all duration-300 shadow-sm hover:shadow-md flex items-center justify-center`}
-                onClick={() => onSlotSelect(slot)}
-              >
-                <div className="text-xs font-medium text-blue-700">
-                  {slot.localStartTime} - {slot.localEndTime}
-                </div>
+    <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-6 backdrop-blur-sm">
+      {/* Glossy overlay effect */}
+      <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl pointer-events-none" />
+
+      <div className="relative">
+        <div className="grid grid-cols-7 gap-3">
+          {dayNames.map((day) => (
+            <div key={day} className="space-y-3">
+              {/* Day header with glossy effect */}
+              <div className="text-center">
+                <h4 className="font-semibold text-sm text-gray-800 bg-gradient-to-b from-gray-100 to-gray-200/80 px-3 py-2 rounded-xl border border-gray-300/50 shadow-sm">
+                  {day.charAt(0) + day.slice(1).toLowerCase()}
+                </h4>
               </div>
-            ))}
-          </div>
-        ))}
+
+              <div className="space-y-2">
+                {slotsByDay[day]?.length > 0 ? (
+                  // Sort slots chronologically within each day
+                  slotsByDay[day]
+                    .sort((a, b) => {
+                      const timeA = timeToMinutes(roundTime(a.localStartTime));
+                      const timeB = timeToMinutes(roundTime(b.localStartTime));
+                      return timeA - timeB;
+                    })
+                    .map((slot) => {
+                      const bookingStatus = slot.bookingStatus || "available";
+                      const isFullyBooked = bookingStatus === "fully-booked";
+                      const isPartiallyBooked =
+                        bookingStatus === "partially-booked";
+                      const bookedDate =
+                        isFullyBooked || isPartiallyBooked
+                          ? getBookedSlotDate(slot)
+                          : "";
+
+                      return (
+                        <div
+                          key={slot.id}
+                          className={`
+                            w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-xl
+                            border shadow-lg backdrop-blur-sm relative overflow-hidden
+                            ${
+                              isFullyBooked
+                                ? "bg-gradient-to-br from-gray-300 to-gray-400 text-gray-600 border-gray-300 shadow-gray-400/20"
+                                : isPartiallyBooked
+                                  ? "bg-gradient-to-br from-amber-200 to-amber-300 border-amber-400 text-amber-900 shadow-amber-400/25"
+                                  : "bg-gradient-to-br from-emerald-100 to-emerald-200 text-emerald-800 border-emerald-300 shadow-emerald-400/20"
+                            }
+                          `}
+                        >
+                          {/* Glossy overlay for buttons */}
+                          <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-xl pointer-events-none" />
+
+                          <div className="relative flex flex-col items-center justify-center h-full space-y-1">
+                            {/* Time range in one line */}
+                            <div className="font-medium leading-tight text-center text-[11px]">
+                              {roundTime(slot.localStartTime)} -{" "}
+                              {roundTime(slot.localEndTime)}
+                            </div>
+
+                            {/* Status and date for booked slots */}
+                            {isFullyBooked && (
+                              <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                                Booked
+                                <br />
+                                {bookedDate && `(${bookedDate})`}
+                              </div>
+                            )}
+                            {isPartiallyBooked && (
+                              <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                                Partially
+                                <br />
+                                Booked {bookedDate && `(${bookedDate})`}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                ) : (
+                  <div className="h-16 flex items-center justify-center text-xs text-gray-400 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200 shadow-sm">
+                    No slots
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
-};
+}
