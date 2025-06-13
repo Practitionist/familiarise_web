@@ -539,63 +539,17 @@ export function RequestSlotAllocationTab({
                                 : "Use Requested Times"}
                             </Button>
                           )}
-                        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                          <DialogTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedRequest(request);
-                                setSelectedSlots([]);
-                                setDialogOpen(true);
-                              }}
-                            >
-                              Allocate Slots
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent
-                            className="max-w-3xl"
-                            onInteractOutside={(e) => {
-                              // Prevent closing dialog while allocating
-                              if (isAllocating) {
-                                e.preventDefault();
-                              }
-                            }}
-                          >
-                            <DialogHeader>
-                              <DialogTitle>Allocate Slots</DialogTitle>
-                              <DialogDescription>
-                                Choose {request.requiredSlots} slots for{" "}
-                                {request.type.toLowerCase()}
-                              </DialogDescription>
-                            </DialogHeader>
-                            <TimingsCalendar
-                              availableSlots={availableSlots}
-                              existingAppointments={existingAppointments}
-                              onSlotSelect={handleSlotSelect}
-                              selectedSlots={selectedSlots}
-                              requiredSlots={request.requiredSlots}
-                              scheduleType={consultantData.scheduleType}
-                            />
-                            <DialogFooter>
-                              <Button
-                                variant="outline"
-                                onClick={handleAutoAllocation}
-                                disabled={!canAutoAllocate(selectedRequest, availableSlots, existingAppointments) || isAllocating}
-                              >
-                                {isAllocating ? "Allocating..." : "Auto Allocate"}
-                              </Button>
-                              <Button
-                                onClick={handleManualAllocation}
-                                disabled={!isQuotaMet || isAllocating}
-                              >
-                                {isAllocating
-                                  ? "Allocating..."
-                                  : "Allocate Manual Slots"}
-                              </Button>
-                            </DialogFooter>
-                          </DialogContent>
-                        </Dialog>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedRequest(request);
+                            setSelectedSlots([]);
+                            setDialogOpen(true);
+                          }}
+                        >
+                          Allocate Slots
+                        </Button>
                       </>
                     )}
                     {request.status === RequestStatus.APPROVED &&
@@ -609,6 +563,52 @@ export function RequestSlotAllocationTab({
               ))}
             </TableBody>
           </Table>
+
+          {/* Slot Allocation Dialog */}
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <DialogContent
+              className="max-w-3xl"
+              onInteractOutside={(e) => {
+                // Prevent closing dialog while allocating
+                if (isAllocating) {
+                  e.preventDefault();
+                }
+              }}
+            >
+              <DialogHeader>
+                <DialogTitle>Allocate Slots</DialogTitle>
+                <DialogDescription>
+                  Choose {selectedRequest?.requiredSlots || 0} slots for{" "}
+                  {selectedRequest?.type.toLowerCase() || "request"}
+                </DialogDescription>
+              </DialogHeader>
+              <TimingsCalendar
+                availableSlots={availableSlots}
+                existingAppointments={existingAppointments}
+                onSlotSelect={handleSlotSelect}
+                selectedSlots={selectedSlots}
+                requiredSlots={selectedRequest?.requiredSlots || 0}
+                scheduleType={consultantData.scheduleType}
+              />
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={handleAutoAllocation}
+                  disabled={!canAutoAllocate(selectedRequest, availableSlots, existingAppointments) || isAllocating}
+                >
+                  {isAllocating ? "Allocating..." : "Auto Allocate"}
+                </Button>
+                <Button
+                  onClick={handleManualAllocation}
+                  disabled={!isQuotaMet || isAllocating}
+                >
+                  {isAllocating
+                    ? "Allocating..."
+                    : "Allocate Manual Slots"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           <RequestedSlotsDialog
             open={requestedSlotsDialogOpen}
