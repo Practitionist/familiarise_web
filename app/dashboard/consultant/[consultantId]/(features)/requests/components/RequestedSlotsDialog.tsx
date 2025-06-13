@@ -8,7 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AppointmentsType } from "@prisma/client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 interface ValidationResult {
   conflicts: Array<{
@@ -50,10 +50,20 @@ export function RequestedSlotsDialog({
   const [error, setError] = useState<string | null>(null);
 
   // Validate slots when dialog opens
-  const validateSlots = async () => {
+  const validateSlots = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
+
+      // If no requested slots, skip validation
+      if (!requestedSlots || requestedSlots.length === 0) {
+        setValidationResult({
+          conflicts: [],
+          outsideAvailability: [],
+          validSlots: [],
+        });
+        return;
+      }
 
       const endpoint =
         requestType === AppointmentsType.SUBSCRIPTION
@@ -76,18 +86,19 @@ export function RequestedSlotsDialog({
 
       setValidationResult(data.data);
     } catch (err) {
+      console.error("Validation error:", err);
       setError(err instanceof Error ? err.message : "Failed to validate slots");
     } finally {
       setLoading(false);
     }
-  };
+  }, [requestId, requestType, requestedSlots]);
 
   // Validate on open
   useEffect(() => {
     if (open) {
       validateSlots();
     }
-  }, [open, requestId, requestedSlots]);
+  }, [open, validateSlots]);
 
   // Safe access to validation result arrays
   const conflicts = validationResult?.conflicts || [];
@@ -149,14 +160,25 @@ export function RequestedSlotsDialog({
             </div>
           )}
 
-          {!hasConflicts && !hasOutsideSlots && (
+          {!hasConflicts && !hasOutsideSlots && requestedSlots.length > 0 && (
             <div className="bg-green-50 p-4 rounded-md mb-4">
               <h3 className="font-semibold text-green-700">
                 All Slots Available
               </h3>
               <p className="text-sm text-green-600">
-                All requested slots are within your availability and have no
+                All {requestedSlots.length} requested slots are within your availability and have no
                 conflicts.
+              </p>
+            </div>
+          )}
+          
+          {requestedSlots.length === 0 && (
+            <div className="bg-gray-50 p-4 rounded-md mb-4">
+              <h3 className="font-semibold text-gray-700">
+                No Requested Slots
+              </h3>
+              <p className="text-sm text-gray-600">
+                This request does not have specific time slots requested. You can proceed with manual or auto allocation.
               </p>
             </div>
           )}
@@ -184,7 +206,7 @@ export function RequestedSlotsDialog({
             Cancel
           </Button>
 
-          {!hasConflicts && !loading && validationResult && (
+          {!hasConflicts && !loading && validationResult && requestedSlots.length > 0 && (
             <Button
               variant={hasOutsideSlots ? "destructive" : "default"}
               onClick={() => onConfirm(hasOutsideSlots)}
@@ -193,6 +215,16 @@ export function RequestedSlotsDialog({
               {hasOutsideSlots
                 ? "Override and Allocate"
                 : "Allocate Requested Times"}
+            </Button>
+          )}
+
+          {!loading && validationResult && requestedSlots.length === 0 && (
+            <Button
+              variant="outline"
+              onClick={onCancel}
+              disabled={loading}
+            >
+              Proceed with Manual/Auto Allocation
             </Button>
           )}
         </DialogFooter>

@@ -126,13 +126,15 @@ async function allocateSlotsAuto(
     ),
   );
 
-  // Calculate required number of slots
-  const totalWeeks = subscriptionPlan.durationInMonths * 4;
+  // Calculate required number of slots - use more precise week calculation
+  const totalDays = subscriptionPlan.durationInMonths * 30; // Approximate days
+  const totalWeeks = Math.ceil(totalDays / 7); // Round up to ensure we cover the full period
   const totalRequiredSlots = totalWeeks * subscriptionPlan.callsPerWeek;
 
   // Find best available slots
   const selectedSlots: Date[] = [];
   const startDate = new Date();
+  startDate.setHours(0, 0, 0, 0); // Start from beginning of today
   let currentWeek = 0;
 
   while (
@@ -142,70 +144,110 @@ async function allocateSlotsAuto(
     const weekStart = addWeeks(startDate, currentWeek);
     let slotsThisWeek = 0;
 
-    // Process each day of the week
-    for (
-      let dayOffset = 0;
-      dayOffset < 7 && slotsThisWeek < subscriptionPlan.callsPerWeek;
-      dayOffset++
-    ) {
-      const currentDay = new Date(weekStart);
-      currentDay.setDate(currentDay.getDate() + dayOffset);
+    // For weekly schedule, try to find slots for each day of the week
+    if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
+      // Group weekly slots by day of week
+      const slotsByDay = new Map<DayOfWeek, SlotOfAvailabilityWeekly[]>();
+      sortedSlots.forEach((slot) => {
+        const weeklySlot = slot as SlotOfAvailabilityWeekly;
+        const daySlots = slotsByDay.get(weeklySlot.dayOfWeekforStartTimeInUTC) || [];
+        daySlots.push(weeklySlot);
+        slotsByDay.set(weeklySlot.dayOfWeekforStartTimeInUTC, daySlots);
+      });
 
-      // Try to find the first available slot for this day
-      for (const slot of sortedSlots) {
-        const slotTime = new Date(currentDay);
+      // Try to distribute slots evenly across the week
+      const daysWithSlots = Array.from(slotsByDay.keys());
+      let dayIndex = 0;
 
-        if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
-          const weeklySlot = slot as SlotOfAvailabilityWeekly;
-          // Skip if not the right day of week
-          if (
-            weeklySlot.dayOfWeekforStartTimeInUTC !== getDayOfWeek(currentDay)
-          ) {
-            continue;
-          }
+      while (slotsThisWeek < subscriptionPlan.callsPerWeek && dayIndex < daysWithSlots.length * 3) {
+        const dayOfWeek = daysWithSlots[dayIndex % daysWithSlots.length];
+        const daySlots = slotsByDay.get(dayOfWeek) || [];
+        
+        // Calculate the actual date for this day of week in the current week
+        const targetDate = new Date(weekStart);
+        const currentDayOfWeek = targetDate.getDay();
+        const targetDayNum = Object.values(DayOfWeek).indexOf(dayOfWeek);
+        const daysToAdd = (targetDayNum - currentDayOfWeek + 7) % 7;
+        targetDate.setDate(targetDate.getDate() + daysToAdd);
+
+        // Try to find an available slot for this day
+        for (const weeklySlot of daySlots) {
+          const slotTime = new Date(targetDate);
           slotTime.setHours(
             weeklySlot.slotStartTimeInUTC.getHours(),
             weeklySlot.slotStartTimeInUTC.getMinutes(),
             0,
             0,
           );
-        } else {
+
+          // Skip if slot is already booked, in the past, or we already have enough slots this week
+          if (
+            bookedSlots.has(slotTime.toISOString()) || 
+            slotTime < new Date() ||
+            slotsThisWeek >= subscriptionPlan.callsPerWeek
+          ) {
+            continue;
+          }
+
+          // Found a valid slot
+          selectedSlots.push(slotTime);
+          bookedSlots.add(slotTime.toISOString());
+          slotsThisWeek++;
+          break; // Move to next day after finding a slot
+        }
+        
+        dayIndex++;
+      }
+    } else {
+      // For custom schedule, process each day of the week
+      for (
+        let dayOffset = 0;
+        dayOffset < 7 && slotsThisWeek < subscriptionPlan.callsPerWeek;
+        dayOffset++
+      ) {
+        const currentDay = new Date(weekStart);
+        currentDay.setDate(currentDay.getDate() + dayOffset);
+
+        // Try to find the first available slot for this day
+        for (const slot of sortedSlots) {
           const customSlot = slot as SlotOfAvailabilityCustom;
+          
           // For custom slots, check if the slot is for this specific day
           if (!isSameDay(customSlot.slotStartTimeInUTC, currentDay)) {
             continue;
           }
-          slotTime.setTime(customSlot.slotStartTimeInUTC.getTime());
-        }
 
-        // Skip if slot is already booked or in the past
-        if (bookedSlots.has(slotTime.toISOString()) || slotTime < new Date()) {
-          continue;
-        }
+          const slotTime = new Date(customSlot.slotStartTimeInUTC);
 
-        // Found a valid slot for this day
-        selectedSlots.push(slotTime);
-        bookedSlots.add(slotTime.toISOString());
-        slotsThisWeek++;
-        break; // Move to next day after finding first available slot
+          // Skip if slot is already booked or in the past
+          if (bookedSlots.has(slotTime.toISOString()) || slotTime < new Date()) {
+            continue;
+          }
+
+          // Found a valid slot for this day
+          selectedSlots.push(slotTime);
+          bookedSlots.add(slotTime.toISOString());
+          slotsThisWeek++;
+          break; // Move to next day after finding first available slot
+        }
       }
     }
 
-    if (slotsThisWeek < subscriptionPlan.callsPerWeek) {
-      throw new Error(
-        `Could not find enough available slots for week ${currentWeek + 1}`,
-      );
+    // If we couldn't find enough slots for this week, that's okay for later weeks
+    // but we should have at least some slots
+    if (currentWeek === 0 && slotsThisWeek === 0) {
+      throw new Error("Could not find any available slots for the first week");
     }
 
     currentWeek++;
   }
 
-  if (selectedSlots.length < totalRequiredSlots) {
-    throw new Error(
-      `Required ${totalRequiredSlots} slots but could only find ${selectedSlots.length}`,
-    );
+  if (selectedSlots.length === 0) {
+    throw new Error("No available slots found for the subscription period");
   }
 
+  // If we couldn't find all required slots, that's okay - return what we found
+  // The consultant can manually adjust if needed
   return selectedSlots.sort((a, b) => a.getTime() - b.getTime());
 }
 
@@ -284,27 +326,43 @@ async function allocateSlotsManual(
 ): Promise<Date[]> {
   const { subscriptionPlan, requestedBy } = subscription;
   const { consultantProfile } = subscriptionPlan;
-  const consultantTimezone = consultantProfile.user.currentTimezone || "UTC";
 
-  // Validate number of slots
-  const totalWeeks = subscriptionPlan.durationInMonths * 4;
-  const totalRequiredSlots = totalWeeks * subscriptionPlan.callsPerWeek;
+  // Calculate expected number of slots (but allow flexibility)
+  const totalDays = subscriptionPlan.durationInMonths * 30;
+  const totalWeeks = Math.ceil(totalDays / 7);
+  const expectedSlots = totalWeeks * subscriptionPlan.callsPerWeek;
 
-  if (slots.length !== totalRequiredSlots) {
+  // Validate minimum slots (at least 1 slot per week for first month)
+  const minimumSlots = Math.min(4 * subscriptionPlan.callsPerWeek, expectedSlots);
+  
+  if (slots.length < minimumSlots) {
     throw new Error(
-      `Expected ${totalRequiredSlots} slots but received ${slots.length}`,
+      `At least ${minimumSlots} slots required (minimum 1 month coverage), but received ${slots.length}`,
+    );
+  }
+
+  // Allow up to 20% more slots than expected for flexibility
+  const maximumSlots = Math.ceil(expectedSlots * 1.2);
+  if (slots.length > maximumSlots) {
+    throw new Error(
+      `Too many slots provided. Maximum ${maximumSlots} slots allowed, but received ${slots.length}`,
     );
   }
 
   // Convert string dates to Date objects for validation
-  const slotDates = slots.map((slot) => new Date(slot));
+  const slotDates = slots.map((slot, index) => {
+    const date = new Date(slot);
+    if (isNaN(date.getTime())) {
+      throw new Error(`Invalid date format for slot ${index + 1}: ${slot}`);
+    }
+    return date;
+  });
 
   // Validate all slots are in the future
   const now = new Date();
-  for (const slotDate of slotDates) {
-    if (slotDate <= now) {
-      throw new Error("Cannot allocate slots in the past");
-    }
+  const pastSlots = slotDates.filter(date => date <= now);
+  if (pastSlots.length > 0) {
+    throw new Error(`Cannot allocate ${pastSlots.length} slots in the past`);
   }
 
   // Validate slots match consultant's schedule type
@@ -319,13 +377,15 @@ async function allocateSlotsManual(
       }),
     );
 
-    for (const slotDate of slotDates) {
+    const invalidSlots = slotDates.filter(slotDate => {
       const slotPattern = `${getDayOfWeek(slotDate)}-${slotDate.getHours()}-${slotDate.getMinutes()}`;
-      if (!availableWeeklySlots.has(slotPattern)) {
-        throw new Error(
-          `Slot ${slotDate.toLocaleString()} does not match consultant's weekly schedule`,
-        );
-      }
+      return !availableWeeklySlots.has(slotPattern);
+    });
+
+    if (invalidSlots.length > 0) {
+      throw new Error(
+        `${invalidSlots.length} slots do not match consultant's weekly schedule. First invalid slot: ${invalidSlots[0].toLocaleString()}`,
+      );
     }
   } else {
     // For custom schedule, validate slots exist in custom slots
@@ -335,12 +395,14 @@ async function allocateSlotsManual(
       ),
     );
 
-    for (const slotDate of slotDates) {
-      if (!availableCustomSlots.has(slotDate.toISOString())) {
-        throw new Error(
-          `Slot ${slotDate.toLocaleString()} is not in consultant's custom schedule`,
-        );
-      }
+    const invalidSlots = slotDates.filter(slotDate => 
+      !availableCustomSlots.has(slotDate.toISOString())
+    );
+
+    if (invalidSlots.length > 0) {
+      throw new Error(
+        `${invalidSlots.length} slots are not in consultant's custom schedule. First invalid slot: ${invalidSlots[0].toLocaleString()}`,
+      );
     }
   }
 
@@ -374,33 +436,40 @@ async function allocateSlotsManual(
       ],
     },
     include: {
-      slotsOfAppointment: {
-        include: {
-          user: true,
-        },
-      },
+      slotsOfAppointment: true,
     },
   });
 
   if (existingAppointments.length > 0) {
-    throw new Error("Some selected slots are already booked");
+    const conflictingSlots = existingAppointments.flatMap(app => 
+      app.slotsOfAppointment.map(slot => slot.slotStartTimeInUTC.toISOString())
+    );
+    throw new Error(
+      `${conflictingSlots.length} selected slots are already booked. First conflict: ${new Date(conflictingSlots[0]).toLocaleString()}`
+    );
   }
 
-  // Validate slots per week quota
+  // Validate slots per week quota (with some flexibility)
   const slotsByWeek = new Map<string, number>();
   for (const slotDate of slotDates) {
     const weekStart = new Date(slotDate);
     weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Get start of week
+    weekStart.setHours(0, 0, 0, 0); // Normalize to start of day
     const weekKey = weekStart.toISOString();
     slotsByWeek.set(weekKey, (slotsByWeek.get(weekKey) || 0) + 1);
   }
 
-  for (const [week, count] of Array.from(slotsByWeek.entries())) {
-    if (count > subscriptionPlan.callsPerWeek) {
-      throw new Error(
-        `Too many slots allocated for week of ${new Date(week).toLocaleDateString()} (max ${subscriptionPlan.callsPerWeek} allowed)`,
-      );
-    }
+  // Allow up to 2x the weekly quota for flexibility (consultant might want to front-load)
+  const maxSlotsPerWeek = subscriptionPlan.callsPerWeek * 2;
+  const overloadedWeeks = Array.from(slotsByWeek.entries()).filter(
+    ([week, count]) => count > maxSlotsPerWeek
+  );
+
+  if (overloadedWeeks.length > 0) {
+    const [week, count] = overloadedWeeks[0];
+    throw new Error(
+      `Too many slots allocated for week of ${new Date(week).toLocaleDateString()}: ${count} slots (max ${maxSlotsPerWeek} recommended)`,
+    );
   }
 
   // Return sorted slots

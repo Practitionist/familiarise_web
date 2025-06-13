@@ -26,6 +26,7 @@ const subscriptionInclude = {
     include: {
       consultantProfile: {
         select: {
+          id: true,
           user: true,
           scheduleType: true,
           slotsOfAvailabilityWeekly: true,
@@ -40,6 +41,28 @@ const subscriptionInclude = {
     },
   },
 } as const;
+
+// Helper function to get day of week number from day name
+function getDayOfWeekNumber(dayName: string): number {
+  const dayMap: { [key: string]: number } = {
+    'SUNDAY': 0,
+    'MONDAY': 1,
+    'TUESDAY': 2,
+    'WEDNESDAY': 3,
+    'THURSDAY': 4,
+    'FRIDAY': 5,
+    'SATURDAY': 6,
+  };
+  return dayMap[dayName] ?? -1;
+}
+
+// Helper function to extract time from 1970 UTC timestamp
+function extractTimeFromUTC(utcTimestamp: Date): { hours: number; minutes: number } {
+  return {
+    hours: utcTimestamp.getUTCHours(),
+    minutes: utcTimestamp.getUTCMinutes(),
+  };
+}
 
 export async function POST(
   request: NextRequest,
@@ -75,7 +98,7 @@ export async function POST(
     // Convert slots to Date objects
     const slotDates = body.slots.map((slot) => new Date(slot));
 
-    // Check for conflicts with existing appointments
+    // Check for conflicts with existing appointments for this specific consultant
     const existingAppointments = await prisma.appointment.findMany({
       where: {
         AND: [
@@ -84,11 +107,17 @@ export async function POST(
               {
                 subscription: {
                   requestStatus: RequestStatus.APPROVED,
+                  subscriptionPlan: {
+                    consultantProfileId: consultantProfile.id,
+                  },
                 },
               },
               {
                 consultation: {
                   requestStatus: RequestStatus.APPROVED,
+                  consultationPlan: {
+                    consultantProfileId: consultantProfile.id,
+                  },
                 },
               },
             ],
@@ -147,7 +176,21 @@ export async function POST(
 
       if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
         // For weekly schedule, check if the slot matches any weekly pattern
-        isAvailable = availableSlots.some((slot) => {
+        // Handle both old and new data structures
+        isAvailable = availableSlots.some((slot: any) => {
+          // Check if using new structure with dayOfWeekforStartTimeInUTC
+          if (slot.dayOfWeekforStartTimeInUTC && slot.slotStartTimeInUTC) {
+            const dayOfWeek = getDayOfWeekNumber(slot.dayOfWeekforStartTimeInUTC);
+            const slotTime = extractTimeFromUTC(new Date(slot.slotStartTimeInUTC));
+            
+            return (
+              slotDate.getDay() === dayOfWeek &&
+              slotDate.getHours() === slotTime.hours &&
+              slotDate.getMinutes() === slotTime.minutes
+            );
+          }
+          
+          // Fallback to old structure
           const slotTime = new Date(slot.slotStartTimeInUTC);
           return (
             slotDate.getDay() === slotTime.getDay() &&

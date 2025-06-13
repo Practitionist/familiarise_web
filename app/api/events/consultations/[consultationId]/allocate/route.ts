@@ -4,6 +4,7 @@ import {
   Prisma,
   RequestStatus,
   ScheduleType,
+  DayOfWeek,
 } from "@prisma/client";
 import { addHours } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
@@ -54,7 +55,6 @@ async function allocateSlotAuto(
 ): Promise<Date> {
   const { consultationPlan, requestedBy } = consultation;
   const { consultantProfile } = consultationPlan;
-  const consultantTimezone = consultantProfile.user.currentTimezone || "UTC";
 
   // Get available slots based on schedule type
   const availableSlots =
@@ -126,34 +126,60 @@ async function allocateSlotAuto(
 
   // Find first available slot
   const now = new Date();
-  for (const slot of sortedSlots) {
-    let slotTime: Date;
-
-    if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
-      // For weekly slots, find the next occurrence of this weekday
-      const slotDate = new Date();
-      const currentDay = slotDate.getDay();
-      const targetDay = new Date(slot.slotStartTimeInUTC).getDay();
-      const daysToAdd = (targetDay - currentDay + 7) % 7;
-      slotDate.setDate(slotDate.getDate() + daysToAdd);
-      slotDate.setHours(
-        new Date(slot.slotStartTimeInUTC).getHours(),
-        new Date(slot.slotStartTimeInUTC).getMinutes(),
-        0,
-        0,
-      );
-      slotTime = slotDate;
-    } else {
-      // For custom slots, use the exact date
-      slotTime = new Date(slot.slotStartTimeInUTC);
+  
+  if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
+    // For weekly slots, find the next available occurrence
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Look ahead up to 8 weeks to find an available slot
+    for (let weekOffset = 0; weekOffset < 8; weekOffset++) {
+      const weekStart = new Date(today);
+      weekStart.setDate(weekStart.getDate() + (weekOffset * 7));
+      
+      for (const slot of sortedSlots) {
+        const weeklySlot = slot as any; // Type assertion for weekly slot
+        
+        // Calculate the target date for this day of week
+        const targetDate = new Date(weekStart);
+        const currentDayOfWeek = targetDate.getDay(); // 0 = Sunday, 1 = Monday, etc.
+        
+        // Convert DayOfWeek enum to number (assuming SUNDAY = 0, MONDAY = 1, etc.)
+        const slotDayOfWeek = Object.values(DayOfWeek).indexOf(weeklySlot.dayOfWeekforStartTimeInUTC);
+        const daysToAdd = (slotDayOfWeek - currentDayOfWeek + 7) % 7;
+        targetDate.setDate(targetDate.getDate() + daysToAdd);
+        
+        // Set the time from the slot
+        targetDate.setHours(
+          new Date(weeklySlot.slotStartTimeInUTC).getHours(),
+          new Date(weeklySlot.slotStartTimeInUTC).getMinutes(),
+          0,
+          0,
+        );
+        
+        // Skip if slot is already booked or in the past
+        if (bookedSlots.has(targetDate.toISOString()) || targetDate <= now) {
+          continue;
+        }
+        
+        return targetDate;
+      }
     }
-
-    // Skip if slot is already booked or in the past
-    if (bookedSlots.has(slotTime.toISOString()) || slotTime < now) {
-      continue;
+  } else {
+    // For custom slots, find the next available future slot
+    const futureSlots = sortedSlots
+      .map(slot => new Date(slot.slotStartTimeInUTC))
+      .filter(slotTime => slotTime > now)
+      .sort((a, b) => a.getTime() - b.getTime());
+    
+    for (const slotTime of futureSlots) {
+      // Skip if slot is already booked
+      if (bookedSlots.has(slotTime.toISOString())) {
+        continue;
+      }
+      
+      return slotTime;
     }
-
-    return slotTime;
   }
 
   throw new Error("No available slots found");
@@ -204,17 +230,21 @@ async function allocateSlotManual(
 ): Promise<Date> {
   const { consultationPlan, requestedBy } = consultation;
   const { consultantProfile } = consultationPlan;
-  const consultantTimezone = consultantProfile.user.currentTimezone || "UTC";
 
   // Validate number of slots
   if (slots.length !== 1) {
     throw new Error("Consultation requires exactly one slot");
   }
 
+  // Validate and parse the slot date
   const slotDate = new Date(slots[0]);
+  if (isNaN(slotDate.getTime())) {
+    throw new Error(`Invalid date format: ${slots[0]}`);
+  }
 
   // Validate slot is in the future
-  if (slotDate <= new Date()) {
+  const now = new Date();
+  if (slotDate <= now) {
     throw new Error("Cannot allocate slots in the past");
   }
 
@@ -255,7 +285,7 @@ async function allocateSlotManual(
     }
   }
 
-  // Check for conflicts
+  // Check for conflicts with existing appointments
   const existingAppointment = await tx.appointment.findFirst({
     where: {
       AND: [
@@ -282,10 +312,25 @@ async function allocateSlotManual(
         },
       ],
     },
+    include: {
+      slotsOfAppointment: {
+        include: {
+          user: true,
+        },
+      },
+    },
   });
 
   if (existingAppointment) {
-    throw new Error("Selected slot is already booked");
+    // Provide more detailed conflict information
+    const conflictingSlot = existingAppointment.slotsOfAppointment.find(
+      slot => slot.slotStartTimeInUTC.toISOString() === slotDate.toISOString()
+    );
+    const conflictingUsers = conflictingSlot?.user?.map(u => u.email).join(', ') || 'unknown users';
+    
+    throw new Error(
+      `Selected slot is already booked by: ${conflictingUsers}`
+    );
   }
 
   return slotDate;
