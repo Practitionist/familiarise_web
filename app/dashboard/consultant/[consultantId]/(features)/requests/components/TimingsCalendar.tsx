@@ -79,6 +79,9 @@ export function TimingsCalendar({
 
     const isButtonDisabled = status.isDisabled;
 
+    // Check for true booking conflicts (multiple appointments overlapping the same time)
+    const hasBookingConflict = status.overlappingAppointments.length > 1;
+
     let cellClassName =
       "h-8 w-full relative text-[10px] leading-tight px-1 py-0.5 transition-colors duration-150 ease-in-out border border-transparent rounded-sm ";
     let buttonText = "";
@@ -87,6 +90,11 @@ export function TimingsCalendar({
       cellClassName +=
         "bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
       buttonText = "Selected";
+    } else if (hasBookingConflict) {
+      // Red color for booking conflicts (multiple overlapping appointments)
+      cellClassName += "bg-red-500 text-red-50 cursor-not-allowed border-red-600";
+      cellClassName += status.isInPast ? " opacity-50" : "";
+      buttonText = "Booking Conflict";
     } else if (status.isBookedForDisplay) {
       cellClassName += "bg-slate-400 text-slate-800 cursor-not-allowed";
       cellClassName += status.isInPast ? " opacity-50" : "";
@@ -153,6 +161,11 @@ export function TimingsCalendar({
               align="center"
             >
               <div className="flex flex-col gap-1">
+                {hasBookingConflict && (
+                  <div className="bg-red-100 text-red-800 px-2 py-1 rounded text-center font-semibold mb-2">
+                    ⚠️ SCHEDULING CONFLICT
+                  </div>
+                )}
                 {status.overlappingAppointments.map((appSlot) => (
                   <div
                     key={

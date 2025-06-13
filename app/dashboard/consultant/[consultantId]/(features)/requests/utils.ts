@@ -297,19 +297,39 @@ export function processCustomAvailabilitySlots(
  */
 export function processAppointments(appointments: TAppointment[]): DetailedTimeSlotMeta[] {
   return appointments.flatMap((appointment) =>
-    appointment.slotsOfAppointment.map((slot) => ({
-      startTime: new Date(slot.slotStartTimeInUTC),
-      endTime: new Date(slot.slotEndTimeInUTC),
-      appointmentDetails: {
-        id: appointment.id,
-        type: appointment.consultation ? AppointmentsType.CONSULTATION : 
-              appointment.subscription ? AppointmentsType.SUBSCRIPTION :
-              AppointmentsType.CONSULTATION, // default fallback
-        title: appointment.consultation?.consultationPlan?.title || 
-               appointment.subscription?.subscriptionPlan?.title || 
-               "Unknown Appointment",
-      },
-    }))
+    appointment.slotsOfAppointment.map((slot) => {
+      // Determine appointment type and title
+      let type: AppointmentsType;
+      let title: string;
+
+      if (appointment.consultation) {
+        type = AppointmentsType.CONSULTATION;
+        title = appointment.consultation.consultationPlan?.title || "Consultation";
+      } else if (appointment.subscription) {
+        type = AppointmentsType.SUBSCRIPTION;
+        title = appointment.subscription.subscriptionPlan?.title || "Subscription";
+      } else if (appointment.webinar) {
+        type = AppointmentsType.WEBINAR;
+        title = appointment.webinar.webinarPlan?.title || "Webinar";
+      } else if (appointment.class) {
+        type = AppointmentsType.CLASS;
+        title = appointment.class.classPlan?.title || "Class";
+      } else {
+        // Fallback for unknown appointment types
+        type = appointment.appointmentType || AppointmentsType.CONSULTATION;
+        title = "Appointment";
+      }
+
+      return {
+        startTime: new Date(slot.slotStartTimeInUTC),
+        endTime: new Date(slot.slotEndTimeInUTC),
+        appointmentDetails: {
+          id: appointment.id,
+          type,
+          title,
+        },
+      };
+    })
   );
 }
 
