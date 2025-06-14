@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, AppointmentsType } from "@prisma/client";
+import { notifyAppointmentUpdate } from "@/utils/realTimeNotifications";
 
 interface UpdateSlotsRequest {
   slotsOfAppointment?: {
@@ -811,6 +812,27 @@ export async function DELETE(
         },
       },
     });
+
+    // Trigger real-time notification for deletion
+    let consultantId = null;
+    if (deletedAppointment.consultation?.consultationPlan?.consultantProfile?.user?.id) {
+      consultantId = deletedAppointment.consultation.consultationPlan.consultantProfile.user.id;
+    } else if (deletedAppointment.subscription?.subscriptionPlan?.consultantProfile?.user?.id) {
+      consultantId = deletedAppointment.subscription.subscriptionPlan.consultantProfile.user.id;
+    } else if (deletedAppointment.webinar?.webinarPlan?.consultantProfile?.user?.id) {
+      consultantId = deletedAppointment.webinar.webinarPlan.consultantProfile.user.id;
+    } else if (deletedAppointment.class?.classPlan?.consultantProfile?.user?.id) {
+      consultantId = deletedAppointment.class.classPlan.consultantProfile.user.id;
+    }
+
+    if (consultantId) {
+      notifyAppointmentUpdate(consultantId, appointmentId, {
+        action: 'deletion',
+        appointmentType: deletedAppointment.consultation ? 'consultation' : 
+                        deletedAppointment.subscription ? 'subscription' :
+                        deletedAppointment.webinar ? 'webinar' : 'class'
+      });
+    }
 
     return NextResponse.json({ data: deletedAppointment }, { status: 200 });
   } catch (error) {

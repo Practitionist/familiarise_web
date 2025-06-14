@@ -10,6 +10,7 @@ import {
 } from "@prisma/client";
 import { addHours, addWeeks } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
+import { notifyRequestUpdate } from "@/utils/realTimeNotifications";
 
 type PrismaTransaction = Omit<
   Prisma.TransactionClient,
@@ -682,6 +683,17 @@ export async function PATCH(
         {
           timeout: 30000, // Increase timeout to 30 seconds for subscription allocations
         },
+      );
+
+      // Trigger real-time notification
+      notifyRequestUpdate(
+        result.subscription.subscriptionPlan.consultantProfile.user.id,
+        subscriptionId,
+        {
+          action: body.isAuto ? 'auto_allocation' : body.useRequestedSlots ? 'requested_allocation' : 'manual_allocation',
+          appointmentIds: result.appointments.map(app => app.id),
+          subscriptionType: true,
+        }
       );
 
       return NextResponse.json({ data: result });

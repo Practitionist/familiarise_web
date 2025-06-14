@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 import { addHours } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
+import { notifyRequestUpdate } from "@/utils/realTimeNotifications";
 
 type PrismaTransaction = Omit<
   Prisma.TransactionClient,
@@ -512,6 +513,16 @@ export async function PATCH(
           appointment,
         };
       });
+
+      // Trigger real-time notification
+      notifyRequestUpdate(
+        result.consultation.consultationPlan.consultantProfile.user.id,
+        consultationId,
+        {
+          action: body.isAuto ? 'auto_allocation' : body.useRequestedSlots ? 'requested_allocation' : 'manual_allocation',
+          appointmentId: result.appointment.id,
+        }
+      );
 
       return NextResponse.json({ data: result });
     } catch (error) {

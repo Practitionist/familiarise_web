@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
+import { notifyAppointmentUpdate } from "@/utils/realTimeNotifications";
 
 export async function POST(
   request: NextRequest,
@@ -21,10 +22,50 @@ export async function POST(
       const appointment = await tx.appointment.findUnique({
         where: { id: appointmentId },
         include: {
-          consultation: true,
-          subscription: true,
-          webinar: true,
-          class: true,
+          consultation: {
+            include: {
+              consultationPlan: {
+                include: {
+                  consultantProfile: {
+                    select: { user: { select: { id: true } } }
+                  }
+                }
+              }
+            }
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                include: {
+                  consultantProfile: {
+                    select: { user: { select: { id: true } } }
+                  }
+                }
+              }
+            }
+          },
+          webinar: {
+            include: {
+              webinarPlan: {
+                include: {
+                  consultantProfile: {
+                    select: { user: { select: { id: true } } }
+                  }
+                }
+              }
+            }
+          },
+          class: {
+            include: {
+              classPlan: {
+                include: {
+                  consultantProfile: {
+                    select: { user: { select: { id: true } } }
+                  }
+                }
+              }
+            }
+          },
         },
       });
 
@@ -65,10 +106,35 @@ export async function POST(
         where: { id: appointmentId },
       });
 
-      return { success: true };
+      return { success: true, appointment };
     });
 
-    return NextResponse.json(result);
+    // Trigger real-time notification for cancellation
+    if (result.appointment) {
+      const appointment = result.appointment;
+      let consultantId = null;
+
+      if (appointment.consultation?.consultationPlan?.consultantProfile?.user?.id) {
+        consultantId = appointment.consultation.consultationPlan.consultantProfile.user.id;
+      } else if (appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.id) {
+        consultantId = appointment.subscription.subscriptionPlan.consultantProfile.user.id;
+      } else if (appointment.webinar?.webinarPlan?.consultantProfile?.user?.id) {
+        consultantId = appointment.webinar.webinarPlan.consultantProfile.user.id;
+      } else if (appointment.class?.classPlan?.consultantProfile?.user?.id) {
+        consultantId = appointment.class.classPlan.consultantProfile.user.id;
+      }
+
+      if (consultantId) {
+        notifyAppointmentUpdate(consultantId, appointmentId, {
+          action: 'cancellation',
+          appointmentType: appointment.consultation ? 'consultation' : 
+                          appointment.subscription ? 'subscription' :
+                          appointment.webinar ? 'webinar' : 'class'
+        });
+      }
+    }
+
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error canceling appointment:", error);
     return NextResponse.json(

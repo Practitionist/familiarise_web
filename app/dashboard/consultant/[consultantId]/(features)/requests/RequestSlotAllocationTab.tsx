@@ -13,8 +13,7 @@ import {
   DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+  DialogTitle
 } from "@/components/ui/dialog";
 import {
   Table,
@@ -25,15 +24,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { toast } from "@/components/ui/use-toast";
+import { RealTimeUpdateData, useRealTimeUpdates } from "@/hooks/useRealTimeUpdates";
 import { DetailedTimeSlotMeta, TimeSlotMeta } from "@/utils/timeSlotsMeta";
 import { AppointmentsType, RequestStatus, ScheduleType } from "@prisma/client";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
 import { TimingsCalendar } from "./components/TimingsCalendar";
-import {
-  RequestedBy
-} from "./types";
 import {
   Request as UtilRequest,
   canAutoAllocate,
@@ -44,35 +41,7 @@ import {
   processConsultations,
   processCustomAvailabilitySlots,
   processSubscriptions,
-  setupPolling,
 } from "./utils";
-
-// --- API Response Type Definitions ---
-// interface UserInfo { ... } // Removed
-// interface RequestedBy { ... } // Removed
-// interface ConsultationPlanInfo { ... } // Removed
-// interface SubscriptionPlanInfo { ... } // Removed
-// interface AppointmentSlot { ... } // Removed (part of SlotInterval now)
-// interface AppointmentInfo { ... } // Removed
-// interface ConsultationApiResponse { ... } // Removed
-// interface SubscriptionApiResponse { ... } // Removed
-// interface AvailabilityApiResponse extends AppointmentSlot { } // Removed
-// interface ConsultantApiResponse { ... } // Removed
-// --- End API Response Type Definitions ---
-
-interface Request {
-  id: string;
-  type: AppointmentsType;
-  title: string;
-  requestedBy: RequestedBy;
-  requestedAt: string;
-  requestedTimes?: string[];
-  status: RequestStatus;
-  requiredSlots: number;
-  allocatedSlots?: string[];
-}
-
-// interface SlotInterval { ... } // Removed - Now imported
 
 type RequestType = "all" | "consultation" | "subscription";
 
@@ -81,48 +50,6 @@ interface RequestSlotAllocationTabProps {
   onUpdate: () => void;
 }
 
-// Helper function to fetch and process data
-async function fetchDataFromApi<T>(
-  url: string,
-): Promise<{ ok: boolean; data: T | null; error?: string }> {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`Failed to fetch ${url}:`, errorText);
-      return {
-        ok: false,
-        data: null,
-        // Keep server errors somewhat specific
-        error: `Server error (${response.status}) while fetching data.`,
-      };
-    }
-    const data = await response.json();
-    // Ensure data exists and has the expected structure
-    if (data && data.data !== undefined) {
-      return { ok: true, data: data.data as T, error: undefined };
-    } else {
-      console.error(`Unexpected response structure from ${url}:`, data);
-      return {
-        ok: false,
-        data: null,
-        error: "Received unexpected data structure from server.",
-      };
-    }
-  } catch (err) {
-    console.error(`Error fetching ${url}:`, err);
-    let message = "An unknown error occurred while fetching data.";
-    // Specifically check for the browser's network error
-    if (err instanceof TypeError && err.message === "Failed to fetch") {
-      message =
-        "Network error: Could not connect to the server. Please check your internet connection.";
-    } else if (err instanceof Error) {
-      // Use message from other error types
-      message = err.message;
-    }
-    return { ok: false, data: null, error: message };
-  }
-}
 
 export function RequestSlotAllocationTab({
   type,
@@ -216,14 +143,39 @@ export function RequestSlotAllocationTab({
     }
   }, [consultantId, type]);
 
-  // Combined useEffect for data fetching and polling
+  // Real-time updates handler
+  const handleRealTimeUpdate = useCallback((data: RealTimeUpdateData) => {
+    console.log('Received real-time update:', data);
+    
+    // Show a brief visual indicator for real-time updates
+    toast({
+      title: "Real-time Update",
+      description: `${data.type.replace('_', ' ').toLowerCase()} received`,
+      duration: 2000,
+    });
+    
+    switch (data.type) {
+      case 'REQUEST_UPDATE':
+      case 'APPOINTMENT_UPDATE':
+      case 'AVAILABILITY_UPDATE':
+        // Refresh data when any relevant update occurs
+        fetchData();
+        break;
+      default:
+        break;
+    }
+  }, [fetchData]);
+
+  // Setup real-time updates
+  const { broadcastUpdate, isConnected } = useRealTimeUpdates({
+    consultantId,
+    onUpdate: handleRealTimeUpdate,
+    enabled: true,
+  });
+
+  // Initial data fetch
   useEffect(() => {
     fetchData();
-    
-    // Setup polling
-    const cleanup = setupPolling(fetchData, 30000);
-    
-    return cleanup;
   }, [fetchData]);
 
   // Combined useEffect for onUpdate callback
@@ -275,6 +227,13 @@ export function RequestSlotAllocationTab({
         description: `Successfully allocated ${selectedSlots.length} slots for ${selectedRequest.title}`,
       });
 
+      // Broadcast update to other tabs
+      broadcastUpdate({
+        type: 'REQUEST_UPDATE',
+        requestId: selectedRequest.id,
+        data: { action: 'manual_allocation', slots: selectedSlots },
+      });
+
       // Reset state and refresh data
       setSelectedSlots([]);
       setSelectedRequest(null);
@@ -322,6 +281,13 @@ export function RequestSlotAllocationTab({
       toast({
         title: "Success",
         description: `Successfully auto-allocated slots for ${selectedRequest.title}`,
+      });
+
+      // Broadcast update to other tabs
+      broadcastUpdate({
+        type: 'REQUEST_UPDATE',
+        requestId: selectedRequest.id,
+        data: { action: 'auto_allocation' },
       });
 
       // Reset state and refresh data
@@ -373,6 +339,13 @@ export function RequestSlotAllocationTab({
       toast({
         title: "Success",
         description: `Successfully allocated requested slots for ${selectedRequestForDialog.title}`,
+      });
+
+      // Broadcast update to other tabs
+      broadcastUpdate({
+        type: 'REQUEST_UPDATE',
+        requestId: selectedRequestForDialog.id,
+        data: { action: 'requested_allocation', override },
       });
 
       // Reset state and refresh data
@@ -455,10 +428,20 @@ export function RequestSlotAllocationTab({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Slot Allocation</CardTitle>
-        <CardDescription>
-          Allocate slots for subscription and class requests
-        </CardDescription>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle>Slot Allocation</CardTitle>
+            <CardDescription>
+              Allocate slots for subscription and class requests
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+            <span className="text-xs text-muted-foreground">
+              {isConnected ? 'Real-time updates active' : 'Connecting...'}
+            </span>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         {requests.length === 0 ? (
