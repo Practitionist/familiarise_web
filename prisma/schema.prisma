@@ -434,8 +434,9 @@ model SubscriptionPlan {
   description      String?          @db.Text
   durationInMonths Int              @default(1)
   price            Int
-  callsPerWeek     Int              @default(1)
-  videoMeetings    Int              @default(1)
+  callsPerWeek           Int              @default(1)
+  sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
+  videoMeetings          Int              @default(1)
   emailSupport     PlanEmailSupport @default(GENERAL)
   language         String           @default("English")
   level            String           @default("Beginner")

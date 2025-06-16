@@ -582,11 +582,11 @@ export async function PATCH(
                     create: {
                       slotStartTimeInUTC: slotTime,
                       slotEndTimeInUTC: addHours(slotTime, (() => {
+                        // Find the corresponding class content for this session
                         const classContents = classPlan.classPlan.classContents || [];
-                        if (classContents.length === 0) return 1; // Default 1 hour
-                        
-                        const totalHours = classContents.reduce((sum: number, content: any) => sum + content.hoursAllotted, 0);
-                        return totalHours / classContents.length; // Average session duration
+                        const sessionIndex = selectedSlots.indexOf(slotTime);
+                        const content = classContents[sessionIndex % classContents.length];
+                        return content?.hoursAllotted || 1; // Use content-specific duration or default 1 hour
                       })()),
                       isTentative: false,
                       user: {

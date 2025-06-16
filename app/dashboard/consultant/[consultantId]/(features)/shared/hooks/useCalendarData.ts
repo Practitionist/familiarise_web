@@ -157,8 +157,8 @@ export function useCalendarData(options: UseCalendarDataOptions): UseCalendarDat
 
             const intervalSlots: TimeSlot[] = [];
             for (let i = 0; i < numIntervals; i++) {
-              const intervalStart = new Date(start.getTime() + i * 30 * 60 * 1000);
-              const intervalEnd = new Date(intervalStart.getTime() + 30 * 60 * 1000);
+              const intervalStart = new Date(start.getTime() + i * 30 * 60 * 1000); // 30-minute grid intervals
+              const intervalEnd = new Date(intervalStart.getTime() + 30 * 60 * 1000); // 30-minute grid intervals
               intervalSlots.push({
                 startTime: intervalStart,
                 endTime: intervalEnd,

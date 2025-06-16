@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { UnifiedCalendar } from "../../shared/components/UnifiedCalendar";
 import { TimeSlot } from "../../shared/utils/calendarUtils";
 
@@ -35,6 +35,41 @@ export function EventTimingsCalendar({
   const { toast } = useToast();
   const [selectedSlots, setSelectedSlots] = useState<TimeSlot[]>([]);
   const [saving, setSaving] = useState(false);
+  const [sessionDuration, setSessionDuration] = useState<number>(1); // Default 1 hour
+
+  // Fetch session duration based on event type and ID
+  useEffect(() => {
+    const fetchSessionDuration = async () => {
+      try {
+        const endpoint = eventType === "webinar" 
+          ? `/api/events/webinars/${eventId}` 
+          : `/api/events/classes/${eventId}`;
+        
+        const response = await fetch(endpoint);
+        if (response.ok) {
+          const data = await response.json();
+          
+          if (eventType === "webinar") {
+            setSessionDuration(data.webinarPlan?.durationInHours || 1);
+          } else {
+            // For classes, use average of class content durations
+            const classContents = data.classPlan?.classContents || [];
+            if (classContents.length > 0) {
+              const totalHours = classContents.reduce((sum: number, content: any) => sum + content.hoursAllotted, 0);
+              setSessionDuration(totalHours / classContents.length);
+            } else {
+              setSessionDuration(1); // Default fallback
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("Failed to fetch session duration, using default:", error);
+        setSessionDuration(1);
+      }
+    };
+
+    fetchSessionDuration();
+  }, [eventId, eventType]);
 
   const consultantId = params.consultantId?.toString() || "";
   const requiredSlots = eventType === "webinar" ? 1 : callsPerWeek * 2 * 4 * durationInMonths;
@@ -67,6 +102,7 @@ export function EventTimingsCalendar({
           eventId={eventId}
           durationInMonths={durationInMonths}
           callsPerWeek={callsPerWeek}
+          sessionDurationInHours={sessionDuration}
           mode="allocate"
           onAllocationComplete={handleAllocationComplete}
           showAllocationButtons={true}

@@ -92,6 +92,7 @@ export function mapWeeklySlots(
   consultantData: ConsultantData,
   currentDate: Date,
   view: "week" | "month" = "week",
+  intervalMinutes: number = 30, // Configurable interval duration
 ): TimeSlot[] {
   if (
     consultantData.scheduleType !== ScheduleType.WEEKLY ||
@@ -144,11 +145,11 @@ export function mapWeeklySlots(
         slotEndTime.setDate(slotEndTime.getDate() + 1);
       }
 
-      // Create hourly slots (30-minute intervals)
+      // Create slots with configurable intervals
       let currentHour = new Date(slotStartTime);
       while (currentHour < slotEndTime) {
         const nextInterval = new Date(currentHour);
-        nextInterval.setMinutes(currentHour.getMinutes() + 30);
+        nextInterval.setMinutes(currentHour.getMinutes() + intervalMinutes);
 
         const endTimeForSlot = nextInterval > slotEndTime ? slotEndTime : nextInterval;
 
@@ -173,7 +174,10 @@ export function mapWeeklySlots(
 /**
  * Maps custom availability slots to calendar time slots
  */
-export function mapCustomSlots(consultantData: ConsultantData): TimeSlot[] {
+export function mapCustomSlots(
+  consultantData: ConsultantData,
+  intervalMinutes: number = 30, // Configurable interval duration
+): TimeSlot[] {
   if (
     consultantData.scheduleType !== ScheduleType.CUSTOM ||
     !consultantData.slotsOfAvailabilityCustom?.length
@@ -187,11 +191,11 @@ export function mapCustomSlots(consultantData: ConsultantData): TimeSlot[] {
     const startTime = new Date(slot.slotStartTimeInUTC);
     const endTime = new Date(slot.slotEndTimeInUTC);
 
-    // Create 30-minute intervals for the custom slot
+    // Create intervals with configurable duration for the custom slot
     let currentInterval = new Date(startTime);
     while (currentInterval < endTime) {
       const nextInterval = new Date(currentInterval);
-      nextInterval.setMinutes(currentInterval.getMinutes() + 30);
+      nextInterval.setMinutes(currentInterval.getMinutes() + intervalMinutes);
 
       const endTimeForSlot = nextInterval > endTime ? endTime : nextInterval;
 
@@ -230,11 +234,12 @@ export function getSlotStatus(
   date: Date,
   availableSlots: TimeSlot[],
   existingAppointments: Appointment[],
+  intervalMinutes: number = 30, // Configurable interval duration
 ): SlotStatus {
   const slotStart = new Date(date);
   slotStart.setHours(interval.hour, interval.minute, 0, 0);
   const slotEnd = new Date(slotStart);
-  slotEnd.setMinutes(slotStart.getMinutes() + 30);
+  slotEnd.setMinutes(slotStart.getMinutes() + intervalMinutes);
 
   const now = new Date();
   const isInPast = slotStart < now;

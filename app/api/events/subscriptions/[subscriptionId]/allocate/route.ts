@@ -583,7 +583,7 @@ export async function PATCH(
                   slotsOfAppointment: {
                     create: {
                       slotStartTimeInUTC: slotTime,
-                      slotEndTimeInUTC: addHours(slotTime, 1),
+                      slotEndTimeInUTC: addHours(slotTime, subscription.subscriptionPlan.sessionDurationInHours),
                       isTentative: false,
                       user: {
                         connect: [

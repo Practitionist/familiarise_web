@@ -25,6 +25,7 @@ export interface UnifiedCalendarProps {
   eventId?: string;
   durationInMonths?: number;
   callsPerWeek?: number;
+  sessionDurationInHours?: number; // Expected duration for each session
   mode: "view" | "select" | "allocate";
   onSlotsSelected?: (slots: TimeSlot[]) => void;
   onAllocationComplete?: (result: any) => void;
@@ -37,6 +38,7 @@ export interface UnifiedCalendarProps {
 export function UnifiedCalendar({
   consultantId,
   eventType,
+  sessionDurationInHours,
   eventId,
   durationInMonths,
   callsPerWeek,
@@ -48,6 +50,12 @@ export function UnifiedCalendar({
   requestedSlots = [],
   className = "",
 }: UnifiedCalendarProps) {
+  // Validate required sessionDurationInHours
+  if (!sessionDurationInHours || sessionDurationInHours <= 0) {
+    console.error("sessionDurationInHours is required and must be greater than 0", sessionDurationInHours);
+    throw new Error("sessionDurationInHours is required and must be greater than 0");
+  }
+
   // State
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState<"week" | "month">("week");
@@ -101,7 +109,7 @@ export function UnifiedCalendar({
     if (preSelectedSlots.length > 0) {
       setSelectedSlots(preSelectedSlots);
     }
-  }, [preSelectedSlots, setSelectedSlots]);
+  }, [preSelectedSlots]); // Remove setSelectedSlots to prevent infinite loops
 
   // Call onSlotsSelected when selection changes
   useEffect(() => {
@@ -153,7 +161,7 @@ export function UnifiedCalendar({
 
     const slot: TimeSlot = {
       startTime: new Date(status.intervalStartUTCString),
-      endTime: new Date(status.intervalEndUTCString),
+      endTime: new Date(new Date(status.intervalStartUTCString).getTime() + sessionDurationInHours * 60 * 60 * 1000), // Use sessionDurationInHours instead of 30-minute default
       isAvailable: status.isAvailable,
       isBooked: status.isBooked,
     };
