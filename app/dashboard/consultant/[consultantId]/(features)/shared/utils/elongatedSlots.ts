@@ -14,17 +14,23 @@ export async function fetchSessionDurationFromPlan(
 ): Promise<number> {
   try {
     const endpoint = getEventEndpoint(eventType, eventId);
+    console.log(`[DEBUG] Fetching from endpoint: ${endpoint}`);
+    
     const response = await fetch(endpoint);
+    console.log(`[DEBUG] Response status: ${response.status}`);
     
     if (!response.ok) {
-      throw new Error(`Failed to fetch ${eventType} plan`);
+      const errorText = await response.text();
+      console.error(`[DEBUG] Response error:`, errorText);
+      throw new Error(`Failed to fetch ${eventType} plan: ${response.status} ${errorText}`);
     }
     
     const data = await response.json();
+    console.log(`[DEBUG] Response data keys:`, Object.keys(data));
     return extractSessionDuration(eventType, data);
   } catch (error) {
-    console.warn(`Failed to fetch session duration for ${eventType}:`, error);
-    return getDefaultSessionDuration(eventType);
+    console.error(`Failed to fetch session duration for ${eventType}:`, error);
+    throw new Error(`Unable to fetch required session duration for ${eventType}. Plan data is missing or invalid.`);
   }
 }
 
@@ -44,43 +50,53 @@ function getEventEndpoint(eventType: string, eventId: string): string {
 /**
  * Extracts session duration from plan data
  */
-function extractSessionDuration(eventType: string, data: any): number {
+function extractSessionDuration(eventType: string, response: any): number {
+  // Handle API response wrapper - extract actual data
+  const data = response.data || response;
+  
   switch (eventType) {
     case "consultation":
-      return data.consultationPlan?.durationInHours || 1;
+      const consultationDuration = data.consultationPlan?.durationInHours;
+      if (!consultationDuration || consultationDuration <= 0) {
+        throw new Error(`Consultation plan is missing required durationInHours. Received: ${JSON.stringify(data.consultationPlan)}`);
+      }
+      return consultationDuration;
     
     case "subscription":
-      return data.subscriptionPlan?.sessionDurationInHours || 1;
+      const subscriptionDuration = data.subscriptionPlan?.sessionDurationInHours;
+      if (!subscriptionDuration || subscriptionDuration <= 0) {
+        throw new Error(`Subscription plan is missing required sessionDurationInHours. Received: ${JSON.stringify(data.subscriptionPlan)}`);
+      }
+      return subscriptionDuration;
     
     case "webinar":
-      return data.webinarPlan?.durationInHours || 1;
+      const webinarDuration = data.webinarPlan?.durationInHours;
+      if (!webinarDuration || webinarDuration <= 0) {
+        throw new Error(`Webinar plan is missing required durationInHours. Received: ${JSON.stringify(data.webinarPlan)}`);
+      }
+      return webinarDuration;
     
     case "class":
       // For classes, calculate average from class contents
       const classContents = data.classPlan?.classContents || [];
-      if (classContents.length > 0) {
-        const totalHours = classContents.reduce((sum: number, content: any) => sum + content.hoursAllotted, 0);
-        return totalHours / classContents.length;
+      if (classContents.length === 0) {
+        throw new Error("Class plan is missing required classContents with hoursAllotted");
       }
-      return 1;
+      
+      const totalHours = classContents.reduce((sum: number, content: any) => {
+        if (!content.hoursAllotted || content.hoursAllotted <= 0) {
+          throw new Error("Class content is missing required hoursAllotted");
+        }
+        return sum + content.hoursAllotted;
+      }, 0);
+      
+      return totalHours / classContents.length;
     
     default:
-      return 1;
+      throw new Error(`Invalid event type: ${eventType}`);
   }
 }
 
-/**
- * Gets default session duration fallback
- */
-function getDefaultSessionDuration(eventType: string): number {
-  const defaults = {
-    consultation: 1,    // 1 hour
-    subscription: 1,    // 1 hour
-    webinar: 1,         // 1 hour
-    class: 1            // 1 hour
-  };
-  return defaults[eventType as keyof typeof defaults] || 1;
-}
 
 /**
  * Calculates number of 30-minute slots needed for session duration

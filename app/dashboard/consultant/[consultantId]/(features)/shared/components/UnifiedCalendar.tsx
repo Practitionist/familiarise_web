@@ -79,17 +79,27 @@ export function UnifiedCalendar({
 
       if (eventId) {
         try {
+          console.log(`[DEBUG] Fetching session duration for ${eventType} with eventId: ${eventId}`);
           const duration = await fetchSessionDurationFromPlan(eventType, eventId);
           setActualSessionDuration(duration);
         } catch (error) {
-          console.warn("Failed to fetch session duration, using default:", error);
-          setActualSessionDuration(1); // Default 1 hour
+          console.error("Failed to fetch session duration:", error);
+          // For now, use a default value instead of throwing to prevent calendar crashes
+          console.warn(`Using default 1-hour duration for ${eventType} due to fetch error`);
+          setActualSessionDuration(1);
         }
+      } else if (mode !== "view") {
+        // Only require eventId for non-view modes
+        console.warn(`No eventId provided for ${eventType} calendar in ${mode} mode. Using default 1-hour duration.`);
+        setActualSessionDuration(1);
+      } else {
+        // View mode doesn't need duration
+        setActualSessionDuration(1);
       }
     };
 
     fetchDuration();
-  }, [eventType, eventId, sessionDurationInHours]);
+  }, [eventType, eventId, sessionDurationInHours, mode]);
 
   // Calendar data hook
   const {
@@ -268,7 +278,7 @@ export function UnifiedCalendar({
 
     let cellClassName = "h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5";
     let buttonText = "";
-    const showTooltip = status.isBooked && status.overlappingAppointments.length > 0;
+    const showTooltip = (status.isBooked || status.isPartiallyBooked || status.isConflicting) && status.overlappingAppointments.length > 0;
 
     if (isCurrentlySelected) {
       cellClassName += " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
@@ -286,7 +296,12 @@ export function UnifiedCalendar({
         cellClassName += ` ${borderRadiusClass}`;
       }
       
-      buttonText = "Selected";
+      // Show group number for better visual grouping
+      if (elongatedSlotInfo) {
+        buttonText = `Selected #${elongatedSlotInfo.groupIndex + 1}`;
+      } else {
+        buttonText = "Selected";
+      }
     } else if (isEventSlot) {
       cellClassName += " bg-blue-500 text-white border-blue-600";
       buttonText = "Scheduled";
