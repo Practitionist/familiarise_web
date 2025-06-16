@@ -33,6 +33,7 @@ const classInclude = {
           slotsOfAvailabilityCustom: true,
         },
       },
+      classContents: true,
     },
   },
   appointments: {
@@ -50,8 +51,8 @@ async function allocateSlotsAuto(
   classPlan: ClassWithRelations,
   tx: PrismaTransaction,
 ): Promise<Date[]> {
-  const { classPlan: plan } = classPlan;
-  const { consultantProfile } = plan;
+  const { classPlan: classDetails } = classPlan;
+  const { consultantProfile } = classDetails;
   
   if (!consultantProfile) {
     throw new Error("Consultant profile not found");
@@ -130,8 +131,8 @@ async function allocateSlotsAuto(
   );
 
   // Calculate required number of slots
-  const totalWeeks = plan.durationInMonths * 4;
-  const totalRequiredSlots = totalWeeks * plan.callsPerWeek;
+  const totalWeeks = classDetails.durationInMonths * 4;
+  const totalRequiredSlots = totalWeeks * classDetails.callsPerWeek;
 
   // Find best available slots
   const selectedSlots: Date[] = [];
@@ -148,7 +149,7 @@ async function allocateSlotsAuto(
     // Process each day of the week
     for (
       let dayOffset = 0;
-      dayOffset < 7 && slotsThisWeek < plan.callsPerWeek;
+      dayOffset < 7 && slotsThisWeek < classDetails.callsPerWeek;
       dayOffset++
     ) {
       const currentDay = new Date(weekStart);
@@ -194,7 +195,7 @@ async function allocateSlotsAuto(
       }
     }
 
-    if (slotsThisWeek < plan.callsPerWeek) {
+    if (slotsThisWeek < classDetails.callsPerWeek) {
       throw new Error(
         `Could not find enough available slots for week ${currentWeek + 1}`,
       );
@@ -287,16 +288,16 @@ async function allocateSlotsManual(
   slots: string[],
   tx: PrismaTransaction,
 ): Promise<Date[]> {
-  const { classPlan: plan } = classPlan;
-  const { consultantProfile } = plan;
+  const { classPlan: classDetails } = classPlan;
+  const { consultantProfile } = classDetails;
   
   if (!consultantProfile) {
     throw new Error("Consultant profile not found");
   }
 
   // Validate number of slots
-  const totalWeeks = plan.durationInMonths * 4;
-  const totalRequiredSlots = totalWeeks * plan.callsPerWeek;
+  const totalWeeks = classDetails.durationInMonths * 4;
+  const totalRequiredSlots = totalWeeks * classDetails.callsPerWeek;
 
   if (slots.length !== totalRequiredSlots) {
     throw new Error(
@@ -407,9 +408,9 @@ async function allocateSlotsManual(
   }
 
   for (const [week, count] of Array.from(slotsByWeek.entries())) {
-    if (count > plan.callsPerWeek) {
+    if (count > classDetails.callsPerWeek) {
       throw new Error(
-        `Too many slots allocated for week of ${new Date(week).toLocaleDateString()} (max ${plan.callsPerWeek} allowed)`,
+        `Too many slots allocated for week of ${new Date(week).toLocaleDateString()} (max ${classDetails.callsPerWeek} allowed)`,
       );
     }
   }
@@ -580,12 +581,23 @@ export async function PATCH(
                   slotsOfAppointment: {
                     create: {
                       slotStartTimeInUTC: slotTime,
-                      slotEndTimeInUTC: addHours(slotTime, 0.5), // 30 minutes
+                      slotEndTimeInUTC: addHours(slotTime, (() => {
+                        const classContents = classPlan.classPlan.classContents || [];
+                        if (classContents.length === 0) return 1; // Default 1 hour
+                        
+                        const totalHours = classContents.reduce((sum: number, content: any) => sum + content.hoursAllotted, 0);
+                        return totalHours / classContents.length; // Average session duration
+                      })()),
                       isTentative: false,
                       user: {
                         connect: [
                           {
-                            id: classPlan.classPlan.consultantProfile!.user.id,
+                            id: (() => {
+                              if (!classPlan.classPlan.consultantProfile?.user?.id) {
+                                throw new Error("Missing consultant user information");
+                              }
+                              return classPlan.classPlan.consultantProfile.user.id;
+                            })(),
                           },
                         ],
                       },

@@ -15,7 +15,7 @@ import {
 import { format, addDays, startOfWeek, isSameDay } from "date-fns";
 import { ChevronLeft, ChevronRight, Calendar, Clock, Users, Zap, RotateCcw } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
-import { TimeSlot } from "../utils/calendarUtils";
+import { TimeSlot, AppointmentDetail } from "../utils/calendarUtils";
 import { useCalendarData } from "../hooks/useCalendarData";
 import { useSlotAllocation } from "../hooks/useSlotAllocation";
 
@@ -245,7 +245,7 @@ export function UnifiedCalendar({
               align="center"
             >
               <div className="flex flex-col gap-1">
-                {status.overlappingAppointments.map((appSlot: any, index: number) => (
+                {status.overlappingAppointments.map((appSlot: AppointmentDetail, index: number) => (
                   <div
                     key={`${appSlot.id}-${index}`}
                     className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0"

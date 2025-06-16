@@ -443,12 +443,17 @@ export async function PATCH(
             slotsOfAppointment: {
               create: {
                 slotStartTimeInUTC: selectedSlot,
-                slotEndTimeInUTC: addHours(selectedSlot, 0.5), // 30 minutes
+                slotEndTimeInUTC: addHours(selectedSlot, webinar.webinarPlan.durationInHours),
                 isTentative: false,
                 user: {
                   connect: [
                     {
-                      id: webinar.webinarPlan.consultantProfile!.user.id,
+                      id: (() => {
+                        if (!webinar.webinarPlan.consultantProfile?.user?.id) {
+                          throw new Error("Missing consultant user information");
+                        }
+                        return webinar.webinarPlan.consultantProfile.user.id;
+                      })(),
                     },
                   ],
                 },
