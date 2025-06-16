@@ -63,6 +63,8 @@ interface Request {
   status: RequestStatus;
   requiredSlots: number;
   allocatedSlots?: string[];
+  durationInMonths?: number;
+  callsPerWeek?: number;
 }
 
 // interface SlotInterval { ... } // Removed - Now imported
@@ -253,6 +255,8 @@ export function RequestSlotAllocationTab({
               (subscription.subscriptionPlan?.callsPerWeek ?? 0) *
                 4 *
                 (subscription.subscriptionPlan?.durationInMonths ?? 0) || 0,
+            durationInMonths: subscription.subscriptionPlan?.durationInMonths,
+            callsPerWeek: subscription.subscriptionPlan?.callsPerWeek,
           })),
         );
       }
@@ -732,12 +736,14 @@ export function RequestSlotAllocationTab({
                             </DialogDescription>
                           </DialogHeader>
                           <TimingsCalendar
-                            availableSlots={availableSlots}
-                            existingAppointments={existingAppointments}
+                            consultantId={consultantId}
+                            eventType={request.type.toLowerCase() as "consultation" | "subscription"}
+                            eventId={request.id}
                             onSlotSelect={handleSlotSelect}
                             selectedSlots={selectedSlots}
                             requiredSlots={request.requiredSlots}
-                            scheduleType={consultantData.scheduleType}
+                            durationInMonths={request.type === "SUBSCRIPTION" ? request.durationInMonths : undefined}
+                            callsPerWeek={request.type === "SUBSCRIPTION" ? request.callsPerWeek : undefined}
                           />
                           <DialogFooter>
                             <Button

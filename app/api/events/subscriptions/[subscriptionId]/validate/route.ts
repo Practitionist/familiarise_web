@@ -64,6 +64,13 @@ export async function POST(
 
     const { subscriptionPlan, requestedBy } = subscription;
     const { consultantProfile } = subscriptionPlan;
+    
+    if (!consultantProfile) {
+      return NextResponse.json(
+        { error: "Consultant profile not found" },
+        { status: 400 },
+      );
+    }
 
     // Initialize validation result
     const result: ValidationResult = {

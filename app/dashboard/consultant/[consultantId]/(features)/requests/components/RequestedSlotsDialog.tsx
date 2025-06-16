@@ -9,6 +9,8 @@ import {
 } from "@/components/ui/dialog";
 import { AppointmentsType } from "@prisma/client";
 import { useEffect, useState } from "react";
+import { AllocationService } from "../../shared/utils/allocationService";
+import { TimeSlot } from "../../shared/utils/calendarUtils";
 
 interface ValidationResult {
   conflicts: Array<{
@@ -55,26 +57,31 @@ export function RequestedSlotsDialog({
       setLoading(true);
       setError(null);
 
-      const endpoint =
-        requestType === AppointmentsType.SUBSCRIPTION
-          ? `/api/events/subscriptions/${requestId}/validate`
-          : `/api/events/consultations/${requestId}/validate`;
-
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ slots: requestedSlots }),
+      const eventType = requestType === AppointmentsType.SUBSCRIPTION ? "subscription" : "consultation";
+      
+      // Convert requested slots to TimeSlot objects
+      const timeSlots: TimeSlot[] = requestedSlots.map(slotString => {
+        const startTime = new Date(slotString);
+        const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // 30 minutes later
+        return {
+          startTime,
+          endTime,
+          isAvailable: true,
+          isBooked: false,
+        };
       });
 
-      const data = await response.json();
+      const validationResponse = await AllocationService.validateSlots(
+        eventType,
+        requestId,
+        timeSlots
+      );
 
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to validate slots");
+      if (!validationResponse.success) {
+        throw new Error(validationResponse.error || "Failed to validate slots");
       }
 
-      setValidationResult(data.data);
+      setValidationResult(validationResponse.data || null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to validate slots");
     } finally {

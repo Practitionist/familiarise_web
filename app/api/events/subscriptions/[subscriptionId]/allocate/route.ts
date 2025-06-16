@@ -57,6 +57,10 @@ async function allocateSlotsAuto(
 ): Promise<Date[]> {
   const { subscriptionPlan, requestedBy } = subscription;
   const { consultantProfile } = subscriptionPlan;
+  
+  if (!consultantProfile) {
+    throw new Error("Consultant profile not found");
+  }
 
   // Get available slots based on schedule type
   const availableSlots =
@@ -284,6 +288,11 @@ async function allocateSlotsManual(
 ): Promise<Date[]> {
   const { subscriptionPlan, requestedBy } = subscription;
   const { consultantProfile } = subscriptionPlan;
+  
+  if (!consultantProfile) {
+    throw new Error("Consultant profile not found");
+  }
+  
   const consultantTimezone = consultantProfile.user.currentTimezone || "UTC";
 
   // Validate number of slots
@@ -453,6 +462,14 @@ export async function PATCH(
     ) {
       return NextResponse.json(
         { error: "Missing user information" },
+        { status: 400 },
+      );
+    }
+
+    const { consultantProfile } = subscription.subscriptionPlan;
+    if (!consultantProfile) {
+      return NextResponse.json(
+        { error: "Consultant profile not found" },
         { status: 400 },
       );
     }
