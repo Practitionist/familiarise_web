@@ -18,6 +18,13 @@ import { useState, useEffect, useMemo } from "react";
 import { TimeSlot, AppointmentDetail } from "../utils/calendarUtils";
 import { useCalendarData } from "../hooks/useCalendarData";
 import { useSlotAllocation } from "../hooks/useSlotAllocation";
+import { 
+  fetchSessionDurationFromPlan, 
+  groupConsecutiveSlots, 
+  validateElongatedSlotSelection,
+  getElongatedSlotStyling,
+  convertElongatedSlotsTo30MinSlots 
+} from "../utils/elongatedSlots";
 
 export interface UnifiedCalendarProps {
   consultantId: string;
@@ -25,7 +32,7 @@ export interface UnifiedCalendarProps {
   eventId?: string;
   durationInMonths?: number;
   callsPerWeek?: number;
-  sessionDurationInHours?: number; // Expected duration for each session
+  sessionDurationInHours?: number; // Optional - will be fetched from plan if not provided
   mode: "view" | "select" | "allocate";
   onSlotsSelected?: (slots: TimeSlot[]) => void;
   onAllocationComplete?: (result: any) => void;
@@ -50,21 +57,39 @@ export function UnifiedCalendar({
   requestedSlots = [],
   className = "",
 }: UnifiedCalendarProps) {
-  // Validate required sessionDurationInHours
-  if (!sessionDurationInHours || sessionDurationInHours <= 0) {
-    console.error("sessionDurationInHours is required and must be greater than 0", sessionDurationInHours);
-    throw new Error("sessionDurationInHours is required and must be greater than 0");
-  }
-
   // State
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState<"week" | "month">("week");
   const [browserTimezone, setBrowserTimezone] = useState("UTC");
+  const [actualSessionDuration, setActualSessionDuration] = useState<number>(sessionDurationInHours || 1);
+  const [elongatedSlotGroups, setElongatedSlotGroups] = useState<TimeSlot[][]>([]);
 
   // Initialize timezone
   useEffect(() => {
     setBrowserTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
   }, []);
+
+  // Fetch session duration from plan if not provided
+  useEffect(() => {
+    const fetchDuration = async () => {
+      if (sessionDurationInHours) {
+        setActualSessionDuration(sessionDurationInHours);
+        return;
+      }
+
+      if (eventId) {
+        try {
+          const duration = await fetchSessionDurationFromPlan(eventType, eventId);
+          setActualSessionDuration(duration);
+        } catch (error) {
+          console.warn("Failed to fetch session duration, using default:", error);
+          setActualSessionDuration(1); // Default 1 hour
+        }
+      }
+    };
+
+    fetchDuration();
+  }, [eventType, eventId, sessionDurationInHours]);
 
   // Calendar data hook
   const {
@@ -111,12 +136,48 @@ export function UnifiedCalendar({
     }
   }, [preSelectedSlots]); // Remove setSelectedSlots to prevent infinite loops
 
+  // Update elongated slot groups when selected slots change
+  useEffect(() => {
+    if (selectedSlots.length > 0) {
+      const groups = groupConsecutiveSlots(selectedSlots);
+      setElongatedSlotGroups(groups);
+    } else {
+      setElongatedSlotGroups([]);
+    }
+  }, [selectedSlots]);
+
   // Call onSlotsSelected when selection changes
   useEffect(() => {
     if (mode === "select" && onSlotsSelected) {
       onSlotsSelected(selectedSlots);
     }
   }, [selectedSlots, mode]); // Remove onSlotsSelected from dependencies to prevent infinite loops
+
+  // Custom allocation handler that validates elongated slots
+  const handleElongatedSlotAllocation = async () => {
+    // Validate that selected slots form valid elongated sessions
+    const validation = validateElongatedSlotSelection(
+      selectedSlots,
+      actualSessionDuration,
+      false // Don't allow partial sessions
+    );
+
+    if (!validation.isValid) {
+      // Show error message
+      console.error("Invalid slot selection:", validation.errorMessage);
+      return;
+    }
+
+    // Convert elongated slots to 30-minute API format
+    const apiSlots = convertElongatedSlotsTo30MinSlots(validation.validGroups.flat());
+    
+    // Call the original manual allocate with converted slots
+    try {
+      await manualAllocate();
+    } catch (error) {
+      console.error("Allocation failed:", error);
+    }
+  };
 
   // Week view dates
   const weekDates = useMemo(() => {
@@ -159,9 +220,10 @@ export function UnifiedCalendar({
     const status = getSlotStatusForInterval(interval, date);
     if (status.isDisabled) return;
 
+    // Create 30-minute slot (elongation is handled visually)
     const slot: TimeSlot = {
       startTime: new Date(status.intervalStartUTCString),
-      endTime: new Date(new Date(status.intervalStartUTCString).getTime() + sessionDurationInHours * 60 * 60 * 1000), // Use sessionDurationInHours instead of 30-minute default
+      endTime: new Date(status.intervalEndUTCString), // Keep 30-minute slots
       isAvailable: status.isAvailable,
       isBooked: status.isBooked,
     };
@@ -191,12 +253,39 @@ export function UnifiedCalendar({
       es.startTime.getTime() === slot.startTime.getTime()
     );
 
+    // Find if this slot is part of an elongated group and get its position
+    let elongatedSlotInfo: { groupIndex: number; slotIndex: number; groupSize: number } | null = null;
+    if (isCurrentlySelected) {
+      for (let groupIndex = 0; groupIndex < elongatedSlotGroups.length; groupIndex++) {
+        const group = elongatedSlotGroups[groupIndex];
+        const slotIndex = group.findIndex(s => s.startTime.getTime() === slot.startTime.getTime());
+        if (slotIndex !== -1) {
+          elongatedSlotInfo = { groupIndex, slotIndex, groupSize: group.length };
+          break;
+        }
+      }
+    }
+
     let cellClassName = "h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5";
     let buttonText = "";
     const showTooltip = status.isBooked && status.overlappingAppointments.length > 0;
 
     if (isCurrentlySelected) {
       cellClassName += " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
+      
+      // Apply elongated slot styling
+      if (elongatedSlotInfo) {
+        const styling = getElongatedSlotStyling(elongatedSlotInfo.slotIndex, elongatedSlotInfo.groupSize);
+        cellClassName = cellClassName.replace("rounded-sm", ""); // Remove default rounding
+        cellClassName += ` border-2`; // Stronger border for grouped slots
+        
+        // Apply custom border radius based on position in group
+        const borderRadiusClass = styling.borderRadius === "4px" ? "rounded-sm" :
+          styling.borderRadius === "4px 4px 0 0" ? "rounded-t-sm" :
+          styling.borderRadius === "0 0 4px 4px" ? "rounded-b-sm" : "";
+        cellClassName += ` ${borderRadiusClass}`;
+      }
+      
       buttonText = "Selected";
     } else if (isEventSlot) {
       cellClassName += " bg-blue-500 text-white border-blue-600";
@@ -527,7 +616,10 @@ export function UnifiedCalendar({
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <div className="text-sm">
-            Selected: {selectedSlots.length} / {requiredSlots} slots
+            Selected: {selectedSlots.length} slots ({elongatedSlotGroups.length} session{elongatedSlotGroups.length !== 1 ? 's' : ''})
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Required: {actualSessionDuration}h per session
           </div>
           {allocationError && (
             <div className="text-sm text-red-600">{allocationError}</div>
@@ -541,8 +633,8 @@ export function UnifiedCalendar({
         {mode === "allocate" && (
           <div className="flex gap-2">
             <Button
-              onClick={manualAllocate}
-              disabled={!canAllocate || isAllocating}
+              onClick={handleElongatedSlotAllocation}
+              disabled={!canAllocate || isAllocating || elongatedSlotGroups.length === 0}
               size="sm"
             >
               <Users className="h-4 w-4 mr-2" />
