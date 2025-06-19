@@ -37,7 +37,9 @@ const initializeRazorpayClient = () => {
   const keyId = process.env.RAZORPAY_KEY_ID;
   const keySecret = process.env.RAZORPAY_SECRET;
   if (!keyId || !keySecret) {
-    console.warn("RAZORPAY_KEY_ID or RAZORPAY_SECRET not found in environment variables");
+    console.warn(
+      "RAZORPAY_KEY_ID or RAZORPAY_SECRET not found in environment variables",
+    );
     return null;
   }
   return new Razorpay({
@@ -77,7 +79,9 @@ export async function createPaymentIntent({
   try {
     if (paymentGateway === "STRIPE") {
       if (!stripeClient) {
-        throw new Error("Stripe client not initialized - check STRIPE_SECRET_KEY environment variable");
+        throw new Error(
+          "Stripe client not initialized - check STRIPE_SECRET_KEY environment variable",
+        );
       }
       // Create a Checkout Session instead of Payment Intent for better UX
       const session = await stripeClient.checkout.sessions.create({
@@ -110,7 +114,9 @@ export async function createPaymentIntent({
       };
     } else if (paymentGateway === "RAZORPAY") {
       if (!razorpay) {
-        throw new Error("Razorpay client not initialized - check RAZORPAY_KEY_ID and RAZORPAY_SECRET environment variables");
+        throw new Error(
+          "Razorpay client not initialized - check RAZORPAY_KEY_ID and RAZORPAY_SECRET environment variables",
+        );
       }
       const order = await razorpay.orders.create({
         amount: Math.round(amount * 100), // Convert to paise
@@ -168,7 +174,9 @@ export async function cancelPaymentIntent(
     if (paymentIntentId.startsWith("pi_")) {
       // Stripe payment intent
       if (!stripeClient) {
-        console.warn("Stripe client not initialized - cannot cancel payment intent");
+        console.warn(
+          "Stripe client not initialized - cannot cancel payment intent",
+        );
         return;
       }
       await stripeClient.paymentIntents.cancel(paymentIntentId, {
@@ -183,7 +191,9 @@ export async function cancelPaymentIntent(
     } else if (paymentIntentId.startsWith("cs_")) {
       // Stripe checkout session - can't be cancelled directly, but we can expire it
       if (!stripeClient) {
-        console.warn("Stripe client not initialized - cannot expire checkout session");
+        console.warn(
+          "Stripe client not initialized - cannot expire checkout session",
+        );
         return;
       }
       try {
@@ -255,7 +265,9 @@ export async function initiateRefund(
     if (paymentIntentId.startsWith("pi_")) {
       // Stripe refund
       if (!stripeClient) {
-        throw new Error("Stripe client not initialized - cannot process refund");
+        throw new Error(
+          "Stripe client not initialized - cannot process refund",
+        );
       }
       await stripeClient.refunds.create({
         payment_intent: paymentIntentId,
@@ -264,7 +276,9 @@ export async function initiateRefund(
     } else {
       // Razorpay refund
       if (!razorpay) {
-        throw new Error("Razorpay client not initialized - cannot process refund");
+        throw new Error(
+          "Razorpay client not initialized - cannot process refund",
+        );
       }
       const payments = await razorpay.orders.fetchPayments(paymentIntentId);
       if (payments.count > 0) {
