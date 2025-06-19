@@ -79,7 +79,6 @@ export function UnifiedCalendar({
 
       if (eventId) {
         try {
-          console.log(`[DEBUG] Fetching session duration for ${eventType} with eventId: ${eventId}`);
           const duration = await fetchSessionDurationFromPlan(eventType, eventId);
           setActualSessionDuration(duration);
         } catch (error) {
@@ -298,7 +297,9 @@ export function UnifiedCalendar({
       
       // Show group number for better visual grouping
       if (elongatedSlotInfo) {
-        buttonText = `Selected #${elongatedSlotInfo.groupIndex + 1}`;
+        const requiredSlotsPerSession = Math.ceil(actualSessionDuration * 2);
+        const isComplete = elongatedSlotInfo.groupSize >= requiredSlotsPerSession;
+        buttonText = `Session ${elongatedSlotInfo.groupIndex + 1}${isComplete ? '' : '*'}`;
       } else {
         buttonText = "Selected";
       }
@@ -631,10 +632,20 @@ export function UnifiedCalendar({
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <div className="text-sm">
-            Selected: {selectedSlots.length} slots ({elongatedSlotGroups.length} session{elongatedSlotGroups.length !== 1 ? 's' : ''})
+            {(() => {
+              const requiredSlotsPerSession = Math.ceil(actualSessionDuration * 2); // 30-min slots needed
+              const completeSessions = elongatedSlotGroups.filter(group => group.length >= requiredSlotsPerSession).length;
+              const totalSessions = elongatedSlotGroups.length;
+              
+              if (selectedSlots.length === 0) {
+                return "No slots selected";
+              }
+              
+              return `Selected: ${selectedSlots.length} slots forming ${totalSessions} session${totalSessions !== 1 ? 's' : ''} (${completeSessions} complete)`;
+            })()}
           </div>
           <div className="text-xs text-muted-foreground">
-            Required: {actualSessionDuration}h per session
+            Required: {actualSessionDuration}h per session ({Math.ceil(actualSessionDuration * 2)} consecutive slots)
           </div>
           {allocationError && (
             <div className="text-sm text-red-600">{allocationError}</div>
@@ -649,7 +660,7 @@ export function UnifiedCalendar({
           <div className="flex gap-2">
             <Button
               onClick={handleElongatedSlotAllocation}
-              disabled={!canAllocate || isAllocating || elongatedSlotGroups.length === 0}
+              disabled={!canAllocate || isAllocating}
               size="sm"
             >
               <Users className="h-4 w-4 mr-2" />
