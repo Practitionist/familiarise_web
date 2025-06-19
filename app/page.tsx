@@ -1,11 +1,9 @@
 "use client";
 
 import useSWR from "swr";
-
 import { AnimatePresence, motion } from "framer-motion";
-import { Star, StarHalf, User } from "lucide-react";
 import Link from "next/link";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect } from "react";
 
 import {
   Accordion,
@@ -13,508 +11,27 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-import {
-  ProcessFlowDisplay,
-  ProcessFlowStepProps,
-} from "@/components/home/flows/ProcessFlowDisplay";
+import { ProcessFlowDisplay } from "@/components/home/flows/ProcessFlowDisplay";
 import { OFFERINGS } from "@/constants/homePageData";
-import type { SupabaseImageFile } from "@/lib/supabase"; // Use SupabaseImageFile directly
+import type { SupabaseImageFile } from "@/lib/supabase";
 import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
 import { renderLCPImage } from "@/utils/image";
 
+import BlurryBackground from "@/components/home/BlurryBackground";
+import ExpertCard from "@/components/home/components/ExpertCard";
+import ReviewCard from "@/components/home/components/ReviewCard";
+import { ExpertLoadingSkeleton, TestimonialLoadingSkeleton } from "@/components/home/components/LoadingSkeletons";
+import OptimizedMarquee from "@/components/home/components/OptimizedMarquee";
+import { useOptimizedReviews, useMarqueeGroups, consultantsFetcher, reviewsFetcher } from "@/components/home/components/hooks";
+import { swrOptions, flowData, faqItems } from "@/components/home/constants";
+
 import type { TConsultantProfile } from "@/types/consultant";
 import type { ReviewWithProfiles } from "@/types/review";
-
-// Styles from CSS modules, combined into a single object
-const pageStyles = {
-  // From FeaturedExpertsSection.module.css
-  "featured-marquee-container": {
-    width: "100%",
-    overflow: "hidden",
-    position: "relative" as const,
-    maskImage:
-      "linear-gradient(to right, transparent, black 5%, black 95%, transparent)",
-    WebkitMaskImage:
-      "linear-gradient(to right, transparent, black 5%, black 95%, transparent)",
-  },
-  "featured-marquee-track": {
-    display: "flex",
-    width: "fit-content",
-    animation: "marquee-featured 60s linear infinite",
-    transform: "translateX(0)",
-  },
-  // From Testimonials.module.css
-  "testimonials-marqueeContainer": {
-    width: "100%",
-    overflow: "hidden",
-    position: "relative" as const,
-    maskImage:
-      "linear-gradient(to right, transparent, black 20%, black 80%, transparent)",
-    WebkitMaskImage:
-      "linear-gradient(to right, transparent, black 20%, black 80%, transparent)",
-  },
-  "testimonials-marquee-track-ltr": {
-    display: "flex",
-    width: "fit-content",
-    animationName: "marquee-testimonials-ltr",
-    animationDuration: "180s",
-    animationTimingFunction: "linear",
-    animationIterationCount: "infinite",
-    willChange: "transform",
-    transition: "transform 0.5s ease",
-    transform: "translateX(calc(-100% / 3))",
-  },
-  "testimonials-marquee-track-rtl": {
-    display: "flex",
-    width: "fit-content",
-    animationName: "marquee-testimonials-rtl",
-    animationDuration: "180s",
-    animationTimingFunction: "linear",
-    animationIterationCount: "infinite",
-    willChange: "transform",
-    transition: "transform 0.5s ease",
-    transform: "translateX(calc(-100% / 3))",
-  },
-};
-
-// Keyframes need to be global or injected. For simplicity, we'll assume they are in a global CSS file or use a library for animations.
-// Or, if using a CSS-in-JS solution, they can be defined there.
-// For this example, I'll add a <style jsx global> tag for keyframes.
-
-// --- Helper Components ---
-
-function RatingStars({ rating }: Readonly<{ rating: number }>) {
-  const fullStars = Math.floor(rating);
-  const hasHalfStar = rating % 1 >= 0.5;
-  return (
-    <div className="flex items-center gap-0.5 justify-center">
-      {Array.from({ length: fullStars }, (_, i) => (
-        <Star
-          key={`star-${i}`}
-          className="w-4 h-4 fill-yellow-400 text-yellow-400"
-        />
-      ))}
-      {hasHalfStar && (
-        <StarHalf className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-      )}
-      <span className="text-sm text-gray-600 ml-1">{rating.toFixed(1)}</span>
-    </div>
-  );
-}
-
-function ExpertCard({
-  expert,
-  className = "",
-}: Readonly<{ expert: TConsultantProfile; className?: string }>) {
-  const [isAvatarLoaded, setIsAvatarLoaded] = useState(false);
-  return (
-    <Link
-      href={`/explore/experts/${expert.id}`}
-      className={`block hover:no-underline flex-shrink-0 w-[280px] ${className}`}
-    >
-      <Card className="hover:shadow-lg transition-shadow duration-300 hover:-translate-y-0.5 h-full mx-3">
-        <CardHeader className="space-y-3">
-          <div className="relative mx-auto h-16 w-16">
-            {!isAvatarLoaded && (
-              <div className="absolute inset-0 h-16 w-16 rounded-full bg-gray-300 animate-pulse" />
-            )}
-            <Avatar
-              className={`mx-auto h-16 w-16 ${isAvatarLoaded ? "opacity-100" : "opacity-0"} transition-opacity duration-300`}
-            >
-              <AvatarImage
-                src={expert.user.image ?? "/placeholder-user.jpg"}
-                alt={expert.user.name ?? "Expert"}
-                onLoad={() => setIsAvatarLoaded(true)}
-                onError={() => setIsAvatarLoaded(true)} // Also set to true on error to show fallback
-              />
-              <AvatarFallback>
-                <User className="h-8 w-8" />
-              </AvatarFallback>
-            </Avatar>
-          </div>
-          <h3 className="text-lg font-semibold text-center line-clamp-1">
-            {expert.user.name}
-          </h3>
-          <RatingStars rating={expert.rating} />
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="text-center">
-            <p className="text-sm text-gray-600 font-medium line-clamp-1">
-              {expert.specialization || expert.domain.name}
-            </p>
-            <p className="text-xs text-gray-500 mt-1">
-              {expert.experience} experience
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2 justify-center">
-            {expert.tags?.slice(0, 3).map((tag) => (
-              <Badge
-                key={tag.id}
-                variant="secondary"
-                className="text-xs px-2 py-0.5"
-              >
-                {tag.name}
-              </Badge>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    </Link>
-  );
-}
-
-function ExpertLoadingSkeleton() {
-  return (
-    <div className="flex-shrink-0 w-[280px]">
-      <Card className="mx-3">
-        <CardHeader>
-          <div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mx-auto mb-3" />
-          <div className="h-5 bg-gray-200 rounded animate-pulse w-3/4 mx-auto" />
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            <div className="h-4 bg-gray-200 rounded animate-pulse w-1/2 mx-auto" />
-            <div className="h-3 bg-gray-200 rounded animate-pulse w-1/3 mx-auto" />
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-const ReviewCard = ({ review }: { review: ReviewWithProfiles }) => {
-  const stars = Array.from({ length: 5 }, (_, position) => ({
-    id: `star-${position}-${review.id}`,
-    filled: position < review.rating,
-  }));
-  return (
-    <Card className="w-[300px] flex-shrink-0 mx-3 bg-white hover:shadow-lg transition-all duration-300 hover:-translate-y-1 hover:scale-[1.02] border border-gray-100">
-      <CardContent className="p-5">
-        <div className="flex items-start gap-3">
-          <Avatar className="h-10 w-10 border border-gray-100">
-            {review.consulteeProfile?.user?.image ? (
-              <AvatarImage
-                src={review.consulteeProfile.user.image}
-                alt={review.consulteeProfile.user.name || "Reviewer"}
-              />
-            ) : (
-              <AvatarFallback>
-                <User className="h-5 w-5" />
-              </AvatarFallback>
-            )}
-          </Avatar>
-          <div className="flex-1 min-w-0">
-            <div className="flex justify-between items-start gap-2">
-              <div className="min-w-0">
-                <h4 className="font-semibold truncate">
-                  {review.consulteeProfile?.user?.name || "Anonymous"}
-                </h4>
-                <p className="text-sm text-gray-500 truncate">
-                  Review for {review.consultantProfile?.user?.name}
-                </p>
-              </div>
-              <div className="flex items-center flex-shrink-0">
-                {stars.map((star) => (
-                  <Star
-                    key={star.id}
-                    className={`w-3 h-3 ${star.filled ? "text-yellow-400 fill-yellow-400" : "text-gray-300"}`}
-                  />
-                ))}
-              </div>
-            </div>
-            <p className="mt-3 text-gray-700 text-sm line-clamp-3">
-              {review.reviewDescription || "No review description provided"}
-            </p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-};
-
-const TestimonialLoadingSkeleton = () => {
-  const skeletonIds = Array.from(
-    { length: 3 },
-    (_, i) => `skeleton-${i}-${Math.random()}`,
-  );
-  return (
-    <section className="py-16">
-      <div className="container mx-auto px-4">
-        <h2 className="text-3xl font-bold text-center mb-12">
-          What Our Users Say
-        </h2>
-        <div className="flex justify-center">
-          <div className="animate-pulse space-x-4 flex">
-            {skeletonIds.map((id) => (
-              <div
-                key={id}
-                className="w-[300px] h-[160px] bg-gray-200 rounded-lg flex-shrink-0"
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-};
-
-const flowData: Record<string, ProcessFlowStepProps[]> = {
-  consultation: [
-    {
-      number: 1,
-      title: "Select a Consultation Plan",
-      description:
-        "Browse and choose from various consultation plans offered by experts",
-    },
-    {
-      number: 2,
-      title: "Create Consultation Request",
-      description:
-        "Submit your request with preferred time slots and specific requirements",
-    },
-    {
-      number: 3,
-      title: "Schedule Appointment",
-      description:
-        "Once approved, an appointment is created for your consultation",
-    },
-    {
-      number: 4,
-      title: "Complete Payment",
-      description: "Secure your booking by completing the payment process",
-    },
-    {
-      number: 5,
-      title: "Join Consultation",
-      description:
-        "Access your consultation at the scheduled time through our platform",
-      isLast: true,
-    },
-  ],
-  subscription: [
-    {
-      number: 1,
-      title: "Choose Subscription Plan",
-      description:
-        "Select from monthly subscription plans with different benefits",
-    },
-    {
-      number: 2,
-      title: "Submit Subscription Request",
-      description: "Provide your preferred schedule and learning goals",
-    },
-    {
-      number: 3,
-      title: "Schedule Multiple Sessions",
-      description:
-        "Get access to multiple appointments throughout your subscription period",
-    },
-    {
-      number: 4,
-      title: "One-time Payment",
-      description: "Make a single payment to activate your subscription",
-    },
-    {
-      number: 5,
-      title: "Access All Benefits",
-      description:
-        "Enjoy regular sessions and additional subscription benefits",
-      isLast: true,
-    },
-  ],
-  webinar: [
-    {
-      number: 1,
-      title: "Select Webinar",
-      description: "Choose from upcoming webinars on various topics",
-    },
-    {
-      number: 2,
-      title: "Check Availability",
-      description: "View scheduled dates and remaining spots",
-    },
-    {
-      number: 3,
-      title: "Book Your Spot",
-      description: "Reserve your place in the webinar",
-    },
-    {
-      number: 4,
-      title: "Complete Payment",
-      description: "Secure your spot by completing the payment",
-    },
-    {
-      number: 5,
-      title: "Join Webinar",
-      description: "Get access to the webinar at the scheduled time",
-      isLast: true,
-    },
-  ],
-  class: [
-    {
-      number: 1,
-      title: "Choose Class Plan",
-      description: "Browse structured class programs with detailed curricula",
-    },
-    {
-      number: 2,
-      title: "Check Class Schedule",
-      description: "View class timings and batch availability",
-    },
-    {
-      number: 3,
-      title: "Secure Your Seat",
-      description: "Book your place in the upcoming batch",
-    },
-    {
-      number: 4,
-      title: "Complete Payment",
-      description: "Process payment to confirm your enrollment",
-    },
-    {
-      number: 5,
-      title: "Start Learning",
-      description: "Access class materials and attend scheduled sessions",
-      isLast: true,
-    },
-  ],
-};
-
-const faqItems = [
-  {
-    question: "What services does our consultancy provide?",
-    answer:
-      "We offer a range of services including business strategy, market research, and project management.",
-  },
-  {
-    question: "How can our consultancy help your business grow?",
-    answer:
-      "We provide expert advice and strategies tailored to your business needs, helping you to improve efficiency and increase profits.",
-  },
-  {
-    question: "What industries do we specialize in?",
-    answer:
-      "Our consultants have experience in a wide range of industries, including technology, healthcare, and finance.",
-  },
-  {
-    question: "How can you get started with our consultancy?",
-    answer:
-      "Contact us to schedule a consultation. We will discuss your business needs and how our services can help you achieve your goals.",
-  },
-  {
-    question: "What is our consultancy approach to problem-solving?",
-    answer:
-      "We use a collaborative approach, working closely with your team to understand your business and develop effective solutions.",
-  },
-];
-const BlurryBackground = () => {
-  return (
-    <div className="absolute inset-0 -z-10 overflow-hidden bg-transparent">
-      {/* === HERO SECTION === */}
-      <div className="absolute -top-32 -left-48 h-[400px] w-[400px] rounded-full bg-gradient-to-br from-pink-500 to-purple-600 opacity-50 blur-3xl animate-blob animation-delay-1000"></div>
-      <div className="absolute -top-32 -right-48 h-[400px] w-[400px] rounded-full bg-gradient-to-bl from-teal-400 to-blue-500 opacity-50 blur-3xl animate-blob animation-delay-3000"></div>
-      <div className="absolute -top-40 left-1/2 h-[450px] w-[450px] -translate-x-1/3 rounded-full bg-gradient-to-b from-cyan-400 to-indigo-500 opacity-50 blur-3xl animate-blob animation-delay-2500"></div>
-      <div className="absolute top-1/6 left-1/4 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-[#ff5ca0] to-[#7b73fc] opacity-45 blur-3xl animate-blob animation-delay-2000"></div>
-      <div className="absolute top-1/6 right-1/4 h-[450px] w-[450px] translate-x-1/2 rounded-full bg-gradient-to-tl from-amber-400 to-orange-500 opacity-45 blur-3xl animate-blob animation-delay-4000"></div>
-      <div className="absolute top-[20%] left-1/6 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-400 to-teal-500 opacity-45 blur-3xl animate-blob animation-delay-5000"></div>
-      <div className="absolute top-[25%] right-1/6 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-rose-400 to-pink-500 opacity-45 blur-3xl animate-blob animation-delay-6000"></div>
-      <div className="absolute top-[32%] left-1/5 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-400 to-teal-500 opacity-45 blur-3xl animate-blob animation-delay-5000"></div>
-      <div className="absolute top-[37%] right-1/5 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-rose-400 to-pink-500 opacity-45 blur-3xl animate-blob animation-delay-6000"></div>
-      <div className="absolute top-[42%] left-1/4 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-400 to-teal-500 opacity-45 blur-3xl animate-blob animation-delay-5000"></div>
-      <div className="absolute top-[36%] -left-48 h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-violet-200 to-purple-300 opacity-45 blur-3xl animate-blob animation-delay-1500"></div>
-      <div className="absolute top-[36%] -right-48 h-[500px] w-[500px] rounded-full bg-gradient-to-tl from-sky-200 to-blue-300 opacity-45 blur-3xl animate-blob animation-delay-3500"></div>
-      <div className="absolute top-[48%] left-1/6 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-200 to-teal-300 opacity-45 blur-3xl animate-blob animation-delay-5000"></div>
-      <div className="absolute top-[48%] right-1/6 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-rose-200 to-pink-300 opacity-45 blur-3xl animate-blob animation-delay-6000"></div>
-
-      {/* === TRANSFORM YOUR CAREER SECTION === */}
-      <div className="absolute top-[55%] -left-12 h-[300px] w-[300px] rounded-full bg-gradient-to-r from-green-200 to-cyan-300 opacity-55 blur-3xl animate-blob animation-delay-500"></div>
-      <div className="absolute top-[55%] -right-12 h-[300px] w-[300px] rounded-full bg-gradient-to-l from-blue-200 to-green-300 opacity-55 blur-3xl animate-blob animation-delay-3200"></div>
-      <div className="absolute top-[60%] -left-24 h-[300px] w-[300px] -translate-y-1/2 rounded-full bg-gradient-to-r from-cyan-200 to-sky-300 opacity-50 blur-3xl animate-blob animation-delay-4800"></div>
-      <div className="absolute top-[65%] left-1/3 h-[700px] w-[700px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-r from-purple-200 to-pink-300 opacity-45 blur-3xl animate-blob animation-delay-7000"></div>
-      <div className="absolute top-[57%] left-[15%] h-[350px] w-[350px] rounded-full bg-gradient-to-br from-emerald-200 to-green-400 opacity-50 blur-3xl animate-blob animation-delay-6000"></div>
-      <div className="absolute top-[61%] right-[20%] h-[250px] w-[250px] rounded-full bg-gradient-to-tl from-rose-200 to-red-300 opacity-45 blur-3xl animate-blob animation-delay-7500"></div>
-
-      {/* === UNLOCK POTENTIAL SECTION === */}
-      <div className="absolute top-[72%] -left-56 h-[350px] w-[350px] rounded-full bg-gradient-to-r from-sky-400 to-indigo-500 opacity-50 blur-3xl animate-blob animation-delay-1500"></div>
-      <div className="absolute top-[78%] -right-56 h-[350px] w-[350px] rounded-full bg-gradient-to-l from-rose-400 to-fuchsia-500 opacity-50 blur-3xl animate-blob animation-delay-3500"></div>
-      <div className="absolute top-[75%] left-1/2 h-[300px] w-[300px] -translate-x-1/4 -translate-y-1/4 rounded-full bg-gradient-to-tr from-yellow-300 to-orange-400 opacity-55 blur-3xl animate-blob animation-delay-8000"></div>
-      <div className="absolute top-[74%] left-[10%] h-[400px] w-[400px] rounded-full bg-gradient-to-bl from-cyan-300 to-sky-500 opacity-45 blur-3xl animate-blob animation-delay-5500"></div>
-      <div className="absolute top-[77%] right-[5%] h-[300px] w-[300px] rounded-full bg-gradient-to-tr from-pink-300 to-purple-400 opacity-50 blur-3xl animate-blob animation-delay-9000"></div>
-
-      {/* === BEST EXPERTS SECTION === */}
-      <div className="absolute top-2/3 -right-48 h-[300px] w-[300px] -translate-y-1/2 rounded-full bg-gradient-to-l from-pink-300 to-orange-300 opacity-50 blur-3xl animate-blob animation-delay-2200"></div>
-      <div className="absolute top-2/3 left-1/4 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-gradient-to-br from-purple-300 to-pink-400 opacity-50 blur-3xl animate-blob animation-delay-9500"></div>
-
-      {/* === FEATURED EXPERTS SECTION === */}
-      <div className="absolute top-3/4 right-1/4 h-[450px] w-[450px] translate-x-1/2 rounded-full bg-gradient-to-tl from-orange-300 to-yellow-400 opacity-50 blur-3xl animate-blob animation-delay-10000"></div>
-      <div className="absolute top-3/5 -right-32 h-[400px] w-[400px] rounded-full bg-gradient-to-l from-red-200 to-rose-300 opacity-50 blur-3xl animate-blob animation-delay-11000"></div>
-
-      {/* === OFFERINGS SECTION === */}
-      <div className="absolute bottom-1/3 left-1/2 -translate-x-1/2 h-[350px] w-[350px] rounded-full bg-gradient-to-t from-cyan-200 to-blue-300 opacity-50 blur-3xl animate-blob animation-delay-5500"></div>
-      <div className="absolute bottom-1/3 left-1/2 -translate-x-1/3 h-[600px] w-[600px] rounded-full bg-gradient-to-t from-green-300 to-teal-400 opacity-45 blur-3xl animate-blob animation-delay-10500"></div>
-      <div className="absolute bottom-1/4 right-1/3 translate-x-1/2 translate-y-1/2 h-[600px] w-[600px] rounded-full bg-gradient-to-l from-teal-200 to-cyan-300 opacity-45 blur-3xl animate-blob animation-delay-7500"></div>
-
-      {/* === TESTIMONIALS SECTION === */}
-      <div className="absolute -bottom-1/4 right-1/4 h-[500px] w-[500px] translate-x-1/2 rounded-full bg-gradient-to-tr from-[#facc15] to-[#fb923c] opacity-50 blur-3xl animate-blob animation-delay-4000"></div>
-      <div className="absolute -bottom-32 -left-32 h-[400px] w-[400px] rounded-full bg-gradient-to-tr from-lime-300 to-green-400 opacity-50 blur-3xl animate-blob animation-delay-5000"></div>
-      <div className="absolute -bottom-32 -right-32 h-[400px] w-[400px] rounded-full bg-gradient-to-tl from-orange-300 to-red-400 opacity-50 blur-3xl animate-blob animation-delay-6000"></div>
-
-      {/* === HOW PROCESS WORKS SECTION === */}
-      <div className="absolute -bottom-40 left-1/2 h-[450px] w-[450px] -translate-x-1/2 rounded-full bg-gradient-to-t from-amber-300 to-yellow-500 opacity-50 blur-3xl animate-blob animation-delay-4500"></div>
-      <div className="absolute -bottom-60 left-1/2 h-[600px] w-[600px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-green-300 to-yellow-400 opacity-45 blur-3xl animate-blob animation-delay-1000"></div>
-      <div className="absolute -bottom-80 left-1/3 h-[700px] w-[700px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-lime-200 to-teal-400 opacity-50 blur-3xl animate-blob animation-delay-3800"></div>
-      <div className="absolute -bottom-80 right-1/3 h-[700px] w-[700px] translate-x-1/2 rounded-full bg-gradient-to-tl from-sky-300 to-indigo-400 opacity-50 blur-3xl animate-blob animation-delay-5200"></div>
-
-      {/* === JOIN COMMUNITY SECTION === */}
-      <div className="absolute top-[78%] -left-32 h-[400px] w-[400px] rounded-full bg-gradient-to-tr from-teal-300 to-cyan-400 opacity-50 blur-3xl animate-blob animation-delay-6500"></div>
-      <div className="absolute top-[78%] -right-32 h-[450px] w-[450px] rounded-full bg-gradient-to-tl from-purple-300 to-indigo-400 opacity-50 blur-3xl animate-blob animation-delay-7200"></div>
-      <div className="absolute bottom-0 left-1/4 h-[400px] w-[400px] rounded-full bg-gradient-to-tr from-blue-300 to-indigo-400 opacity-45 blur-3xl animate-blob animation-delay-9000"></div>
-
-      {/* === FAQ SECTION === */}
-      <div className="absolute top-[82%] left-1/2 -translate-x-1/2 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-45 blur-3xl animate-blob animation-delay-8200"></div>
-      <div className="absolute top-[86%] left-1/2 -translate-x-1/4 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-45 blur-3xl animate-blob animation-delay-8200"></div>
-      <div className="absolute top-[92%] left-1/2 -translate-x-3/4 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-45 blur-3xl animate-blob animation-delay-8200"></div>
-      <div className="absolute top-[98%] left-1/2 -translate-x-1/2 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-45 blur-3xl animate-blob animation-delay-8200"></div>
-      <div className="absolute -bottom-96 left-1/2 h-[800px] w-[800px] -translate-x-1/2 rounded-full bg-gradient-to-t from-green-200 to-cyan-300 opacity-45 blur-3xl animate-blob animation-delay-1800"></div>
-
-      {/* === NEWSLETTER SECTION === */}
-      <div className="absolute -bottom-40 left-1/2 h-[450px] w-[450px] -translate-x-1/2 rounded-full bg-gradient-to-t from-gray-800 to-gray-600 opacity-35 blur-3xl animate-blob animation-delay-4500"></div>
-    </div>
-  );
-};
-
-// Define a custom error type for fetcher
-interface FetchError extends Error {
-  info?: any; // Keep 'any' for info as it can be diverse, or define a more specific type if known
-  status?: number;
-}
-
-// Fetcher function for useSWR (expects API to return { data: [...] })
-const fetcher = async <T = unknown,>(url: string): Promise<T> => {
-  const res = await fetch(url);
-  if (!res.ok) {
-    const error: FetchError = new Error(
-      "An error occurred while fetching the data.",
-    );
-    try {
-      error.info = await res.json();
-    } catch (_e) {
-      // Renamed 'e' to '_e' as it's not used
-      error.info = await res.text(); // Fallback if response is not JSON
-    }
-    error.status = res.status;
-    throw error;
-  }
-  const jsonData = await res.json();
-  return jsonData.data as T; // Modify if your API structure is different, ensure type assertion is safe
-};
 
 // Specific fetcher for Supabase storage images
 const supabaseImagesFetcher = async ([, bucket, path]: [
@@ -527,16 +44,6 @@ const supabaseImagesFetcher = async ([, bucket, path]: [
   return imageData || []; // Default to empty array if null/undefined
 };
 
-// Optimized SWR configuration for a SaaS landing page
-const swrOptions = {
-  revalidateOnFocus: false,
-  revalidateOnReconnect: false,
-  refreshInterval: 0, // Disable polling, landing page data is not typically real-time
-  shouldRetryOnError: true, // Retry on error for critical data
-  errorRetryCount: 2, // Number of retry attempts
-  dedupingInterval: 5000, // 5 seconds to prevent duplicate requests for the same key
-  keepPreviousData: true, // Show stale data while revalidating, prevents UI flashes
-};
 
 export default function Home() {
   // SWR hooks for data fetching
@@ -556,7 +63,7 @@ export default function Home() {
     isLoading: isLoadingExperts,
   } = useSWR<TConsultantProfile[]>(
     "/api/user/consultants?limit=10",
-    fetcher,
+    consultantsFetcher,
     swrOptions,
   );
 
@@ -566,7 +73,7 @@ export default function Home() {
     isLoading: isLoadingReviews,
   } = useSWR<ReviewWithProfiles[]>(
     "/api/user/reviews?rating=4",
-    fetcher,
+    reviewsFetcher,
     swrOptions,
   );
 
@@ -589,77 +96,11 @@ export default function Home() {
       console.error("SWR - Failed to fetch reviews:", reviewsError);
   }, [imagesError, expertsError, reviewsError]);
 
-  // For Testimonials marquee effect
-  const displayReviews =
-    reviews.length >= 4
-      ? reviews
-      : [...reviews, ...reviews, ...reviews, ...reviews]; // Ensure enough for smooth scroll
-  const marqueeGroups = Array.from({ length: 3 }, (_, i) => ({
-    ltrId: `ltr-group-${i}-${Math.random()}`,
-    rtlId: `rtl-group-${i}-${Math.random()}`,
-  }));
+  const displayReviews = useOptimizedReviews(reviews);
+  const marqueeGroups = useMarqueeGroups();
 
   return (
     <AnimatePresence>
-      <style jsx global key="global-styles">{`
-        @keyframes marquee-featured {
-          0% {
-            transform: translateX(0);
-          }
-          100% {
-            transform: translateX(calc(-100% / 2));
-          }
-        }
-        @keyframes marquee-testimonials-ltr {
-          0% {
-            transform: translateX(calc(-100% / 3));
-          }
-          100% {
-            transform: translateX(calc(-200% / 3));
-          }
-        }
-        @keyframes marquee-testimonials-rtl {
-          0% {
-            transform: translateX(calc(-100% / 3));
-          }
-          100% {
-            transform: translateX(0);
-          }
-        }
-        .animation-delay-2000 {
-          animation-delay: 2s;
-        }
-        .animation-delay-3000 {
-          animation-delay: 3s;
-        }
-        .animation-delay-4000 {
-          animation-delay: 4s;
-        }
-        .animation-delay-5000 {
-          animation-delay: 5s;
-        }
-        .animation-delay-6000 {
-          animation-delay: 6s;
-        }
-        @keyframes blob {
-          0% {
-            transform: scale(1) translate(0px, 0px);
-          }
-          33% {
-            transform: scale(1.1) translate(30px, -50px);
-          }
-          66% {
-            transform: scale(0.9) translate(-20px, 20px);
-          }
-          100% {
-            transform: scale(1) translate(0px, 0px);
-          }
-        }
-        .animate-blob {
-          animation: blob 15s infinite ease-in-out;
-          will-change: transform;
-        }
-      `}</style>
       <main key="main-content-wrapper" className="flex-1 w-full relative">
         <BlurryBackground key="blurry-background" />
 
@@ -875,41 +316,32 @@ export default function Home() {
               </Link>
             </div>
           </div>
-          <div
-            className="w-full overflow-hidden"
-            style={pageStyles["featured-marquee-container"]}
-          >
-            <div style={pageStyles["featured-marquee-track"]}>
-              {isLoading
-                ? Array.from({ length: 10 }, (_, index) => (
-                    <ExpertLoadingSkeleton key={`skeleton-expert-${index}`} />
+          <OptimizedMarquee type="featured">
+            {(() => {
+              if (isLoading) {
+                return Array.from({ length: 10 }, (_, index) => (
+                  <ExpertLoadingSkeleton key={`skeleton-expert-${index}`} />
+                ));
+              }
+              
+              if (experts.length > 0) {
+                return Array.from({ length: 4 }).flatMap((_, marqueeSetIndex) =>
+                  experts.map((expert) => (
+                    <ExpertCard
+                      key={`${expert.id}-marquee-${marqueeSetIndex + 1}`}
+                      expert={expert}
+                    />
                   ))
-                : (() => {
-                    if (experts.length > 0) {
-                      return (
-                        <>
-                          {/* Render multiple sets for marquee effect */}
-                          {Array.from({ length: 4 }).flatMap(
-                            (_, marqueeSetIndex) =>
-                              experts.map((expert) => (
-                                <ExpertCard
-                                  key={`${expert.id}-marquee-${marqueeSetIndex + 1}`}
-                                  expert={expert}
-                                />
-                              )),
-                          )}
-                        </>
-                      );
-                    } else {
-                      return (
-                        <p className="text-center text-gray-500">
-                          No featured experts available at the moment.
-                        </p>
-                      );
-                    }
-                  })()}
-            </div>
-          </div>
+                );
+              }
+              
+              return (
+                <p className="text-center text-gray-500">
+                  No featured experts available at the moment.
+                </p>
+              );
+            })()}
+          </OptimizedMarquee>
         </section>
 
         {/* OfferingsSection */}
@@ -956,36 +388,32 @@ export default function Home() {
           ) : (
             <div className="space-y-12">
               <div className="relative py-4">
-                <div style={pageStyles["testimonials-marqueeContainer"]}>
-                  <div style={pageStyles["testimonials-marquee-track-ltr"]}>
-                    {marqueeGroups.map((group) => (
-                      <div key={group.ltrId} className="flex">
-                        {displayReviews.map((review) => (
-                          <ReviewCard
-                            key={`${review.id}-${group.ltrId}`}
-                            review={review}
-                          />
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <OptimizedMarquee type="testimonials" direction="ltr">
+                  {marqueeGroups.map((group) => (
+                    <div key={group.ltrId} className="flex">
+                      {displayReviews.map((review) => (
+                        <ReviewCard
+                          key={`${review.id}-${group.ltrId}`}
+                          review={review}
+                        />
+                      ))}
+                    </div>
+                  ))}
+                </OptimizedMarquee>
               </div>
               <div className="relative py-4">
-                <div style={pageStyles["testimonials-marqueeContainer"]}>
-                  <div style={pageStyles["testimonials-marquee-track-rtl"]}>
-                    {marqueeGroups.map((group) => (
-                      <div key={group.rtlId} className="flex">
-                        {displayReviews.map((review) => (
-                          <ReviewCard
-                            key={`${review.id}-${group.rtlId}`}
-                            review={review}
-                          />
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <OptimizedMarquee type="testimonials" direction="rtl">
+                  {marqueeGroups.map((group) => (
+                    <div key={group.rtlId} className="flex">
+                      {displayReviews.map((review) => (
+                        <ReviewCard
+                          key={`${review.id}-${group.rtlId}`}
+                          review={review}
+                        />
+                      ))}
+                    </div>
+                  ))}
+                </OptimizedMarquee>
               </div>
             </div>
           )}

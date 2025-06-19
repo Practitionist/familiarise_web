@@ -1,0 +1,478 @@
+@keyframes blob {
+  0% {
+    transform: scale(1) translate(0px, 0px);
+  }
+  33% {
+    transform: scale(1.1) translate(30px, -50px);
+  }
+  66% {
+    transform: scale(0.9) translate(-20px, 20px);
+  }
+  100% {
+    transform: scale(1) translate(0px, 0px);
+  }
+}
+
+.blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px);
+  animation: blob 15s infinite ease-in-out;
+  will-change: transform;
+}
+
+.heroBlobs .blob1 {
+  top: -8rem;
+  left: -12rem;
+  height: 25rem;
+  width: 25rem;
+  background: linear-gradient(to bottom right, #ec4899, #9333ea);
+  opacity: 0.5;
+  animation-delay: 1s;
+}
+
+.heroBlobs .blob2 {
+  top: -8rem;
+  right: -12rem;
+  height: 25rem;
+  width: 25rem;
+  background: linear-gradient(to bottom left, #14b8a6, #3b82f6);
+  opacity: 0.5;
+  animation-delay: 3s;
+}
+
+.heroBlobs .blob3 {
+  top: -10rem;
+  left: 50%;
+  transform: translateX(-33%);
+  height: 28rem;
+  width: 28rem;
+  background: linear-gradient(to bottom, #06b6d4, #6366f1);
+  opacity: 0.5;
+  animation-delay: 2.5s;
+}
+
+.heroBlobs .blob4 {
+  top: 16.666667%;
+  left: 25%;
+  transform: translateX(-50%);
+  height: 31rem;
+  width: 31rem;
+  background: linear-gradient(to top right, #ff5ca0, #7b73fc);
+  opacity: 0.45;
+  animation-delay: 2s;
+}
+
+.heroBlobs .blob5 {
+  top: 16.666667%;
+  right: 25%;
+  transform: translateX(50%);
+  height: 28rem;
+  width: 28rem;
+  background: linear-gradient(to top left, #f59e0b, #f97316);
+  opacity: 0.45;
+  animation-delay: 4s;
+}
+
+.sectionBlobs .blob6 {
+  top: 55%;
+  left: -3rem;
+  height: 18rem;
+  width: 18rem;
+  background: linear-gradient(to right, #bbf7d0, #67e8f9);
+  opacity: 0.55;
+  animation-delay: 0.5s;
+}
+
+.sectionBlobs .blob7 {
+  top: 55%;
+  right: -3rem;
+  height: 18rem;
+  width: 18rem;
+  background: linear-gradient(to left, #dbeafe, #bbf7d0);
+  opacity: 0.55;
+  animation-delay: 3.2s;
+}
+
+.sectionBlobs .blob8 {
+  top: 72%;
+  left: -14rem;
+  height: 21rem;
+  width: 21rem;
+  background: linear-gradient(to right, #38bdf8, #6366f1);
+  opacity: 0.5;
+  animation-delay: 1.5s;
+}
+
+.sectionBlobs .blob9 {
+  top: 78%;
+  right: -14rem;
+  height: 21rem;
+  width: 21rem;
+  background: linear-gradient(to left, #fb7185, #c084fc);
+  opacity: 0.5;
+  animation-delay: 3.5s;
+}
+
+.sectionBlobs .blob10 {
+  top: 75%;
+  left: 50%;
+  transform: translateX(-25%) translateY(-25%);
+  height: 18rem;
+  width: 18rem;
+  background: linear-gradient(to top right, #fde047, #fb923c);
+  opacity: 0.55;
+  animation-delay: 8s;
+}
+
+.footerBlobs .blob11 {
+  bottom: 33.333333%;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 21rem;
+  width: 21rem;
+  background: linear-gradient(to top, #a7f3d0, #7dd3fc);
+  opacity: 0.5;
+  animation-delay: 5.5s;
+}
+
+.footerBlobs .blob12 {
+  bottom: -8rem;
+  left: -8rem;
+  height: 25rem;
+  width: 25rem;
+  background: linear-gradient(to top right, #bef264, #4ade80);
+  opacity: 0.5;
+  animation-delay: 5s;
+}
+
+.footerBlobs .blob13 {
+  bottom: -8rem;
+  right: -8rem;
+  height: 25rem;
+  width: 25rem;
+  background: linear-gradient(to top left, #fdba74, #f87171);
+  opacity: 0.5;
+  animation-delay: 6s;
+}
+
+/* Additional blobs for enhanced visual effect */
+.heroBlobs .blob14 {
+  top: 5%;
+  left: 10%;
+  height: 15rem;
+  width: 15rem;
+  background: linear-gradient(to bottom right, #a855f7, #3b82f6);
+  opacity: 0.3;
+  animation-delay: 7s;
+}
+
+.heroBlobs .blob15 {
+  top: 8%;
+  right: 15%;
+  height: 20rem;
+  width: 20rem;
+  background: linear-gradient(to bottom left, #10b981, #06b6d4);
+  opacity: 0.35;
+  animation-delay: 9s;
+}
+
+.heroBlobs .blob16 {
+  top: 25%;
+  left: 5%;
+  height: 18rem;
+  width: 18rem;
+  background: linear-gradient(to top right, #f59e0b, #ef4444);
+  opacity: 0.4;
+  animation-delay: 11s;
+}
+
+.heroBlobs .blob17 {
+  top: 12%;
+  left: 65%;
+  height: 13rem;
+  width: 13rem;
+  background: linear-gradient(45deg, #a855f7, #06b6d4);
+  opacity: 0.25;
+  animation-delay: 21s;
+}
+
+.heroBlobs .blob18 {
+  top: 18%;
+  left: 80%;
+  height: 11rem;
+  width: 11rem;
+  background: linear-gradient(-45deg, #10b981, #f97316);
+  opacity: 0.3;
+  animation-delay: 23s;
+}
+
+.heroBlobs .blob19 {
+  top: 30%;
+  right: 10%;
+  height: 16rem;
+  width: 16rem;
+  background: linear-gradient(to bottom, #ec4899, #be185d);
+  opacity: 0.35;
+  animation-delay: 13s;
+}
+
+.heroBlobs .blob20 {
+  top: 35%;
+  left: 15%;
+  height: 14rem;
+  width: 14rem;
+  background: linear-gradient(to right, #06d6a0, #059669);
+  opacity: 0.4;
+  animation-delay: 15s;
+}
+
+.sectionBlobs .blob21 {
+  top: 35%;
+  right: 8%;
+  height: 22rem;
+  width: 22rem;
+  background: linear-gradient(to left, #8b5cf6, #ec4899);
+  opacity: 0.3;
+  animation-delay: 4.5s;
+}
+
+.sectionBlobs .blob22 {
+  top: 40%;
+  left: 12%;
+  height: 16rem;
+  width: 16rem;
+  background: linear-gradient(to right, #14b8a6, #06d6a0);
+  opacity: 0.4;
+  animation-delay: 6.5s;
+}
+
+.sectionBlobs .blob23 {
+  top: 50%;
+  right: 20%;
+  height: 24rem;
+  width: 24rem;
+  background: linear-gradient(to bottom, #f97316, #dc2626);
+  opacity: 0.35;
+  animation-delay: 8.5s;
+}
+
+.sectionBlobs .blob24 {
+  top: 62%;
+  left: 8%;
+  height: 19rem;
+  width: 19rem;
+  background: linear-gradient(to top left, #06b6d4, #3b82f6);
+  opacity: 0.45;
+  animation-delay: 10.5s;
+}
+
+.sectionBlobs .blob25 {
+  top: 68%;
+  right: 12%;
+  height: 17rem;
+  width: 17rem;
+  background: linear-gradient(to bottom right, #a855f7, #ec4899);
+  opacity: 0.4;
+  animation-delay: 12.5s;
+}
+
+.sectionBlobs .blob26 {
+  top: 45%;
+  left: 30%;
+  height: 14rem;
+  width: 14rem;
+  background: linear-gradient(to top, #10b981, #059669);
+  opacity: 0.3;
+  animation-delay: 14s;
+}
+
+.sectionBlobs .blob27 {
+  top: 58%;
+  right: 35%;
+  height: 21rem;
+  width: 21rem;
+  background: linear-gradient(to bottom left, #f59e0b, #d97706);
+  opacity: 0.35;
+  animation-delay: 16s;
+}
+
+.sectionBlobs .blob28 {
+  top: 38%;
+  left: 60%;
+  height: 12rem;
+  width: 12rem;
+  background: linear-gradient(135deg, #ec4899, #8b5cf6);
+  opacity: 0.3;
+  animation-delay: 25s;
+}
+
+.sectionBlobs .blob29 {
+  top: 52%;
+  left: 75%;
+  height: 14rem;
+  width: 14rem;
+  background: linear-gradient(-135deg, #06b6d4, #10b981);
+  opacity: 0.35;
+  animation-delay: 27s;
+}
+
+.sectionBlobs .blob30 {
+  top: 65%;
+  left: 45%;
+  height: 16rem;
+  width: 16rem;
+  background: linear-gradient(90deg, #f97316, #ec4899);
+  opacity: 0.4;
+  animation-delay: 29s;
+}
+
+.sectionBlobs .blob31 {
+  top: 83%;
+  left: 25%;
+  height: 18rem;
+  width: 18rem;
+  background: linear-gradient(to top right, #a855f7, #06b6d4);
+  opacity: 0.35;
+  animation-delay: 31s;
+}
+
+.sectionBlobs .blob32 {
+  top: 88%;
+  right: 25%;
+  height: 20rem;
+  width: 20rem;
+  background: linear-gradient(to top left, #10b981, #f59e0b);
+  opacity: 0.4;
+  animation-delay: 33s;
+}
+
+.footerBlobs .blob33 {
+  bottom: 25%;
+  left: 15%;
+  height: 20rem;
+  width: 20rem;
+  background: linear-gradient(to top right, #8b5cf6, #7c3aed);
+  opacity: 0.4;
+  animation-delay: 7.5s;
+}
+
+.footerBlobs .blob34 {
+  bottom: 35%;
+  right: 18%;
+  height: 18rem;
+  width: 18rem;
+  background: linear-gradient(to top left, #06b6d4, #0891b2);
+  opacity: 0.45;
+  animation-delay: 9.5s;
+}
+
+.footerBlobs .blob35 {
+  bottom: 15%;
+  left: 25%;
+  height: 16rem;
+  width: 16rem;
+  background: linear-gradient(to bottom, #f97316, #ea580c);
+  opacity: 0.35;
+  animation-delay: 11.5s;
+}
+
+.footerBlobs .blob36 {
+  bottom: 20%;
+  right: 30%;
+  height: 22rem;
+  width: 22rem;
+  background: linear-gradient(to top, #ec4899, #db2777);
+  opacity: 0.4;
+  animation-delay: 13.5s;
+}
+
+.footerBlobs .blob37 {
+  bottom: 10%;
+  left: 35%;
+  height: 15rem;
+  width: 15rem;
+  background: linear-gradient(to right, #10b981, #047857);
+  opacity: 0.3;
+  animation-delay: 15.5s;
+}
+
+.footerBlobs .blob38 {
+  bottom: 30%;
+  left: 8%;
+  height: 19rem;
+  width: 19rem;
+  background: linear-gradient(to bottom right, #3b82f6, #1d4ed8);
+  opacity: 0.4;
+  animation-delay: 17.5s;
+}
+
+.footerBlobs .blob39 {
+  bottom: 40%;
+  right: 10%;
+  height: 17rem;
+  width: 17rem;
+  background: linear-gradient(to bottom left, #f59e0b, #b45309);
+  opacity: 0.35;
+  animation-delay: 19s;
+}
+
+.footerBlobs .blob40 {
+  bottom: 45%;
+  left: 40%;
+  height: 13rem;
+  width: 13rem;
+  background: linear-gradient(to top, #a855f7, #7c3aed);
+  opacity: 0.3;
+  animation-delay: 21.5s;
+}
+
+.footerBlobs .blob41 {
+  bottom: 50%;
+  right: 45%;
+  height: 15rem;
+  width: 15rem;
+  background: linear-gradient(to bottom, #06b6d4, #0891b2);
+  opacity: 0.35;
+  animation-delay: 23.5s;
+}
+
+.footerBlobs .blob42 {
+  bottom: 5%;
+  left: 60%;
+  height: 17rem;
+  width: 17rem;
+  background: linear-gradient(to right, #ec4899, #be185d);
+  opacity: 0.4;
+  animation-delay: 25.5s;
+}
+
+.footerBlobs .blob43 {
+  bottom: 12%;
+  right: 55%;
+  height: 14rem;
+  width: 14rem;
+  background: linear-gradient(to left, #10b981, #059669);
+  opacity: 0.3;
+  animation-delay: 27.5s;
+}
+
+.footerBlobs .blob44 {
+  bottom: 55%;
+  left: 65%;
+  height: 12rem;
+  width: 12rem;
+  background: linear-gradient(to top right, #f97316, #ea580c);
+  opacity: 0.35;
+  animation-delay: 29.5s;
+}
+
+.footerBlobs .blob45 {
+  bottom: 60%;
+  right: 70%;
+  height: 16rem;
+  width: 16rem;
+  background: linear-gradient(to top left, #3b82f6, #1e40af);
+  opacity: 0.4;
+  animation-delay: 31.5s;
+}

@@ -1,0 +1,93 @@
+@keyframes marquee-featured {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(calc(-100% / 2));
+  }
+}
+
+@keyframes marquee-testimonials-ltr {
+  0% {
+    transform: translateX(calc(-100% / 3));
+  }
+  100% {
+    transform: translateX(calc(-200% / 3));
+  }
+}
+
+@keyframes marquee-testimonials-rtl {
+  0% {
+    transform: translateX(calc(-100% / 3));
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.featuredMarqueeContainer {
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+  mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);
+}
+
+.featuredMarqueeTrack {
+  display: flex;
+  width: fit-content;
+  animation: marquee-featured 60s linear infinite;
+  transform: translateX(0);
+}
+
+.testimonialsMarqueeContainer {
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+  mask-image: linear-gradient(to right, transparent, black 20%, black 80%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 20%, black 80%, transparent);
+}
+
+.testimonialsMarqueeTrackLtr {
+  display: flex;
+  width: fit-content;
+  animation-name: marquee-testimonials-ltr;
+  animation-duration: 180s;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+  transition: transform 0.5s ease;
+  transform: translateX(calc(-100% / 3));
+}
+
+.testimonialsMarqueeTrackRtl {
+  display: flex;
+  width: fit-content;
+  animation-name: marquee-testimonials-rtl;
+  animation-duration: 180s;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+  transition: transform 0.5s ease;
+  transform: translateX(calc(-100% / 3));
+}
+
+.animationDelay2000 {
+  animation-delay: 2s;
+}
+
+.animationDelay3000 {
+  animation-delay: 3s;
+}
+
+.animationDelay4000 {
+  animation-delay: 4s;
+}
+
+.animationDelay5000 {
+  animation-delay: 5s;
+}
+
+.animationDelay6000 {
+  animation-delay: 6s;
+}
