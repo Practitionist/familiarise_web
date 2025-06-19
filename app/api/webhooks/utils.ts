@@ -27,6 +27,10 @@ export async function verifyWebhookSignature(
 
   try {
     if (gateway === "stripe") {
+      if (!stripeClient) {
+        console.error("Stripe client not initialized - cannot verify webhook signature");
+        return { isValid: false, body: "" };
+      }
       stripeClient.webhooks.constructEvent(body, signature, secret);
       return { isValid: true, body };
     } else {
