@@ -13,7 +13,7 @@ const ReviewCard = React.memo(({ review }: ReviewCardProps) => {
     id: `star-${position}-${review.id}`,
     filled: position < review.rating,
   }));
-  
+
   return (
     <Card className="w-[300px] flex-shrink-0 mx-3 bg-white hover:shadow-lg transition-all duration-300 hover:-translate-y-1 hover:scale-[1.02] border border-gray-100">
       <CardContent className="p-5">

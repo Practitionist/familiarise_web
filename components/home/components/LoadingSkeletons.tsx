@@ -27,7 +27,7 @@ export const TestimonialLoadingSkeleton = React.memo(() => {
     { length: 3 },
     (_, i) => `skeleton-${i}-${Math.random()}`,
   );
-  
+
   return (
     <section className="py-16">
       <div className="container mx-auto px-4">

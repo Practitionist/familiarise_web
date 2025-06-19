@@ -8,7 +8,7 @@ interface RatingStarsProps {
 const RatingStars = React.memo(({ rating }: RatingStarsProps) => {
   const fullStars = Math.floor(rating);
   const hasHalfStar = rating % 1 >= 0.5;
-  
+
   return (
     <div className="flex items-center gap-0.5 justify-center">
       {Array.from({ length: fullStars }, (_, i) => (

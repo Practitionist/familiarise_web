@@ -14,7 +14,7 @@ interface ExpertCardProps {
 
 const ExpertCard = React.memo(({ expert, className = "" }: ExpertCardProps) => {
   const [isAvatarLoaded, setIsAvatarLoaded] = useState(false);
-  
+
   return (
     <Link
       href={`/explore/experts/${expert.id}`}

@@ -10,11 +10,13 @@ export const useOptimizedReviews = (reviews: ReviewWithProfiles[]) => {
 };
 
 export const useMarqueeGroups = () => {
-  return useMemo(() => 
-    Array.from({ length: 3 }, (_, i) => ({
-      ltrId: `ltr-group-${i}`,
-      rtlId: `rtl-group-${i}`,
-    })), []
+  return useMemo(
+    () =>
+      Array.from({ length: 3 }, (_, i) => ({
+        ltrId: `ltr-group-${i}`,
+        rtlId: `rtl-group-${i}`,
+      })),
+    [],
   );
 };
 
@@ -23,7 +25,9 @@ export interface FetchError extends Error {
   status?: number;
 }
 
-export const consultantsFetcher = async (url: string): Promise<TConsultantProfile[]> => {
+export const consultantsFetcher = async (
+  url: string,
+): Promise<TConsultantProfile[]> => {
   const res = await fetch(url);
   if (!res.ok) {
     const error: FetchError = new Error(
@@ -41,7 +45,9 @@ export const consultantsFetcher = async (url: string): Promise<TConsultantProfil
   return jsonData.data as TConsultantProfile[];
 };
 
-export const reviewsFetcher = async (url: string): Promise<ReviewWithProfiles[]> => {
+export const reviewsFetcher = async (
+  url: string,
+): Promise<ReviewWithProfiles[]> => {
   const res = await fetch(url);
   if (!res.ok) {
     const error: FetchError = new Error(

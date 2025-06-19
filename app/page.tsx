@@ -25,9 +25,17 @@ import { renderLCPImage } from "@/utils/image";
 import BlurryBackground from "@/components/home/BlurryBackground";
 import ExpertCard from "@/components/home/components/ExpertCard";
 import ReviewCard from "@/components/home/components/ReviewCard";
-import { ExpertLoadingSkeleton, TestimonialLoadingSkeleton } from "@/components/home/components/LoadingSkeletons";
+import {
+  ExpertLoadingSkeleton,
+  TestimonialLoadingSkeleton,
+} from "@/components/home/components/LoadingSkeletons";
 import OptimizedMarquee from "@/components/home/components/OptimizedMarquee";
-import { useOptimizedReviews, useMarqueeGroups, consultantsFetcher, reviewsFetcher } from "@/components/home/components/hooks";
+import {
+  useOptimizedReviews,
+  useMarqueeGroups,
+  consultantsFetcher,
+  reviewsFetcher,
+} from "@/components/home/components/hooks";
 import { swrOptions, flowData, faqItems } from "@/components/home/constants";
 
 import type { TConsultantProfile } from "@/types/consultant";
@@ -43,7 +51,6 @@ const supabaseImagesFetcher = async ([, bucket, path]: [
   const imageData = await fetchImagesFromSupabaseStorage(bucket, path);
   return imageData || []; // Default to empty array if null/undefined
 };
-
 
 export default function Home() {
   // SWR hooks for data fetching
@@ -323,7 +330,7 @@ export default function Home() {
                   <ExpertLoadingSkeleton key={`skeleton-expert-${index}`} />
                 ));
               }
-              
+
               if (experts.length > 0) {
                 return Array.from({ length: 4 }).flatMap((_, marqueeSetIndex) =>
                   experts.map((expert) => (
@@ -331,10 +338,10 @@ export default function Home() {
                       key={`${expert.id}-marquee-${marqueeSetIndex + 1}`}
                       expert={expert}
                     />
-                  ))
+                  )),
                 );
               }
-              
+
               return (
                 <p className="text-center text-gray-500">
                   No featured experts available at the moment.
