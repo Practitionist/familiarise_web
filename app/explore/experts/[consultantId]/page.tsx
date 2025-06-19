@@ -41,7 +41,7 @@ export default function ExpertProfile(
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
   const { toast } = useToast();
@@ -92,22 +92,42 @@ export default function ExpertProfile(
           console.log("Using timezone:", timezone);
           console.log("Selected date:", selectedDate.toISOString());
 
-          // Get unallocated slots for the selected day
           const startDateInUtc = new Date(selectedDate);
           startDateInUtc.setHours(0, 0, 0, 0);
           const endDateInUtc = new Date(selectedDate);
           endDateInUtc.setHours(23, 59, 59, 999);
 
           const response = await fetch(
-            `/api/slots/unallocated/${consultantDetails.id}?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}`,
+            `/api/slots/availability-with-allocation/${
+              consultantDetails.id
+            }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${timezone}`,
           );
 
           if (!response.ok) {
-            throw new Error("Failed to fetch unallocated slots");
+            const errorData = await response.json();
+            throw new Error(
+              errorData.error || "Failed to fetch availability slots",
+            );
           }
 
-          const { data: slots } = await response.json();
-          setSlotTimings(slots);
+          const { data } = await response.json();
+
+          // Extract slots for the selected date specifically
+          // Use local date formatting to avoid timezone shifts
+          const year = selectedDate.getFullYear();
+          const month = String(selectedDate.getMonth() + 1).padStart(2, "0");
+          const day = String(selectedDate.getDate()).padStart(2, "0");
+          const selectedDateKey = `${year}-${month}-${day}`; // YYYY-MM-DD format
+          const slotsForSelectedDate = data[selectedDateKey] || [];
+
+          console.log("Available dates in response:", Object.keys(data));
+          console.log("Looking for date:", selectedDateKey);
+          console.log(
+            "Slots found for selected date:",
+            slotsForSelectedDate.length,
+          );
+
+          setSlotTimings(slotsForSelectedDate);
         } catch (error) {
           console.error("Error fetching slots:", error);
           toast({
@@ -155,7 +175,10 @@ export default function ExpertProfile(
     const slotStartTimeInUTC = new Date(selectedSlot.slotStartTimeInUTC);
     const slotEndTimeInUTC = new Date(selectedSlot.slotEndTimeInUTC);
 
-    if (consultantDetails.scheduleType === "WEEKLY") {
+    if (
+      (selectedSlot as TSlotTiming & { type: "WEEKLY" | "CUSTOM" }).type ===
+      "WEEKLY"
+    ) {
       params.append(
         "slotOfAvailabilityWeeklyId",
         selectedSlot.slotOfAvailabilityId,
@@ -212,9 +235,12 @@ export default function ExpertProfile(
       currentDate.getMonth(),
       1,
     ).getDay();
+
+    // Adjust for Monday as first day of week (0 = Monday, 1 = Tuesday, etc.)
+    const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
     const days = [];
 
-    for (let i = 0; i < firstDayOfMonth; i++) {
+    for (let i = 0; i < adjustedFirstDay; i++) {
       days.push(<div key={`empty-${i}`} className="p-2"></div>);
     }
 
@@ -278,8 +304,6 @@ export default function ExpertProfile(
 
           <ConsultantAvailability
             consultantDetails={consultantDetails}
-            selectedSlot={selectedSlot}
-            setSelectedSlot={setSelectedSlot}
             timezone={timezone || "UTC"}
           />
         </div>
@@ -305,6 +329,7 @@ export default function ExpertProfile(
         slotTimings={slotTimings}
         selectedSlot={selectedSlot}
         setSelectedSlot={setSelectedSlot}
+        timezone={timezone || "UTC"}
       />
     </div>
   );

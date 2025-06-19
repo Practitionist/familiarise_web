@@ -4,14 +4,25 @@ import { PasswordResetEmail } from "@/emails/auth/PasswordResetEmail";
 import { AccountLinkedEmail } from "@/emails/auth/AccountLinkedEmail";
 import { render } from "@react-email/render";
 
-// Initialize Resend with API key, with validation
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-if (!RESEND_API_KEY) {
-  console.warn(
-    "WARNING: RESEND_API_KEY is not defined. Email functionality will not work.",
-  );
+// Initialize Resend lazily to avoid build-time issues
+let resendClient: Resend | null = null;
+
+function getResendClient(): Resend | null {
+  const RESEND_API_KEY = process.env.RESEND_API_KEY;
+
+  if (!RESEND_API_KEY) {
+    console.warn(
+      "WARNING: RESEND_API_KEY is not defined. Email functionality will not work.",
+    );
+    return null;
+  }
+
+  if (!resendClient) {
+    resendClient = new Resend(RESEND_API_KEY);
+  }
+
+  return resendClient;
 }
-const resend = new Resend(RESEND_API_KEY);
 
 // Base URL for app
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
@@ -31,8 +42,10 @@ export async function sendWelcomeEmail({
   dashboardUrl?: string;
 }) {
   try {
-    // Check if Resend API key is available
-    if (!RESEND_API_KEY) {
+    const resend = getResendClient();
+
+    // Check if Resend client is available
+    if (!resend) {
       console.error(
         "RESEND_API_KEY is not configured. Cannot send welcome email.",
       );
@@ -79,6 +92,18 @@ export async function sendPasswordResetEmail({
   token: string;
 }) {
   try {
+    const resend = getResendClient();
+
+    if (!resend) {
+      console.error(
+        "RESEND_API_KEY is not configured. Cannot send password reset email.",
+      );
+      return {
+        success: false,
+        error: "Email service not configured",
+      };
+    }
+
     const resetLink = `${baseUrl}/auth/reset-password?token=${token}`;
     const html = await render(PasswordResetEmail({ name, resetLink }));
 
@@ -113,6 +138,18 @@ export async function sendAccountLinkedEmail({
   dashboardUrl?: string;
 }) {
   try {
+    const resend = getResendClient();
+
+    if (!resend) {
+      console.error(
+        "RESEND_API_KEY is not configured. Cannot send account linked email.",
+      );
+      return {
+        success: false,
+        error: "Email service not configured",
+      };
+    }
+
     const html = await render(
       AccountLinkedEmail({ name, provider, dashboardUrl }),
     );

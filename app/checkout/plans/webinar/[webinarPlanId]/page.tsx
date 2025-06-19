@@ -5,13 +5,28 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { fetchReviews } from "@/lib/user";
-
-import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useEffect, useState, useCallback } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { z } from "zod";
+import { fetchReviews } from "@/lib/user";
+import {
+  CheckoutInput,
+  checkoutResponseSchema,
+  webinarSearchParamsSchema,
+  createCheckoutData,
+} from "@/schemas/checkout";
+import { PaymentGateway } from "@prisma/client";
 import { loadStripe } from "@stripe/stripe-js";
+import { CreditCard as CreditCardIcon } from "lucide-react";
+import { use, useCallback, useEffect, useState } from "react";
+import RazorpayCheckout from "../../../components/RazorpayCheckout";
+import StripeCheckout from "../../../components/StripeCheckout";
+import {
+  createHandleApiError,
+  createHandleCheckoutSuccess,
+  handleProductionCheckout,
+  paymentGateways,
+  createStripeCheckoutHandlers,
+  createRazorpayCheckoutHandlers,
+} from "../../utils";
 
 import type {
   WebinarPlan,
@@ -53,10 +68,6 @@ type PlanResponse = {
   data: CheckoutWebinarPlanData;
 };
 
-const webinarSchema = z.object({
-  discountCode: z.string().optional(),
-});
-
 type PageProps = {
   params: Promise<{ webinarPlanId: string }>;
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
@@ -68,7 +79,7 @@ export default function WebinarCheckoutPage({
 }: Readonly<PageProps>) {
   // Next.js 15 Synchronous params and searchParams
   const resolvedParams = use(params);
-  const resolvedSearchParams = use(searchParams); // Added to match class checkout page structure
+  const resolvedSearchParams = use(searchParams);
 
   const [planData, setPlanData] = useState<PlanResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -80,170 +91,14 @@ export default function WebinarCheckoutPage({
   );
   const { toast } = useToast();
 
-  // Common error handling logic
-  const handleApiError = (errorData: any) => {
-    const errorMessage = errorData.error || "Operation failed";
-    const errorType = errorData.errorType || "UNKNOWN_ERROR";
-
-    const errorMessages = {
-      PAYMENT_CONFIG_ERROR: {
-        title: "Payment System Error",
-        description: "Payment system unavailable. Please contact support.",
-      },
-      PAYMENT_PROCESSING_ERROR: {
-        title: "Payment Error",
-        description: "Payment processing error. Please try again later.",
-      },
-      DATABASE_ERROR: {
-        title: "System Error",
-        description: "System error. Please try again.",
-      },
-      NOT_FOUND_ERROR: {
-        title: "Not Found",
-        description: errorMessage,
-      },
-      AVAILABILITY_ERROR: {
-        title: "Registration Unavailable",
-        description: errorMessage,
-      },
-      UNKNOWN_ERROR: {
-        title: "Operation Failed",
-        description: errorMessage,
-      },
-    };
-
-    const error =
-      errorMessages[errorType as keyof typeof errorMessages] ||
-      errorMessages.UNKNOWN_ERROR;
-
-    toast({
-      title: error.title,
-      description: error.description,
-      variant: "destructive",
-    });
-  };
-
-  // Common API request logic
-  const makeCheckoutRequest = async (parsedParams: any, gateway: string) => {
-    if (!planData?.data?.id) {
-      throw new Error("Webinar plan not found");
-    }
-
-    // Get the first available webinar instance from the plan
-    const availableWebinar = planData.data.webinars?.[0];
-    if (!availableWebinar) {
-      throw new Error("No webinar instances available for this plan");
-    }
-
-    return fetch("/api/checkout", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        appointmentType: "WEBINAR",
-        planId: planData.data.id,
-        eventId: availableWebinar.id,
-        discountCode: parsedParams.data.discountCode,
-        paymentGateway: gateway,
-      }),
-    });
-  };
-
-  // Common success handling logic
-  const handleCheckoutSuccess = (data: any, isDevMode: boolean = false) => {
-    if (isDevMode) {
-      // Development mode - direct registration success
-      toast({
-        title: "✅ Webinar Registration Successful!",
-        description: data.skipPayment
-          ? "You're registered for the webinar. Check your dashboard for details."
-          : "Payment processed successfully. You're registered for the webinar.",
-        variant: "default",
-      });
-
-      // Redirect after a short delay
-      setTimeout(() => {
-        window.location.href = "/dashboard/consultee";
-      }, 2000);
-    } else {
-      // Production mode - payment initiated success
-      toast({
-        title: "🚀 Payment Initiated!",
-        description:
-          "Redirecting to secure payment gateway. Complete your payment to confirm the registration.",
-        variant: "default",
-      });
-    }
-  };
-
-  // Development workflow - direct registration
-  const handleDevCheckout = async (parsedParams: any, gateway: string) => {
-    const response = await makeCheckoutRequest(parsedParams, gateway);
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      handleApiError(errorData);
-      throw new Error(errorData.error || "Registration failed");
-    }
-
-    const data = await response.json();
-    handleCheckoutSuccess(data, true);
-  };
-
-  // Production workflow - payment gateway processing
-  const handleProdCheckout = async (
-    parsedParams: any,
-    gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW",
-  ) => {
-    const response = await makeCheckoutRequest(parsedParams, gateway);
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      handleApiError(errorData);
-      throw new Error(errorData.error || "Checkout failed");
-    }
-
-    const data = await response.json();
-
-    // Show success toast before redirecting
-    handleCheckoutSuccess(data, false);
-
-    // Small delay to let user see the toast before redirect
-    setTimeout(async () => {
-      // Handle gateway-specific responses
-      switch (gateway) {
-        case "STRIPE": {
-          const stripeInstance = await loadStripe(
-            process.env.NEXT_PUBLIC_STRIPE_KEY!,
-          );
-          if (!stripeInstance) {
-            throw new Error("Failed to load Stripe");
-          }
-          await stripeInstance.confirmPayment({
-            clientSecret: data.clientSecret,
-            confirmParams: {
-              return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
-            },
-          });
-          break;
-        }
-
-        case "RAZORPAY": {
-          window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
-          break;
-        }
-        case "LEMON_SQUEEZY":
-        case "XFLOW": {
-          window.location.href = data.checkoutUrl;
-          break;
-        }
-      }
-    }, 1000);
-  };
+  // Create utility functions using the toast instance
+  const handleApiError = createHandleApiError(toast);
+  const handleCheckoutSuccess = createHandleCheckoutSuccess(toast, "WEBINAR");
+  const stripeHandlers = createStripeCheckoutHandlers(toast);
+  const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   const handleCheckout = useCallback(
-    async (gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW") => {
+    async (gateway: PaymentGateway) => {
       // Prevent double-clicks and multiple simultaneous requests
       if (isCheckoutProcessing) {
         return;
@@ -254,46 +109,55 @@ export default function WebinarCheckoutPage({
         setIsCheckoutProcessing(true);
         setProcessingGateway(gateway);
 
-        // Validate params first
-        const parsedParams = webinarSchema.safeParse(resolvedSearchParams);
-        if (!parsedParams.success) {
+        // Validate search params using the shared schema
+        const searchParamsValidation =
+          webinarSearchParamsSchema.safeParse(resolvedSearchParams);
+        if (!searchParamsValidation.success) {
           throw new Error("Invalid webinar parameters");
         }
 
-        // Route to appropriate workflow based on environment
-        const isDevelopment =
-          process.env.NODE_ENV === "development" ||
-          process.env.NODE_ENV === "test";
-
-        if (isDevelopment) {
-          await handleDevCheckout(parsedParams, gateway);
-        } else {
-          await handleProdCheckout(parsedParams, gateway);
+        if (!planData?.data?.id) {
+          throw new Error("Webinar plan not found");
         }
+
+        // Create checkout data using the shared utility
+        const checkoutData = createCheckoutData({
+          appointmentType: "WEBINAR",
+          planId: planData.data.id,
+          eventId: resolvedParams.webinarPlanId,
+          discountCode: searchParamsValidation.data.discountCode,
+          paymentGateway: gateway,
+        });
+
+        // Handle production checkout flow using the utility
+        await handleProductionCheckout(
+          checkoutData,
+          gateway,
+          handleApiError,
+          handleCheckoutSuccess,
+        );
       } catch (error) {
         console.error("Checkout error:", error);
-
-        // Only show generic error if it wasn't already handled
-        if (!(error instanceof Error && error.message.includes("failed"))) {
+        if (error instanceof Error) {
           toast({
             title: "Checkout Failed",
-            description:
-              error instanceof Error ? error.message : "Please try again",
+            description: error.message,
             variant: "destructive",
           });
         }
       } finally {
-        // Always reset loading state
         setIsCheckoutProcessing(false);
         setProcessingGateway(null);
       }
     },
     [
-      resolvedParams.webinarPlanId,
-      resolvedSearchParams,
-      planData,
-      toast,
       isCheckoutProcessing,
+      resolvedSearchParams,
+      planData?.data?.id,
+      resolvedParams.webinarPlanId,
+      handleApiError,
+      handleCheckoutSuccess,
+      toast,
     ],
   );
 
@@ -463,35 +327,75 @@ export default function WebinarCheckoutPage({
                 Select Payment Method
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                {["STRIPE", "RAZORPAY", "LEMON_SQUEEZY", "XFLOW"].map(
-                  (gateway) => (
-                    <Button
-                      key={gateway}
-                      variant="outline"
-                      className="w-full h-20 text-lg flex flex-col items-center justify-center hover:bg-blue-50 transition-colors duration-150"
-                      onClick={() =>
-                        handleCheckout(
-                          gateway as
-                            | "STRIPE"
-                            | "RAZORPAY"
-                            | "LEMON_SQUEEZY"
-                            | "XFLOW",
-                        )
-                      }
-                      disabled={isCheckoutProcessing}
-                    >
-                      {isCheckoutProcessing && processingGateway === gateway ? (
-                        <>
-                          <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                          Processing...
-                        </>
-                      ) : (
-                        gateway.charAt(0).toUpperCase() +
-                        gateway.slice(1).toLowerCase()
-                      )}
-                    </Button>
-                  ),
-                )}
+                {paymentGateways.map((gateway) => (
+                  <Card
+                    key={gateway.gateway}
+                    className="p-4 hover:shadow-md transition-shadow cursor-pointer"
+                  >
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium flex items-center gap-2">
+                        <CreditCardIcon className="h-4 w-4" />
+                        {gateway.name}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <p className="text-xs text-gray-600 mb-4">
+                        {gateway.description}
+                      </p>
+                      <div className="flex justify-center">
+                        {gateway.gateway === "STRIPE" ? (
+                          <StripeCheckout
+                            checkoutData={createCheckoutData({
+                              appointmentType: "WEBINAR",
+                              planId: planDetails.id,
+                              eventId: planDetails.webinars[0].id,
+                              paymentGateway: "STRIPE",
+                              discountCode: Array.isArray(
+                                resolvedSearchParams.discountCode,
+                              )
+                                ? resolvedSearchParams.discountCode[0]
+                                : resolvedSearchParams.discountCode,
+                            })}
+                            onPaymentSuccess={stripeHandlers.onPaymentSuccess}
+                            onPaymentError={stripeHandlers.onPaymentError}
+                          />
+                        ) : gateway.gateway === "RAZORPAY" ? (
+                          <RazorpayCheckout
+                            checkoutData={createCheckoutData({
+                              appointmentType: "WEBINAR",
+                              planId: planDetails.id,
+                              eventId: planDetails.webinars[0].id,
+                              paymentGateway: "RAZORPAY",
+                              discountCode: Array.isArray(
+                                resolvedSearchParams.discountCode,
+                              )
+                                ? resolvedSearchParams.discountCode[0]
+                                : resolvedSearchParams.discountCode,
+                            })}
+                            onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
+                            onPaymentError={razorpayHandlers.onPaymentError}
+                          />
+                        ) : (
+                          <Button
+                            variant="outline"
+                            onClick={() => handleCheckout(gateway.gateway)}
+                            disabled={isCheckoutProcessing}
+                          >
+                            {isCheckoutProcessing &&
+                            processingGateway === gateway.gateway ? (
+                              <>
+                                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                                Processing...
+                              </>
+                            ) : (
+                              `Pay with ${gateway.name}`
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
             </div>
 

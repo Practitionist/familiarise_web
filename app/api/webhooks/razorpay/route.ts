@@ -1,121 +1,67 @@
 import { NextRequest, NextResponse } from "next/server";
-import crypto from "crypto";
-import prisma from "@/lib/prisma";
+import {
+  handlePaymentFailure,
+  handlePaymentSuccess,
+  verifyWebhookSignature,
+} from "../utils";
+import {
+  razorpayBaseEventSchema,
+  razorpayPaymentCapturedEventSchema,
+  razorpayPaymentFailedEventSchema,
+  razorpayOrderPaidEventSchema,
+} from "../../../../schemas/webhooks/razorpay";
 
 export async function POST(req: NextRequest) {
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  if (!secret) {
+    console.error("RAZORPAY_WEBHOOK_SECRET not configured");
+    return NextResponse.json(
+      { error: "Webhook secret not configured" },
+      { status: 500 },
+    );
+  }
+
+  const { isValid, body } = await verifyWebhookSignature(
+    req,
+    secret,
+    "razorpay",
+  );
+  if (!isValid) {
+    return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
+  }
+
   try {
-    const body = await req.text();
-    const signature = req.headers.get("x-razorpay-signature");
-
-    if (!process.env.RAZORPAY_WEBHOOK_SECRET) {
-      console.error("RAZORPAY_WEBHOOK_SECRET not configured");
-      return NextResponse.json(
-        { error: "Webhook secret not configured" },
-        { status: 500 },
-      );
-    }
-
-    // Verify webhook signature
-    if (signature) {
-      const expectedSignature = crypto
-        .createHmac("sha256", process.env.RAZORPAY_WEBHOOK_SECRET)
-        .update(body)
-        .digest("hex");
-
-      if (signature !== expectedSignature) {
-        console.error("Razorpay webhook signature verification failed");
-        return NextResponse.json(
-          { error: "Invalid signature" },
-          { status: 400 },
-        );
-      }
-    }
-
     const event = JSON.parse(body);
+    const { event: eventType } = razorpayBaseEventSchema.parse(event);
 
-    // Log all webhook events
-    console.log(`🔔 Razorpay Webhook Event: ${event.event}`, {
-      account_id: event.account_id,
-      entity: event.entity,
-      created_at: new Date(event.created_at * 1000).toISOString(),
+    console.log(`🔔 Razorpay Webhook Event: ${eventType}`, {
       payload: event.payload,
     });
 
-    // Handle different event types
-    switch (event.event) {
+    switch (eventType) {
       case "payment.captured":
-        const payment = event.payload.payment.entity;
-        console.log("✅ Payment captured:", {
-          id: payment.id,
-          amount: payment.amount,
-          currency: payment.currency,
-          order_id: payment.order_id,
-          notes: payment.notes,
-          status: payment.status,
-        });
-
-        // Update booking status if notes contain booking info
-        if (payment.notes && payment.notes.bookingId) {
-          try {
-            // Note: Update based on your actual booking table structure
-            console.log(
-              "✅ Booking confirmed via Razorpay:",
-              payment.notes.bookingId,
-            );
-          } catch (error) {
-            console.error("Failed to update booking:", error);
-          }
-        }
-        break;
-
-      case "payment.failed":
-        const failedPayment = event.payload.payment.entity;
-        console.log("❌ Payment failed:", {
-          id: failedPayment.id,
-          order_id: failedPayment.order_id,
-          error_code: failedPayment.error_code,
-          error_description: failedPayment.error_description,
-          notes: failedPayment.notes,
-        });
+        const capturedEvent = razorpayPaymentCapturedEventSchema.parse(event);
+        await handlePaymentSuccess(
+          capturedEvent.payload.payment.entity.order_id,
+          capturedEvent.payload.payment.entity.notes || {},
+        );
         break;
 
       case "order.paid":
-        const order = event.payload.order.entity;
-        console.log("✅ Order paid:", {
-          id: order.id,
-          amount: order.amount,
-          amount_paid: order.amount_paid,
-          currency: order.currency,
-          status: order.status,
-          notes: order.notes,
-        });
+        const paidEvent = razorpayOrderPaidEventSchema.parse(event);
+        await handlePaymentSuccess(
+          paidEvent.payload.order.entity.id,
+          paidEvent.payload.order.entity.notes || {},
+        );
         break;
 
-      case "subscription.charged":
-        const subscription = event.payload.subscription.entity;
-        console.log("✅ Subscription charged:", {
-          id: subscription.id,
-          status: subscription.status,
-          current_start: new Date(
-            subscription.current_start * 1000,
-          ).toISOString(),
-          current_end: new Date(subscription.current_end * 1000).toISOString(),
-          notes: subscription.notes,
-        });
-        break;
-
-      case "subscription.activated":
-        const activatedSub = event.payload.subscription.entity;
-        console.log("🆕 Subscription activated:", {
-          id: activatedSub.id,
-          status: activatedSub.status,
-          plan_id: activatedSub.plan_id,
-          customer_id: activatedSub.customer_id,
-        });
+      case "payment.failed":
+        const failedEvent = razorpayPaymentFailedEventSchema.parse(event);
+        await handlePaymentFailure(failedEvent.payload.payment.entity.order_id);
         break;
 
       default:
-        console.log(`📄 Unhandled Razorpay event type: ${event.event}`);
+        console.log(`📄 Unhandled Razorpay event type: ${eventType}`);
     }
 
     return NextResponse.json({ status: "ok" });

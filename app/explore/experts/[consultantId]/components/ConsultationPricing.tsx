@@ -19,6 +19,7 @@ interface ConsultationPricingProps {
   slotTimings: TSlotTiming[];
   selectedSlot: TSlotTiming | null;
   setSelectedSlot: (slot: TSlotTiming | null) => void;
+  timezone: string;
 }
 
 export function ConsultationPricing({
@@ -34,6 +35,7 @@ export function ConsultationPricing({
   slotTimings,
   selectedSlot,
   setSelectedSlot,
+  timezone,
 }: Readonly<ConsultationPricingProps>) {
   const formatPricingOptions = (
     plans: (ConsultationPlan | SubscriptionPlan)[],
@@ -70,11 +72,15 @@ export function ConsultationPricing({
   };
 
   const consultationOptions = formatPricingOptions(
-    consultantDetails.consultationPlans,
+    consultantDetails.consultationPlans.sort(
+      (a, b) => a.durationInHours - b.durationInHours,
+    ),
     "consultation",
   );
   const subscriptionOptions = formatPricingOptions(
-    consultantDetails.subscriptionPlans,
+    consultantDetails.subscriptionPlans.sort(
+      (a, b) => a.durationInMonths - b.durationInMonths,
+    ),
     "subscription",
   );
 
@@ -108,6 +114,7 @@ export function ConsultationPricing({
           slotTimings={slotTimings}
           selectedSlot={selectedSlot}
           setSelectedSlot={setSelectedSlot}
+          timezone={timezone}
         />
       </div>
     </div>

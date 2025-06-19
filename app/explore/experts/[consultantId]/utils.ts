@@ -1,5 +1,7 @@
 import { DayOfWeek } from "@prisma/client";
 import { TWeeklySlot, TCustomSlot, TSlotTiming } from "@/types/slots";
+import { format } from "date-fns";
+import { toZonedTime } from "date-fns-tz";
 
 export const dayMap: Record<number, DayOfWeek> = {
   0: DayOfWeek.SUNDAY,
@@ -50,6 +52,19 @@ export function normalizeCustomSlot(slot: TCustomSlot): TCustomSlot & {
   };
 }
 
+export function formatTime(date: Date, timezone?: string | null): string {
+  if (!timezone) {
+    return date.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "numeric",
+      hour12: true,
+    });
+  }
+
+  const zonedDate = toZonedTime(date, timezone);
+  return format(zonedDate, "h:mm a");
+}
+
 export function getLocalDay(date: Date, timezone?: string | null): number {
   if (!timezone) return date.getDay();
 
@@ -57,190 +72,11 @@ export function getLocalDay(date: Date, timezone?: string | null): number {
     const localDate = new Date(
       date.toLocaleString("en-US", { timeZone: timezone }),
     );
-    console.log("Local day calculation:", {
-      originalDate: date.toISOString(),
-      timezone,
-      localDate: localDate.toISOString(),
-      localDay: localDate.getDay(),
-    });
     return localDate.getDay();
   } catch (_) {
     console.warn("Invalid timezone, using UTC day");
     return date.getUTCDay();
   }
-}
-
-export function convertUTCToLocalDate(
-  utcTime: string,
-  selectedDate: Date,
-  timezone?: string | null,
-): Date {
-  // Parse the UTC time from 1970-01-01 format
-  const utcDate = new Date(utcTime);
-  const utcHours = utcDate.getUTCHours();
-  const utcMinutes = utcDate.getUTCMinutes();
-
-  // Create a new date in UTC
-  const utcDateTime = new Date(
-    Date.UTC(
-      selectedDate.getFullYear(),
-      selectedDate.getMonth(),
-      selectedDate.getDate(),
-      utcHours,
-      utcMinutes,
-      0,
-      0,
-    ),
-  );
-
-  if (!timezone) return utcDateTime;
-
-  try {
-    // Convert UTC to local time string in the target timezone
-    const localTimeStr = utcDateTime.toLocaleString("en-US", {
-      timeZone: timezone,
-      year: "numeric",
-      month: "numeric",
-      day: "numeric",
-      hour: "numeric",
-      minute: "numeric",
-      second: "numeric",
-      hour12: false,
-    });
-
-    // Parse the local time string back to a Date object
-    const [datePart, timePart] = localTimeStr.split(", ");
-    const [month, day, year] = datePart.split("/").map(Number);
-    const [hours, minutes, seconds] = timePart.split(":").map(Number);
-
-    const localDate = new Date(year, month - 1, day, hours, minutes, seconds);
-
-    // Adjust date if the local time is on a different day
-    const localDay = getLocalDay(localDate, timezone);
-    const selectedDay = getLocalDay(selectedDate, timezone);
-
-    if (localDay !== selectedDay) {
-      // Handle week wrap-around
-      if (selectedDay === 0 && localDay === 6) {
-        // If selected day is Sunday and local day is Saturday, add a day
-        localDate.setDate(localDate.getDate() + 1);
-      } else if (selectedDay === 6 && localDay === 0) {
-        // If selected day is Saturday and local day is Sunday, subtract a day
-        localDate.setDate(localDate.getDate() - 1);
-      } else if (localDay === selectedDay - 1) {
-        // If local day is the previous day, add a day
-        localDate.setDate(localDate.getDate() + 1);
-      } else if (localDay === selectedDay + 1) {
-        // If local day is the next day, subtract a day
-        localDate.setDate(localDate.getDate() - 1);
-      }
-    }
-
-    console.log("UTC to Local conversion:", {
-      utcTime: utcDateTime.toISOString(),
-      timezone,
-      localTime: localDate.toISOString(),
-    });
-
-    return localDate;
-  } catch (_) {
-    console.warn("Invalid timezone, using UTC");
-    return utcDateTime;
-  }
-}
-
-export function formatTime(
-  date: string | Date,
-  timezone?: string | null,
-): string {
-  const dateObj = typeof date === "string" ? new Date(date) : date;
-
-  try {
-    return new Intl.DateTimeFormat("en-US", {
-      hour: "numeric",
-      minute: "numeric",
-      hour12: true,
-      timeZone: timezone || undefined,
-    }).format(dateObj);
-  } catch (_) {
-    console.warn("Error formatting time");
-    return dateObj.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "numeric",
-      hour12: true,
-    });
-  }
-}
-
-export function isSameLocalDay(
-  date1: Date,
-  date2: Date,
-  timezone?: string | null,
-): boolean {
-  if (!timezone) return false;
-
-  try {
-    const d1 = new Date(date1.toLocaleString("en-US", { timeZone: timezone }));
-    const d2 = new Date(date2.toLocaleString("en-US", { timeZone: timezone }));
-
-    const result =
-      d1.getFullYear() === d2.getFullYear() &&
-      d1.getMonth() === d2.getMonth() &&
-      d1.getDate() === d2.getDate();
-
-    console.log("Same local day check:", {
-      date1: date1.toISOString(),
-      date2: date2.toISOString(),
-      timezone,
-      localDate1: d1.toISOString(),
-      localDate2: d2.toISOString(),
-      isSameDay: result,
-    });
-
-    return result;
-  } catch (_) {
-    console.warn("Invalid timezone");
-    return false;
-  }
-}
-
-export function isSlotRelevantForDay(
-  slot: TWeeklySlot,
-  selectedDay: DayOfWeek,
-  _timezone?: string | null,
-): boolean {
-  const startDay = slot.dayOfWeekforStartTimeInUTC;
-  const endDay = slot.dayOfWeekforEndTimeInUTC;
-
-  // Direct match
-  if (startDay === selectedDay) return true;
-
-  // Handle overnight slots
-  if (startDay !== endDay) {
-    const selectedDayNum = dayToNumber[selectedDay];
-    const startDayNum = dayToNumber[startDay];
-    const endDayNum = dayToNumber[endDay];
-
-    // Handle week wrap-around (e.g., Saturday to Sunday)
-    if (startDayNum > endDayNum) {
-      // For slots that wrap around the week (e.g., Sat 9pm - Sun 3am)
-      // The slot is relevant for both the start day and the end day
-      if (selectedDay === endDay) return true;
-
-      // For days in between (in case of multi-day slots)
-      const dayAfterStart = (startDayNum + 1) % 7;
-      return (
-        selectedDayNum >= startDayNum ||
-        selectedDayNum <= endDayNum ||
-        (selectedDayNum >= dayAfterStart && selectedDayNum <= 6)
-      );
-    }
-
-    // Normal case (e.g., Mon 10pm - Tue 2am)
-    return selectedDayNum >= startDayNum && selectedDayNum <= endDayNum;
-  }
-
-  return false;
 }
 
 export function createWeeklySlot(
@@ -250,45 +86,20 @@ export function createWeeklySlot(
   endDateTime: Date,
   timezone?: string | null,
 ): TSlotTiming {
-  let adjustedEndDateTime = new Date(endDateTime);
-  const normalizedSlot = normalizeWeeklySlot(slot);
+  const localDay = getLocalDay(selectedDate, timezone);
+  const selectedDayOfWeek = dayMap[localDay];
 
-  // Handle slots that cross midnight
-  if (
-    slot.dayOfWeekforStartTimeInUTC !== slot.dayOfWeekforEndTimeInUTC ||
-    endDateTime <= startDateTime ||
-    (endDateTime.getHours() === 0 && endDateTime.getMinutes() === 0)
-  ) {
-    adjustedEndDateTime = new Date(endDateTime);
-    adjustedEndDateTime.setDate(adjustedEndDateTime.getDate() + 1);
-  }
-
-  const slotTiming = {
-    slotId: normalizedSlot.id,
+  return {
+    slotId: slot.id,
     dateInISO: selectedDate.toISOString(),
-    dayOfWeek: normalizedSlot.dayOfWeekforStartTimeInUTC,
+    dayOfWeek: selectedDayOfWeek,
     slotStartTimeInUTC: startDateTime.toISOString(),
-    slotEndTimeInUTC: adjustedEndDateTime.toISOString(),
-    slotOfAvailabilityId: normalizedSlot.id,
-    slotOfAppointmentId: "",
+    slotEndTimeInUTC: endDateTime.toISOString(),
+    slotOfAvailabilityId: slot.id,
+    slotOfAppointmentId: "", // Not an appointment
     localStartTime: formatTime(startDateTime, timezone),
-    localEndTime: formatTime(adjustedEndDateTime, timezone),
+    localEndTime: formatTime(endDateTime, timezone),
   };
-
-  console.log("Created weekly slot:", {
-    startDay: normalizedSlot.dayOfWeekforStartTimeInUTC,
-    endDay: normalizedSlot.dayOfWeekforEndTimeInUTC,
-    utcStart: normalizedSlot.slotStartTimeInUTC,
-    utcEnd: normalizedSlot.slotEndTimeInUTC,
-    localStart: slotTiming.localStartTime,
-    localEnd: slotTiming.localEndTime,
-    timezone,
-    crossesMidnight:
-      normalizedSlot.dayOfWeekforStartTimeInUTC !==
-      normalizedSlot.dayOfWeekforEndTimeInUTC,
-  });
-
-  return slotTiming;
 }
 
 export function createCustomSlot(
@@ -361,43 +172,4 @@ export function mergeOverlappingSlots(
 
     return [...acc, curr];
   }, []);
-}
-
-export function breakDownSlotsByDuration(
-  slots: TSlotTiming[],
-  durationInHours: number,
-  timezone?: string | null,
-): TSlotTiming[] {
-  const brokenDownSlots: TSlotTiming[] = [];
-
-  slots.forEach((slot) => {
-    const startTime = new Date(slot.slotStartTimeInUTC);
-    const endTime = new Date(slot.slotEndTimeInUTC);
-    const durationMs = durationInHours * 60 * 60 * 1000;
-
-    // Calculate how many slots of the given duration can fit in this time period
-    let currentStart = new Date(startTime);
-
-    while (currentStart.getTime() + durationMs <= endTime.getTime()) {
-      const currentEnd = new Date(currentStart.getTime() + durationMs);
-
-      brokenDownSlots.push({
-        ...slot,
-        slotId: `${slot.slotId}-${currentStart.getTime()}`,
-        slotStartTimeInUTC: currentStart.toISOString(),
-        slotEndTimeInUTC: currentEnd.toISOString(),
-        localStartTime: formatTime(currentStart, timezone),
-        localEndTime: formatTime(currentEnd, timezone),
-      });
-
-      // Move to next potential slot
-      currentStart = new Date(currentStart.getTime() + durationMs);
-    }
-  });
-
-  return brokenDownSlots.sort(
-    (a, b) =>
-      new Date(a.slotStartTimeInUTC).getTime() -
-      new Date(b.slotStartTimeInUTC).getTime(),
-  );
 }

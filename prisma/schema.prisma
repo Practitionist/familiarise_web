@@ -478,6 +478,7 @@ model Subscription {
 enum RequestStatus {
   PENDING
   APPROVED
+  SCHEDULED
   REJECTED
   CANCELLED
   EXPIRED
@@ -730,8 +731,8 @@ model Payment {
 
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
-  appointment    Appointment   @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  appointmentId  String        @unique
+  appointment    Appointment?  @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentId  String?       @unique
   discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   discountCodeId String?
 

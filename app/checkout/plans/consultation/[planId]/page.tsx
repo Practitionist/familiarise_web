@@ -5,17 +5,25 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { useToast } from "@/hooks/use-toast";
 import { fetchReviews } from "@/lib/user";
+import {
+  CheckoutInput,
+  checkoutResponseSchema,
+  consultationSearchParamsSchema,
+  createCheckoutData,
+} from "@/schemas/checkout";
 import {
   ConsultantProfile,
   ConsultantReview,
   ConsultationPlan,
+  PaymentGateway,
 } from "@prisma/client";
-import { CreditCard as CreditCardIcon } from "lucide-react";
-import { use, useEffect, useState, useCallback } from "react";
-import { useToast } from "@/hooks/use-toast";
-import { z } from "zod";
 import { loadStripe } from "@stripe/stripe-js";
+import { CreditCard as CreditCardIcon } from "lucide-react";
+import { use, useCallback, useEffect, useState } from "react";
+import RazorpayCheckout from "../../../components/RazorpayCheckout";
+import StripeCheckout from "../../../components/StripeCheckout";
 
 type ConsultationPlanWithConsultant = ConsultationPlan & {
   consultantProfile: ConsultantProfile & {
@@ -32,32 +40,7 @@ type ConsultationResponse = {
   data: ConsultationPlanWithConsultant;
 };
 
-const consultationSchema = z
-  .object({
-    slotOfAvailabilityWeeklyId: z.string().optional(),
-    slotOfAvailabilityCustomId: z.string().optional(),
-    slotStartTimeInUTC: z.string().datetime(),
-    slotEndTimeInUTC: z.string().datetime(),
-    discountCode: z.string().optional(),
-  })
-  .refine(
-    (data) =>
-      (data.slotOfAvailabilityWeeklyId && !data.slotOfAvailabilityCustomId) ||
-      (!data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId),
-    {
-      message:
-        "Exactly one of slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
-      path: ["slotOfAvailabilityWeeklyId", "slotOfAvailabilityCustomId"],
-    },
-  )
-  .refine(
-    (data) =>
-      new Date(data.slotStartTimeInUTC) < new Date(data.slotEndTimeInUTC),
-    {
-      message: "Start time must be before end time",
-      path: ["slotStartTime", "slotEndTime"],
-    },
-  );
+// Using the shared consultation schema from utils/payments.ts
 
 type PageProps = {
   params: Promise<{ planId: string }>;
@@ -165,110 +148,17 @@ export default function ConsultationCheckoutPage({
   };
 
   // Common API request logic
-  const makeCheckoutRequest = async (parsedParams: any, gateway: string) => {
+  const makeCheckoutRequest = async (
+    checkoutData: CheckoutInput,
+    gateway: string,
+  ) => {
     return fetch("/api/checkout", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        appointmentType: "CONSULTATION",
-        planId: resolvedParams.planId,
-        slotOfAvailabilityWeeklyId:
-          parsedParams.data.slotOfAvailabilityWeeklyId,
-        slotOfAvailabilityCustomId:
-          parsedParams.data.slotOfAvailabilityCustomId,
-        slotStartTimeInUTC: parsedParams.data.slotStartTimeInUTC,
-        slotEndTimeInUTC: parsedParams.data.slotEndTimeInUTC,
-        discountCode: parsedParams.data.discountCode,
-        paymentGateway: gateway,
-      }),
+      body: JSON.stringify(checkoutData),
     });
-  };
-
-  // Common success handling logic
-  const handleCheckoutSuccess = (data: any, isDevMode: boolean = false) => {
-    if (isDevMode) {
-      // Development mode - direct booking success
-      toast({
-        title: "✅ Consultation Booked Successfully!",
-        description: data.skipPayment
-          ? "Your consultation has been confirmed. Check your dashboard for details."
-          : "Payment processed successfully. Your consultation is confirmed.",
-        variant: "default",
-      });
-
-      // Redirect after a short delay
-      setTimeout(() => {
-        window.location.href = "/dashboard/consultee";
-      }, 2000);
-    } else {
-      // Production mode - payment initiated success
-      toast({
-        title: "🚀 Payment Initiated!",
-        description:
-          "Redirecting to secure payment gateway. Complete your payment to confirm the consultation.",
-        variant: "default",
-      });
-    }
-  };
-
-  // Development workflow - direct booking
-  const handleDevCheckout = async (parsedParams: any, gateway: string) => {
-    const response = await makeCheckoutRequest(parsedParams, gateway);
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      handleApiError(errorData);
-      throw new Error(errorData.error || "Booking failed");
-    }
-
-    const data = await response.json();
-    handleCheckoutSuccess(data, true);
-  };
-
-  // Production workflow - payment gateway processing
-  const handleProdCheckout = async (
-    parsedParams: any,
-    gateway: "STRIPE" | "RAZORPAY" | "LEMON_SQUEEZY" | "XFLOW",
-  ) => {
-    const response = await makeCheckoutRequest(parsedParams, gateway);
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      handleApiError(errorData);
-      throw new Error(errorData.error || "Checkout failed");
-    }
-
-    const data = await response.json();
-
-    // Show success toast before redirecting
-    handleCheckoutSuccess(data, false);
-
-    // Small delay to let user see the toast before redirect
-    setTimeout(async () => {
-      // Handle gateway-specific responses
-      switch (gateway) {
-        case "STRIPE":
-          const stripe = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_KEY!);
-          await stripe?.confirmPayment({
-            clientSecret: data.clientSecret,
-            confirmParams: {
-              return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`,
-            },
-          });
-          break;
-
-        case "RAZORPAY":
-          window.location.href = `/checkout/razorpay?order_id=${data.orderId}`;
-          break;
-
-        case "LEMON_SQUEEZY":
-        case "XFLOW":
-          window.location.href = data.checkoutUrl;
-          break;
-      }
-    }, 1000);
   };
 
   const handleCheckout = useCallback(
@@ -283,21 +173,97 @@ export default function ConsultationCheckoutPage({
         setIsCheckoutProcessing(true);
         setProcessingGateway(gateway);
 
-        // Validate params first
-        const parsedParams = consultationSchema.safeParse(resolvedSearchParams);
-        if (!parsedParams.success) {
-          throw new Error("Invalid booking parameters");
+        // Validate search params first
+        const searchParamsValidation =
+          consultationSearchParamsSchema.safeParse(resolvedSearchParams);
+        if (!searchParamsValidation.success) {
+          const issues = searchParamsValidation.error.issues;
+          const missingFields = issues.map((issue) => issue.path[0]).join(", ");
+          throw new Error(`Invalid booking parameters: ${missingFields}`);
         }
 
-        // Route to appropriate workflow based on environment
-        const isDevelopment =
-          process.env.NODE_ENV === "development" ||
-          process.env.NODE_ENV === "test";
+        // Create validated checkout data
+        const checkoutData = createCheckoutData({
+          appointmentType: "CONSULTATION",
+          planId: resolvedParams.planId,
+          paymentGateway: gateway as PaymentGateway,
+          slotStartTimeInUTC: searchParamsValidation.data.slotStartTimeInUTC,
+          slotEndTimeInUTC: searchParamsValidation.data.slotEndTimeInUTC,
+          slotOfAvailabilityWeeklyId:
+            searchParamsValidation.data.slotOfAvailabilityWeeklyId,
+          slotOfAvailabilityCustomId:
+            searchParamsValidation.data.slotOfAvailabilityCustomId,
+          discountCode: searchParamsValidation.data.discountCode,
+          notes: searchParamsValidation.data.notes,
+        });
 
-        if (isDevelopment) {
-          await handleDevCheckout(parsedParams, gateway);
+        // Make single API call - backend decides dev vs prod flow
+        const response = await makeCheckoutRequest(checkoutData, gateway);
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          handleApiError(errorData);
+          throw new Error(errorData.error || "Checkout failed");
+        }
+
+        const data = await response.json();
+
+        // Validate response using schema
+        const validatedResponse = checkoutResponseSchema.safeParse(data);
+        if (!validatedResponse.success) {
+          throw new Error("Invalid response format from server");
+        }
+
+        // Handle response based on what backend returns
+        if (data.skipPayment) {
+          // Development mode - direct booking success
+          toast({
+            title: "✅ Consultation Booked Successfully!",
+            description:
+              "Your consultation has been confirmed. Check your dashboard for details.",
+            variant: "default",
+          });
+
+          // Redirect after a short delay
+          setTimeout(() => {
+            window.location.href = "/dashboard/consultee";
+          }, 2000);
         } else {
-          await handleProdCheckout(parsedParams, gateway);
+          // Production mode - payment initiated success
+          toast({
+            title: "🚀 Payment Initiated!",
+            description:
+              "Redirecting to secure payment gateway. Complete your payment to confirm the consultation.",
+            variant: "default",
+          });
+
+          // Small delay to let user see the toast before redirect
+          setTimeout(async () => {
+            // Handle gateway-specific responses
+            switch (gateway) {
+              case "STRIPE":
+                const stripe = await loadStripe(
+                  process.env.NEXT_PUBLIC_STRIPE_KEY!,
+                );
+                await stripe?.confirmPayment({
+                  clientSecret: data.paymentIntent.client_secret,
+                  confirmParams: {
+                    return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/checkout-success`,
+                  },
+                });
+                break;
+
+              case "RAZORPAY":
+                // Razorpay is handled by the RazorpayCheckout component
+                // This case shouldn't be reached since Razorpay has its own component
+                break;
+
+              case "LEMON_SQUEEZY":
+              case "XFLOW":
+                window.location.href = data.paymentIntent.client_secret; // This would be the checkout URL for these gateways
+                break;
+            }
+          }, 1000);
         }
       } catch (error) {
         console.error("Checkout error:", error);
@@ -324,12 +290,13 @@ export default function ConsultationCheckoutPage({
     async function fetchEventData() {
       setIsLoading(true);
       try {
-        const parsedParams = consultationSchema.safeParse(resolvedSearchParams);
-
-        if (!parsedParams.success) {
-          const issues = parsedParams.error.issues;
-          const missingFields = issues.map((issue) => issue.path[0]).join(", ");
-          throw new Error(`Missing required fields: ${missingFields}`);
+        // Validate search params using Zod schema
+        const searchParamsValidation =
+          consultationSearchParamsSchema.safeParse(resolvedSearchParams);
+        if (!searchParamsValidation.success) {
+          const issues = searchParamsValidation.error.issues;
+          const errorMessage = issues.map((issue) => issue.message).join(", ");
+          throw new Error(`Validation failed: ${errorMessage}`);
         }
 
         const endpoint = `/api/plans/consultations/${resolvedParams.planId}`;
@@ -608,21 +575,131 @@ export default function ConsultationCheckoutPage({
                       </div>
                     </div>
                   </div>
-                  <Button
-                    variant="outline"
-                    onClick={() => handleCheckout(gateway.gateway)}
-                    disabled={isCheckoutProcessing}
-                  >
-                    {isCheckoutProcessing &&
-                    processingGateway === gateway.gateway ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                        Processing...
-                      </>
-                    ) : (
-                      `Pay with ${gateway.name}`
-                    )}
-                  </Button>
+                  {gateway.gateway === "RAZORPAY" ? (
+                    <RazorpayCheckout
+                      checkoutData={createCheckoutData({
+                        appointmentType: "CONSULTATION",
+                        planId: resolvedParams.planId,
+                        paymentGateway: "RAZORPAY",
+                        slotStartTimeInUTC: Array.isArray(
+                          resolvedSearchParams.slotStartTimeInUTC,
+                        )
+                          ? resolvedSearchParams.slotStartTimeInUTC[0]
+                          : resolvedSearchParams.slotStartTimeInUTC,
+                        slotEndTimeInUTC: Array.isArray(
+                          resolvedSearchParams.slotEndTimeInUTC,
+                        )
+                          ? resolvedSearchParams.slotEndTimeInUTC[0]
+                          : resolvedSearchParams.slotEndTimeInUTC,
+                        slotOfAvailabilityWeeklyId: Array.isArray(
+                          resolvedSearchParams.slotOfAvailabilityWeeklyId,
+                        )
+                          ? resolvedSearchParams.slotOfAvailabilityWeeklyId[0]
+                          : resolvedSearchParams.slotOfAvailabilityWeeklyId,
+                        slotOfAvailabilityCustomId: Array.isArray(
+                          resolvedSearchParams.slotOfAvailabilityCustomId,
+                        )
+                          ? resolvedSearchParams.slotOfAvailabilityCustomId[0]
+                          : resolvedSearchParams.slotOfAvailabilityCustomId,
+                        discountCode: Array.isArray(
+                          resolvedSearchParams.discountCode,
+                        )
+                          ? resolvedSearchParams.discountCode[0]
+                          : resolvedSearchParams.discountCode,
+                        notes: Array.isArray(resolvedSearchParams.notes)
+                          ? resolvedSearchParams.notes[0]
+                          : resolvedSearchParams.notes,
+                      })}
+                      onPaymentSuccess={(response: {
+                        razorpay_payment_id: string;
+                      }) => {
+                        toast({
+                          title: "Payment Successful",
+                          description: `Payment ID: ${response.razorpay_payment_id}`,
+                        });
+                        window.location.href = "/dashboard/consultee";
+                      }}
+                      onPaymentError={(error: { description: string }) => {
+                        toast({
+                          title: "Payment Failed",
+                          description:
+                            error.description || "An unknown error occurred",
+                          variant: "destructive",
+                        });
+                      }}
+                    />
+                  ) : gateway.gateway === "STRIPE" ? (
+                    <StripeCheckout
+                      checkoutData={createCheckoutData({
+                        appointmentType: "CONSULTATION",
+                        planId: resolvedParams.planId,
+                        paymentGateway: "STRIPE",
+                        slotStartTimeInUTC: Array.isArray(
+                          resolvedSearchParams.slotStartTimeInUTC,
+                        )
+                          ? resolvedSearchParams.slotStartTimeInUTC[0]
+                          : resolvedSearchParams.slotStartTimeInUTC,
+                        slotEndTimeInUTC: Array.isArray(
+                          resolvedSearchParams.slotEndTimeInUTC,
+                        )
+                          ? resolvedSearchParams.slotEndTimeInUTC[0]
+                          : resolvedSearchParams.slotEndTimeInUTC,
+                        slotOfAvailabilityWeeklyId: Array.isArray(
+                          resolvedSearchParams.slotOfAvailabilityWeeklyId,
+                        )
+                          ? resolvedSearchParams.slotOfAvailabilityWeeklyId[0]
+                          : resolvedSearchParams.slotOfAvailabilityWeeklyId,
+                        slotOfAvailabilityCustomId: Array.isArray(
+                          resolvedSearchParams.slotOfAvailabilityCustomId,
+                        )
+                          ? resolvedSearchParams.slotOfAvailabilityCustomId[0]
+                          : resolvedSearchParams.slotOfAvailabilityCustomId,
+                        discountCode: Array.isArray(
+                          resolvedSearchParams.discountCode,
+                        )
+                          ? resolvedSearchParams.discountCode[0]
+                          : resolvedSearchParams.discountCode,
+                        notes: Array.isArray(resolvedSearchParams.notes)
+                          ? resolvedSearchParams.notes[0]
+                          : resolvedSearchParams.notes,
+                      })}
+                      onPaymentSuccess={(response: any) => {
+                        toast({
+                          title: "Payment Successful",
+                          description:
+                            response.message ||
+                            "Payment completed successfully",
+                        });
+                        window.location.href = "/dashboard/consultee";
+                      }}
+                      onPaymentError={(error: any) => {
+                        toast({
+                          title: "Payment Failed",
+                          description:
+                            error.message ||
+                            error.description ||
+                            "An unknown error occurred",
+                          variant: "destructive",
+                        });
+                      }}
+                    />
+                  ) : (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleCheckout(gateway.gateway)}
+                      disabled={isCheckoutProcessing}
+                    >
+                      {isCheckoutProcessing &&
+                      processingGateway === gateway.gateway ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
+                          Processing...
+                        </>
+                      ) : (
+                        `Pay with ${gateway.name}`
+                      )}
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>

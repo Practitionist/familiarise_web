@@ -10,6 +10,9 @@ export type TSlotTiming = {
   slotOfAppointmentId: string;
   localStartTime: string;
   localEndTime: string;
+  isAllocated?: boolean;
+  allocatedTo?: string;
+  type?: "WEEKLY" | "CUSTOM";
 };
 
 export type TWeeklySlot = {
