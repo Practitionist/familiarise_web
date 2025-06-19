@@ -21,15 +21,33 @@ const getBaseUrl = () => {
   return "http://localhost:3000";
 };
 
-// Initialize payment clients
-export const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2025-05-28.basil",
-});
+// Initialize payment clients with proper error handling
+const initializeStripeClient = () => {
+  const apiKey = process.env.STRIPE_SECRET_KEY;
+  if (!apiKey) {
+    console.warn("STRIPE_SECRET_KEY not found in environment variables");
+    return null;
+  }
+  return new Stripe(apiKey, {
+    apiVersion: "2025-05-28.basil",
+  });
+};
 
-export const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID!,
-  key_secret: process.env.RAZORPAY_SECRET!,
-});
+const initializeRazorpayClient = () => {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_SECRET;
+  if (!keyId || !keySecret) {
+    console.warn("RAZORPAY_KEY_ID or RAZORPAY_SECRET not found in environment variables");
+    return null;
+  }
+  return new Razorpay({
+    key_id: keyId,
+    key_secret: keySecret,
+  });
+};
+
+export const stripeClient = initializeStripeClient();
+export const razorpay = initializeRazorpayClient();
 
 export interface PaymentIntentParams {
   amount: number;
@@ -58,6 +76,9 @@ export async function createPaymentIntent({
 }: PaymentIntentParams): Promise<PaymentIntent> {
   try {
     if (paymentGateway === "STRIPE") {
+      if (!stripeClient) {
+        throw new Error("Stripe client not initialized - check STRIPE_SECRET_KEY environment variable");
+      }
       // Create a Checkout Session instead of Payment Intent for better UX
       const session = await stripeClient.checkout.sessions.create({
         payment_method_types: ["card"],
@@ -88,6 +109,9 @@ export async function createPaymentIntent({
         status: session.status || "open",
       };
     } else if (paymentGateway === "RAZORPAY") {
+      if (!razorpay) {
+        throw new Error("Razorpay client not initialized - check RAZORPAY_KEY_ID and RAZORPAY_SECRET environment variables");
+      }
       const order = await razorpay.orders.create({
         amount: Math.round(amount * 100), // Convert to paise
         currency,
@@ -143,6 +167,10 @@ export async function cancelPaymentIntent(
   try {
     if (paymentIntentId.startsWith("pi_")) {
       // Stripe payment intent
+      if (!stripeClient) {
+        console.warn("Stripe client not initialized - cannot cancel payment intent");
+        return;
+      }
       await stripeClient.paymentIntents.cancel(paymentIntentId, {
         cancellation_reason:
           reason === "requested_by_customer"
@@ -154,6 +182,10 @@ export async function cancelPaymentIntent(
       );
     } else if (paymentIntentId.startsWith("cs_")) {
       // Stripe checkout session - can't be cancelled directly, but we can expire it
+      if (!stripeClient) {
+        console.warn("Stripe client not initialized - cannot expire checkout session");
+        return;
+      }
       try {
         await stripeClient.checkout.sessions.expire(paymentIntentId);
         console.log(
@@ -167,6 +199,10 @@ export async function cancelPaymentIntent(
       }
     } else if (paymentIntentId.startsWith("order_")) {
       // For Razorpay, we can only cancel an order if it's still pending
+      if (!razorpay) {
+        console.warn("Razorpay client not initialized - cannot cancel order");
+        return;
+      }
       try {
         const order = await razorpay.orders.fetchPayments(paymentIntentId);
         if (order.count === 0) {
@@ -218,12 +254,18 @@ export async function initiateRefund(
   try {
     if (paymentIntentId.startsWith("pi_")) {
       // Stripe refund
+      if (!stripeClient) {
+        throw new Error("Stripe client not initialized - cannot process refund");
+      }
       await stripeClient.refunds.create({
         payment_intent: paymentIntentId,
         amount: amount ? Math.round(amount * 100) : undefined,
       });
     } else {
       // Razorpay refund
+      if (!razorpay) {
+        throw new Error("Razorpay client not initialized - cannot process refund");
+      }
       const payments = await razorpay.orders.fetchPayments(paymentIntentId);
       if (payments.count > 0) {
         const payment = payments.items[0];
