@@ -164,7 +164,15 @@ const ConsultantProfileForm: React.FC<Props> = ({
 
       <div className="space-y-2">
         <Label htmlFor="experience">Experience</Label>
-        <Input id="experience" {...register("experience")} />
+        <Input
+          id="experience"
+          type="number"
+          min="0"
+          max="100"
+          step="0.5"
+          placeholder="Years of experience"
+          {...register("experience", { valueAsNumber: true })}
+        />
         {errors.experience && (
           <p className="text-red-500">{errors.experience?.message}</p>
         )}

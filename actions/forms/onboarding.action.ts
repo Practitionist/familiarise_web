@@ -10,6 +10,7 @@ import {
   DayOfWeek,
 } from "@prisma/client";
 import { z } from "zod";
+import { experienceValidation } from "@/schemas/shared";
 
 // #region Zod Schema Definitions
 
@@ -43,7 +44,7 @@ const BaseConsultantProfileCreateInputSchema = z.object({
   description: z.string().optional(),
   qualifications: z.string().optional(),
   specialization: z.string().optional(),
-  experience: z.string().optional(),
+  experience: experienceValidation,
   scheduleType: z.nativeEnum(ScheduleType).default(ScheduleType.WEEKLY),
   domain: z.object({ connect: z.object({ id: z.string() }) }),
   subDomains: ConsultantProfileRelatedSubDomainsInputSchema.optional(),
@@ -162,7 +163,7 @@ async function updateConsultantProfileAndRelations(
       description: profileData.description ?? "",
       qualifications: profileData.qualifications ?? "",
       specialization: profileData.specialization ?? "",
-      experience: profileData.experience ?? "",
+      experience: profileData.experience ?? null,
       scheduleType: scheduleTypeEnum,
       rating: 0,
       domainId: domainId,
@@ -177,7 +178,7 @@ async function updateConsultantProfileAndRelations(
       description: profileData.description ?? "",
       qualifications: profileData.qualifications ?? "",
       specialization: profileData.specialization ?? "",
-      experience: profileData.experience ?? "",
+      experience: profileData.experience ?? null,
       scheduleType: scheduleTypeEnum,
       domain: { connect: { id: domainId } },
       subDomains: profileData.subDomains?.connect
