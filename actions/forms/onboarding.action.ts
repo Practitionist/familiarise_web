@@ -43,7 +43,11 @@ const BaseConsultantProfileCreateInputSchema = z.object({
   description: z.string().optional(),
   qualifications: z.string().optional(),
   specialization: z.string().optional(),
-  experience: z.number().min(0, "Experience cannot be negative").max(100, "Experience cannot exceed 100 years").optional(),
+  experience: z
+    .number()
+    .min(0, "Experience cannot be negative")
+    .max(100, "Experience cannot exceed 100 years")
+    .optional(),
   scheduleType: z.nativeEnum(ScheduleType).default(ScheduleType.WEEKLY),
   domain: z.object({ connect: z.object({ id: z.string() }) }),
   subDomains: ConsultantProfileRelatedSubDomainsInputSchema.optional(),

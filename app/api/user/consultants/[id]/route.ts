@@ -47,7 +47,11 @@ const updateConsultantSchema = z
     description: z.string().optional(),
     qualifications: z.string().optional(),
     specialization: z.string().optional(),
-    experience: z.number().min(0, "Experience cannot be negative").max(100, "Experience cannot exceed 100 years").optional(),
+    experience: z
+      .number()
+      .min(0, "Experience cannot be negative")
+      .max(100, "Experience cannot exceed 100 years")
+      .optional(),
     scheduleType: z.enum(["WEEKLY", "CUSTOM"]),
     domainId: uuidSchema,
     subDomainIds: z.array(uuidSchema),
