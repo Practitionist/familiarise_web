@@ -201,7 +201,7 @@ model ConsultantProfile {
   description    String? @db.Text
   qualifications String?
   specialization String?
-  experience     String?
+  experience     Float?
   rating         Float   @default(0)
 
   domain     Domain      @relation(fields: [domainId], references: [id])

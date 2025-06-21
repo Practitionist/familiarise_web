@@ -543,9 +543,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                   </Label>
                   <Input
                     name="experience"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.5"
                     value={formData.experience}
                     onChange={handleInputChange}
-                    placeholder="e.g. 5+ years in machine learning"
+                    placeholder="Years of experience (e.g. 5.5)"
                     className="mt-1"
                   />
                 </div>

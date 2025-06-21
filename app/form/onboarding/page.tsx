@@ -148,7 +148,7 @@ const MultiStepForm: React.FC = () => {
                   description: finalData.description ?? "",
                   qualifications: finalData.qualifications ?? "",
                   specialization: finalData.specialization ?? "",
-                  experience: finalData.experience ?? "",
+                  experience: finalData.experience ?? null,
                   domain: { connect: { id: finalData.domain!.id } },
                   subDomains: finalData.subDomains?.filter(
                     (sd) => sd.id !== undefined && sd.id !== null,
