@@ -1,5 +1,6 @@
 // schemas/UserSchema.ts
 import { z } from "zod";
+import { experienceValidation } from "./shared";
 
 export const PersonalInfoAndRoleSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -34,7 +35,7 @@ export const ConsultantProfileSchema = z.object({
   description: z.string().optional(),
   qualifications: z.string().optional(),
   specialization: z.string().optional(),
-  experience: z.string().optional(),
+  experience: experienceValidation,
   rating: z.number().default(0),
   domain: z.object({
     id: z.string(),
