@@ -447,9 +447,9 @@ const MultiStepForm: React.FC = () => {
         </div>
         
         {/* Content */}
-        <div className="relative z-10 flex flex-col items-center w-full max-w-2xl px-6">
+        <div className="relative z-10 flex flex-col items-center w-full max-w-7xl px-6">
           <Header />
-          <div className="glassmorphism rounded-2xl p-8 w-full max-w-md border border-white/20 shadow-2xl">
+          <div className="glassmorphism rounded-2xl p-8 w-full max-w-5xl border border-white/20 shadow-2xl">
             <Progress 
               value={((step + 1) / 4) * 100} 
               className="w-full mb-8 h-2 bg-white/20" 
