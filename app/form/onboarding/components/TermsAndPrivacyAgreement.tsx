@@ -17,20 +17,20 @@ const Agreement: React.FC<AgreementProps> = ({
   label,
   link,
 }) => (
-  <div className="flex items-center space-x-2">
+  <div className="flex items-center space-x-3 p-4 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-colors">
     <Checkbox
       id={id}
       checked={checked}
       onCheckedChange={onCheckedChange}
-      className="h-4 w-4 border-2 border-gray-300 rounded text-blue-600 focus:ring-blue-500"
+      className="border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500 h-5 w-5"
     />
-    <Label htmlFor={id} className="text-sm text-gray-700">
+    <Label htmlFor={id} className="text-sm text-white cursor-pointer">
       I agree to the{" "}
       <a
         href={link}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-blue-600 hover:underline"
+        className="text-purple-300 hover:text-purple-200 underline transition-colors"
       >
         {label}
       </a>

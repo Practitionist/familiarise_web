@@ -77,14 +77,14 @@ const ConsultantReviewForm: React.FC<Props> = ({
 
     return (
       <div className="space-y-3">
-        <h3 className="text-lg font-semibold text-gray-900">Schedule</h3>
-        <p className="text-sm text-gray-600">
+        <h3 className="text-lg font-semibold text-white">Schedule</h3>
+        <p className="text-sm text-white/70">
           Schedule Type:{" "}
-          <span className="font-medium">{formData.scheduleType}</span>
+          <span className="font-medium text-white">{formData.scheduleType}</span>
         </p>
         {formData.scheduleType === "WEEKLY" && formData.weeklySlots && (
           <div className="space-y-2">
-            <h4 className="text-md font-medium text-gray-800">Weekly Slots</h4>
+            <h4 className="text-md font-medium text-white">Weekly Slots</h4>
             <ul className="space-y-2 list-none pl-0">
               {formData.weeklySlots.filter(isValidSlot).map((slot, index) => {
                 const startTime = formatTime(slot.slotStartTimeInUTC, "12h");
@@ -96,19 +96,19 @@ const ConsultantReviewForm: React.FC<Props> = ({
                 return (
                   <li
                     key={index}
-                    className="px-4 py-2 bg-gray-50 rounded-lg text-sm text-gray-700"
+                    className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white"
                   >
                     <span className="font-medium">
                       {slot.dayOfWeekforStartTimeInUTC}
                     </span>{" "}
-                    <span className="text-gray-600">{startTime}</span>
+                    <span className="text-white/70">{startTime}</span>
                     {" to "}
                     {!isSameDay && (
                       <span className="font-medium">
                         {slot.dayOfWeekforEndTimeInUTC}{" "}
                       </span>
                     )}
-                    <span className="text-gray-600">{endTime}</span>
+                    <span className="text-white/70">{endTime}</span>
                   </li>
                 );
               })}
@@ -117,7 +117,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
         )}
         {formData.scheduleType === "CUSTOM" && formData.customSlots && (
           <div className="space-y-2">
-            <h4 className="text-md font-medium text-gray-800">Custom Slots</h4>
+            <h4 className="text-md font-medium text-white">Custom Slots</h4>
             <ul className="space-y-2 list-none pl-0">
               {formData.customSlots.filter(isValidSlot).map((slot, index) => {
                 const startDate = formatDate(slot.slotStartTimeInUTC);
@@ -129,15 +129,15 @@ const ConsultantReviewForm: React.FC<Props> = ({
                 return (
                   <li
                     key={index}
-                    className="px-4 py-2 bg-gray-50 rounded-lg text-sm text-gray-700"
+                    className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white"
                   >
                     <span className="font-medium">{startDate}</span>{" "}
-                    <span className="text-gray-600">{startTime}</span>
+                    <span className="text-white/70">{startTime}</span>
                     {" to "}
                     {!isSameDay && (
                       <span className="font-medium">{endDate} </span>
                     )}
-                    <span className="text-gray-600">{endTime}</span>
+                    <span className="text-white/70">{endTime}</span>
                   </li>
                 );
               })}
@@ -154,7 +154,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
     className: string = "",
   ) => (
     <div className={`space-y-3 ${className}`}>
-      <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+      <h3 className="text-lg font-semibold text-white">{title}</h3>
       {content}
     </div>
   );
@@ -167,50 +167,49 @@ const ConsultantReviewForm: React.FC<Props> = ({
       {items?.map((item) => (
         <li
           key={item.id}
-          className="px-3 py-1.5 bg-gray-50 rounded-md text-sm text-gray-700"
+          className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-md text-sm text-white"
         >
           {item.name}
         </li>
       ))}
       {(!items || items.length === 0) && (
-        <li className="text-sm text-gray-500 italic">{emptyMessage}</li>
+        <li className="text-sm text-white/50 italic">{emptyMessage}</li>
       )}
     </ul>
   );
 
   return (
-    <div className="w-full max-w-2xl mx-auto space-y-6">
-      <Card className="shadow-lg border-gray-200">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-gray-900">
-            Review Your Information
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6">
+    <div className="w-full space-y-6">
+      <div className="glassmorphism2 rounded-2xl p-6 border border-white/20 shadow-2xl">
+        <div className="mb-6">
+          <h3 className="text-2xl font-bold text-white mb-2">Review Your Information</h3>
+          <p className="text-white/70">Please review your details before submitting</p>
+        </div>
+        <div className="space-y-6">
           {renderSection(
             "Personal Information",
             <div className="grid gap-2 text-sm">
-              <div className="grid grid-cols-3 items-center py-2 border-b border-gray-100">
-                <span className="font-medium text-gray-600">Name</span>
-                <span className="col-span-2 text-gray-900">
+              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
+                <span className="font-medium text-white/70">Name</span>
+                <span className="col-span-2 text-white">
                   {formData.name}
                 </span>
               </div>
-              <div className="grid grid-cols-3 items-center py-2 border-b border-gray-100">
-                <span className="font-medium text-gray-600">Email</span>
-                <span className="col-span-2 text-gray-900">
+              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
+                <span className="font-medium text-white/70">Email</span>
+                <span className="col-span-2 text-white">
                   {formData.email}
                 </span>
               </div>
-              <div className="grid grid-cols-3 items-center py-2 border-b border-gray-100">
-                <span className="font-medium text-gray-600">Phone</span>
-                <span className="col-span-2 text-gray-900">
+              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
+                <span className="font-medium text-white/70">Phone</span>
+                <span className="col-span-2 text-white">
                   {formData.phone || "Not provided"}
                 </span>
               </div>
-              <div className="grid grid-cols-3 items-center py-2">
-                <span className="font-medium text-gray-600">Address</span>
-                <span className="col-span-2 text-gray-900">
+              <div className="grid grid-cols-3 items-center py-3">
+                <span className="font-medium text-white/70">Address</span>
+                <span className="col-span-2 text-white">
                   {formData.address || "Not provided"}
                 </span>
               </div>
@@ -220,31 +219,31 @@ const ConsultantReviewForm: React.FC<Props> = ({
           {renderSection(
             "Professional Details",
             <div className="grid gap-2 text-sm">
-              <div className="grid grid-cols-3 items-center py-2 border-b border-gray-100">
-                <span className="font-medium text-gray-600">Description</span>
-                <span className="col-span-2 text-gray-900">
+              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
+                <span className="font-medium text-white/70">Description</span>
+                <span className="col-span-2 text-white">
                   {formData.description || "Not provided"}
                 </span>
               </div>
-              <div className="grid grid-cols-3 items-center py-2 border-b border-gray-100">
-                <span className="font-medium text-gray-600">
+              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
+                <span className="font-medium text-white/70">
                   Qualifications
                 </span>
-                <span className="col-span-2 text-gray-900">
+                <span className="col-span-2 text-white">
                   {formData.qualifications || "Not provided"}
                 </span>
               </div>
-              <div className="grid grid-cols-3 items-center py-2 border-b border-gray-100">
-                <span className="font-medium text-gray-600">
+              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
+                <span className="font-medium text-white/70">
                   Specialization
                 </span>
-                <span className="col-span-2 text-gray-900">
+                <span className="col-span-2 text-white">
                   {formData.specialization || "Not provided"}
                 </span>
               </div>
-              <div className="grid grid-cols-3 items-center py-2">
-                <span className="font-medium text-gray-600">Experience</span>
-                <span className="col-span-2 text-gray-900">
+              <div className="grid grid-cols-3 items-center py-3">
+                <span className="font-medium text-white/70">Experience</span>
+                <span className="col-span-2 text-white">
                   {formData.experience || "Not provided"}
                 </span>
               </div>
@@ -254,44 +253,42 @@ const ConsultantReviewForm: React.FC<Props> = ({
           {renderSection(
             "Domain & Tags",
             <div className="space-y-4">
-              <div className="grid grid-cols-3 items-center py-2 border-b border-gray-100">
-                <span className="font-medium text-gray-600">Domain</span>
-                <span className="col-span-2 text-gray-900">
+              <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
+                <span className="font-medium text-white/70">Domain</span>
+                <span className="col-span-2 text-white">
                   {formData.domain?.name || "Not selected"}
                 </span>
               </div>
               <div className="space-y-2">
-                <h4 className="text-sm font-medium text-gray-700">
+                <h4 className="text-sm font-medium text-white">
                   Sub-Domains
                 </h4>
                 {renderList(formData.subDomains, "No sub-domains selected")}
               </div>
               <div className="space-y-2">
-                <h4 className="text-sm font-medium text-gray-700">Tags</h4>
+                <h4 className="text-sm font-medium text-white">Tags</h4>
                 {renderList(formData.tags, "No tags selected")}
               </div>
             </div>,
           )}
 
           {renderSchedule()}
-        </CardContent>
-      </Card>
-      <div className="flex justify-between pt-4">
+        </div>
+      </div>
+      <div className="flex justify-between gap-4">
         <Button
           type="button"
           onClick={onBack}
-          variant="outline"
-          className="px-6"
+          className="flex-1 h-12 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg font-medium transition-all duration-200"
         >
-          Back
+          ← Back
         </Button>
         <Button
           type="button"
           onClick={handleSubmit}
-          variant="night"
-          className="px-6"
+          className="flex-1 h-12 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 transition-all duration-200 border-0"
         >
-          Submit
+          Complete Onboarding ✓
         </Button>
       </div>
     </div>

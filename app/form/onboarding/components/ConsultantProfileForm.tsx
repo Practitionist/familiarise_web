@@ -126,44 +126,68 @@ const ConsultantProfileForm: React.FC<Props> = ({
   };
 
   if (isLoading) {
-    return <div>Loading...</div>;
+    return (
+      <div className="flex items-center justify-center p-8">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-400"></div>
+        <span className="ml-3 text-white">Loading...</span>
+      </div>
+    );
   }
 
   if (error) {
-    return <div className="text-red-500">{error}</div>;
+    return (
+      <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
+        <p className="text-red-400">{error}</p>
+      </div>
+    );
   }
 
   return (
     <form
       onSubmit={handleSubmit(onSubmit)}
-      className="w-full max-w-md space-y-4"
+      className="w-full space-y-6"
     >
-      <div className="space-y-2">
-        <Label htmlFor="description">Description</Label>
-        <Textarea id="description" {...register("description")} />
+      <div className="space-y-3">
+        <Label htmlFor="description" className="text-white font-medium">Description</Label>
+        <Textarea 
+          id="description" 
+          {...register("description")} 
+          className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm rounded-lg min-h-[100px] resize-none"
+          placeholder="Tell us about yourself and your expertise..."
+        />
         {errors.description && (
-          <p className="text-red-500">{errors.description?.message}</p>
+          <p className="text-red-400 text-sm">{errors.description?.message}</p>
         )}
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="qualifications">Qualifications</Label>
-        <Input id="qualifications" {...register("qualifications")} />
+      <div className="space-y-3">
+        <Label htmlFor="qualifications" className="text-white font-medium">Qualifications</Label>
+        <Input 
+          id="qualifications" 
+          {...register("qualifications")} 
+          className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm h-12 rounded-lg"
+          placeholder="Your educational background and certifications"
+        />
         {errors.qualifications && (
-          <p className="text-red-500">{errors.qualifications?.message}</p>
+          <p className="text-red-400 text-sm">{errors.qualifications?.message}</p>
         )}
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="specialization">Specialization</Label>
-        <Input id="specialization" {...register("specialization")} />
+      <div className="space-y-3">
+        <Label htmlFor="specialization" className="text-white font-medium">Specialization</Label>
+        <Input 
+          id="specialization" 
+          {...register("specialization")} 
+          className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm h-12 rounded-lg"
+          placeholder="Your area of expertise"
+        />
         {errors.specialization && (
-          <p className="text-red-500">{errors.specialization?.message}</p>
+          <p className="text-red-400 text-sm">{errors.specialization?.message}</p>
         )}
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="experience">Experience</Label>
+      <div className="space-y-3">
+        <Label htmlFor="experience" className="text-white font-medium">Experience (Years)</Label>
         <Input
           id="experience"
           type="number"
@@ -172,14 +196,15 @@ const ConsultantProfileForm: React.FC<Props> = ({
           step="0.5"
           placeholder="Years of experience"
           {...register("experience", { valueAsNumber: true })}
+          className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm h-12 rounded-lg"
         />
         {errors.experience && (
-          <p className="text-red-500">{errors.experience?.message}</p>
+          <p className="text-red-400 text-sm">{errors.experience?.message}</p>
         )}
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="domain">Domain</Label>
+      <div className="space-y-3">
+        <Label htmlFor="domain" className="text-white font-medium">Domain</Label>
         <Controller
           name="domain"
           control={control}
@@ -191,12 +216,12 @@ const ConsultantProfileForm: React.FC<Props> = ({
               }}
               value={field.value?.id ?? ""}
             >
-              <SelectTrigger>
-                <SelectValue placeholder="Select a domain" />
+              <SelectTrigger className="bg-white/10 border-white/20 text-white h-12 rounded-lg focus:border-purple-400 focus:ring-purple-400/20">
+                <SelectValue placeholder="Select your domain" className="text-white/70" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="bg-slate-800 border-white/20">
                 {domains.map((domain) => (
-                  <SelectItem key={domain.id} value={domain.id!}>
+                  <SelectItem key={domain.id} value={domain.id!} className="text-white focus:bg-white/10">
                     {domain.name}
                   </SelectItem>
                 ))}
@@ -205,19 +230,19 @@ const ConsultantProfileForm: React.FC<Props> = ({
           )}
         />
         {errors.domain && (
-          <p className="text-red-500">{errors.domain?.message}</p>
+          <p className="text-red-400 text-sm">{errors.domain?.message}</p>
         )}
       </div>
 
-      <div className="space-y-2">
-        <Label>Sub-Domains</Label>
+      <div className="space-y-3">
+        <Label className="text-white font-medium">Sub-Domains</Label>
         <Controller
           name="subDomains"
           control={control}
           render={({ field }) => (
-            <div className="space-y-2">
+            <div className="space-y-3 max-h-40 overflow-y-auto">
               {filteredSubDomains.map((subDomain) => (
-                <div key={subDomain.id} className="flex items-center space-x-2">
+                <div key={subDomain.id} className="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 transition-colors">
                   <Checkbox
                     id={`subDomain-${subDomain.id}`}
                     checked={
@@ -231,8 +256,9 @@ const ConsultantProfileForm: React.FC<Props> = ({
                           );
                       field.onChange(updatedSubDomains);
                     }}
+                    className="border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
                   />
-                  <Label htmlFor={`subDomain-${subDomain.id}`}>
+                  <Label htmlFor={`subDomain-${subDomain.id}`} className="text-white cursor-pointer">
                     {subDomain.name}
                   </Label>
                 </div>
@@ -241,19 +267,19 @@ const ConsultantProfileForm: React.FC<Props> = ({
           )}
         />
         {errors.subDomains && (
-          <p className="text-red-500">{errors.subDomains?.message}</p>
+          <p className="text-red-400 text-sm">{errors.subDomains?.message}</p>
         )}
       </div>
 
-      <div className="space-y-2">
-        <Label>Tags</Label>
+      <div className="space-y-3">
+        <Label className="text-white font-medium">Tags</Label>
         <Controller
           name="tags"
           control={control}
           render={({ field }) => (
-            <div className="space-y-2">
+            <div className="space-y-3 max-h-40 overflow-y-auto">
               {filteredTags.map((tag) => (
-                <div key={tag.id} className="flex items-center space-x-2">
+                <div key={tag.id} className="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 transition-colors">
                   <Checkbox
                     id={`tag-${tag.id}`}
                     checked={field.value?.some((t) => t.id === tag.id) || false}
@@ -263,30 +289,34 @@ const ConsultantProfileForm: React.FC<Props> = ({
                         : (field.value || []).filter((t) => t.id !== tag.id);
                       field.onChange(updatedTags);
                     }}
+                    className="border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
                   />
-                  <Label htmlFor={`tag-${tag.id}`}>{tag.name}</Label>
+                  <Label htmlFor={`tag-${tag.id}`} className="text-white cursor-pointer">{tag.name}</Label>
                 </div>
               ))}
             </div>
           )}
         />
-        {errors.tags && <p className="text-red-500">{errors.tags?.message}</p>}
+        {errors.tags && <p className="text-red-400 text-sm">{errors.tags?.message}</p>}
       </div>
 
-      <div className="space-y-2">
-        <Label>Schedule Type</Label>
+      <div className="space-y-3">
+        <Label className="text-white font-medium">Schedule Type</Label>
         <Controller
           name="scheduleType"
           control={control}
           render={({ field }) => (
-            <div className="flex space-x-2">
+            <div className="grid grid-cols-2 gap-3">
               {["WEEKLY", "CUSTOM"].map((type) => (
                 <Button
                   key={type}
                   type="button"
-                  variant={field.value === type ? "night" : "outline"}
                   onClick={() => field.onChange(type)}
-                  className="flex-1"
+                  className={`h-12 rounded-lg font-medium transition-all duration-200 ${
+                    field.value === type 
+                      ? "bg-gradient-to-r from-purple-500 to-blue-500 text-white shadow-lg shadow-purple-500/25 border-0" 
+                      : "bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30"
+                  }`}
                 >
                   {type.charAt(0) + type.slice(1).toLowerCase()}
                 </Button>
@@ -295,16 +325,23 @@ const ConsultantProfileForm: React.FC<Props> = ({
           )}
         />
         {errors.scheduleType && (
-          <p className="text-red-500">{errors.scheduleType?.message}</p>
+          <p className="text-red-400 text-sm">{errors.scheduleType?.message}</p>
         )}
       </div>
 
-      <div className="flex justify-between">
-        <Button type="button" onClick={onBack} variant="outline">
-          Back
+      <div className="flex justify-between gap-4 pt-6">
+        <Button 
+          type="button" 
+          onClick={onBack} 
+          className="flex-1 h-12 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg font-medium transition-all duration-200"
+        >
+          ← Back
         </Button>
-        <Button type="submit" variant="night">
-          Next
+        <Button 
+          type="submit" 
+          className="flex-1 h-12 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 transition-all duration-200 border-0"
+        >
+          Next Step →
         </Button>
       </div>
     </form>

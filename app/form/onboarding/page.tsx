@@ -438,27 +438,46 @@ const MultiStepForm: React.FC = () => {
 
   return (
     <FormProvider {...methods}>
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
-        <Header />
-        <Progress value={((step + 1) / 4) * 100} className="w-[60%] mb-8" />
-        <WelcomeMessage />
-        {renderFormStep()}
+      <div className="relative flex flex-col items-center justify-center min-h-screen overflow-hidden">
+        {/* Background with gradient and animated blobs */}
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+          <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full opacity-30 animate-blob"></div>
+          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500 rounded-full opacity-30 animate-blob animation-delay-2000"></div>
+          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-60 h-60 bg-indigo-500 rounded-full opacity-20 animate-blob animation-delay-4000"></div>
+        </div>
+        
+        {/* Content */}
+        <div className="relative z-10 flex flex-col items-center w-full max-w-2xl px-6">
+          <Header />
+          <div className="glassmorphism rounded-2xl p-8 w-full max-w-md border border-white/20 shadow-2xl">
+            <Progress 
+              value={((step + 1) / 4) * 100} 
+              className="w-full mb-8 h-2 bg-white/20" 
+            />
+            <WelcomeMessage />
+            {renderFormStep()}
+          </div>
+        </div>
       </div>
     </FormProvider>
   );
 };
 
 const Header: React.FC = () => (
-  <header className="flex items-center space-x-2 mb-8">
-    <LogInIcon className="w-8 h-8 text-primary" />
-    <h1 className="text-2xl font-bold">Familiarise</h1>
+  <header className="flex items-center space-x-3 mb-8">
+    <div className="p-2 rounded-xl bg-gradient-to-r from-purple-500 to-blue-500 shadow-lg">
+      <LogInIcon className="w-8 h-8 text-white" />
+    </div>
+    <h1 className="text-3xl font-bold bg-gradient-to-r from-white to-purple-200 bg-clip-text text-transparent">
+      Familiarise
+    </h1>
   </header>
 );
 
 const WelcomeMessage: React.FC = () => (
   <div className="text-center mb-8">
-    <h2 className="text-2xl font-bold">Welcome! First things first...</h2>
-    <p className="text-muted-foreground">You can always change them later.</p>
+    <h2 className="text-2xl font-bold text-white mb-2">Welcome! First things first...</h2>
+    <p className="text-white/70">You can always change them later.</p>
   </div>
 );
 
