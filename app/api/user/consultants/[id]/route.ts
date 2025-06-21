@@ -4,6 +4,7 @@ import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import authOptions from "../../../auth/[...nextauth]/options";
+import { experienceValidation } from "@/schemas/shared";
 
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
@@ -47,11 +48,7 @@ const updateConsultantSchema = z
     description: z.string().optional(),
     qualifications: z.string().optional(),
     specialization: z.string().optional(),
-    experience: z
-      .number()
-      .min(0, "Experience cannot be negative")
-      .max(100, "Experience cannot exceed 100 years")
-      .optional(),
+    experience: experienceValidation,
     scheduleType: z.enum(["WEEKLY", "CUSTOM"]),
     domainId: uuidSchema,
     subDomainIds: z.array(uuidSchema),

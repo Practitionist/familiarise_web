@@ -63,14 +63,14 @@ export const formatTimeFromDate = (date: Date): string => {
 export const getInitialFormData = (
   consultant: TConsultantProfile,
 ): FormData => ({
-  description: consultant?.description || "",
-  qualifications: consultant?.qualifications || "",
-  specialization: consultant?.specialization || "",
-  experience: consultant?.experience || 0,
-  scheduleType: consultant?.scheduleType || ScheduleType.WEEKLY,
-  domainId: consultant?.domain?.id || "",
-  subDomainIds: consultant?.subDomains?.map((sd) => sd.id) || [],
-  tagIds: consultant?.tags?.map((t) => t.id) || [],
+  description: consultant?.description ?? "",
+  qualifications: consultant?.qualifications ?? "",
+  specialization: consultant?.specialization ?? "",
+  experience: consultant?.experience ?? 0,
+  scheduleType: consultant?.scheduleType ?? ScheduleType.WEEKLY,
+  domainId: consultant?.domain?.id ?? "",
+  subDomainIds: consultant?.subDomains?.map((sd) => sd.id) ?? [],
+  tagIds: consultant?.tags?.map((t) => t.id) ?? [],
 });
 
 export const getInitialWeeklySlots = (
