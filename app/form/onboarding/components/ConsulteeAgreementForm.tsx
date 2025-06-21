@@ -7,6 +7,7 @@ import {
   ConsulteePreferences,
   PersonalInfoAndRole,
 } from "@/schemas/user";
+import { useThemeClasses } from "../useTheme";
 
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsulteeProfile> &
@@ -29,6 +30,7 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
   onBack,
   formData,
 }) => {
+  const { classes, colors } = useThemeClasses();
   const [termsAccepted, setTermsAccepted] = React.useState(
     formData.termsAccepted || false,
   );
@@ -48,47 +50,47 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
 
   return (
     <div className="w-full space-y-6">
-      <div className="glassmorphism2 rounded-2xl p-6 border border-white/20 shadow-2xl">
+      <div className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl`}>
         <div className="mb-6">
-          <h3 className="text-2xl font-bold text-white mb-2">Terms and Conditions</h3>
-          <p className="text-white/70">Please review and accept our terms to continue</p>
+          <h3 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>Terms and Conditions</h3>
+          <p className={colors.textSecondary}>Please review and accept our terms to continue</p>
         </div>
         <div className="space-y-4">
           <div className="space-y-4">
-            <div className="flex items-center space-x-3 p-4 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-colors">
+            <div className={`flex items-center space-x-3 p-4 rounded-lg ${colors.glassBg} ${colors.glassBorder} hover:${colors.secondaryBg} transition-colors`}>
               <Checkbox
                 id="terms"
                 checked={termsAccepted}
                 onCheckedChange={(checked) =>
                   setTermsAccepted(checked as boolean)
                 }
-                className="border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500 h-5 w-5"
+                className={`${classes.checkbox} h-5 w-5`}
               />
               <label
                 htmlFor="terms"
-                className="text-sm text-white cursor-pointer font-medium"
+                className={`text-sm ${colors.textPrimary} cursor-pointer font-medium`}
               >
                 I accept the{" "}
-                <a href="/terms" target="_blank" className="text-purple-300 hover:text-purple-200 underline transition-colors">
+                <a href="/terms" target="_blank" className={`${colors.linkColor} ${colors.linkHover} underline transition-colors`}>
                   terms and conditions
                 </a>
               </label>
             </div>
-            <div className="flex items-center space-x-3 p-4 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-colors">
+            <div className={`flex items-center space-x-3 p-4 rounded-lg ${colors.glassBg} ${colors.glassBorder} hover:${colors.secondaryBg} transition-colors`}>
               <Checkbox
                 id="privacy"
                 checked={privacyAccepted}
                 onCheckedChange={(checked) =>
                   setPrivacyAccepted(checked as boolean)
                 }
-                className="border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500 h-5 w-5"
+                className={`${classes.checkbox} h-5 w-5`}
               />
               <label
                 htmlFor="privacy"
-                className="text-sm text-white cursor-pointer font-medium"
+                className={`text-sm ${colors.textPrimary} cursor-pointer font-medium`}
               >
                 I accept the{" "}
-                <a href="/privacy" target="_blank" className="text-purple-300 hover:text-purple-200 underline transition-colors">
+                <a href="/privacy" target="_blank" className={`${colors.linkColor} ${colors.linkHover} underline transition-colors`}>
                   privacy policy
                 </a>
               </label>
@@ -100,7 +102,7 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
         <Button 
           type="button" 
           onClick={onBack} 
-          className="flex-1 h-12 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg font-medium transition-all duration-200"
+          className={`flex-1 h-12 ${classes.secondaryButton}`}
         >
           ← Back
         </Button>
@@ -108,7 +110,7 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
           type="button"
           onClick={handleSubmit}
           disabled={!termsAccepted || !privacyAccepted}
-          className="flex-1 h-12 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 transition-all duration-200 border-0 disabled:opacity-50 disabled:cursor-not-allowed"
+          className={`flex-1 h-12 ${classes.primaryButton} disabled:opacity-50 disabled:cursor-not-allowed`}
         >
           Complete Onboarding ✓
         </Button>

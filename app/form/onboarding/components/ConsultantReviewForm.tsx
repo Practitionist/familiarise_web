@@ -8,6 +8,7 @@ import {
 } from "@/schemas/user";
 import { Domain, SubDomain, Tag } from "@/schemas/plans";
 import { formatTime, formatDate } from "../timeUtils";
+import { useThemeClasses } from "../useTheme";
 
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsultantProfile> &
@@ -55,6 +56,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
   onBack,
   formData,
 }) => {
+  const { classes, colors } = useThemeClasses();
   const handleSubmit = () => {
     onSubmit({
       ...formData,
@@ -180,10 +182,10 @@ const ConsultantReviewForm: React.FC<Props> = ({
 
   return (
     <div className="w-full space-y-6">
-      <div className="glassmorphism2 rounded-2xl p-6 border border-white/20 shadow-2xl">
+      <div className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl`}>
         <div className="mb-6">
-          <h3 className="text-2xl font-bold text-white mb-2">Review Your Information</h3>
-          <p className="text-white/70">Please review your details before submitting</p>
+          <h3 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>Review Your Information</h3>
+          <p className={colors.textSecondary}>Please review your details before submitting</p>
         </div>
         <div className="space-y-6">
           {renderSection(
@@ -279,14 +281,14 @@ const ConsultantReviewForm: React.FC<Props> = ({
         <Button
           type="button"
           onClick={onBack}
-          className="flex-1 h-12 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg font-medium transition-all duration-200"
+          className={`flex-1 h-12 ${classes.secondaryButton}`}
         >
           ← Back
         </Button>
         <Button
           type="button"
           onClick={handleSubmit}
-          className="flex-1 h-12 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 transition-all duration-200 border-0"
+          className={`flex-1 h-12 ${classes.primaryButton}`}
         >
           Complete Onboarding ✓
         </Button>

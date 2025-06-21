@@ -19,6 +19,7 @@ import { responsibilitiesAndPermissions } from "@/schemas/responsibbilities-perm
 import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import React, { useEffect, useState } from "react";
 import { useFormContext } from "react-hook-form";
+import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (data: any) => void;
@@ -31,6 +32,7 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
   onBack,
   initialData,
 }) => {
+  const { classes, colors } = useThemeClasses();
   const [department, setDepartment] = useState<string | null>(null);
   const [position, setPosition] = useState<string | null>(null);
 
@@ -73,8 +75,8 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
 
   if (!department || !position) {
     return (
-      <div className="glassmorphism2 rounded-2xl p-6 border border-white/20 shadow-2xl w-full">
-        <p className="text-center text-white">
+      <div className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full`}>
+        <p className={`text-center ${colors.textPrimary}`}>
           Please complete the Staff Profile form first.
         </p>
       </div>
@@ -86,8 +88,8 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
 
   if (!departmentData || !positionData) {
     return (
-      <div className="glassmorphism2 rounded-2xl p-6 border border-white/20 shadow-2xl w-full">
-        <p className="text-center text-white">
+      <div className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full`}>
+        <p className={`text-center ${colors.textPrimary}`}>
           Invalid department or position. Please go back and select valid
           options.
         </p>
@@ -116,10 +118,10 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
   };
 
   return (
-    <div className="glassmorphism2 rounded-2xl p-6 border border-white/20 shadow-2xl w-full space-y-6">
+    <div className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full space-y-6`}>
       <div>
-        <h3 className="text-2xl font-bold text-white mb-2">Staff Responsibilities</h3>
-        <p className="text-white/70">
+        <h3 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>Staff Responsibilities</h3>
+        <p className={colors.textSecondary}>
           Select your responsibilities and permissions
         </p>
       </div>
@@ -217,18 +219,18 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
           </Accordion>
         </form>
       </div>
-      <div className="flex justify-between gap-4 pt-6 border-t border-white/20">
+      <div className={`flex justify-between gap-4 pt-6 border-t ${colors.glassBorder}`}>
         <Button 
           type="button" 
           onClick={onBack} 
-          className="flex-1 h-12 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg font-medium transition-all duration-200"
+          className={`flex-1 h-12 ${classes.secondaryButton}`}
         >
           ← Back
         </Button>
         <Button 
           type="submit" 
           onClick={handleSubmit}
-          className="flex-1 h-12 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 transition-all duration-200 border-0"
+          className={`flex-1 h-12 ${classes.primaryButton}`}
         >
           Next Step →
         </Button>

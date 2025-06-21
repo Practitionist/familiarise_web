@@ -16,6 +16,7 @@ import { validateTimeSlot } from "@/utils/timeSlotValidation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
+import { useThemeClasses } from "../useTheme";
 import {
   DAYS_OF_WEEK,
   type DayOfWeek,
@@ -65,6 +66,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   onBack,
   initialData,
 }) => {
+  const { classes, colors } = useThemeClasses();
   const { handleSubmit, watch, setValue, control } = useForm<PreferredSchedule>(
     {
       resolver: zodResolver(PreferredScheduleSchema),
@@ -632,18 +634,18 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             )}
           />
         </div>
-        <div className="flex justify-between gap-4 pt-6 mt-6 border-t border-white/20">
+        <div className={`flex justify-between gap-4 pt-6 mt-6 border-t ${colors.glassBorder}`}>
           <Button 
             type="button" 
             onClick={onBack} 
-            className="flex-1 h-12 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg font-medium transition-all duration-200"
+            className={`flex-1 h-12 ${classes.secondaryButton}`}
           >
             ← Back
           </Button>
           <Button 
             type="submit" 
             disabled={!allSlotsValid()}
-            className="flex-1 h-12 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 transition-all duration-200 border-0 disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`flex-1 h-12 ${classes.primaryButton} disabled:opacity-50 disabled:cursor-not-allowed`}
           >
             Next Step →
           </Button>

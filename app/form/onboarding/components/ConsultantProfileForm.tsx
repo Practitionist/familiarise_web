@@ -19,6 +19,7 @@ import {
   PersonalInfoAndRole,
 } from "@/schemas/user";
 import { Domain, SubDomain, Tag } from "@/schemas/plans";
+import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (data: FormData) => void;
@@ -38,6 +39,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
   onBack,
   initialData,
 }) => {
+  const { classes, colors } = useThemeClasses();
   const [domains, setDomains] = useState<Domain[]>([]);
   const [subDomains, setSubDomains] = useState<SubDomain[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
@@ -128,16 +130,16 @@ const ConsultantProfileForm: React.FC<Props> = ({
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-400"></div>
-        <span className="ml-3 text-white">Loading...</span>
+        <div className={`animate-spin rounded-full h-8 w-8 border-b-2 ${colors.textPrimary}`}></div>
+        <span className={`ml-3 ${colors.textPrimary}`}>Loading...</span>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
-        <p className="text-red-400">{error}</p>
+      <div className={`p-4 ${colors.glassBg} ${colors.glassBorder} rounded-lg`}>
+        <p className={colors.error}>{error}</p>
       </div>
     );
   }
@@ -152,46 +154,46 @@ const ConsultantProfileForm: React.FC<Props> = ({
         {/* Left Column - Basic Information */}
         <div className="space-y-6">
           <div className="space-y-3">
-            <Label htmlFor="description" className="text-white font-medium">Description</Label>
+            <Label htmlFor="description" className={`${colors.textPrimary} font-medium`}>Description</Label>
             <Textarea 
               id="description" 
               {...register("description")} 
-              className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm rounded-lg min-h-[120px] resize-none"
+              className={classes.textarea}
               placeholder="Tell us about yourself and your expertise..."
             />
             {errors.description && (
-              <p className="text-red-400 text-sm">{errors.description?.message}</p>
+              <p className={`${colors.error} text-sm`}>{errors.description?.message}</p>
             )}
           </div>
 
           <div className="space-y-3">
-            <Label htmlFor="qualifications" className="text-white font-medium">Qualifications</Label>
+            <Label htmlFor="qualifications" className={`${colors.textPrimary} font-medium`}>Qualifications</Label>
             <Input 
               id="qualifications" 
               {...register("qualifications")} 
-              className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm h-12 rounded-lg"
+              className={classes.input}
               placeholder="Your educational background and certifications"
             />
             {errors.qualifications && (
-              <p className="text-red-400 text-sm">{errors.qualifications?.message}</p>
+              <p className={`${colors.error} text-sm`}>{errors.qualifications?.message}</p>
             )}
           </div>
 
           <div className="space-y-3">
-            <Label htmlFor="specialization" className="text-white font-medium">Specialization</Label>
+            <Label htmlFor="specialization" className={`${colors.textPrimary} font-medium`}>Specialization</Label>
             <Input 
               id="specialization" 
               {...register("specialization")} 
-              className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm h-12 rounded-lg"
+              className={classes.input}
               placeholder="Your area of expertise"
             />
             {errors.specialization && (
-              <p className="text-red-400 text-sm">{errors.specialization?.message}</p>
+              <p className={`${colors.error} text-sm`}>{errors.specialization?.message}</p>
             )}
           </div>
 
           <div className="space-y-3">
-            <Label htmlFor="experience" className="text-white font-medium">Experience (Years)</Label>
+            <Label htmlFor="experience" className={`${colors.textPrimary} font-medium`}>Experience (Years)</Label>
             <Input
               id="experience"
               type="number"
@@ -200,15 +202,15 @@ const ConsultantProfileForm: React.FC<Props> = ({
               step="0.5"
               placeholder="Years of experience"
               {...register("experience", { valueAsNumber: true })}
-              className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm h-12 rounded-lg"
+              className={classes.input}
             />
             {errors.experience && (
-              <p className="text-red-400 text-sm">{errors.experience?.message}</p>
+              <p className={`${colors.error} text-sm`}>{errors.experience?.message}</p>
             )}
           </div>
 
           <div className="space-y-3">
-            <Label className="text-white font-medium">Schedule Type</Label>
+            <Label className={`${colors.textPrimary} font-medium`}>Schedule Type</Label>
             <Controller
               name="scheduleType"
               control={control}
@@ -221,8 +223,8 @@ const ConsultantProfileForm: React.FC<Props> = ({
                       onClick={() => field.onChange(type)}
                       className={`h-12 rounded-lg font-medium transition-all duration-200 ${
                         field.value === type 
-                          ? "bg-gradient-to-r from-purple-500 to-blue-500 text-white shadow-lg shadow-purple-500/25 border-0" 
-                          : "bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30"
+                          ? classes.primaryButton 
+                          : classes.secondaryButton
                       }`}
                     >
                       {type.charAt(0) + type.slice(1).toLowerCase()}
@@ -232,7 +234,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
               )}
             />
             {errors.scheduleType && (
-              <p className="text-red-400 text-sm">{errors.scheduleType?.message}</p>
+              <p className={`${colors.error} text-sm`}>{errors.scheduleType?.message}</p>
             )}
           </div>
         </div>
@@ -240,7 +242,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
         {/* Right Column - Domain, Sub-Domains, Tags */}
         <div className="space-y-6">
           <div className="space-y-3">
-            <Label htmlFor="domain" className="text-white font-medium">Domain</Label>
+            <Label htmlFor="domain" className={`${colors.textPrimary} font-medium`}>Domain</Label>
             <Controller
               name="domain"
               control={control}
@@ -252,12 +254,12 @@ const ConsultantProfileForm: React.FC<Props> = ({
                   }}
                   value={field.value?.id ?? ""}
                 >
-                  <SelectTrigger className="bg-white/10 border-white/20 text-white h-12 rounded-lg focus:border-purple-400 focus:ring-purple-400/20">
-                    <SelectValue placeholder="Select your domain" className="text-white/70" />
+                  <SelectTrigger className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus}`}>
+                    <SelectValue placeholder="Select your domain" className={colors.textSecondary} />
                   </SelectTrigger>
-                  <SelectContent className="bg-slate-800 border-white/20">
+                  <SelectContent className={`${colors.glassBg} ${colors.glassBorder}`}>
                     {domains.map((domain) => (
-                      <SelectItem key={domain.id} value={domain.id!} className="text-white focus:bg-white/10">
+                      <SelectItem key={domain.id} value={domain.id!} className={`${colors.textPrimary} focus:${colors.secondaryBg}`}>
                         {domain.name}
                       </SelectItem>
                     ))}
@@ -266,19 +268,19 @@ const ConsultantProfileForm: React.FC<Props> = ({
               )}
             />
             {errors.domain && (
-              <p className="text-red-400 text-sm">{errors.domain?.message}</p>
+              <p className={`${colors.error} text-sm`}>{errors.domain?.message}</p>
             )}
           </div>
 
           <div className="space-y-3">
-            <Label className="text-white font-medium">Sub-Domains</Label>
+            <Label className={`${colors.textPrimary} font-medium`}>Sub-Domains</Label>
             <Controller
               name="subDomains"
               control={control}
               render={({ field }) => (
-                <div className="space-y-3 max-h-48 overflow-y-auto p-4 bg-white/5 border border-white/10 rounded-lg">
+                <div className={`space-y-3 max-h-48 overflow-y-auto p-4 ${colors.glassBg} ${colors.glassBorder} rounded-lg`}>
                   {filteredSubDomains.map((subDomain) => (
-                    <div key={subDomain.id} className="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 transition-colors">
+                    <div key={subDomain.id} className={`flex items-center space-x-3 p-2 rounded-lg hover:${colors.secondaryBg} transition-colors`}>
                       <Checkbox
                         id={`subDomain-${subDomain.id}`}
                         checked={
@@ -292,33 +294,33 @@ const ConsultantProfileForm: React.FC<Props> = ({
                               );
                           field.onChange(updatedSubDomains);
                         }}
-                        className="border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
+                        className={classes.checkbox}
                       />
-                      <Label htmlFor={`subDomain-${subDomain.id}`} className="text-white cursor-pointer text-sm">
+                      <Label htmlFor={`subDomain-${subDomain.id}`} className={`${colors.textPrimary} cursor-pointer text-sm`}>
                         {subDomain.name}
                       </Label>
                     </div>
                   ))}
                   {filteredSubDomains.length === 0 && (
-                    <p className="text-white/50 text-sm italic text-center py-4">No sub-domains available for selected domain</p>
+                    <p className={`${colors.textMuted} text-sm italic text-center py-4`}>No sub-domains available for selected domain</p>
                   )}
                 </div>
               )}
             />
             {errors.subDomains && (
-              <p className="text-red-400 text-sm">{errors.subDomains?.message}</p>
+              <p className={`${colors.error} text-sm`}>{errors.subDomains?.message}</p>
             )}
           </div>
 
           <div className="space-y-3">
-            <Label className="text-white font-medium">Tags</Label>
+            <Label className={`${colors.textPrimary} font-medium`}>Tags</Label>
             <Controller
               name="tags"
               control={control}
               render={({ field }) => (
-                <div className="space-y-3 max-h-48 overflow-y-auto p-4 bg-white/5 border border-white/10 rounded-lg">
+                <div className={`space-y-3 max-h-48 overflow-y-auto p-4 ${colors.glassBg} ${colors.glassBorder} rounded-lg`}>
                   {filteredTags.map((tag) => (
-                    <div key={tag.id} className="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 transition-colors">
+                    <div key={tag.id} className={`flex items-center space-x-3 p-2 rounded-lg hover:${colors.secondaryBg} transition-colors`}>
                       <Checkbox
                         id={`tag-${tag.id}`}
                         checked={field.value?.some((t) => t.id === tag.id) ?? false}
@@ -328,18 +330,18 @@ const ConsultantProfileForm: React.FC<Props> = ({
                             : (field.value ?? []).filter((t) => t.id !== tag.id);
                           field.onChange(updatedTags);
                         }}
-                        className="border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
+                        className={classes.checkbox}
                       />
-                      <Label htmlFor={`tag-${tag.id}`} className="text-white cursor-pointer text-sm">{tag.name}</Label>
+                      <Label htmlFor={`tag-${tag.id}`} className={`${colors.textPrimary} cursor-pointer text-sm`}>{tag.name}</Label>
                     </div>
                   ))}
                   {filteredTags.length === 0 && (
-                    <p className="text-white/50 text-sm italic text-center py-4">No tags available for selected domain</p>
+                    <p className={`${colors.textMuted} text-sm italic text-center py-4`}>No tags available for selected domain</p>
                   )}
                 </div>
               )}
             />
-            {errors.tags && <p className="text-red-400 text-sm">{errors.tags?.message}</p>}
+            {errors.tags && <p className={`${colors.error} text-sm`}>{errors.tags?.message}</p>}
           </div>
         </div>
       </div>
@@ -349,13 +351,13 @@ const ConsultantProfileForm: React.FC<Props> = ({
         <Button 
           type="button" 
           onClick={onBack} 
-          className="flex-1 h-12 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg font-medium transition-all duration-200"
+          className={`flex-1 h-12 ${classes.secondaryButton}`}
         >
           ← Back
         </Button>
         <Button 
           type="submit" 
-          className="flex-1 h-12 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 transition-all duration-200 border-0"
+          className={`flex-1 h-12 ${classes.primaryButton}`}
         >
           Next Step →
         </Button>

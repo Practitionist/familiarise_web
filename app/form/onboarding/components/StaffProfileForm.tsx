@@ -11,6 +11,7 @@ import { responsibilitiesAndPermissions } from "@/schemas/responsibbilities-perm
 import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import React, { useEffect, useState } from "react";
 import { Controller, useFormContext } from "react-hook-form";
+import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (data: any) => void;
@@ -19,6 +20,7 @@ interface Props {
 }
 
 const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
+  const { classes, colors } = useThemeClasses();
   const [departments, setDepartments] = useState<string[]>([]);
   const [positions, setPositions] = useState<string[]>([]);
 
@@ -75,19 +77,19 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
       className="w-full space-y-6"
     >
       <div className="space-y-3">
-        <Label htmlFor="department" className="text-white font-medium">Department</Label>
+        <Label htmlFor="department" className={`${colors.textPrimary} font-medium`}>Department</Label>
         <Controller
           name="department"
           control={control}
           rules={{ required: "Department is required" }}
           render={({ field }) => (
             <Select onValueChange={field.onChange} value={field.value}>
-              <SelectTrigger className="bg-white/10 border-white/20 text-white h-12 rounded-lg focus:border-purple-400 focus:ring-purple-400/20">
-                <SelectValue placeholder="Select a department" className="text-white/70" />
+              <SelectTrigger className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus}`}>
+                <SelectValue placeholder="Select a department" className={colors.textSecondary} />
               </SelectTrigger>
-              <SelectContent className="bg-slate-800 border-white/20">
+              <SelectContent className={`${colors.glassBg} ${colors.glassBorder}`}>
                 {departments.map((department) => (
-                  <SelectItem key={department} value={department} className="text-white focus:bg-white/10">
+                  <SelectItem key={department} value={department} className={`${colors.textPrimary} focus:${colors.secondaryBg}`}>
                     {department}
                   </SelectItem>
                 ))}
@@ -96,14 +98,14 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
           )}
         />
         {errors.department && (
-          <p className="text-red-400 text-sm">
+          <p className={`${colors.error} text-sm`}>
             {errors.department.message as string}
           </p>
         )}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="position" className="text-white font-medium">Position</Label>
+        <Label htmlFor="position" className={`${colors.textPrimary} font-medium`}>Position</Label>
         <Controller
           name="position"
           control={control}
@@ -114,12 +116,12 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
               value={field.value}
               disabled={!watchDepartment}
             >
-              <SelectTrigger className={`bg-white/10 border-white/20 text-white h-12 rounded-lg focus:border-purple-400 focus:ring-purple-400/20 ${!watchDepartment ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                <SelectValue placeholder={!watchDepartment ? "Select a department first" : "Select a position"} className="text-white/70" />
+              <SelectTrigger className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus} ${!watchDepartment ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                <SelectValue placeholder={!watchDepartment ? "Select a department first" : "Select a position"} className={colors.textSecondary} />
               </SelectTrigger>
-              <SelectContent className="bg-slate-800 border-white/20">
+              <SelectContent className={`${colors.glassBg} ${colors.glassBorder}`}>
                 {positions.map((position) => (
-                  <SelectItem key={position} value={position} className="text-white focus:bg-white/10">
+                  <SelectItem key={position} value={position} className={`${colors.textPrimary} focus:${colors.secondaryBg}`}>
                     {position}
                   </SelectItem>
                 ))}
@@ -128,7 +130,7 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
           )}
         />
         {errors.position && (
-          <p className="text-red-400 text-sm">
+          <p className={`${colors.error} text-sm`}>
             {errors.position.message as string}
           </p>
         )}
@@ -138,13 +140,13 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
         <Button 
           type="button" 
           onClick={onBack} 
-          className="flex-1 h-12 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg font-medium transition-all duration-200"
+          className={`flex-1 h-12 ${classes.secondaryButton}`}
         >
           ← Back
         </Button>
         <Button 
           type="submit" 
-          className="flex-1 h-12 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 transition-all duration-200 border-0"
+          className={`flex-1 h-12 ${classes.primaryButton}`}
         >
           Next Step →
         </Button>

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ConsulteeProfile, ConsulteeProfileSchema } from "@/schemas/user";
 import { Textarea } from "@/components/ui/textarea";
+import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (data: Partial<ConsulteeProfile>) => void;
@@ -18,6 +19,7 @@ const ConsulteeProfileForm: React.FC<Props> = ({
   onBack,
   initialData,
 }) => {
+  const { classes, colors } = useThemeClasses();
   const {
     register,
     handleSubmit,
@@ -37,41 +39,41 @@ const ConsulteeProfileForm: React.FC<Props> = ({
       className="w-full space-y-6"
     >
       <div className="space-y-3">
-        <Label htmlFor="education" className="text-white font-medium">Education</Label>
+        <Label htmlFor="education" className={`${colors.textPrimary} font-medium`}>Education</Label>
         <Input 
           id="education" 
           {...register("education")} 
-          className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm h-12 rounded-lg"
+          className={classes.input}
           placeholder="Your educational background"
         />
         {errors.education && (
-          <p className="text-red-400 text-sm">{errors.education.message}</p>
+          <p className={`${colors.error} text-sm`}>{errors.education.message}</p>
         )}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="occupation" className="text-white font-medium">Occupation</Label>
+        <Label htmlFor="occupation" className={`${colors.textPrimary} font-medium`}>Occupation</Label>
         <Input 
           id="occupation" 
           {...register("occupation")} 
-          className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm h-12 rounded-lg"
+          className={classes.input}
           placeholder="Your current occupation"
         />
         {errors.occupation && (
-          <p className="text-red-400 text-sm">{errors.occupation.message}</p>
+          <p className={`${colors.error} text-sm`}>{errors.occupation.message}</p>
         )}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="aboutMe" className="text-white font-medium">About Me</Label>
+        <Label htmlFor="aboutMe" className={`${colors.textPrimary} font-medium`}>About Me</Label>
         <Textarea 
           id="aboutMe" 
           {...register("aboutMe")} 
-          className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm rounded-lg min-h-[120px] resize-none"
+          className={classes.textarea}
           placeholder="Tell us about yourself, your interests, and goals..."
         />
         {errors.aboutMe && (
-          <p className="text-red-400 text-sm">{errors.aboutMe.message}</p>
+          <p className={`${colors.error} text-sm`}>{errors.aboutMe.message}</p>
         )}
       </div>
 
@@ -79,14 +81,14 @@ const ConsulteeProfileForm: React.FC<Props> = ({
         <Button 
           type="button" 
           onClick={onBack} 
-          className="flex-1 h-12 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg font-medium transition-all duration-200"
+          className={`flex-1 h-12 ${classes.secondaryButton}`}
         >
           ← Back
         </Button>
         <Button 
           type="submit" 
           disabled={isSubmitting}
-          className="flex-1 h-12 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 transition-all duration-200 border-0 disabled:opacity-50"
+          className={`flex-1 h-12 ${classes.primaryButton} disabled:opacity-50`}
         >
           {isSubmitting ? "Processing..." : "Next Step →"}
         </Button>

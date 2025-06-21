@@ -16,6 +16,8 @@ import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
+import { useThemeClasses, ThemeName } from "./useTheme";
+import { getOccasionTheme } from "./themeUtils";
 import ConsultantAgreementForm from "./components/ConsultantAgreementForm";
 import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
 import ConsultantProfileForm from "./components/ConsultantProfileForm";
@@ -77,6 +79,10 @@ const MultiStepForm: React.FC = () => {
   } as OnboardingFormData);
   const router = useRouter();
   const { toast } = useToast();
+  
+  // Theme configuration - auto-detects festivals or use default ShadCN style
+  const currentTheme: ThemeName = getOccasionTheme(); // Auto-detect or default to ShadCN theme
+  const { theme, classes, colors } = useThemeClasses(currentTheme);
 
   const methods = useForm<OnboardingFormData>({
     resolver: zodResolver(PersonalInfoAndRoleSchema),
@@ -440,19 +446,19 @@ const MultiStepForm: React.FC = () => {
     <FormProvider {...methods}>
       <div className="relative flex flex-col items-center justify-center min-h-screen overflow-hidden">
         {/* Background with gradient and animated blobs */}
-        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
-          <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full opacity-30 animate-blob"></div>
-          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500 rounded-full opacity-30 animate-blob animation-delay-2000"></div>
-          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-60 h-60 bg-indigo-500 rounded-full opacity-20 animate-blob animation-delay-4000"></div>
+        <div className={`absolute inset-0 ${colors.backgroundGradient}`}>
+          <div className={`absolute -top-40 -right-40 w-80 h-80 ${colors.blob1} rounded-full opacity-30 animate-blob`}></div>
+          <div className={`absolute -bottom-40 -left-40 w-80 h-80 ${colors.blob2} rounded-full opacity-30 animate-blob animation-delay-2000`}></div>
+          <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-60 h-60 ${colors.blob3} rounded-full opacity-20 animate-blob animation-delay-4000`}></div>
         </div>
         
         {/* Content */}
         <div className="relative z-10 flex flex-col items-center w-full max-w-7xl px-6">
           <Header />
-          <div className="glassmorphism rounded-2xl p-8 w-full max-w-5xl border border-white/20 shadow-2xl">
+          <div className={`glassmorphism rounded-2xl p-8 w-full max-w-5xl ${colors.glassBorder} shadow-2xl`}>
             <Progress 
               value={((step + 1) / 4) * 100} 
-              className="w-full mb-8 h-2 bg-white/20" 
+              className={`w-full mb-8 h-2 ${colors.glassBg}`}
             />
             <WelcomeMessage />
             {renderFormStep()}
@@ -463,23 +469,29 @@ const MultiStepForm: React.FC = () => {
   );
 };
 
-const Header: React.FC = () => (
-  <header className="flex items-center space-x-3 mb-8">
-    <div className="p-2 rounded-xl bg-gradient-to-r from-purple-500 to-blue-500 shadow-lg">
-      <LogInIcon className="w-8 h-8 text-white" />
-    </div>
-    <h1 className="text-3xl font-bold bg-gradient-to-r from-white to-purple-200 bg-clip-text text-transparent">
-      Familiarise
-    </h1>
-  </header>
-);
+const Header: React.FC = () => {
+  const { colors } = useThemeClasses();
+  return (
+    <header className="flex items-center space-x-3 mb-8">
+      <div className={`p-2 rounded-xl ${colors.primaryGradient} shadow-lg`}>
+        <LogInIcon className={`w-8 h-8 ${colors.textPrimary}`} />
+      </div>
+      <h1 className={`text-3xl font-bold ${colors.textPrimary}`}>
+        Familiarise
+      </h1>
+    </header>
+  );
+};
 
-const WelcomeMessage: React.FC = () => (
-  <div className="text-center mb-8">
-    <h2 className="text-2xl font-bold text-white mb-2">Welcome! First things first...</h2>
-    <p className="text-white/70">You can always change them later.</p>
-  </div>
-);
+const WelcomeMessage: React.FC = () => {
+  const { colors } = useThemeClasses();
+  return (
+    <div className="text-center mb-8">
+      <h2 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>Welcome! First things first...</h2>
+      <p className={colors.textSecondary}>You can always change them later.</p>
+    </div>
+  );
+};
 
 function LogInIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (

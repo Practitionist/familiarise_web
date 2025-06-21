@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import { useFormContext } from "react-hook-form";
 import TermsAndPrivacyAgreement from "./TermsAndPrivacyAgreement";
+import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (data: any) => void;
@@ -21,6 +22,7 @@ const StaffAgreementForm: React.FC<Props> = ({
   onBack,
   initialData,
 }) => {
+  const { classes, colors } = useThemeClasses();
   const {
     setValue,
     watch,
@@ -62,7 +64,7 @@ const StaffAgreementForm: React.FC<Props> = ({
         privacyChecked={privacyAccepted || false}
       />
       {(errors.termsAccepted || errors.privacyAccepted) && (
-        <p className="text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+        <p className={`${colors.error} text-sm ${colors.glassBg} ${colors.glassBorder} rounded-lg p-3`}>
           Please accept both the Terms of Service and Privacy Policy to
           continue.
         </p>
@@ -71,14 +73,14 @@ const StaffAgreementForm: React.FC<Props> = ({
         <Button 
           type="button" 
           onClick={onBack} 
-          className="flex-1 h-12 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg font-medium transition-all duration-200"
+          className={`flex-1 h-12 ${classes.secondaryButton}`}
         >
           ← Back
         </Button>
         <Button
           type="submit"
           disabled={!termsAccepted || !privacyAccepted}
-          className="flex-1 h-12 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 transition-all duration-200 border-0 disabled:opacity-50 disabled:cursor-not-allowed"
+          className={`flex-1 h-12 ${classes.primaryButton} disabled:opacity-50 disabled:cursor-not-allowed`}
         >
           Next Step →
         </Button>

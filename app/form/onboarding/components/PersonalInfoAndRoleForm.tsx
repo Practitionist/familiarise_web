@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PersonalInfoAndRole, PersonalInfoAndRoleSchema } from "@/schemas/user";
 import { useSession } from "next-auth/react";
+import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (data: PersonalInfoAndRole) => void;
@@ -14,6 +15,7 @@ interface Props {
 
 const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
   const { data: session } = useSession();
+  const { classes, colors } = useThemeClasses();
   const {
     register,
     handleSubmit,
@@ -42,53 +44,53 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
       className="w-full space-y-6"
     >
       <div className="space-y-3">
-        <Label htmlFor="name" className="text-white font-medium">Full Name</Label>
+        <Label htmlFor="name" className={`${colors.textPrimary} font-medium`}>Full Name</Label>
         <Input 
           id="name" 
           {...register("name")} 
-          className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm h-12 rounded-lg"
+          className={classes.input}
           placeholder="Enter your full name"
         />
-        {errors.name && <p className="text-red-400 text-sm">{errors.name.message}</p>}
+        {errors.name && <p className={`${colors.error} text-sm`}>{errors.name.message}</p>}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="email" className="text-white font-medium">Email</Label>
+        <Label htmlFor="email" className={`${colors.textPrimary} font-medium`}>Email</Label>
         <Input
           id="email"
           type="email"
           value={session?.user?.email || ""}
           disabled
-          className="bg-white/5 border-white/20 text-white h-12 rounded-lg opacity-70"
+          className={`${classes.input} opacity-70`}
         />
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="phone" className="text-white font-medium">Phone</Label>
+        <Label htmlFor="phone" className={`${colors.textPrimary} font-medium`}>Phone</Label>
         <Input 
           id="phone" 
           {...register("phone")} 
-          className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm h-12 rounded-lg"
+          className={classes.input}
           placeholder="Enter your phone number"
         />
-        {errors.phone && <p className="text-red-400 text-sm">{errors.phone.message}</p>}
+        {errors.phone && <p className={`${colors.error} text-sm`}>{errors.phone.message}</p>}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="address" className="text-white font-medium">Address</Label>
+        <Label htmlFor="address" className={`${colors.textPrimary} font-medium`}>Address</Label>
         <Input 
           id="address" 
           {...register("address")} 
-          className="bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:border-purple-400 focus:ring-purple-400/20 backdrop-blur-sm h-12 rounded-lg"
+          className={classes.input}
           placeholder="Enter your address"
         />
         {errors.address && (
-          <p className="text-red-400 text-sm">{errors.address.message}</p>
+          <p className={`${colors.error} text-sm`}>{errors.address.message}</p>
         )}
       </div>
 
       <div className="space-y-3">
-        <Label className="text-white font-medium">Role</Label>
+        <Label className={`${colors.textPrimary} font-medium`}>Role</Label>
         <Controller
           name="role"
           control={control}
@@ -102,8 +104,8 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
                   onClick={() => field.onChange(role)}
                   className={`h-12 rounded-lg font-medium transition-all duration-200 ${
                     field.value === role 
-                      ? "bg-gradient-to-r from-purple-500 to-blue-500 text-white shadow-lg shadow-purple-500/25 border-0" 
-                      : "bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30"
+                      ? classes.primaryButton 
+                      : classes.secondaryButton
                   }`}
                 >
                   {role.charAt(0) + role.slice(1).toLowerCase()}
@@ -112,12 +114,12 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
             </div>
           )}
         />
-        {errors.role && <p className="text-red-400 text-sm">{errors.role.message}</p>}
+        {errors.role && <p className={`${colors.error} text-sm`}>{errors.role.message}</p>}
       </div>
 
       <Button 
         type="submit" 
-        className="w-full h-12 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-lg shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 transition-all duration-200 border-0 mt-8"
+        className={`w-full h-12 ${classes.primaryButton} mt-8`}
       >
         Next Step →
       </Button>

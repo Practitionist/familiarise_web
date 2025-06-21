@@ -1,6 +1,7 @@
 import React from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { useThemeClasses } from "../useTheme";
 
 interface AgreementProps {
   id: string;
@@ -16,27 +17,30 @@ const Agreement: React.FC<AgreementProps> = ({
   onCheckedChange,
   label,
   link,
-}) => (
-  <div className="flex items-center space-x-3 p-4 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-colors">
-    <Checkbox
-      id={id}
-      checked={checked}
-      onCheckedChange={onCheckedChange}
-      className="border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500 h-5 w-5"
-    />
-    <Label htmlFor={id} className="text-sm text-white cursor-pointer">
-      I agree to the{" "}
-      <a
-        href={link}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-purple-300 hover:text-purple-200 underline transition-colors"
-      >
-        {label}
-      </a>
-    </Label>
-  </div>
-);
+}) => {
+  const { classes, colors } = useThemeClasses();
+  return (
+    <div className={`flex items-center space-x-3 p-4 rounded-lg ${colors.glassBg} ${colors.glassBorder} hover:${colors.secondaryBg} transition-colors`}>
+      <Checkbox
+        id={id}
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        className={`${classes.checkbox} h-5 w-5`}
+      />
+      <Label htmlFor={id} className={`text-sm ${colors.textPrimary} cursor-pointer`}>
+        I agree to the{" "}
+        <a
+          href={link}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`${colors.linkColor} ${colors.linkHover} underline transition-colors`}
+        >
+          {label}
+        </a>
+      </Label>
+    </div>
+  );
+};
 
 interface TermsAndPrivacyAgreementProps {
   onTermsChange: (checked: boolean) => void;
