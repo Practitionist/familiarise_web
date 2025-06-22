@@ -44,9 +44,9 @@ const ConsultantAgreementForm: React.FC<Props> = ({
         privacyChecked={privacyChecked}
       />
       <div className="flex justify-between gap-4 pt-6">
-        <Button 
-          type="button" 
-          onClick={onBack} 
+        <Button
+          type="button"
+          onClick={onBack}
           className={`flex-1 h-12 ${classes.secondaryButton}`}
         >
           ← Back

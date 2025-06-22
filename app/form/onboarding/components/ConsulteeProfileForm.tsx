@@ -34,41 +34,57 @@ const ConsulteeProfileForm: React.FC<Props> = ({
   };
 
   return (
-    <form
-      onSubmit={handleSubmit(onSubmit)}
-      className="w-full space-y-6"
-    >
+    <form onSubmit={handleSubmit(onSubmit)} className="w-full space-y-6">
       <div className="space-y-3">
-        <Label htmlFor="education" className={`${colors.textPrimary} font-medium`}>Education</Label>
-        <Input 
-          id="education" 
-          {...register("education")} 
+        <Label
+          htmlFor="education"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Education
+        </Label>
+        <Input
+          id="education"
+          {...register("education")}
           className={classes.input}
           placeholder="Your educational background"
         />
         {errors.education && (
-          <p className={`${colors.error} text-sm`}>{errors.education.message}</p>
+          <p className={`${colors.error} text-sm`}>
+            {errors.education.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="occupation" className={`${colors.textPrimary} font-medium`}>Occupation</Label>
-        <Input 
-          id="occupation" 
-          {...register("occupation")} 
+        <Label
+          htmlFor="occupation"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Occupation
+        </Label>
+        <Input
+          id="occupation"
+          {...register("occupation")}
           className={classes.input}
           placeholder="Your current occupation"
         />
         {errors.occupation && (
-          <p className={`${colors.error} text-sm`}>{errors.occupation.message}</p>
+          <p className={`${colors.error} text-sm`}>
+            {errors.occupation.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="aboutMe" className={`${colors.textPrimary} font-medium`}>About Me</Label>
-        <Textarea 
-          id="aboutMe" 
-          {...register("aboutMe")} 
+        <Label
+          htmlFor="aboutMe"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          About Me
+        </Label>
+        <Textarea
+          id="aboutMe"
+          {...register("aboutMe")}
           className={classes.textarea}
           placeholder="Tell us about yourself, your interests, and goals..."
         />
@@ -78,15 +94,15 @@ const ConsulteeProfileForm: React.FC<Props> = ({
       </div>
 
       <div className="flex justify-between gap-4 pt-6">
-        <Button 
-          type="button" 
-          onClick={onBack} 
+        <Button
+          type="button"
+          onClick={onBack}
           className={`flex-1 h-12 ${classes.secondaryButton}`}
         >
           ← Back
         </Button>
-        <Button 
-          type="submit" 
+        <Button
+          type="submit"
           disabled={isSubmitting}
           className={`flex-1 h-12 ${classes.primaryButton} disabled:opacity-50`}
         >

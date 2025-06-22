@@ -81,7 +81,9 @@ const ConsultantReviewForm: React.FC<Props> = ({
         <h3 className="text-lg font-semibold text-white">Schedule</h3>
         <p className="text-sm text-white/70">
           Schedule Type:{" "}
-          <span className="font-medium text-white">{formData.scheduleType}</span>
+          <span className="font-medium text-white">
+            {formData.scheduleType}
+          </span>
         </p>
         {formData.scheduleType === "WEEKLY" && formData.weeklySlots && (
           <div className="space-y-2">
@@ -181,10 +183,16 @@ const ConsultantReviewForm: React.FC<Props> = ({
 
   return (
     <div className="w-full space-y-6">
-      <div className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl`}>
+      <div
+        className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl`}
+      >
         <div className="mb-6">
-          <h3 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>Review Your Information</h3>
-          <p className={colors.textSecondary}>Please review your details before submitting</p>
+          <h3 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>
+            Review Your Information
+          </h3>
+          <p className={colors.textSecondary}>
+            Please review your details before submitting
+          </p>
         </div>
         <div className="space-y-6">
           {renderSection(
@@ -192,15 +200,11 @@ const ConsultantReviewForm: React.FC<Props> = ({
             <div className="grid gap-2 text-sm">
               <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
                 <span className="font-medium text-white/70">Name</span>
-                <span className="col-span-2 text-white">
-                  {formData.name}
-                </span>
+                <span className="col-span-2 text-white">{formData.name}</span>
               </div>
               <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
                 <span className="font-medium text-white/70">Email</span>
-                <span className="col-span-2 text-white">
-                  {formData.email}
-                </span>
+                <span className="col-span-2 text-white">{formData.email}</span>
               </div>
               <div className="grid grid-cols-3 items-center py-3 border-b border-white/10">
                 <span className="font-medium text-white/70">Phone</span>
@@ -261,9 +265,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
                 </span>
               </div>
               <div className="space-y-2">
-                <h4 className="text-sm font-medium text-white">
-                  Sub-Domains
-                </h4>
+                <h4 className="text-sm font-medium text-white">Sub-Domains</h4>
                 {renderList(formData.subDomains, "No sub-domains selected")}
               </div>
               <div className="space-y-2">

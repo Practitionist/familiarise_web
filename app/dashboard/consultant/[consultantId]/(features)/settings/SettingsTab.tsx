@@ -33,15 +33,15 @@ import {
   type Tag,
 } from "./settings";
 // Import functions from centralized utils
-import { 
+import {
   formatDayDisplay,
   getDaysInMonth,
   getFirstDayOfMonth,
-  getLocalDateString 
+  getLocalDateString,
 } from "@/utils/dateTimeUtils";
-import { 
+import {
   validateTimeSlot as validateSlot,
-  validateAllSlots as validateAllSlotsDetailed
+  validateAllSlots as validateAllSlotsDetailed,
 } from "@/utils/timeSlotValidation";
 
 interface Option {
@@ -365,14 +365,15 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
 
     const currentSlots =
       scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots;
-    
+
     // Use improved validation with detailed feedback
     const validation = validateAllSlotsDetailed(currentSlots);
     if (!validation.isValid) {
-      const errorMessage = validation.errors.length > 0 
-        ? `Please fix the following issues:\n${validation.errors.slice(0, 3).join('\n')}${validation.errors.length > 3 ? '\n...and more' : ''}`
-        : "Please ensure all time slots are valid before saving.";
-      
+      const errorMessage =
+        validation.errors.length > 0
+          ? `Please fix the following issues:\n${validation.errors.slice(0, 3).join("\n")}${validation.errors.length > 3 ? "\n...and more" : ""}`
+          : "Please ensure all time slots are valid before saving.";
+
       toast({
         title: "Validation Error",
         description: errorMessage,

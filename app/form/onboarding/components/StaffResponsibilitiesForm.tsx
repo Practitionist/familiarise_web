@@ -75,7 +75,9 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
 
   if (!department || !position) {
     return (
-      <div className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full`}>
+      <div
+        className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full`}
+      >
         <p className={`text-center ${colors.textPrimary}`}>
           Please complete the Staff Profile form first.
         </p>
@@ -88,7 +90,9 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
 
   if (!departmentData || !positionData) {
     return (
-      <div className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full`}>
+      <div
+        className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full`}
+      >
         <p className={`text-center ${colors.textPrimary}`}>
           Invalid department or position. Please go back and select valid
           options.
@@ -118,9 +122,13 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
   };
 
   return (
-    <div className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full space-y-6`}>
+    <div
+      className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full space-y-6`}
+    >
       <div>
-        <h3 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>Staff Responsibilities</h3>
+        <h3 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>
+          Staff Responsibilities
+        </h3>
         <p className={colors.textSecondary}>
           Select your responsibilities and permissions
         </p>
@@ -136,8 +144,13 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
                 <div className="space-y-4">
                   {Object.entries(positionData.responsibilities).map(
                     ([category, items]) => (
-                      <div key={category} className="space-y-3 p-3 rounded-lg bg-white/5 border border-white/10">
-                        <Label className="font-semibold text-white text-sm">{category}</Label>
+                      <div
+                        key={category}
+                        className="space-y-3 p-3 rounded-lg bg-white/5 border border-white/10"
+                      >
+                        <Label className="font-semibold text-white text-sm">
+                          {category}
+                        </Label>
                         {items.map((item, index) => (
                           <div
                             key={index}
@@ -182,8 +195,13 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
                 <div className="space-y-4">
                   {Object.entries(positionData.permissions).map(
                     ([category, items]) => (
-                      <div key={category} className="space-y-3 p-3 rounded-lg bg-white/5 border border-white/10">
-                        <Label className="font-semibold text-white text-sm">{category}</Label>
+                      <div
+                        key={category}
+                        className="space-y-3 p-3 rounded-lg bg-white/5 border border-white/10"
+                      >
+                        <Label className="font-semibold text-white text-sm">
+                          {category}
+                        </Label>
                         {items.map((item, index) => (
                           <div
                             key={index}
@@ -219,16 +237,18 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
           </Accordion>
         </form>
       </div>
-      <div className={`flex justify-between gap-4 pt-6 border-t ${colors.glassBorder}`}>
-        <Button 
-          type="button" 
-          onClick={onBack} 
+      <div
+        className={`flex justify-between gap-4 pt-6 border-t ${colors.glassBorder}`}
+      >
+        <Button
+          type="button"
+          onClick={onBack}
           className={`flex-1 h-12 ${classes.secondaryButton}`}
         >
           ← Back
         </Button>
-        <Button 
-          type="submit" 
+        <Button
+          type="submit"
           onClick={handleSubmit}
           className={`flex-1 h-12 ${classes.primaryButton}`}
         >

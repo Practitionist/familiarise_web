@@ -80,7 +80,7 @@ const MultiStepForm: React.FC = () => {
   } as OnboardingFormData);
   const router = useRouter();
   const { toast } = useToast();
-  
+
   // Theme configuration - auto-detects festivals or use default ShadCN style
   const currentTheme: ThemeName = getOccasionTheme(); // Auto-detect or default to ShadCN theme
   const { theme, classes, colors } = useThemeClasses(currentTheme);
@@ -448,17 +448,25 @@ const MultiStepForm: React.FC = () => {
       <div className="relative flex flex-col items-center justify-center min-h-screen overflow-hidden">
         {/* Background with gradient and animated blobs */}
         <div className={`absolute inset-0 ${colors.backgroundGradient}`}>
-          <div className={`absolute -top-40 -right-40 w-80 h-80 ${colors.blob1} rounded-full opacity-30 animate-blob`}></div>
-          <div className={`absolute -bottom-40 -left-40 w-80 h-80 ${colors.blob2} rounded-full opacity-30 animate-blob animation-delay-2000`}></div>
-          <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-60 h-60 ${colors.blob3} rounded-full opacity-20 animate-blob animation-delay-4000`}></div>
+          <div
+            className={`absolute -top-40 -right-40 w-80 h-80 ${colors.blob1} rounded-full opacity-30 animate-blob`}
+          ></div>
+          <div
+            className={`absolute -bottom-40 -left-40 w-80 h-80 ${colors.blob2} rounded-full opacity-30 animate-blob animation-delay-2000`}
+          ></div>
+          <div
+            className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-60 h-60 ${colors.blob3} rounded-full opacity-20 animate-blob animation-delay-4000`}
+          ></div>
         </div>
-        
+
         {/* Content */}
         <div className="relative z-10 flex flex-col items-center w-full max-w-7xl px-6">
           <Header />
-          <div className={`glassmorphism rounded-2xl p-8 w-full max-w-5xl ${colors.glassBorder} shadow-2xl`}>
-            <Progress 
-              value={((step + 1) / 4) * 100} 
+          <div
+            className={`glassmorphism rounded-2xl p-8 w-full max-w-5xl ${colors.glassBorder} shadow-2xl`}
+          >
+            <Progress
+              value={((step + 1) / 4) * 100}
               className={`w-full mb-8 h-2 ${colors.glassBg}`}
             />
             <WelcomeMessage />
@@ -488,7 +496,9 @@ const WelcomeMessage: React.FC = () => {
   const { colors } = useThemeClasses();
   return (
     <div className="text-center mb-8">
-      <h2 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>Welcome! First things first...</h2>
+      <h2 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>
+        Welcome! First things first...
+      </h2>
       <p className={colors.textSecondary}>You can always change them later.</p>
     </div>
   );

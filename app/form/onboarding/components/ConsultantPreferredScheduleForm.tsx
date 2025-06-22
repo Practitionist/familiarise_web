@@ -16,7 +16,11 @@ import {
   getNextDay,
   isOvernight,
 } from "@/utils/dateTimeUtils";
-import { getSlotStatistics, validateAllSlots, validateTimeSlot } from "@/utils/timeSlotValidation";
+import {
+  getSlotStatistics,
+  validateAllSlots,
+  validateTimeSlot,
+} from "@/utils/timeSlotValidation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
@@ -286,8 +290,13 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
     ) => {
       const dayKey = day.toLowerCase();
       return (
-        <div key={`slot-${day}`} className="grid gap-3 p-4 rounded-lg bg-white/5 border border-white/10">
-          <Label className="text-white font-medium text-sm">{formatDayDisplay(day)}</Label>
+        <div
+          key={`slot-${day}`}
+          className="grid gap-3 p-4 rounded-lg bg-white/5 border border-white/10"
+        >
+          <Label className="text-white font-medium text-sm">
+            {formatDayDisplay(day)}
+          </Label>
           {slots[dayKey]?.map((slot: SlotType, index: number) => (
             <div key={`slot-${day}-${index}`} className="grid gap-3">
               <div className="grid grid-cols-5 gap-3 items-center">
@@ -366,7 +375,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
     const currentSlots = scheduleType === "WEEKLY" ? weeklySlots : customSlots;
     const validation = validateAllSlots(currentSlots);
     const stats = getSlotStatistics(currentSlots);
-    
+
     return {
       ...validation,
       ...stats,
@@ -377,20 +386,21 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   const onSubmitForm = useCallback(
     (data: PreferredSchedule) => {
       const feedback = getValidationFeedback();
-      
+
       if (!feedback.hasSlots) {
         alert("Please add at least one time slot before proceeding.");
         return;
       }
-      
+
       if (!feedback.isValid) {
-        const errorMessage = feedback.errors.length > 0 
-          ? `Please fix the following issues:\n${feedback.errors.join('\n')}`
-          : "Please fix all validation errors before proceeding.";
+        const errorMessage =
+          feedback.errors.length > 0
+            ? `Please fix the following issues:\n${feedback.errors.join("\n")}`
+            : "Please fix all validation errors before proceeding.";
         alert(errorMessage);
         return;
       }
-      
+
       onNext(data);
     },
     [getValidationFeedback, onNext],
@@ -432,8 +442,8 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           key={`day-${i}`}
           type="button"
           className={`p-2 rounded-lg transition-all duration-200 text-sm font-medium ${
-            isSelected 
-              ? "bg-gradient-to-r from-purple-500 to-blue-500 text-white shadow-lg" 
+            isSelected
+              ? "bg-gradient-to-r from-purple-500 to-blue-500 text-white shadow-lg"
               : "text-white/70 hover:bg-white/10 hover:text-white"
           }`}
           onClick={() => {
@@ -459,7 +469,10 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   const renderSlotsForDate = (dateString: string) => {
     const date = new Date(dateString);
     return (
-      <div key={`date-${dateString}`} className="mt-4 p-4 rounded-lg bg-white/5 border border-white/10">
+      <div
+        key={`date-${dateString}`}
+        className="mt-4 p-4 rounded-lg bg-white/5 border border-white/10"
+      >
         <h4 className="font-semibold text-white mb-3">
           {date.toLocaleDateString("en-US", {
             weekday: "long",
@@ -543,13 +556,12 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   };
 
   return (
-    <form
-      onSubmit={handleSubmit(onSubmitForm)}
-      className="w-full space-y-6"
-    >
+    <form onSubmit={handleSubmit(onSubmitForm)} className="w-full space-y-6">
       <div className="glassmorphism2 rounded-2xl p-6 border border-white/20 shadow-2xl">
         <div className="mb-6">
-          <h3 className="text-2xl font-bold text-white mb-2">Preferred Schedule</h3>
+          <h3 className="text-2xl font-bold text-white mb-2">
+            Preferred Schedule
+          </h3>
           <p className="text-white/70">
             Choose how you'd like to schedule your appointments.
           </p>
@@ -568,10 +580,17 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                 <div className="flex flex-col lg:flex-row lg:space-x-8 space-y-6 lg:space-y-0">
                   <div className="flex-1">
                     <div className="flex items-center justify-between mb-4 p-4 rounded-lg bg-white/5 border border-white/10">
-                      <Label htmlFor="WEEKLY" className="font-medium text-white text-lg">
+                      <Label
+                        htmlFor="WEEKLY"
+                        className="font-medium text-white text-lg"
+                      >
                         📅 Weekly Recurring
                       </Label>
-                      <RadioGroupItem id="WEEKLY" value="WEEKLY" className="border-white/30 text-purple-400" />
+                      <RadioGroupItem
+                        id="WEEKLY"
+                        value="WEEKLY"
+                        className="border-white/30 text-purple-400"
+                      />
                     </div>
                     <div
                       className={`grid gap-4 ${scheduleType !== "WEEKLY" ? "opacity-30 pointer-events-none" : ""}`}
@@ -583,10 +602,17 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center justify-between mb-4 p-4 rounded-lg bg-white/5 border border-white/10">
-                      <Label htmlFor="CUSTOM" className="font-medium text-white text-lg">
+                      <Label
+                        htmlFor="CUSTOM"
+                        className="font-medium text-white text-lg"
+                      >
                         🗓️ Custom Schedule
                       </Label>
-                      <RadioGroupItem id="CUSTOM" value="CUSTOM" className="border-white/30 text-purple-400" />
+                      <RadioGroupItem
+                        id="CUSTOM"
+                        value="CUSTOM"
+                        className="border-white/30 text-purple-400"
+                      />
                     </div>
                     <div
                       className={`grid gap-4 ${scheduleType !== "CUSTOM" ? "opacity-30 pointer-events-none" : ""}`}
@@ -638,50 +664,66 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             )}
           />
         </div>
-        
+
         {/* Validation Feedback */}
         {(() => {
           const feedback = getValidationFeedback();
           if (!feedback.hasSlots) return null;
-          
+
           return (
-            <div className={`mt-4 p-3 rounded-lg ${colors.glassBg} ${colors.glassBorder}`}>
+            <div
+              className={`mt-4 p-3 rounded-lg ${colors.glassBg} ${colors.glassBorder}`}
+            >
               <div className="flex items-center justify-between">
                 <div className={`text-sm ${colors.textSecondary}`}>
-                  {feedback.validSlots} valid slot{feedback.validSlots !== 1 ? 's' : ''} 
-                  {feedback.totalDurationHours > 0 && ` (${feedback.totalDurationHours}h total)`}
-                  {feedback.overnightSlots > 0 && `, ${feedback.overnightSlots} overnight`}
+                  {feedback.validSlots} valid slot
+                  {feedback.validSlots !== 1 ? "s" : ""}
+                  {feedback.totalDurationHours > 0 &&
+                    ` (${feedback.totalDurationHours}h total)`}
+                  {feedback.overnightSlots > 0 &&
+                    `, ${feedback.overnightSlots} overnight`}
                 </div>
                 {feedback.isValid ? (
-                  <span className={`text-sm ${colors.success}`}>✓ Ready to proceed</span>
+                  <span className={`text-sm ${colors.success}`}>
+                    ✓ Ready to proceed
+                  </span>
                 ) : (
-                  <span className={`text-sm ${colors.error}`}>⚠ {feedback.errors.length} error{feedback.errors.length !== 1 ? 's' : ''}</span>
+                  <span className={`text-sm ${colors.error}`}>
+                    ⚠ {feedback.errors.length} error
+                    {feedback.errors.length !== 1 ? "s" : ""}
+                  </span>
                 )}
               </div>
               {!feedback.isValid && feedback.errors.length > 0 && (
                 <div className="mt-2 space-y-1">
                   {feedback.errors.slice(0, 3).map((error, index) => (
-                    <div key={index} className={`text-xs ${colors.error}`}>• {error}</div>
+                    <div key={index} className={`text-xs ${colors.error}`}>
+                      • {error}
+                    </div>
                   ))}
                   {feedback.errors.length > 3 && (
-                    <div className={`text-xs ${colors.textMuted}`}>...and {feedback.errors.length - 3} more</div>
+                    <div className={`text-xs ${colors.textMuted}`}>
+                      ...and {feedback.errors.length - 3} more
+                    </div>
                   )}
                 </div>
               )}
             </div>
           );
         })()}
-        
-        <div className={`flex justify-between gap-4 pt-6 mt-6 border-t ${colors.glassBorder}`}>
-          <Button 
-            type="button" 
-            onClick={onBack} 
+
+        <div
+          className={`flex justify-between gap-4 pt-6 mt-6 border-t ${colors.glassBorder}`}
+        >
+          <Button
+            type="button"
+            onClick={onBack}
             className={`flex-1 h-12 ${classes.secondaryButton}`}
           >
             ← Back
           </Button>
-          <Button 
-            type="submit" 
+          <Button
+            type="submit"
             disabled={!allSlotsValid()}
             className={`flex-1 h-12 ${classes.primaryButton} disabled:opacity-50 disabled:cursor-not-allowed`}
           >

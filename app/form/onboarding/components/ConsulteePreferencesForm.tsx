@@ -82,12 +82,12 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
   };
 
   return (
-    <form
-      onSubmit={handleSubmit(onSubmit)}
-      className="w-full space-y-6"
-    >
+    <form onSubmit={handleSubmit(onSubmit)} className="w-full space-y-6">
       <div className="space-y-3">
-        <Label htmlFor="preferredCommunicationMethod" className={`${colors.textPrimary} font-medium`}>
+        <Label
+          htmlFor="preferredCommunicationMethod"
+          className={`${colors.textPrimary} font-medium`}
+        >
           Preferred Communication Method
         </Label>
         <Controller
@@ -99,13 +99,24 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
               onValueChange={field.onChange}
               value={field.value || "VIDEO"}
             >
-              <SelectTrigger className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus}`}>
-                <SelectValue placeholder="Select communication method" className={colors.textSecondary} />
+              <SelectTrigger
+                className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus}`}
+              >
+                <SelectValue
+                  placeholder="Select communication method"
+                  className={colors.textSecondary}
+                />
               </SelectTrigger>
               <SelectContent className={classes.dropdown}>
-                <SelectItem value="VIDEO" className={classes.dropdownItem}>📹 Video</SelectItem>
-                <SelectItem value="AUDIO" className={classes.dropdownItem}>🎙️ Audio</SelectItem>
-                <SelectItem value="IN_PERSON" className={classes.dropdownItem}>👥 In Person</SelectItem>
+                <SelectItem value="VIDEO" className={classes.dropdownItem}>
+                  📹 Video
+                </SelectItem>
+                <SelectItem value="AUDIO" className={classes.dropdownItem}>
+                  🎙️ Audio
+                </SelectItem>
+                <SelectItem value="IN_PERSON" className={classes.dropdownItem}>
+                  👥 In Person
+                </SelectItem>
               </SelectContent>
             </Select>
           )}
@@ -118,20 +129,30 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="preferredLanguage" className={`${colors.textPrimary} font-medium`}>Preferred Language</Label>
-        <Input 
-          id="preferredLanguage" 
-          {...register("preferredLanguage")} 
+        <Label
+          htmlFor="preferredLanguage"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Preferred Language
+        </Label>
+        <Input
+          id="preferredLanguage"
+          {...register("preferredLanguage")}
           className={classes.input}
           placeholder="e.g., English, Spanish, French"
         />
         {errors.preferredLanguage && (
-          <p className={`${colors.error} text-sm`}>{errors.preferredLanguage.message}</p>
+          <p className={`${colors.error} text-sm`}>
+            {errors.preferredLanguage.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="specialRequirements" className={`${colors.textPrimary} font-medium`}>
+        <Label
+          htmlFor="specialRequirements"
+          className={`${colors.textPrimary} font-medium`}
+        >
           Special Requirements (Optional)
         </Label>
         <Textarea
@@ -141,12 +162,19 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
           placeholder="Any accessibility needs or special accommodations..."
         />
         {errors.specialRequirements && (
-          <p className={`${colors.error} text-sm`}>{errors.specialRequirements.message}</p>
+          <p className={`${colors.error} text-sm`}>
+            {errors.specialRequirements.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="interests" className={`${colors.textPrimary} font-medium`}>Interests (comma-separated)</Label>
+        <Label
+          htmlFor="interests"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Interests (comma-separated)
+        </Label>
         <Input
           id="interests"
           {...register("interests")}
@@ -154,31 +182,37 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
           className={classes.input}
         />
         {errors.interests && (
-          <p className={`${colors.error} text-sm`}>{errors.interests.message}</p>
+          <p className={`${colors.error} text-sm`}>
+            {errors.interests.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="goals" className={`${colors.textPrimary} font-medium`}>Goals (comma-separated)</Label>
+        <Label htmlFor="goals" className={`${colors.textPrimary} font-medium`}>
+          Goals (comma-separated)
+        </Label>
         <Textarea
           id="goals"
           {...register("goals")}
           placeholder="e.g., Improve leadership skills, Learn new technologies"
           className={classes.textarea}
         />
-        {errors.goals && <p className={`${colors.error} text-sm`}>{errors.goals.message}</p>}
+        {errors.goals && (
+          <p className={`${colors.error} text-sm`}>{errors.goals.message}</p>
+        )}
       </div>
 
       <div className="flex justify-between gap-4 pt-6">
-        <Button 
-          type="button" 
-          onClick={onBack} 
+        <Button
+          type="button"
+          onClick={onBack}
           className={`flex-1 h-12 ${classes.secondaryButton}`}
         >
           ← Back
         </Button>
-        <Button 
-          type="submit" 
+        <Button
+          type="submit"
           className={`flex-1 h-12 ${classes.primaryButton}`}
         >
           Next Step →

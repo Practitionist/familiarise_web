@@ -50,14 +50,22 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
 
   return (
     <div className="w-full space-y-6">
-      <div className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl`}>
+      <div
+        className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl`}
+      >
         <div className="mb-6">
-          <h3 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>Terms and Conditions</h3>
-          <p className={colors.textSecondary}>Please review and accept our terms to continue</p>
+          <h3 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>
+            Terms and Conditions
+          </h3>
+          <p className={colors.textSecondary}>
+            Please review and accept our terms to continue
+          </p>
         </div>
         <div className="space-y-4">
           <div className="space-y-4">
-            <div className={`flex items-center space-x-3 p-4 rounded-lg ${colors.glassBg} ${colors.glassBorder} hover:${colors.secondaryBg} transition-colors`}>
+            <div
+              className={`flex items-center space-x-3 p-4 rounded-lg ${colors.glassBg} ${colors.glassBorder} hover:${colors.secondaryBg} transition-colors`}
+            >
               <Checkbox
                 id="terms"
                 checked={termsAccepted}
@@ -71,12 +79,18 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
                 className={`text-sm ${colors.textPrimary} cursor-pointer font-medium`}
               >
                 I accept the{" "}
-                <a href="/terms" target="_blank" className={`${colors.linkColor} ${colors.linkHover} underline transition-colors`}>
+                <a
+                  href="/terms"
+                  target="_blank"
+                  className={`${colors.linkColor} ${colors.linkHover} underline transition-colors`}
+                >
                   terms and conditions
                 </a>
               </label>
             </div>
-            <div className={`flex items-center space-x-3 p-4 rounded-lg ${colors.glassBg} ${colors.glassBorder} hover:${colors.secondaryBg} transition-colors`}>
+            <div
+              className={`flex items-center space-x-3 p-4 rounded-lg ${colors.glassBg} ${colors.glassBorder} hover:${colors.secondaryBg} transition-colors`}
+            >
               <Checkbox
                 id="privacy"
                 checked={privacyAccepted}
@@ -90,7 +104,11 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
                 className={`text-sm ${colors.textPrimary} cursor-pointer font-medium`}
               >
                 I accept the{" "}
-                <a href="/privacy" target="_blank" className={`${colors.linkColor} ${colors.linkHover} underline transition-colors`}>
+                <a
+                  href="/privacy"
+                  target="_blank"
+                  className={`${colors.linkColor} ${colors.linkHover} underline transition-colors`}
+                >
                   privacy policy
                 </a>
               </label>
@@ -99,9 +117,9 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
         </div>
       </div>
       <div className="flex justify-between gap-4">
-        <Button 
-          type="button" 
-          onClick={onBack} 
+        <Button
+          type="button"
+          onClick={onBack}
           className={`flex-1 h-12 ${classes.secondaryButton}`}
         >
           ← Back

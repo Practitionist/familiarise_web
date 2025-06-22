@@ -39,23 +39,26 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
   };
 
   return (
-    <form
-      onSubmit={handleSubmit(onSubmit)}
-      className="w-full space-y-6"
-    >
+    <form onSubmit={handleSubmit(onSubmit)} className="w-full space-y-6">
       <div className="space-y-3">
-        <Label htmlFor="name" className={`${colors.textPrimary} font-medium`}>Full Name</Label>
-        <Input 
-          id="name" 
-          {...register("name")} 
+        <Label htmlFor="name" className={`${colors.textPrimary} font-medium`}>
+          Full Name
+        </Label>
+        <Input
+          id="name"
+          {...register("name")}
           className={classes.input}
           placeholder="Enter your full name"
         />
-        {errors.name && <p className={`${colors.error} text-sm`}>{errors.name.message}</p>}
+        {errors.name && (
+          <p className={`${colors.error} text-sm`}>{errors.name.message}</p>
+        )}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="email" className={`${colors.textPrimary} font-medium`}>Email</Label>
+        <Label htmlFor="email" className={`${colors.textPrimary} font-medium`}>
+          Email
+        </Label>
         <Input
           id="email"
           type="email"
@@ -66,21 +69,30 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="phone" className={`${colors.textPrimary} font-medium`}>Phone</Label>
-        <Input 
-          id="phone" 
-          {...register("phone")} 
+        <Label htmlFor="phone" className={`${colors.textPrimary} font-medium`}>
+          Phone
+        </Label>
+        <Input
+          id="phone"
+          {...register("phone")}
           className={classes.input}
           placeholder="Enter your phone number"
         />
-        {errors.phone && <p className={`${colors.error} text-sm`}>{errors.phone.message}</p>}
+        {errors.phone && (
+          <p className={`${colors.error} text-sm`}>{errors.phone.message}</p>
+        )}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="address" className={`${colors.textPrimary} font-medium`}>Address</Label>
-        <Input 
-          id="address" 
-          {...register("address")} 
+        <Label
+          htmlFor="address"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Address
+        </Label>
+        <Input
+          id="address"
+          {...register("address")}
           className={classes.input}
           placeholder="Enter your address"
         />
@@ -103,8 +115,8 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
                   variant={field.value === role ? "default" : "outline"}
                   onClick={() => field.onChange(role)}
                   className={`h-12 rounded-lg font-medium transition-all duration-200 ${
-                    field.value === role 
-                      ? classes.primaryButton 
+                    field.value === role
+                      ? classes.primaryButton
                       : classes.secondaryButton
                   }`}
                 >
@@ -114,11 +126,13 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
             </div>
           )}
         />
-        {errors.role && <p className={`${colors.error} text-sm`}>{errors.role.message}</p>}
+        {errors.role && (
+          <p className={`${colors.error} text-sm`}>{errors.role.message}</p>
+        )}
       </div>
 
-      <Button 
-        type="submit" 
+      <Button
+        type="submit"
         className={`w-full h-12 ${classes.primaryButton} mt-8`}
       >
         Next Step →

@@ -20,14 +20,19 @@ const Agreement: React.FC<AgreementProps> = ({
 }) => {
   const { classes, colors } = useThemeClasses();
   return (
-    <div className={`flex items-center space-x-3 p-4 rounded-lg ${colors.glassBg} ${colors.glassBorder} hover:${colors.secondaryBg} transition-colors`}>
+    <div
+      className={`flex items-center space-x-3 p-4 rounded-lg ${colors.glassBg} ${colors.glassBorder} hover:${colors.secondaryBg} transition-colors`}
+    >
       <Checkbox
         id={id}
         checked={checked}
         onCheckedChange={onCheckedChange}
         className={`${classes.checkbox} h-5 w-5`}
       />
-      <Label htmlFor={id} className={`text-sm ${colors.textPrimary} cursor-pointer`}>
+      <Label
+        htmlFor={id}
+        className={`text-sm ${colors.textPrimary} cursor-pointer`}
+      >
         I agree to the{" "}
         <a
           href={link}

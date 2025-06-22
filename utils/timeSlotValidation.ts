@@ -16,10 +16,15 @@ const VALIDATION_CONFIG = {
 
 // Helper function to convert HH:MM to minutes
 const getMinutes = (time: string): number | null => {
-  if (!time || typeof time !== 'string') return null;
+  if (!time || typeof time !== "string") return null;
   const [hours, minutes] = time.split(":").map(Number);
-  return !isNaN(hours) && !isNaN(minutes) && hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60 
-    ? hours * 60 + minutes 
+  return !isNaN(hours) &&
+    !isNaN(minutes) &&
+    hours >= 0 &&
+    hours < 24 &&
+    minutes >= 0 &&
+    minutes < 60
+    ? hours * 60 + minutes
     : null;
 };
 
@@ -29,9 +34,12 @@ const isOvernightSlot = (startMinutes: number, endMinutes: number): boolean => {
 };
 
 // Calculate slot duration handling overnight slots
-const calculateSlotDuration = (startMinutes: number, endMinutes: number): number => {
+const calculateSlotDuration = (
+  startMinutes: number,
+  endMinutes: number,
+): number => {
   return isOvernightSlot(startMinutes, endMinutes)
-    ? (24 * 60) - startMinutes + endMinutes
+    ? 24 * 60 - startMinutes + endMinutes
     : endMinutes - startMinutes;
 };
 
@@ -75,39 +83,49 @@ export const isValidTimeRange = (
   }
 
   const duration = calculateSlotDuration(startMinutes, endMinutes);
-  
+
   // Validate duration constraints
-  return duration >= VALIDATION_CONFIG.MIN_DURATION_MINUTES && 
-         duration <= VALIDATION_CONFIG.MAX_DURATION_MINUTES;
+  return (
+    duration >= VALIDATION_CONFIG.MIN_DURATION_MINUTES &&
+    duration <= VALIDATION_CONFIG.MAX_DURATION_MINUTES
+  );
 };
 
 // Check if time follows required increments
-const validateTimeIncrements = (startMinutes: number, endMinutes: number): string | null => {
-  if (startMinutes % VALIDATION_CONFIG.TIME_INCREMENT_MINUTES !== 0 || 
-      endMinutes % VALIDATION_CONFIG.TIME_INCREMENT_MINUTES !== 0) {
+const validateTimeIncrements = (
+  startMinutes: number,
+  endMinutes: number,
+): string | null => {
+  if (
+    startMinutes % VALIDATION_CONFIG.TIME_INCREMENT_MINUTES !== 0 ||
+    endMinutes % VALIDATION_CONFIG.TIME_INCREMENT_MINUTES !== 0
+  ) {
     return `Times must be in multiples of ${VALIDATION_CONFIG.TIME_INCREMENT_MINUTES} minutes`;
   }
-  
+
   const duration = calculateSlotDuration(startMinutes, endMinutes);
   if (duration % VALIDATION_CONFIG.SESSION_INCREMENT_MINUTES !== 0) {
     return `Session duration must be in multiples of ${VALIDATION_CONFIG.SESSION_INCREMENT_MINUTES} minutes`;
   }
-  
+
   return null;
 };
 
 // Check if duration meets requirements
-const validateDuration = (startMinutes: number, endMinutes: number): string | null => {
+const validateDuration = (
+  startMinutes: number,
+  endMinutes: number,
+): string | null => {
   const duration = calculateSlotDuration(startMinutes, endMinutes);
-  
+
   if (duration < VALIDATION_CONFIG.MIN_DURATION_MINUTES) {
     return `Session must be at least ${VALIDATION_CONFIG.MIN_DURATION_MINUTES} minutes long`;
   }
-  
+
   if (duration > VALIDATION_CONFIG.MAX_DURATION_MINUTES) {
     return `Session cannot exceed ${VALIDATION_CONFIG.MAX_DURATION_MINUTES / 60} hours`;
   }
-  
+
   return null;
 };
 
@@ -115,57 +133,72 @@ const validateDuration = (startMinutes: number, endMinutes: number): string | nu
 const checkSlotOverlap = (
   slot1Start: number,
   slot1End: number,
-  slot2Start: number, 
+  slot2Start: number,
   slot2End: number,
 ): boolean => {
   const slot1IsOvernight = isOvernightSlot(slot1Start, slot1End);
   const slot2IsOvernight = isOvernightSlot(slot2Start, slot2End);
-  
+
   // Convert overnight slots to ranges that can be compared
-  const slot1Ranges = slot1IsOvernight 
-    ? [[slot1Start, 24 * 60], [0, slot1End]]
+  const slot1Ranges = slot1IsOvernight
+    ? [
+        [slot1Start, 24 * 60],
+        [0, slot1End],
+      ]
     : [[slot1Start, slot1End]];
-    
+
   const slot2Ranges = slot2IsOvernight
-    ? [[slot2Start, 24 * 60], [0, slot2End]]
+    ? [
+        [slot2Start, 24 * 60],
+        [0, slot2End],
+      ]
     : [[slot2Start, slot2End]];
-  
+
   // Check if any ranges overlap with buffer
   for (const [start1, end1] of slot1Ranges) {
     for (const [start2, end2] of slot2Ranges) {
-      if (!(end1 + VALIDATION_CONFIG.BUFFER_MINUTES <= start2 || 
-            start1 >= end2 + VALIDATION_CONFIG.BUFFER_MINUTES)) {
+      if (
+        !(
+          end1 + VALIDATION_CONFIG.BUFFER_MINUTES <= start2 ||
+          start1 >= end2 + VALIDATION_CONFIG.BUFFER_MINUTES
+        )
+      ) {
         return true;
       }
     }
   }
-  
+
   return false;
 };
 
 // Validate slot against other slots for overlaps
-const validateSlotOverlaps = (slot: SlotType, otherSlots: SlotType[]): string | null => {
+const validateSlotOverlaps = (
+  slot: SlotType,
+  otherSlots: SlotType[],
+): string | null => {
   const startMinutes = getMinutes(slot.startTime);
   const endMinutes = getMinutes(slot.endTime);
-  
+
   if (startMinutes === null || endMinutes === null) {
     return "Invalid time format";
   }
-  
+
   // Only check against valid slots
-  const validSlots = otherSlots.filter(s => s.isValid && s.startTime && s.endTime);
-  
+  const validSlots = otherSlots.filter(
+    (s) => s.isValid && s.startTime && s.endTime,
+  );
+
   for (const otherSlot of validSlots) {
     const otherStart = getMinutes(otherSlot.startTime);
     const otherEnd = getMinutes(otherSlot.endTime);
-    
+
     if (otherStart === null || otherEnd === null) continue;
-    
+
     if (checkSlotOverlap(startMinutes, endMinutes, otherStart, otherEnd)) {
       return `Must have at least a ${VALIDATION_CONFIG.BUFFER_MINUTES}-minute break between sessions`;
     }
   }
-  
+
   return null;
 };
 
@@ -173,7 +206,7 @@ const validateSlotOverlaps = (slot: SlotType, otherSlots: SlotType[]): string | 
 export const validateTimeSlot = (
   slot: SlotType,
   otherSlots: SlotType[],
-  key: string, 
+  key: string,
   setSlots?: React.Dispatch<React.SetStateAction<Record<string, SlotType[]>>>,
   isWeekly: boolean = false,
 ): SlotType => {
@@ -195,8 +228,8 @@ export const validateTimeSlot = (
     };
   }
 
-  const startMinutes = getMinutes(slot.startTime)!
-  const endMinutes = getMinutes(slot.endTime)!
+  const startMinutes = getMinutes(slot.startTime)!;
+  const endMinutes = getMinutes(slot.endTime)!;
 
   // Validate time increments
   const incrementError = validateTimeIncrements(startMinutes, endMinutes);
@@ -256,7 +289,8 @@ const handleOvernightSlotSplit = (
       ...prev,
       [key]: [
         ...(prev[key] || []).filter(
-          (s) => !(s.startTime === slot.startTime && s.endTime === slot.endTime),
+          (s) =>
+            !(s.startTime === slot.startTime && s.endTime === slot.endTime),
         ),
         currentDaySlot,
       ],
@@ -296,8 +330,8 @@ export const getSlotStatistics = (slots: Record<string, SlotType[]>) => {
   let overnightSlots = 0;
   let totalDuration = 0;
 
-  Object.values(slots).forEach(daySlots => {
-    daySlots.forEach(slot => {
+  Object.values(slots).forEach((daySlots) => {
+    daySlots.forEach((slot) => {
       totalSlots++;
       if (slot.isValid) {
         validSlots++;
@@ -318,7 +352,8 @@ export const getSlotStatistics = (slots: Record<string, SlotType[]>) => {
     validSlots,
     invalidSlots: totalSlots - validSlots,
     overnightSlots,
-    totalDurationHours: Math.round(totalDuration / 60 * 100) / 100,
-    averageDurationMinutes: validSlots > 0 ? Math.round(totalDuration / validSlots) : 0,
+    totalDurationHours: Math.round((totalDuration / 60) * 100) / 100,
+    averageDurationMinutes:
+      validSlots > 0 ? Math.round(totalDuration / validSlots) : 0,
   };
 };

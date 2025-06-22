@@ -1,5 +1,11 @@
-import { createContext, useContext } from 'react';
-import { OnboardingTheme, ThemeName, getTheme, getThemeClasses, defaultTheme } from './themes';
+import { createContext, useContext } from "react";
+import {
+  OnboardingTheme,
+  ThemeName,
+  getTheme,
+  getThemeClasses,
+  defaultTheme,
+} from "./themes";
 
 // Theme context
 export const ThemeContext = createContext<{
@@ -15,7 +21,7 @@ export const ThemeContext = createContext<{
 // Hook to use theme in components
 export const useOnboardingTheme = () => {
   const { theme, themeName, setTheme } = useContext(ThemeContext);
-  
+
   return {
     theme,
     themeName,

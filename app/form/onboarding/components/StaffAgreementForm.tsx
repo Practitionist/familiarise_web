@@ -53,10 +53,7 @@ const StaffAgreementForm: React.FC<Props> = ({
   };
 
   return (
-    <form
-      onSubmit={handleSubmit(onSubmit)}
-      className="w-full space-y-6"
-    >
+    <form onSubmit={handleSubmit(onSubmit)} className="w-full space-y-6">
       <TermsAndPrivacyAgreement
         onTermsChange={handleTermsChange}
         onPrivacyChange={handlePrivacyChange}
@@ -64,15 +61,17 @@ const StaffAgreementForm: React.FC<Props> = ({
         privacyChecked={privacyAccepted || false}
       />
       {(errors.termsAccepted || errors.privacyAccepted) && (
-        <p className={`${colors.error} text-sm ${colors.glassBg} ${colors.glassBorder} rounded-lg p-3`}>
+        <p
+          className={`${colors.error} text-sm ${colors.glassBg} ${colors.glassBorder} rounded-lg p-3`}
+        >
           Please accept both the Terms of Service and Privacy Policy to
           continue.
         </p>
       )}
       <div className="flex justify-between gap-4 pt-6">
-        <Button 
-          type="button" 
-          onClick={onBack} 
+        <Button
+          type="button"
+          onClick={onBack}
           className={`flex-1 h-12 ${classes.secondaryButton}`}
         >
           ← Back
