@@ -74,8 +74,8 @@ export const getInitialWeeklySlots = (
   const formattedWeeklySlots: SlotsType = {};
   consultant.slotsOfAvailabilityWeekly.forEach((slot) => {
     const day = slot.dayOfWeekforStartTimeInUTC.toLowerCase();
-    const startTime = convertToLocalTime(slot.slotStartTimeInUTC.toISOString());
-    const endTime = convertToLocalTime(slot.slotEndTimeInUTC.toISOString());
+    const startTime = convertToLocalTime(slot.slotStartTimeInUTC);
+    const endTime = convertToLocalTime(slot.slotEndTimeInUTC);
 
     // Only add valid slots
     if (isValidTimeRange(startTime, endTime)) {
@@ -101,8 +101,8 @@ export const getInitialCustomSlots = (
   consultant.slotsOfAvailabilityCustom.forEach((slot) => {
     const date = new Date(slot.slotStartTimeInUTC);
     const dateString = getLocalDateString(date);
-    const startTime = convertToLocalTime(slot.slotStartTimeInUTC.toISOString());
-    const endTime = convertToLocalTime(slot.slotEndTimeInUTC.toISOString());
+    const startTime = convertToLocalTime(slot.slotStartTimeInUTC);
+    const endTime = convertToLocalTime(slot.slotEndTimeInUTC);
 
     // Only add valid slots
     if (isValidTimeRange(startTime, endTime)) {
@@ -143,7 +143,6 @@ export const formatSlotsForApi = (slots: SlotsType, isWeekly: boolean) => {
   );
 };
 
-
 // Calendar utilities - using centralized functions from timeUtils
 export const getCurrentDate = () => {
   const date = new Date();
@@ -156,4 +155,3 @@ export const getMonthYearString = (date: Date) => {
     year: "numeric",
   });
 };
-
