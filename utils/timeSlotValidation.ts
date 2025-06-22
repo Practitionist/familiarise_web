@@ -308,8 +308,10 @@ export const validateAllSlots = (
 
   Object.entries(slots).forEach(([day, daySlots]) => {
     daySlots.forEach((slot, index) => {
-      if (!slot.isValid && slot.errorMessage) {
-        errors.push(`${day} slot ${index + 1}: ${slot.errorMessage}`);
+      // Count any invalid slot, regardless of whether it has an error message
+      if (!slot.isValid) {
+        const errorMsg = slot.errorMessage ?? "Please complete both start and end time";
+        errors.push(`${day} slot ${index + 1}: ${errorMsg}`);
         isValid = false;
       }
     });
