@@ -1,5 +1,6 @@
 import { TConsultantProfile } from "@/types/consultant";
-import { isValidTimeRange, validateTimeSlot } from "@/utils/timeSlotValidation";
+import { isValidTimeRange } from "@/utils/timeSlotValidation";
+import { getLocalDateString, convertToLocalTime } from "@/utils/dateTimeUtils";
 import { DayOfWeek, ScheduleType } from "@prisma/client";
 export interface SlotType {
   startTime: string;
@@ -48,17 +49,9 @@ export const DAYS_OF_WEEK: DayOfWeek[] = [
   DayOfWeek.SUNDAY,
 ];
 
-export const formatDayDisplay = (day: DayOfWeek): string => {
-  return day.charAt(0) + day.slice(1).toLowerCase();
-};
+// formatDayDisplay is now imported from timeUtils
 
-export const formatTimeFromDate = (date: Date): string => {
-  return date.toLocaleTimeString("en-US", {
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
+// formatTimeFromDate removed - using convertToLocalTime from timeUtils
 
 export const getInitialFormData = (
   consultant: TConsultantProfile,
@@ -81,8 +74,8 @@ export const getInitialWeeklySlots = (
   const formattedWeeklySlots: SlotsType = {};
   consultant.slotsOfAvailabilityWeekly.forEach((slot) => {
     const day = slot.dayOfWeekforStartTimeInUTC.toLowerCase();
-    const startTime = formatTimeFromDate(new Date(slot.slotStartTimeInUTC));
-    const endTime = formatTimeFromDate(new Date(slot.slotEndTimeInUTC));
+    const startTime = convertToLocalTime(slot.slotStartTimeInUTC.toISOString());
+    const endTime = convertToLocalTime(slot.slotEndTimeInUTC.toISOString());
 
     // Only add valid slots
     if (isValidTimeRange(startTime, endTime)) {
@@ -108,8 +101,8 @@ export const getInitialCustomSlots = (
   consultant.slotsOfAvailabilityCustom.forEach((slot) => {
     const date = new Date(slot.slotStartTimeInUTC);
     const dateString = getLocalDateString(date);
-    const startTime = formatTimeFromDate(new Date(slot.slotStartTimeInUTC));
-    const endTime = formatTimeFromDate(new Date(slot.slotEndTimeInUTC));
+    const startTime = convertToLocalTime(slot.slotStartTimeInUTC.toISOString());
+    const endTime = convertToLocalTime(slot.slotEndTimeInUTC.toISOString());
 
     // Only add valid slots
     if (isValidTimeRange(startTime, endTime)) {
@@ -126,8 +119,6 @@ export const getInitialCustomSlots = (
   return formattedCustomSlots;
 };
 
-// Re-export the shared validation utility
-export const validateSlot = validateTimeSlot;
 export const formatSlotsForApi = (slots: SlotsType, isWeekly: boolean) => {
   return Object.entries(slots).flatMap(([key, slots]) =>
     slots
@@ -152,26 +143,11 @@ export const formatSlotsForApi = (slots: SlotsType, isWeekly: boolean) => {
   );
 };
 
-export const validateAllSlots = (slots: SlotsType): boolean => {
-  return Object.values(slots).every((daySlots) =>
-    daySlots.every(
-      (slot) => slot.isValid && isValidTimeRange(slot.startTime, slot.endTime),
-    ),
-  );
-};
 
-// Calendar utilities
+// Calendar utilities - using centralized functions from timeUtils
 export const getCurrentDate = () => {
   const date = new Date();
   return date.toISOString().split("T")[0];
-};
-
-export const getDaysInMonth = (date: Date) => {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-};
-
-export const getFirstDayOfMonth = (date: Date) => {
-  return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
 };
 
 export const getMonthYearString = (date: Date) => {
@@ -181,9 +157,3 @@ export const getMonthYearString = (date: Date) => {
   });
 };
 
-export const getLocalDateString = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, "0");
-  const day = date.getDate().toString().padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};

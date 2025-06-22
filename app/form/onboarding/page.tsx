@@ -16,8 +16,6 @@ import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
-import { useThemeClasses, ThemeName } from "./useTheme";
-import { getOccasionTheme } from "./themeUtils";
 import ConsultantAgreementForm from "./components/ConsultantAgreementForm";
 import ConsultantPreferredScheduleForm from "./components/ConsultantPreferredScheduleForm";
 import ConsultantProfileForm from "./components/ConsultantProfileForm";
@@ -31,6 +29,9 @@ import StaffAgreementForm from "./components/StaffAgreementForm";
 import StaffProfileForm from "./components/StaffProfileForm";
 import StaffResponsibilitiesForm from "./components/StaffResponsibilitiesForm";
 import StaffReviewForm from "./components/StaffReviewForm";
+import { ThemeName } from "./themes";
+import { getOccasionTheme } from "./themeUtils";
+import { useThemeClasses } from "./useTheme";
 
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsultantProfile> &

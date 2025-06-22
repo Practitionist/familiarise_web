@@ -1,22 +1,9 @@
 import { TrashIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { PreferredSchedule, PreferredScheduleSchema } from "@/schemas/user";
-import { validateTimeSlot } from "@/utils/timeSlotValidation";
-import { zodResolver } from "@hookform/resolvers/zod";
-import React, { useCallback, useEffect, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
-import { useThemeClasses } from "../useTheme";
 import {
   DAYS_OF_WEEK,
   type DayOfWeek,
@@ -28,7 +15,12 @@ import {
   getLocalDateString,
   getNextDay,
   isOvernight,
-} from "../timeUtils";
+} from "@/utils/dateTimeUtils";
+import { getSlotStatistics, validateAllSlots, validateTimeSlot } from "@/utils/timeSlotValidation";
+import { zodResolver } from "@hookform/resolvers/zod";
+import React, { useCallback, useEffect, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { useThemeClasses } from "../useTheme";
 
 interface SlotType {
   startTime: string;
@@ -363,33 +355,45 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   );
 
   const allSlotsValid = useCallback(() => {
-    const areAllSlotsValid = (slots: SlotsType) =>
-      Object.values(slots).every((daySlots) =>
-        daySlots.every((slot) => slot.isValid),
-      );
+    const currentSlots = scheduleType === "WEEKLY" ? weeklySlots : customSlots;
+    const { isValid } = validateAllSlots(currentSlots);
+    const hasSlots = Object.keys(currentSlots).length > 0;
+    return isValid && hasSlots;
+  }, [weeklySlots, customSlots, scheduleType]);
 
-    if (scheduleType === "WEEKLY") {
-      return (
-        areAllSlotsValid(weeklySlots) && Object.keys(weeklySlots).length > 0
-      );
-    } else {
-      return (
-        areAllSlotsValid(customSlots) && Object.keys(customSlots).length > 0
-      );
-    }
+  // Get validation details for better user feedback
+  const getValidationFeedback = useCallback(() => {
+    const currentSlots = scheduleType === "WEEKLY" ? weeklySlots : customSlots;
+    const validation = validateAllSlots(currentSlots);
+    const stats = getSlotStatistics(currentSlots);
+    
+    return {
+      ...validation,
+      ...stats,
+      hasSlots: Object.keys(currentSlots).length > 0,
+    };
   }, [weeklySlots, customSlots, scheduleType]);
 
   const onSubmitForm = useCallback(
     (data: PreferredSchedule) => {
-      if (!allSlotsValid()) {
-        alert(
-          "Please add and validate at least one time slot before proceeding.",
-        );
+      const feedback = getValidationFeedback();
+      
+      if (!feedback.hasSlots) {
+        alert("Please add at least one time slot before proceeding.");
         return;
       }
+      
+      if (!feedback.isValid) {
+        const errorMessage = feedback.errors.length > 0 
+          ? `Please fix the following issues:\n${feedback.errors.join('\n')}`
+          : "Please fix all validation errors before proceeding.";
+        alert(errorMessage);
+        return;
+      }
+      
       onNext(data);
     },
-    [allSlotsValid, onNext],
+    [getValidationFeedback, onNext],
   );
 
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -625,7 +629,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                         </div>
                       </div>
                       {Object.keys(customSlots)
-                        .sort()
+                        .sort((a, b) => a.localeCompare(b))
                         .map((dateString) => renderSlotsForDate(dateString))}
                     </div>
                   </div>
@@ -634,6 +638,40 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             )}
           />
         </div>
+        
+        {/* Validation Feedback */}
+        {(() => {
+          const feedback = getValidationFeedback();
+          if (!feedback.hasSlots) return null;
+          
+          return (
+            <div className={`mt-4 p-3 rounded-lg ${colors.glassBg} ${colors.glassBorder}`}>
+              <div className="flex items-center justify-between">
+                <div className={`text-sm ${colors.textSecondary}`}>
+                  {feedback.validSlots} valid slot{feedback.validSlots !== 1 ? 's' : ''} 
+                  {feedback.totalDurationHours > 0 && ` (${feedback.totalDurationHours}h total)`}
+                  {feedback.overnightSlots > 0 && `, ${feedback.overnightSlots} overnight`}
+                </div>
+                {feedback.isValid ? (
+                  <span className={`text-sm ${colors.success}`}>✓ Ready to proceed</span>
+                ) : (
+                  <span className={`text-sm ${colors.error}`}>⚠ {feedback.errors.length} error{feedback.errors.length !== 1 ? 's' : ''}</span>
+                )}
+              </div>
+              {!feedback.isValid && feedback.errors.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {feedback.errors.slice(0, 3).map((error, index) => (
+                    <div key={index} className={`text-xs ${colors.error}`}>• {error}</div>
+                  ))}
+                  {feedback.errors.length > 3 && (
+                    <div className={`text-xs ${colors.textMuted}`}>...and {feedback.errors.length - 3} more</div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+        
         <div className={`flex justify-between gap-4 pt-6 mt-6 border-t ${colors.glassBorder}`}>
           <Button 
             type="button" 

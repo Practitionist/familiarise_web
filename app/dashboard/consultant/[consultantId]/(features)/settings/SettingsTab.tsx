@@ -21,23 +21,28 @@ import { TConsultantProfile } from "types/consultant";
 import { MultiSelect } from "../../components/MultiSelect";
 import {
   DAYS_OF_WEEK,
-  formatDayDisplay,
   formatSlotsForApi,
-  getDaysInMonth,
-  getFirstDayOfMonth,
   getInitialCustomSlots,
   getInitialFormData,
   getInitialWeeklySlots,
-  getLocalDateString,
   getMonthYearString,
-  validateAllSlots,
-  validateSlot,
   type Domain,
   type FormData,
   type SlotsType,
   type SubDomain,
   type Tag,
 } from "./settings";
+// Import functions from centralized utils
+import { 
+  formatDayDisplay,
+  getDaysInMonth,
+  getFirstDayOfMonth,
+  getLocalDateString 
+} from "@/utils/dateTimeUtils";
+import { 
+  validateTimeSlot as validateSlot,
+  validateAllSlots as validateAllSlotsDetailed
+} from "@/utils/timeSlotValidation";
 
 interface Option {
   value: string;
@@ -360,10 +365,17 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
 
     const currentSlots =
       scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots;
-    if (!validateAllSlots(currentSlots)) {
+    
+    // Use improved validation with detailed feedback
+    const validation = validateAllSlotsDetailed(currentSlots);
+    if (!validation.isValid) {
+      const errorMessage = validation.errors.length > 0 
+        ? `Please fix the following issues:\n${validation.errors.slice(0, 3).join('\n')}${validation.errors.length > 3 ? '\n...and more' : ''}`
+        : "Please ensure all time slots are valid before saving.";
+      
       toast({
         title: "Validation Error",
-        description: "Please ensure all time slots are valid before saving.",
+        description: errorMessage,
         variant: "destructive",
       });
       return;
