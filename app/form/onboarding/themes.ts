@@ -44,6 +44,11 @@ export interface OnboardingTheme {
     checkboxChecked: string;
     linkColor: string;
     linkHover: string;
+    
+    // Dropdown specific
+    dropdownBg: string;
+    dropdownBorder: string;
+    dropdownItemHover: string;
   };
 }
 
@@ -83,6 +88,10 @@ export const purpleBlueTheme: OnboardingTheme = {
     checkboxChecked: "data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500",
     linkColor: "text-purple-300",
     linkHover: "hover:text-purple-200",
+    
+    dropdownBg: "bg-slate-800",
+    dropdownBorder: "border-white/20",
+    dropdownItemHover: "focus:bg-white/10",
   }
 };
 
@@ -122,6 +131,10 @@ export const fireRedOrangeTheme: OnboardingTheme = {
     checkboxChecked: "data-[state=checked]:bg-red-500 data-[state=checked]:border-red-500",
     linkColor: "text-red-300",
     linkHover: "hover:text-red-200",
+    
+    dropdownBg: "bg-slate-800",
+    dropdownBorder: "border-white/20",
+    dropdownItemHover: "focus:bg-white/10",
   }
 };
 
@@ -161,6 +174,10 @@ export const blueTurquoiseTheme: OnboardingTheme = {
     checkboxChecked: "data-[state=checked]:bg-cyan-500 data-[state=checked]:border-cyan-500",
     linkColor: "text-cyan-300",
     linkHover: "hover:text-cyan-200",
+    
+    dropdownBg: "bg-slate-800",
+    dropdownBorder: "border-white/20",
+    dropdownItemHover: "focus:bg-white/10",
   }
 };
 
@@ -200,6 +217,10 @@ export const blackSilverTheme: OnboardingTheme = {
     checkboxChecked: "data-[state=checked]:bg-white data-[state=checked]:border-white",
     linkColor: "text-white/80",
     linkHover: "hover:text-white",
+    
+    dropdownBg: "bg-slate-900",
+    dropdownBorder: "border-slate-700",
+    dropdownItemHover: "focus:bg-slate-800",
   }
 };
 
@@ -244,4 +265,8 @@ export const getThemeClasses = (theme: OnboardingTheme) => ({
   
   // Link classes
   link: `${theme.colors.linkColor} ${theme.colors.linkHover} underline transition-colors`,
+  
+  // Dropdown classes
+  dropdown: `${theme.colors.dropdownBg} ${theme.colors.dropdownBorder}`,
+  dropdownItem: `${theme.colors.textPrimary} ${theme.colors.dropdownItemHover}`,
 });

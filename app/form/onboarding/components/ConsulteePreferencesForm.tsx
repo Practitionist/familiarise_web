@@ -102,10 +102,10 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
               <SelectTrigger className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus}`}>
                 <SelectValue placeholder="Select communication method" className={colors.textSecondary} />
               </SelectTrigger>
-              <SelectContent className={`${colors.glassBg} ${colors.glassBorder}`}>
-                <SelectItem value="VIDEO" className={`${colors.textPrimary} focus:${colors.secondaryBg}`}>📹 Video</SelectItem>
-                <SelectItem value="AUDIO" className={`${colors.textPrimary} focus:${colors.secondaryBg}`}>🎙️ Audio</SelectItem>
-                <SelectItem value="IN_PERSON" className={`${colors.textPrimary} focus:${colors.secondaryBg}`}>👥 In Person</SelectItem>
+              <SelectContent className={classes.dropdown}>
+                <SelectItem value="VIDEO" className={classes.dropdownItem}>📹 Video</SelectItem>
+                <SelectItem value="AUDIO" className={classes.dropdownItem}>🎙️ Audio</SelectItem>
+                <SelectItem value="IN_PERSON" className={classes.dropdownItem}>👥 In Person</SelectItem>
               </SelectContent>
             </Select>
           )}

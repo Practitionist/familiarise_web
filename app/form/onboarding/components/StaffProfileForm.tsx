@@ -87,9 +87,9 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
               <SelectTrigger className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus}`}>
                 <SelectValue placeholder="Select a department" className={colors.textSecondary} />
               </SelectTrigger>
-              <SelectContent className={`${colors.glassBg} ${colors.glassBorder}`}>
+              <SelectContent className={classes.dropdown}>
                 {departments.map((department) => (
-                  <SelectItem key={department} value={department} className={`${colors.textPrimary} focus:${colors.secondaryBg}`}>
+                  <SelectItem key={department} value={department} className={classes.dropdownItem}>
                     {department}
                   </SelectItem>
                 ))}
@@ -119,9 +119,9 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
               <SelectTrigger className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus} ${!watchDepartment ? 'opacity-50 cursor-not-allowed' : ''}`}>
                 <SelectValue placeholder={!watchDepartment ? "Select a department first" : "Select a position"} className={colors.textSecondary} />
               </SelectTrigger>
-              <SelectContent className={`${colors.glassBg} ${colors.glassBorder}`}>
+              <SelectContent className={classes.dropdown}>
                 {positions.map((position) => (
-                  <SelectItem key={position} value={position} className={`${colors.textPrimary} focus:${colors.secondaryBg}`}>
+                  <SelectItem key={position} value={position} className={classes.dropdownItem}>
                     {position}
                   </SelectItem>
                 ))}

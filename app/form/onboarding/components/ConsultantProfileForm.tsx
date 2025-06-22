@@ -257,9 +257,9 @@ const ConsultantProfileForm: React.FC<Props> = ({
                   <SelectTrigger className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus}`}>
                     <SelectValue placeholder="Select your domain" className={colors.textSecondary} />
                   </SelectTrigger>
-                  <SelectContent className={`${colors.glassBg} ${colors.glassBorder}`}>
+                  <SelectContent className={classes.dropdown}>
                     {domains.map((domain) => (
-                      <SelectItem key={domain.id} value={domain.id!} className={`${colors.textPrimary} focus:${colors.secondaryBg}`}>
+                      <SelectItem key={domain.id} value={domain.id!} className={classes.dropdownItem}>
                         {domain.name}
                       </SelectItem>
                     ))}
