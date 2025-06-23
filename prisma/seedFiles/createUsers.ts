@@ -1,18 +1,15 @@
 import { faker } from "@faker-js/faker";
 import {
-  User,
-  UserRole,
   ConsultantProfile,
-  ConsulteeProfile,
-  StaffProfile,
-  ScheduleType,
   ConsultationMode,
-  PlanEmailSupport,
-  Domain,
-  SubDomain,
-  Tag,
+  ConsulteeProfile,
+  ScheduleType,
+  StaffProfile,
+  User,
+  UserRole
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
+import { sanitizeEmail, sanitizePhone, sanitizeString } from "./utils";
 
 export type UserWithProfiles = User & {
   consultantProfile?: ConsultantProfile | null;
@@ -218,9 +215,9 @@ async function createConsultantProfileData() {
 
   return {
     rating: faker.number.float({ min: 1, max: 5, multipleOf: 0.1 }),
-    specialization: faker.person.jobArea(),
+    specialization: sanitizeString(faker.person.jobArea()),
     experience: faker.number.float({ min: 0.5, max: 20, multipleOf: 0.5 }),
-    description: faker.lorem.paragraph(),
+    description: sanitizeString(faker.lorem.paragraph()),
     domain: { connect: { id: domain.id } },
     subDomains: {
       connect: subDomains.map((sd) => ({ id: sd.id })),
@@ -232,7 +229,7 @@ async function createConsultantProfileData() {
       "WEEKLY",
       "CUSTOM",
     ]) as ScheduleType,
-    qualifications: faker.lorem.sentence(),
+    qualifications: sanitizeString(faker.lorem.sentence()),
   };
 }
 
@@ -251,14 +248,14 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
     try {
       const user = await prisma.user.create({
         data: {
-          name: faker.person.fullName(),
-          email: faker.internet.email(),
+          name: sanitizeString(faker.person.fullName()),
+          email: sanitizeEmail(faker.internet.email()),
           emailVerified: faker.date.past(),
-          image: faker.image.avatar(),
-          phone: faker.phone.number(),
-          address: faker.location.streetAddress(),
+          image: sanitizeString(faker.image.avatar()),
+          phone: sanitizePhone(faker.phone.number()),
+          address: sanitizeString(faker.location.streetAddress()),
           onlineStatus: faker.datatype.boolean(),
-          currentTimezone: faker.location.timeZone(),
+          currentTimezone: sanitizeString(faker.location.timeZone()),
           onboardingCompleted: faker.datatype.boolean(),
           role: userRole,
           cookiePreferences: {
@@ -290,7 +287,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
                   "Master's",
                   "PhD",
                 ]),
-                occupation: faker.person.jobTitle(),
+                occupation: sanitizeString(faker.person.jobTitle()),
                 preferredCommunicationMethod: faker.helpers.arrayElement([
                   ConsultationMode.VIDEO,
                   ConsultationMode.AUDIO,
@@ -303,18 +300,18 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
                   "German",
                   "Chinese",
                 ]),
-                specialRequirements: faker.lorem.sentence(),
-                interests: faker.lorem.words(5),
-                aboutMe: faker.lorem.paragraph(),
-                goals: faker.lorem.sentence(),
+                specialRequirements: sanitizeString(faker.lorem.sentence()),
+                interests: sanitizeString(faker.lorem.words(5)),
+                aboutMe: sanitizeString(faker.lorem.paragraph()),
+                goals: sanitizeString(faker.lorem.sentence()),
               },
             },
           }),
           ...(userRole === "STAFF" && {
             staffProfile: {
               create: {
-                department: faker.commerce.department(),
-                position: faker.person.jobTitle(),
+                department: sanitizeString(faker.commerce.department()),
+                position: sanitizeString(faker.person.jobTitle()),
                 permissions: {
                   permissions: faker.helpers.arrayElements(
                     ["read", "write", "delete"],

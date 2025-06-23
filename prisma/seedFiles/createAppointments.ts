@@ -417,8 +417,8 @@ async function createAppointmentBatch(
       const actualEndTime = new Date(startDate);
       actualEndTime.setUTCHours(endHours, endMinutes, 0, 0);
 
-      // If end time is before start time, it means the slot crosses midnight
-      if (actualEndTime <= actualStartTime) {
+      // Check if this is an overnight slot (end hour < start hour OR same hour but end minute < start minute)
+      if (endHours < startHours || (endHours === startHours && endMinutes < startMinutes)) {
         actualEndTime.setDate(actualEndTime.getDate() + 1);
       }
 

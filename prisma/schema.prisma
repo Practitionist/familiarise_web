@@ -335,9 +335,9 @@ model StaffProfile {
 model SlotOfAvailabilityWeekly {
   id                         String    @id @default(uuid())
   dayOfWeekforStartTimeInUTC DayOfWeek
-  slotStartTimeInUTC         DateTime  @db.Timetz()
+  slotStartTimeInUTC         DateTime  @db.Timestamptz()
   dayOfWeekforEndTimeInUTC   DayOfWeek
-  slotEndTimeInUTC           DateTime  @db.Timetz()
+  slotEndTimeInUTC           DateTime  @db.Timestamptz()
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
