@@ -84,45 +84,30 @@ export function processWeeklySlots(
 
     weeklySlots.forEach((slot) => {
       if (slot.dayOfWeekforStartTimeInUTC === dayOfWeekEnum) {
-        const startTime = slot.slotStartTimeInUTC;
-        const endTime = slot.slotEndTimeInUTC;
+        // Extract LOCAL time patterns from the stored weekly slot
+        // Convert the stored UTC times to the target timezone to get the local time pattern
+        const startTimeLocal = toZonedTime(slot.slotStartTimeInUTC, timezone);
+        const endTimeLocal = toZonedTime(slot.slotEndTimeInUTC, timezone);
+        
+        const startHour = startTimeLocal.getHours();
+        const startMinute = startTimeLocal.getMinutes();
+        const endHour = endTimeLocal.getHours();
+        const endMinute = endTimeLocal.getMinutes();
 
+        // Create start time for this specific occurrence in the target timezone
         const startDateTime = new Date(currentDateTz);
-        startDateTime.setHours(
-          startTime.getUTCHours(),
-          startTime.getUTCMinutes(),
-          startTime.getUTCSeconds(),
-          startTime.getUTCMilliseconds(),
-        );
+        startDateTime.setHours(startHour, startMinute, 0, 0);
 
-        // Calculate end day offset for handling overnight slots
-        let endDayOffset =
-          (dayToNumber[slot.dayOfWeekforEndTimeInUTC] -
-            dayToNumber[slot.dayOfWeekforStartTimeInUTC] +
-            7) %
-          7;
+        // Create end time for this specific occurrence
+        const endDateTime = new Date(currentDateTz);
+        endDateTime.setHours(endHour, endMinute, 0, 0);
 
-        if (endTime <= startTime) {
-          endDayOffset = (endDayOffset + 1) % 7;
-          if (endDayOffset === 0) endDayOffset = 1;
-        }
-
-        const endDateTime = new Date(startDateTime);
-        if (endDayOffset > 0) {
-          endDateTime.setDate(startDateTime.getDate() + endDayOffset);
-        }
-        endDateTime.setHours(
-          endTime.getUTCHours(),
-          endTime.getUTCMinutes(),
-          endTime.getUTCSeconds(),
-          endTime.getUTCMilliseconds(),
-        );
-
-        // If end time is still before start time, push end date by one day
-        if (endDateTime <= startDateTime) {
+        // Handle overnight slots: if end hour < start hour, the slot crosses midnight
+        if (endHour < startHour || (endHour === startHour && endMinute < startMinute)) {
           endDateTime.setDate(endDateTime.getDate() + 1);
         }
 
+        // Convert the timezone-aware datetimes to UTC for storage/API response
         const startUTC = fromZonedTime(startDateTime, timezone);
         const endUTC = fromZonedTime(endDateTime, timezone);
 
