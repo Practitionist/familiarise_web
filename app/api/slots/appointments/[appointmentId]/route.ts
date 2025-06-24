@@ -304,6 +304,8 @@ export async function GET(
   }
 }
 
+
+// this only updates the slots of the appointment
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -471,6 +473,8 @@ export async function PATCH(
   }
 }
 
+
+// this updates the appointments but not the slot times
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -662,7 +666,7 @@ export async function DELETE(
 ) {
   try {
     const { appointmentId } = await params;
-    // Check if there's an associated payment
+    // Check if there's an associated appointment
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
       include: {
