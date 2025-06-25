@@ -7,19 +7,35 @@ import {
 } from "@prisma/client";
 import crypto from "crypto";
 import { stripeClient } from "../../../lib/payment";
-import Stripe from "stripe";
+import { AppErrors, ErrorLogger } from "../../../utils/errorHandling";
 
-// Generic webhook verification
+// Webhook event tracking for replay attack prevention
+const processedWebhookEvents = new Map<string, number>();
+const WEBHOOK_EVENT_EXPIRY = 5 * 60 * 1000; // 5 minutes
+const MAX_WEBHOOK_AGE = 5 * 60 * 1000; // 5 minutes
+
+// Clean up old processed events periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [eventId, timestamp] of Array.from(processedWebhookEvents.entries())) {
+    if (now - timestamp > WEBHOOK_EVENT_EXPIRY) {
+      processedWebhookEvents.delete(eventId);
+    }
+  }
+}, 60 * 1000); // Clean up every minute
+
+// Enhanced webhook verification with replay attack prevention
 export async function verifyWebhookSignature(
   req: Request,
   secret: string,
   gateway: "stripe" | "razorpay",
-): Promise<{ isValid: boolean; body: string }> {
+): Promise<{ isValid: boolean; body: string; eventId?: string }> {
   const signature =
-    req.headers.get("stripe-signature") ||
+    req.headers.get("stripe-signature") ??
     req.headers.get("x-razorpay-signature");
 
   if (!signature) {
+    console.warn(`Missing signature for ${gateway} webhook`);
     return { isValid: false, body: "" };
   }
 
@@ -33,28 +49,81 @@ export async function verifyWebhookSignature(
         );
         return { isValid: false, body: "" };
       }
-      stripeClient.webhooks.constructEvent(body, signature, secret);
-      return { isValid: true, body };
+
+      // Stripe's constructEvent method validates both signature and timestamp
+      const event = stripeClient.webhooks.constructEvent(body, signature, secret);
+      
+      // Additional replay attack prevention
+      const eventId = event.id;
+      const eventTimestamp = event.created * 1000; // Convert to milliseconds
+      const now = Date.now();
+
+      // Check if event is too old
+      if (now - eventTimestamp > MAX_WEBHOOK_AGE) {
+        console.warn(`Stripe webhook event ${eventId} is too old, rejecting`);
+        return { isValid: false, body: "" };
+      }
+
+      // Check if we've already processed this event
+      if (processedWebhookEvents.has(eventId)) {
+        console.warn(`Stripe webhook event ${eventId} already processed, ignoring replay`);
+        return { isValid: false, body: "" };
+      }
+
+      // Mark event as processed
+      processedWebhookEvents.set(eventId, now);
+      
+      return { isValid: true, body, eventId };
     } else {
+      // Razorpay signature verification
       const expectedSignature = crypto
         .createHmac("sha256", secret)
         .update(body)
         .digest("hex");
-      return { isValid: signature === expectedSignature, body };
+      
+      if (signature !== expectedSignature) {
+        console.warn("Razorpay webhook signature verification failed");
+        return { isValid: false, body: "" };
+      }
+
+      // Parse event to get ID for replay prevention
+      try {
+        const event = JSON.parse(body);
+        const eventId = event.event_id ?? event.id;
+        
+        if (eventId) {
+          // Check for replay attacks
+          if (processedWebhookEvents.has(eventId)) {
+            console.warn(`Razorpay webhook event ${eventId} already processed, ignoring replay`);
+            return { isValid: false, body: "" };
+          }
+
+          // Mark event as processed
+          processedWebhookEvents.set(eventId, Date.now());
+        }
+
+        return { isValid: true, body, eventId };
+      } catch (parseError) {
+        console.error("Failed to parse Razorpay webhook event for replay prevention:", parseError);
+        // Continue processing even if we can't extract event ID
+        return { isValid: true, body };
+      }
     }
   } catch (error) {
     console.error(
       `Webhook signature verification failed for ${gateway}:`,
       error,
     );
-    return { isValid: false, body };
+    return { isValid: false, body: "" };
   }
 }
 
-// Shared payment success handler
+// Shared payment success handler with amount verification
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   metadata: Record<string, string>,
+  webhookAmount?: number, // Amount from webhook payload
+  webhookCurrency?: string, // Currency from webhook payload
 ) {
   return await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.findUnique({
@@ -71,6 +140,60 @@ export async function handlePaymentSuccess(
     if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
       console.log(`Payment ${paymentIntentId} has already been processed.`);
       return;
+    }
+
+    // SECURITY: Verify payment amount matches expected amount
+    if (webhookAmount !== undefined) {
+      const expectedAmount = payment.amount;
+      const tolerance = 0.01; // Allow 1 cent difference for currency conversion
+      
+      if (Math.abs(webhookAmount - expectedAmount) > tolerance) {
+        ErrorLogger.error(
+          `Payment amount mismatch for ${paymentIntentId}`,
+          new Error("Amount mismatch"),
+          {
+            expectedAmount,
+            expectedCurrency: payment.currency,
+            webhookAmount,
+            webhookCurrency: webhookCurrency ?? 'unknown'
+          }
+        );
+        
+        // Mark payment as failed due to amount mismatch
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: { 
+            paymentStatus: PaymentStatus.FAILED,
+            description: `Amount verification failed: expected ${expectedAmount}, got ${webhookAmount}`
+          },
+        });
+        
+        throw AppErrors.paymentAmountMismatch(
+          expectedAmount,
+          webhookAmount,
+          payment.currency
+        );
+      }
+    }
+
+    // SECURITY: Verify currency matches if provided
+    if (webhookCurrency && webhookCurrency !== payment.currency) {
+      console.error(
+        `⚠️ Payment currency mismatch for ${paymentIntentId}: ` +
+        `Expected ${payment.currency}, Got ${webhookCurrency}`
+      );
+      
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: { 
+          paymentStatus: PaymentStatus.FAILED,
+          description: `Currency verification failed: expected ${payment.currency}, got ${webhookCurrency}`
+        },
+      });
+      
+      throw new Error(
+        "Payment currency verification failed. This could indicate a security issue."
+      );
     }
 
     await tx.payment.update({
@@ -94,7 +217,9 @@ export async function handlePaymentSuccess(
     await confirmExistingAppointment(tx, appointment.id);
 
     console.log(
-      `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
+      `✅ Payment ${paymentIntentId} processed successfully. ` +
+      `Amount: ${payment.amount} ${payment.currency}, ` +
+      `Appointment ID: ${appointment.id}`
     );
   });
 }

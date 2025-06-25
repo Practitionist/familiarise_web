@@ -75,6 +75,8 @@ export default [
         __filename: true,
         process: true,
         Buffer: true,
+        // Node.js TypeScript namespace
+        NodeJS: "readonly",
         // React globals
         React: true,
         JSX: true,
