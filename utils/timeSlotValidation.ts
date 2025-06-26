@@ -202,29 +202,42 @@ const validateSlotOverlaps = (
   return null;
 };
 
-// Main validation function - now much cleaner and modular
+// Validation result interface for better type safety
+interface ValidationResult {
+  slot: SlotType;
+  needsSplitting?: {
+    currentDaySlot: SlotType;
+    nextDaySlot: SlotType;
+    nextKey: string;
+  };
+}
+
+// Main validation function - now pure without side effects
 export const validateTimeSlot = (
   slot: SlotType,
   otherSlots: SlotType[],
   key: string,
-  setSlots?: React.Dispatch<React.SetStateAction<Record<string, SlotType[]>>>,
   isWeekly: boolean = false,
-): SlotType => {
+): ValidationResult => {
   // Early return for empty slots
   if (!slot.startTime || !slot.endTime) {
     return {
-      ...slot,
-      isValid: false,
-      errorMessage: "Please select both start and end time",
+      slot: {
+        ...slot,
+        isValid: false,
+        errorMessage: "Please select both start and end time",
+      },
     };
   }
 
   // Validate basic time range
   if (!isValidTimeRange(slot.startTime, slot.endTime)) {
     return {
-      ...slot,
-      isValid: false,
-      errorMessage: "Invalid time range",
+      slot: {
+        ...slot,
+        isValid: false,
+        errorMessage: "Invalid time range",
+      },
     };
   }
 
@@ -234,73 +247,64 @@ export const validateTimeSlot = (
   // Validate time increments
   const incrementError = validateTimeIncrements(startMinutes, endMinutes);
   if (incrementError) {
-    return { ...slot, isValid: false, errorMessage: incrementError };
+    return { 
+      slot: { ...slot, isValid: false, errorMessage: incrementError } 
+    };
   }
 
   // Validate duration
   const durationError = validateDuration(startMinutes, endMinutes);
   if (durationError) {
-    return { ...slot, isValid: false, errorMessage: durationError };
+    return { 
+      slot: { ...slot, isValid: false, errorMessage: durationError } 
+    };
   }
 
   // Check for overlaps
   const overlapError = validateSlotOverlaps(slot, otherSlots);
   if (overlapError) {
-    return { ...slot, isValid: false, errorMessage: overlapError };
+    return { 
+      slot: { ...slot, isValid: false, errorMessage: overlapError } 
+    };
   }
 
   // Handle overnight slot splitting if needed
   const isOvernight = isOvernightSlot(startMinutes, endMinutes);
-  if (isOvernight && setSlots) {
-    handleOvernightSlotSplit(slot, key, isWeekly, setSlots);
+  if (isOvernight) {
+    const nextKey = isWeekly ? getNextDay(key) : getNextDate(key);
     return {
-      startTime: slot.startTime,
-      endTime: "00:00",
-      isValid: true,
-      errorMessage: undefined,
+      slot: {
+        startTime: slot.startTime,
+        endTime: "00:00",
+        isValid: true,
+        errorMessage: undefined,
+      },
+      needsSplitting: {
+        currentDaySlot: {
+          startTime: slot.startTime,
+          endTime: "00:00",
+          isValid: true,
+        },
+        nextDaySlot: {
+          startTime: "00:00",
+          endTime: slot.endTime,
+          isValid: true,
+        },
+        nextKey,
+      },
     };
   }
 
-  return { ...slot, isValid: true, errorMessage: undefined };
+  return { 
+    slot: { ...slot, isValid: true, errorMessage: undefined } 
+  };
 };
 
-// Handle splitting overnight slots into two separate slots
-const handleOvernightSlotSplit = (
-  slot: SlotType,
-  key: string,
-  isWeekly: boolean,
-  setSlots: React.Dispatch<React.SetStateAction<Record<string, SlotType[]>>>,
-): void => {
-  const currentDaySlot: SlotType = {
-    startTime: slot.startTime,
-    endTime: "00:00",
-    isValid: true,
-  };
-
-  const nextDaySlot: SlotType = {
-    startTime: "00:00",
-    endTime: slot.endTime,
-    isValid: true,
-  };
-
-  setSlots((prev) => {
-    const nextKey = isWeekly ? getNextDay(key) : getNextDate(key);
-    return {
-      ...prev,
-      [key]: [
-        ...(prev[key] || []).filter(
-          (s) =>
-            !(s.startTime === slot.startTime && s.endTime === slot.endTime),
-        ),
-        currentDaySlot,
-      ],
-      [nextKey]: [...(prev[nextKey] || []), nextDaySlot],
-    };
-  });
-};
+// Backward compatibility alias - now returns validation result instead of mutating state
+export const validateSlot = validateTimeSlot;
 
 // Enhanced validation for all slots with detailed feedback
-export const validateAllSlots = (
+export const validateAllSlotsDetailed = (
   slots: Record<string, SlotType[]>,
 ): { isValid: boolean; errors: string[] } => {
   const errors: string[] = [];
@@ -320,6 +324,9 @@ export const validateAllSlots = (
 
   return { isValid, errors };
 };
+
+// Backward compatibility alias
+export const validateAllSlots = validateAllSlotsDetailed;
 
 // Quick boolean check for backward compatibility
 export const allSlotsValid = (slots: Record<string, SlotType[]>): boolean => {

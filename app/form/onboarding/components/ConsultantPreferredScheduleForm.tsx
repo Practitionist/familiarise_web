@@ -248,13 +248,13 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             i === index ? { ...slot, [field]: value } : slot,
           ),
         };
-        updatedSlots[day][index] = validateTimeSlot(
+        const validationResult = validateTimeSlot(
           updatedSlots[day][index],
           updatedSlots[day].filter((_, i) => i !== index),
           day,
-          setSlots,
           scheduleType === "WEEKLY",
         );
+        updatedSlots[day][index] = validationResult.slot;
         return updatedSlots;
       });
     },
