@@ -28,8 +28,23 @@ export async function fetchConsultantData(
       `${baseUrl}/api/user/consultants/${consultantId}`,
     );
     if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error(
+          "This consultant profile could not be found. The consultant may not exist or may have been removed.",
+        );
+      }
+      if (response.status === 401) {
+        throw new Error(
+          "You are not authorized to view this consultant profile. Please log in and try again.",
+        );
+      }
+      if (response.status === 500) {
+        throw new Error(
+          "We're experiencing technical difficulties. Please try again in a few moments.",
+        );
+      }
       throw new Error(
-        `Failed to fetch consultant data: ${response.statusText}`,
+        `Unable to load consultant profile. Please try again later. (Error: ${response.status})`,
       );
     }
     const data: ApiResponse<TConsultantProfile> = await response.json();
