@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { Prisma, RequestStatus, ScheduleType } from "@prisma/client";
+import { RequestStatus, ScheduleType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 
 interface ValidationRequest {
@@ -19,10 +19,15 @@ interface ValidationResult {
     slot: string;
   }[];
   validSlots: string[];
+  weeklyDistributionErrors: {
+    week: string;
+    slotsCount: number;
+    maxAllowed: number;
+  }[];
 }
 
-const consultationInclude = {
-  consultationPlan: {
+const classInclude = {
+  classPlan: {
     include: {
       consultantProfile: {
         select: {
@@ -34,36 +39,36 @@ const consultationInclude = {
       },
     },
   },
-  requestedBy: {
-    include: {
-      user: true,
-    },
-  },
 } as const;
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ consultationId: string }> },
+  { params }: { params: Promise<{ classId: string }> },
 ) {
   try {
-    const { consultationId } = await params;
+    const { classId } = await params;
     const body: ValidationRequest = await request.json();
 
-    // Fetch consultation with necessary relations
-    const consultation = await prisma.consultation.findUnique({
-      where: { id: consultationId },
-      include: consultationInclude,
-    });
-
-    if (!consultation) {
+    // Validate slots array
+    if (!Array.isArray(body.slots) || body.slots.length === 0) {
       return NextResponse.json(
-        { error: "Consultation not found" },
-        { status: 404 },
+        { error: "Slots array is required and must not be empty" },
+        { status: 400 },
       );
     }
 
-    const { consultationPlan, requestedBy } = consultation;
-    const { consultantProfile } = consultationPlan;
+    // Fetch class with necessary relations
+    const classPlan = await prisma.class.findUnique({
+      where: { id: classId },
+      include: classInclude,
+    });
+
+    if (!classPlan) {
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    }
+
+    const { classPlan: plan } = classPlan;
+    const { consultantProfile } = plan;
 
     if (!consultantProfile) {
       return NextResponse.json(
@@ -77,12 +82,23 @@ export async function POST(
       conflicts: [],
       outsideAvailability: [],
       validSlots: [],
+      weeklyDistributionErrors: [],
     };
 
     // Convert slots to Date objects
     const slotDates = body.slots.map((slot) => new Date(slot));
 
-    // Check for conflicts with existing appointments
+    // Validate slots are not in the past
+    const now = new Date();
+    const pastSlots = slotDates.filter((slot) => slot <= now);
+    if (pastSlots.length > 0) {
+      return NextResponse.json(
+        { error: "Cannot validate slots in the past" },
+        { status: 400 },
+      );
+    }
+
+    // Check for conflicts with existing approved appointments
     const existingAppointments = await prisma.appointment.findMany({
       where: {
         AND: [
@@ -98,11 +114,26 @@ export async function POST(
                   requestStatus: RequestStatus.APPROVED,
                 },
               },
+              {
+                webinar: {
+                  status: "SCHEDULED",
+                },
+              },
+              {
+                class: {
+                  status: "SCHEDULED",
+                },
+              },
             ],
           },
           {
             slotsOfAppointment: {
               some: {
+                user: {
+                  some: {
+                    id: consultantProfile.user.id,
+                  },
+                },
                 slotStartTimeInUTC: {
                   in: slotDates,
                 },
@@ -112,8 +143,34 @@ export async function POST(
         ],
       },
       include: {
-        subscription: true,
-        consultation: true,
+        subscription: {
+          include: {
+            requestedBy: {
+              include: {
+                user: true,
+              },
+            },
+          },
+        },
+        consultation: {
+          include: {
+            requestedBy: {
+              include: {
+                user: true,
+              },
+            },
+          },
+        },
+        webinar: {
+          include: {
+            webinarPlan: true,
+          },
+        },
+        class: {
+          include: {
+            classPlan: true,
+          },
+        },
         slotsOfAppointment: {
           include: {
             user: true,
@@ -132,11 +189,30 @@ export async function POST(
       );
 
       for (const slot of conflictingSlots) {
+        let appointmentType = "Unknown";
+        let withUser = "Unknown";
+
+        if (appointment.subscription) {
+          appointmentType = "Subscription";
+          withUser =
+            appointment.subscription.requestedBy?.user?.name || "Unknown";
+        } else if (appointment.consultation) {
+          appointmentType = "Consultation";
+          withUser =
+            appointment.consultation.requestedBy?.user?.name || "Unknown";
+        } else if (appointment.webinar) {
+          appointmentType = "Webinar";
+          withUser = appointment.webinar.webinarPlan?.title || "Unknown";
+        } else if (appointment.class) {
+          appointmentType = "Class";
+          withUser = appointment.class.classPlan?.title || "Unknown";
+        }
+
         result.conflicts.push({
           slot: slot.slotStartTimeInUTC.toISOString(),
           existingAppointment: {
-            type: appointment.subscription ? "Subscription" : "Consultation",
-            with: slot.user[0]?.name || "Unknown",
+            type: appointmentType,
+            with: withUser,
             time: new Date(slot.slotStartTimeInUTC).toLocaleString(),
           },
         });
@@ -178,7 +254,30 @@ export async function POST(
       }
     }
 
-    // Valid slots are those without conflicts and within availability
+    // Validate weekly distribution for classes (if applicable)
+    if (plan.callsPerWeek) {
+      const slotsByWeek = new Map<string, number>();
+
+      for (const slotDate of slotDates) {
+        const weekStart = new Date(slotDate);
+        weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Get start of week (Sunday)
+        weekStart.setHours(0, 0, 0, 0); // Set to start of day
+        const weekKey = weekStart.toISOString();
+        slotsByWeek.set(weekKey, (slotsByWeek.get(weekKey) || 0) + 1);
+      }
+
+      for (const [weekKey, count] of Array.from(slotsByWeek.entries())) {
+        if (count > plan.callsPerWeek) {
+          result.weeklyDistributionErrors.push({
+            week: new Date(weekKey).toLocaleDateString(),
+            slotsCount: count,
+            maxAllowed: plan.callsPerWeek,
+          });
+        }
+      }
+    }
+
+    // Valid slots are those without conflicts, within availability, and following distribution rules
     result.validSlots = slotDates
       .filter((date) => {
         const dateStr = date.toISOString();
@@ -189,11 +288,16 @@ export async function POST(
       })
       .map((date) => date.toISOString());
 
+    // If there are weekly distribution errors, no slots are valid
+    if (result.weeklyDistributionErrors.length > 0) {
+      result.validSlots = [];
+    }
+
     return NextResponse.json({ data: result });
   } catch (error) {
-    console.error("Validation error:", error);
+    console.error("Class validation error:", error);
     return NextResponse.json(
-      { error: "Failed to validate slots" },
+      { error: "Failed to validate class slots" },
       { status: 500 },
     );
   }

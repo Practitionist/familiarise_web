@@ -1,12 +1,11 @@
 import prisma from "@/lib/prisma";
-import { TSlotTiming } from "@/types/slots";
-import { NextRequest, NextResponse } from "next/server";
 import {
+  AppointmentSlot,
+  CustomSlot,
   processAvailabilitySlots,
   WeeklySlot,
-  CustomSlot,
-  AppointmentSlot,
 } from "@/utils/timeSlotsProcessing";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   req: NextRequest,
@@ -41,7 +40,7 @@ export async function GET(
       );
     }
 
-    // 1. Fetch consultant's availability
+    // 1. Fetch consulta nt's availability
     const consultant = await prisma.consultantProfile.findUnique({
       where: { id: consultantId },
       include: {
@@ -133,23 +132,41 @@ export async function GET(
     );
 
     // Convert to utility interfaces
-    const weeklySlots: WeeklySlot[] = consultant.slotsOfAvailabilityWeekly.map(
-      (slot) => ({
+    const weeklySlots: WeeklySlot[] = consultant.slotsOfAvailabilityWeekly
+      .filter((slot) => {
+        // Filter out any remaining invalid slots where end time <= start time
+        if (slot.slotEndTimeInUTC <= slot.slotStartTimeInUTC) {
+          console.warn(
+            `Filtering out invalid weekly slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`,
+          );
+          return false;
+        }
+        return true;
+      })
+      .map((slot) => ({
         id: slot.id,
         dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
         slotStartTimeInUTC: slot.slotStartTimeInUTC,
         dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
         slotEndTimeInUTC: slot.slotEndTimeInUTC,
-      }),
-    );
+      }));
 
-    const customSlots: CustomSlot[] = consultant.slotsOfAvailabilityCustom.map(
-      (slot) => ({
+    const customSlots: CustomSlot[] = consultant.slotsOfAvailabilityCustom
+      .filter((slot) => {
+        // Filter out any remaining invalid slots where end time <= start time
+        if (slot.slotEndTimeInUTC <= slot.slotStartTimeInUTC) {
+          console.warn(
+            `Filtering out invalid custom slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`,
+          );
+          return false;
+        }
+        return true;
+      })
+      .map((slot) => ({
         id: slot.id,
         slotStartTimeInUTC: slot.slotStartTimeInUTC,
         slotEndTimeInUTC: slot.slotEndTimeInUTC,
-      }),
-    );
+      }));
 
     // Process all slots using the unified utility
     // Note: Allow both weekly and custom slots to be processed regardless of scheduleType

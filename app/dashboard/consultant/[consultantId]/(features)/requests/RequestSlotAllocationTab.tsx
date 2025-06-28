@@ -63,6 +63,8 @@ interface Request {
   status: RequestStatus;
   requiredSlots: number;
   allocatedSlots?: string[];
+  durationInMonths?: number;
+  callsPerWeek?: number;
 }
 
 // interface SlotInterval { ... } // Removed - Now imported
@@ -253,6 +255,8 @@ export function RequestSlotAllocationTab({
               (subscription.subscriptionPlan?.callsPerWeek ?? 0) *
                 4 *
                 (subscription.subscriptionPlan?.durationInMonths ?? 0) || 0,
+            durationInMonths: subscription.subscriptionPlan?.durationInMonths,
+            callsPerWeek: subscription.subscriptionPlan?.callsPerWeek,
           })),
         );
       }
@@ -701,63 +705,17 @@ export function RequestSlotAllocationTab({
                               : "Use Requested Times"}
                           </Button>
                         )}
-                      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                        <DialogTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedRequest(request);
-                              setSelectedSlots([]);
-                              setDialogOpen(true);
-                            }}
-                          >
-                            Allocate Slots
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent
-                          className="max-w-3xl"
-                          onInteractOutside={(e) => {
-                            // Prevent closing dialog while allocating
-                            if (isAllocating) {
-                              e.preventDefault();
-                            }
-                          }}
-                        >
-                          <DialogHeader>
-                            <DialogTitle>Allocate Slots</DialogTitle>
-                            <DialogDescription>
-                              Choose {request.requiredSlots} slots for{" "}
-                              {request.type.toLowerCase()}
-                            </DialogDescription>
-                          </DialogHeader>
-                          <TimingsCalendar
-                            availableSlots={availableSlots}
-                            existingAppointments={existingAppointments}
-                            onSlotSelect={handleSlotSelect}
-                            selectedSlots={selectedSlots}
-                            requiredSlots={request.requiredSlots}
-                            scheduleType={consultantData.scheduleType}
-                          />
-                          <DialogFooter>
-                            <Button
-                              variant="outline"
-                              onClick={handleAutoAllocation}
-                              disabled={!canAutoAllocate() || isAllocating}
-                            >
-                              {isAllocating ? "Allocating..." : "Auto Allocate"}
-                            </Button>
-                            <Button
-                              onClick={handleManualAllocation}
-                              disabled={!isQuotaMet || isAllocating}
-                            >
-                              {isAllocating
-                                ? "Allocating..."
-                                : "Allocate Manual Slots"}
-                            </Button>
-                          </DialogFooter>
-                        </DialogContent>
-                      </Dialog>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedRequest(request);
+                          setSelectedSlots([]);
+                          setDialogOpen(true);
+                        }}
+                      >
+                        Allocate Slots
+                      </Button>
                     </>
                   )}
                   {request.status === RequestStatus.APPROVED &&
@@ -771,6 +729,76 @@ export function RequestSlotAllocationTab({
             ))}
           </TableBody>
         </Table>
+
+        {/* Single Allocation Dialog - moved outside map loop to prevent multiple dialogs */}
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogContent
+            className="max-w-3xl"
+            onInteractOutside={(e) => {
+              // Prevent closing dialog while allocating
+              if (isAllocating) {
+                e.preventDefault();
+              }
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Allocate Slots</DialogTitle>
+              <DialogDescription>
+                {selectedRequest && (
+                  <>
+                    Choose {selectedRequest.requiredSlots} slots for{" "}
+                    {selectedRequest.type.toLowerCase()}
+                  </>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            {selectedRequest && (
+              <TimingsCalendar
+                consultantId={consultantId}
+                eventType={
+                  selectedRequest.type.toLowerCase() as
+                    | "consultation"
+                    | "subscription"
+                }
+                eventId={selectedRequest.id}
+                onSlotSelect={handleSlotSelect}
+                selectedSlots={selectedSlots}
+                requiredSlots={selectedRequest.requiredSlots}
+                durationInMonths={
+                  selectedRequest.type === "SUBSCRIPTION"
+                    ? selectedRequest.durationInMonths
+                    : undefined
+                }
+                callsPerWeek={
+                  selectedRequest.type === "SUBSCRIPTION"
+                    ? selectedRequest.callsPerWeek
+                    : undefined
+                }
+              />
+            )}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setDialogOpen(false)}
+                disabled={isAllocating}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleAutoAllocation}
+                disabled={!canAutoAllocate() || isAllocating}
+              >
+                {isAllocating ? "Allocating..." : "Auto Allocate"}
+              </Button>
+              <Button
+                onClick={handleManualAllocation}
+                disabled={!isQuotaMet || isAllocating}
+              >
+                {isAllocating ? "Allocating..." : "Allocate Manual Slots"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <RequestedSlotsDialog
           open={requestedSlotsDialogOpen}
