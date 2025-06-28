@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import TermsAndPrivacyAgreement from "./TermsAndPrivacyAgreement";
+import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (
@@ -15,6 +16,7 @@ const ConsultantAgreementForm: React.FC<Props> = ({
   onBack,
   initialData,
 }) => {
+  const { classes } = useThemeClasses();
   const [termsChecked, setTermsChecked] = useState(
     initialData.termsAccepted || false,
   );
@@ -34,23 +36,27 @@ const ConsultantAgreementForm: React.FC<Props> = ({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="w-full max-w-md space-y-4">
+    <form onSubmit={handleSubmit} className="w-full space-y-6">
       <TermsAndPrivacyAgreement
         onTermsChange={setTermsChecked}
         onPrivacyChange={setPrivacyChecked}
         termsChecked={termsChecked}
         privacyChecked={privacyChecked}
       />
-      <div className="flex justify-between">
-        <Button type="button" onClick={onBack} variant="outline">
-          Back
+      <div className="flex justify-between gap-4 pt-6">
+        <Button
+          type="button"
+          onClick={onBack}
+          className={`flex-1 h-12 ${classes.secondaryButton}`}
+        >
+          ← Back
         </Button>
         <Button
           type="submit"
-          variant="night"
           disabled={!termsChecked || !privacyChecked}
+          className={`flex-1 h-12 ${classes.primaryButton} disabled:opacity-50 disabled:cursor-not-allowed`}
         >
-          Next
+          Next Step →
         </Button>
       </div>
     </form>

@@ -11,6 +11,7 @@ import { responsibilitiesAndPermissions } from "@/schemas/responsibbilities-perm
 import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import React, { useEffect, useState } from "react";
 import { Controller, useFormContext } from "react-hook-form";
+import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (data: any) => void;
@@ -19,6 +20,7 @@ interface Props {
 }
 
 const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
+  const { classes, colors } = useThemeClasses();
   const [departments, setDepartments] = useState<string[]>([]);
   const [positions, setPositions] = useState<string[]>([]);
 
@@ -70,24 +72,35 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
   };
 
   return (
-    <form
-      onSubmit={handleSubmit(onSubmit)}
-      className="w-full max-w-md space-y-4"
-    >
-      <div className="space-y-2">
-        <Label htmlFor="department">Department</Label>
+    <form onSubmit={handleSubmit(onSubmit)} className="w-full space-y-6">
+      <div className="space-y-3">
+        <Label
+          htmlFor="department"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Department
+        </Label>
         <Controller
           name="department"
           control={control}
           rules={{ required: "Department is required" }}
           render={({ field }) => (
             <Select onValueChange={field.onChange} value={field.value}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select a department" />
+              <SelectTrigger
+                className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus}`}
+              >
+                <SelectValue
+                  placeholder="Select a department"
+                  className={colors.textSecondary}
+                />
               </SelectTrigger>
-              <SelectContent className="bg-slate-100">
+              <SelectContent className={classes.dropdown}>
                 {departments.map((department) => (
-                  <SelectItem key={department} value={department}>
+                  <SelectItem
+                    key={department}
+                    value={department}
+                    className={classes.dropdownItem}
+                  >
                     {department}
                   </SelectItem>
                 ))}
@@ -96,14 +109,19 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
           )}
         />
         {errors.department && (
-          <p className="text-red-500 text-sm">
+          <p className={`${colors.error} text-sm`}>
             {errors.department.message as string}
           </p>
         )}
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="position">Position</Label>
+      <div className="space-y-3">
+        <Label
+          htmlFor="position"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Position
+        </Label>
         <Controller
           name="position"
           control={control}
@@ -114,12 +132,25 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
               value={field.value}
               disabled={!watchDepartment}
             >
-              <SelectTrigger>
-                <SelectValue placeholder="Select a position" />
+              <SelectTrigger
+                className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus} ${!watchDepartment ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                <SelectValue
+                  placeholder={
+                    !watchDepartment
+                      ? "Select a department first"
+                      : "Select a position"
+                  }
+                  className={colors.textSecondary}
+                />
               </SelectTrigger>
-              <SelectContent className="bg-slate-100">
+              <SelectContent className={classes.dropdown}>
                 {positions.map((position) => (
-                  <SelectItem key={position} value={position}>
+                  <SelectItem
+                    key={position}
+                    value={position}
+                    className={classes.dropdownItem}
+                  >
                     {position}
                   </SelectItem>
                 ))}
@@ -128,18 +159,25 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
           )}
         />
         {errors.position && (
-          <p className="text-red-500 text-sm">
+          <p className={`${colors.error} text-sm`}>
             {errors.position.message as string}
           </p>
         )}
       </div>
 
-      <div className="flex justify-between">
-        <Button type="button" onClick={onBack} variant="outline">
-          Back
+      <div className="flex justify-between gap-4 pt-6">
+        <Button
+          type="button"
+          onClick={onBack}
+          className={`flex-1 h-12 ${classes.secondaryButton}`}
+        >
+          ← Back
         </Button>
-        <Button type="submit" variant="night">
-          Next
+        <Button
+          type="submit"
+          className={`flex-1 h-12 ${classes.primaryButton}`}
+        >
+          Next Step →
         </Button>
       </div>
     </form>

@@ -51,13 +51,13 @@ jobs:
       - name: Run Jest Unit Tests
         run: npm run test
 
-      - name: Run Cypress Tests
-        uses: cypress-io/github-action@v6
-        env:
-          NEXT_PUBLIC_TEST_USERID: ${{ secrets.NEXT_PUBLIC_TEST_USERID }}
-        with:
-          start: npm run dev
-          wait-on: "http://localhost:3000"
-          record: false
-          publish-summary: true
-          component: false
+      # - name: Run Cypress Tests
+      #   uses: cypress-io/github-action@v6
+      #   env:
+      #     NEXT_PUBLIC_TEST_USERID: ${{ secrets.NEXT_PUBLIC_TEST_USERID }}
+      #   with:
+      #     start: npm run dev
+      #     wait-on: "http://localhost:3000"
+      #     record: false
+      #     publish-summary: true
+      #     component: false

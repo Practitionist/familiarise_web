@@ -17,6 +17,7 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import React from "react";
 import { useForm, Controller } from "react-hook-form";
+import { useThemeClasses } from "../useTheme";
 
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsulteeProfile> &
@@ -42,6 +43,7 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
   onBack,
   initialData,
 }) => {
+  const { classes, colors } = useThemeClasses();
   const {
     register,
     handleSubmit,
@@ -80,12 +82,12 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
   };
 
   return (
-    <form
-      onSubmit={handleSubmit(onSubmit)}
-      className="w-full max-w-md space-y-4"
-    >
-      <div className="space-y-2">
-        <Label htmlFor="preferredCommunicationMethod">
+    <form onSubmit={handleSubmit(onSubmit)} className="w-full space-y-6">
+      <div className="space-y-3">
+        <Label
+          htmlFor="preferredCommunicationMethod"
+          className={`${colors.textPrimary} font-medium`}
+        >
           Preferred Communication Method
         </Label>
         <Controller
@@ -97,75 +99,123 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
               onValueChange={field.onChange}
               value={field.value || "VIDEO"}
             >
-              <SelectTrigger>
-                <SelectValue placeholder="Select communication method" />
+              <SelectTrigger
+                className={`${colors.inputBg} ${colors.inputBorder} ${colors.textPrimary} h-12 rounded-lg ${colors.inputFocus}`}
+              >
+                <SelectValue
+                  placeholder="Select communication method"
+                  className={colors.textSecondary}
+                />
               </SelectTrigger>
-              <SelectContent className="bg-slate-100">
-                <SelectItem value="VIDEO">Video</SelectItem>
-                <div className="border-t border-gray-300 my-1"></div>
-                <SelectItem value="AUDIO">Audio</SelectItem>
-                <div className="border-t border-gray-300 my-1"></div>
-                <SelectItem value="IN_PERSON">In Person</SelectItem>
+              <SelectContent className={classes.dropdown}>
+                <SelectItem value="VIDEO" className={classes.dropdownItem}>
+                  📹 Video
+                </SelectItem>
+                <SelectItem value="AUDIO" className={classes.dropdownItem}>
+                  🎙️ Audio
+                </SelectItem>
+                <SelectItem value="IN_PERSON" className={classes.dropdownItem}>
+                  👥 In Person
+                </SelectItem>
               </SelectContent>
             </Select>
           )}
         />
         {errors.preferredCommunicationMethod && (
-          <p className="text-red-500">
+          <p className={`${colors.error} text-sm`}>
             {errors.preferredCommunicationMethod.message}
           </p>
         )}
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="preferredLanguage">Preferred Language</Label>
-        <Input id="preferredLanguage" {...register("preferredLanguage")} />
+      <div className="space-y-3">
+        <Label
+          htmlFor="preferredLanguage"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Preferred Language
+        </Label>
+        <Input
+          id="preferredLanguage"
+          {...register("preferredLanguage")}
+          className={classes.input}
+          placeholder="e.g., English, Spanish, French"
+        />
         {errors.preferredLanguage && (
-          <p className="text-red-500">{errors.preferredLanguage.message}</p>
+          <p className={`${colors.error} text-sm`}>
+            {errors.preferredLanguage.message}
+          </p>
         )}
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="specialRequirements">
+      <div className="space-y-3">
+        <Label
+          htmlFor="specialRequirements"
+          className={`${colors.textPrimary} font-medium`}
+        >
           Special Requirements (Optional)
         </Label>
         <Textarea
           id="specialRequirements"
           {...register("specialRequirements")}
+          className={classes.textarea}
+          placeholder="Any accessibility needs or special accommodations..."
         />
         {errors.specialRequirements && (
-          <p className="text-red-500">{errors.specialRequirements.message}</p>
+          <p className={`${colors.error} text-sm`}>
+            {errors.specialRequirements.message}
+          </p>
         )}
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="interests">Interests (comma-separated)</Label>
+      <div className="space-y-3">
+        <Label
+          htmlFor="interests"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Interests (comma-separated)
+        </Label>
         <Input
           id="interests"
           {...register("interests")}
           placeholder="e.g., Career Growth, Leadership, Technology"
+          className={classes.input}
         />
         {errors.interests && (
-          <p className="text-red-500">{errors.interests.message}</p>
+          <p className={`${colors.error} text-sm`}>
+            {errors.interests.message}
+          </p>
         )}
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="goals">Goals (comma-separated)</Label>
+      <div className="space-y-3">
+        <Label htmlFor="goals" className={`${colors.textPrimary} font-medium`}>
+          Goals (comma-separated)
+        </Label>
         <Textarea
           id="goals"
           {...register("goals")}
           placeholder="e.g., Improve leadership skills, Learn new technologies"
+          className={classes.textarea}
         />
-        {errors.goals && <p className="text-red-500">{errors.goals.message}</p>}
+        {errors.goals && (
+          <p className={`${colors.error} text-sm`}>{errors.goals.message}</p>
+        )}
       </div>
 
-      <div className="flex justify-between">
-        <Button type="button" onClick={onBack} variant="outline">
-          Back
+      <div className="flex justify-between gap-4 pt-6">
+        <Button
+          type="button"
+          onClick={onBack}
+          className={`flex-1 h-12 ${classes.secondaryButton}`}
+        >
+          ← Back
         </Button>
-        <Button type="submit" variant="night">
-          Next
+        <Button
+          type="submit"
+          className={`flex-1 h-12 ${classes.primaryButton}`}
+        >
+          Next Step →
         </Button>
       </div>
     </form>
