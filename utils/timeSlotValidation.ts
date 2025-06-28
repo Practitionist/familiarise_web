@@ -248,6 +248,17 @@ export const validateTimeSlot = (
     };
   }
 
+  // Start and end cannot be the same
+  if (startMinutes === endMinutes) {
+    return {
+      slot: {
+        ...slot,
+        isValid: false,
+        errorMessage: "Start and end time cannot be the same",
+      },
+    };
+  }
+
   // Disallow overnight slots – end time must be after start time on the same day, except when it ends exactly at midnight (00:00)
   if (endMinutes <= startMinutes && endMinutes !== 0) {
     return {
