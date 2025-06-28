@@ -36,7 +36,7 @@ const isOvernightSlot = (startMinutes: number, endMinutes: number): boolean => {
 // Calculate slot duration handling overnight slots
 const calculateSlotDuration = (
   startMinutes: number,
-  endMinutes: number
+  endMinutes: number,
 ): number => {
   return isOvernightSlot(startMinutes, endMinutes)
     ? 24 * 60 - startMinutes + endMinutes
@@ -66,7 +66,7 @@ const getNextDate = (dateString: string): string => {
 // Validate basic time range requirements
 export const isValidTimeRange = (
   startTime: string,
-  endTime: string
+  endTime: string,
 ): boolean => {
   if (!startTime || !endTime) return false;
 
@@ -99,7 +99,7 @@ export const isValidTimeRange = (
 // Check if time follows required increments
 const validateTimeIncrements = (
   startMinutes: number,
-  endMinutes: number
+  endMinutes: number,
 ): string | null => {
   if (
     startMinutes % VALIDATION_CONFIG.TIME_INCREMENT_MINUTES !== 0 ||
@@ -119,7 +119,7 @@ const validateTimeIncrements = (
 // Check if duration meets requirements
 const validateDuration = (
   startMinutes: number,
-  endMinutes: number
+  endMinutes: number,
 ): string | null => {
   const duration = calculateSlotDuration(startMinutes, endMinutes);
 
@@ -139,7 +139,7 @@ const checkSlotOverlap = (
   slot1Start: number,
   slot1End: number,
   slot2Start: number,
-  slot2End: number
+  slot2End: number,
 ): boolean => {
   const slot1IsOvernight = isOvernightSlot(slot1Start, slot1End);
   const slot2IsOvernight = isOvernightSlot(slot2Start, slot2End);
@@ -179,7 +179,7 @@ const checkSlotOverlap = (
 // Validate slot against other slots for overlaps
 const validateSlotOverlaps = (
   slot: SlotType,
-  otherSlots: SlotType[]
+  otherSlots: SlotType[],
 ): string | null => {
   const startMinutes = getMinutes(slot.startTime);
   const endMinutes = getMinutes(slot.endTime);
@@ -190,7 +190,7 @@ const validateSlotOverlaps = (
 
   // Only check against valid slots
   const validSlots = otherSlots.filter(
-    (s) => s.isValid && s.startTime && s.endTime
+    (s) => s.isValid && s.startTime && s.endTime,
   );
 
   for (const otherSlot of validSlots) {
@@ -222,7 +222,7 @@ export const validateTimeSlot = (
   slot: SlotType,
   otherSlots: SlotType[],
   key: string,
-  isWeekly: boolean = false
+  isWeekly: boolean = false,
 ): ValidationResult => {
   // Early return for empty slots
   if (!slot.startTime || !slot.endTime) {
@@ -343,7 +343,7 @@ export const validateSlot = validateTimeSlot;
 
 // Enhanced validation for all slots with detailed feedback
 export const validateAllSlotsDetailed = (
-  slots: Record<string, SlotType[]>
+  slots: Record<string, SlotType[]>,
 ): { isValid: boolean; errors: string[] } => {
   const errors: string[] = [];
   let isValid = true;

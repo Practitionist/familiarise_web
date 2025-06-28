@@ -255,9 +255,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       value: string,
     ) => {
       React.startTransition(() => {
-        const currentSlots = scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots;
-        const setSlots = scheduleType === ScheduleType.WEEKLY ? setWeeklySlots : setCustomSlots;
-        
+        const currentSlots =
+          scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots;
+        const setSlots =
+          scheduleType === ScheduleType.WEEKLY
+            ? setWeeklySlots
+            : setCustomSlots;
+
         // Create updated slot
         const updatedSlot = {
           ...currentSlots[day][index],
@@ -275,7 +279,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         // Handle overnight slot splitting if needed
         if (validationResult.needsSplitting) {
           setSlots((prev) => {
-            const { currentDaySlot, nextDaySlot, nextKey } = validationResult.needsSplitting!;
+            const { currentDaySlot, nextDaySlot, nextKey } =
+              validationResult.needsSplitting!;
             return {
               ...prev,
               [day]: [
@@ -449,10 +454,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       }
 
       // Refetch the consultant data to show what was actually saved
-      const updatedResponse = await fetch(`/api/user/consultants/${consultant.id}`);
+      const updatedResponse = await fetch(
+        `/api/user/consultants/${consultant.id}`,
+      );
       if (updatedResponse.ok) {
         const { data: updatedConsultant } = await updatedResponse.json();
-        
+
         // Update local state to match what was saved to database
         setWeeklySlots(getInitialWeeklySlots(updatedConsultant));
         setCustomSlots(getInitialCustomSlots(updatedConsultant));

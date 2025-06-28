@@ -37,7 +37,6 @@ export interface Tag {
   id: string;
   name: string;
   domainId: string;
-  
 }
 
 export const DAYS_OF_WEEK: DayOfWeek[] = [
@@ -76,8 +75,13 @@ export const getInitialWeeklySlots = (
   try {
     consultant.slotsOfAvailabilityWeekly.forEach((slot) => {
       try {
-        if (!slot || !slot.dayOfWeekforStartTimeInUTC || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
-          console.warn('Invalid weekly slot data:', slot);
+        if (
+          !slot ||
+          !slot.dayOfWeekforStartTimeInUTC ||
+          !slot.slotStartTimeInUTC ||
+          !slot.slotEndTimeInUTC
+        ) {
+          console.warn("Invalid weekly slot data:", slot);
           return;
         }
 
@@ -85,12 +89,16 @@ export const getInitialWeeklySlots = (
         // For weekly slots, extract time directly from UTC since we store with epoch date
         const startDate = new Date(slot.slotStartTimeInUTC);
         const endDate = new Date(slot.slotEndTimeInUTC);
-        
+
         // Extract HH:MM directly from UTC time (no timezone conversion needed for weekly slots)
-        const startTime = startDate.getUTCHours().toString().padStart(2, '0') + ':' + 
-                          startDate.getUTCMinutes().toString().padStart(2, '0');
-        const endTime = endDate.getUTCHours().toString().padStart(2, '0') + ':' + 
-                        endDate.getUTCMinutes().toString().padStart(2, '0');
+        const startTime =
+          startDate.getUTCHours().toString().padStart(2, "0") +
+          ":" +
+          startDate.getUTCMinutes().toString().padStart(2, "0");
+        const endTime =
+          endDate.getUTCHours().toString().padStart(2, "0") +
+          ":" +
+          endDate.getUTCMinutes().toString().padStart(2, "0");
 
         // Only add valid slots with proper error handling
         if (isValidTimeRange(startTime, endTime)) {
@@ -103,14 +111,18 @@ export const getInitialWeeklySlots = (
             isValid: true,
           });
         } else {
-          console.warn('Invalid time range for weekly slot:', { day, startTime, endTime });
+          console.warn("Invalid time range for weekly slot:", {
+            day,
+            startTime,
+            endTime,
+          });
         }
       } catch (error) {
-        console.error('Error processing weekly slot:', error, slot);
+        console.error("Error processing weekly slot:", error, slot);
       }
     });
   } catch (error) {
-    console.error('Error in getInitialWeeklySlots:', error);
+    console.error("Error in getInitialWeeklySlots:", error);
   }
   return formattedWeeklySlots;
 };
@@ -125,23 +137,31 @@ export const getInitialCustomSlots = (
     consultant.slotsOfAvailabilityCustom.forEach((slot) => {
       try {
         if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
-          console.warn('Invalid custom slot data:', slot);
+          console.warn("Invalid custom slot data:", slot);
           return;
         }
 
         const startDate = new Date(slot.slotStartTimeInUTC);
         const endDate = new Date(slot.slotEndTimeInUTC);
-        
+
         if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-          console.warn('Invalid date in custom slot:', slot.slotStartTimeInUTC, slot.slotEndTimeInUTC);
+          console.warn(
+            "Invalid date in custom slot:",
+            slot.slotStartTimeInUTC,
+            slot.slotEndTimeInUTC,
+          );
           return;
         }
 
         // For custom slots, we need to handle timezone conversion properly
         // Convert UTC back to user's local time for display
         const dateString = getLocalDateString(startDate);
-        const startTime = convertToLocalTime(new Date(slot.slotStartTimeInUTC).toISOString());
-        const endTime = convertToLocalTime(new Date(slot.slotEndTimeInUTC).toISOString());
+        const startTime = convertToLocalTime(
+          new Date(slot.slotStartTimeInUTC).toISOString(),
+        );
+        const endTime = convertToLocalTime(
+          new Date(slot.slotEndTimeInUTC).toISOString(),
+        );
         // Only add valid slots with proper error handling
         if (isValidTimeRange(startTime, endTime)) {
           if (!formattedCustomSlots[dateString]) {
@@ -153,14 +173,18 @@ export const getInitialCustomSlots = (
             isValid: true,
           });
         } else {
-          console.warn('Invalid time range for custom slot:', { dateString, startTime, endTime });
+          console.warn("Invalid time range for custom slot:", {
+            dateString,
+            startTime,
+            endTime,
+          });
         }
       } catch (error) {
-        console.error('Error processing custom slot:', error, slot);
+        console.error("Error processing custom slot:", error, slot);
       }
     });
   } catch (error) {
-    console.error('Error in getInitialCustomSlots:', error);
+    console.error("Error in getInitialCustomSlots:", error);
   }
   return formattedCustomSlots;
 };
@@ -172,64 +196,76 @@ export const formatSlotsForApi = (slots: SlotsType, isWeekly: boolean) => {
         // Ensure we have valid key and slots array
         return key && Array.isArray(daySlots) && daySlots.length > 0;
       })
-      .flatMap(([key, daySlots]) =>
-        daySlots
-          .filter((slot) => {
-            // Comprehensive slot validation
-            return (
-              slot &&
-              typeof slot === 'object' &&
-              slot.isValid === true &&
-              slot.startTime &&
-              slot.endTime &&
-              typeof slot.startTime === 'string' &&
-              typeof slot.endTime === 'string' &&
-              isValidTimeRange(slot.startTime, slot.endTime)
-            );
-          })
-          .map((slot) => {
-            try {
-              if (isWeekly) {
-                // Validate day of week for weekly slots
-                const dayOfWeek = key.toUpperCase();
-                const validDays = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
-                if (!validDays.includes(dayOfWeek)) {
-                  throw new Error(`Invalid day of week: ${dayOfWeek}`);
+      .flatMap(
+        ([key, daySlots]) =>
+          daySlots
+            .filter((slot) => {
+              // Comprehensive slot validation
+              return (
+                slot &&
+                typeof slot === "object" &&
+                slot.isValid === true &&
+                slot.startTime &&
+                slot.endTime &&
+                typeof slot.startTime === "string" &&
+                typeof slot.endTime === "string" &&
+                isValidTimeRange(slot.startTime, slot.endTime)
+              );
+            })
+            .map((slot) => {
+              try {
+                if (isWeekly) {
+                  // Validate day of week for weekly slots
+                  const dayOfWeek = key.toUpperCase();
+                  const validDays = [
+                    "MONDAY",
+                    "TUESDAY",
+                    "WEDNESDAY",
+                    "THURSDAY",
+                    "FRIDAY",
+                    "SATURDAY",
+                    "SUNDAY",
+                  ];
+                  if (!validDays.includes(dayOfWeek)) {
+                    throw new Error(`Invalid day of week: ${dayOfWeek}`);
+                  }
+
+                  // Use a consistent UTC date for weekly slots to avoid timezone issues
+                  const baseDate = "1970-01-01"; // Use epoch date to avoid DST issues
+                  return {
+                    dayOfWeekforStartTimeInUTC: dayOfWeek,
+                    dayOfWeekforEndTimeInUTC: dayOfWeek,
+                    slotStartTimeInUTC: `${baseDate}T${slot.startTime}:00.000Z`,
+                    slotEndTimeInUTC: `${baseDate}T${slot.endTime}:00.000Z`,
+                  };
+                } else {
+                  // Validate date format for custom slots
+                  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+                  if (!dateRegex.test(key)) {
+                    throw new Error(`Invalid date format: ${key}`);
+                  }
+
+                  // Convert local time to UTC properly for custom slots
+                  const startDateTime = new Date(`${key}T${slot.startTime}:00`);
+                  const endDateTime = new Date(`${key}T${slot.endTime}:00`);
+
+                  return {
+                    slotStartTimeInUTC: startDateTime.toISOString(),
+                    slotEndTimeInUTC: endDateTime.toISOString(),
+                  };
                 }
-                
-                // Use a consistent UTC date for weekly slots to avoid timezone issues
-                const baseDate = '1970-01-01'; // Use epoch date to avoid DST issues
-                return {
-                  dayOfWeekforStartTimeInUTC: dayOfWeek,
-                  dayOfWeekforEndTimeInUTC: dayOfWeek,
-                  slotStartTimeInUTC: `${baseDate}T${slot.startTime}:00.000Z`,
-                  slotEndTimeInUTC: `${baseDate}T${slot.endTime}:00.000Z`,
-                };
-              } else {
-                // Validate date format for custom slots
-                const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-                if (!dateRegex.test(key)) {
-                  throw new Error(`Invalid date format: ${key}`);
-                }
-                
-                // Convert local time to UTC properly for custom slots
-                const startDateTime = new Date(`${key}T${slot.startTime}:00`);
-                const endDateTime = new Date(`${key}T${slot.endTime}:00`);
-                
-                return {
-                  slotStartTimeInUTC: startDateTime.toISOString(),
-                  slotEndTimeInUTC: endDateTime.toISOString(),
-                };
+              } catch (error) {
+                console.error("Error formatting slot for API:", error, {
+                  key,
+                  slot,
+                });
+                return null; // Filter out invalid slots
               }
-            } catch (error) {
-              console.error('Error formatting slot for API:', error, { key, slot });
-              return null; // Filter out invalid slots
-            }
-          })
-          .filter(Boolean) // Remove null entries
+            })
+            .filter(Boolean), // Remove null entries
       );
   } catch (error) {
-    console.error('Error in formatSlotsForApi:', error, { slots, isWeekly });
+    console.error("Error in formatSlotsForApi:", error, { slots, isWeekly });
     return []; // Return empty array on error to prevent API failures
   }
 };
