@@ -140,9 +140,8 @@ export const getInitialCustomSlots = (
         // For custom slots, we need to handle timezone conversion properly
         // Convert UTC back to user's local time for display
         const dateString = getLocalDateString(startDate);
-        const startTime = convertToLocalTime(slot.slotStartTimeInUTC);
-        const endTime = convertToLocalTime(slot.slotEndTimeInUTC);
-
+        const startTime = convertToLocalTime(new Date(slot.slotStartTimeInUTC).toISOString());
+        const endTime = convertToLocalTime(new Date(slot.slotEndTimeInUTC).toISOString());
         // Only add valid slots with proper error handling
         if (isValidTimeRange(startTime, endTime)) {
           if (!formattedCustomSlots[dateString]) {

@@ -36,7 +36,7 @@ const isOvernightSlot = (startMinutes: number, endMinutes: number): boolean => {
 // Calculate slot duration handling overnight slots
 const calculateSlotDuration = (
   startMinutes: number,
-  endMinutes: number,
+  endMinutes: number
 ): number => {
   return isOvernightSlot(startMinutes, endMinutes)
     ? 24 * 60 - startMinutes + endMinutes
@@ -66,7 +66,7 @@ const getNextDate = (dateString: string): string => {
 // Validate basic time range requirements
 export const isValidTimeRange = (
   startTime: string,
-  endTime: string,
+  endTime: string
 ): boolean => {
   if (!startTime || !endTime) return false;
 
@@ -77,8 +77,13 @@ export const isValidTimeRange = (
     return false;
   }
 
-  // Same start and end time is invalid
+  // Check if same start and end time are invalid
   if (startMinutes === endMinutes) {
+    return false;
+  }
+
+  // Disallow overnight slots – end time must be after start time on the same day, except when it ends exactly at midnight (00:00)
+  if (endMinutes <= startMinutes && endMinutes !== 0) {
     return false;
   }
 
@@ -94,7 +99,7 @@ export const isValidTimeRange = (
 // Check if time follows required increments
 const validateTimeIncrements = (
   startMinutes: number,
-  endMinutes: number,
+  endMinutes: number
 ): string | null => {
   if (
     startMinutes % VALIDATION_CONFIG.TIME_INCREMENT_MINUTES !== 0 ||
@@ -114,7 +119,7 @@ const validateTimeIncrements = (
 // Check if duration meets requirements
 const validateDuration = (
   startMinutes: number,
-  endMinutes: number,
+  endMinutes: number
 ): string | null => {
   const duration = calculateSlotDuration(startMinutes, endMinutes);
 
@@ -134,7 +139,7 @@ const checkSlotOverlap = (
   slot1Start: number,
   slot1End: number,
   slot2Start: number,
-  slot2End: number,
+  slot2End: number
 ): boolean => {
   const slot1IsOvernight = isOvernightSlot(slot1Start, slot1End);
   const slot2IsOvernight = isOvernightSlot(slot2Start, slot2End);
@@ -174,7 +179,7 @@ const checkSlotOverlap = (
 // Validate slot against other slots for overlaps
 const validateSlotOverlaps = (
   slot: SlotType,
-  otherSlots: SlotType[],
+  otherSlots: SlotType[]
 ): string | null => {
   const startMinutes = getMinutes(slot.startTime);
   const endMinutes = getMinutes(slot.endTime);
@@ -185,7 +190,7 @@ const validateSlotOverlaps = (
 
   // Only check against valid slots
   const validSlots = otherSlots.filter(
-    (s) => s.isValid && s.startTime && s.endTime,
+    (s) => s.isValid && s.startTime && s.endTime
   );
 
   for (const otherSlot of validSlots) {
@@ -217,7 +222,7 @@ export const validateTimeSlot = (
   slot: SlotType,
   otherSlots: SlotType[],
   key: string,
-  isWeekly: boolean = false,
+  isWeekly: boolean = false
 ): ValidationResult => {
   // Early return for empty slots
   if (!slot.startTime || !slot.endTime) {
@@ -230,7 +235,32 @@ export const validateTimeSlot = (
     };
   }
 
-  // Validate basic time range
+  const startMinutes = getMinutes(slot.startTime);
+  const endMinutes = getMinutes(slot.endTime);
+
+  if (startMinutes === null || endMinutes === null) {
+    return {
+      slot: {
+        ...slot,
+        isValid: false,
+        errorMessage: "Invalid time format",
+      },
+    };
+  }
+
+  // Disallow overnight slots – end time must be after start time on the same day, except when it ends exactly at midnight (00:00)
+  if (endMinutes <= startMinutes && endMinutes !== 0) {
+    return {
+      slot: {
+        ...slot,
+        isValid: false,
+        errorMessage:
+          "Overnight slots are not allowed. Please create a slot on the next day.",
+      },
+    };
+  }
+
+  // Validate basic time range (duration constraints etc.)
   if (!isValidTimeRange(slot.startTime, slot.endTime)) {
     return {
       slot: {
@@ -241,36 +271,33 @@ export const validateTimeSlot = (
     };
   }
 
-  const startMinutes = getMinutes(slot.startTime)!;
-  const endMinutes = getMinutes(slot.endTime)!;
-
   // Validate time increments
   const incrementError = validateTimeIncrements(startMinutes, endMinutes);
   if (incrementError) {
-    return { 
-      slot: { ...slot, isValid: false, errorMessage: incrementError } 
+    return {
+      slot: { ...slot, isValid: false, errorMessage: incrementError },
     };
   }
 
   // Validate duration
   const durationError = validateDuration(startMinutes, endMinutes);
   if (durationError) {
-    return { 
-      slot: { ...slot, isValid: false, errorMessage: durationError } 
+    return {
+      slot: { ...slot, isValid: false, errorMessage: durationError },
     };
   }
 
   // Check for overlaps
   const overlapError = validateSlotOverlaps(slot, otherSlots);
   if (overlapError) {
-    return { 
-      slot: { ...slot, isValid: false, errorMessage: overlapError } 
+    return {
+      slot: { ...slot, isValid: false, errorMessage: overlapError },
     };
   }
 
-  // Handle overnight slot splitting if needed
+  // Handle overnight slot splitting only for spans that cross midnight and do NOT end exactly at 00:00
   const isOvernight = isOvernightSlot(startMinutes, endMinutes);
-  if (isOvernight) {
+  if (isOvernight && endMinutes !== 0) {
     const nextKey = isWeekly ? getNextDay(key) : getNextDate(key);
     return {
       slot: {
@@ -295,8 +322,8 @@ export const validateTimeSlot = (
     };
   }
 
-  return { 
-    slot: { ...slot, isValid: true, errorMessage: undefined } 
+  return {
+    slot: { ...slot, isValid: true, errorMessage: undefined },
   };
 };
 
@@ -305,7 +332,7 @@ export const validateSlot = validateTimeSlot;
 
 // Enhanced validation for all slots with detailed feedback
 export const validateAllSlotsDetailed = (
-  slots: Record<string, SlotType[]>,
+  slots: Record<string, SlotType[]>
 ): { isValid: boolean; errors: string[] } => {
   const errors: string[] = [];
   let isValid = true;
