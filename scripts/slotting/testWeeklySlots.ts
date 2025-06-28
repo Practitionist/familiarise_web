@@ -1,9 +1,9 @@
 import prisma from "../../lib/prisma";
-import { 
+import {
   processAvailabilitySlots,
   WeeklySlot,
   CustomSlot,
-  AppointmentSlot 
+  AppointmentSlot,
 } from "../../utils/timeSlotsProcessing";
 
 /**
@@ -33,7 +33,9 @@ async function testWeeklySlots() {
     console.log(`✅ Found weekly consultant: ${weeklyConsultant.user.name}`);
     console.log(`📍 Consultant ID: ${weeklyConsultant.id}`);
     console.log(`🌍 Timezone: ${weeklyConsultant.user.currentTimezone}`);
-    console.log(`📅 Weekly slots count: ${weeklyConsultant.slotsOfAvailabilityWeekly.length}`);
+    console.log(
+      `📅 Weekly slots count: ${weeklyConsultant.slotsOfAvailabilityWeekly.length}`,
+    );
 
     // Show raw weekly slots from database
     console.log("\n📋 Raw weekly slots from database:");
@@ -42,26 +44,34 @@ async function testWeeklySlots() {
       console.log(`    Day: ${slot.dayOfWeekforStartTimeInUTC}`);
       console.log(`    Start: ${slot.slotStartTimeInUTC.toISOString()}`);
       console.log(`    End: ${slot.slotEndTimeInUTC.toISOString()}`);
-      console.log(`    Start Time: ${slot.slotStartTimeInUTC.getUTCHours()}:${slot.slotStartTimeInUTC.getUTCMinutes().toString().padStart(2, '0')}`);
-      console.log(`    End Time: ${slot.slotEndTimeInUTC.getUTCHours()}:${slot.slotEndTimeInUTC.getUTCMinutes().toString().padStart(2, '0')}`);
+      console.log(
+        `    Start Time: ${slot.slotStartTimeInUTC.getUTCHours()}:${slot.slotStartTimeInUTC.getUTCMinutes().toString().padStart(2, "0")}`,
+      );
+      console.log(
+        `    End Time: ${slot.slotEndTimeInUTC.getUTCHours()}:${slot.slotEndTimeInUTC.getUTCMinutes().toString().padStart(2, "0")}`,
+      );
     });
 
     // Test the processing logic
-    const startDate = new Date('2025-06-23T00:00:00.000Z');
-    const endDate = new Date('2025-06-29T23:59:59.999Z');
-    const timezone = weeklyConsultant.user.currentTimezone || 'America/New_York';
+    const startDate = new Date("2025-06-23T00:00:00.000Z");
+    const endDate = new Date("2025-06-29T23:59:59.999Z");
+    const timezone =
+      weeklyConsultant.user.currentTimezone || "America/New_York";
 
-    console.log(`\n🔧 Processing slots for date range ${startDate.toISOString()} to ${endDate.toISOString()}`);
+    console.log(
+      `\n🔧 Processing slots for date range ${startDate.toISOString()} to ${endDate.toISOString()}`,
+    );
     console.log(`🌍 Using timezone: ${timezone}`);
 
     // Convert to utility interfaces
-    const weeklySlots: WeeklySlot[] = weeklyConsultant.slotsOfAvailabilityWeekly.map(slot => ({
-      id: slot.id,
-      dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
-      slotStartTimeInUTC: slot.slotStartTimeInUTC,
-      dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
-      slotEndTimeInUTC: slot.slotEndTimeInUTC,
-    }));
+    const weeklySlots: WeeklySlot[] =
+      weeklyConsultant.slotsOfAvailabilityWeekly.map((slot) => ({
+        id: slot.id,
+        dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
+        slotStartTimeInUTC: slot.slotStartTimeInUTC,
+        dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
+        slotEndTimeInUTC: slot.slotEndTimeInUTC,
+      }));
 
     const customSlots: CustomSlot[] = [];
     const appointmentSlots: AppointmentSlot[] = [];
@@ -73,19 +83,24 @@ async function testWeeklySlots() {
       appointmentSlots,
       startDate,
       endDate,
-      timezone
+      timezone,
     );
 
-    console.log(`\n✨ Processed ${Object.keys(processedSlots).length} days with slots:`);
-    
+    console.log(
+      `\n✨ Processed ${Object.keys(processedSlots).length} days with slots:`,
+    );
+
     Object.entries(processedSlots).forEach(([date, slots]) => {
       console.log(`\n📅 ${date}:`);
       slots.forEach((slot, index) => {
-        console.log(`  Slot ${index + 1}: ${slot.localStartTime} - ${slot.localEndTime} (${slot.type})`);
-        console.log(`    UTC: ${slot.slotStartTimeInUTC} - ${slot.slotEndTimeInUTC}`);
+        console.log(
+          `  Slot ${index + 1}: ${slot.localStartTime} - ${slot.localEndTime} (${slot.type})`,
+        );
+        console.log(
+          `    UTC: ${slot.slotStartTimeInUTC} - ${slot.slotEndTimeInUTC}`,
+        );
       });
     });
-
   } catch (error) {
     console.error("❌ Error testing weekly slots:", error);
     throw error;

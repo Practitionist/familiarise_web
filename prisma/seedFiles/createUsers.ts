@@ -6,7 +6,7 @@ import {
   ScheduleType,
   StaffProfile,
   User,
-  UserRole
+  UserRole,
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { sanitizeEmail, sanitizePhone, sanitizeString } from "./utils";

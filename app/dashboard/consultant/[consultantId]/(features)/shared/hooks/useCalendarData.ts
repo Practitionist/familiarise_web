@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useToast } from "@/components/ui/use-toast";
-import { 
-  TimeSlot, 
-  ConsultantData, 
-  Appointment, 
-  mapWeeklySlots, 
-  mapCustomSlots, 
-  getSlotStatus 
+import {
+  TimeSlot,
+  ConsultantData,
+  Appointment,
+  mapWeeklySlots,
+  mapCustomSlots,
+  getSlotStatus,
 } from "../utils/calendarUtils";
 import { AllocationService } from "../utils/allocationService";
 import { ScheduleType } from "@prisma/client";
@@ -46,17 +46,22 @@ export interface UseCalendarDataReturn extends CalendarData {
 /**
  * Custom hook for managing calendar data fetching and state
  */
-export function useCalendarData(options: UseCalendarDataOptions): UseCalendarDataReturn {
+export function useCalendarData(
+  options: UseCalendarDataOptions,
+): UseCalendarDataReturn {
   const { consultantId, eventType, eventId, autoLoad = true } = options;
   const { toast } = useToast();
 
   // State
-  const [consultantDetails, setConsultantDetails] = useState<ConsultantData | null>(null);
+  const [consultantDetails, setConsultantDetails] =
+    useState<ConsultantData | null>(null);
   const [rawAvailabilitySlots, setRawAvailabilitySlots] = useState<{
     weekly: any[];
     custom: any[];
   }>({ weekly: [], custom: [] });
-  const [existingAppointments, setExistingAppointments] = useState<Appointment[]>([]);
+  const [existingAppointments, setExistingAppointments] = useState<
+    Appointment[]
+  >([]);
   const [eventSlots, setEventSlots] = useState<TimeSlot[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +94,10 @@ export function useCalendarData(options: UseCalendarDataOptions): UseCalendarDat
       setConsultantDetails(data);
     } catch (error) {
       console.error("Error fetching consultant details:", error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to fetch consultant data";
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch consultant data";
       setError(errorMessage);
       toast({
         variant: "destructive",
@@ -108,7 +116,10 @@ export function useCalendarData(options: UseCalendarDataOptions): UseCalendarDat
       setRawAvailabilitySlots(data);
     } catch (error) {
       console.error("Error fetching availability slots:", error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to fetch availability data";
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch availability data";
       setError(errorMessage);
       toast({
         variant: "destructive",
@@ -127,7 +138,8 @@ export function useCalendarData(options: UseCalendarDataOptions): UseCalendarDat
       setExistingAppointments(data);
     } catch (error) {
       console.error("Error fetching appointments:", error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to fetch appointments";
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to fetch appointments";
       setError(errorMessage);
       toast({
         variant: "destructive",
@@ -139,26 +151,35 @@ export function useCalendarData(options: UseCalendarDataOptions): UseCalendarDat
 
   // Fetch event-specific slots
   const fetchEventSlots = useCallback(async () => {
-    if (!eventType || !eventId || (eventType !== "webinar" && eventType !== "class")) {
+    if (
+      !eventType ||
+      !eventId ||
+      (eventType !== "webinar" && eventType !== "class")
+    ) {
       setEventSlots([]);
       return;
     }
 
     try {
       const data = await AllocationService.fetchEventSlots(eventType, eventId);
-      
+
       if (data && data.length > 0 && data[0].slotsOfAppointment?.length > 0) {
         const slots: TimeSlot[] = data[0].slotsOfAppointment.flatMap(
           (slot: any): TimeSlot[] => {
             const start = new Date(slot.slotStartTimeInUTC);
             const end = new Date(slot.slotEndTimeInUTC);
-            const durationMinutes = (end.getTime() - start.getTime()) / (1000 * 60);
+            const durationMinutes =
+              (end.getTime() - start.getTime()) / (1000 * 60);
             const numIntervals = Math.round(durationMinutes / 30);
 
             const intervalSlots: TimeSlot[] = [];
             for (let i = 0; i < numIntervals; i++) {
-              const intervalStart = new Date(start.getTime() + i * 30 * 60 * 1000); // 30-minute grid intervals
-              const intervalEnd = new Date(intervalStart.getTime() + 30 * 60 * 1000); // 30-minute grid intervals
+              const intervalStart = new Date(
+                start.getTime() + i * 30 * 60 * 1000,
+              ); // 30-minute grid intervals
+              const intervalEnd = new Date(
+                intervalStart.getTime() + 30 * 60 * 1000,
+              ); // 30-minute grid intervals
               intervalSlots.push({
                 startTime: intervalStart,
                 endTime: intervalEnd,
@@ -195,7 +216,10 @@ export function useCalendarData(options: UseCalendarDataOptions): UseCalendarDat
       ]);
     } catch (error) {
       console.error("Error fetching calendar data:", error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to fetch calendar data";
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch calendar data";
       setError(errorMessage);
     } finally {
       setLoading(false);
@@ -205,7 +229,12 @@ export function useCalendarData(options: UseCalendarDataOptions): UseCalendarDat
   // Get slot status for a specific interval
   const getSlotStatusForInterval = useCallback(
     (interval: { hour: number; minute: number }, date: Date) => {
-      return getSlotStatus(interval, date, availableSlots, existingAppointments);
+      return getSlotStatus(
+        interval,
+        date,
+        availableSlots,
+        existingAppointments,
+      );
     },
     [availableSlots, existingAppointments],
   );
@@ -215,19 +244,24 @@ export function useCalendarData(options: UseCalendarDataOptions): UseCalendarDat
     if (autoLoad && consultantId) {
       setLoading(true);
       setError(null);
-      
+
       Promise.all([
         fetchConsultantDetails(),
         fetchAvailabilitySlots(),
         fetchExistingAppointments(),
         fetchEventSlots(),
-      ]).catch(error => {
-        console.error("Error fetching calendar data:", error);
-        const errorMessage = error instanceof Error ? error.message : "Failed to fetch calendar data";
-        setError(errorMessage);
-      }).finally(() => {
-        setLoading(false);
-      });
+      ])
+        .catch((error) => {
+          console.error("Error fetching calendar data:", error);
+          const errorMessage =
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch calendar data";
+          setError(errorMessage);
+        })
+        .finally(() => {
+          setLoading(false);
+        });
     }
   }, [autoLoad, consultantId, eventType, eventId]);
 

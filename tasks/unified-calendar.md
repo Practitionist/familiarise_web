@@ -26,46 +26,44 @@ The apis concerned are
 /api/events/classes/[classId]/allocate
 /api/events/classes/[classId]/validate
 
-The Timings Calendar(for consultations and subscriptions) and Event Timings Calendar(for webinars and classes) are kind of redundant. 
-Maybe there are minor bugs in both of them. 
-but the idea is to have UnifiedCalendar.tsx that is imported in both of their parents and completely get rid of these. 
+The Timings Calendar(for consultations and subscriptions) and Event Timings Calendar(for webinars and classes) are kind of redundant.
+Maybe there are minor bugs in both of them.
+but the idea is to have UnifiedCalendar.tsx that is imported in both of their parents and completely get rid of these.
 
 The calendar just like the present one should show booked, partially booked(with the appointment booked name) , available, conflicting(new status and in red) slots.
 
 there are 3 allocation algorithms
-Manual allocate  - Allocates the selected slots from the UnifiedCalendar
+Manual allocate - Allocates the selected slots from the UnifiedCalendar
 Auto allocate - Allocates the first available slots in sight
 Pre Allocate(use Requested Times from RequestedSlotsDialog) - Allocates the slots requested by the consultee himself.
 
 we also need to verify if algorithms in apis are correct and need some upgrades.
-if possible you can create 
+if possible you can create
 
-shared/components/UnifiedCalendar.tsx, shared/utils/manykindsofutils, shared/hooks/*,
+shared/components/UnifiedCalendar.tsx, shared/utils/manykindsofutils, shared/hooks/\*,
 
-Some of the files are already created. 
-But the code is not working as expected. 
+Some of the files are already created.
+But the code is not working as expected.
 So you need to fix the code and make it work as expected.
 You can also create new files if needed.
 
 /home/kaustav/Desktop/familiarise_web/app/dashboard/consultant/[consultantId]/(features)/
 ├── shared/
-│   ├── components/
-│   │   └── UnifiedCalendar.tsx                    # Main calendar component
-│   ├── utils/
-│   │   ├── calendarUtils.ts                       # Core utilities and types
-│   │   ├── allocationService.ts                   # API service layer
-│   │   └── allocationAlgorithms.ts                # Enhanced algorithms
-│   └── hooks/
-│       ├── useCalendarData.ts                     # Data fetching hook
-│       └── useSlotAllocation.ts                   # Allocation logic hook
+│ ├── components/
+│ │ └── UnifiedCalendar.tsx # Main calendar component
+│ ├── utils/
+│ │ ├── calendarUtils.ts # Core utilities and types
+│ │ ├── allocationService.ts # API service layer
+│ │ └── allocationAlgorithms.ts # Enhanced algorithms
+│ └── hooks/
+│ ├── useCalendarData.ts # Data fetching hook
+│ └── useSlotAllocation.ts # Allocation logic hook
 └── app/dashboard/consultant/[consultantId]/(features)/
-    ├── planner/components/
-    │   └── EventTimingsCalendar.tsx               # Updated planner calendar
-    └── requests/components/
-        ├── TimingsCalendar.tsx                    # Updated requests calendar
-        └── RequestedSlotsDialog.tsx               # Enhanced dialog
-
-
+├── planner/components/
+│ └── EventTimingsCalendar.tsx # Updated planner calendar
+└── requests/components/
+├── TimingsCalendar.tsx # Updated requests calendar
+└── RequestedSlotsDialog.tsx # Enhanced dialog
 
 Please Create a checklist below and then start working on it. Its a long running task.
 The allocate and validate apis need any improvement/optimisation/fixing ?
@@ -73,20 +71,23 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 ## ✅ COMPLETED IMPLEMENTATION CHECKLIST
 
 ### Phase 1: Analysis and Understanding ✅
+
 - [x] **Read and understand Prisma schema relationships**
+
   - Analyzed User, ConsultantProfile, Appointment, SlotOfAppointment models
   - Understood the relationship between consultations, subscriptions, webinars, classes
   - Identified AppointmentsType enum and RequestStatus workflow
   - Mapped out ScheduleType (WEEKLY vs CUSTOM) availability patterns
 
 - [x] **Analyze existing planner and requests calendar components**
+
   - Reviewed EventTimingsCalendar.tsx (planner side - webinars/classes)
   - Reviewed TimingsCalendar.tsx (requests side - consultations/subscriptions)
   - Identified redundant code patterns and shared functionality
   - Analyzed slot selection logic and UI patterns
 
 - [x] **Review allocation and validation APIs**
-  - Examined `/api/events/consultations/[consultationId]/allocate` 
+  - Examined `/api/events/consultations/[consultationId]/allocate`
   - Examined `/api/events/consultations/[consultationId]/validate`
   - Examined `/api/events/subscriptions/[subscriptionId]/allocate`
   - Examined `/api/events/subscriptions/[subscriptionId]/validate`
@@ -95,7 +96,9 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - Note: Webinar and class validate APIs are missing and need to be created
 
 ### Phase 2: Shared Infrastructure Creation ✅
+
 - [x] **Created shared directory structure**
+
   ```
   app/dashboard/consultant/[consultantId]/(features)/shared/
   ├── components/
@@ -110,6 +113,7 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   ```
 
 - [x] **Created shared/utils/calendarUtils.ts**
+
   - Core TypeScript interfaces (TimeSlot, AppointmentDetail, ConsultantData, etc.)
   - mapWeeklySlots() function for weekly schedule type
   - mapCustomSlots() function for custom schedule type
@@ -120,6 +124,7 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - Utility functions for appointment title and user extraction
 
 - [x] **Created shared/utils/allocationService.ts**
+
   - Centralized API service layer for all allocation operations
   - allocateConsultationSlots() and validateConsultationSlots()
   - allocateSubscriptionSlots() and validateSubscriptionSlots()
@@ -137,7 +142,9 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - Comprehensive validation for each allocation type
 
 ### Phase 3: Custom Hooks Development ✅
+
 - [x] **Created shared/hooks/useCalendarData.ts**
+
   - Fetches and manages all calendar-related data
   - Handles consultant details, availability slots, existing appointments
   - Supports event-specific slot fetching for webinars/classes
@@ -154,6 +161,7 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - Success/error callback handling
 
 ### Phase 4: Unified Calendar Component ✅
+
 - [x] **Created shared/components/UnifiedCalendar.tsx**
   - **Three operation modes**: 'view', 'select', 'allocate'
   - **Week and month view support** with navigation
@@ -175,7 +183,9 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - **Timezone display** and proper UTC handling
 
 ### Phase 5: Legacy Component Refactoring ✅
+
 - [x] **Updated EventTimingsCalendar.tsx (Planner side)**
+
   - Completely replaced 947 lines of complex logic with ~84 lines
   - Now uses UnifiedCalendar in 'allocate' mode
   - Maintains same Dialog wrapper for UX consistency
@@ -183,6 +193,7 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - Integrated with allocation completion callbacks
 
 - [x] **Updated TimingsCalendar.tsx (Requests side)**
+
   - Replaced 424 lines of redundant calendar logic with ~60 lines
   - Now uses UnifiedCalendar in 'select' mode
   - Maintains compatibility with existing parent component interface
@@ -196,6 +207,7 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - Improved error handling and user feedback
 
 ### Phase 6: Error Resolution ✅
+
 - [x] **Fixed TypeScript compilation errors**
   - Removed unused imports (Card, CardContent, ConsultantProfile, addDays, isSameDay)
   - Fixed Map iteration compatibility issues (Array.from() wrapper)
@@ -204,6 +216,7 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - Cleaned up unused variables and assignments
 
 ### Phase 7: Integration Status ✅
+
 - [x] **Unified calendar system is now operational**
   - Single source of truth for all calendar functionality
   - Consistent UI/UX across planner and requests features
@@ -214,7 +227,9 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 ## 🔄 REMAINING TASKS
 
 ### Testing and Validation
+
 - [ ] **Integration testing**
+
   - Test all allocation algorithms with real data
   - Verify calendar displays correctly across all event types
   - Test responsive behavior on mobile devices
@@ -226,6 +241,7 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - Implement slot caching where appropriate
 
 ### Documentation
+
 - [ ] **Component documentation**
   - Add JSDoc comments to all shared utilities
   - Document UnifiedCalendar props and usage patterns
@@ -234,7 +250,9 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 ## ✅ API IMPROVEMENTS COMPLETED
 
 ### Missing Validation APIs Created ✅
+
 - [x] **Created `/api/events/webinars/[webinarId]/validate`**
+
   - Comprehensive validation for single webinar slots
   - Conflict detection with existing appointments
   - Consultant availability validation for both WEEKLY and CUSTOM schedules
@@ -249,7 +267,9 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - Enhanced validation result with weeklyDistributionErrors
 
 ### Allocation API Standardization ✅
+
 - [x] **Fixed webinar allocation API**
+
   - **Added support for three allocation modes**:
     - `isAuto: true` - Automatic slot selection using consultant availability
     - `isAuto: false, slots: [...]` - Manual slot selection with validation
@@ -270,12 +290,15 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - **Standardized response format** with detailed appointment information
 
 ### API Consistency Improvements ✅
+
 - [x] **Standardized request/response formats**
+
   - All allocation APIs now use consistent `AllocationRequest` interface
   - Unified error handling and response structures
   - Consistent validation patterns across all event types
 
 - [x] **Enhanced conflict detection**
+
   - Updated all APIs to check conflicts across consultations, subscriptions, webinars, and classes
   - Improved query efficiency with proper indexing
   - Better error messages with specific conflict details
@@ -286,12 +309,15 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - Atomic operations ensuring data consistency
 
 ### Validation Enhancements ✅
+
 - [x] **Consultant availability validation**
+
   - All APIs now properly validate slots against consultant schedules
   - Support for both WEEKLY and CUSTOM schedule types
   - Time zone handling improvements
 
 - [x] **Business rule validation**
+
   - Weekly distribution limits for subscriptions and classes
   - Slot count validation based on event requirements
   - Past slot prevention across all APIs
@@ -304,11 +330,13 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 ## 📊 IMPLEMENTATION IMPACT
 
 **Code Reduction**: ~70% reduction in calendar-related code
+
 - EventTimingsCalendar: 947 lines → 84 lines
 - TimingsCalendar: 424 lines → 60 lines
 - Added shared infrastructure: ~800 lines of reusable code
 
 **Features Added**:
+
 - Three allocation algorithms (Manual, Auto, Pre-allocate)
 - Conflicting slots detection and display
 - Enhanced slot status visualization
@@ -317,6 +345,7 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 - Comprehensive TypeScript interfaces
 
 **Maintainability Improvements**:
+
 - Single source of truth for calendar logic
 - Centralized API service layer
 - Reusable custom hooks
@@ -326,6 +355,7 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 ## ✅ FINAL STATUS
 
 ### System Architecture Complete ✅
+
 The unified calendar system is now fully operational with all major components implemented:
 
 - **Central Infrastructure**: All shared utilities, services, hooks, and components are in place
@@ -336,6 +366,7 @@ The unified calendar system is now fully operational with all major components i
 ### Implementation Details Completed ✅
 
 **Core Utilities (`shared/utils/calendarUtils.ts`)**:
+
 - 458 lines of comprehensive utility functions
 - TimeSlot, AppointmentDetail, ConsultantData, SlotStatus interfaces
 - mapWeeklySlots() and mapCustomSlots() for schedule type handling
@@ -344,6 +375,7 @@ The unified calendar system is now fully operational with all major components i
 - groupSlotsByWeek() and validateSlotDistribution() for subscription/class constraints
 
 **Allocation Service (`shared/utils/allocationService.ts`)**:
+
 - Centralized API layer routing to correct endpoints
 - Generic allocateSlots() and validateSlots() functions
 - Event-specific handlers for consultations, subscriptions, webinars, classes
@@ -351,6 +383,7 @@ The unified calendar system is now fully operational with all major components i
 - Data fetching utilities for consultant details and availability
 
 **Allocation Algorithms (`shared/utils/allocationAlgorithms.ts`)**:
+
 - **Manual Algorithm**: User-selected slots with validation
 - **Auto Algorithm**: Smart slot selection with preference scoring (weekdays > weekends, business hours priority)
 - **Pre-Allocation Algorithm**: Uses consultee's requested slots with conflict detection
@@ -359,6 +392,7 @@ The unified calendar system is now fully operational with all major components i
 - Preference-based slot ranking for optimal scheduling
 
 **Calendar Data Hook (`shared/hooks/useCalendarData.ts`)**:
+
 - Centralized data fetching for all calendar components
 - Handles consultant details, availability slots, existing appointments
 - Supports both WEEKLY and CUSTOM schedule types
@@ -367,6 +401,7 @@ The unified calendar system is now fully operational with all major components i
 - Individual refetch functions for granular updates
 
 **Slot Allocation Hook (`shared/hooks/useSlotAllocation.ts`)**:
+
 - 367 lines of state management and allocation logic
 - Intelligent slot selection with event-type specific limits
 - Integration with all three allocation algorithms
@@ -375,6 +410,7 @@ The unified calendar system is now fully operational with all major components i
 - Comprehensive error handling and success callbacks
 
 **Unified Calendar Component (`shared/components/UnifiedCalendar.tsx`)**:
+
 - 540 lines of comprehensive calendar implementation
 - **Three operation modes**: 'view' (read-only), 'select' (slot selection), 'allocate' (full allocation)
 - **Dual view support**: Week view with 30-minute intervals, Month view with slot counts
@@ -398,6 +434,7 @@ The unified calendar system is now fully operational with all major components i
   - Loading states and error handling
 
 **Legacy Component Refactoring**:
+
 - **EventTimingsCalendar.tsx**: 947 lines → 84 lines (91% reduction)
   - Now a Dialog wrapper around UnifiedCalendar in 'allocate' mode
   - Maintains all original functionality for webinars and classes
@@ -408,6 +445,7 @@ The unified calendar system is now fully operational with all major components i
   - Handles slot format conversion between string and TimeSlot objects
 
 ### Error Resolution Completed ✅
+
 - **TypeScript Compilation**: All implicit 'any' type errors fixed
 - **Map Iteration**: Fixed "MapIterator can only be iterated" with Array.from()
 - **Unused Imports**: Cleaned up Card, CardContent, ConsultantProfile, date-fns imports
@@ -415,7 +453,9 @@ The unified calendar system is now fully operational with all major components i
 - **Type Safety**: Added explicit type annotations for callback parameters
 
 ### API Integration Status ✅
+
 **All APIs Now Fully Integrated**:
+
 - ✅ `/api/events/consultations/[consultationId]/allocate` (enhanced)
 - ✅ `/api/events/consultations/[consultationId]/validate` (working)
 - ✅ `/api/events/subscriptions/[subscriptionId]/allocate` (enhanced)
@@ -426,12 +466,14 @@ The unified calendar system is now fully operational with all major components i
 - ✅ `/api/events/classes/[classId]/validate` (newly created)
 
 **API Standardization Complete**:
+
 - All 8 APIs now support the unified allocation patterns
 - Consistent request/response formats across all endpoints
 - Enhanced error handling and validation logic
 - Complete feature parity between all event types
 
 ### System Performance ✅
+
 - **Code Efficiency**: Eliminated redundant calendar implementations
 - **Memory Usage**: Single component instance replaces multiple implementations
 - **Maintenance**: Centralized bug fixes and feature additions

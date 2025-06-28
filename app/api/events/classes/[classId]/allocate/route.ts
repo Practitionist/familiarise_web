@@ -53,7 +53,7 @@ async function allocateSlotsAuto(
 ): Promise<Date[]> {
   const { classPlan: classDetails } = classPlan;
   const { consultantProfile } = classDetails;
-  
+
   if (!consultantProfile) {
     throw new Error("Consultant profile not found");
   }
@@ -290,7 +290,7 @@ async function allocateSlotsManual(
 ): Promise<Date[]> {
   const { classPlan: classDetails } = classPlan;
   const { consultantProfile } = classDetails;
-  
+
   if (!consultantProfile) {
     throw new Error("Consultant profile not found");
   }
@@ -452,10 +452,7 @@ export async function PATCH(
     });
 
     if (!classPlan) {
-      return NextResponse.json(
-        { error: "Class not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
     }
 
     // Validate user information
@@ -542,10 +539,7 @@ export async function PATCH(
           }
 
           // For auto/manual allocation, delete existing appointments if any
-          if (
-            !body.useRequestedSlots &&
-            classPlan.appointments?.length > 0
-          ) {
+          if (!body.useRequestedSlots && classPlan.appointments?.length > 0) {
             await Promise.all(
               classPlan.appointments.map((appointment) =>
                 tx.appointment.delete({
@@ -581,22 +575,32 @@ export async function PATCH(
                   slotsOfAppointment: {
                     create: {
                       slotStartTimeInUTC: slotTime,
-                      slotEndTimeInUTC: addHours(slotTime, (() => {
-                        // Find the corresponding class content for this session
-                        const classContents = classPlan.classPlan.classContents || [];
-                        const sessionIndex = selectedSlots.indexOf(slotTime);
-                        const content = classContents[sessionIndex % classContents.length];
-                        return content?.hoursAllotted || 1; // Use content-specific duration or default 1 hour
-                      })()),
+                      slotEndTimeInUTC: addHours(
+                        slotTime,
+                        (() => {
+                          // Find the corresponding class content for this session
+                          const classContents =
+                            classPlan.classPlan.classContents || [];
+                          const sessionIndex = selectedSlots.indexOf(slotTime);
+                          const content =
+                            classContents[sessionIndex % classContents.length];
+                          return content?.hoursAllotted || 1; // Use content-specific duration or default 1 hour
+                        })(),
+                      ),
                       isTentative: false,
                       user: {
                         connect: [
                           {
                             id: (() => {
-                              if (!classPlan.classPlan.consultantProfile?.user?.id) {
-                                throw new Error("Missing consultant user information");
+                              if (
+                                !classPlan.classPlan.consultantProfile?.user?.id
+                              ) {
+                                throw new Error(
+                                  "Missing consultant user information",
+                                );
                               }
-                              return classPlan.classPlan.consultantProfile.user.id;
+                              return classPlan.classPlan.consultantProfile.user
+                                .id;
                             })(),
                           },
                         ],

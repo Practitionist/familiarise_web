@@ -49,7 +49,7 @@ async function allocateSlotAuto(
 ): Promise<Date> {
   const { webinarPlan } = webinar;
   const { consultantProfile } = webinarPlan;
-  
+
   if (!consultantProfile) {
     throw new Error("Consultant profile not found");
   }
@@ -208,7 +208,7 @@ async function allocateSlotManual(
 ): Promise<Date> {
   const { webinarPlan } = webinar;
   const { consultantProfile } = webinarPlan;
-  
+
   if (!consultantProfile) {
     throw new Error("Consultant profile not found");
   }
@@ -341,10 +341,7 @@ export async function PATCH(
     });
 
     if (!webinar) {
-      return NextResponse.json(
-        { error: "Webinar not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
     }
 
     // Validate user information
@@ -426,11 +423,7 @@ export async function PATCH(
         } else if (body.isAuto) {
           selectedSlot = await allocateSlotAuto(webinar, tx);
         } else {
-          selectedSlot = await allocateSlotManual(
-            webinar,
-            body.slots!,
-            tx,
-          );
+          selectedSlot = await allocateSlotManual(webinar, body.slots!, tx);
         }
 
         // Create appointment for selected slot
@@ -443,14 +436,19 @@ export async function PATCH(
             slotsOfAppointment: {
               create: {
                 slotStartTimeInUTC: selectedSlot,
-                slotEndTimeInUTC: addHours(selectedSlot, webinar.webinarPlan.durationInHours),
+                slotEndTimeInUTC: addHours(
+                  selectedSlot,
+                  webinar.webinarPlan.durationInHours,
+                ),
                 isTentative: false,
                 user: {
                   connect: [
                     {
                       id: (() => {
                         if (!webinar.webinarPlan.consultantProfile?.user?.id) {
-                          throw new Error("Missing consultant user information");
+                          throw new Error(
+                            "Missing consultant user information",
+                          );
                         }
                         return webinar.webinarPlan.consultantProfile.user.id;
                       })(),

@@ -755,13 +755,25 @@ export function RequestSlotAllocationTab({
             {selectedRequest && (
               <TimingsCalendar
                 consultantId={consultantId}
-                eventType={selectedRequest.type.toLowerCase() as "consultation" | "subscription"}
+                eventType={
+                  selectedRequest.type.toLowerCase() as
+                    | "consultation"
+                    | "subscription"
+                }
                 eventId={selectedRequest.id}
                 onSlotSelect={handleSlotSelect}
                 selectedSlots={selectedSlots}
                 requiredSlots={selectedRequest.requiredSlots}
-                durationInMonths={selectedRequest.type === "SUBSCRIPTION" ? selectedRequest.durationInMonths : undefined}
-                callsPerWeek={selectedRequest.type === "SUBSCRIPTION" ? selectedRequest.callsPerWeek : undefined}
+                durationInMonths={
+                  selectedRequest.type === "SUBSCRIPTION"
+                    ? selectedRequest.durationInMonths
+                    : undefined
+                }
+                callsPerWeek={
+                  selectedRequest.type === "SUBSCRIPTION"
+                    ? selectedRequest.callsPerWeek
+                    : undefined
+                }
               />
             )}
             <DialogFooter>
@@ -782,9 +794,7 @@ export function RequestSlotAllocationTab({
                 onClick={handleManualAllocation}
                 disabled={!isQuotaMet || isAllocating}
               >
-                {isAllocating
-                  ? "Allocating..."
-                  : "Allocate Manual Slots"}
+                {isAllocating ? "Allocating..." : "Allocate Manual Slots"}
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -57,7 +57,7 @@ async function allocateSlotsAuto(
 ): Promise<Date[]> {
   const { subscriptionPlan, requestedBy } = subscription;
   const { consultantProfile } = subscriptionPlan;
-  
+
   if (!consultantProfile) {
     throw new Error("Consultant profile not found");
   }
@@ -288,11 +288,11 @@ async function allocateSlotsManual(
 ): Promise<Date[]> {
   const { subscriptionPlan, requestedBy } = subscription;
   const { consultantProfile } = subscriptionPlan;
-  
+
   if (!consultantProfile) {
     throw new Error("Consultant profile not found");
   }
-  
+
   const consultantTimezone = consultantProfile.user.currentTimezone || "UTC";
 
   // Validate number of slots
@@ -583,7 +583,10 @@ export async function PATCH(
                   slotsOfAppointment: {
                     create: {
                       slotStartTimeInUTC: slotTime,
-                      slotEndTimeInUTC: addHours(slotTime, subscription.subscriptionPlan.sessionDurationInHours),
+                      slotEndTimeInUTC: addHours(
+                        slotTime,
+                        subscription.subscriptionPlan.sessionDurationInHours,
+                      ),
                       isTentative: false,
                       user: {
                         connect: [

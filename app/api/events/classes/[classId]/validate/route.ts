@@ -64,15 +64,12 @@ export async function POST(
     });
 
     if (!classPlan) {
-      return NextResponse.json(
-        { error: "Class not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Class not found" }, { status: 404 });
     }
 
     const { classPlan: plan } = classPlan;
     const { consultantProfile } = plan;
-    
+
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
@@ -93,7 +90,7 @@ export async function POST(
 
     // Validate slots are not in the past
     const now = new Date();
-    const pastSlots = slotDates.filter(slot => slot <= now);
+    const pastSlots = slotDates.filter((slot) => slot <= now);
     if (pastSlots.length > 0) {
       return NextResponse.json(
         { error: "Cannot validate slots in the past" },
@@ -197,10 +194,12 @@ export async function POST(
 
         if (appointment.subscription) {
           appointmentType = "Subscription";
-          withUser = appointment.subscription.requestedBy?.user?.name || "Unknown";
+          withUser =
+            appointment.subscription.requestedBy?.user?.name || "Unknown";
         } else if (appointment.consultation) {
           appointmentType = "Consultation";
-          withUser = appointment.consultation.requestedBy?.user?.name || "Unknown";
+          withUser =
+            appointment.consultation.requestedBy?.user?.name || "Unknown";
         } else if (appointment.webinar) {
           appointmentType = "Webinar";
           withUser = appointment.webinar.webinarPlan?.title || "Unknown";
@@ -258,7 +257,7 @@ export async function POST(
     // Validate weekly distribution for classes (if applicable)
     if (plan.callsPerWeek) {
       const slotsByWeek = new Map<string, number>();
-      
+
       for (const slotDate of slotDates) {
         const weekStart = new Date(slotDate);
         weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Get start of week (Sunday)

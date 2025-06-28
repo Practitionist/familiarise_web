@@ -28,8 +28,10 @@ async function regenerateSlots() {
     console.log("🗑️  Deleting existing slots...");
     const deletedCustom = await prisma.slotOfAvailabilityCustom.deleteMany({});
     const deletedWeekly = await prisma.slotOfAvailabilityWeekly.deleteMany({});
-    
-    console.log(`Deleted ${deletedCustom.count} custom slots and ${deletedWeekly.count} weekly slots`);
+
+    console.log(
+      `Deleted ${deletedCustom.count} custom slots and ${deletedWeekly.count} weekly slots`,
+    );
 
     // Regenerate slots with fixed logic
     console.log("✨ Creating new slots with fixed logic...");
@@ -39,7 +41,7 @@ async function regenerateSlots() {
 
     // Verify no corrupted slots were created
     console.log("\n🔍 Verifying no corrupted slots were created...");
-    
+
     const corruptedWeekly = await prisma.slotOfAvailabilityWeekly.count({
       where: {
         slotEndTimeInUTC: {
@@ -59,9 +61,10 @@ async function regenerateSlots() {
     if (corruptedWeekly === 0 && corruptedCustom === 0) {
       console.log("✅ No corrupted slots found - regeneration successful!");
     } else {
-      console.warn(`⚠️  Found ${corruptedWeekly} corrupted weekly slots and ${corruptedCustom} corrupted custom slots`);
+      console.warn(
+        `⚠️  Found ${corruptedWeekly} corrupted weekly slots and ${corruptedCustom} corrupted custom slots`,
+      );
     }
-
   } catch (error) {
     console.error("❌ Error regenerating slots:", error);
     throw error;

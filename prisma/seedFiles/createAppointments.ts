@@ -418,7 +418,10 @@ async function createAppointmentBatch(
       actualEndTime.setUTCHours(endHours, endMinutes, 0, 0);
 
       // Check if this is an overnight slot (end hour < start hour OR same hour but end minute < start minute)
-      if (endHours < startHours || (endHours === startHours && endMinutes < startMinutes)) {
+      if (
+        endHours < startHours ||
+        (endHours === startHours && endMinutes < startMinutes)
+      ) {
         actualEndTime.setDate(actualEndTime.getDate() + 1);
       }
 

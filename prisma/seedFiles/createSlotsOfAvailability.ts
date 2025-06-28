@@ -14,17 +14,22 @@ const MAX_SLOTS_PER_DAY = 4;
 function validateSlot(startTime: Date, endTime: Date): boolean {
   // Check that end time is after start time
   if (endTime <= startTime) {
-    console.warn(`Invalid slot: end time ${endTime.toISOString()} is not after start time ${startTime.toISOString()}`);
+    console.warn(
+      `Invalid slot: end time ${endTime.toISOString()} is not after start time ${startTime.toISOString()}`,
+    );
     return false;
   }
-  
+
   // Check that slot duration is reasonable (max 24 hours)
-  const durationHours = (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
+  const durationHours =
+    (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
   if (durationHours > 24) {
-    console.warn(`Invalid slot: duration ${durationHours} hours exceeds 24 hours`);
+    console.warn(
+      `Invalid slot: duration ${durationHours} hours exceeds 24 hours`,
+    );
     return false;
   }
-  
+
   return true;
 }
 
@@ -136,13 +141,18 @@ export async function createSlotsOfAvailability(
             endTime.setUTCHours(endHour, endMinute, 0, 0);
 
             // Check if this is an overnight slot (end hour < start hour OR same hour but end minute < start minute)
-            if (endHour < startHour || (endHour === startHour && endMinute < startMinute)) {
+            if (
+              endHour < startHour ||
+              (endHour === startHour && endMinute < startMinute)
+            ) {
               endTime.setDate(endTime.getDate() + 1);
             }
 
             // Validate the slot before creating it
             if (!validateSlot(startTime, endTime)) {
-              console.warn(`Skipping invalid weekly slot for consultant ${consultant.consultantProfile.id}, day ${dayOfWeek}`);
+              console.warn(
+                `Skipping invalid weekly slot for consultant ${consultant.consultantProfile.id}, day ${dayOfWeek}`,
+              );
               continue;
             }
 
@@ -153,7 +163,8 @@ export async function createSlotsOfAvailability(
                 slotStartTimeInUTC: startTime,
                 // If slot crosses midnight, end day is next day
                 dayOfWeekforEndTimeInUTC:
-                  endHour < startHour || (endHour === startHour && endMinute < startMinute)
+                  endHour < startHour ||
+                  (endHour === startHour && endMinute < startMinute)
                     ? daysOfWeek[(daysOfWeek.indexOf(dayOfWeek) + 1) % 7]
                     : dayOfWeek,
                 slotEndTimeInUTC: endTime,
@@ -185,13 +196,18 @@ export async function createSlotsOfAvailability(
             endTime.setUTCHours(endHour, endMinute, 0, 0);
 
             // Check if this is an overnight slot (end hour < start hour OR same hour but end minute < start minute)
-            if (endHour < startHour || (endHour === startHour && endMinute < startMinute)) {
+            if (
+              endHour < startHour ||
+              (endHour === startHour && endMinute < startMinute)
+            ) {
               endTime.setDate(endTime.getDate() + 1);
             }
 
             // Validate the slot before creating it
             if (!validateSlot(startTime, endTime)) {
-              console.warn(`Skipping invalid custom slot for consultant ${consultant.consultantProfile.id}, date ${date.toISOString()}`);
+              console.warn(
+                `Skipping invalid custom slot for consultant ${consultant.consultantProfile.id}, date ${date.toISOString()}`,
+              );
               continue;
             }
 

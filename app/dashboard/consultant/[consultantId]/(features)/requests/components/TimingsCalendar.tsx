@@ -25,7 +25,7 @@ export function TimingsCalendar({
 }: TimingsCalendarProps) {
   // Convert string slots to TimeSlot objects for the unified calendar
   const convertToTimeSlots = (slotStrings: string[]): TimeSlot[] => {
-    return slotStrings.map(slotString => {
+    return slotStrings.map((slotString) => {
       const startTime = new Date(slotString);
       const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // 30 minutes later
       return {
@@ -39,11 +39,10 @@ export function TimingsCalendar({
 
   const handleSlotsSelected = (slots: TimeSlot[]) => {
     // Convert TimeSlot objects back to ISO strings for the parent component
-    slots.forEach(slot => {
+    slots.forEach((slot) => {
       onSlotSelect(slot.startTime.toISOString());
     });
   };
-
 
   return (
     <UnifiedCalendar

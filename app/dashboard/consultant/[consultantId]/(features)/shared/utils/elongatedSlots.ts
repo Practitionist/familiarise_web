@@ -10,27 +10,31 @@ import { TimeSlot } from "./calendarUtils";
  */
 export async function fetchSessionDurationFromPlan(
   eventType: "consultation" | "subscription" | "webinar" | "class",
-  eventId: string
+  eventId: string,
 ): Promise<number> {
   try {
     const endpoint = getEventEndpoint(eventType, eventId);
     console.log(`[DEBUG] Fetching from endpoint: ${endpoint}`);
-    
+
     const response = await fetch(endpoint);
     console.log(`[DEBUG] Response status: ${response.status}`);
-    
+
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`[DEBUG] Response error:`, errorText);
-      throw new Error(`Failed to fetch ${eventType} plan: ${response.status} ${errorText}`);
+      throw new Error(
+        `Failed to fetch ${eventType} plan: ${response.status} ${errorText}`,
+      );
     }
-    
+
     const data = await response.json();
     console.log(`[DEBUG] Response data keys:`, Object.keys(data));
     return extractSessionDuration(eventType, data);
   } catch (error) {
     console.error(`Failed to fetch session duration for ${eventType}:`, error);
-    throw new Error(`Unable to fetch required session duration for ${eventType}. Plan data is missing or invalid.`);
+    throw new Error(
+      `Unable to fetch required session duration for ${eventType}. Plan data is missing or invalid.`,
+    );
   }
 }
 
@@ -42,7 +46,7 @@ function getEventEndpoint(eventType: string, eventId: string): string {
     consultation: `/api/events/consultations/${eventId}`,
     subscription: `/api/events/subscriptions/${eventId}`,
     webinar: `/api/events/webinars/${eventId}`,
-    class: `/api/events/classes/${eventId}`
+    class: `/api/events/classes/${eventId}`,
   };
   return endpoints[eventType as keyof typeof endpoints];
 }
@@ -53,55 +57,65 @@ function getEventEndpoint(eventType: string, eventId: string): string {
 function extractSessionDuration(eventType: string, response: any): number {
   // Handle API response wrapper - extract actual data
   const data = response.data || response;
-  
+
   switch (eventType) {
     case "consultation":
       const consultationDuration = data.consultationPlan?.durationInHours;
       if (!consultationDuration || consultationDuration <= 0) {
-        throw new Error(`Consultation plan is missing required durationInHours. Received: ${JSON.stringify(data.consultationPlan)}`);
+        throw new Error(
+          `Consultation plan is missing required durationInHours. Received: ${JSON.stringify(data.consultationPlan)}`,
+        );
       }
       return consultationDuration;
-    
+
     case "subscription":
-      const subscriptionDuration = data.subscriptionPlan?.sessionDurationInHours;
+      const subscriptionDuration =
+        data.subscriptionPlan?.sessionDurationInHours;
       if (!subscriptionDuration || subscriptionDuration <= 0) {
-        throw new Error(`Subscription plan is missing required sessionDurationInHours. Received: ${JSON.stringify(data.subscriptionPlan)}`);
+        throw new Error(
+          `Subscription plan is missing required sessionDurationInHours. Received: ${JSON.stringify(data.subscriptionPlan)}`,
+        );
       }
       return subscriptionDuration;
-    
+
     case "webinar":
       const webinarDuration = data.webinarPlan?.durationInHours;
       if (!webinarDuration || webinarDuration <= 0) {
-        throw new Error(`Webinar plan is missing required durationInHours. Received: ${JSON.stringify(data.webinarPlan)}`);
+        throw new Error(
+          `Webinar plan is missing required durationInHours. Received: ${JSON.stringify(data.webinarPlan)}`,
+        );
       }
       return webinarDuration;
-    
+
     case "class":
       // For classes, calculate average from class contents
       const classContents = data.classPlan?.classContents || [];
       if (classContents.length === 0) {
-        throw new Error("Class plan is missing required classContents with hoursAllotted");
+        throw new Error(
+          "Class plan is missing required classContents with hoursAllotted",
+        );
       }
-      
+
       const totalHours = classContents.reduce((sum: number, content: any) => {
         if (!content.hoursAllotted || content.hoursAllotted <= 0) {
           throw new Error("Class content is missing required hoursAllotted");
         }
         return sum + content.hoursAllotted;
       }, 0);
-      
+
       return totalHours / classContents.length;
-    
+
     default:
       throw new Error(`Invalid event type: ${eventType}`);
   }
 }
 
-
 /**
  * Calculates number of 30-minute slots needed for session duration
  */
-export function calculateRequiredSlots30Min(sessionDurationInHours: number): number {
+export function calculateRequiredSlots30Min(
+  sessionDurationInHours: number,
+): number {
   return Math.ceil(sessionDurationInHours * 2); // 2 slots per hour (30-min each)
 }
 
@@ -110,20 +124,23 @@ export function calculateRequiredSlots30Min(sessionDurationInHours: number): num
  */
 export function groupConsecutiveSlots(slots: TimeSlot[]): TimeSlot[][] {
   if (slots.length === 0) return [];
-  
+
   // Sort slots by start time
-  const sortedSlots = [...slots].sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
-  
+  const sortedSlots = [...slots].sort(
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+  );
+
   const groups: TimeSlot[][] = [];
   let currentGroup: TimeSlot[] = [sortedSlots[0]];
-  
+
   for (let i = 1; i < sortedSlots.length; i++) {
     const currentSlot = sortedSlots[i];
     const lastSlotInGroup = currentGroup[currentGroup.length - 1];
-    
+
     // Check if current slot is consecutive (starts when previous ends)
-    const isConsecutive = currentSlot.startTime.getTime() === lastSlotInGroup.endTime.getTime();
-    
+    const isConsecutive =
+      currentSlot.startTime.getTime() === lastSlotInGroup.endTime.getTime();
+
     if (isConsecutive) {
       currentGroup.push(currentSlot);
     } else {
@@ -131,7 +148,7 @@ export function groupConsecutiveSlots(slots: TimeSlot[]): TimeSlot[][] {
       currentGroup = [currentSlot];
     }
   }
-  
+
   groups.push(currentGroup);
   return groups;
 }
@@ -143,18 +160,22 @@ export function createElongatedSlot(consecutiveSlots: TimeSlot[]): TimeSlot {
   if (consecutiveSlots.length === 0) {
     throw new Error("Cannot create elongated slot from empty array");
   }
-  
-  const sortedSlots = [...consecutiveSlots].sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
-  
+
+  const sortedSlots = [...consecutiveSlots].sort(
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+  );
+
   return {
     startTime: sortedSlots[0].startTime,
     endTime: sortedSlots[sortedSlots.length - 1].endTime,
-    isAvailable: sortedSlots.every(slot => slot.isAvailable),
-    isBooked: sortedSlots.some(slot => slot.isBooked),
-    isPartiallyBooked: sortedSlots.some(slot => slot.isPartiallyBooked),
-    isConflicting: sortedSlots.some(slot => slot.isConflicting),
+    isAvailable: sortedSlots.every((slot) => slot.isAvailable),
+    isBooked: sortedSlots.some((slot) => slot.isBooked),
+    isPartiallyBooked: sortedSlots.some((slot) => slot.isPartiallyBooked),
+    isConflicting: sortedSlots.some((slot) => slot.isConflicting),
     originalSlot: sortedSlots[0].originalSlot, // Keep reference to first slot
-    appointmentDetails: sortedSlots.flatMap(slot => slot.appointmentDetails || [])
+    appointmentDetails: sortedSlots.flatMap(
+      (slot) => slot.appointmentDetails || [],
+    ),
   };
 }
 
@@ -164,39 +185,41 @@ export function createElongatedSlot(consecutiveSlots: TimeSlot[]): TimeSlot {
 export function validateElongatedSlotSelection(
   selectedSlots: TimeSlot[],
   requiredSessionDurationInHours: number,
-  allowPartialSessions: boolean = false
+  allowPartialSessions: boolean = false,
 ): { isValid: boolean; errorMessage?: string; validGroups: TimeSlot[][] } {
   const groups = groupConsecutiveSlots(selectedSlots);
-  const requiredSlots30Min = calculateRequiredSlots30Min(requiredSessionDurationInHours);
-  
-  const validGroups = groups.filter(group => {
+  const requiredSlots30Min = calculateRequiredSlots30Min(
+    requiredSessionDurationInHours,
+  );
+
+  const validGroups = groups.filter((group) => {
     if (allowPartialSessions) {
       return group.length > 0 && group.length <= requiredSlots30Min;
     }
     return group.length === requiredSlots30Min;
   });
-  
+
   if (validGroups.length === 0) {
     return {
       isValid: false,
-      errorMessage: `Please select ${requiredSlots30Min} consecutive 30-minute slots (${requiredSessionDurationInHours} hour${requiredSessionDurationInHours !== 1 ? 's' : ''} total)`,
-      validGroups: []
+      errorMessage: `Please select ${requiredSlots30Min} consecutive 30-minute slots (${requiredSessionDurationInHours} hour${requiredSessionDurationInHours !== 1 ? "s" : ""} total)`,
+      validGroups: [],
     };
   }
-  
+
   // Check for invalid group sizes
-  const invalidGroups = groups.filter(group => !validGroups.includes(group));
+  const invalidGroups = groups.filter((group) => !validGroups.includes(group));
   if (invalidGroups.length > 0) {
     return {
       isValid: false,
       errorMessage: `Some selected slots don't form valid ${requiredSessionDurationInHours}-hour sessions. Please select ${requiredSlots30Min} consecutive slots per session.`,
-      validGroups
+      validGroups,
     };
   }
-  
+
   return {
     isValid: true,
-    validGroups
+    validGroups,
   };
 }
 
@@ -212,12 +235,12 @@ export function areConsecutiveSlots(slot1: TimeSlot, slot2: TimeSlot): boolean {
  */
 export function getElongatedSlotStyling(
   slotIndex: number,
-  groupSize: number
+  groupSize: number,
 ): { borderRadius: string; borderWidth: string } {
   if (groupSize === 1) {
     return { borderRadius: "4px", borderWidth: "2px" };
   }
-  
+
   if (slotIndex === 0) {
     // First slot in group - rounded top
     return { borderRadius: "4px 4px 0 0", borderWidth: "2px 2px 1px 2px" };
@@ -251,19 +274,21 @@ export function formatElongatedSlotDuration(durationInHours: number): string {
 /**
  * Converts elongated slots back to 30-minute slots for API submission
  */
-export function convertElongatedSlotsTo30MinSlots(elongatedSlots: TimeSlot[]): string[] {
+export function convertElongatedSlotsTo30MinSlots(
+  elongatedSlots: TimeSlot[],
+): string[] {
   const slots30Min: string[] = [];
-  
-  elongatedSlots.forEach(elongatedSlot => {
+
+  elongatedSlots.forEach((elongatedSlot) => {
     const startTime = new Date(elongatedSlot.startTime);
     const endTime = new Date(elongatedSlot.endTime);
-    
+
     let currentTime = new Date(startTime);
     while (currentTime < endTime) {
       slots30Min.push(currentTime.toISOString());
       currentTime = new Date(currentTime.getTime() + 30 * 60 * 1000); // Add 30 minutes
     }
   });
-  
+
   return slots30Min;
 }

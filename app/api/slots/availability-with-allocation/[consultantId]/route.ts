@@ -136,7 +136,9 @@ export async function GET(
       .filter((slot) => {
         // Filter out any remaining invalid slots where end time <= start time
         if (slot.slotEndTimeInUTC <= slot.slotStartTimeInUTC) {
-          console.warn(`Filtering out invalid weekly slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`);
+          console.warn(
+            `Filtering out invalid weekly slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`,
+          );
           return false;
         }
         return true;
@@ -153,7 +155,9 @@ export async function GET(
       .filter((slot) => {
         // Filter out any remaining invalid slots where end time <= start time
         if (slot.slotEndTimeInUTC <= slot.slotStartTimeInUTC) {
-          console.warn(`Filtering out invalid custom slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`);
+          console.warn(
+            `Filtering out invalid custom slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`,
+          );
           return false;
         }
         return true;

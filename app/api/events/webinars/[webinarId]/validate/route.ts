@@ -59,15 +59,12 @@ export async function POST(
     });
 
     if (!webinar) {
-      return NextResponse.json(
-        { error: "Webinar not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
     }
 
     const { webinarPlan } = webinar;
     const { consultantProfile } = webinarPlan;
-    
+
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
@@ -175,8 +172,9 @@ export async function POST(
 
     // Process conflicts
     for (const appointment of existingAppointments) {
-      const conflictingSlots = appointment.slotsOfAppointment.filter((slot) =>
-        slotDate.toISOString() === slot.slotStartTimeInUTC.toISOString(),
+      const conflictingSlots = appointment.slotsOfAppointment.filter(
+        (slot) =>
+          slotDate.toISOString() === slot.slotStartTimeInUTC.toISOString(),
       );
 
       for (const slot of conflictingSlots) {
@@ -185,10 +183,12 @@ export async function POST(
 
         if (appointment.subscription) {
           appointmentType = "Subscription";
-          withUser = appointment.subscription.requestedBy?.user?.name || "Unknown";
+          withUser =
+            appointment.subscription.requestedBy?.user?.name || "Unknown";
         } else if (appointment.consultation) {
           appointmentType = "Consultation";
-          withUser = appointment.consultation.requestedBy?.user?.name || "Unknown";
+          withUser =
+            appointment.consultation.requestedBy?.user?.name || "Unknown";
         } else if (appointment.webinar) {
           appointmentType = "Webinar";
           withUser = appointment.webinar.webinarPlan?.title || "Unknown";
@@ -242,7 +242,10 @@ export async function POST(
     }
 
     // Valid slots are those without conflicts and within availability
-    if (result.conflicts.length === 0 && result.outsideAvailability.length === 0) {
+    if (
+      result.conflicts.length === 0 &&
+      result.outsideAvailability.length === 0
+    ) {
       result.validSlots = [slotDate.toISOString()];
     }
 

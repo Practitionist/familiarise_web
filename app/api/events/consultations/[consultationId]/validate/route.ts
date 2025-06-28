@@ -64,7 +64,7 @@ export async function POST(
 
     const { consultationPlan, requestedBy } = consultation;
     const { consultantProfile } = consultationPlan;
-    
+
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },

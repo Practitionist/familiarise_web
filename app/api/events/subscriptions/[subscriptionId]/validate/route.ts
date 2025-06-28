@@ -64,7 +64,7 @@ export async function POST(
 
     const { subscriptionPlan, requestedBy } = subscription;
     const { consultantProfile } = subscriptionPlan;
-    
+
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },

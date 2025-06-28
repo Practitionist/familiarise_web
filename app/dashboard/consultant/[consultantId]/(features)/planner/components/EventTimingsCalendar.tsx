@@ -39,7 +39,8 @@ export function EventTimingsCalendar({
   const consultantId = params.consultantId?.toString() || "";
   // For elongated slots, we don't need to calculate specific slot counts
   // The UnifiedCalendar will handle session duration requirements
-  const requiredSlots = eventType === "webinar" ? 1 : callsPerWeek * durationInMonths;
+  const requiredSlots =
+    eventType === "webinar" ? 1 : callsPerWeek * durationInMonths;
 
   const handleAllocationComplete = (result: any) => {
     toast({
@@ -59,10 +60,10 @@ export function EventTimingsCalendar({
           <DialogDescription>
             {eventType === "webinar"
               ? "Select consecutive time slots matching your webinar duration."
-              : `Create ${requiredSlots} complete session${requiredSlots !== 1 ? 's' : ''} by selecting 5 consecutive time slots for each 2.5-hour session.`}
+              : `Create ${requiredSlots} complete session${requiredSlots !== 1 ? "s" : ""} by selecting 5 consecutive time slots for each 2.5-hour session.`}
           </DialogDescription>
         </DialogHeader>
-        
+
         <UnifiedCalendar
           consultantId={consultantId}
           eventType={eventType}
@@ -74,7 +75,7 @@ export function EventTimingsCalendar({
           showAllocationButtons={true}
           className="min-h-[500px]"
         />
-        
+
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Cancel

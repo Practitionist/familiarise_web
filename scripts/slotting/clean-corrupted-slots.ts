@@ -8,27 +8,34 @@ async function cleanCorruptedSlots() {
 
   try {
     // Find corrupted weekly slots
-    const corruptedWeeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
-      where: {
-        slotEndTimeInUTC: {
-          lte: prisma.slotOfAvailabilityWeekly.fields.slotStartTimeInUTC,
+    const corruptedWeeklySlots = await prisma.slotOfAvailabilityWeekly.findMany(
+      {
+        where: {
+          slotEndTimeInUTC: {
+            lte: prisma.slotOfAvailabilityWeekly.fields.slotStartTimeInUTC,
+          },
         },
       },
-    });
+    );
 
     // Find corrupted custom slots
-    const corruptedCustomSlots = await prisma.slotOfAvailabilityCustom.findMany({
-      where: {
-        slotEndTimeInUTC: {
-          lte: prisma.slotOfAvailabilityCustom.fields.slotStartTimeInUTC,
+    const corruptedCustomSlots = await prisma.slotOfAvailabilityCustom.findMany(
+      {
+        where: {
+          slotEndTimeInUTC: {
+            lte: prisma.slotOfAvailabilityCustom.fields.slotStartTimeInUTC,
+          },
         },
       },
-    });
+    );
 
     console.log(`Found ${corruptedWeeklySlots.length} corrupted weekly slots`);
     console.log(`Found ${corruptedCustomSlots.length} corrupted custom slots`);
 
-    if (corruptedWeeklySlots.length === 0 && corruptedCustomSlots.length === 0) {
+    if (
+      corruptedWeeklySlots.length === 0 &&
+      corruptedCustomSlots.length === 0
+    ) {
       console.log("✅ No corrupted slots found!");
       return;
     }
@@ -79,7 +86,7 @@ async function cleanCorruptedSlots() {
 
     // Also clean up any appointments that might reference corrupted slots
     console.log("\n🔍 Checking for appointments with corrupted slot times...");
-    
+
     const corruptedAppointmentSlots = await prisma.slotOfAppointment.findMany({
       where: {
         slotEndTimeInUTC: {
@@ -89,21 +96,26 @@ async function cleanCorruptedSlots() {
     });
 
     if (corruptedAppointmentSlots.length > 0) {
-      console.log(`Found ${corruptedAppointmentSlots.length} corrupted appointment slots`);
-      
+      console.log(
+        `Found ${corruptedAppointmentSlots.length} corrupted appointment slots`,
+      );
+
       // Delete corrupted appointment slots
-      const deletedAppointmentSlots = await prisma.slotOfAppointment.deleteMany({
-        where: {
-          id: {
-            in: corruptedAppointmentSlots.map((slot) => slot.id),
+      const deletedAppointmentSlots = await prisma.slotOfAppointment.deleteMany(
+        {
+          where: {
+            id: {
+              in: corruptedAppointmentSlots.map((slot) => slot.id),
+            },
           },
         },
-      });
-      console.log(`Deleted ${deletedAppointmentSlots.count} corrupted appointment slots`);
+      );
+      console.log(
+        `Deleted ${deletedAppointmentSlots.count} corrupted appointment slots`,
+      );
     } else {
       console.log("✅ No corrupted appointment slots found!");
     }
-
   } catch (error) {
     console.error("❌ Error cleaning corrupted slots:", error);
     throw error;

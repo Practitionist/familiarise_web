@@ -54,12 +54,16 @@ export class AllocationAlgorithms {
       }
 
       // For subscriptions/classes, validate distribution
-      if (options.eventType === "subscription" || options.eventType === "class") {
+      if (
+        options.eventType === "subscription" ||
+        options.eventType === "class"
+      ) {
         if (!options.callsPerWeek) {
           return {
             success: false,
             selectedSlots: [],
-            error: "Calls per week is required for subscription/class allocation",
+            error:
+              "Calls per week is required for subscription/class allocation",
           };
         }
 
@@ -101,7 +105,8 @@ export class AllocationAlgorithms {
       return {
         success: false,
         selectedSlots: [],
-        error: error instanceof Error ? error.message : "Manual allocation failed",
+        error:
+          error instanceof Error ? error.message : "Manual allocation failed",
       };
     }
   }
@@ -122,7 +127,10 @@ export class AllocationAlgorithms {
 
       let selectedSlots: TimeSlot[] = [];
 
-      if (options.eventType === "consultation" || options.eventType === "webinar") {
+      if (
+        options.eventType === "consultation" ||
+        options.eventType === "webinar"
+      ) {
         // For single-slot events, find the earliest available slot
         selectedSlots = this.findEarliestAvailableSlots(availableSlots, 1);
       } else {
@@ -168,7 +176,8 @@ export class AllocationAlgorithms {
       return {
         success: false,
         selectedSlots: [],
-        error: error instanceof Error ? error.message : "Auto allocation failed",
+        error:
+          error instanceof Error ? error.message : "Auto allocation failed",
       };
     }
   }
@@ -203,7 +212,10 @@ export class AllocationAlgorithms {
       }
 
       // Validate requested slots for consultation/subscription
-      if (options.eventType === "consultation" || options.eventType === "subscription") {
+      if (
+        options.eventType === "consultation" ||
+        options.eventType === "subscription"
+      ) {
         const validationResult = await AllocationService.validateSlots(
           options.eventType,
           options.eventId,
@@ -219,11 +231,15 @@ export class AllocationAlgorithms {
         }
 
         // Check for conflicts
-        if (validationResult.data?.conflicts && validationResult.data.conflicts.length > 0) {
+        if (
+          validationResult.data?.conflicts &&
+          validationResult.data.conflicts.length > 0
+        ) {
           return {
             success: false,
             selectedSlots: [],
-            error: "Some requested slots have conflicts with existing appointments",
+            error:
+              "Some requested slots have conflicts with existing appointments",
           };
         }
       }
@@ -266,10 +282,12 @@ export class AllocationAlgorithms {
     count: number,
   ): TimeSlot[] {
     const now = new Date();
-    
+
     // Filter out past slots and sort by time
     const futureSlots = availableSlots
-      .filter((slot) => slot.startTime > now && slot.isAvailable && !slot.isBooked)
+      .filter(
+        (slot) => slot.startTime > now && slot.isAvailable && !slot.isBooked,
+      )
       .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
     return futureSlots.slice(0, count);
@@ -286,7 +304,9 @@ export class AllocationAlgorithms {
   ): TimeSlot[] {
     const now = new Date();
     const futureSlots = availableSlots
-      .filter((slot) => slot.startTime > now && slot.isAvailable && !slot.isBooked)
+      .filter(
+        (slot) => slot.startTime > now && slot.isAvailable && !slot.isBooked,
+      )
       .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
     const selectedSlots: TimeSlot[] = [];
@@ -297,7 +317,7 @@ export class AllocationAlgorithms {
     futureSlots.forEach((slot) => {
       const weekStart = this.getWeekStart(slot.startTime);
       const weekKey = weekStart.toISOString();
-      
+
       if (!slotsByWeek.has(weekKey)) {
         slotsByWeek.set(weekKey, []);
       }
@@ -315,11 +335,14 @@ export class AllocationAlgorithms {
       }
 
       const weekSlots = slotsByWeek.get(weekKey)!;
-      const slotsNeededThisWeek = Math.min(callsPerWeek, totalSlots - selectedSlots.length);
-      
+      const slotsNeededThisWeek = Math.min(
+        callsPerWeek,
+        totalSlots - selectedSlots.length,
+      );
+
       // Sort slots by preference (earlier in the day, specific days)
       const preferredSlots = this.sortSlotsByPreference(weekSlots);
-      
+
       // Take the best slots for this week
       const selectedThisWeek = preferredSlots.slice(0, slotsNeededThisWeek);
       selectedSlots.push(...selectedThisWeek);
@@ -338,7 +361,7 @@ export class AllocationAlgorithms {
       // Prefer weekdays over weekends
       const aIsWeekday = this.isWeekday(a.startTime);
       const bIsWeekday = this.isWeekday(b.startTime);
-      
+
       if (aIsWeekday !== bIsWeekday) {
         return aIsWeekday ? -1 : 1;
       }
@@ -346,10 +369,10 @@ export class AllocationAlgorithms {
       // Prefer earlier times (9 AM - 5 PM are most preferred)
       const aHour = a.startTime.getHours();
       const bHour = b.startTime.getHours();
-      
+
       const aScore = this.getTimeScore(aHour);
       const bScore = this.getTimeScore(bHour);
-      
+
       if (aScore !== bScore) {
         return bScore - aScore; // Higher score is better
       }

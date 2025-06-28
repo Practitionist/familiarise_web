@@ -88,7 +88,7 @@ export function processWeeklySlots(
         // Convert the stored UTC times to the target timezone to get the local time pattern
         const startTimeLocal = toZonedTime(slot.slotStartTimeInUTC, timezone);
         const endTimeLocal = toZonedTime(slot.slotEndTimeInUTC, timezone);
-        
+
         const startHour = startTimeLocal.getHours();
         const startMinute = startTimeLocal.getMinutes();
         const endHour = endTimeLocal.getHours();
@@ -103,7 +103,10 @@ export function processWeeklySlots(
         endDateTime.setHours(endHour, endMinute, 0, 0);
 
         // Handle overnight slots: if end hour < start hour, the slot crosses midnight
-        if (endHour < startHour || (endHour === startHour && endMinute < startMinute)) {
+        if (
+          endHour < startHour ||
+          (endHour === startHour && endMinute < startMinute)
+        ) {
           endDateTime.setDate(endDateTime.getDate() + 1);
         }
 

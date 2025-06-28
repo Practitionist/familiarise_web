@@ -1,5 +1,11 @@
 import { TCustomSlot, TWeeklySlot } from "@/types/slots";
-import { SlotOfAvailabilityCustom, SlotOfAvailabilityWeekly, DayOfWeek, ScheduleType, AppointmentsType } from "@prisma/client";
+import {
+  SlotOfAvailabilityCustom,
+  SlotOfAvailabilityWeekly,
+  DayOfWeek,
+  ScheduleType,
+  AppointmentsType,
+} from "@prisma/client";
 import { startOfWeek } from "date-fns";
 
 // Core types for the unified calendar system
@@ -35,13 +41,13 @@ export interface Appointment {
   slotsOfAppointment?: AppointmentSlot[];
   webinar?: { status: string; webinarPlan?: { title: string } };
   class?: { status: string; classPlan?: { title: string } };
-  consultation?: { 
-    requestStatus: string; 
+  consultation?: {
+    requestStatus: string;
     consultationPlan?: { title: string };
     requestedBy?: { user?: { name: string } };
   };
-  subscription?: { 
-    requestStatus: string; 
+  subscription?: {
+    requestStatus: string;
     subscriptionPlan?: { title: string };
     requestedBy?: { user?: { name: string } };
   };
@@ -151,7 +157,8 @@ export function mapWeeklySlots(
         const nextInterval = new Date(currentHour);
         nextInterval.setMinutes(currentHour.getMinutes() + intervalMinutes);
 
-        const endTimeForSlot = nextInterval > slotEndTime ? slotEndTime : nextInterval;
+        const endTimeForSlot =
+          nextInterval > slotEndTime ? slotEndTime : nextInterval;
 
         slots.push({
           startTime: new Date(currentHour),
@@ -267,10 +274,14 @@ export function getSlotStatus(
         let withUser = "";
 
         if (appointment.appointmentType === AppointmentsType.CONSULTATION) {
-          title = appointment.consultation?.consultationPlan?.title || "Consultation";
+          title =
+            appointment.consultation?.consultationPlan?.title || "Consultation";
           withUser = appointment.consultation?.requestedBy?.user?.name || "";
-        } else if (appointment.appointmentType === AppointmentsType.SUBSCRIPTION) {
-          title = appointment.subscription?.subscriptionPlan?.title || "Subscription";
+        } else if (
+          appointment.appointmentType === AppointmentsType.SUBSCRIPTION
+        ) {
+          title =
+            appointment.subscription?.subscriptionPlan?.title || "Subscription";
           withUser = appointment.subscription?.requestedBy?.user?.name || "";
         } else if (appointment.appointmentType === AppointmentsType.WEBINAR) {
           title = appointment.webinar?.webinarPlan?.title || "Webinar";
@@ -286,7 +297,10 @@ export function getSlotStatus(
         });
 
         // Determine booking status
-        if (slotStart.getTime() === apptStart.getTime() && slotEnd.getTime() === apptEnd.getTime()) {
+        if (
+          slotStart.getTime() === apptStart.getTime() &&
+          slotEnd.getTime() === apptEnd.getTime()
+        ) {
           isBooked = true;
         } else {
           isPartiallyBooked = true;
@@ -381,7 +395,9 @@ export function calculateRequiredSlots(
     case "subscription":
     case "class":
       if (!durationInMonths || !callsPerWeek) {
-        throw new Error("Duration and calls per week are required for subscription/class");
+        throw new Error(
+          "Duration and calls per week are required for subscription/class",
+        );
       }
       return durationInMonths * 4 * callsPerWeek; // 4 weeks per month
 
@@ -437,9 +453,13 @@ export function validateSlotDistribution(
 export function getAppointmentTitle(appointment: Appointment): string {
   switch (appointment.appointmentType) {
     case AppointmentsType.CONSULTATION:
-      return appointment.consultation?.consultationPlan?.title || "Consultation";
+      return (
+        appointment.consultation?.consultationPlan?.title || "Consultation"
+      );
     case AppointmentsType.SUBSCRIPTION:
-      return appointment.subscription?.subscriptionPlan?.title || "Subscription";
+      return (
+        appointment.subscription?.subscriptionPlan?.title || "Subscription"
+      );
     case AppointmentsType.WEBINAR:
       return appointment.webinar?.webinarPlan?.title || "Webinar";
     case AppointmentsType.CLASS:

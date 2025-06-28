@@ -57,10 +57,13 @@ export function RequestedSlotsDialog({
       setLoading(true);
       setError(null);
 
-      const eventType = requestType === AppointmentsType.SUBSCRIPTION ? "subscription" : "consultation";
-      
+      const eventType =
+        requestType === AppointmentsType.SUBSCRIPTION
+          ? "subscription"
+          : "consultation";
+
       // Convert requested slots to TimeSlot objects
-      const timeSlots: TimeSlot[] = requestedSlots.map(slotString => {
+      const timeSlots: TimeSlot[] = requestedSlots.map((slotString) => {
         const startTime = new Date(slotString);
         const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // 30 minutes later
         return {
@@ -74,7 +77,7 @@ export function RequestedSlotsDialog({
       const validationResponse = await AllocationService.validateSlots(
         eventType,
         requestId,
-        timeSlots
+        timeSlots,
       );
 
       if (!validationResponse.success) {

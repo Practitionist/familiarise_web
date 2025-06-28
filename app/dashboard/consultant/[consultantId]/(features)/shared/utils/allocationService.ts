@@ -46,13 +46,16 @@ export class AllocationService {
     request: AllocationRequest,
   ): Promise<AllocationResponse> {
     try {
-      const response = await fetch(`/api/events/consultations/${consultationId}/allocate`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/events/consultations/${consultationId}/allocate`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(request),
         },
-        body: JSON.stringify(request),
-      });
+      );
 
       const data = await response.json();
 
@@ -71,7 +74,8 @@ export class AllocationService {
       console.error("Error allocating consultation slots:", error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Network error occurred",
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
       };
     }
   }
@@ -84,13 +88,16 @@ export class AllocationService {
     slots: string[],
   ): Promise<ValidationResponse> {
     try {
-      const response = await fetch(`/api/events/consultations/${consultationId}/validate`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/events/consultations/${consultationId}/validate`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ slots }),
         },
-        body: JSON.stringify({ slots }),
-      });
+      );
 
       const data = await response.json();
 
@@ -109,7 +116,8 @@ export class AllocationService {
       console.error("Error validating consultation slots:", error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Network error occurred",
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
       };
     }
   }
@@ -122,13 +130,16 @@ export class AllocationService {
     request: AllocationRequest,
   ): Promise<AllocationResponse> {
     try {
-      const response = await fetch(`/api/events/subscriptions/${subscriptionId}/allocate`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/events/subscriptions/${subscriptionId}/allocate`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(request),
         },
-        body: JSON.stringify(request),
-      });
+      );
 
       const data = await response.json();
 
@@ -147,7 +158,8 @@ export class AllocationService {
       console.error("Error allocating subscription slots:", error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Network error occurred",
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
       };
     }
   }
@@ -160,13 +172,16 @@ export class AllocationService {
     slots: string[],
   ): Promise<ValidationResponse> {
     try {
-      const response = await fetch(`/api/events/subscriptions/${subscriptionId}/validate`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/events/subscriptions/${subscriptionId}/validate`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ slots }),
         },
-        body: JSON.stringify({ slots }),
-      });
+      );
 
       const data = await response.json();
 
@@ -185,7 +200,8 @@ export class AllocationService {
       console.error("Error validating subscription slots:", error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Network error occurred",
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
       };
     }
   }
@@ -198,13 +214,16 @@ export class AllocationService {
     slots: string[],
   ): Promise<AllocationResponse> {
     try {
-      const response = await fetch(`/api/events/webinars/${webinarId}/allocate`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/events/webinars/${webinarId}/allocate`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ slots }),
         },
-        body: JSON.stringify({ slots }),
-      });
+      );
 
       const data = await response.json();
 
@@ -223,7 +242,8 @@ export class AllocationService {
       console.error("Error allocating webinar slots:", error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Network error occurred",
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
       };
     }
   }
@@ -261,7 +281,8 @@ export class AllocationService {
       console.error("Error allocating class slots:", error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Network error occurred",
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
       };
     }
   }
@@ -340,7 +361,7 @@ export class AllocationService {
   static async fetchConsultantData(consultantId: string) {
     try {
       const response = await fetch(`/api/user/consultants/${consultantId}`);
-      
+
       if (!response.ok) {
         throw new Error("Failed to fetch consultant data");
       }
@@ -359,12 +380,20 @@ export class AllocationService {
   static async fetchAvailabilitySlots(consultantId: string) {
     try {
       const [weeklyResponse, customResponse] = await Promise.all([
-        fetch(`/api/slots/availability/weekly?consultantProfileId=${consultantId}`),
-        fetch(`/api/slots/availability/custom?consultantProfileId=${consultantId}`),
+        fetch(
+          `/api/slots/availability/weekly?consultantProfileId=${consultantId}`,
+        ),
+        fetch(
+          `/api/slots/availability/custom?consultantProfileId=${consultantId}`,
+        ),
       ]);
 
-      const weeklyData = weeklyResponse.ok ? await weeklyResponse.json() : { data: [] };
-      const customData = customResponse.ok ? await customResponse.json() : { data: [] };
+      const weeklyData = weeklyResponse.ok
+        ? await weeklyResponse.json()
+        : { data: [] };
+      const customData = customResponse.ok
+        ? await customResponse.json()
+        : { data: [] };
 
       return {
         weekly: weeklyData.data || [],
@@ -381,8 +410,10 @@ export class AllocationService {
    */
   static async fetchAppointments(consultantId: string) {
     try {
-      const response = await fetch(`/api/slots/appointments?consultantProfileId=${consultantId}`);
-      
+      const response = await fetch(
+        `/api/slots/appointments?consultantProfileId=${consultantId}`,
+      );
+
       if (!response.ok) {
         throw new Error("Failed to fetch appointments");
       }
@@ -398,7 +429,10 @@ export class AllocationService {
   /**
    * Fetches specific event slots
    */
-  static async fetchEventSlots(eventType: "webinar" | "class", eventId: string) {
+  static async fetchEventSlots(
+    eventType: "webinar" | "class",
+    eventId: string,
+  ) {
     try {
       const params = new URLSearchParams({
         type: eventType.toUpperCase(),
@@ -411,7 +445,7 @@ export class AllocationService {
       }
 
       const response = await fetch(`/api/slots/appointments?${params}`);
-      
+
       if (!response.ok) {
         throw new Error("Failed to fetch event slots");
       }
