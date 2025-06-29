@@ -1,6 +1,13 @@
 import { TConsultantProfile } from "@/types/consultant";
 import { isValidTimeRange } from "@/utils/timeSlotValidation";
-import { getLocalDateString, convertToLocalTime } from "@/utils/dateTimeUtils";
+import { 
+  getLocalDateString, 
+  convertToLocalTime, 
+  convertUtcToTimezone,
+  extractTimeFromUtcSlot,
+  convertTimezoneToUtc,
+  sortSlotsByTime
+} from "@/utils/dateTimeUtils";
 import { DayOfWeek, ScheduleType } from "@prisma/client";
 export interface SlotType {
   startTime: string;
@@ -68,6 +75,7 @@ export const getInitialFormData = (
 
 export const getInitialWeeklySlots = (
   consultant: TConsultantProfile,
+  timezone: string = 'UTC'
 ): SlotsType => {
   if (!consultant?.slotsOfAvailabilityWeekly?.length) return {};
 
@@ -86,19 +94,10 @@ export const getInitialWeeklySlots = (
         }
 
         const day = slot.dayOfWeekforStartTimeInUTC.toLowerCase();
-        // For weekly slots, extract time directly from UTC since we store with epoch date
-        const startDate = new Date(slot.slotStartTimeInUTC);
-        const endDate = new Date(slot.slotEndTimeInUTC);
-
-        // Extract HH:MM directly from UTC time (no timezone conversion needed for weekly slots)
-        const startTime =
-          startDate.getUTCHours().toString().padStart(2, "0") +
-          ":" +
-          startDate.getUTCMinutes().toString().padStart(2, "0");
-        const endTime =
-          endDate.getUTCHours().toString().padStart(2, "0") +
-          ":" +
-          endDate.getUTCMinutes().toString().padStart(2, "0");
+        
+        // Use timezone-aware time extraction for consistency
+        const startTime = extractTimeFromUtcSlot(slot.slotStartTimeInUTC.toString(), timezone);
+        const endTime = extractTimeFromUtcSlot(slot.slotEndTimeInUTC.toString(), timezone);
 
         // Only add valid slots with proper error handling
         if (isValidTimeRange(startTime, endTime)) {
@@ -124,11 +123,18 @@ export const getInitialWeeklySlots = (
   } catch (error) {
     console.error("Error in getInitialWeeklySlots:", error);
   }
+  
+  // Sort slots chronologically within each day
+  Object.keys(formattedWeeklySlots).forEach(day => {
+    formattedWeeklySlots[day] = sortSlotsByTime(formattedWeeklySlots[day]);
+  });
+  
   return formattedWeeklySlots;
 };
 
 export const getInitialCustomSlots = (
   consultant: TConsultantProfile,
+  timezone: string = 'UTC'
 ): SlotsType => {
   if (!consultant?.slotsOfAvailabilityCustom?.length) return {};
 
@@ -153,15 +159,15 @@ export const getInitialCustomSlots = (
           return;
         }
 
-        // For custom slots, we need to handle timezone conversion properly
-        // Convert UTC back to user's local time for display
-        const dateString = getLocalDateString(startDate);
-        const startTime = convertToLocalTime(
-          new Date(slot.slotStartTimeInUTC).toISOString(),
-        );
-        const endTime = convertToLocalTime(
-          new Date(slot.slotEndTimeInUTC).toISOString(),
-        );
+        // For custom slots, use timezone-aware conversion
+        // Get the date in the specified timezone
+        const dateString = startDate.toLocaleDateString("en-CA", { 
+          timeZone: timezone 
+        }); // en-CA gives YYYY-MM-DD format
+        
+        const startTime = convertUtcToTimezone(slot.slotStartTimeInUTC.toString(), timezone);
+        const endTime = convertUtcToTimezone(slot.slotEndTimeInUTC.toString(), timezone);
+        
         // Only add valid slots with proper error handling
         if (isValidTimeRange(startTime, endTime)) {
           if (!formattedCustomSlots[dateString]) {
@@ -186,10 +192,16 @@ export const getInitialCustomSlots = (
   } catch (error) {
     console.error("Error in getInitialCustomSlots:", error);
   }
+  
+  // Sort slots chronologically within each date
+  Object.keys(formattedCustomSlots).forEach(dateString => {
+    formattedCustomSlots[dateString] = sortSlotsByTime(formattedCustomSlots[dateString]);
+  });
+  
   return formattedCustomSlots;
 };
 
-export const formatSlotsForApi = (slots: SlotsType, isWeekly: boolean) => {
+export const formatSlotsForApi = (slots: SlotsType, isWeekly: boolean, timezone: string = 'UTC') => {
   try {
     return Object.entries(slots)
       .filter(([key, daySlots]) => {
@@ -197,8 +209,11 @@ export const formatSlotsForApi = (slots: SlotsType, isWeekly: boolean) => {
         return key && Array.isArray(daySlots) && daySlots.length > 0;
       })
       .flatMap(
-        ([key, daySlots]) =>
-          daySlots
+        ([key, daySlots]) => {
+          // Sort slots chronologically before processing
+          const sortedSlots = sortSlotsByTime(daySlots);
+          
+          return sortedSlots
             .filter((slot) => {
               // Comprehensive slot validation
               return (
@@ -230,13 +245,16 @@ export const formatSlotsForApi = (slots: SlotsType, isWeekly: boolean) => {
                     throw new Error(`Invalid day of week: ${dayOfWeek}`);
                   }
 
-                  // Use a consistent UTC date for weekly slots to avoid timezone issues
-                  const baseDate = "1970-01-01"; // Use epoch date to avoid DST issues
+                  // For weekly slots, convert timezone-aware time back to UTC with epoch date
+                  const baseDate = "1970-01-01";
+                  const startTimeUtc = convertTimezoneToUtc(slot.startTime, baseDate, timezone);
+                  const endTimeUtc = convertTimezoneToUtc(slot.endTime, baseDate, timezone);
+                  
                   return {
                     dayOfWeekforStartTimeInUTC: dayOfWeek,
                     dayOfWeekforEndTimeInUTC: dayOfWeek,
-                    slotStartTimeInUTC: `${baseDate}T${slot.startTime}:00.000Z`,
-                    slotEndTimeInUTC: `${baseDate}T${slot.endTime}:00.000Z`,
+                    slotStartTimeInUTC: startTimeUtc || `${baseDate}T${slot.startTime}:00.000Z`,
+                    slotEndTimeInUTC: endTimeUtc || `${baseDate}T${slot.endTime}:00.000Z`,
                   };
                 } else {
                   // Validate date format for custom slots
@@ -245,13 +263,13 @@ export const formatSlotsForApi = (slots: SlotsType, isWeekly: boolean) => {
                     throw new Error(`Invalid date format: ${key}`);
                   }
 
-                  // Convert local time to UTC properly for custom slots
-                  const startDateTime = new Date(`${key}T${slot.startTime}:00`);
-                  const endDateTime = new Date(`${key}T${slot.endTime}:00`);
+                  // Convert timezone-aware time to UTC for custom slots
+                  const startTimeUtc = convertTimezoneToUtc(slot.startTime, key, timezone);
+                  const endTimeUtc = convertTimezoneToUtc(slot.endTime, key, timezone);
 
                   return {
-                    slotStartTimeInUTC: startDateTime.toISOString(),
-                    slotEndTimeInUTC: endDateTime.toISOString(),
+                    slotStartTimeInUTC: startTimeUtc || new Date(`${key}T${slot.startTime}:00`).toISOString(),
+                    slotEndTimeInUTC: endTimeUtc || new Date(`${key}T${slot.endTime}:00`).toISOString(),
                   };
                 }
               } catch (error) {
@@ -262,7 +280,8 @@ export const formatSlotsForApi = (slots: SlotsType, isWeekly: boolean) => {
                 return null; // Filter out invalid slots
               }
             })
-            .filter(Boolean), // Remove null entries
+            .filter(Boolean) // Remove null entries
+        }
       );
   } catch (error) {
     console.error("Error in formatSlotsForApi:", error, { slots, isWeekly });

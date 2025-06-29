@@ -32,12 +32,14 @@ import {
   type SubDomain,
   type Tag,
 } from "./settings";
+import { useTimezone } from "@/app/explore/experts/[consultantId]/hooks/useTimezone";
 // Import functions from centralized utils
 import {
   formatDayDisplay,
   getDaysInMonth,
   getFirstDayOfMonth,
   getLocalDateString,
+  sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
 import {
   validateTimeSlot,
@@ -55,14 +57,11 @@ interface SettingsTabProps {
 
 export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const { toast } = useToast();
+  const { timezone, isLoading: timezoneLoading } = useTimezone();
   const [isLoading, setIsLoading] = useState(false);
   const [isContentLoading, setIsContentLoading] = useState(true);
-  const [weeklySlots, setWeeklySlots] = useState<SlotsType>(
-    getInitialWeeklySlots(consultant),
-  );
-  const [customSlots, setCustomSlots] = useState<SlotsType>(
-    getInitialCustomSlots(consultant),
-  );
+  const [weeklySlots, setWeeklySlots] = useState<SlotsType>({});
+  const [customSlots, setCustomSlots] = useState<SlotsType>({});
   const [currentDate, setCurrentDate] = useState(new Date());
   const [scheduleType, setScheduleType] = useState<ScheduleType>(
     consultant.scheduleType,
@@ -73,6 +72,14 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [subDomains, setSubDomains] = useState<SubDomain[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+
+  // Initialize slots data when timezone is available
+  useEffect(() => {
+    if (!timezoneLoading && timezone) {
+      setWeeklySlots(getInitialWeeklySlots(consultant, timezone));
+      setCustomSlots(getInitialCustomSlots(consultant, timezone));
+    }
+  }, [consultant, timezone, timezoneLoading]);
 
   // Convert subdomains and tags to options format with safety checks
   const subDomainOptions = React.useMemo<Option[]>(() => {
@@ -433,11 +440,11 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         scheduleType,
         slotsOfAvailabilityWeekly:
           scheduleType === ScheduleType.WEEKLY
-            ? formatSlotsForApi(weeklySlots, true)
+            ? formatSlotsForApi(weeklySlots, true, timezone || 'UTC')
             : [],
         slotsOfAvailabilityCustom:
           scheduleType === ScheduleType.CUSTOM
-            ? formatSlotsForApi(customSlots, false)
+            ? formatSlotsForApi(customSlots, false, timezone || 'UTC')
             : [],
       };
 
@@ -461,8 +468,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         const { data: updatedConsultant } = await updatedResponse.json();
 
         // Update local state to match what was saved to database
-        setWeeklySlots(getInitialWeeklySlots(updatedConsultant));
-        setCustomSlots(getInitialCustomSlots(updatedConsultant));
+        setWeeklySlots(getInitialWeeklySlots(updatedConsultant, timezone || 'UTC'));
+        setCustomSlots(getInitialCustomSlots(updatedConsultant, timezone || 'UTC'));
         setFormData(getInitialFormData(updatedConsultant));
         setScheduleType(updatedConsultant.scheduleType);
       }
@@ -483,12 +490,14 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
     }
   };
 
-  if (isContentLoading) {
+  if (isContentLoading || timezoneLoading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-t-black border-r-black border-b-gray-200 border-l-gray-200 rounded-full animate-spin mb-4"></div>
-          <p className="text-gray-500">Loading settings...</p>
+          <p className="text-gray-500">
+            {timezoneLoading ? "Detecting timezone..." : "Loading settings..."}
+          </p>
         </div>
       </div>
     );
@@ -867,8 +876,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
             React.startTransition(() => {
               setFormData(getInitialFormData(consultant));
               setScheduleType(consultant.scheduleType);
-              setWeeklySlots(getInitialWeeklySlots(consultant));
-              setCustomSlots(getInitialCustomSlots(consultant));
+              setWeeklySlots(getInitialWeeklySlots(consultant, timezone || 'UTC'));
+              setCustomSlots(getInitialCustomSlots(consultant, timezone || 'UTC'));
             });
           }}
           disabled={isLoading}

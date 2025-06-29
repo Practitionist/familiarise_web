@@ -152,3 +152,106 @@ export const formatDate = (
     return utcTimeString;
   }
 };
+
+// Timezone-aware utility functions for consistent slot handling
+export const convertUtcToTimezone = (utcTimeString: string, timezone: string = 'UTC'): string => {
+  try {
+    if (!utcTimeString) return "";
+    
+    const date = new Date(utcTimeString);
+    if (isNaN(date.getTime())) return "";
+    
+    // Use Intl.DateTimeFormat for timezone conversion
+    return date.toLocaleTimeString("en-US", {
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: timezone,
+    });
+  } catch (error) {
+    console.error("Error converting UTC to timezone:", error);
+    return "";
+  }
+};
+
+export const convertTimezoneToUtc = (timeStr: string, dateStr: string, timezone: string = 'UTC'): string => {
+  try {
+    if (!timeStr || !dateStr) return "";
+    
+    // Create date in the specified timezone
+    const localDateTime = `${dateStr}T${timeStr}:00`;
+    const date = new Date(localDateTime);
+    
+    if (isNaN(date.getTime())) return "";
+    
+    // For UTC timezone, return as-is
+    if (timezone === 'UTC') {
+      return date.toISOString();
+    }
+    
+    // Calculate timezone offset
+    const tempDate = new Date(localDateTime);
+    const utcTime = tempDate.getTime() + (tempDate.getTimezoneOffset() * 60000);
+    
+    // Get timezone offset for the target timezone
+    const targetDate = new Date(utcTime + (getTimezoneOffset(timezone) * 60000));
+    
+    return targetDate.toISOString();
+  } catch (error) {
+    console.error("Error converting timezone to UTC:", error);
+    return "";
+  }
+};
+
+// Helper function to get timezone offset in milliseconds
+const getTimezoneOffset = (timezone: string): number => {
+  try {
+    const now = new Date();
+    const utc = new Date(now.getTime() + (now.getTimezoneOffset() * 60000));
+    const targetTime = new Date(utc.toLocaleString("en-US", { timeZone: timezone }));
+    return targetTime.getTime() - utc.getTime();
+  } catch (error) {
+    console.error("Error getting timezone offset:", error);
+    return 0;
+  }
+};
+
+export const extractTimeFromUtcSlot = (utcTimeString: string, timezone: string = 'UTC'): string => {
+  try {
+    if (!utcTimeString) return "";
+    
+    const date = new Date(utcTimeString);
+    if (isNaN(date.getTime())) return "";
+    
+    // For weekly slots, we want to extract the time pattern regardless of date
+    // but respect the timezone for display
+    if (timezone === 'UTC') {
+      // Extract UTC time directly
+      return date.getUTCHours().toString().padStart(2, "0") + ":" + 
+             date.getUTCMinutes().toString().padStart(2, "0");
+    } else {
+      // Convert to target timezone
+      return convertUtcToTimezone(utcTimeString, timezone);
+    }
+  } catch (error) {
+    console.error("Error extracting time from UTC slot:", error);
+    return "";
+  }
+};
+
+// Utility function to convert time string to minutes for sorting
+export const timeToMinutes = (timeString: string): number => {
+  try {
+    if (!timeString) return 0;
+    const [hours, minutes] = timeString.split(":").map(Number);
+    return (hours * 60) + minutes;
+  } catch (error) {
+    console.error("Error converting time to minutes:", error);
+    return 0;
+  }
+};
+
+// Sort slots chronologically by start time
+export const sortSlotsByTime = <T extends { startTime: string }>(slots: T[]): T[] => {
+  return slots.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+};
