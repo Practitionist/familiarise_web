@@ -1,3 +1,5 @@
+import { toZonedTime, fromZonedTime } from "date-fns-tz";
+
 export const DAYS_OF_WEEK = [
   "MONDAY",
   "TUESDAY",
@@ -161,13 +163,14 @@ export const convertUtcToTimezone = (utcTimeString: string, timezone: string = '
     const date = new Date(utcTimeString);
     if (isNaN(date.getTime())) return "";
     
-    // Use Intl.DateTimeFormat for timezone conversion
-    return date.toLocaleTimeString("en-US", {
-      hour12: false,
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZone: timezone,
-    });
+    // Use date-fns-tz for consistent timezone conversion
+    const zonedDate = toZonedTime(date, timezone);
+    
+    // Format as HH:mm
+    const hours = zonedDate.getHours().toString().padStart(2, '0');
+    const minutes = zonedDate.getMinutes().toString().padStart(2, '0');
+    
+    return `${hours}:${minutes}`;
   } catch (error) {
     console.error("Error converting UTC to timezone:", error);
     return "";
@@ -178,41 +181,27 @@ export const convertTimezoneToUtc = (timeStr: string, dateStr: string, timezone:
   try {
     if (!timeStr || !dateStr) return "";
     
-    // Create date in the specified timezone
-    const localDateTime = `${dateStr}T${timeStr}:00`;
-    const date = new Date(localDateTime);
-    
-    if (isNaN(date.getTime())) return "";
-    
     // For UTC timezone, return as-is
     if (timezone === 'UTC') {
-      return date.toISOString();
+      const localDateTime = `${dateStr}T${timeStr}:00`;
+      const date = new Date(localDateTime);
+      return isNaN(date.getTime()) ? "" : date.toISOString();
     }
     
-    // Calculate timezone offset
-    const tempDate = new Date(localDateTime);
-    const utcTime = tempDate.getTime() + (tempDate.getTimezoneOffset() * 60000);
+    // Create a date in the specified timezone using date-fns-tz
+    const localDateTime = `${dateStr}T${timeStr}:00`;
+    const zonedDate = new Date(localDateTime);
     
-    // Get timezone offset for the target timezone
-    const targetDate = new Date(utcTime + (getTimezoneOffset(timezone) * 60000));
+    if (isNaN(zonedDate.getTime())) return "";
     
-    return targetDate.toISOString();
+    // Convert from the specified timezone to UTC using date-fns-tz
+    // First, treat the time as if it's in the target timezone
+    const utcDate = fromZonedTime(zonedDate, timezone);
+    
+    return utcDate.toISOString();
   } catch (error) {
     console.error("Error converting timezone to UTC:", error);
     return "";
-  }
-};
-
-// Helper function to get timezone offset in milliseconds
-const getTimezoneOffset = (timezone: string): number => {
-  try {
-    const now = new Date();
-    const utc = new Date(now.getTime() + (now.getTimezoneOffset() * 60000));
-    const targetTime = new Date(utc.toLocaleString("en-US", { timeZone: timezone }));
-    return targetTime.getTime() - utc.getTime();
-  } catch (error) {
-    console.error("Error getting timezone offset:", error);
-    return 0;
   }
 };
 
