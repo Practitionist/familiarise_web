@@ -69,7 +69,7 @@
     "@stream-io/video-react-sdk": "^1.12.6",
     "@stripe/stripe-js": "^7.3.1",
     "@supabase/storage-js": "^2.7.3",
-    "@supabase/supabase-js": "^2.47.10",
+    "@supabase/supabase-js": "^2.50.2",
     "@types/bad-words": "^3.0.3",
     "@types/bcrypt": "^5.0.2",
     "@types/redlock": "^4.0.7",
