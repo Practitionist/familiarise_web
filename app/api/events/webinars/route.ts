@@ -7,8 +7,26 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const consulteeProfileId = searchParams.get("consulteeProfileId");
     const consultantProfileId = searchParams.get("consultantProfileId");
+    const startDateStr = searchParams.get("startDate");
+    const endDateStr = searchParams.get("endDate");
 
     let webinars;
+
+    const dateFilter =
+      startDateStr && endDateStr
+        ? {
+            appointment: {
+              slotsOfAppointment: {
+                some: {
+                  slotStartTimeInUTC: {
+                    gte: new Date(startDateStr),
+                    lte: new Date(endDateStr),
+                  },
+                },
+              },
+            },
+          }
+        : {};
 
     if (consulteeProfileId) {
       webinars = await prisma.webinar.findMany({
@@ -43,6 +61,7 @@ export async function GET(request: Request) {
               },
             },
           ],
+          ...dateFilter,
         },
         include: {
           webinarPlan: {
@@ -104,12 +123,27 @@ export async function GET(request: Request) {
         },
       });
     } else if (consultantProfileId) {
-      webinars = await prisma.webinar.findMany({
-        where: {
-          webinarPlan: {
-            consultantProfileId,
-          },
+      const whereClause: any = {
+        webinarPlan: {
+          consultantProfileId,
         },
+      };
+
+      if (startDateStr && endDateStr) {
+        whereClause.appointment = {
+          slotsOfAppointment: {
+            some: {
+              slotStartTimeInUTC: {
+                gte: new Date(startDateStr),
+                lte: new Date(endDateStr),
+              },
+            },
+          },
+        };
+      }
+
+      webinars = await prisma.webinar.findMany({
+        where: whereClause,
         include: {
           webinarPlan: {
             include: {
@@ -132,6 +166,7 @@ export async function GET(request: Request) {
       });
     } else {
       webinars = await prisma.webinar.findMany({
+        where: { ...dateFilter },
         include: {
           webinarPlan: {
             include: {
@@ -159,7 +194,7 @@ export async function GET(request: Request) {
     console.error("Error fetching webinars:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching webinars" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
@@ -175,7 +210,7 @@ export async function POST(request: Request) {
           error:
             "Missing required fields: scheduledAt, endAt, and webinarPlanId are required",
         },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -212,7 +247,7 @@ export async function POST(request: Request) {
     console.error("Error creating webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the webinar" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

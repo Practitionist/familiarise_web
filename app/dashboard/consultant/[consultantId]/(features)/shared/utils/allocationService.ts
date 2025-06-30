@@ -43,7 +43,7 @@ export class AllocationService {
    */
   static async allocateConsultationSlots(
     consultationId: string,
-    request: AllocationRequest,
+    request: AllocationRequest
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
@@ -54,7 +54,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(request),
-        },
+        }
       );
 
       const data = await response.json();
@@ -85,7 +85,7 @@ export class AllocationService {
    */
   static async validateConsultationSlots(
     consultationId: string,
-    slots: string[],
+    slots: string[]
   ): Promise<ValidationResponse> {
     try {
       const response = await fetch(
@@ -96,7 +96,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ slots }),
-        },
+        }
       );
 
       const data = await response.json();
@@ -127,7 +127,7 @@ export class AllocationService {
    */
   static async allocateSubscriptionSlots(
     subscriptionId: string,
-    request: AllocationRequest,
+    request: AllocationRequest
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
@@ -138,7 +138,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(request),
-        },
+        }
       );
 
       const data = await response.json();
@@ -169,7 +169,7 @@ export class AllocationService {
    */
   static async validateSubscriptionSlots(
     subscriptionId: string,
-    slots: string[],
+    slots: string[]
   ): Promise<ValidationResponse> {
     try {
       const response = await fetch(
@@ -180,7 +180,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ slots }),
-        },
+        }
       );
 
       const data = await response.json();
@@ -211,7 +211,7 @@ export class AllocationService {
    */
   static async allocateWebinarSlots(
     webinarId: string,
-    slots: string[],
+    slots: string[]
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
@@ -222,7 +222,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ slots }),
-        },
+        }
       );
 
       const data = await response.json();
@@ -253,7 +253,7 @@ export class AllocationService {
    */
   static async allocateClassSlots(
     classId: string,
-    slots: string[],
+    slots: string[]
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(`/api/events/classes/${classId}/allocate`, {
@@ -297,7 +297,7 @@ export class AllocationService {
     allocationOptions?: {
       isAuto?: boolean;
       useRequestedSlots?: boolean;
-    },
+    }
   ): Promise<AllocationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
 
@@ -336,7 +336,7 @@ export class AllocationService {
   static async validateSlots(
     eventType: "consultation" | "subscription",
     eventId: string,
-    slots: TimeSlot[],
+    slots: TimeSlot[]
   ): Promise<ValidationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
 
@@ -375,29 +375,37 @@ export class AllocationService {
   }
 
   /**
-   * Fetches availability slots
+   * Fetches consultant availability slots (weekly and custom)
    */
-  static async fetchAvailabilitySlots(consultantId: string) {
+  static async fetchAvailabilitySlots(
+    consultantId: string,
+    startDate: Date,
+    endDate: Date
+  ) {
+    if (!consultantId) {
+      throw new Error("Consultant ID is required");
+    }
+
     try {
-      const [weeklyResponse, customResponse] = await Promise.all([
-        fetch(
-          `/api/slots/availability/weekly?consultantProfileId=${consultantId}`,
-        ),
-        fetch(
-          `/api/slots/availability/custom?consultantProfileId=${consultantId}`,
-        ),
-      ]);
-
-      const weeklyData = weeklyResponse.ok
-        ? await weeklyResponse.json()
-        : { data: [] };
-      const customData = customResponse.ok
-        ? await customResponse.json()
-        : { data: [] };
-
+      const params = new URLSearchParams({
+        startDateInUtc: startDate.toISOString(),
+        endDateInUtc: endDate.toISOString(),
+      });
+      const response = await fetch(
+        `/api/slots/availability-with-allocation/${consultantId}?${params}`
+      );
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error || "Failed to fetch availability slots"
+        );
+      }
+      const result = await response.json();
+      const { data: slotsByDate } = result;
+      const allSlots: any[] = Object.values(slotsByDate).flat();
       return {
-        weekly: weeklyData.data || [],
-        custom: customData.data || [],
+        weekly: allSlots.filter((s) => s.type === "WEEKLY"),
+        custom: allSlots.filter((s) => s.type === "CUSTOM"),
       };
     } catch (error) {
       console.error("Error fetching availability slots:", error);
@@ -406,18 +414,28 @@ export class AllocationService {
   }
 
   /**
-   * Fetches appointment data
+   * Fetches all appointments for a consultant
    */
-  static async fetchAppointments(consultantId: string) {
+  static async fetchAppointments(
+    consultantId: string,
+    startDate: Date,
+    endDate: Date
+  ) {
+    if (!consultantId) {
+      throw new Error("Consultant ID is required");
+    }
+
     try {
-      const response = await fetch(
-        `/api/slots/appointments?consultantProfileId=${consultantId}`,
-      );
-
+      const params = new URLSearchParams({
+        consultantProfileId: consultantId,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+      });
+      const response = await fetch(`/api/slots/appointments?${params}`);
       if (!response.ok) {
-        throw new Error("Failed to fetch appointments");
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to fetch appointments");
       }
-
       const { data } = await response.json();
       return data || [];
     } catch (error) {
@@ -431,7 +449,7 @@ export class AllocationService {
    */
   static async fetchEventSlots(
     eventType: "webinar" | "class",
-    eventId: string,
+    eventId: string
   ) {
     try {
       const params = new URLSearchParams({

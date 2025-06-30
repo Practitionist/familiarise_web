@@ -67,10 +67,10 @@ export function UnifiedCalendar({
   const [view, setView] = useState<"week" | "month">("week");
   const [browserTimezone, setBrowserTimezone] = useState("UTC");
   const [actualSessionDuration, setActualSessionDuration] = useState<number>(
-    sessionDurationInHours || 1,
+    sessionDurationInHours || 1
   );
   const [elongatedSlotGroups, setElongatedSlotGroups] = useState<TimeSlot[][]>(
-    [],
+    []
   );
 
   // Initialize timezone
@@ -90,21 +90,21 @@ export function UnifiedCalendar({
         try {
           const duration = await fetchSessionDurationFromPlan(
             eventType,
-            eventId,
+            eventId
           );
           setActualSessionDuration(duration);
         } catch (error) {
           console.error("Failed to fetch session duration:", error);
           // For now, use a default value instead of throwing to prevent calendar crashes
           console.warn(
-            `Using default 1-hour duration for ${eventType} due to fetch error`,
+            `Using default 1-hour duration for ${eventType} due to fetch error`
           );
           setActualSessionDuration(1);
         }
       } else if (mode !== "view") {
         // Only require eventId for non-view modes
         console.warn(
-          `No eventId provided for ${eventType} calendar in ${mode} mode. Using default 1-hour duration.`,
+          `No eventId provided for ${eventType} calendar in ${mode} mode. Using default 1-hour duration.`
         );
         setActualSessionDuration(1);
       } else {
@@ -130,6 +130,8 @@ export function UnifiedCalendar({
     consultantId,
     eventType,
     eventId,
+    view,
+    currentDate,
   });
 
   // Slot allocation hook
@@ -184,7 +186,7 @@ export function UnifiedCalendar({
     const validation = validateElongatedSlotSelection(
       selectedSlots,
       actualSessionDuration,
-      false, // Don't allow partial sessions
+      false // Don't allow partial sessions
     );
 
     if (!validation.isValid) {
@@ -195,7 +197,7 @@ export function UnifiedCalendar({
 
     // Convert elongated slots to 30-minute API format
     const apiSlots = convertElongatedSlotsTo30MinSlots(
-      validation.validGroups.flat(),
+      validation.validGroups.flat()
     );
 
     // Call the original manual allocate with converted slots
@@ -240,7 +242,7 @@ export function UnifiedCalendar({
   // Handle slot click
   const handleSlotClick = (
     interval: { hour: number; minute: number },
-    date: Date,
+    date: Date
   ) => {
     if (mode === "view") return;
 
@@ -263,7 +265,7 @@ export function UnifiedCalendar({
   // Render time cell
   const renderTimeCell = (
     interval: { hour: number; minute: number },
-    date: Date,
+    date: Date
   ) => {
     const status = getSlotStatusForInterval(interval, date);
     const slotUTCTimestamp = status.intervalStartUTCString;
@@ -277,7 +279,7 @@ export function UnifiedCalendar({
 
     const isCurrentlySelected = isSlotSelected(slot);
     const isEventSlot = eventSlots.some(
-      (es) => es.startTime.getTime() === slot.startTime.getTime(),
+      (es) => es.startTime.getTime() === slot.startTime.getTime()
     );
 
     // Find if this slot is part of an elongated group and get its position
@@ -294,7 +296,7 @@ export function UnifiedCalendar({
       ) {
         const group = elongatedSlotGroups[groupIndex];
         const slotIndex = group.findIndex(
-          (s) => s.startTime.getTime() === slot.startTime.getTime(),
+          (s) => s.startTime.getTime() === slot.startTime.getTime()
         );
         if (slotIndex !== -1) {
           elongatedSlotInfo = {
@@ -322,7 +324,7 @@ export function UnifiedCalendar({
       if (elongatedSlotInfo) {
         const styling = getElongatedSlotStyling(
           elongatedSlotInfo.slotIndex,
-          elongatedSlotInfo.groupSize,
+          elongatedSlotInfo.groupSize
         );
         cellClassName = cellClassName.replace("rounded-sm", ""); // Remove default rounding
         cellClassName += ` border-2`; // Stronger border for grouped slots
@@ -421,7 +423,7 @@ export function UnifiedCalendar({
                         </p>
                       )}
                     </div>
-                  ),
+                  )
                 )}
               </div>
             </TooltipContent>
@@ -508,7 +510,7 @@ export function UnifiedCalendar({
                 </div>
               </div>
             );
-          },
+          }
         )}
       </div>
     );
@@ -661,7 +663,7 @@ export function UnifiedCalendar({
                       0,
                       1,
                       interval.hour,
-                      interval.minute,
+                      interval.minute
                     ).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
@@ -689,10 +691,10 @@ export function UnifiedCalendar({
           <div className="text-sm">
             {(() => {
               const requiredSlotsPerSession = Math.ceil(
-                actualSessionDuration * 2,
+                actualSessionDuration * 2
               ); // 30-min slots needed
               const completeSessions = elongatedSlotGroups.filter(
-                (group) => group.length >= requiredSlotsPerSession,
+                (group) => group.length >= requiredSlotsPerSession
               ).length;
               const totalSessions = elongatedSlotGroups.length;
 

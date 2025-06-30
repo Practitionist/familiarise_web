@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useToast } from "@/components/ui/use-toast";
+import { startOfWeek, endOfWeek, startOfMonth, endOfMonth } from "date-fns";
 import {
   TimeSlot,
   ConsultantData,
@@ -16,6 +17,8 @@ export interface UseCalendarDataOptions {
   eventType?: "consultation" | "subscription" | "webinar" | "class";
   eventId?: string;
   autoLoad?: boolean;
+  view: "week" | "month";
+  currentDate: Date;
 }
 
 export interface CalendarData {
@@ -39,7 +42,7 @@ export interface UseCalendarDataReturn extends CalendarData {
   refetchEventSlots: () => Promise<void>;
   getSlotStatusForInterval: (
     interval: { hour: number; minute: number },
-    date: Date,
+    date: Date
   ) => any;
 }
 
@@ -47,9 +50,16 @@ export interface UseCalendarDataReturn extends CalendarData {
  * Custom hook for managing calendar data fetching and state
  */
 export function useCalendarData(
-  options: UseCalendarDataOptions,
+  options: UseCalendarDataOptions
 ): UseCalendarDataReturn {
-  const { consultantId, eventType, eventId, autoLoad = true } = options;
+  const {
+    consultantId,
+    eventType,
+    eventId,
+    autoLoad = true,
+    view,
+    currentDate,
+  } = options;
   const { toast } = useToast();
 
   // State
@@ -68,22 +78,23 @@ export function useCalendarData(
 
   // Computed available slots
   const availableSlots = useMemo(() => {
-    if (!consultantDetails) return [];
+    // Combine weekly and custom raw slots and map them to the TimeSlot format.
+    // This is now the source of truth for available slots, replacing the old
+    // mapWeeklySlots and mapCustomSlots functions which were causing the issue.
+    const allRawSlots = [
+      ...(rawAvailabilitySlots.weekly || []),
+      ...(rawAvailabilitySlots.custom || []),
+    ];
 
-    const consultantDataForMapping = {
-      ...consultantDetails,
-      slotsOfAvailabilityWeekly: rawAvailabilitySlots.weekly,
-      slotsOfAvailabilityCustom: rawAvailabilitySlots.custom,
-    };
-
-    if (consultantDetails.scheduleType === ScheduleType.WEEKLY) {
-      return mapWeeklySlots(consultantDataForMapping, new Date(), "month");
-    } else if (consultantDetails.scheduleType === ScheduleType.CUSTOM) {
-      return mapCustomSlots(consultantDataForMapping);
-    }
-
-    return [];
-  }, [consultantDetails, rawAvailabilitySlots]);
+    return allRawSlots.map((slot: any) => ({
+      startTime: new Date(slot.slotStartTimeInUTC),
+      endTime: new Date(slot.slotEndTimeInUTC),
+      isAvailable:
+        slot.bookingStatus === "available" ||
+        slot.bookingStatus === "partially-booked",
+      isBooked: slot.bookingStatus === "fully-booked",
+    }));
+  }, [rawAvailabilitySlots]);
 
   // Fetch consultant details
   const fetchConsultantDetails = useCallback(async () => {
@@ -112,7 +123,15 @@ export function useCalendarData(
     if (!consultantId) return;
 
     try {
-      const data = await AllocationService.fetchAvailabilitySlots(consultantId);
+      const startDate =
+        view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
+      const endDate =
+        view === "week" ? endOfWeek(currentDate) : endOfMonth(currentDate);
+      const data = await AllocationService.fetchAvailabilitySlots(
+        consultantId,
+        startDate,
+        endDate
+      );
       setRawAvailabilitySlots(data);
     } catch (error) {
       console.error("Error fetching availability slots:", error);
@@ -127,14 +146,22 @@ export function useCalendarData(
         description: errorMessage,
       });
     }
-  }, [consultantId, toast]);
+  }, [consultantId, toast, view, currentDate]);
 
   // Fetch existing appointments
   const fetchExistingAppointments = useCallback(async () => {
     if (!consultantId) return;
 
     try {
-      const data = await AllocationService.fetchAppointments(consultantId);
+      const startDate =
+        view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
+      const endDate =
+        view === "week" ? endOfWeek(currentDate) : endOfMonth(currentDate);
+      const data = await AllocationService.fetchAppointments(
+        consultantId,
+        startDate,
+        endDate
+      );
       setExistingAppointments(data);
     } catch (error) {
       console.error("Error fetching appointments:", error);
@@ -147,7 +174,7 @@ export function useCalendarData(
         description: errorMessage,
       });
     }
-  }, [consultantId, toast]);
+  }, [consultantId, toast, view, currentDate]);
 
   // Fetch event-specific slots
   const fetchEventSlots = useCallback(async () => {
@@ -175,10 +202,10 @@ export function useCalendarData(
             const intervalSlots: TimeSlot[] = [];
             for (let i = 0; i < numIntervals; i++) {
               const intervalStart = new Date(
-                start.getTime() + i * 30 * 60 * 1000,
+                start.getTime() + i * 30 * 60 * 1000
               ); // 30-minute grid intervals
               const intervalEnd = new Date(
-                intervalStart.getTime() + 30 * 60 * 1000,
+                intervalStart.getTime() + 30 * 60 * 1000
               ); // 30-minute grid intervals
               intervalSlots.push({
                 startTime: intervalStart,
@@ -188,7 +215,7 @@ export function useCalendarData(
               });
             }
             return intervalSlots;
-          },
+          }
         );
         setEventSlots(slots);
       } else {
@@ -233,10 +260,10 @@ export function useCalendarData(
         interval,
         date,
         availableSlots,
-        existingAppointments,
+        existingAppointments
       );
     },
-    [availableSlots, existingAppointments],
+    [availableSlots, existingAppointments]
   );
 
   // Auto-load data on mount and when dependencies change
@@ -263,7 +290,7 @@ export function useCalendarData(
           setLoading(false);
         });
     }
-  }, [autoLoad, consultantId, eventType, eventId]);
+  }, [autoLoad, consultantId, eventType, eventId, currentDate, view]);
 
   // Individual refetch functions
   const refetchConsultant = useCallback(async () => {

@@ -24,7 +24,7 @@ export class PlannerService {
       | "consultation"
       | "subscription"
       | "both" = "both",
-    excludeId: string = "",
+    excludeId: string = ""
   ): Promise<boolean> {
     try {
       // For 'both' option, check webinars first, then classes
@@ -33,7 +33,7 @@ export class PlannerService {
           title,
           consultantId,
           "webinar",
-          excludeId,
+          excludeId
         );
         if (isWebinarDuplicate) return true;
 
@@ -41,7 +41,7 @@ export class PlannerService {
           title,
           consultantId,
           "class",
-          excludeId,
+          excludeId
         );
         return isClassDuplicate;
       }
@@ -80,8 +80,7 @@ export class PlannerService {
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(
-          errorData.error ||
-            `Failed to check for duplicate ${eventType} titles`,
+          errorData.error || `Failed to check for duplicate ${eventType} titles`
         );
       }
 
@@ -96,11 +95,19 @@ export class PlannerService {
   /**
    * Fetch webinars for a consultant
    */
-  static async fetchWebinars(consultantId: string): Promise<WebinarEvent[]> {
+  static async fetchWebinars(
+    consultantId: string,
+    startDate: Date,
+    endDate: Date
+  ): Promise<WebinarEvent[]> {
     try {
-      const response = await fetch(
-        `/api/events/webinars?consultantProfileId=${consultantId}`,
-      );
+      const params = new URLSearchParams({
+        consultantProfileId: consultantId,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+      });
+
+      const response = await fetch(`/api/events/webinars?${params}`);
 
       if (!response.ok) {
         throw new Error("Failed to fetch webinars");
@@ -137,11 +144,18 @@ export class PlannerService {
   /**
    * Fetch classes for a consultant
    */
-  static async fetchClasses(consultantId: string): Promise<ClassEvent[]> {
+  static async fetchClasses(
+    consultantId: string,
+    startDate: Date,
+    endDate: Date
+  ): Promise<ClassEvent[]> {
     try {
-      const response = await fetch(
-        `/api/events/classes?consultantProfileId=${consultantId}`,
-      );
+      const params = new URLSearchParams({
+        consultantProfileId: consultantId,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+      });
+      const response = await fetch(`/api/events/classes?${params}`);
 
       if (!response.ok) {
         throw new Error("Failed to fetch classes");
@@ -174,7 +188,7 @@ export class PlannerService {
   static async saveWebinar(
     webinarData: Partial<WebinarEvent>,
     scheduledAt: string | Date | null | undefined,
-    consultantId: string,
+    consultantId: string
   ): Promise<WebinarEvent> {
     try {
       // Reset tracking
@@ -189,7 +203,7 @@ export class PlannerService {
       const webinarId = webinarData.id ?? ""; // Get the webinar instance ID
 
       console.log(
-        `[PlannerService.saveWebinar] ${isUpdate ? "Updating" : "Creating"} webinar${isUpdate ? ` with plan ID ${planId}` : ""}${webinarId ? ` and instance ID ${webinarId}` : ""}...`,
+        `[PlannerService.saveWebinar] ${isUpdate ? "Updating" : "Creating"} webinar${isUpdate ? ` with plan ID ${planId}` : ""}${webinarId ? ` and instance ID ${webinarId}` : ""}...`
       );
 
       if (title) {
@@ -197,12 +211,12 @@ export class PlannerService {
           title,
           consultantId,
           "webinar",
-          planId,
+          planId
         );
 
         if (isDuplicate) {
           throw new Error(
-            `A webinar with title "${title}" already exists. Please use a different title.`,
+            `A webinar with title "${title}" already exists. Please use a different title.`
           );
         }
       }
@@ -218,7 +232,7 @@ export class PlannerService {
       }
       console.log(
         "[PlannerService.saveWebinar] Extracted topic names from input data:",
-        topicNames,
+        topicNames
       );
 
       // Prepare all topic ids list
@@ -228,28 +242,28 @@ export class PlannerService {
         try {
           console.log(
             "[PlannerService.saveWebinar] Calling createTopics with names:",
-            topicNames,
+            topicNames
           );
           const newTopicIds = await this.createTopics(topicNames);
           this.newlyCreatedTopicIds = newTopicIds; // Track only newly created ones? createTopics might return existing ones too. Revisit if rollback logic needs adjustment.
           allTopicIds = [...newTopicIds]; // Assuming createTopics returns all relevant IDs (new + existing)
           console.log(
             "[PlannerService.saveWebinar] Received topic IDs from createTopics:",
-            allTopicIds,
+            allTopicIds
           );
         } catch (error) {
           console.error(
             "[PlannerService.saveWebinar] Error creating topics:",
-            error,
+            error
           );
           throw new Error(
             "Failed to create topics: " +
-              (error instanceof Error ? error.message : String(error)),
+              (error instanceof Error ? error.message : String(error))
           );
         }
       } else if (isUpdate) {
         console.log(
-          "[PlannerService.saveWebinar] No topic names provided for update. Existing topics might be preserved or cleared depending on API logic.",
+          "[PlannerService.saveWebinar] No topic names provided for update. Existing topics might be preserved or cleared depending on API logic."
         );
       }
 
@@ -259,7 +273,7 @@ export class PlannerService {
         const method = isUpdate ? "PATCH" : "POST";
 
         console.log(
-          `[PlannerService.saveWebinar] Using ${method} request to ${endpoint}`,
+          `[PlannerService.saveWebinar] Using ${method} request to ${endpoint}`
         );
 
         // Prepare the scheduled date if provided
@@ -277,7 +291,7 @@ export class PlannerService {
 
           if (scheduledAtDate) {
             console.log(
-              `Converting scheduledAt from local (${scheduledAtDate.toString()}) to UTC...`,
+              `Converting scheduledAt from local (${scheduledAtDate.toString()}) to UTC...`
             );
             // Don't need to convert since the date object inherently handles the UTC conversion when sent as JSON
           }
@@ -319,12 +333,12 @@ export class PlannerService {
           };
           // Remove undefined fields before sending
           Object.keys(requestBody).forEach(
-            (key) => requestBody[key] === undefined && delete requestBody[key],
+            (key) => requestBody[key] === undefined && delete requestBody[key]
           );
 
           console.log(
             "[PlannerService.saveWebinar] Constructed PATCH request body:",
-            JSON.stringify(requestBody, null, 2),
+            JSON.stringify(requestBody, null, 2)
           );
         } else {
           // For POST, send all plan data + topicIds
@@ -339,17 +353,17 @@ export class PlannerService {
           };
           // Remove undefined fields before sending
           Object.keys(requestBody).forEach(
-            (key) => requestBody[key] === undefined && delete requestBody[key],
+            (key) => requestBody[key] === undefined && delete requestBody[key]
           );
           console.log(
             "[PlannerService.saveWebinar] Constructed POST request body:",
-            JSON.stringify(requestBody, null, 2),
+            JSON.stringify(requestBody, null, 2)
           );
         }
 
         // Now create or update the webinar using the constructed body
         console.log(
-          `[PlannerService.saveWebinar] Sending ${method} request to ${endpoint}...`,
+          `[PlannerService.saveWebinar] Sending ${method} request to ${endpoint}...`
         );
         const response = await fetch(endpoint, {
           method,
@@ -359,14 +373,14 @@ export class PlannerService {
           body: JSON.stringify(requestBody),
         });
         console.log(
-          `[PlannerService.saveWebinar] Received response status: ${response.status}`,
+          `[PlannerService.saveWebinar] Received response status: ${response.status}`
         );
 
         if (!response.ok) {
           const errorData = await response.json();
           throw new Error(
             errorData.error ||
-              `Failed to ${isUpdate ? "update" : "create"} webinar`,
+              `Failed to ${isUpdate ? "update" : "create"} webinar`
           );
         }
 
@@ -419,7 +433,7 @@ export class PlannerService {
     try {
       console.log(
         "Rolling back newly created topics:",
-        this.newlyCreatedTopicIds,
+        this.newlyCreatedTopicIds
       );
 
       const response = await fetch("/api/user/content/topics", {
@@ -449,7 +463,7 @@ export class PlannerService {
    */
   static async saveClass(
     classData: Partial<ClassEvent>,
-    consultantId: string,
+    consultantId: string
   ): Promise<ClassEvent> {
     try {
       // Reset tracking
@@ -464,7 +478,7 @@ export class PlannerService {
       const classId = classData.id ?? ""; // Get the class instance ID
 
       console.log(
-        `[PlannerService.saveClass] ${isUpdate ? "Updating" : "Creating"} class${isUpdate ? ` with plan ID ${planId}` : ""}${classId ? ` and instance ID ${classId}` : ""}...`,
+        `[PlannerService.saveClass] ${isUpdate ? "Updating" : "Creating"} class${isUpdate ? ` with plan ID ${planId}` : ""}${classId ? ` and instance ID ${classId}` : ""}...`
       );
 
       if (title) {
@@ -472,12 +486,12 @@ export class PlannerService {
           title,
           consultantId,
           "class",
-          planId,
+          planId
         );
 
         if (isDuplicate) {
           throw new Error(
-            `A class with title "${title}" already exists. Please use a different title.`,
+            `A class with title "${title}" already exists. Please use a different title.`
           );
         }
       }
@@ -493,7 +507,7 @@ export class PlannerService {
       }
       console.log(
         "[PlannerService.saveClass] Extracted topic names from input data:",
-        topicNames,
+        topicNames
       );
 
       // Prepare all topic ids list
@@ -503,28 +517,28 @@ export class PlannerService {
         try {
           console.log(
             "[PlannerService.saveClass] Calling createTopics with names:",
-            topicNames,
+            topicNames
           );
           const newTopicIds = await this.createTopics(topicNames);
           this.newlyCreatedTopicIds = newTopicIds; // See comment in saveWebinar about rollback
           allTopicIds = [...newTopicIds];
           console.log(
             "[PlannerService.saveClass] Received topic IDs from createTopics:",
-            allTopicIds,
+            allTopicIds
           );
         } catch (error) {
           console.error(
             "[PlannerService.saveClass] Error creating topics:",
-            error,
+            error
           );
           throw new Error(
             "Failed to create topics: " +
-              (error instanceof Error ? error.message : String(error)),
+              (error instanceof Error ? error.message : String(error))
           );
         }
       } else if (isUpdate) {
         console.log(
-          "[PlannerService.saveClass] No topic names provided for update. Existing topics might be preserved or cleared.",
+          "[PlannerService.saveClass] No topic names provided for update. Existing topics might be preserved or cleared."
         );
       }
 
@@ -534,7 +548,7 @@ export class PlannerService {
         const method = isUpdate ? "PATCH" : "POST";
 
         console.log(
-          `[PlannerService.saveClass] Using ${method} request to ${endpoint}`,
+          `[PlannerService.saveClass] Using ${method} request to ${endpoint}`
         );
 
         // Construct payload carefully based on POST vs PATCH
@@ -545,10 +559,10 @@ export class PlannerService {
           if (!classData.classPlan) {
             // This shouldn't logically happen if isUpdate is true, but handle defensively
             console.error(
-              "[PlannerService.saveClass] Error: classData.classPlan is undefined during PATCH operation.",
+              "[PlannerService.saveClass] Error: classData.classPlan is undefined during PATCH operation."
             );
             throw new Error(
-              "Internal error: Class plan data is missing during update.",
+              "Internal error: Class plan data is missing during update."
             );
           }
           // --- End Linter Fix ---
@@ -588,11 +602,11 @@ export class PlannerService {
           };
           // Remove undefined fields before sending
           Object.keys(requestBody).forEach(
-            (key) => requestBody[key] === undefined && delete requestBody[key],
+            (key) => requestBody[key] === undefined && delete requestBody[key]
           );
           console.log(
             "[PlannerService.saveClass] Constructed PATCH request body:",
-            JSON.stringify(requestBody, null, 2),
+            JSON.stringify(requestBody, null, 2)
           );
         } else {
           // For POST
@@ -609,15 +623,15 @@ export class PlannerService {
           };
           // Remove undefined fields before sending
           Object.keys(requestBody).forEach(
-            (key) => requestBody[key] === undefined && delete requestBody[key],
+            (key) => requestBody[key] === undefined && delete requestBody[key]
           );
           console.log(
             "[PlannerService.saveClass] Constructed POST request body:",
-            JSON.stringify(requestBody, null, 2),
+            JSON.stringify(requestBody, null, 2)
           );
         }
         console.log(
-          `[PlannerService.saveClass] Sending ${method} request to ${endpoint}...`,
+          `[PlannerService.saveClass] Sending ${method} request to ${endpoint}...`
         );
         const response = await fetch(endpoint, {
           method,
@@ -627,14 +641,14 @@ export class PlannerService {
           body: JSON.stringify(requestBody),
         });
         console.log(
-          `[PlannerService.saveClass] Received response status: ${response.status}`,
+          `[PlannerService.saveClass] Received response status: ${response.status}`
         );
 
         if (!response.ok) {
           const errorData = await response.json();
           throw new Error(
             errorData.error ||
-              `Failed to ${isUpdate ? "update" : "create"} class`,
+              `Failed to ${isUpdate ? "update" : "create"} class`
           );
         }
 
@@ -680,7 +694,7 @@ export class PlannerService {
    * Get all available topics
    */
   static async getTopics(
-    query?: string,
+    query?: string
   ): Promise<
     Array<{ id: string; name: string; createdAt: Date; updatedAt: Date }>
   > {
@@ -730,14 +744,14 @@ export class PlannerService {
 
       if (uniqueTopicNames.length === 0) {
         console.log(
-          "[PlannerService.createTopics] No valid unique topic names after processing.",
+          "[PlannerService.createTopics] No valid unique topic names after processing."
         );
         return []; // Return empty array if no valid topics remain
       }
 
       console.log(
         "[PlannerService.createTopics] Requesting topics from backend with names:",
-        uniqueTopicNames,
+        uniqueTopicNames
       );
 
       // Create/retrieve all topics in a single request
@@ -750,7 +764,7 @@ export class PlannerService {
       });
 
       console.log(
-        `[PlannerService.createTopics] API response status: ${response.status}`,
+        `[PlannerService.createTopics] API response status: ${response.status}`
       );
 
       if (!response.ok) {
@@ -759,7 +773,7 @@ export class PlannerService {
           .catch(() => ({ error: "Failed to parse error response" }));
         console.error(
           "[PlannerService.createTopics] API error response:",
-          errorData,
+          errorData
         );
         throw new Error(errorData.error || "Failed to create topics via API");
       }
@@ -769,19 +783,19 @@ export class PlannerService {
         // Simplified check
         console.error(
           "[PlannerService.createTopics] Invalid API response format - 'data' is not an array:",
-          topics,
+          topics
         );
         throw new Error("Invalid response format from topic creation API");
       }
 
       console.log(
         "[PlannerService.createTopics] Topics received from API:",
-        topics,
+        topics
       );
       const topicIds = topics.map((topic) => topic.id);
       console.log(
         "[PlannerService.createTopics] Returning topic IDs:",
-        topicIds,
+        topicIds
       );
       return topicIds;
     } catch (error) {
@@ -811,7 +825,7 @@ export class PlannerService {
     data: FormData,
     eventType: "webinar" | "class",
     initialData: Event | null,
-    consultantId: string,
+    consultantId: string
   ): Promise<Event> {
     // Reset all tracking at the start of a transaction
     this.newlyCreatedTopicIds = [];
@@ -821,7 +835,7 @@ export class PlannerService {
     try {
       console.log(
         "Starting form submission with data:",
-        JSON.stringify(data, null, 2),
+        JSON.stringify(data, null, 2)
       );
 
       // Step 1: Process topics
@@ -841,14 +855,14 @@ export class PlannerService {
             data,
             initialData,
             consultantId,
-            finalTopicIds,
+            finalTopicIds
           );
         } else {
           return await this.processClassData(
             data,
             initialData,
             consultantId,
-            finalTopicIds,
+            finalTopicIds
           );
         }
       } catch (eventError) {
@@ -893,8 +907,8 @@ export class PlannerService {
           topic.length >= 2 &&
           // Filter out duplicates
           !topics.find(
-            (t) => t !== topic && t.toLowerCase() === topic.toLowerCase(),
-          ),
+            (t) => t !== topic && t.toLowerCase() === topic.toLowerCase()
+          )
       );
 
     // Create new topics with processed names
@@ -909,7 +923,7 @@ export class PlannerService {
     data: FormData,
     initialData: Event | null,
     consultantId: string,
-    topicIds: string[],
+    topicIds: string[]
   ): Promise<WebinarEvent> {
     this.newlyCreatedEventId = null;
     this.newlyCreatedEventType = null;
@@ -973,7 +987,7 @@ export class PlannerService {
     const savedWebinar = await this.saveWebinar(
       webinarData,
       data.scheduledAt,
-      consultantId,
+      consultantId
     );
     this.showSuccessToast(data.title, initialData, "webinar");
     return savedWebinar;
@@ -988,7 +1002,7 @@ export class PlannerService {
     data: FormData,
     initialData: Event | null,
     consultantId: string,
-    topicIds: string[],
+    topicIds: string[]
   ): Promise<ClassEvent> {
     this.newlyCreatedEventId = null;
     this.newlyCreatedEventType = null;
@@ -1036,7 +1050,7 @@ export class PlannerService {
         classContents: this.formatClassContents(
           classDataForm.classContents ?? [],
           classPlanId,
-          now,
+          now
         ),
         // Class specific plan fields
         certificateProvided: classDataForm.certificateProvided ?? false,
@@ -1095,7 +1109,7 @@ export class PlannerService {
   private static formatClassContents(
     classContents: any[],
     classPlanId: string,
-    now: Date,
+    now: Date
   ) {
     return classContents.map((content: any, index: number) => ({
       id: content.id ?? `temp-${index}`,
@@ -1117,7 +1131,7 @@ export class PlannerService {
   private static showSuccessToast(
     title: string,
     initialData: Event | null,
-    eventType: string,
+    eventType: string
   ) {
     const action = initialData ? "Updated" : "Created";
     toast({
@@ -1161,7 +1175,7 @@ export class PlannerService {
     try {
       console.log(
         `Rolling back newly created ${this.newlyCreatedEventType}:`,
-        this.newlyCreatedEventId,
+        this.newlyCreatedEventId
       );
 
       const endpoint =
@@ -1179,7 +1193,7 @@ export class PlannerService {
       if (!response.ok) {
         console.error(
           `Failed to rollback ${this.newlyCreatedEventType}, status:`,
-          response.status,
+          response.status
         );
         const errorData = await response.json();
         console.error("Rollback error:", errorData);
@@ -1187,7 +1201,7 @@ export class PlannerService {
         const result = await response.json();
         console.log(
           `${this.newlyCreatedEventType} rolled back successfully:`,
-          result,
+          result
         );
         this.newlyCreatedEventId = null;
         this.newlyCreatedEventType = null;
@@ -1195,7 +1209,7 @@ export class PlannerService {
     } catch (error) {
       console.error(
         `Error during ${this.newlyCreatedEventType} rollback:`,
-        error,
+        error
       );
     }
   }

@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
   ) {
     return NextResponse.json(
       { error: "Invalid appointment type" },
-      { status: 400 },
+      { status: 400 }
     );
   }
 
@@ -36,29 +36,32 @@ export async function GET(request: NextRequest) {
   if (consultationStatus && !validStatuses.includes(consultationStatus)) {
     return NextResponse.json(
       { error: "Invalid consultation status" },
-      { status: 400 },
+      { status: 400 }
     );
   }
   if (subscriptionStatus && !validStatuses.includes(subscriptionStatus)) {
     return NextResponse.json(
       { error: "Invalid subscription status" },
-      { status: 400 },
+      { status: 400 }
     );
   }
   if (webinarStatus && !validStatuses.includes(webinarStatus)) {
     return NextResponse.json(
       { error: "Invalid webinar status" },
-      { status: 400 },
+      { status: 400 }
     );
   }
   if (classStatus && !validStatuses.includes(classStatus)) {
     return NextResponse.json(
       { error: "Invalid class status" },
-      { status: 400 },
+      { status: 400 }
     );
   }
 
   try {
+    const startDate = searchParams.get("startDate");
+    const endDate = searchParams.get("endDate");
+
     const appointments = await getAppointments(
       type as AppointmentsType | undefined,
       consultantProfileId,
@@ -90,6 +93,8 @@ export async function GET(request: NextRequest) {
           | "CANCELLED"
           | undefined,
       },
+      startDate,
+      endDate
     );
 
     return NextResponse.json({ data: appointments });
@@ -97,7 +102,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching appointments:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching appointments" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
@@ -113,90 +118,96 @@ async function getAppointments(
     webinar?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
     class?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
   },
+  startDate?: string | null,
+  endDate?: string | null
 ) {
-  const whereClause: Prisma.AppointmentWhereInput = {
-    OR: [
-      {
-        consultation: {
-          requestStatus: statuses?.consultation || "APPROVED",
-          consultationPlan: consultantProfileId
-            ? {
-                consultantProfileId,
-              }
-            : undefined,
-          requestedBy: consulteeProfileId
-            ? {
-                id: consulteeProfileId,
-              }
-            : undefined,
-        },
-      },
-      {
-        subscription: {
-          requestStatus: statuses?.subscription || "APPROVED",
-          subscriptionPlan: consultantProfileId
-            ? {
-                consultantProfileId,
-              }
-            : undefined,
-          requestedBy: consulteeProfileId
-            ? {
-                id: consulteeProfileId,
-              }
-            : undefined,
-        },
-      },
-      {
-        webinar: {
-          status:
-            statuses?.webinar === "APPROVED"
-              ? "SCHEDULED"
-              : statuses?.webinar === "CANCELLED"
-                ? "CANCELLED"
-                : statuses?.webinar === "REJECTED"
-                  ? "CANCELLED"
-                  : "SCHEDULED",
-          webinarPlan: consultantProfileId
-            ? {
-                consultantProfileId,
-              }
-            : undefined,
-        },
-      },
-      {
-        class: {
-          status:
-            statuses?.class === "APPROVED"
-              ? "SCHEDULED"
-              : statuses?.class === "CANCELLED"
-                ? "CANCELLED"
-                : statuses?.class === "REJECTED"
-                  ? "CANCELLED"
-                  : "SCHEDULED",
-          classPlan: consultantProfileId
-            ? {
-                consultantProfileId,
-              }
-            : undefined,
-        },
-      },
-    ],
-  };
+  const whereClause: Prisma.AppointmentWhereInput = {};
 
-  if (type) {
-    whereClause.appointmentType = type;
+  // Date range filtering for appointments. This is the primary filter.
+  // It looks for appointments where any of its slots overlap with the given date range.
+  if (startDate && endDate) {
+    whereClause.slotsOfAppointment = {
+      some: {
+        AND: [
+          { slotStartTimeInUTC: { lt: new Date(endDate) } },
+          { slotEndTimeInUTC: { gt: new Date(startDate) } },
+        ],
+      },
+    };
+  }
+
+  const userFilterClauses: Prisma.AppointmentWhereInput[] = [];
+  if (consultantProfileId) {
+    userFilterClauses.push({
+      OR: [
+        {
+          consultation: {
+            consultationPlan: { consultantProfileId },
+          },
+        },
+        {
+          subscription: {
+            subscriptionPlan: { consultantProfileId },
+          },
+        },
+        {
+          webinar: {
+            webinarPlan: { consultantProfileId },
+          },
+        },
+        {
+          class: {
+            classPlan: { consultantProfileId },
+          },
+        },
+      ],
+    });
+  }
+
+  if (consulteeProfileId) {
+    userFilterClauses.push({
+      OR: [
+        {
+          consultation: {
+            requestedBy: { id: consulteeProfileId },
+          },
+        },
+        {
+          subscription: {
+            requestedBy: { id: consulteeProfileId },
+          },
+        },
+        {
+          slotsOfAppointment: {
+            some: {
+              user: { some: { consulteeProfileId: consulteeProfileId } },
+            },
+          },
+        },
+      ],
+    });
   }
 
   if (userId) {
-    whereClause.slotsOfAppointment = {
-      some: {
-        user: {
-          some: {
-            id: userId,
+    userFilterClauses.push({
+      slotsOfAppointment: {
+        some: {
+          user: {
+            some: {
+              id: userId,
+            },
           },
         },
       },
-    };
+    });
+  }
+
+  if (userFilterClauses.length > 0) {
+    whereClause.AND = userFilterClauses;
+  }
+
+  if (type) {
+    whereClause.appointmentType = type;
   }
 
   const appointments = await prisma.appointment.findMany({
@@ -295,7 +306,7 @@ export async function POST(request: NextRequest) {
     if (!appointmentType || !slotsOfAppointment?.createMany?.data?.length) {
       return NextResponse.json(
         { error: "Missing required fields" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -307,7 +318,7 @@ export async function POST(request: NextRequest) {
           (slot: { slotStartTimeInUTC: string; slotEndTimeInUTC: string }) => ({
             slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
             slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
-          }),
+          })
         ),
       },
     };
@@ -394,7 +405,7 @@ export async function POST(request: NextRequest) {
     console.error("Error creating appointment:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the appointment" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
