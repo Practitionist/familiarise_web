@@ -440,11 +440,11 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         scheduleType,
         slotsOfAvailabilityWeekly:
           scheduleType === ScheduleType.WEEKLY
-            ? formatSlotsForApi(weeklySlots, true, timezone || 'UTC')
+            ? formatSlotsForApi(weeklySlots, true, timezone || "UTC")
             : [],
         slotsOfAvailabilityCustom:
           scheduleType === ScheduleType.CUSTOM
-            ? formatSlotsForApi(customSlots, false, timezone || 'UTC')
+            ? formatSlotsForApi(customSlots, false, timezone || "UTC")
             : [],
       };
 
@@ -468,8 +468,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         const { data: updatedConsultant } = await updatedResponse.json();
 
         // Update local state to match what was saved to database
-        setWeeklySlots(getInitialWeeklySlots(updatedConsultant, timezone || 'UTC'));
-        setCustomSlots(getInitialCustomSlots(updatedConsultant, timezone || 'UTC'));
+        setWeeklySlots(
+          getInitialWeeklySlots(updatedConsultant, timezone || "UTC"),
+        );
+        setCustomSlots(
+          getInitialCustomSlots(updatedConsultant, timezone || "UTC"),
+        );
         setFormData(getInitialFormData(updatedConsultant));
         setScheduleType(updatedConsultant.scheduleType);
       }
@@ -876,8 +880,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
             React.startTransition(() => {
               setFormData(getInitialFormData(consultant));
               setScheduleType(consultant.scheduleType);
-              setWeeklySlots(getInitialWeeklySlots(consultant, timezone || 'UTC'));
-              setCustomSlots(getInitialCustomSlots(consultant, timezone || 'UTC'));
+              setWeeklySlots(
+                getInitialWeeklySlots(consultant, timezone || "UTC"),
+              );
+              setCustomSlots(
+                getInitialCustomSlots(consultant, timezone || "UTC"),
+              );
             });
           }}
           disabled={isLoading}

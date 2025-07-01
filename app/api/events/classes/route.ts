@@ -156,7 +156,7 @@ export async function GET(request: Request) {
     console.error("Error fetching classes:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching classes" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

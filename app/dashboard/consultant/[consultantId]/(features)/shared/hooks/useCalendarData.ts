@@ -42,7 +42,7 @@ export interface UseCalendarDataReturn extends CalendarData {
   refetchEventSlots: () => Promise<void>;
   getSlotStatusForInterval: (
     interval: { hour: number; minute: number },
-    date: Date
+    date: Date,
   ) => any;
 }
 
@@ -50,7 +50,7 @@ export interface UseCalendarDataReturn extends CalendarData {
  * Custom hook for managing calendar data fetching and state
  */
 export function useCalendarData(
-  options: UseCalendarDataOptions
+  options: UseCalendarDataOptions,
 ): UseCalendarDataReturn {
   const {
     consultantId,
@@ -130,7 +130,7 @@ export function useCalendarData(
       const data = await AllocationService.fetchAvailabilitySlots(
         consultantId,
         startDate,
-        endDate
+        endDate,
       );
       setRawAvailabilitySlots(data);
     } catch (error) {
@@ -160,7 +160,7 @@ export function useCalendarData(
       const data = await AllocationService.fetchAppointments(
         consultantId,
         startDate,
-        endDate
+        endDate,
       );
       setExistingAppointments(data);
     } catch (error) {
@@ -202,10 +202,10 @@ export function useCalendarData(
             const intervalSlots: TimeSlot[] = [];
             for (let i = 0; i < numIntervals; i++) {
               const intervalStart = new Date(
-                start.getTime() + i * 30 * 60 * 1000
+                start.getTime() + i * 30 * 60 * 1000,
               ); // 30-minute grid intervals
               const intervalEnd = new Date(
-                intervalStart.getTime() + 30 * 60 * 1000
+                intervalStart.getTime() + 30 * 60 * 1000,
               ); // 30-minute grid intervals
               intervalSlots.push({
                 startTime: intervalStart,
@@ -215,7 +215,7 @@ export function useCalendarData(
               });
             }
             return intervalSlots;
-          }
+          },
         );
         setEventSlots(slots);
       } else {
@@ -260,10 +260,10 @@ export function useCalendarData(
         interval,
         date,
         availableSlots,
-        existingAppointments
+        existingAppointments,
       );
     },
-    [availableSlots, existingAppointments]
+    [availableSlots, existingAppointments],
   );
 
   // Auto-load data on mount and when dependencies change

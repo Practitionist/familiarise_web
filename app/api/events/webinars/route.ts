@@ -194,7 +194,7 @@ export async function GET(request: Request) {
     console.error("Error fetching webinars:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching webinars" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -210,7 +210,7 @@ export async function POST(request: Request) {
           error:
             "Missing required fields: scheduledAt, endAt, and webinarPlanId are required",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -247,7 +247,7 @@ export async function POST(request: Request) {
     console.error("Error creating webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the webinar" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

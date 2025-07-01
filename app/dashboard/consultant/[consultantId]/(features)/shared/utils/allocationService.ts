@@ -43,7 +43,7 @@ export class AllocationService {
    */
   static async allocateConsultationSlots(
     consultationId: string,
-    request: AllocationRequest
+    request: AllocationRequest,
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
@@ -54,7 +54,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(request),
-        }
+        },
       );
 
       const data = await response.json();
@@ -85,7 +85,7 @@ export class AllocationService {
    */
   static async validateConsultationSlots(
     consultationId: string,
-    slots: string[]
+    slots: string[],
   ): Promise<ValidationResponse> {
     try {
       const response = await fetch(
@@ -96,7 +96,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ slots }),
-        }
+        },
       );
 
       const data = await response.json();
@@ -127,7 +127,7 @@ export class AllocationService {
    */
   static async allocateSubscriptionSlots(
     subscriptionId: string,
-    request: AllocationRequest
+    request: AllocationRequest,
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
@@ -138,7 +138,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(request),
-        }
+        },
       );
 
       const data = await response.json();
@@ -169,7 +169,7 @@ export class AllocationService {
    */
   static async validateSubscriptionSlots(
     subscriptionId: string,
-    slots: string[]
+    slots: string[],
   ): Promise<ValidationResponse> {
     try {
       const response = await fetch(
@@ -180,7 +180,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ slots }),
-        }
+        },
       );
 
       const data = await response.json();
@@ -211,7 +211,7 @@ export class AllocationService {
    */
   static async allocateWebinarSlots(
     webinarId: string,
-    slots: string[]
+    slots: string[],
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
@@ -222,7 +222,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ slots }),
-        }
+        },
       );
 
       const data = await response.json();
@@ -253,7 +253,7 @@ export class AllocationService {
    */
   static async allocateClassSlots(
     classId: string,
-    slots: string[]
+    slots: string[],
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(`/api/events/classes/${classId}/allocate`, {
@@ -297,7 +297,7 @@ export class AllocationService {
     allocationOptions?: {
       isAuto?: boolean;
       useRequestedSlots?: boolean;
-    }
+    },
   ): Promise<AllocationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
 
@@ -336,7 +336,7 @@ export class AllocationService {
   static async validateSlots(
     eventType: "consultation" | "subscription",
     eventId: string,
-    slots: TimeSlot[]
+    slots: TimeSlot[],
   ): Promise<ValidationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
 
@@ -380,24 +380,42 @@ export class AllocationService {
   static async fetchAvailabilitySlots(
     consultantId: string,
     startDate: Date,
-    endDate: Date
+    endDate: Date,
+    /**
+     * Explicit timezone override. If omitted we fall back to the browser's
+     * locale (when running on the client) and finally to "UTC".  This keeps
+     * the API response aligned with the user's calendar view.
+     */
+    timezone?: string,
   ) {
     if (!consultantId) {
       throw new Error("Consultant ID is required");
     }
 
+    // Resolve the timezone to send to the server.  Priority:
+    //   1. Explicit argument
+    //   2. Browser-reported tz (client-side)
+    //   3. "UTC" (safe default on server or SSR)
+    const tz =
+      timezone ||
+      (typeof Intl !== "undefined"
+        ? Intl.DateTimeFormat().resolvedOptions().timeZone
+        : undefined) ||
+      "UTC";
+
     try {
       const params = new URLSearchParams({
         startDateInUtc: startDate.toISOString(),
         endDateInUtc: endDate.toISOString(),
+        timezone: tz,
       });
       const response = await fetch(
-        `/api/slots/availability-with-allocation/${consultantId}?${params}`
+        `/api/slots/availability-with-allocation/${consultantId}?${params}`,
       );
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(
-          errorData.error || "Failed to fetch availability slots"
+          errorData.error || "Failed to fetch availability slots",
         );
       }
       const result = await response.json();
@@ -419,7 +437,7 @@ export class AllocationService {
   static async fetchAppointments(
     consultantId: string,
     startDate: Date,
-    endDate: Date
+    endDate: Date,
   ) {
     if (!consultantId) {
       throw new Error("Consultant ID is required");
@@ -449,7 +467,7 @@ export class AllocationService {
    */
   static async fetchEventSlots(
     eventType: "webinar" | "class",
-    eventId: string
+    eventId: string,
   ) {
     try {
       const params = new URLSearchParams({
