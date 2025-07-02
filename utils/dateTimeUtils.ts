@@ -156,20 +156,23 @@ export const formatDate = (
 };
 
 // Timezone-aware utility functions for consistent slot handling
-export const convertUtcToTimezone = (utcTimeString: string, timezone: string = 'UTC'): string => {
+export const convertUtcToTimezone = (
+  utcTimeString: string,
+  timezone: string = "UTC",
+): string => {
   try {
     if (!utcTimeString) return "";
-    
+
     const date = new Date(utcTimeString);
     if (isNaN(date.getTime())) return "";
-    
+
     // Use date-fns-tz for consistent timezone conversion
     const zonedDate = toZonedTime(date, timezone);
-    
+
     // Format as HH:mm
-    const hours = zonedDate.getHours().toString().padStart(2, '0');
-    const minutes = zonedDate.getMinutes().toString().padStart(2, '0');
-    
+    const hours = zonedDate.getHours().toString().padStart(2, "0");
+    const minutes = zonedDate.getMinutes().toString().padStart(2, "0");
+
     return `${hours}:${minutes}`;
   } catch (error) {
     console.error("Error converting UTC to timezone:", error);
@@ -177,27 +180,31 @@ export const convertUtcToTimezone = (utcTimeString: string, timezone: string = '
   }
 };
 
-export const convertTimezoneToUtc = (timeStr: string, dateStr: string, timezone: string = 'UTC'): string => {
+export const convertTimezoneToUtc = (
+  timeStr: string,
+  dateStr: string,
+  timezone: string = "UTC",
+): string => {
   try {
     if (!timeStr || !dateStr) return "";
-    
+
     // For UTC timezone, return as-is
-    if (timezone === 'UTC') {
+    if (timezone === "UTC") {
       const localDateTime = `${dateStr}T${timeStr}:00`;
       const date = new Date(localDateTime);
       return isNaN(date.getTime()) ? "" : date.toISOString();
     }
-    
+
     // Create a date in the specified timezone using date-fns-tz
     const localDateTime = `${dateStr}T${timeStr}:00`;
     const zonedDate = new Date(localDateTime);
-    
+
     if (isNaN(zonedDate.getTime())) return "";
-    
+
     // Convert from the specified timezone to UTC using date-fns-tz
     // First, treat the time as if it's in the target timezone
     const utcDate = fromZonedTime(zonedDate, timezone);
-    
+
     return utcDate.toISOString();
   } catch (error) {
     console.error("Error converting timezone to UTC:", error);
@@ -205,19 +212,25 @@ export const convertTimezoneToUtc = (timeStr: string, dateStr: string, timezone:
   }
 };
 
-export const extractTimeFromUtcSlot = (utcTimeString: string, timezone: string = 'UTC'): string => {
+export const extractTimeFromUtcSlot = (
+  utcTimeString: string,
+  timezone: string = "UTC",
+): string => {
   try {
     if (!utcTimeString) return "";
-    
+
     const date = new Date(utcTimeString);
     if (isNaN(date.getTime())) return "";
-    
+
     // For weekly slots, we want to extract the time pattern regardless of date
     // but respect the timezone for display
-    if (timezone === 'UTC') {
+    if (timezone === "UTC") {
       // Extract UTC time directly
-      return date.getUTCHours().toString().padStart(2, "0") + ":" + 
-             date.getUTCMinutes().toString().padStart(2, "0");
+      return (
+        date.getUTCHours().toString().padStart(2, "0") +
+        ":" +
+        date.getUTCMinutes().toString().padStart(2, "0")
+      );
     } else {
       // Convert to target timezone
       return convertUtcToTimezone(utcTimeString, timezone);
@@ -233,7 +246,7 @@ export const timeToMinutes = (timeString: string): number => {
   try {
     if (!timeString) return 0;
     const [hours, minutes] = timeString.split(":").map(Number);
-    return (hours * 60) + minutes;
+    return hours * 60 + minutes;
   } catch (error) {
     console.error("Error converting time to minutes:", error);
     return 0;
@@ -241,6 +254,10 @@ export const timeToMinutes = (timeString: string): number => {
 };
 
 // Sort slots chronologically by start time
-export const sortSlotsByTime = <T extends { startTime: string }>(slots: T[]): T[] => {
-  return slots.sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
+export const sortSlotsByTime = <T extends { startTime: string }>(
+  slots: T[],
+): T[] => {
+  return slots.sort(
+    (a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime),
+  );
 };

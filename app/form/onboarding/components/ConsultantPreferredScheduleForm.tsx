@@ -96,17 +96,23 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           formattedWeeklySlots[day] = [];
         }
         formattedWeeklySlots[day].push({
-          startTime: extractTimeFromUtcSlot(slot.slotStartTimeInUTC.toString(), timezone),
-          endTime: extractTimeFromUtcSlot(slot.slotEndTimeInUTC.toString(), timezone),
+          startTime: extractTimeFromUtcSlot(
+            slot.slotStartTimeInUTC.toString(),
+            timezone,
+          ),
+          endTime: extractTimeFromUtcSlot(
+            slot.slotEndTimeInUTC.toString(),
+            timezone,
+          ),
           isValid: true,
         });
       });
-      
+
       // Sort slots chronologically within each day
-      Object.keys(formattedWeeklySlots).forEach(day => {
+      Object.keys(formattedWeeklySlots).forEach((day) => {
         formattedWeeklySlots[day] = sortSlotsByTime(formattedWeeklySlots[day]);
       });
-      
+
       setWeeklySlots(formattedWeeklySlots);
     }
 
@@ -116,27 +122,35 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         try {
           const startDate = new Date(slot.slotStartTimeInUTC);
           // Get date in target timezone
-          const dateString = startDate.toLocaleDateString("en-CA", { 
-            timeZone: timezone 
+          const dateString = startDate.toLocaleDateString("en-CA", {
+            timeZone: timezone,
           });
           if (!formattedCustomSlots[dateString]) {
             formattedCustomSlots[dateString] = [];
           }
           formattedCustomSlots[dateString].push({
-            startTime: convertUtcToTimezone(slot.slotStartTimeInUTC.toString(), timezone),
-            endTime: convertUtcToTimezone(slot.slotEndTimeInUTC.toString(), timezone),
+            startTime: convertUtcToTimezone(
+              slot.slotStartTimeInUTC.toString(),
+              timezone,
+            ),
+            endTime: convertUtcToTimezone(
+              slot.slotEndTimeInUTC.toString(),
+              timezone,
+            ),
             isValid: true,
           });
         } catch (error) {
           console.error("Error processing custom slot:", error);
         }
       });
-      
+
       // Sort slots chronologically within each date
-      Object.keys(formattedCustomSlots).forEach(dateString => {
-        formattedCustomSlots[dateString] = sortSlotsByTime(formattedCustomSlots[dateString]);
+      Object.keys(formattedCustomSlots).forEach((dateString) => {
+        formattedCustomSlots[dateString] = sortSlotsByTime(
+          formattedCustomSlots[dateString],
+        );
       });
-      
+
       setCustomSlots(formattedCustomSlots);
     }
   }, [initialData, timezone, timezoneLoading]);
@@ -144,7 +158,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   // Legacy weekly slots formatting - replaced with timezone-aware version
   useEffect(() => {
     if (!timezone) return;
-    
+
     // Sort slots before processing for API
     const sortedWeeklySlots: SlotsType = {};
     Object.entries(weeklySlots).forEach(([day, slots]) => {
@@ -159,17 +173,25 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           const overnight = isOvernight(slot.startTime, slot.endTime);
 
           // Convert timezone-aware time back to UTC
-          const startUTC = convertTimezoneToUtc(slot.startTime, baseDate, timezone);
+          const startUTC = convertTimezoneToUtc(
+            slot.startTime,
+            baseDate,
+            timezone,
+          );
           const endUTC = convertTimezoneToUtc(
             slot.endTime,
             overnight ? nextDate : baseDate,
-            timezone
+            timezone,
           );
 
           if (!startUTC || !endUTC) return [];
 
           if (overnight) {
-            const midnightUTC = convertTimezoneToUtc("00:00", nextDate, timezone);
+            const midnightUTC = convertTimezoneToUtc(
+              "00:00",
+              nextDate,
+              timezone,
+            );
             if (!midnightUTC) return [];
 
             const startDay = day.toUpperCase() as DayOfWeek;
@@ -208,7 +230,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   // Legacy custom slots formatting - replaced with timezone-aware version
   useEffect(() => {
     if (!timezone) return;
-    
+
     // Sort slots before processing for API
     const sortedCustomSlots: SlotsType = {};
     Object.entries(customSlots).forEach(([dateString, slots]) => {
@@ -224,17 +246,25 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           const overnight = isOvernight(slot.startTime, slot.endTime);
 
           // Convert timezone-aware time to UTC
-          const startUTC = convertTimezoneToUtc(slot.startTime, dateString, timezone);
+          const startUTC = convertTimezoneToUtc(
+            slot.startTime,
+            dateString,
+            timezone,
+          );
           const endUTC = convertTimezoneToUtc(
             slot.endTime,
             overnight ? nextDateStr : dateString,
-            timezone
+            timezone,
           );
 
           if (!startUTC || !endUTC) return [];
 
           if (overnight) {
-            const midnightUTC = convertTimezoneToUtc("00:00", nextDateStr, timezone);
+            const midnightUTC = convertTimezoneToUtc(
+              "00:00",
+              nextDateStr,
+              timezone,
+            );
             if (!midnightUTC) return [];
 
             return [
@@ -308,12 +338,12 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           scheduleType === "WEEKLY",
         );
         updatedSlots[day][index] = validationResult.slot;
-        
+
         // Sort slots after update
         if (updatedSlots[day]) {
           updatedSlots[day] = sortSlotsByTime(updatedSlots[day]);
         }
-        
+
         return updatedSlots;
       });
     },
