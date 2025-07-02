@@ -150,15 +150,19 @@ export class PlannerService {
    */
   static async fetchClasses(
     consultantId: string,
-    startDate: Date,
-    endDate: Date
+    startDate?: Date,
+    endDate?: Date
   ): Promise<ClassEvent[]> {
     try {
       const params = new URLSearchParams({
         consultantProfileId: consultantId,
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
       });
+
+      // Only add date filters if provided
+      if (startDate && endDate) {
+        params.append("startDate", startDate.toISOString());
+        params.append("endDate", endDate.toISOString());
+      }
       const response = await fetch(`/api/events/classes?${params}`);
 
       if (!response.ok) {
