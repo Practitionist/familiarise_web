@@ -37,7 +37,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
 
         // Use the service to fetch data
         const [fetchedWebinars, fetchedClasses] = await Promise.all([
-          PlannerService.fetchWebinars(consultantId, startDate, endDate),
+          PlannerService.fetchWebinars(consultantId),
           PlannerService.fetchClasses(consultantId, startDate, endDate),
         ]);
 
@@ -57,7 +57,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   // Handle webinar saved event
   const handleWebinarSaved = async (
     data: Partial<WebinarEvent>,
-    scheduledAt?: string | Date,
+    scheduledAt?: string | Date
   ) => {
     try {
       setIsSaving(true);
@@ -69,7 +69,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
       const savedWebinar = await PlannerService.saveWebinar(
         data,
         scheduledAt,
-        consultantId,
+        consultantId
       );
       console.log("Webinar saved successfully:", savedWebinar);
 
@@ -128,7 +128,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
         `/api/events/webinars/crud-with-plan/${webinarId}`,
         {
           method: "DELETE",
-        },
+        }
       );
 
       if (!response.ok) {
@@ -165,7 +165,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
         `/api/events/classes/crud-with-plan/${classId}`,
         {
           method: "DELETE",
-        },
+        }
       );
 
       if (!response.ok) {
@@ -196,7 +196,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
 
   const handleMonthChange = (direction: "prev" | "next") => {
     setCurrentDate((prevDate) =>
-      addMonths(prevDate, direction === "prev" ? -1 : 1),
+      addMonths(prevDate, direction === "prev" ? -1 : 1)
     );
   };
 
@@ -231,19 +231,6 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-3xl font-bold mb-8">Event Management Dashboard</h1>
-
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-2xl font-semibold">
-          {currentDate.toLocaleString("default", {
-            month: "long",
-            year: "numeric",
-          })}
-        </h2>
-        <div className="space-x-2">
-          <Button onClick={() => handleMonthChange("prev")}>Previous</Button>
-          <Button onClick={() => handleMonthChange("next")}>Next</Button>
-        </div>
-      </div>
 
       <div className="mb-8">
         <div className="flex justify-between items-center mb-4">
