@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useToast } from "@/components/ui/use-toast";
 import {
   TimeSlot,
@@ -16,6 +16,7 @@ export interface UseSlotAllocationOptions {
   eventId: string;
   durationInMonths?: number;
   callsPerWeek?: number;
+  sessionDurationInHours?: number;
   onSuccess?: (result: AllocationResult) => void;
   onError?: (error: string) => void;
 }
@@ -46,13 +47,14 @@ export interface UseSlotAllocationReturn {
  * Custom hook for managing slot allocation logic
  */
 export function useSlotAllocation(
-  options: UseSlotAllocationOptions,
+  options: UseSlotAllocationOptions
 ): UseSlotAllocationReturn {
   const {
     eventType,
     eventId,
     durationInMonths,
     callsPerWeek,
+    sessionDurationInHours,
     onSuccess,
     onError,
   } = options;
@@ -63,71 +65,140 @@ export function useSlotAllocation(
   const [selectedSlots, setSelectedSlots] = useState<TimeSlot[]>([]);
   const [isAllocating, setIsAllocating] = useState(false);
   const [allocationError, setAllocationError] = useState<string | null>(null);
+  const [validationMessage, setValidationMessage] = useState<string | null>(
+    null
+  );
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Calculate required slots
   const requiredSlots = calculateRequiredSlots(
     eventType,
     durationInMonths,
     callsPerWeek,
+    sessionDurationInHours
   );
 
   // Check if we can allocate (have the right number of slots)
   const canAllocate = selectedSlots.length === requiredSlots;
+
+  // Handle validation messages with toast
+  useEffect(() => {
+    if (validationMessage) {
+      toast({
+        variant: "destructive",
+        title: "Selection Error",
+        description: validationMessage,
+      });
+      setValidationMessage(null); // Clear after showing
+    }
+  }, [validationMessage, toast]);
+
+  // Handle success messages with toast
+  useEffect(() => {
+    if (successMessage) {
+      toast({
+        title: "Success",
+        description: successMessage,
+      });
+      setSuccessMessage(null); // Clear after showing
+    }
+  }, [successMessage, toast]);
 
   // Toggle slot selection
   const toggleSlot = useCallback(
     (slot: TimeSlot) => {
       setSelectedSlots((current) => {
         const isSelected = current.some(
-          (s) => s.startTime.getTime() === slot.startTime.getTime(),
+          (s) => s.startTime.getTime() === slot.startTime.getTime()
         );
 
         if (isSelected) {
           // Remove slot
           return current.filter(
-            (s) => s.startTime.getTime() !== slot.startTime.getTime(),
+            (s) => s.startTime.getTime() !== slot.startTime.getTime()
           );
         } else {
           // Add slot (with limits)
-          if (eventType === "consultation" || eventType === "webinar") {
+          if (eventType === "consultation") {
             // Single slot events - replace selection
             return [slot];
-          } else if (current.length >= requiredSlots) {
-            // Multi-slot events - add if under limit
-            toast({
-              variant: "destructive",
-              title: "Maximum slots reached",
-              description: `You can only select ${requiredSlots} slots for this ${eventType}.`,
-            });
-            return current;
-          } else {
-            // Add slot with validation
-            // For subscription/class, validate weekly distribution
-            const newSelection = [...current, slot].sort(
-              (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+          } else if (eventType === "webinar") {
+            // For webinars, check if it's single or multi-slot based on duration
+            const webinarRequiredSlots = calculateRequiredSlots(
+              eventType,
+              undefined,
+              undefined,
+              sessionDurationInHours
             );
-
-            if (callsPerWeek) {
-              const validation = validateSlotDistribution(
-                newSelection,
-                callsPerWeek,
-              );
-              if (!validation.isValid) {
-                toast({
-                  variant: "destructive",
-                  title: "Invalid slot distribution",
-                  description: validation.errorMessage,
-                });
+            if (webinarRequiredSlots === 1) {
+              // Single slot webinar - replace selection
+              return [slot];
+            } else {
+              // Multi-slot webinar - allow adding up to required slots
+              if (current.length >= webinarRequiredSlots) {
+                setValidationMessage(
+                  `You can only select ${webinarRequiredSlots} consecutive slots for this ${sessionDurationInHours || 1} hour webinar.`
+                );
                 return current;
+              } else {
+                // Add slot and validate consecutiveness
+                const newSelection = [...current, slot].sort(
+                  (a, b) => a.startTime.getTime() - b.startTime.getTime()
+                );
+
+                // Validate consecutive slots for multi-slot webinars
+                if (newSelection.length > 1) {
+                  for (let i = 1; i < newSelection.length; i++) {
+                    const prevSlot = newSelection[i - 1];
+                    const currentSlot = newSelection[i];
+                    if (
+                      currentSlot.startTime.getTime() !==
+                      prevSlot.endTime.getTime()
+                    ) {
+                      setValidationMessage("Webinar slots must be consecutive");
+                      return current;
+                    }
+                  }
+                }
+
+                return newSelection;
               }
             }
+          } else {
+            // Handle subscription/class events
+            if (current.length >= requiredSlots) {
+              // Multi-slot events - add if under limit
+              setValidationMessage(
+                `You can only select ${requiredSlots} slots for this ${eventType}.`
+              );
+              return current;
+            } else {
+              // Add slot with validation
+              // For subscription/class, validate weekly distribution
+              const newSelection = [...current, slot].sort(
+                (a, b) => a.startTime.getTime() - b.startTime.getTime()
+              );
 
-            return newSelection;
+              if (callsPerWeek) {
+                const validation = validateSlotDistribution(
+                  newSelection,
+                  callsPerWeek
+                );
+                if (!validation.isValid) {
+                  setValidationMessage(
+                    validation.errorMessage || "Invalid slot distribution"
+                  );
+                  return current;
+                }
+              }
+
+              return newSelection;
+            }
           }
         }
       });
     },
-    [eventType, requiredSlots, callsPerWeek, toast],
+    [eventType, requiredSlots, callsPerWeek, sessionDurationInHours]
   );
 
   // Clear all selected slots
@@ -140,10 +211,10 @@ export function useSlotAllocation(
   const isSlotSelected = useCallback(
     (slot: TimeSlot) => {
       return selectedSlots.some(
-        (s) => s.startTime.getTime() === slot.startTime.getTime(),
+        (s) => s.startTime.getTime() === slot.startTime.getTime()
       );
     },
-    [selectedSlots],
+    [selectedSlots]
   );
 
   // Validate current selection
@@ -152,6 +223,7 @@ export function useSlotAllocation(
       selectedSlots,
       eventType,
       requiredSlots,
+      sessionDurationInHours
     );
 
     if (!validation.isValid) {
@@ -167,7 +239,13 @@ export function useSlotAllocation(
     }
 
     return { isValid: true };
-  }, [selectedSlots, eventType, requiredSlots, callsPerWeek]);
+  }, [
+    selectedSlots,
+    eventType,
+    requiredSlots,
+    callsPerWeek,
+    sessionDurationInHours,
+  ]);
 
   // Manual allocation using selected slots
   const manualAllocate = useCallback(async () => {
@@ -175,11 +253,7 @@ export function useSlotAllocation(
     if (!validation.isValid) {
       const errorMessage = validation.errorMessage || "Invalid slot selection";
       setAllocationError(errorMessage);
-      toast({
-        variant: "destructive",
-        title: "Allocation Error",
-        description: errorMessage,
-      });
+      setValidationMessage(errorMessage);
       onError?.(errorMessage);
       return;
     }
@@ -193,38 +267,28 @@ export function useSlotAllocation(
         eventId,
         durationInMonths,
         callsPerWeek,
+        sessionDurationInHours,
       };
 
       const result = await AllocationAlgorithms.manualAllocate(
         selectedSlots,
-        allocationOptions,
+        allocationOptions
       );
 
       if (result.success) {
-        toast({
-          title: "Success",
-          description: "Slots allocated successfully",
-        });
+        setSuccessMessage("Slots allocated successfully");
         onSuccess?.(result);
       } else {
         const errorMessage = result.error || "Manual allocation failed";
         setAllocationError(errorMessage);
-        toast({
-          variant: "destructive",
-          title: "Allocation Failed",
-          description: errorMessage,
-        });
+        setValidationMessage(errorMessage);
         onError?.(errorMessage);
       }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Allocation failed";
       setAllocationError(errorMessage);
-      toast({
-        variant: "destructive",
-        title: "Allocation Error",
-        description: errorMessage,
-      });
+      setValidationMessage(errorMessage);
       onError?.(errorMessage);
     } finally {
       setIsAllocating(false);
@@ -236,7 +300,6 @@ export function useSlotAllocation(
     eventId,
     durationInMonths,
     callsPerWeek,
-    toast,
     onSuccess,
     onError,
   ]);
@@ -253,11 +316,12 @@ export function useSlotAllocation(
           eventId,
           durationInMonths,
           callsPerWeek,
+          sessionDurationInHours,
         };
 
         const result = await AllocationAlgorithms.autoAllocate(
           availableSlots,
-          allocationOptions,
+          allocationOptions
         );
 
         if (result.success) {
@@ -299,7 +363,7 @@ export function useSlotAllocation(
       toast,
       onSuccess,
       onError,
-    ],
+    ]
   );
 
   // Pre-allocation using requested slots
@@ -314,6 +378,7 @@ export function useSlotAllocation(
           eventId,
           durationInMonths,
           callsPerWeek,
+          sessionDurationInHours,
           requestedSlots,
         };
 
@@ -359,7 +424,7 @@ export function useSlotAllocation(
       toast,
       onSuccess,
       onError,
-    ],
+    ]
   );
 
   return {
@@ -391,7 +456,7 @@ export function useSlotAllocation(
  */
 function validateSlotDistribution(
   slots: TimeSlot[],
-  callsPerWeek: number,
+  callsPerWeek: number
 ): { isValid: boolean; errorMessage?: string } {
   const slotsByWeek = new Map<string, TimeSlot[]>();
 

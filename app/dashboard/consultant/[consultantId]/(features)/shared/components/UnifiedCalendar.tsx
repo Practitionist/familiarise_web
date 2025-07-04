@@ -20,7 +20,11 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
-import { TimeSlot, AppointmentDetail } from "../utils/calendarUtils";
+import {
+  TimeSlot,
+  AppointmentDetail,
+  calculateRequiredSlots,
+} from "../utils/calendarUtils";
 import { useCalendarData } from "../hooks/useCalendarData";
 import { useSlotAllocation } from "../hooks/useSlotAllocation";
 import {
@@ -67,10 +71,10 @@ export function UnifiedCalendar({
   const [view, setView] = useState<"week" | "month">("week");
   const [browserTimezone, setBrowserTimezone] = useState("UTC");
   const [actualSessionDuration, setActualSessionDuration] = useState<number>(
-    sessionDurationInHours || 1,
+    sessionDurationInHours || 1
   );
   const [elongatedSlotGroups, setElongatedSlotGroups] = useState<TimeSlot[][]>(
-    [],
+    []
   );
 
   // Initialize timezone
@@ -90,21 +94,21 @@ export function UnifiedCalendar({
         try {
           const duration = await fetchSessionDurationFromPlan(
             eventType,
-            eventId,
+            eventId
           );
           setActualSessionDuration(duration);
         } catch (error) {
           console.error("Failed to fetch session duration:", error);
           // For now, use a default value instead of throwing to prevent calendar crashes
           console.warn(
-            `Using default 1-hour duration for ${eventType} due to fetch error`,
+            `Using default 1-hour duration for ${eventType} due to fetch error`
           );
           setActualSessionDuration(1);
         }
       } else if (mode !== "view") {
         // Only require eventId for non-view modes
         console.warn(
-          `No eventId provided for ${eventType} calendar in ${mode} mode. Using default 1-hour duration.`,
+          `No eventId provided for ${eventType} calendar in ${mode} mode. Using default 1-hour duration.`
         );
         setActualSessionDuration(1);
       } else {
@@ -153,6 +157,7 @@ export function UnifiedCalendar({
     eventId: eventId || "",
     durationInMonths,
     callsPerWeek,
+    sessionDurationInHours: actualSessionDuration,
     onSuccess: onAllocationComplete,
   });
 
@@ -165,10 +170,17 @@ export function UnifiedCalendar({
 
   // Update elongated slot groups when selected slots change
   useEffect(() => {
-    if (selectedSlots.length > 0) {
-      const groups = groupConsecutiveSlots(selectedSlots);
-      setElongatedSlotGroups(groups);
-    } else {
+    try {
+      if (selectedSlots.length > 0) {
+        console.log("Updating elongated slot groups for slots:", selectedSlots);
+        const groups = groupConsecutiveSlots(selectedSlots);
+        console.log("Created elongated slot groups:", groups);
+        setElongatedSlotGroups(groups);
+      } else {
+        setElongatedSlotGroups([]);
+      }
+    } catch (error) {
+      console.error("Error updating elongated slot groups:", error);
       setElongatedSlotGroups([]);
     }
   }, [selectedSlots]);
@@ -186,7 +198,7 @@ export function UnifiedCalendar({
     const validation = validateElongatedSlotSelection(
       selectedSlots,
       actualSessionDuration,
-      false, // Don't allow partial sessions
+      false // Don't allow partial sessions
     );
 
     if (!validation.isValid) {
@@ -197,7 +209,7 @@ export function UnifiedCalendar({
 
     // Convert elongated slots to 30-minute API format
     const apiSlots = convertElongatedSlotsTo30MinSlots(
-      validation.validGroups.flat(),
+      validation.validGroups.flat()
     );
 
     // Call the original manual allocate with converted slots
@@ -242,30 +254,42 @@ export function UnifiedCalendar({
   // Handle slot click
   const handleSlotClick = (
     interval: { hour: number; minute: number },
-    date: Date,
+    date: Date
   ) => {
     if (mode === "view") return;
 
-    const status = getSlotStatusForInterval(interval, date);
-    if (status.isDisabled) return;
+    try {
+      const status = getSlotStatusForInterval(interval, date);
+      if (status.isDisabled) return;
 
-    // Create 30-minute slot (elongation is handled visually)
-    const slot: TimeSlot = {
-      startTime: new Date(status.intervalStartUTCString),
-      endTime: new Date(status.intervalEndUTCString), // Keep 30-minute slots
-      isAvailable: status.isAvailable,
-      isBooked: status.isBooked,
-    };
+      // Create 30-minute slot (elongation is handled visually)
+      const slot: TimeSlot = {
+        startTime: new Date(status.intervalStartUTCString),
+        endTime: new Date(status.intervalEndUTCString), // Keep 30-minute slots
+        isAvailable: status.isAvailable,
+        isBooked: status.isBooked,
+      };
 
-    if (mode === "select" || mode === "allocate") {
-      toggleSlot(slot);
+      console.log("Clicking slot:", {
+        interval,
+        date,
+        slot,
+        mode,
+        actualSessionDuration,
+      });
+
+      if (mode === "select" || mode === "allocate") {
+        toggleSlot(slot);
+      }
+    } catch (error) {
+      console.error("Error in handleSlotClick:", error);
     }
   };
 
   // Render time cell
   const renderTimeCell = (
     interval: { hour: number; minute: number },
-    date: Date,
+    date: Date
   ) => {
     const status = getSlotStatusForInterval(interval, date);
 
@@ -288,7 +312,7 @@ export function UnifiedCalendar({
 
     const isCurrentlySelected = isSlotSelected(slot);
     const isEventSlot = eventSlots.some(
-      (es) => es.startTime.getTime() === slot.startTime.getTime(),
+      (es) => es.startTime.getTime() === slot.startTime.getTime()
     );
 
     // Find if this slot is part of an elongated group and get its position
@@ -297,24 +321,38 @@ export function UnifiedCalendar({
       slotIndex: number;
       groupSize: number;
     } | null = null;
-    if (isCurrentlySelected) {
-      for (
-        let groupIndex = 0;
-        groupIndex < elongatedSlotGroups.length;
-        groupIndex++
-      ) {
-        const group = elongatedSlotGroups[groupIndex];
-        const slotIndex = group.findIndex(
-          (s) => s.startTime.getTime() === slot.startTime.getTime(),
-        );
-        if (slotIndex !== -1) {
-          elongatedSlotInfo = {
-            groupIndex,
-            slotIndex,
-            groupSize: group.length,
-          };
-          break;
+
+    if (isCurrentlySelected && elongatedSlotGroups.length > 0) {
+      try {
+        for (
+          let groupIndex = 0;
+          groupIndex < elongatedSlotGroups.length;
+          groupIndex++
+        ) {
+          const group = elongatedSlotGroups[groupIndex];
+          if (!group || !Array.isArray(group)) {
+            console.warn("Invalid group at index", groupIndex, group);
+            continue;
+          }
+
+          const slotIndex = group.findIndex(
+            (s) =>
+              s &&
+              s.startTime &&
+              s.startTime.getTime() === slot.startTime.getTime()
+          );
+
+          if (slotIndex !== -1) {
+            elongatedSlotInfo = {
+              groupIndex,
+              slotIndex,
+              groupSize: group.length,
+            };
+            break;
+          }
         }
+      } catch (error) {
+        console.error("Error finding elongated slot info:", error);
       }
     }
 
@@ -333,7 +371,7 @@ export function UnifiedCalendar({
       if (elongatedSlotInfo) {
         const styling = getElongatedSlotStyling(
           elongatedSlotInfo.slotIndex,
-          elongatedSlotInfo.groupSize,
+          elongatedSlotInfo.groupSize
         );
         cellClassName = cellClassName.replace("rounded-sm", ""); // Remove default rounding
         cellClassName += ` border-2`; // Stronger border for grouped slots
@@ -350,14 +388,23 @@ export function UnifiedCalendar({
         cellClassName += ` ${borderRadiusClass}`;
       }
 
-      // Show group number for better visual grouping
+      // Show slot number for better visual grouping
       if (elongatedSlotInfo) {
-        const requiredSlotsPerSession = Math.ceil(actualSessionDuration * 2);
-        const isComplete =
-          elongatedSlotInfo.groupSize >= requiredSlotsPerSession;
-        buttonText = `Session ${elongatedSlotInfo.groupIndex + 1}${isComplete ? "" : "*"}`;
+        try {
+          const requiredSlotsPerSession = Math.ceil(
+            (actualSessionDuration || 1) * 2
+          );
+          const isComplete =
+            elongatedSlotInfo.groupSize >= requiredSlotsPerSession;
+          // Show slot number within the session (1, 2, 3, 4...)
+          buttonText = `Slot ${elongatedSlotInfo.slotIndex + 1}${isComplete ? "" : "*"}`;
+        } catch (error) {
+          console.error("Error calculating session info:", error);
+          buttonText = "Selected";
+        }
       } else {
-        buttonText = "Selected";
+        // For single slot selections or when not part of a group
+        buttonText = "Slot 1";
       }
     } else if (isEventSlot) {
       cellClassName += " bg-blue-500 text-white border-blue-600";
@@ -432,7 +479,7 @@ export function UnifiedCalendar({
                         </p>
                       )}
                     </div>
-                  ),
+                  )
                 )}
               </div>
             </TooltipContent>
@@ -519,7 +566,7 @@ export function UnifiedCalendar({
                 </div>
               </div>
             );
-          },
+          }
         )}
       </div>
     );
@@ -672,7 +719,7 @@ export function UnifiedCalendar({
                       0,
                       1,
                       interval.hour,
-                      interval.minute,
+                      interval.minute
                     ).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
@@ -699,24 +746,36 @@ export function UnifiedCalendar({
         <div className="flex items-center gap-4">
           <div className="text-sm">
             {(() => {
-              const requiredSlotsPerSession = Math.ceil(
-                actualSessionDuration * 2,
-              ); // 30-min slots needed
-              const completeSessions = elongatedSlotGroups.filter(
-                (group) => group.length >= requiredSlotsPerSession,
-              ).length;
-              const totalSessions = elongatedSlotGroups.length;
+              try {
+                const requiredSlotsPerSession = Math.ceil(
+                  (actualSessionDuration || 1) * 2
+                ); // 30-min slots needed
+                const completeSessions = elongatedSlotGroups.filter(
+                  (group) => group && group.length >= requiredSlotsPerSession
+                ).length;
+                const totalSessions = elongatedSlotGroups.length;
 
-              if (selectedSlots.length === 0) {
-                return "No slots selected";
+                const requiredSlotsForThisEvent = calculateRequiredSlots(
+                  eventType,
+                  durationInMonths,
+                  callsPerWeek,
+                  actualSessionDuration
+                );
+
+                if (selectedSlots.length === 0) {
+                  return `0 selected out of ${requiredSlotsForThisEvent} required slots for the session`;
+                }
+
+                return `${selectedSlots.length} selected out of ${requiredSlotsForThisEvent} required slots for the session`;
+              } catch (error) {
+                console.error("Error calculating footer stats:", error);
+                return `Selected: ${selectedSlots.length} slots`;
               }
-
-              return `Selected: ${selectedSlots.length} slots forming ${totalSessions} session${totalSessions !== 1 ? "s" : ""} (${completeSessions} complete)`;
             })()}
           </div>
           <div className="text-xs text-muted-foreground">
-            Required: {actualSessionDuration}h per session (
-            {Math.ceil(actualSessionDuration * 2)} consecutive slots)
+            Required: {actualSessionDuration || 1}h per session (
+            {Math.ceil((actualSessionDuration || 1) * 2)} consecutive slots)
           </div>
           {allocationError && (
             <div className="text-sm text-red-600">{allocationError}</div>

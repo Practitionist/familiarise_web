@@ -6,6 +6,7 @@ export interface AllocationOptions {
   eventId: string;
   durationInMonths?: number;
   callsPerWeek?: number;
+  sessionDurationInHours?: number;
   requestedSlots?: TimeSlot[];
 }
 
@@ -24,7 +25,7 @@ export class AllocationAlgorithms {
    */
   static async manualAllocate(
     selectedSlots: TimeSlot[],
-    options: AllocationOptions,
+    options: AllocationOptions
   ): Promise<AllocationResult> {
     try {
       // Validate the selected slots count
@@ -32,6 +33,7 @@ export class AllocationAlgorithms {
         options.eventType,
         options.durationInMonths,
         options.callsPerWeek,
+        options.sessionDurationInHours
       );
 
       if (selectedSlots.length !== requiredSlots) {
@@ -69,7 +71,7 @@ export class AllocationAlgorithms {
 
         const distributionValidation = this.validateSlotDistribution(
           selectedSlots,
-          options.callsPerWeek,
+          options.callsPerWeek
         );
 
         if (!distributionValidation.isValid) {
@@ -85,7 +87,7 @@ export class AllocationAlgorithms {
       const allocationResult = await AllocationService.allocateSlots(
         options.eventType,
         options.eventId,
-        selectedSlots,
+        selectedSlots
       );
 
       if (!allocationResult.success) {
@@ -116,13 +118,14 @@ export class AllocationAlgorithms {
    */
   static async autoAllocate(
     availableSlots: TimeSlot[],
-    options: AllocationOptions,
+    options: AllocationOptions
   ): Promise<AllocationResult> {
     try {
       const requiredSlots = calculateRequiredSlots(
         options.eventType,
         options.durationInMonths,
         options.callsPerWeek,
+        options.sessionDurationInHours
       );
 
       let selectedSlots: TimeSlot[] = [];
@@ -139,7 +142,7 @@ export class AllocationAlgorithms {
           availableSlots,
           requiredSlots,
           options.callsPerWeek!,
-          options.durationInMonths!,
+          options.durationInMonths!
         );
       }
 
@@ -156,7 +159,7 @@ export class AllocationAlgorithms {
         options.eventType,
         options.eventId,
         selectedSlots,
-        { isAuto: true },
+        { isAuto: true }
       );
 
       if (!allocationResult.success) {
@@ -186,7 +189,7 @@ export class AllocationAlgorithms {
    * Pre-allocate using requested slots from the consultee
    */
   static async preAllocate(
-    options: AllocationOptions,
+    options: AllocationOptions
   ): Promise<AllocationResult> {
     try {
       if (!options.requestedSlots || options.requestedSlots.length === 0) {
@@ -201,6 +204,7 @@ export class AllocationAlgorithms {
         options.eventType,
         options.durationInMonths,
         options.callsPerWeek,
+        options.sessionDurationInHours
       );
 
       if (options.requestedSlots.length !== requiredSlots) {
@@ -219,7 +223,7 @@ export class AllocationAlgorithms {
         const validationResult = await AllocationService.validateSlots(
           options.eventType,
           options.eventId,
-          options.requestedSlots,
+          options.requestedSlots
         );
 
         if (!validationResult.success) {
@@ -249,7 +253,7 @@ export class AllocationAlgorithms {
         options.eventType,
         options.eventId,
         options.requestedSlots,
-        { useRequestedSlots: true },
+        { useRequestedSlots: true }
       );
 
       if (!allocationResult.success) {
@@ -279,14 +283,14 @@ export class AllocationAlgorithms {
    */
   private static findEarliestAvailableSlots(
     availableSlots: TimeSlot[],
-    count: number,
+    count: number
   ): TimeSlot[] {
     const now = new Date();
 
     // Filter out past slots and sort by time
     const futureSlots = availableSlots
       .filter(
-        (slot) => slot.startTime > now && slot.isAvailable && !slot.isBooked,
+        (slot) => slot.startTime > now && slot.isAvailable && !slot.isBooked
       )
       .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
@@ -300,12 +304,12 @@ export class AllocationAlgorithms {
     availableSlots: TimeSlot[],
     totalSlots: number,
     callsPerWeek: number,
-    durationInMonths: number,
+    durationInMonths: number
   ): TimeSlot[] {
     const now = new Date();
     const futureSlots = availableSlots
       .filter(
-        (slot) => slot.startTime > now && slot.isAvailable && !slot.isBooked,
+        (slot) => slot.startTime > now && slot.isAvailable && !slot.isBooked
       )
       .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
@@ -337,7 +341,7 @@ export class AllocationAlgorithms {
       const weekSlots = slotsByWeek.get(weekKey)!;
       const slotsNeededThisWeek = Math.min(
         callsPerWeek,
-        totalSlots - selectedSlots.length,
+        totalSlots - selectedSlots.length
       );
 
       // Sort slots by preference (earlier in the day, specific days)
@@ -418,7 +422,7 @@ export class AllocationAlgorithms {
    */
   private static validateSlotDistribution(
     slots: TimeSlot[],
-    callsPerWeek: number,
+    callsPerWeek: number
   ): { isValid: boolean; errorMessage?: string } {
     const slotsByWeek = new Map<string, TimeSlot[]>();
 

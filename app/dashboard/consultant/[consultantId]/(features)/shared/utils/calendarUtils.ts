@@ -98,7 +98,7 @@ export function mapWeeklySlots(
   consultantData: ConsultantData,
   currentDate: Date,
   view: "week" | "month" = "week",
-  intervalMinutes: number = 30, // Configurable interval duration
+  intervalMinutes: number = 30 // Configurable interval duration
 ): TimeSlot[] {
   if (
     consultantData.scheduleType !== ScheduleType.WEEKLY ||
@@ -127,7 +127,7 @@ export function mapWeeklySlots(
   while (iterDate <= endDate) {
     const dayOfWeek = iterDate.getDay();
     const matchingSlots = consultantData.slotsOfAvailabilityWeekly.filter(
-      (slot) => DAY_INDEX[slot.dayOfWeekforStartTimeInUTC] === dayOfWeek,
+      (slot) => DAY_INDEX[slot.dayOfWeekforStartTimeInUTC] === dayOfWeek
     );
 
     matchingSlots.forEach((slot) => {
@@ -140,7 +140,7 @@ export function mapWeeklySlots(
         startTime.getHours(),
         startTime.getMinutes(),
         0,
-        0,
+        0
       );
 
       const slotEndTime = new Date(iterDate);
@@ -183,7 +183,7 @@ export function mapWeeklySlots(
  */
 export function mapCustomSlots(
   consultantData: ConsultantData,
-  intervalMinutes: number = 30, // Configurable interval duration
+  intervalMinutes: number = 30 // Configurable interval duration
 ): TimeSlot[] {
   if (
     consultantData.scheduleType !== ScheduleType.CUSTOM ||
@@ -241,7 +241,7 @@ export function getSlotStatus(
   date: Date,
   availableSlots: TimeSlot[],
   existingAppointments: Appointment[],
-  intervalMinutes: number = 30, // Configurable interval duration
+  intervalMinutes: number = 30 // Configurable interval duration
 ): SlotStatus {
   const slotStart = new Date(date);
   slotStart.setHours(interval.hour, interval.minute, 0, 0);
@@ -333,12 +333,45 @@ export function formatSlotsForAPI(slots: TimeSlot[]): string[] {
 }
 
 /**
+ * Calculates required slots for different event types
+ */
+export function calculateRequiredSlots(
+  eventType: "consultation" | "subscription" | "webinar" | "class",
+  durationInMonths?: number,
+  callsPerWeek?: number,
+  sessionDurationInHours?: number
+): number {
+  switch (eventType) {
+    case "consultation":
+      return 1;
+
+    case "webinar":
+      // For webinars, calculate based on session duration (default to 1 hour if not provided)
+      const webinarDuration = sessionDurationInHours || 1;
+      return Math.ceil(webinarDuration * 2); // 2 slots per hour (30-min each)
+
+    case "subscription":
+    case "class":
+      if (!durationInMonths || !callsPerWeek) {
+        throw new Error(
+          "Duration and calls per week are required for subscription/class"
+        );
+      }
+      return durationInMonths * 4 * callsPerWeek; // 4 weeks per month
+
+    default:
+      throw new Error("Invalid event type");
+  }
+}
+
+/**
  * Validates selected slots for a specific event type
  */
 export function validateSelectedSlots(
   selectedSlots: TimeSlot[],
   eventType: "consultation" | "subscription" | "webinar" | "class",
   requiredSlots?: number,
+  sessionDurationInHours?: number
 ): { isValid: boolean; errorMessage?: string } {
   if (selectedSlots.length === 0) {
     return { isValid: false, errorMessage: "Please select at least one slot" };
@@ -346,12 +379,49 @@ export function validateSelectedSlots(
 
   switch (eventType) {
     case "consultation":
-    case "webinar":
       if (selectedSlots.length !== 1) {
         return {
           isValid: false,
-          errorMessage: `${eventType === "consultation" ? "Consultation" : "Webinar"} requires exactly one slot`,
+          errorMessage: "Consultation requires exactly one slot",
         };
+      }
+      break;
+
+    case "webinar":
+      // For webinars, calculate required slots based on session duration
+      const webinarRequiredSlots =
+        requiredSlots ||
+        calculateRequiredSlots(
+          eventType,
+          undefined,
+          undefined,
+          sessionDurationInHours
+        );
+      if (selectedSlots.length !== webinarRequiredSlots) {
+        const durationText = sessionDurationInHours
+          ? `${sessionDurationInHours} hour${sessionDurationInHours > 1 ? "s" : ""}`
+          : "1 hour";
+        return {
+          isValid: false,
+          errorMessage: `Webinar (${durationText}) requires exactly ${webinarRequiredSlots} consecutive slot${webinarRequiredSlots > 1 ? "s" : ""}`,
+        };
+      }
+
+      // Validate that slots are consecutive for multi-slot webinars
+      if (webinarRequiredSlots > 1) {
+        const sortedSlots = [...selectedSlots].sort(
+          (a, b) => a.startTime.getTime() - b.startTime.getTime()
+        );
+        for (let i = 1; i < sortedSlots.length; i++) {
+          const prevSlot = sortedSlots[i - 1];
+          const currentSlot = sortedSlots[i];
+          if (currentSlot.startTime.getTime() !== prevSlot.endTime.getTime()) {
+            return {
+              isValid: false,
+              errorMessage: "Webinar slots must be consecutive",
+            };
+          }
+        }
       }
       break;
 
@@ -380,33 +450,6 @@ export function validateSelectedSlots(
 }
 
 /**
- * Calculates required slots for different event types
- */
-export function calculateRequiredSlots(
-  eventType: "consultation" | "subscription" | "webinar" | "class",
-  durationInMonths?: number,
-  callsPerWeek?: number,
-): number {
-  switch (eventType) {
-    case "consultation":
-    case "webinar":
-      return 1;
-
-    case "subscription":
-    case "class":
-      if (!durationInMonths || !callsPerWeek) {
-        throw new Error(
-          "Duration and calls per week are required for subscription/class",
-        );
-      }
-      return durationInMonths * 4 * callsPerWeek; // 4 weeks per month
-
-    default:
-      throw new Error("Invalid event type");
-  }
-}
-
-/**
  * Groups slots by week for subscription/class validation
  */
 export function groupSlotsByWeek(slots: TimeSlot[]): Map<string, TimeSlot[]> {
@@ -430,7 +473,7 @@ export function groupSlotsByWeek(slots: TimeSlot[]): Map<string, TimeSlot[]> {
  */
 export function validateSlotDistribution(
   slots: TimeSlot[],
-  callsPerWeek: number,
+  callsPerWeek: number
 ): { isValid: boolean; errorMessage?: string } {
   const slotsByWeek = groupSlotsByWeek(slots);
 

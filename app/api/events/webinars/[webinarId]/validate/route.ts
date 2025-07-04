@@ -38,17 +38,17 @@ const webinarInclude = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> },
+  { params }: { params: Promise<{ webinarId: string }> }
 ) {
   try {
     const { webinarId } = await params;
     const body: ValidationRequest = await request.json();
 
-    // Validate webinar requires exactly one slot
-    if (!Array.isArray(body.slots) || body.slots.length !== 1) {
+    // Validate slots array exists
+    if (!Array.isArray(body.slots) || body.slots.length === 0) {
       return NextResponse.json(
-        { error: "Webinar requires exactly one slot" },
-        { status: 400 },
+        { error: "Slots array is required and must not be empty" },
+        { status: 400 }
       );
     }
 
@@ -65,10 +65,25 @@ export async function POST(
     const { webinarPlan } = webinar;
     const { consultantProfile } = webinarPlan;
 
+    // Calculate required slots based on webinar duration
+    const webinarDuration = webinarPlan.durationInHours || 1;
+    const requiredSlots = Math.ceil(webinarDuration * 2); // 2 slots per hour (30-min each)
+
+    // Validate correct number of slots
+    if (body.slots.length !== requiredSlots) {
+      const durationText = `${webinarDuration} hour${webinarDuration > 1 ? "s" : ""}`;
+      return NextResponse.json(
+        {
+          error: `Webinar (${durationText}) requires exactly ${requiredSlots} consecutive slot${requiredSlots > 1 ? "s" : ""}`,
+        },
+        { status: 400 }
+      );
+    }
+
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -79,16 +94,35 @@ export async function POST(
       validSlots: [],
     };
 
-    // Convert slot to Date object
-    const slotDate = new Date(body.slots[0]);
+    // Convert slots to Date objects
+    const slotDates = body.slots.map((slot) => new Date(slot));
 
-    // Validate slot is not in the past
+    // Validate slots are not in the past
     const now = new Date();
-    if (slotDate <= now) {
+    const pastSlots = slotDates.filter((slot) => slot <= now);
+    if (pastSlots.length > 0) {
       return NextResponse.json(
         { error: "Cannot validate slots in the past" },
-        { status: 400 },
+        { status: 400 }
       );
+    }
+
+    // For multi-slot webinars, validate that slots are consecutive
+    if (requiredSlots > 1) {
+      const sortedSlots = [...slotDates].sort(
+        (a, b) => a.getTime() - b.getTime()
+      );
+      for (let i = 1; i < sortedSlots.length; i++) {
+        const prevSlot = sortedSlots[i - 1];
+        const currentSlot = sortedSlots[i];
+        const expectedStartTime = new Date(prevSlot.getTime() + 30 * 60 * 1000); // 30 minutes later
+        if (currentSlot.getTime() !== expectedStartTime.getTime()) {
+          return NextResponse.json(
+            { error: "Webinar slots must be consecutive" },
+            { status: 400 }
+          );
+        }
+      }
     }
 
     // Check for conflicts with existing approved appointments
@@ -127,7 +161,9 @@ export async function POST(
                     id: consultantProfile.user.id,
                   },
                 },
-                slotStartTimeInUTC: slotDate,
+                slotStartTimeInUTC: {
+                  in: slotDates,
+                },
               },
             },
           },
@@ -172,9 +208,10 @@ export async function POST(
 
     // Process conflicts
     for (const appointment of existingAppointments) {
-      const conflictingSlots = appointment.slotsOfAppointment.filter(
-        (slot) =>
-          slotDate.toISOString() === slot.slotStartTimeInUTC.toISOString(),
+      const conflictingSlots = appointment.slotsOfAppointment.filter((slot) =>
+        slotDates.some(
+          (date) => date.toISOString() === slot.slotStartTimeInUTC.toISOString()
+        )
       );
 
       for (const slot of conflictingSlots) {
@@ -208,53 +245,58 @@ export async function POST(
       }
     }
 
-    // Check if slot is within consultant's availability
+    // Check if slots are within consultant's availability
     const availableSlots =
       consultantProfile.scheduleType === ScheduleType.WEEKLY
         ? consultantProfile.slotsOfAvailabilityWeekly
         : consultantProfile.slotsOfAvailabilityCustom;
 
-    let isAvailable = false;
+    for (const slotDate of slotDates) {
+      let isAvailable = false;
 
-    if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
-      // For weekly schedule, check if the slot matches any weekly pattern
-      isAvailable = availableSlots.some((slot) => {
-        const slotTime = new Date(slot.slotStartTimeInUTC);
-        return (
-          slotDate.getDay() === slotTime.getDay() &&
-          slotDate.getHours() === slotTime.getHours() &&
-          slotDate.getMinutes() === slotTime.getMinutes()
+      if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
+        // For weekly schedule, check if the slot matches any weekly pattern
+        isAvailable = availableSlots.some((slot) => {
+          const slotTime = new Date(slot.slotStartTimeInUTC);
+          return (
+            slotDate.getDay() === slotTime.getDay() &&
+            slotDate.getHours() === slotTime.getHours() &&
+            slotDate.getMinutes() === slotTime.getMinutes()
+          );
+        });
+      } else {
+        // For custom schedule, check if the slot exists exactly
+        isAvailable = availableSlots.some(
+          (slot) =>
+            new Date(slot.slotStartTimeInUTC).toISOString() ===
+            slotDate.toISOString()
         );
-      });
-    } else {
-      // For custom schedule, check if the slot exists exactly
-      isAvailable = availableSlots.some(
-        (slot) =>
-          new Date(slot.slotStartTimeInUTC).toISOString() ===
-          slotDate.toISOString(),
-      );
-    }
+      }
 
-    if (!isAvailable) {
-      result.outsideAvailability.push({
-        slot: slotDate.toISOString(),
-      });
+      if (!isAvailable) {
+        result.outsideAvailability.push({
+          slot: slotDate.toISOString(),
+        });
+      }
     }
 
     // Valid slots are those without conflicts and within availability
-    if (
-      result.conflicts.length === 0 &&
-      result.outsideAvailability.length === 0
-    ) {
-      result.validSlots = [slotDate.toISOString()];
-    }
+    result.validSlots = slotDates
+      .filter((date) => {
+        const dateStr = date.toISOString();
+        return (
+          !result.conflicts.some((c) => c.slot === dateStr) &&
+          !result.outsideAvailability.some((o) => o.slot === dateStr)
+        );
+      })
+      .map((date) => date.toISOString());
 
     return NextResponse.json({ data: result });
   } catch (error) {
     console.error("Webinar validation error:", error);
     return NextResponse.json(
       { error: "Failed to validate webinar slot" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
