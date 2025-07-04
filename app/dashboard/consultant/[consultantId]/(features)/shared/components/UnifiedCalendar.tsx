@@ -34,6 +34,7 @@ import {
   getElongatedSlotStyling,
   convertElongatedSlotsTo30MinSlots,
 } from "../utils/elongatedSlots";
+import { useToast } from "@/components/ui/use-toast";
 
 export interface UnifiedCalendarProps {
   consultantId: string;
@@ -76,6 +77,8 @@ export function UnifiedCalendar({
   const [elongatedSlotGroups, setElongatedSlotGroups] = useState<TimeSlot[][]>(
     []
   );
+
+  const { toast } = useToast();
 
   // Initialize timezone
   useEffect(() => {
@@ -217,6 +220,60 @@ export function UnifiedCalendar({
       await manualAllocate();
     } catch (error) {
       console.error("Allocation failed:", error);
+    }
+  };
+
+  const autoSelectConsecutiveSlots = () => {
+    try {
+      const required = Math.ceil((actualSessionDuration || 1) * 2);
+
+      // Search day by day in the current week view
+      for (const day of weekDates) {
+        let run: TimeSlot[] = [];
+        for (const interval of INTERVALS) {
+          const status = getSlotStatusForInterval(interval, day);
+
+          if (status.isAvailable && !status.isBooked && !status.isInPast) {
+            const slot: TimeSlot = {
+              startTime: new Date(status.intervalStartUTCString),
+              endTime: new Date(status.intervalEndUTCString),
+              isAvailable: true,
+              isBooked: false,
+            };
+            if (
+              run.length === 0 ||
+              slot.startTime.getTime() === run[run.length - 1].endTime.getTime()
+            ) {
+              run.push(slot);
+            } else {
+              run = [slot]; // reset run if not consecutive
+            }
+
+            if (run.length === required) {
+              setSelectedSlots(run);
+              toast({
+                title: "Slots auto-selected",
+                description: `${required} consecutive slots selected for the session`,
+              });
+              return;
+            }
+          } else {
+            run = []; // break the run on any unavailable/invalid interval
+          }
+        }
+      }
+
+      // If we reach here no suitable run found
+      console.warn("Auto-select could not find enough consecutive slots");
+      toast({
+        variant: "destructive",
+        title: "No consecutive slots",
+        description: `Could not find ${Math.ceil(
+          (actualSessionDuration || 1) * 2
+        )} consecutive available slots in the current calendar view`,
+      });
+    } catch (error) {
+      console.error("Auto-select error:", error);
     }
   };
 
@@ -649,7 +706,13 @@ export function UnifiedCalendar({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => autoAllocate(availableSlots)}
+            onClick={() => {
+              if (eventType === "webinar") {
+                autoSelectConsecutiveSlots();
+              } else {
+                autoAllocate(availableSlots);
+              }
+            }}
             disabled={isAllocating}
           >
             <Zap className="h-4 w-4 mr-2" />
