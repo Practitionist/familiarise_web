@@ -23,6 +23,7 @@ interface WebinarCarouselProps {
   onEdit: (event: WebinarEvent) => void;
   onDelete: (eventId: string) => Promise<void>;
   eventType: "webinar";
+  participantCounts: Record<string, number>;
 }
 
 interface ClassCarouselProps {
@@ -30,6 +31,7 @@ interface ClassCarouselProps {
   onEdit: (event: ClassEvent) => void;
   onDelete: (eventId: string) => Promise<void>;
   eventType: "class";
+  participantCounts: Record<string, number>;
 }
 
 type EventCarouselProps = WebinarCarouselProps | ClassCarouselProps;
@@ -47,6 +49,7 @@ export function EventCarousel({
   onEdit,
   onDelete,
   eventType,
+  participantCounts,
 }: EventCarouselProps) {
   const [selectedEventId, setSelectedEventId] = React.useState<string | null>(
     null,
@@ -119,45 +122,8 @@ export function EventCarousel({
     throw new Error(`Unknown event type encountered.`);
   };
 
-  const [participantCounts, setParticipantCounts] = React.useState<
-    Record<string, number>
-  >({});
-  const [isLoadingCounts, setIsLoadingCounts] = React.useState(true);
-
-  React.useEffect(() => {
-    const fetchParticipantCounts = async () => {
-      setIsLoadingCounts(true);
-      try {
-        for (const event of events) {
-          try {
-            let endpoint: string;
-            if (isWebinarEvent(event)) {
-              endpoint = `/api/participants/webinar/${event.id}`;
-            } else {
-              endpoint = `/api/participants/class/${event.id}`;
-            }
-
-            const response = await fetch(endpoint);
-            if (response.ok) {
-              const data = await response.json();
-              setParticipantCounts((prev) => ({
-                ...prev,
-                [event.id]: data.participants.length,
-              }));
-            }
-          } catch (error) {
-            console.error("Error fetching participant count:", error);
-          }
-        }
-      } finally {
-        setIsLoadingCounts(false);
-      }
-    };
-
-    if (events.length > 0) {
-      fetchParticipantCounts();
-    }
-  }, [events]);
+  // No longer need local state or useEffect for participant counts
+  // Using the pre-fetched participantCounts prop
 
   const getParticipantsCount = (event: Event) => {
     let maxParticipants = 0;
@@ -211,14 +177,7 @@ export function EventCarousel({
   };
 
   // Helper function for participant display text
-  const getParticipantsDisplayText = (
-    isLoading: boolean,
-    current: number,
-    max: number,
-  ) => {
-    if (isLoading) {
-      return "Loading participants...";
-    }
+  const getParticipantsDisplayText = (current: number, max: number) => {
     return `${current}/${max} participants`;
   };
 
@@ -303,7 +262,6 @@ export function EventCarousel({
                     </CardTitle>
                     <CardDescription className="text-sm text-gray-600">
                       {getParticipantsDisplayText(
-                        isLoadingCounts,
                         currentParticipants,
                         maxParticipants,
                       )}

@@ -1,5 +1,6 @@
 "use client";
 
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import MessagesTab from "./MessagesTab";
 
 type PageProps = {
@@ -8,5 +9,9 @@ type PageProps = {
 };
 
 export default function MessagesPage({ params }: Readonly<PageProps>) {
-  return <MessagesTab />;
+  return (
+    <DashboardErrorBoundary>
+      <MessagesTab />
+    </DashboardErrorBoundary>
+  );
 }

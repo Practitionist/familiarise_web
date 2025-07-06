@@ -2,13 +2,14 @@
 
 import { User } from "@prisma/client";
 import React, { useState } from "react";
-import { useEvents } from "hooks/useEvents";
+import { useConsulteeEvents } from "hooks/useConsulteeEvents";
 import { EventWithType } from "../../utils/getMetadata";
 import {
   getActualMonthlyEvents,
   getActualUpcomingSlots,
 } from "../../utils/scheduleHelpers";
 import { MonthlySection, UpcomingSection } from "./Sections";
+import { ConsulteeDashboardSkeleton } from "@/components/ui/dashboard-skeleton";
 
 interface HomeTabProps {
   userDetails: User | null;
@@ -21,31 +22,41 @@ export default function HomeTab({
 }: Readonly<HomeTabProps>) {
   const resolvedParams = React.use(params);
   const consulteeId = resolvedParams.consulteeId;
-  const { consultations, subscriptions, webinars, classes, isLoading, error } =
-    useEvents(consulteeId);
+  const { data, isLoading, error } = useConsulteeEvents(consulteeId);
   const [currentMonth, setCurrentMonth] = useState(new Date());
 
   if (!userDetails || isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-pulse text-gray-500">Loading user data...</div>
-      </div>
-    );
+    return <ConsulteeDashboardSkeleton />;
   }
 
   if (error) {
     return (
-      <div className="p-4 bg-red-50 text-red-600 rounded-lg">
-        Error loading events: {error.message}
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
+          <h3 className="font-semibold mb-2">Error Loading Events</h3>
+          <p className="text-sm">
+            {error.message || "Failed to load events data. Please try again."}
+          </p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+          >
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
 
+  if (!data) {
+    return <ConsulteeDashboardSkeleton />;
+  }
+
   const allEvents: EventWithType[] = [
-    ...consultations.map((c) => ({ ...c, type: "Consultation" as const })),
-    ...webinars.map((w) => ({ ...w, type: "Webinar" as const })),
-    ...subscriptions.map((s) => ({ ...s, type: "Subscription" as const })),
-    ...classes.map((c) => ({ ...c, type: "Class" as const })),
+    ...data.consultations.map((c) => ({ ...c, type: "Consultation" as const })),
+    ...data.webinars.map((w) => ({ ...w, type: "Webinar" as const })),
+    ...data.subscriptions.map((s) => ({ ...s, type: "Subscription" as const })),
+    ...data.classes.map((c) => ({ ...c, type: "Class" as const })),
   ];
 
   const upcomingSlots = getActualUpcomingSlots(allEvents);

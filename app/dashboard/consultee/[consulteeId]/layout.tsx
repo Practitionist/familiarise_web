@@ -5,6 +5,8 @@ import { getEffectiveUserId } from "@/utils/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Button } from "components/ui/button";
 import { Skeleton } from "components/ui/skeleton";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { usePrefetchDashboard } from "@/hooks/usePrefetchDashboard";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -69,6 +71,7 @@ function ConsulteeNav({
   userName,
 }: Readonly<ConsulteeNavProps>) {
   const firstName = userName?.split(" ")[0] || "User";
+  const { prefetchOnTabHover } = usePrefetchDashboard({ consulteeId });
 
   return (
     <nav className="p-4 sm:p-8 bg-white shadow-sm">
@@ -79,6 +82,16 @@ function ConsulteeNav({
               key={item.name}
               href={`/dashboard/consultee/${consulteeId}/${item.path}`}
               prefetch={true}
+              onMouseEnter={() => {
+                // Prefetch data when hovering over navigation items
+                if (item.path === 'home') {
+                  prefetchOnTabHover('home');
+                } else if (item.path === 'appointments') {
+                  prefetchOnTabHover('appointments');
+                } else {
+                  prefetchOnTabHover('other');
+                }
+              }}
             >
               <Button
                 className={`${
@@ -258,7 +271,11 @@ export default function ConsulteeLayout({
           userImage={userDetails.image}
           userName={userDetails.name}
         />
-        <main className="flex-grow overflow-y-auto p-8">{children}</main>
+        <main className="flex-grow overflow-y-auto p-8">
+          <DashboardErrorBoundary>
+            {children}
+          </DashboardErrorBoundary>
+        </main>
       </div>
     </UserProvider>
   );

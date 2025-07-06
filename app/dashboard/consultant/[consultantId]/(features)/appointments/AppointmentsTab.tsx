@@ -168,9 +168,12 @@ export function AppointmentsTab({
                             )}
                             <div className="text-sm text-gray-500">
                               Starts:{" "}
-                              {formatAppointmentTime(
-                                getStartTime(appointment)!.toISOString(),
-                              )}
+                              {(() => {
+                                const startTime = getStartTime(appointment);
+                                return startTime
+                                  ? formatAppointmentTime(startTime.toISOString())
+                                  : "Time not set";
+                              })()}
                             </div>
                           </div>
                         </div>

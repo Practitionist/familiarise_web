@@ -1,35 +1,47 @@
-import { fetchDocuments } from "../../utils/fetchHelpers";
-import { type IDocument } from "../../types";
+"use client";
+
+import { use } from "react";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { useDocuments } from "../../hooks/useDocuments";
 import { DocumentsTab } from "./DocumentsTab";
 
-export default async function DocumentsPage({
+export default function DocumentsPage({
   params,
-}: Readonly<{
+}: {
   params: Promise<{ consultantId: string }>;
-}>) {
-  const resolvedParams = await params;
-  const consultantId = resolvedParams.consultantId;
+}) {
+  const { consultantId } = use(params);
+  const { data: documents, isLoading, error } = useDocuments(consultantId);
 
-  let documents: IDocument[] = [];
-  let error: string | null = null;
-
-  try {
-    documents = await fetchDocuments(consultantId);
-  } catch (err) {
-    console.error("Error fetching documents:", err);
-    error =
-      err instanceof Error
-        ? err.message
-        : "An error occurred while fetching documents.";
+  if (isLoading) {
+    return <DashboardHomeSkeleton />;
   }
 
   if (error) {
     return (
-      <div className="bg-white p-4 rounded-lg shadow-md">
-        <p className="text-red-600">Error loading documents: {error}</p>
-      </div>
+      <DashboardErrorBoundary>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
+            <h3 className="font-semibold mb-2">Error Loading Documents</h3>
+            <p className="text-sm">
+              {error.message || "Failed to load documents. Please try again."}
+            </p>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </DashboardErrorBoundary>
     );
   }
 
-  return <DocumentsTab documents={documents} />;
+  return (
+    <DashboardErrorBoundary>
+      <DocumentsTab documents={documents || []} />
+    </DashboardErrorBoundary>
+  );
 }

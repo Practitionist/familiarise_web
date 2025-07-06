@@ -79,18 +79,32 @@ export const getAppointmentTypeAndPlan = (
   return `${type} - ${plan}`;
 };
 
-// Get all slot times from appointment
+// Get all slot times from appointment with proper type conversion
 export const getSlotTimes = (appointment: IAppointment): Date[] => {
-  return (
-    appointment?.slotsOfAppointment?.map((slot) => slot.slotStartTimeInUTC) ||
-    []
-  );
+  if (!appointment?.slotsOfAppointment?.length) {
+    return [];
+  }
+  
+  return appointment.slotsOfAppointment
+    .map((slot) => {
+      const time = slot.slotStartTimeInUTC;
+      // Handle both Date objects and string timestamps
+      if (time instanceof Date) {
+        return time;
+      }
+      if (typeof time === 'string' || typeof time === 'number') {
+        const date = new Date(time);
+        return isNaN(date.getTime()) ? null : date;
+      }
+      return null;
+    })
+    .filter((date): date is Date => date !== null);
 };
 
 // Get first slot time from appointment (for backwards compatibility)
-export const getStartTime = (appointment: IAppointment): Date | undefined => {
+export const getStartTime = (appointment: IAppointment): Date | null => {
   const times = getSlotTimes(appointment);
-  return times[0];
+  return times.length > 0 ? times[0] : null;
 };
 
 // Check if appointment has any future slots
@@ -130,11 +144,9 @@ export const formatAppointmentTime = (utcTime: string): string => {
 
 // Get appointment status
 export const getAppointmentStatus = (appointment: IAppointment): string => {
-  const startTimeStr = getStartTime(appointment);
-  if (!startTimeStr) return "Unknown";
+  const startTime = getStartTime(appointment);
+  if (!startTime) return "Unknown";
 
-  // Convert UTC to local time
-  const startTime = new Date(startTimeStr);
   const now = new Date();
 
   // Check if appointment is marked as completed
@@ -174,8 +186,10 @@ export const sortAppointmentsByStartTime = (
   return [...appointments].sort((a, b) => {
     const aTime = getStartTime(a);
     const bTime = getStartTime(b);
-    if (!aTime || !bTime) return 0;
-    return new Date(aTime).getTime() - new Date(bTime).getTime();
+    if (!aTime && !bTime) return 0;
+    if (!aTime) return 1; // Put appointments without time at the end
+    if (!bTime) return -1;
+    return aTime.getTime() - bTime.getTime();
   });
 };
 

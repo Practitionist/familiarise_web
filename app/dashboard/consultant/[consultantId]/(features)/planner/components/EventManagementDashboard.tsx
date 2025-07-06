@@ -7,24 +7,44 @@ import { EventPlanner } from "./EventPlanner";
 import { WebinarEvent, ClassEvent, Event } from "../types/event";
 import { PlannerService } from "../services/planner";
 import { useToast } from "@/hooks/use-toast";
+import { useWebinarMutations, useClassMutations, usePlannerRefresh } from "../../../hooks/usePlanner";
+
+interface PlannerData {
+  webinars: any[];
+  classes: any[];
+  participantCounts: Record<string, number>;
+}
 
 interface Props {
   consultantId: string;
+  initialData?: PlannerData;
 }
 
-export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
-  const [webinars, setWebinars] = useState<WebinarEvent[]>([]);
-  const [classes, setClasses] = useState<ClassEvent[]>([]);
+export function EventManagementDashboard({ consultantId, initialData }: Readonly<Props>) {
+  const [webinars, setWebinars] = useState<WebinarEvent[]>(initialData?.webinars || []);
+  const [classes, setClasses] = useState<ClassEvent[]>(initialData?.classes || []);
   const [isWebinarDialogOpen, setIsWebinarDialogOpen] = useState(false);
   const [isClassDialogOpen, setIsClassDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(!initialData);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
+  
+  // React Query mutations
+  const { deleteWebinar } = useWebinarMutations(consultantId);
+  const { deleteClass } = useClassMutations(consultantId);
+  const { refreshPlanner } = usePlannerRefresh(consultantId);
 
-  // Fetch events on load
+  // Fetch events on load only if no initial data
   useEffect(() => {
+    if (initialData) {
+      setWebinars(initialData.webinars);
+      setClasses(initialData.classes);
+      setIsLoading(false);
+      return;
+    }
+
     const fetchEvents = async () => {
       try {
         setIsLoading(true);
@@ -47,7 +67,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
     };
 
     fetchEvents();
-  }, [consultantId]);
+  }, [consultantId, initialData]);
 
   // Handle webinar saved event
   const handleWebinarSaved = async (
@@ -68,9 +88,8 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
       );
       console.log("Webinar saved successfully:", savedWebinar);
 
-      // Then fetch updated webinars list
-      const updatedWebinars = await PlannerService.fetchWebinars(consultantId);
-      setWebinars(updatedWebinars);
+      // Refresh planner data with React Query
+      refreshPlanner();
       setIsWebinarDialogOpen(false);
       setEditingEvent(null);
     } catch (error) {
@@ -92,9 +111,8 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
       const savedClass = await PlannerService.saveClass(data, consultantId);
       console.log("Class saved successfully:", savedClass);
 
-      // Then fetch updated classes list
-      const updatedClasses = await PlannerService.fetchClasses(consultantId);
-      setClasses(updatedClasses);
+      // Refresh planner data with React Query
+      refreshPlanner();
       setIsClassDialogOpen(false);
       setEditingEvent(null);
     } catch (error) {
@@ -115,78 +133,16 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
     setIsClassDialogOpen(true);
   };
 
-  // Handle webinar delete event
+  // Handle webinar delete event using React Query
   const handleWebinarDelete = async (webinarId: string) => {
     console.log(`EventManagementDashboard - Deleting webinar: ${webinarId}`);
-    try {
-      const response = await fetch(
-        `/api/events/webinars/crud-with-plan/${webinarId}`,
-        {
-          method: "DELETE",
-        },
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to delete webinar");
-      }
-
-      const result = await response.json();
-      toast({
-        title: "Success",
-        description: result.message || "Webinar deleted successfully.",
-      });
-
-      // Refresh the list
-      setWebinars((prev) => prev.filter((w) => w.id !== webinarId));
-    } catch (error) {
-      console.error("Error deleting webinar:", error);
-      toast({
-        title: "Error",
-        description:
-          error instanceof Error ? error.message : "Failed to delete webinar.",
-        variant: "destructive",
-      });
-      // Re-throw or handle as needed
-      throw error;
-    }
+    deleteWebinar.mutate(webinarId);
   };
 
-  // Handle class delete event
+  // Handle class delete event using React Query
   const handleClassDelete = async (classId: string) => {
     console.log(`EventManagementDashboard - Deleting class: ${classId}`);
-    try {
-      const response = await fetch(
-        `/api/events/classes/crud-with-plan/${classId}`,
-        {
-          method: "DELETE",
-        },
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to delete class");
-      }
-
-      const result = await response.json();
-      toast({
-        title: "Success",
-        description: result.message || "Class deleted successfully.",
-      });
-
-      // Refresh the list
-      setClasses((prev) => prev.filter((c) => c.id !== classId));
-    } catch (error) {
-      console.error("Error deleting class:", error);
-      toast({
-        title: "Error",
-        description:
-          error instanceof Error ? error.message : "Failed to delete class.",
-        variant: "destructive",
-      });
-      // Re-throw or handle as needed
-      throw error;
-    }
+    deleteClass.mutate(classId);
   };
 
   if (error) {
@@ -233,6 +189,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
           onEdit={handleEditWebinar}
           onDelete={handleWebinarDelete}
           eventType="webinar"
+          participantCounts={initialData?.participantCounts || {}}
         />
       </div>
 
@@ -248,6 +205,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
           onEdit={handleEditClass}
           onDelete={handleClassDelete}
           eventType="class"
+          participantCounts={initialData?.participantCounts || {}}
         />
       </div>
 

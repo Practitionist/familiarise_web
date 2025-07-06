@@ -159,11 +159,12 @@ export function HomeTab({
                     </div>
                     <div className="mt-3">
                       <div className="text-xs text-gray-500 mt-1">
-                        {getStartTime(appointment)
-                          ? formatAppointmentTime(
-                              getStartTime(appointment)!.toISOString(),
-                            )
-                          : "Time not set"}
+                        {(() => {
+                          const startTime = getStartTime(appointment);
+                          return startTime
+                            ? formatAppointmentTime(startTime.toISOString())
+                            : "Time not set";
+                        })()}
                       </div>
                       <div className="mt-2 flex items-center justify-between">
                         <Badge
@@ -288,13 +289,12 @@ export function HomeTab({
                                   </>
                                 )}
                                 <div className="text-xs text-gray-500">
-                                  {getStartTime(appointment)
-                                    ? formatAppointmentTime(
-                                        getStartTime(
-                                          appointment,
-                                        )!.toISOString(),
-                                      )
-                                    : "Time not set"}
+                                  {(() => {
+                                    const startTime = getStartTime(appointment);
+                                    return startTime
+                                      ? formatAppointmentTime(startTime.toISOString())
+                                      : "Time not set";
+                                  })()}
                                 </div>
                               </div>
                               <div className="flex items-center space-x-2">

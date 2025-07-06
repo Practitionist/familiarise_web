@@ -3,6 +3,8 @@
 import { getEffectiveUserId } from "@/utils/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Skeleton } from "components/ui/skeleton";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { usePrefetchDashboard } from "@/hooks/usePrefetchDashboard";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -62,6 +64,7 @@ export default function ConsultantLayout({
   const { data: session } = useSession();
 
   const userId = getEffectiveUserId(session);
+  const { prefetchOnTabHover } = usePrefetchDashboard({ consultantId });
 
   // Use SWR to fetch and cache consultant data
   const { data: consultantData, error } = useSWR(
@@ -149,6 +152,16 @@ export default function ConsultantLayout({
                       : "text-gray-600 hover:bg-gray-100"
                   }`}
                   prefetch={true}
+                  onMouseEnter={() => {
+                    // Prefetch data when hovering over navigation items
+                    if (item.path === 'home') {
+                      prefetchOnTabHover('home');
+                    } else if (item.path === 'appointments') {
+                      prefetchOnTabHover('appointments');
+                    } else {
+                      prefetchOnTabHover('other');
+                    }
+                  }}
                 >
                   <span>{item.icon}</span>
                   <span>{item.name}</span>
@@ -216,8 +229,10 @@ export default function ConsultantLayout({
             </div>
           </div>
         ) : (
-          // Render children when data is loaded and no error
-          children
+          // Render children when data is loaded and no error with error boundary
+          <DashboardErrorBoundary>
+            {children}
+          </DashboardErrorBoundary>
         )}
       </main>
     </div>

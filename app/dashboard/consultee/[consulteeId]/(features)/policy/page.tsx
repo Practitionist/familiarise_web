@@ -1,7 +1,8 @@
 "use client";
 
-import PolicyTab from "./PolicyTab";
 import { use } from "react";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import PolicyTab from "./PolicyTab";
 
 type PageProps = {
   params: Promise<{ consulteeId: string }>;
@@ -9,6 +10,11 @@ type PageProps = {
 };
 
 export default function PolicyPage({ params }: Readonly<PageProps>) {
-  const resolvedParams = use(params);
-  return <PolicyTab consulteeId={resolvedParams.consulteeId} />;
+  const { consulteeId } = use(params);
+  
+  return (
+    <DashboardErrorBoundary>
+      <PolicyTab consulteeId={consulteeId} />
+    </DashboardErrorBoundary>
+  );
 }

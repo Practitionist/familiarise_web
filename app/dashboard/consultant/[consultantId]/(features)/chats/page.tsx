@@ -1,53 +1,65 @@
-import { fetchConsultantDetails } from "@/lib/user";
+"use client";
+
+import { use } from "react";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { useConsultantDetails } from "../../hooks/useConsultantDetails";
 import { ChatsTab } from "./ChatsTab";
 
-// This is an async Server Component
-export default async function ChatsPage({
+export default function ChatsPage({
   params,
 }: {
   params: Promise<{ consultantId: string }>;
 }) {
-  const { consultantId } = await params;
+  const { consultantId } = use(params);
+  const { data: consultantDetails, isLoading, error } = useConsultantDetails(consultantId);
 
-  let userId: string | null = null;
-  let userRole: string | null = null;
-  let error: string | null = null;
-
-  try {
-    const consultantDetails = await fetchConsultantDetails(consultantId);
-    if (consultantDetails?.user) {
-      userId = consultantDetails.user.id;
-      userRole = consultantDetails.user.role;
-    } else {
-      // If user is null but no error was thrown by fetchConsultantDetails,
-      // it might mean the consultantId is valid but has no associated user record.
-      throw new Error("User details not found for the given consultant ID.");
-    }
-  } catch (err) {
-    console.error("Error fetching consultant details for chat page:", err);
-    error =
-      err instanceof Error ? err.message : "Failed to load user data for chat.";
-    // In a real app, you might want to log this more robustly or have specific error codes
+  if (isLoading) {
+    return <DashboardHomeSkeleton />;
   }
 
-  // Handle error case - ideally show an error message via an error boundary
-  // or a more user-friendly error component within the main layout.
-  if (error || !userId) {
+  if (error) {
     return (
-      <div className="flex h-full w-full items-center justify-center p-4">
-        <div
-          className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative"
-          role="alert"
-        >
-          <strong className="font-bold">Error: </strong>
-          <span className="block sm:inline">
-            {error || "Could not load required user information for chat."}
-          </span>
+      <DashboardErrorBoundary>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
+            <h3 className="font-semibold mb-2">Error Loading Chat Data</h3>
+            <p className="text-sm">
+              {error.message || "Failed to load consultant details for chat. Please try again."}
+            </p>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+            >
+              Retry
+            </button>
+          </div>
         </div>
-      </div>
+      </DashboardErrorBoundary>
     );
   }
 
-  // Pass the fetched data to the Client Component
-  return <ChatsTab userId={userId} userRole={userRole} />;
+  if (!consultantDetails?.user) {
+    return (
+      <DashboardErrorBoundary>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="p-4 bg-orange-50 text-orange-600 rounded-lg max-w-md text-center">
+            <h3 className="font-semibold mb-2">User Data Not Found</h3>
+            <p className="text-sm">
+              User details not found for the given consultant ID.
+            </p>
+          </div>
+        </div>
+      </DashboardErrorBoundary>
+    );
+  }
+
+  return (
+    <DashboardErrorBoundary>
+      <ChatsTab 
+        userId={consultantDetails.user.id} 
+        userRole={consultantDetails.user.role} 
+      />
+    </DashboardErrorBoundary>
+  );
 }
