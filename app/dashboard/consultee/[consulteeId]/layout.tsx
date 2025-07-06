@@ -154,6 +154,7 @@ export default function ConsulteeLayout({
   const { data: session } = useSession();
 
   const userId = getEffectiveUserId(session);
+  const { prefetchAllConsulteeData } = usePrefetchDashboard({ consulteeId });
 
   // Use SWR to fetch user details
   const { data: userDetails, error: userError } = useSWR(
@@ -177,17 +178,20 @@ export default function ConsulteeLayout({
     },
   );
 
-  // Prefetch data for likely navigation paths
+  // Enhanced prefetching for all dashboard tabs in background
   useEffect(() => {
-    // If we have userId and consulteeId, prefetch data
+    // If we have userId and consulteeId, prefetch all dashboard data
     if (userId && consulteeId) {
-      // Prefetch user and consultee data
+      // Prefetch user and consultee data for immediate needs
       preload([`user-${userId}`, userId], ([_, id]) => fetchUserDetails(id));
       preload([`consultee-${consulteeId}`, consulteeId], ([_, id]) =>
         fetchConsulteeDetails(id),
       );
+      
+      // Prefetch all other dashboard tabs in background for instant navigation
+      prefetchAllConsulteeData();
     }
-  }, [userId, consulteeId]);
+  }, [userId, consulteeId, prefetchAllConsulteeData]);
 
   const isLoading =
     (!userDetails && !userError) || (!profileDetails && !profileError);

@@ -64,7 +64,7 @@ export default function ConsultantLayout({
   const { data: session } = useSession();
 
   const userId = getEffectiveUserId(session);
-  const { prefetchOnTabHover } = usePrefetchDashboard({ consultantId });
+  const { prefetchOnTabHover, prefetchAllConsultantData } = usePrefetchDashboard({ consultantId });
 
   // Use SWR to fetch and cache consultant data
   const { data: consultantData, error } = useSWR(
@@ -77,16 +77,19 @@ export default function ConsultantLayout({
     },
   );
 
-  // Prefetch data for likely navigation paths
+  // Enhanced prefetching for all dashboard tabs in background
   useEffect(() => {
-    // If we have userId and consultantId, prefetch data for common routes
+    // If we have userId and consultantId, prefetch all dashboard data
     if (userId && consultantId) {
-      // Prefetch consultant data
+      // Prefetch consultant data for immediate needs
       preload([`consultant-${consultantId}`, consultantId], ([_, id]) =>
         fetchConsultantData(id),
       );
+      
+      // Prefetch all other dashboard tabs in background for instant navigation
+      prefetchAllConsultantData();
     }
-  }, [userId, consultantId]);
+  }, [userId, consultantId, prefetchAllConsultantData]);
 
   // Early render of the skeleton UI for better perceived performance
   const isLoading = !consultantData && !error;
