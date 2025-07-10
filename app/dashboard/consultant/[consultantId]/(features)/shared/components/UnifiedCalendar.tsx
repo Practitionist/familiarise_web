@@ -157,7 +157,7 @@ export function UnifiedCalendar({
         toggleSlot(slot);
       }
     },
-    [mode, getSlotStatusForInterval, toggleSlot]
+    [mode, getSlotStatusForInterval, toggleSlot],
   );
 
   // Render time cell
@@ -173,8 +173,6 @@ export function UnifiedCalendar({
       };
 
       const isCurrentlySelected = isSlotSelected(slot);
-
-
 
       // Fast-exit: avoid rendering a clickable button for cells that have no
       // availability **and** are disabled (e.g. past date).  Rendering a
@@ -262,7 +260,7 @@ export function UnifiedCalendar({
                           </p>
                         )}
                       </div>
-                    )
+                    ),
                   )}
                 </div>
               </TooltipContent>
@@ -282,7 +280,7 @@ export function UnifiedCalendar({
       loading,
       error,
       mode,
-    ]
+    ],
   );
 
   // Render month view
@@ -355,7 +353,7 @@ export function UnifiedCalendar({
                 </div>
               </div>
             );
-          }
+          },
         )}
       </div>
     );
@@ -423,7 +421,7 @@ export function UnifiedCalendar({
               setCurrentDate(
                 view === "week"
                   ? subWeeks(currentDate, 1)
-                  : subMonths(currentDate, 1)
+                  : subMonths(currentDate, 1),
               )
             }
           >
@@ -441,7 +439,7 @@ export function UnifiedCalendar({
               setCurrentDate(
                 view === "week"
                   ? addWeeks(currentDate, 1)
-                  : addMonths(currentDate, 1)
+                  : addMonths(currentDate, 1),
               )
             }
           >
@@ -528,7 +526,7 @@ export function UnifiedCalendar({
                       0,
                       1,
                       interval.hour,
-                      interval.minute
+                      interval.minute,
                     ).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
@@ -559,7 +557,7 @@ export function UnifiedCalendar({
                   eventType,
                   durationInMonths,
                   callsPerWeek,
-                  sessionDurationInHours
+                  sessionDurationInHours,
                 );
 
                 if (selectedSlots.length === 0) {

@@ -47,7 +47,7 @@ export interface UseSlotAllocationReturn {
  * Custom hook for managing slot allocation logic
  */
 export function useSlotAllocation(
-  options: UseSlotAllocationOptions
+  options: UseSlotAllocationOptions,
 ): UseSlotAllocationReturn {
   const {
     eventType,
@@ -66,7 +66,7 @@ export function useSlotAllocation(
   const [isAllocating, setIsAllocating] = useState(false);
   const [allocationError, setAllocationError] = useState<string | null>(null);
   const [validationMessage, setValidationMessage] = useState<string | null>(
-    null
+    null,
   );
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -75,7 +75,7 @@ export function useSlotAllocation(
     eventType,
     durationInMonths,
     callsPerWeek,
-    sessionDurationInHours
+    sessionDurationInHours,
   );
 
   // Check if we can allocate (have the right number of slots)
@@ -109,13 +109,13 @@ export function useSlotAllocation(
     (slot: TimeSlot) => {
       setSelectedSlots((current) => {
         const isSelected = current.some(
-          (s) => s.startTime.getTime() === slot.startTime.getTime()
+          (s) => s.startTime.getTime() === slot.startTime.getTime(),
         );
 
         if (isSelected) {
           // Remove slot
           return current.filter(
-            (s) => s.startTime.getTime() !== slot.startTime.getTime()
+            (s) => s.startTime.getTime() !== slot.startTime.getTime(),
           );
         } else {
           // Add slot (with limits)
@@ -128,7 +128,7 @@ export function useSlotAllocation(
               eventType,
               undefined,
               undefined,
-              sessionDurationInHours
+              sessionDurationInHours,
             );
             if (webinarRequiredSlots === 1) {
               // Single slot webinar - replace selection
@@ -137,13 +137,13 @@ export function useSlotAllocation(
               // Multi-slot webinar - allow adding up to required slots
               if (current.length >= webinarRequiredSlots) {
                 setValidationMessage(
-                  `You can only select ${webinarRequiredSlots} consecutive slots for this ${sessionDurationInHours || 1} hour webinar.`
+                  `You can only select ${webinarRequiredSlots} consecutive slots for this ${sessionDurationInHours || 1} hour webinar.`,
                 );
                 return current;
               } else {
                 // Add slot and validate consecutiveness
                 const newSelection = [...current, slot].sort(
-                  (a, b) => a.startTime.getTime() - b.startTime.getTime()
+                  (a, b) => a.startTime.getTime() - b.startTime.getTime(),
                 );
 
                 // Validate consecutive slots for multi-slot webinars
@@ -169,24 +169,24 @@ export function useSlotAllocation(
             if (current.length >= requiredSlots) {
               // Multi-slot events - add if under limit
               setValidationMessage(
-                `You can only select ${requiredSlots} slots for this ${eventType}.`
+                `You can only select ${requiredSlots} slots for this ${eventType}.`,
               );
               return current;
             } else {
               // Add slot with validation
               // For subscription/class, validate weekly distribution
               const newSelection = [...current, slot].sort(
-                (a, b) => a.startTime.getTime() - b.startTime.getTime()
+                (a, b) => a.startTime.getTime() - b.startTime.getTime(),
               );
 
               if (callsPerWeek) {
                 const validation = validateSlotDistribution(
                   newSelection,
-                  callsPerWeek
+                  callsPerWeek,
                 );
                 if (!validation.isValid) {
                   setValidationMessage(
-                    validation.errorMessage || "Invalid slot distribution"
+                    validation.errorMessage || "Invalid slot distribution",
                   );
                   return current;
                 }
@@ -198,7 +198,7 @@ export function useSlotAllocation(
         }
       });
     },
-    [eventType, requiredSlots, callsPerWeek, sessionDurationInHours]
+    [eventType, requiredSlots, callsPerWeek, sessionDurationInHours],
   );
 
   // Clear all selected slots
@@ -211,10 +211,10 @@ export function useSlotAllocation(
   const isSlotSelected = useCallback(
     (slot: TimeSlot) => {
       return selectedSlots.some(
-        (s) => s.startTime.getTime() === slot.startTime.getTime()
+        (s) => s.startTime.getTime() === slot.startTime.getTime(),
       );
     },
-    [selectedSlots]
+    [selectedSlots],
   );
 
   // Validate current selection
@@ -223,7 +223,7 @@ export function useSlotAllocation(
       selectedSlots,
       eventType,
       requiredSlots,
-      sessionDurationInHours
+      sessionDurationInHours,
     );
 
     if (!validation.isValid) {
@@ -272,7 +272,7 @@ export function useSlotAllocation(
 
       const result = await AllocationAlgorithms.manualAllocate(
         selectedSlots,
-        allocationOptions
+        allocationOptions,
       );
 
       if (result.success) {
@@ -321,7 +321,7 @@ export function useSlotAllocation(
 
         const result = await AllocationAlgorithms.autoAllocate(
           availableSlots,
-          allocationOptions
+          allocationOptions,
         );
 
         if (result.success) {
@@ -363,7 +363,7 @@ export function useSlotAllocation(
       toast,
       onSuccess,
       onError,
-    ]
+    ],
   );
 
   // Pre-allocation using requested slots
@@ -424,7 +424,7 @@ export function useSlotAllocation(
       toast,
       onSuccess,
       onError,
-    ]
+    ],
   );
 
   return {
@@ -456,7 +456,7 @@ export function useSlotAllocation(
  */
 function validateSlotDistribution(
   slots: TimeSlot[],
-  callsPerWeek: number
+  callsPerWeek: number,
 ): { isValid: boolean; errorMessage?: string } {
   const slotsByWeek = new Map<string, TimeSlot[]>();
 

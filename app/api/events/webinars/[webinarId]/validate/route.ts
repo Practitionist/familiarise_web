@@ -38,7 +38,7 @@ const webinarInclude = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> }
+  { params }: { params: Promise<{ webinarId: string }> },
 ) {
   try {
     const { webinarId } = await params;
@@ -48,7 +48,7 @@ export async function POST(
     if (!Array.isArray(body.slots) || body.slots.length === 0) {
       return NextResponse.json(
         { error: "Slots array is required and must not be empty" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -76,14 +76,14 @@ export async function POST(
         {
           error: `Webinar (${durationText}) requires exactly ${requiredSlots} consecutive slot${requiredSlots > 1 ? "s" : ""}`,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -103,14 +103,14 @@ export async function POST(
     if (pastSlots.length > 0) {
       return NextResponse.json(
         { error: "Cannot validate slots in the past" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     // For multi-slot webinars, validate that slots are consecutive
     if (requiredSlots > 1) {
       const sortedSlots = [...slotDates].sort(
-        (a, b) => a.getTime() - b.getTime()
+        (a, b) => a.getTime() - b.getTime(),
       );
       for (let i = 1; i < sortedSlots.length; i++) {
         const prevSlot = sortedSlots[i - 1];
@@ -119,7 +119,7 @@ export async function POST(
         if (currentSlot.getTime() !== expectedStartTime.getTime()) {
           return NextResponse.json(
             { error: "Webinar slots must be consecutive" },
-            { status: 400 }
+            { status: 400 },
           );
         }
       }
@@ -210,8 +210,9 @@ export async function POST(
     for (const appointment of existingAppointments) {
       const conflictingSlots = appointment.slotsOfAppointment.filter((slot) =>
         slotDates.some(
-          (date) => date.toISOString() === slot.slotStartTimeInUTC.toISOString()
-        )
+          (date) =>
+            date.toISOString() === slot.slotStartTimeInUTC.toISOString(),
+        ),
       );
 
       for (const slot of conflictingSlots) {
@@ -269,7 +270,7 @@ export async function POST(
         isAvailable = availableSlots.some(
           (slot) =>
             new Date(slot.slotStartTimeInUTC).toISOString() ===
-            slotDate.toISOString()
+            slotDate.toISOString(),
         );
       }
 
@@ -296,7 +297,7 @@ export async function POST(
     console.error("Webinar validation error:", error);
     return NextResponse.json(
       { error: "Failed to validate webinar slot" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

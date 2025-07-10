@@ -29,7 +29,7 @@ export default function ExpertProfile(
   props: Readonly<{
     params: Params;
     searchParams: SearchParams;
-  }>
+  }>,
 ) {
   const params = use(props.params);
   const { timezone: browserTimezone, isLoading: isTimezoneLoading } =
@@ -56,7 +56,7 @@ export default function ExpertProfile(
       setError(null);
       try {
         const consultantData = await fetchConsultantDetails(
-          params.consultantId
+          params.consultantId,
         );
         setConsultantDetails(consultantData);
         if (consultantData.userId) {
@@ -70,7 +70,7 @@ export default function ExpertProfile(
       } catch (err) {
         console.error("Error fetching data:", err);
         setError(
-          err instanceof Error ? err : new Error("An unknown error occurred")
+          err instanceof Error ? err : new Error("An unknown error occurred"),
         );
         toast({
           title: "Error fetching data",
@@ -101,13 +101,13 @@ export default function ExpertProfile(
           const response = await fetch(
             `/api/slots/availability-with-allocation/${
               consultantDetails.id
-            }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${timezone}`
+            }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${timezone}`,
           );
 
           if (!response.ok) {
             const errorData = await response.json();
             throw new Error(
-              errorData.error || "Failed to fetch availability slots"
+              errorData.error || "Failed to fetch availability slots",
             );
           }
 
@@ -124,7 +124,7 @@ export default function ExpertProfile(
           console.log("Looking for date:", selectedDateKey);
           console.log(
             "Slots found for selected date:",
-            slotsForSelectedDate.length
+            slotsForSelectedDate.length,
           );
 
           setSlotTimings(slotsForSelectedDate);
@@ -160,7 +160,7 @@ export default function ExpertProfile(
 
     // Get the active consultation plan
     const activePlan = consultantDetails.consultationPlans.find(
-      (plan) => plan.durationInHours === durationInHours
+      (plan) => plan.durationInHours === durationInHours,
     );
 
     if (!activePlan) {
@@ -181,12 +181,12 @@ export default function ExpertProfile(
     ) {
       params.append(
         "slotOfAvailabilityWeeklyId",
-        selectedSlot.slotOfAvailabilityId
+        selectedSlot.slotOfAvailabilityId,
       );
     } else {
       params.append(
         "slotOfAvailabilityCustomId",
-        selectedSlot.slotOfAvailabilityId
+        selectedSlot.slotOfAvailabilityId,
       );
     }
     params.append("slotStartTimeInUTC", slotStartTimeInUTC.toISOString());
@@ -210,7 +210,7 @@ export default function ExpertProfile(
 
       // Get the active subscription plan
       const activePlan = consultantDetails.subscriptionPlans.find(
-        (plan) => plan.durationInMonths === parseInt(option.duration)
+        (plan) => plan.durationInMonths === parseInt(option.duration),
       );
 
       if (!activePlan) {
@@ -221,19 +221,19 @@ export default function ExpertProfile(
       // Redirect to subscription checkout page
       window.location.href = `/checkout/plans/subscription/${activePlan.id}`;
     },
-    [consultantDetails, toast]
+    [consultantDetails, toast],
   );
 
   const renderCalendar = useCallback(() => {
     const daysInMonth = new Date(
       currentDate.getFullYear(),
       currentDate.getMonth() + 1,
-      0
+      0,
     ).getDate();
     const firstDayOfMonth = new Date(
       currentDate.getFullYear(),
       currentDate.getMonth(),
-      1
+      1,
     ).getDay();
 
     // Adjust for Monday as first day of week (0 = Monday, 1 = Tuesday, etc.)
@@ -248,7 +248,7 @@ export default function ExpertProfile(
       const date = new Date(
         currentDate.getFullYear(),
         currentDate.getMonth(),
-        i
+        i,
       );
       days.push(
         <button
@@ -261,7 +261,7 @@ export default function ExpertProfile(
           }}
         >
           {i}
-        </button>
+        </button>,
       );
     }
 

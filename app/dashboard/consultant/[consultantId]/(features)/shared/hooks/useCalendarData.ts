@@ -113,7 +113,7 @@ export interface UseCalendarDataReturn extends CalendarData {
   refetchEventSlots: () => Promise<void>;
   getSlotStatusForInterval: (
     interval: { hour: number; minute: number },
-    date: Date
+    date: Date,
   ) => SlotStatusResult;
 }
 
@@ -128,7 +128,7 @@ export interface UseCalendarDataReturn extends CalendarData {
  * 5. Optimized performance with useCallback and useMemo
  */
 export function useCalendarData(
-  options: UseCalendarDataOptions
+  options: UseCalendarDataOptions,
 ): UseCalendarDataReturn {
   const {
     consultantId,
@@ -206,7 +206,7 @@ export function useCalendarData(
       const data = await AllocationService.fetchAvailabilitySlots(
         consultantId,
         startDate,
-        endDate
+        endDate,
       );
       setRawAvailabilitySlots(data);
     } catch (error) {
@@ -235,7 +235,7 @@ export function useCalendarData(
       const data = await AllocationService.fetchAppointments(
         consultantId,
         startDate,
-        endDate
+        endDate,
       );
       setExistingAppointments(data);
     } catch (error) {
@@ -276,10 +276,10 @@ export function useCalendarData(
             const intervalSlots: TimeSlot[] = [];
             for (let i = 0; i < numIntervals; i++) {
               const intervalStart = new Date(
-                start.getTime() + i * 30 * 60 * 1000
+                start.getTime() + i * 30 * 60 * 1000,
               );
               const intervalEnd = new Date(
-                intervalStart.getTime() + 30 * 60 * 1000
+                intervalStart.getTime() + 30 * 60 * 1000,
               );
               intervalSlots.push({
                 startTime: intervalStart,
@@ -289,7 +289,7 @@ export function useCalendarData(
               });
             }
             return intervalSlots;
-          }
+          },
         );
         setEventSlots(slots);
       } else {
@@ -319,7 +319,7 @@ export function useCalendarData(
   const getSlotStatusForInterval = useCallback(
     (
       interval: { hour: number; minute: number },
-      date: Date
+      date: Date,
     ): SlotStatusResult => {
       // STEP 1: Calculate the 30-minute interval boundaries
       const localIntervalStartDate = new Date(date);
@@ -358,7 +358,7 @@ export function useCalendarData(
               type: appointment.appointmentType,
               title: appointment.appointmentType,
               with: "", // Add if available in data
-            })) || []
+            })) || [],
       );
 
       // STEP 5: Determine booking status using SERVER-CALCULATED data
@@ -398,7 +398,7 @@ export function useCalendarData(
         overlappingAppointments,
       };
     },
-    [rawAvailabilitySlots, existingAppointments]
+    [rawAvailabilitySlots, existingAppointments],
   );
 
   // PERFORMANCE: Fetch all data function with parallel API calls

@@ -83,7 +83,7 @@ const fetchExistingAppointments = useCallback(async (): Promise<void> => {
   const data = await AllocationService.fetchAppointments(
     consultantId,
     startDate,
-    endDate
+    endDate,
   );
   setExistingAppointments(data);
 }, [consultantId, toast, view, currentDate]);
@@ -146,7 +146,7 @@ switch (options.eventType) {
       requiredSlots,
       callsPerWeek,
       duration,
-      preferences
+      preferences,
     );
     strategy = "optimal-distribution";
     break;

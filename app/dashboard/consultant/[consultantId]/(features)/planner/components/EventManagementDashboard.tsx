@@ -57,7 +57,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   // Handle webinar saved event
   const handleWebinarSaved = async (
     data: Partial<WebinarEvent>,
-    scheduledAt?: string | Date
+    scheduledAt?: string | Date,
   ) => {
     try {
       setIsSaving(true);
@@ -69,7 +69,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
       const savedWebinar = await PlannerService.saveWebinar(
         data,
         scheduledAt,
-        consultantId
+        consultantId,
       );
       console.log("Webinar saved successfully:", savedWebinar);
 
@@ -128,7 +128,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
         `/api/events/webinars/crud-with-plan/${webinarId}`,
         {
           method: "DELETE",
-        }
+        },
       );
 
       if (!response.ok) {
@@ -165,7 +165,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
         `/api/events/classes/crud-with-plan/${classId}`,
         {
           method: "DELETE",
-        }
+        },
       );
 
       if (!response.ok) {
@@ -196,7 +196,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
 
   const handleMonthChange = (direction: "prev" | "next") => {
     setCurrentDate((prevDate) =>
-      addMonths(prevDate, direction === "prev" ? -1 : 1)
+      addMonths(prevDate, direction === "prev" ? -1 : 1),
     );
   };
 

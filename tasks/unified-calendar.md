@@ -73,14 +73,12 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 ### Phase 1: Analysis and Understanding ✅
 
 - [x] **Read and understand Prisma schema relationships**
-
   - Analyzed User, ConsultantProfile, Appointment, SlotOfAppointment models
   - Understood the relationship between consultations, subscriptions, webinars, classes
   - Identified AppointmentsType enum and RequestStatus workflow
   - Mapped out ScheduleType (WEEKLY vs CUSTOM) availability patterns
 
 - [x] **Analyze existing planner and requests calendar components**
-
   - Reviewed EventTimingsCalendar.tsx (planner side - webinars/classes)
   - Reviewed TimingsCalendar.tsx (requests side - consultations/subscriptions)
   - Identified redundant code patterns and shared functionality
@@ -113,7 +111,6 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   ```
 
 - [x] **Created shared/utils/calendarUtils.ts**
-
   - Core TypeScript interfaces (TimeSlot, AppointmentDetail, ConsultantData, etc.)
   - mapWeeklySlots() function for weekly schedule type
   - mapCustomSlots() function for custom schedule type
@@ -124,7 +121,6 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - Utility functions for appointment title and user extraction
 
 - [x] **Created shared/utils/allocationService.ts**
-
   - Centralized API service layer for all allocation operations
   - allocateConsultationSlots() and validateConsultationSlots()
   - allocateSubscriptionSlots() and validateSubscriptionSlots()
@@ -144,7 +140,6 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 ### Phase 3: Custom Hooks Development ✅
 
 - [x] **Created shared/hooks/useCalendarData.ts**
-
   - Fetches and manages all calendar-related data
   - Handles consultant details, availability slots, existing appointments
   - Supports event-specific slot fetching for webinars/classes
@@ -185,7 +180,6 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 ### Phase 5: Legacy Component Refactoring ✅
 
 - [x] **Updated EventTimingsCalendar.tsx (Planner side)**
-
   - Completely replaced 947 lines of complex logic with ~84 lines
   - Now uses UnifiedCalendar in 'allocate' mode
   - Maintains same Dialog wrapper for UX consistency
@@ -193,7 +187,6 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
   - Integrated with allocation completion callbacks
 
 - [x] **Updated TimingsCalendar.tsx (Requests side)**
-
   - Replaced 424 lines of redundant calendar logic with ~60 lines
   - Now uses UnifiedCalendar in 'select' mode
   - Maintains compatibility with existing parent component interface
@@ -229,7 +222,6 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 ### Testing and Validation
 
 - [ ] **Integration testing**
-
   - Test all allocation algorithms with real data
   - Verify calendar displays correctly across all event types
   - Test responsive behavior on mobile devices
@@ -252,7 +244,6 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 ### Missing Validation APIs Created ✅
 
 - [x] **Created `/api/events/webinars/[webinarId]/validate`**
-
   - Comprehensive validation for single webinar slots
   - Conflict detection with existing appointments
   - Consultant availability validation for both WEEKLY and CUSTOM schedules
@@ -269,7 +260,6 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 ### Allocation API Standardization ✅
 
 - [x] **Fixed webinar allocation API**
-
   - **Added support for three allocation modes**:
     - `isAuto: true` - Automatic slot selection using consultant availability
     - `isAuto: false, slots: [...]` - Manual slot selection with validation
@@ -292,13 +282,11 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 ### API Consistency Improvements ✅
 
 - [x] **Standardized request/response formats**
-
   - All allocation APIs now use consistent `AllocationRequest` interface
   - Unified error handling and response structures
   - Consistent validation patterns across all event types
 
 - [x] **Enhanced conflict detection**
-
   - Updated all APIs to check conflicts across consultations, subscriptions, webinars, and classes
   - Improved query efficiency with proper indexing
   - Better error messages with specific conflict details
@@ -311,13 +299,11 @@ The allocate and validate apis need any improvement/optimisation/fixing ?
 ### Validation Enhancements ✅
 
 - [x] **Consultant availability validation**
-
   - All APIs now properly validate slots against consultant schedules
   - Support for both WEEKLY and CUSTOM schedule types
   - Time zone handling improvements
 
 - [x] **Business rule validation**
-
   - Weekly distribution limits for subscriptions and classes
   - Slot count validation based on event requirements
   - Past slot prevention across all APIs
