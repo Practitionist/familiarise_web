@@ -104,7 +104,7 @@ export const getFirstDayOfMonth = (date: Date): number => {
 
 export const formatTime = (
   utcTimeString: string,
-  format: "12h" | "24h" = "12h",
+  format: "12h" | "24h" = "12h"
 ): string => {
   try {
     // Handle empty string
@@ -130,7 +130,7 @@ export const formatTime = (
 
 export const formatDate = (
   utcTimeString: string,
-  includeWeekday: boolean = true,
+  includeWeekday: boolean = true
 ): string => {
   try {
     // Handle empty string
@@ -158,7 +158,7 @@ export const formatDate = (
 // Timezone-aware utility functions for consistent slot handling
 export const convertUtcToTimezone = (
   utcTimeString: string,
-  timezone: string = "UTC",
+  timezone: string = "UTC"
 ): string => {
   try {
     if (!utcTimeString) return "";
@@ -183,7 +183,7 @@ export const convertUtcToTimezone = (
 export const convertTimezoneToUtc = (
   timeStr: string,
   dateStr: string,
-  timezone: string = "UTC",
+  timezone: string = "UTC"
 ): string => {
   try {
     if (!timeStr || !dateStr) return "";
@@ -212,9 +212,79 @@ export const convertTimezoneToUtc = (
   }
 };
 
+// Enhanced version that handles overnight slots for weekly schedules
+export const convertTimezoneToUtcWithOvernight = (
+  timeStr: string,
+  dateStr: string,
+  timezone: string = "UTC",
+  isEndTime: boolean = false,
+  startTimeStr?: string
+): string => {
+  try {
+    if (!timeStr || !dateStr) return "";
+
+    // For UTC timezone, handle overnight detection
+    if (timezone === "UTC") {
+      let workingDate = dateStr;
+
+      // If this is an end time and we have a start time, check for overnight
+      if (isEndTime && startTimeStr) {
+        const [startHour, startMinute] = startTimeStr.split(":").map(Number);
+        const [endHour, endMinute] = timeStr.split(":").map(Number);
+
+        const startMinutes = startHour * 60 + startMinute;
+        const endMinutes = endHour * 60 + endMinute;
+
+        // If end time is before start time, it's an overnight slot
+        if (endMinutes < startMinutes) {
+          const date = new Date(dateStr);
+          date.setDate(date.getDate() + 1);
+          workingDate = date.toISOString().split("T")[0];
+        }
+      }
+
+      const localDateTime = `${workingDate}T${timeStr}:00`;
+      const date = new Date(localDateTime);
+      return isNaN(date.getTime()) ? "" : date.toISOString();
+    }
+
+    // For other timezones, use date-fns-tz with overnight detection
+    let workingDate = dateStr;
+
+    // If this is an end time and we have a start time, check for overnight
+    if (isEndTime && startTimeStr) {
+      const [startHour, startMinute] = startTimeStr.split(":").map(Number);
+      const [endHour, endMinute] = timeStr.split(":").map(Number);
+
+      const startMinutes = startHour * 60 + startMinute;
+      const endMinutes = endHour * 60 + endMinute;
+
+      // If end time is before start time, it's an overnight slot
+      if (endMinutes < startMinutes) {
+        const date = new Date(dateStr);
+        date.setDate(date.getDate() + 1);
+        workingDate = date.toISOString().split("T")[0];
+      }
+    }
+
+    const localDateTime = `${workingDate}T${timeStr}:00`;
+    const zonedDate = new Date(localDateTime);
+
+    if (isNaN(zonedDate.getTime())) return "";
+
+    // Convert from the specified timezone to UTC using date-fns-tz
+    const utcDate = fromZonedTime(zonedDate, timezone);
+
+    return utcDate.toISOString();
+  } catch (error) {
+    console.error("Error converting timezone to UTC with overnight:", error);
+    return "";
+  }
+};
+
 export const extractTimeFromUtcSlot = (
   utcTimeString: string,
-  timezone: string = "UTC",
+  timezone: string = "UTC"
 ): string => {
   try {
     if (!utcTimeString) return "";
@@ -255,9 +325,9 @@ export const timeToMinutes = (timeString: string): number => {
 
 // Sort slots chronologically by start time
 export const sortSlotsByTime = <T extends { startTime: string }>(
-  slots: T[],
+  slots: T[]
 ): T[] => {
   return slots.sort(
-    (a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime),
+    (a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime)
   );
 };

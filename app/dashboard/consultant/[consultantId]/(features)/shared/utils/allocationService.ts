@@ -420,7 +420,10 @@ export class AllocationService {
       }
       const result = await response.json();
       const { data: slotsByDate } = result;
+
+      // Flatten the grouped-by-date slots into a single array
       const allSlots: any[] = Object.values(slotsByDate).flat();
+
       return {
         weekly: allSlots.filter((s) => s.type === "WEEKLY"),
         custom: allSlots.filter((s) => s.type === "CUSTOM"),

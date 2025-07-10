@@ -20,7 +20,7 @@ export interface DetailedTimeSlotMeta extends TimeSlotMeta {
 export const isOverlapping = <T extends TimeSlotMeta>(
   intervalStart: Date,
   intervalEnd: Date,
-  slotList: T[] = [],
+  slotList: T[] = []
 ): boolean => {
   return slotList.some((slot) => {
     // Normalize start/end times to Date objects for comparison
@@ -39,7 +39,7 @@ export const isOverlapping = <T extends TimeSlotMeta>(
 const findOverlappingAppointments = (
   intervalStart: Date,
   intervalEnd: Date,
-  appointmentSlots: DetailedTimeSlotMeta[] = [],
+  appointmentSlots: DetailedTimeSlotMeta[] = []
 ): DetailedTimeSlotMeta[] => {
   return appointmentSlots.filter((slot) => {
     const slotStart =
@@ -80,7 +80,7 @@ export const getSlotStatus = (
   interval: { hour: number; minute: number },
   date: Date,
   availableSlots: TimeSlotMeta[] = [],
-  existingAppointments: DetailedTimeSlotMeta[] = [],
+  existingAppointments: DetailedTimeSlotMeta[] = []
 ): SlotStatusResult => {
   // 1. Calculate local start/end for the 30-min cell
   const localIntervalStartDate = new Date(date);
@@ -98,13 +98,13 @@ export const getSlotStatus = (
   const isWithinAvailability = isOverlapping(
     intervalStartDateUTC,
     intervalEndDateUTC,
-    availableSlots,
+    availableSlots
   );
 
   const overlappingAppointments = findOverlappingAppointments(
     intervalStartDateUTC,
     intervalEndDateUTC,
-    existingAppointments,
+    existingAppointments
   );
 
   const isActuallyBooked = overlappingAppointments.length > 0;
@@ -125,11 +125,11 @@ export const getSlotStatus = (
 
       const intersectionStart = Math.max(
         intervalStartDateUTC.getTime(),
-        appStart.getTime(),
+        appStart.getTime()
       );
       const intersectionEnd = Math.min(
         intervalEndDateUTC.getTime(),
-        appEnd.getTime(),
+        appEnd.getTime()
       );
 
       if (intersectionEnd > intersectionStart) {
