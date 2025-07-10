@@ -7,6 +7,7 @@ import { EventPlanner } from "./EventPlanner";
 import { WebinarEvent, ClassEvent, Event } from "../types/event";
 import { PlannerService } from "../services/planner";
 import { useToast } from "@/hooks/use-toast";
+import { addMonths, startOfMonth, endOfMonth } from "date-fns";
 
 interface Props {
   consultantId: string;
@@ -22,6 +23,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
+  const [currentDate, setCurrentDate] = useState(new Date());
 
   // Fetch events on load
   useEffect(() => {
@@ -30,10 +32,13 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
         setIsLoading(true);
         setError(null);
 
+        const startDate = startOfMonth(currentDate);
+        const endDate = endOfMonth(currentDate);
+
         // Use the service to fetch data
         const [fetchedWebinars, fetchedClasses] = await Promise.all([
           PlannerService.fetchWebinars(consultantId),
-          PlannerService.fetchClasses(consultantId),
+          PlannerService.fetchClasses(consultantId, startDate, endDate),
         ]);
 
         setWebinars(fetchedWebinars);
@@ -47,7 +52,7 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
     };
 
     fetchEvents();
-  }, [consultantId]);
+  }, [consultantId, currentDate]);
 
   // Handle webinar saved event
   const handleWebinarSaved = async (
@@ -187,6 +192,12 @@ export function EventManagementDashboard({ consultantId }: Readonly<Props>) {
       // Re-throw or handle as needed
       throw error;
     }
+  };
+
+  const handleMonthChange = (direction: "prev" | "next") => {
+    setCurrentDate((prevDate) =>
+      addMonths(prevDate, direction === "prev" ? -1 : 1),
+    );
   };
 
   if (error) {
