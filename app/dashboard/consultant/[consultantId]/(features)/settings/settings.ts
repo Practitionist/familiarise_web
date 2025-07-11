@@ -6,8 +6,10 @@ import {
   convertUtcToTimezone,
   extractTimeFromUtcSlot,
   convertTimezoneToUtc,
+  convertTimezoneToUtcWithOvernight,
   sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
+import { toZonedTime } from "date-fns-tz";
 import { DayOfWeek, ScheduleType } from "@prisma/client";
 export interface SlotType {
   startTime: string;
@@ -83,19 +85,17 @@ export const getInitialWeeklySlots = (
   try {
     consultant.slotsOfAvailabilityWeekly.forEach((slot) => {
       try {
-        if (
-          !slot ||
-          !slot.dayOfWeekforStartTimeInUTC ||
-          !slot.slotStartTimeInUTC ||
-          !slot.slotEndTimeInUTC
-        ) {
+        if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
           console.warn("Invalid weekly slot data:", slot);
           return;
         }
 
-        const day = slot.dayOfWeekforStartTimeInUTC.toLowerCase();
+        // Use the day-of-week stored in the database. This is the consultant's
+        // intended day for the recurring slot. The time will be converted,
+        // but the day grouping should remain consistent with the original setting.
+        const day = (slot.dayOfWeekforStartTimeInUTC as string).toLowerCase();
 
-        // Use timezone-aware time extraction for consistency
+        // Use timezone-aware time extraction so displayed times stay correct
         const startTime = extractTimeFromUtcSlot(
           slot.slotStartTimeInUTC.toString(),
           timezone,
@@ -262,22 +262,40 @@ export const formatSlotsForApi = (
                   throw new Error(`Invalid day of week: ${dayOfWeek}`);
                 }
 
-                // For weekly slots, convert timezone-aware time back to UTC with epoch date
+                // For weekly slots, use the enhanced timezone conversion that handles overnight slots
                 const baseDate = "1970-01-01";
-                const startTimeUtc = convertTimezoneToUtc(
+                const startTimeUtc = convertTimezoneToUtcWithOvernight(
                   slot.startTime,
                   baseDate,
                   timezone,
+                  false, // isEndTime
                 );
-                const endTimeUtc = convertTimezoneToUtc(
+                const endTimeUtc = convertTimezoneToUtcWithOvernight(
                   slot.endTime,
                   baseDate,
                   timezone,
+                  true, // isEndTime
+                  slot.startTime, // startTimeStr for overnight detection
                 );
+
+                // Determine the correct day of week for the end time
+                // If it's an overnight slot, the end day is the next day
+                const [startHour, startMinute] = slot.startTime
+                  .split(":")
+                  .map(Number);
+                const [endHour, endMinute] = slot.endTime
+                  .split(":")
+                  .map(Number);
+                const isOvernightSlot =
+                  endHour * 60 + endMinute < startHour * 60 + startMinute;
+
+                const endDayOfWeek = isOvernightSlot
+                  ? getNextDayOfWeek(dayOfWeek)
+                  : dayOfWeek;
 
                 return {
                   dayOfWeekforStartTimeInUTC: dayOfWeek,
-                  dayOfWeekforEndTimeInUTC: dayOfWeek,
+                  dayOfWeekforEndTimeInUTC: endDayOfWeek,
                   slotStartTimeInUTC:
                     startTimeUtc || `${baseDate}T${slot.startTime}:00.000Z`,
                   slotEndTimeInUTC:
@@ -290,16 +308,19 @@ export const formatSlotsForApi = (
                   throw new Error(`Invalid date format: ${key}`);
                 }
 
-                // Convert timezone-aware time to UTC for custom slots
-                const startTimeUtc = convertTimezoneToUtc(
+                // For custom slots, use the enhanced timezone conversion
+                const startTimeUtc = convertTimezoneToUtcWithOvernight(
                   slot.startTime,
                   key,
                   timezone,
+                  false, // isEndTime
                 );
-                const endTimeUtc = convertTimezoneToUtc(
+                const endTimeUtc = convertTimezoneToUtcWithOvernight(
                   slot.endTime,
                   key,
                   timezone,
+                  true, // isEndTime
+                  slot.startTime, // startTimeStr for overnight detection
                 );
 
                 return {
@@ -325,6 +346,21 @@ export const formatSlotsForApi = (
     console.error("Error in formatSlotsForApi:", error, { slots, isWeekly });
     return []; // Return empty array on error to prevent API failures
   }
+};
+
+// Helper function to get the next day of the week
+const getNextDayOfWeek = (dayOfWeek: string): string => {
+  const days = [
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+    "SUNDAY",
+  ];
+  const currentIndex = days.indexOf(dayOfWeek);
+  return days[(currentIndex + 1) % days.length];
 };
 
 // Calendar utilities - using centralized functions from timeUtils

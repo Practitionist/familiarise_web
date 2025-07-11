@@ -14,6 +14,7 @@ interface PlannerData {
   classes: any[];
   participantCounts: Record<string, number>;
 }
+import { addMonths, startOfMonth, endOfMonth } from "date-fns";
 
 interface Props {
   consultantId: string;
@@ -35,6 +36,7 @@ export function EventManagementDashboard({ consultantId, initialData }: Readonly
   const { deleteWebinar } = useWebinarMutations(consultantId);
   const { deleteClass } = useClassMutations(consultantId);
   const { refreshPlanner } = usePlannerRefresh(consultantId);
+  const [currentDate, setCurrentDate] = useState(new Date());
 
   // Fetch events on load only if no initial data
   useEffect(() => {
@@ -50,10 +52,13 @@ export function EventManagementDashboard({ consultantId, initialData }: Readonly
         setIsLoading(true);
         setError(null);
 
+        const startDate = startOfMonth(currentDate);
+        const endDate = endOfMonth(currentDate);
+
         // Use the service to fetch data
         const [fetchedWebinars, fetchedClasses] = await Promise.all([
           PlannerService.fetchWebinars(consultantId),
-          PlannerService.fetchClasses(consultantId),
+          PlannerService.fetchClasses(consultantId, startDate, endDate),
         ]);
 
         setWebinars(fetchedWebinars);
@@ -67,7 +72,7 @@ export function EventManagementDashboard({ consultantId, initialData }: Readonly
     };
 
     fetchEvents();
-  }, [consultantId, initialData]);
+  }, [consultantId, initialData, currentDate]);
 
   // Handle webinar saved event
   const handleWebinarSaved = async (
@@ -143,6 +148,12 @@ export function EventManagementDashboard({ consultantId, initialData }: Readonly
   const handleClassDelete = async (classId: string) => {
     console.log(`EventManagementDashboard - Deleting class: ${classId}`);
     deleteClass.mutate(classId);
+  };
+
+  const handleMonthChange = (direction: "prev" | "next") => {
+    setCurrentDate((prevDate) =>
+      addMonths(prevDate, direction === "prev" ? -1 : 1),
+    );
   };
 
   if (error) {

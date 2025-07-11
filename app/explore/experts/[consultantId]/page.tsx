@@ -20,6 +20,7 @@ import { ConsultationPricing } from "./components/ConsultationPricing";
 import { ProfileHeader } from "./components/ProfileHeader";
 import { ReviewsSection } from "./components/ReviewsSection";
 import { useTimezone } from "./hooks/useTimezone";
+import { format as formatTz } from "date-fns-tz";
 
 type Params = Promise<{ consultantId: string }>;
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
@@ -113,11 +114,10 @@ export default function ExpertProfile(
           const { data } = await response.json();
 
           // Extract slots for the selected date specifically
-          // Use local date formatting to avoid timezone shifts
-          const year = selectedDate.getFullYear();
-          const month = String(selectedDate.getMonth() + 1).padStart(2, "0");
-          const day = String(selectedDate.getDate()).padStart(2, "0");
-          const selectedDateKey = `${year}-${month}-${day}`; // YYYY-MM-DD format
+          // Use timezone-aware date formatting to match backend grouping
+          const selectedDateKey = formatTz(selectedDate, "yyyy-MM-dd", {
+            timeZone: timezone,
+          });
           const slotsForSelectedDate = data[selectedDateKey] || [];
 
           console.log("Available dates in response:", Object.keys(data));

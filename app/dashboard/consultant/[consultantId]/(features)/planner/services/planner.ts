@@ -96,11 +96,23 @@ export class PlannerService {
   /**
    * Fetch webinars for a consultant
    */
-  static async fetchWebinars(consultantId: string): Promise<WebinarEvent[]> {
+  static async fetchWebinars(
+    consultantId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<WebinarEvent[]> {
     try {
-      const response = await fetch(
-        `/api/events/webinars?consultantProfileId=${consultantId}`,
-      );
+      const params = new URLSearchParams({
+        consultantProfileId: consultantId,
+      });
+
+      // Only add date filters if provided
+      if (startDate && endDate) {
+        params.append("startDate", startDate.toISOString());
+        params.append("endDate", endDate.toISOString());
+      }
+
+      const response = await fetch(`/api/events/webinars?${params}`);
 
       if (!response.ok) {
         throw new Error("Failed to fetch webinars");
@@ -137,11 +149,22 @@ export class PlannerService {
   /**
    * Fetch classes for a consultant
    */
-  static async fetchClasses(consultantId: string): Promise<ClassEvent[]> {
+  static async fetchClasses(
+    consultantId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<ClassEvent[]> {
     try {
-      const response = await fetch(
-        `/api/events/classes?consultantProfileId=${consultantId}`,
-      );
+      const params = new URLSearchParams({
+        consultantProfileId: consultantId,
+      });
+
+      // Only add date filters if provided
+      if (startDate && endDate) {
+        params.append("startDate", startDate.toISOString());
+        params.append("endDate", endDate.toISOString());
+      }
+      const response = await fetch(`/api/events/classes?${params}`);
 
       if (!response.ok) {
         throw new Error("Failed to fetch classes");

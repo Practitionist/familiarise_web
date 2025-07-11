@@ -167,10 +167,33 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 
     const formattedWeeklySlots = Object.entries(sortedWeeklySlots).flatMap(
       ([day, slots]) => {
+        // Debug logging for Friday slots
+        if (day === "friday") {
+          console.log(
+            "📅 Processing Friday slots:",
+            slots.map((s) => ({
+              startTime: s.startTime,
+              endTime: s.endTime,
+              isValid: s.isValid,
+              errorMessage: s.errorMessage,
+            })),
+          );
+        }
+
         return slots.filter(isValidSlot).flatMap((slot): WeeklySlot[] => {
           const baseDate = "1970-01-01"; // Use epoch date for consistency
           const nextDate = "1970-01-02";
           const overnight = isOvernight(slot.startTime, slot.endTime);
+
+          // Debug logging for midnight slots
+          if (slot.startTime === "22:00" && slot.endTime === "00:00") {
+            console.log("🌙 Processing midnight slot:", {
+              day,
+              slot,
+              overnight,
+              timezone,
+            });
+          }
 
           // Convert timezone-aware time back to UTC
           const startUTC = convertTimezoneToUtc(
@@ -184,15 +207,45 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             timezone,
           );
 
-          if (!startUTC || !endUTC) return [];
+          if (!startUTC || !endUTC) {
+            console.log("❌ Failed to convert times to UTC:", {
+              startUTC,
+              endUTC,
+            });
+            return [];
+          }
 
           if (overnight) {
+            // Check if the slot ends exactly at midnight (00:00)
+            if (slot.endTime === "00:00") {
+              console.log("✅ Creating midnight slot (no split):", {
+                startUTC,
+                endUTC,
+                day: day.toUpperCase(),
+              });
+              // This slot ends at midnight, don't split it
+              return [
+                {
+                  dayOfWeekforStartTimeInUTC: day.toUpperCase() as DayOfWeek,
+                  dayOfWeekforEndTimeInUTC: day.toUpperCase() as DayOfWeek,
+                  slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
+                  slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
+                },
+              ];
+            }
+
+            // This is a true overnight slot that crosses midnight (e.g., 10 PM - 2 AM)
             const midnightUTC = convertTimezoneToUtc(
               "00:00",
               nextDate,
               timezone,
             );
             if (!midnightUTC) return [];
+
+            // Adjust first segment to end one second before midnight to keep it on the same day
+            const justBeforeMidnightUTC = new Date(
+              new Date(midnightUTC).getTime() - 1000,
+            );
 
             const startDay = day.toUpperCase() as DayOfWeek;
             const endDay = getNextDay(startDay);
@@ -201,14 +254,14 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
               {
                 dayOfWeekforStartTimeInUTC: startDay,
                 dayOfWeekforEndTimeInUTC: startDay,
-                slotStartTimeInUTC: startUTC,
-                slotEndTimeInUTC: midnightUTC,
+                slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
+                slotEndTimeInUTC: justBeforeMidnightUTC.toISOString(),
               },
               {
                 dayOfWeekforStartTimeInUTC: endDay,
                 dayOfWeekforEndTimeInUTC: endDay,
-                slotStartTimeInUTC: midnightUTC,
-                slotEndTimeInUTC: endUTC,
+                slotStartTimeInUTC: midnightUTC, // Already a string from convertTimezoneToUtc
+                slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
               },
             ];
           }
@@ -217,8 +270,8 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             {
               dayOfWeekforStartTimeInUTC: day.toUpperCase() as DayOfWeek,
               dayOfWeekforEndTimeInUTC: day.toUpperCase() as DayOfWeek,
-              slotStartTimeInUTC: startUTC,
-              slotEndTimeInUTC: endUTC,
+              slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
+              slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
             },
           ];
         });
@@ -260,6 +313,18 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           if (!startUTC || !endUTC) return [];
 
           if (overnight) {
+            // Check if the slot ends exactly at midnight (00:00)
+            if (slot.endTime === "00:00") {
+              // This slot ends at midnight, don't split it
+              return [
+                {
+                  slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
+                  slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
+                },
+              ];
+            }
+
+            // This is a true overnight slot that crosses midnight (e.g., 10 PM - 2 AM)
             const midnightUTC = convertTimezoneToUtc(
               "00:00",
               nextDateStr,
@@ -267,22 +332,26 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             );
             if (!midnightUTC) return [];
 
+            const justBeforeMidnightUTC = new Date(
+              new Date(midnightUTC).getTime() - 1000,
+            );
+
             return [
               {
-                slotStartTimeInUTC: startUTC,
-                slotEndTimeInUTC: midnightUTC,
+                slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
+                slotEndTimeInUTC: justBeforeMidnightUTC.toISOString(),
               },
               {
-                slotStartTimeInUTC: midnightUTC,
-                slotEndTimeInUTC: endUTC,
+                slotStartTimeInUTC: midnightUTC, // Already a string from convertTimezoneToUtc
+                slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
               },
             ];
           }
 
           return [
             {
-              slotStartTimeInUTC: startUTC,
-              slotEndTimeInUTC: endUTC,
+              slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
+              slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
             },
           ];
         });

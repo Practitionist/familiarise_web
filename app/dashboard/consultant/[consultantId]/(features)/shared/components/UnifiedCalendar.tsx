@@ -9,7 +9,18 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { DAYS, INTERVALS } from "@/utils/timeSlotsMeta";
-import { format, addDays, startOfWeek, isSameDay } from "date-fns";
+import {
+  format,
+  addDays,
+  startOfWeek,
+  endOfWeek,
+  isSameDay,
+  subDays,
+  addWeeks,
+  subWeeks,
+  addMonths,
+  subMonths,
+} from "date-fns";
 import {
   ChevronLeft,
   ChevronRight,
@@ -19,17 +30,15 @@ import {
   Zap,
   RotateCcw,
 } from "lucide-react";
-import { useState, useEffect, useMemo } from "react";
-import { TimeSlot, AppointmentDetail } from "../utils/calendarUtils";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import {
+  TimeSlot,
+  AppointmentDetail,
+  calculateRequiredSlots,
+} from "../utils/calendarUtils";
 import { useCalendarData } from "../hooks/useCalendarData";
 import { useSlotAllocation } from "../hooks/useSlotAllocation";
-import {
-  fetchSessionDurationFromPlan,
-  groupConsecutiveSlots,
-  validateElongatedSlotSelection,
-  getElongatedSlotStyling,
-  convertElongatedSlotsTo30MinSlots,
-} from "../utils/elongatedSlots";
+import { cn } from "@/utils/tailwind";
 
 export interface UnifiedCalendarProps {
   consultantId: string;
@@ -63,65 +72,20 @@ export function UnifiedCalendar({
   className = "",
 }: UnifiedCalendarProps) {
   // State
-  const [currentDate, setCurrentDate] = useState(new Date());
+  const [currentDate, setCurrentDate] = useState(() => new Date());
   const [view, setView] = useState<"week" | "month">("week");
   const [browserTimezone, setBrowserTimezone] = useState("UTC");
-  const [actualSessionDuration, setActualSessionDuration] = useState<number>(
-    sessionDurationInHours || 1,
-  );
-  const [elongatedSlotGroups, setElongatedSlotGroups] = useState<TimeSlot[][]>(
-    [],
-  );
 
   // Initialize timezone
   useEffect(() => {
     setBrowserTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
   }, []);
 
-  // Fetch session duration from plan if not provided
-  useEffect(() => {
-    const fetchDuration = async () => {
-      if (sessionDurationInHours) {
-        setActualSessionDuration(sessionDurationInHours);
-        return;
-      }
-
-      if (eventId) {
-        try {
-          const duration = await fetchSessionDurationFromPlan(
-            eventType,
-            eventId,
-          );
-          setActualSessionDuration(duration);
-        } catch (error) {
-          console.error("Failed to fetch session duration:", error);
-          // For now, use a default value instead of throwing to prevent calendar crashes
-          console.warn(
-            `Using default 1-hour duration for ${eventType} due to fetch error`,
-          );
-          setActualSessionDuration(1);
-        }
-      } else if (mode !== "view") {
-        // Only require eventId for non-view modes
-        console.warn(
-          `No eventId provided for ${eventType} calendar in ${mode} mode. Using default 1-hour duration.`,
-        );
-        setActualSessionDuration(1);
-      } else {
-        // View mode doesn't need duration
-        setActualSessionDuration(1);
-      }
-    };
-
-    fetchDuration();
-  }, [eventType, eventId, sessionDurationInHours, mode]);
-
-  // Calendar data hook
+  // Use calendar data hook
   const {
     consultantDetails,
     availableSlots,
     existingAppointments,
-    eventSlots,
     loading,
     error,
     refetch,
@@ -130,6 +94,8 @@ export function UnifiedCalendar({
     consultantId,
     eventType,
     eventId,
+    currentDate,
+    view,
   });
 
   // Slot allocation hook
@@ -138,8 +104,6 @@ export function UnifiedCalendar({
     setSelectedSlots,
     isAllocating,
     allocationError,
-    requiredSlots,
-    canAllocate,
     toggleSlot,
     clearSlots,
     isSlotSelected,
@@ -159,52 +123,14 @@ export function UnifiedCalendar({
     if (preSelectedSlots.length > 0) {
       setSelectedSlots(preSelectedSlots);
     }
-  }, [preSelectedSlots]); // Remove setSelectedSlots to prevent infinite loops
-
-  // Update elongated slot groups when selected slots change
-  useEffect(() => {
-    if (selectedSlots.length > 0) {
-      const groups = groupConsecutiveSlots(selectedSlots);
-      setElongatedSlotGroups(groups);
-    } else {
-      setElongatedSlotGroups([]);
-    }
-  }, [selectedSlots]);
+  }, [preSelectedSlots, setSelectedSlots]);
 
   // Call onSlotsSelected when selection changes
   useEffect(() => {
     if (mode === "select" && onSlotsSelected) {
       onSlotsSelected(selectedSlots);
     }
-  }, [selectedSlots, mode]); // Remove onSlotsSelected from dependencies to prevent infinite loops
-
-  // Custom allocation handler that validates elongated slots
-  const handleElongatedSlotAllocation = async () => {
-    // Validate that selected slots form valid elongated sessions
-    const validation = validateElongatedSlotSelection(
-      selectedSlots,
-      actualSessionDuration,
-      false, // Don't allow partial sessions
-    );
-
-    if (!validation.isValid) {
-      // Show error message
-      console.error("Invalid slot selection:", validation.errorMessage);
-      return;
-    }
-
-    // Convert elongated slots to 30-minute API format
-    const apiSlots = convertElongatedSlotsTo30MinSlots(
-      validation.validGroups.flat(),
-    );
-
-    // Call the original manual allocate with converted slots
-    try {
-      await manualAllocate();
-    } catch (error) {
-      console.error("Allocation failed:", error);
-    }
-  };
+  }, [selectedSlots, mode, onSlotsSelected]);
 
   // Week view dates
   const weekDates = useMemo(() => {
@@ -212,229 +138,153 @@ export function UnifiedCalendar({
     return [...Array(7)].map((_, i) => addDays(startDate, i));
   }, [currentDate]);
 
-  // Navigation handlers
-  const navigatePrevious = () => {
-    if (view === "week") {
-      const newDate = new Date(currentDate);
-      newDate.setDate(newDate.getDate() - 7);
-      setCurrentDate(newDate);
-    } else {
-      const newDate = new Date(currentDate);
-      newDate.setMonth(newDate.getMonth() - 1);
-      setCurrentDate(newDate);
-    }
-  };
-
-  const navigateNext = () => {
-    if (view === "week") {
-      const newDate = new Date(currentDate);
-      newDate.setDate(newDate.getDate() + 7);
-      setCurrentDate(newDate);
-    } else {
-      const newDate = new Date(currentDate);
-      newDate.setMonth(newDate.getMonth() + 1);
-      setCurrentDate(newDate);
-    }
-  };
-
   // Handle slot click
-  const handleSlotClick = (
-    interval: { hour: number; minute: number },
-    date: Date,
-  ) => {
-    if (mode === "view") return;
+  const handleSlotClick = useCallback(
+    (interval: { hour: number; minute: number }, date: Date) => {
+      if (mode === "view") return;
 
-    const status = getSlotStatusForInterval(interval, date);
-    if (status.isDisabled) return;
+      const status = getSlotStatusForInterval(interval, date);
+      if (status.isDisabled) return;
 
-    // Create 30-minute slot (elongation is handled visually)
-    const slot: TimeSlot = {
-      startTime: new Date(status.intervalStartUTCString),
-      endTime: new Date(status.intervalEndUTCString), // Keep 30-minute slots
-      isAvailable: status.isAvailable,
-      isBooked: status.isBooked,
-    };
+      const slot: TimeSlot = {
+        startTime: new Date(status.intervalStartUTCString),
+        endTime: new Date(status.intervalEndUTCString),
+        isAvailable: status.isAvailable,
+        isBooked: status.isBooked,
+      };
 
-    if (mode === "select" || mode === "allocate") {
-      toggleSlot(slot);
-    }
-  };
+      if (mode === "select" || mode === "allocate") {
+        toggleSlot(slot);
+      }
+    },
+    [mode, getSlotStatusForInterval, toggleSlot],
+  );
 
   // Render time cell
-  const renderTimeCell = (
-    interval: { hour: number; minute: number },
-    date: Date,
-  ) => {
-    const status = getSlotStatusForInterval(interval, date);
-    const slotUTCTimestamp = status.intervalStartUTCString;
+  const renderTimeCell = useCallback(
+    (interval: { hour: number; minute: number }, date: Date) => {
+      const status = getSlotStatusForInterval(interval, date);
 
-    const slot: TimeSlot = {
-      startTime: new Date(status.intervalStartUTCString),
-      endTime: new Date(status.intervalEndUTCString),
-      isAvailable: status.isAvailable,
-      isBooked: status.isBooked,
-    };
+      const slot: TimeSlot = {
+        startTime: new Date(status.intervalStartUTCString),
+        endTime: new Date(status.intervalEndUTCString),
+        isAvailable: status.isAvailable,
+        isBooked: status.isBooked,
+      };
 
-    const isCurrentlySelected = isSlotSelected(slot);
-    const isEventSlot = eventSlots.some(
-      (es) => es.startTime.getTime() === slot.startTime.getTime(),
-    );
+      const isCurrentlySelected = isSlotSelected(slot);
 
-    // Find if this slot is part of an elongated group and get its position
-    let elongatedSlotInfo: {
-      groupIndex: number;
-      slotIndex: number;
-      groupSize: number;
-    } | null = null;
-    if (isCurrentlySelected) {
-      for (
-        let groupIndex = 0;
-        groupIndex < elongatedSlotGroups.length;
-        groupIndex++
-      ) {
-        const group = elongatedSlotGroups[groupIndex];
-        const slotIndex = group.findIndex(
-          (s) => s.startTime.getTime() === slot.startTime.getTime(),
+      // Fast-exit: avoid rendering a clickable button for cells that have no
+      // availability **and** are disabled (e.g. past date).  Rendering a
+      // lightweight placeholder saves performance.
+      if (!status.isAvailable && !status.isBooked && status.isInPast) {
+        return (
+          <div className="h-8 w-full bg-gray-100 border border-gray-200 rounded-sm" />
         );
-        if (slotIndex !== -1) {
-          elongatedSlotInfo = {
-            groupIndex,
-            slotIndex,
-            groupSize: group.length,
-          };
-          break;
+      }
+
+      let cellClassName =
+        "h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5";
+      let buttonText = "";
+      const showTooltip =
+        (status.isBookedForDisplay || status.isPartiallyBooked) &&
+        status.overlappingAppointments.length > 0;
+
+      if (isCurrentlySelected) {
+        cellClassName +=
+          " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
+        buttonText = "Selected";
+      } else if (status.isBookedForDisplay) {
+        cellClassName += " bg-slate-400 text-slate-800 cursor-not-allowed";
+        cellClassName += status.isInPast ? " opacity-50" : "";
+        buttonText = "Booked";
+      } else if (status.isPartiallyBooked) {
+        cellClassName += " bg-yellow-400 text-yellow-900 cursor-not-allowed";
+        cellClassName += status.isInPast ? " opacity-50" : "";
+        buttonText = "Partially Booked";
+      } else if (status.isAvailable) {
+        if (status.isInPast) {
+          cellClassName +=
+            " bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
+          buttonText = "Available";
+        } else {
+          cellClassName +=
+            " bg-green-300 text-green-950 hover:bg-green-400 border-green-400";
+          buttonText = "Available";
+        }
+      } else {
+        if (status.isInPast) {
+          cellClassName +=
+            " bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
+        } else {
+          cellClassName += " bg-slate-200 cursor-not-allowed";
         }
       }
-    }
 
-    let cellClassName =
-      "h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5";
-    let buttonText = "";
-    const showTooltip =
-      (status.isBooked || status.isPartiallyBooked || status.isConflicting) &&
-      status.overlappingAppointments.length > 0;
+      const isButtonDisabled =
+        status.isDisabled && !isCurrentlySelected && mode !== "view";
 
-    if (isCurrentlySelected) {
-      cellClassName +=
-        " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
-
-      // Apply elongated slot styling
-      if (elongatedSlotInfo) {
-        const styling = getElongatedSlotStyling(
-          elongatedSlotInfo.slotIndex,
-          elongatedSlotInfo.groupSize,
-        );
-        cellClassName = cellClassName.replace("rounded-sm", ""); // Remove default rounding
-        cellClassName += ` border-2`; // Stronger border for grouped slots
-
-        // Apply custom border radius based on position in group
-        const borderRadiusClass =
-          styling.borderRadius === "4px"
-            ? "rounded-sm"
-            : styling.borderRadius === "4px 4px 0 0"
-              ? "rounded-t-sm"
-              : styling.borderRadius === "0 0 4px 4px"
-                ? "rounded-b-sm"
-                : "";
-        cellClassName += ` ${borderRadiusClass}`;
-      }
-
-      // Show group number for better visual grouping
-      if (elongatedSlotInfo) {
-        const requiredSlotsPerSession = Math.ceil(actualSessionDuration * 2);
-        const isComplete =
-          elongatedSlotInfo.groupSize >= requiredSlotsPerSession;
-        buttonText = `Session ${elongatedSlotInfo.groupIndex + 1}${isComplete ? "" : "*"}`;
-      } else {
-        buttonText = "Selected";
-      }
-    } else if (isEventSlot) {
-      cellClassName += " bg-blue-500 text-white border-blue-600";
-      buttonText = "Scheduled";
-    } else if (status.isBooked) {
-      cellClassName += " bg-slate-400 text-slate-800 cursor-not-allowed";
-      cellClassName += status.isInPast ? " opacity-50" : "";
-      buttonText = "Booked";
-    } else if (status.isPartiallyBooked) {
-      cellClassName += " bg-yellow-400 text-yellow-900 cursor-not-allowed";
-      cellClassName += status.isInPast ? " opacity-50" : "";
-      buttonText = "Partially Booked";
-    } else if (status.isConflicting) {
-      cellClassName += " bg-red-400 text-red-900 cursor-not-allowed";
-      buttonText = "Conflicting";
-    } else if (status.isAvailable) {
-      if (status.isInPast) {
-        cellClassName +=
-          " bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
-        buttonText = "Available";
-      } else {
-        cellClassName +=
-          " bg-green-300 text-green-950 hover:bg-green-400 border-green-400";
-        buttonText = "Available";
-      }
-    } else {
-      if (status.isInPast) {
-        cellClassName +=
-          " bg-gray-300 text-gray-700 cursor-not-allowed opacity-70";
-      } else {
-        cellClassName += " bg-slate-200 cursor-not-allowed";
-      }
-    }
-
-    const isButtonDisabled =
-      status.isDisabled && !isCurrentlySelected && mode !== "view";
-
-    const buttonElement = (
-      <Button
-        key={slotUTCTimestamp}
-        variant="ghost"
-        className={cellClassName}
-        onClick={() => handleSlotClick(interval, date)}
-        disabled={isButtonDisabled}
-      >
-        {buttonText}
-      </Button>
-    );
-
-    if (showTooltip) {
-      return (
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>{buttonElement}</TooltipTrigger>
-            <TooltipContent
-              className="max-w-xs text-xs"
-              side="top"
-              align="center"
-            >
-              <div className="flex flex-col gap-1">
-                {status.overlappingAppointments.map(
-                  (appSlot: AppointmentDetail, index: number) => (
-                    <div
-                      key={`${appSlot.id}-${index}`}
-                      className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0"
-                    >
-                      <p className="font-semibold">{appSlot.title}</p>
-                      <p className="text-muted-foreground">{appSlot.type}</p>
-                      {appSlot.with && (
-                        <p className="text-muted-foreground">
-                          with {appSlot.with}
-                        </p>
-                      )}
-                    </div>
-                  ),
-                )}
-              </div>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+      const buttonElement = (
+        <Button
+          variant="ghost"
+          className={cellClassName}
+          onClick={() => handleSlotClick(interval, date)}
+          disabled={isButtonDisabled}
+        >
+          {buttonText}
+        </Button>
       );
-    }
 
-    return buttonElement;
-  };
+      if (showTooltip) {
+        return (
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>{buttonElement}</TooltipTrigger>
+              <TooltipContent
+                className="max-w-xs text-xs"
+                side="top"
+                align="center"
+              >
+                <div className="flex flex-col gap-1">
+                  {status.overlappingAppointments.map(
+                    (appSlot: AppointmentDetail, index: number) => (
+                      <div
+                        key={`${appSlot.id}-${index}`}
+                        className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0"
+                      >
+                        <p className="font-semibold">{appSlot.title}</p>
+                        <p className="text-muted-foreground">{appSlot.type}</p>
+                        {appSlot.with && (
+                          <p className="text-muted-foreground">
+                            with {appSlot.with}
+                          </p>
+                        )}
+                      </div>
+                    ),
+                  )}
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        );
+      }
+
+      return buttonElement;
+    },
+    [
+      getSlotStatusForInterval,
+      isSlotSelected,
+      handleSlotClick,
+      availableSlots,
+      consultantDetails,
+      loading,
+      error,
+      mode,
+    ],
+  );
 
   // Render month view
-  const renderMonthView = () => {
+  const renderMonthView = useCallback(() => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     const firstDayOfMonth = new Date(year, month, 1).getDay();
@@ -443,11 +293,6 @@ export function UnifiedCalendar({
 
     const countAvailableSlotsForDay = (date: Date): number => {
       let count = 0;
-      const dayStart = new Date(date);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(date);
-      dayEnd.setHours(23, 59, 59, 999);
-
       for (const interval of INTERVALS) {
         const status = getSlotStatusForInterval(interval, date);
         if (status.isAvailable && !status.isInPast) {
@@ -512,7 +357,7 @@ export function UnifiedCalendar({
         )}
       </div>
     );
-  };
+  }, [currentDate, getSlotStatusForInterval]);
 
   // Loading state
   if (loading) {
@@ -569,15 +414,35 @@ export function UnifiedCalendar({
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={navigatePrevious}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              setCurrentDate(
+                view === "week"
+                  ? subWeeks(currentDate, 1)
+                  : subMonths(currentDate, 1),
+              )
+            }
+          >
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <div className="text-lg font-bold text-center min-w-[150px]">
             {view === "week"
-              ? `${format(weekDates[0], "MMM d")} - ${format(weekDates[6], "MMM d, yyyy")}`
+              ? `${format(startOfWeek(currentDate), "MMM d")} - ${format(endOfWeek(currentDate), "MMM d, yyyy")}`
               : format(currentDate, "MMMM yyyy")}
           </div>
-          <Button variant="outline" size="sm" onClick={navigateNext}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              setCurrentDate(
+                view === "week"
+                  ? addWeeks(currentDate, 1)
+                  : addMonths(currentDate, 1),
+              )
+            }
+          >
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
@@ -648,7 +513,7 @@ export function UnifiedCalendar({
           </div>
 
           {/* Week grid */}
-          <div className="flex-1 overflow-y-auto scrollbar-thin">
+          <div className="flex-1 overflow-y-auto scrollbar-thin min-h-0">
             {INTERVALS.map((interval, i) => (
               <div
                 key={`interval-row-${interval.hour}-${interval.minute}`}
@@ -666,7 +531,6 @@ export function UnifiedCalendar({
                       hour: "2-digit",
                       minute: "2-digit",
                       hour12: false,
-                      timeZone: browserTimezone,
                     })}
                   </div>
                 </div>
@@ -688,24 +552,28 @@ export function UnifiedCalendar({
         <div className="flex items-center gap-4">
           <div className="text-sm">
             {(() => {
-              const requiredSlotsPerSession = Math.ceil(
-                actualSessionDuration * 2,
-              ); // 30-min slots needed
-              const completeSessions = elongatedSlotGroups.filter(
-                (group) => group.length >= requiredSlotsPerSession,
-              ).length;
-              const totalSessions = elongatedSlotGroups.length;
+              try {
+                const requiredSlotsForThisEvent = calculateRequiredSlots(
+                  eventType,
+                  durationInMonths,
+                  callsPerWeek,
+                  sessionDurationInHours,
+                );
 
-              if (selectedSlots.length === 0) {
-                return "No slots selected";
+                if (selectedSlots.length === 0) {
+                  return `0 selected out of ${requiredSlotsForThisEvent} required slots for the session`;
+                }
+
+                return `${selectedSlots.length} selected out of ${requiredSlotsForThisEvent} required slots for the session`;
+              } catch (error) {
+                console.error("Error calculating footer stats:", error);
+                return `Selected: ${selectedSlots.length} slots`;
               }
-
-              return `Selected: ${selectedSlots.length} slots forming ${totalSessions} session${totalSessions !== 1 ? "s" : ""} (${completeSessions} complete)`;
             })()}
           </div>
           <div className="text-xs text-muted-foreground">
-            Required: {actualSessionDuration}h per session (
-            {Math.ceil(actualSessionDuration * 2)} consecutive slots)
+            Required: {sessionDurationInHours || 1}h per session (
+            {Math.ceil((sessionDurationInHours || 1) * 2)} consecutive slots)
           </div>
           {allocationError && (
             <div className="text-sm text-red-600">{allocationError}</div>
@@ -719,8 +587,8 @@ export function UnifiedCalendar({
         {mode === "allocate" && (
           <div className="flex gap-2">
             <Button
-              onClick={handleElongatedSlotAllocation}
-              disabled={!canAllocate || isAllocating}
+              onClick={() => manualAllocate()}
+              disabled={isAllocating}
               size="sm"
             >
               <Users className="h-4 w-4 mr-2" />

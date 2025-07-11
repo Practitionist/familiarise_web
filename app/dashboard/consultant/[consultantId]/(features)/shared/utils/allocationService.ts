@@ -375,29 +375,58 @@ export class AllocationService {
   }
 
   /**
-   * Fetches availability slots
+   * Fetches consultant availability slots (weekly and custom)
    */
-  static async fetchAvailabilitySlots(consultantId: string) {
-    try {
-      const [weeklyResponse, customResponse] = await Promise.all([
-        fetch(
-          `/api/slots/availability/weekly?consultantProfileId=${consultantId}`,
-        ),
-        fetch(
-          `/api/slots/availability/custom?consultantProfileId=${consultantId}`,
-        ),
-      ]);
+  static async fetchAvailabilitySlots(
+    consultantId: string,
+    startDate: Date,
+    endDate: Date,
+    /**
+     * Explicit timezone override. If omitted we fall back to the browser's
+     * locale (when running on the client) and finally to "UTC".  This keeps
+     * the API response aligned with the user's calendar view.
+     */
+    timezone?: string,
+  ) {
+    if (!consultantId) {
+      throw new Error("Consultant ID is required");
+    }
 
-      const weeklyData = weeklyResponse.ok
-        ? await weeklyResponse.json()
-        : { data: [] };
-      const customData = customResponse.ok
-        ? await customResponse.json()
-        : { data: [] };
+    // Resolve the timezone to send to the server.  Priority:
+    //   1. Explicit argument
+    //   2. Browser-reported tz (client-side)
+    //   3. "UTC" (safe default on server or SSR)
+    const tz =
+      timezone ||
+      (typeof Intl !== "undefined"
+        ? Intl.DateTimeFormat().resolvedOptions().timeZone
+        : undefined) ||
+      "UTC";
+
+    try {
+      const params = new URLSearchParams({
+        startDateInUtc: startDate.toISOString(),
+        endDateInUtc: endDate.toISOString(),
+        timezone: tz,
+      });
+      const response = await fetch(
+        `/api/slots/availability-with-allocation/${consultantId}?${params}`,
+      );
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error || "Failed to fetch availability slots",
+        );
+      }
+      const result = await response.json();
+      const { data: slotsByDate } = result;
+
+      // Flatten the grouped-by-date slots into a single array
+      const allSlots: any[] = Object.values(slotsByDate).flat();
 
       return {
-        weekly: weeklyData.data || [],
-        custom: customData.data || [],
+        weekly: allSlots.filter((s) => s.type === "WEEKLY"),
+        custom: allSlots.filter((s) => s.type === "CUSTOM"),
       };
     } catch (error) {
       console.error("Error fetching availability slots:", error);
@@ -406,18 +435,28 @@ export class AllocationService {
   }
 
   /**
-   * Fetches appointment data
+   * Fetches all appointments for a consultant
    */
-  static async fetchAppointments(consultantId: string) {
+  static async fetchAppointments(
+    consultantId: string,
+    startDate: Date,
+    endDate: Date,
+  ) {
+    if (!consultantId) {
+      throw new Error("Consultant ID is required");
+    }
+
     try {
-      const response = await fetch(
-        `/api/slots/appointments?consultantProfileId=${consultantId}`,
-      );
-
+      const params = new URLSearchParams({
+        consultantProfileId: consultantId,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+      });
+      const response = await fetch(`/api/slots/appointments?${params}`);
       if (!response.ok) {
-        throw new Error("Failed to fetch appointments");
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to fetch appointments");
       }
-
       const { data } = await response.json();
       return data || [];
     } catch (error) {

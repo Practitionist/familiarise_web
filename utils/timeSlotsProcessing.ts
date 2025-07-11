@@ -172,16 +172,29 @@ export function splitSlotsByDay(
       const dayStart = startOfDay(zonedCurrent);
       const dayEnd = endOfDay(zonedCurrent);
 
-      const slotPartEnd = isBefore(slot.end, fromZonedTime(dayEnd, timezone))
+      const slotPartEndCandidate = isBefore(
+        slot.end,
+        fromZonedTime(dayEnd, timezone),
+      )
         ? slot.end
         : fromZonedTime(dayEnd, timezone);
 
-      splitSlots.push({
-        start: current,
-        end: slotPartEnd,
-        availabilityId: slot.availabilityId,
-        type: slot.type,
-      });
+      // Skip zero-length segments
+      if (slotPartEndCandidate.getTime() === current.getTime()) {
+        break;
+      }
+
+      const slotPartEnd = slotPartEndCandidate;
+
+      // Push valid segment
+      if (isBefore(current, slotPartEnd)) {
+        splitSlots.push({
+          start: current,
+          end: slotPartEnd,
+          availabilityId: slot.availabilityId,
+          type: slot.type,
+        });
+      }
 
       const nextDayStart = fromZonedTime(addDays(dayStart, 1), timezone);
       if (
