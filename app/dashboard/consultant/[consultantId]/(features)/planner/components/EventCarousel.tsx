@@ -10,8 +10,7 @@ import {
   CardFooter,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Users, Edit, Clock, Trash2 } from "lucide-react";
-import { EventTimingsCalendar } from "./EventTimingsCalendar";
+import { Users, Edit, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons";
 import { WebinarEvent, ClassEvent, Event } from "../types/event";
@@ -51,9 +50,6 @@ export function EventCarousel({
   eventType,
   participantCounts,
 }: EventCarouselProps) {
-  const [selectedEventId, setSelectedEventId] = React.useState<string | null>(
-    null,
-  );
   const [currentPage, setCurrentPage] = React.useState(1);
   const itemsPerPage = 8; // Show 8 items per page (adjust as needed)
 
@@ -310,20 +306,12 @@ export function EventCarousel({
                     Duration: {getEventDuration(event)}
                   </p>
                 </CardContent>
-                <CardFooter className="bg-gray-50 border-t p-4 flex justify-between flex-shrink-0">
+                <CardFooter className="bg-gray-50 border-t p-4 flex justify-center flex-shrink-0">
                   <Button variant="outline" size="sm" asChild>
                     <Link href={getProfileUrl(event)}>
                       <Users className="w-4 h-4 mr-2" />
                       Manage Participants
                     </Link>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSelectedEventId(event.id)}
-                  >
-                    <Clock className="w-4 h-4 mr-2" />
-                    Manage Timings
                   </Button>
                 </CardFooter>
               </Card>
@@ -357,12 +345,6 @@ export function EventCarousel({
         )}
       </div>
 
-      <EventTimingsCalendar
-        isOpen={!!selectedEventId}
-        onClose={() => setSelectedEventId(null)}
-        eventType={eventType}
-        eventId={selectedEventId ?? ""}
-      />
     </div>
   );
 }

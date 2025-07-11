@@ -1,8 +1,8 @@
 import { format } from "date-fns";
-import { IAppointment, ISlotOfAppointment } from "../types";
+import { TAppointment } from "@/types/appointment";
 
 // Get the consultee name based on appointment type
-export const getConsumeeName = (appointment: IAppointment): string => {
+export const getConsumeeName = (appointment: TAppointment): string => {
   if (!appointment) return "Unknown User";
 
   switch (appointment.appointmentType) {
@@ -25,7 +25,7 @@ export const getConsumeeName = (appointment: IAppointment): string => {
 };
 
 // Get the consultee image based on appointment type
-export const getConsumeeImage = (appointment: IAppointment): string => {
+export const getConsumeeImage = (appointment: TAppointment): string => {
   if (!appointment) return "/placeholder.svg";
 
   switch (appointment.appointmentType) {
@@ -50,7 +50,7 @@ export const getConsumeeImage = (appointment: IAppointment): string => {
 
 // Get appointment type and plan
 export const getAppointmentTypeAndPlan = (
-  appointment: IAppointment,
+  appointment: TAppointment,
 ): string => {
   if (!appointment?.appointmentType) return "Unknown Type";
 
@@ -80,7 +80,7 @@ export const getAppointmentTypeAndPlan = (
 };
 
 // Get all slot times from appointment with proper type conversion
-export const getSlotTimes = (appointment: IAppointment): Date[] => {
+export const getSlotTimes = (appointment: TAppointment): Date[] => {
   if (!appointment?.slotsOfAppointment?.length) {
     return [];
   }
@@ -102,19 +102,19 @@ export const getSlotTimes = (appointment: IAppointment): Date[] => {
 };
 
 // Get first slot time from appointment (for backwards compatibility)
-export const getStartTime = (appointment: IAppointment): Date | null => {
+export const getStartTime = (appointment: TAppointment): Date | null => {
   const times = getSlotTimes(appointment);
   return times.length > 0 ? times[0] : null;
 };
 
 // Check if appointment has any future slots
-export const hasUpcomingSlots = (appointment: IAppointment): boolean => {
+export const hasUpcomingSlots = (appointment: TAppointment): boolean => {
   const now = new Date();
   return getSlotTimes(appointment).some((time) => new Date(time) > now);
 };
 
 // Check if appointment has any slots today
-export const hasTodaySlots = (appointment: IAppointment): boolean => {
+export const hasTodaySlots = (appointment: TAppointment): boolean => {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const todayEnd = new Date(
@@ -143,7 +143,7 @@ export const formatAppointmentTime = (utcTime: string): string => {
 };
 
 // Get appointment status
-export const getAppointmentStatus = (appointment: IAppointment): string => {
+export const getAppointmentStatus = (appointment: TAppointment): string => {
   const startTime = getStartTime(appointment);
   if (!startTime) return "Unknown";
 
@@ -181,8 +181,8 @@ export const getAppointmentStatus = (appointment: IAppointment): string => {
 
 // Sort appointments by start time
 export const sortAppointmentsByStartTime = (
-  appointments: IAppointment[],
-): IAppointment[] => {
+  appointments: TAppointment[],
+): TAppointment[] => {
   return [...appointments].sort((a, b) => {
     const aTime = getStartTime(a);
     const bTime = getStartTime(b);
@@ -195,8 +195,8 @@ export const sortAppointmentsByStartTime = (
 
 // Filter today's appointments
 export const getTodayAppointments = (
-  appointments: IAppointment[],
-): IAppointment[] => {
+  appointments: TAppointment[],
+): TAppointment[] => {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const todayEnd = new Date(
@@ -249,8 +249,8 @@ export const getTodayAppointments = (
 
 // Filter upcoming appointments
 export const getUpcomingAppointments = (
-  appointments: IAppointment[],
-): IAppointment[] => {
+  appointments: TAppointment[],
+): TAppointment[] => {
   const now = new Date();
 
   // First filter out completed appointments
@@ -288,9 +288,9 @@ export const getUpcomingAppointments = (
 
 // Group recurring appointments
 export const groupRecurringAppointments = (
-  appointments: IAppointment[],
-): { [key: string]: IAppointment[] } => {
-  const groups: { [key: string]: IAppointment[] } = {};
+  appointments: TAppointment[],
+): { [key: string]: TAppointment[] } => {
+  const groups: { [key: string]: TAppointment[] } = {};
 
   // Group appointments by their type (subscription/class/single)
   appointments.forEach((appointment) => {
@@ -341,7 +341,7 @@ export const groupRecurringAppointments = (
 };
 
 // Get group title
-export const getGroupTitle = (appointments: IAppointment[]): string => {
+export const getGroupTitle = (appointments: TAppointment[]): string => {
   if (!appointments.length) return "";
 
   const firstAppointment = appointments[0];
@@ -380,7 +380,7 @@ export const getGroupTitle = (appointments: IAppointment[]): string => {
 };
 
 // Get group status
-export const getGroupStatus = (appointments: IAppointment[]): string => {
+export const getGroupStatus = (appointments: TAppointment[]): string => {
   if (!appointments.length) return "Unknown";
 
   const firstAppointment = appointments[0];

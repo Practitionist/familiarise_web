@@ -3,10 +3,12 @@
 import { useMemo } from "react";
 import { usePagination } from "@/hooks/usePagination";
 import { Pagination } from "@/components/Pagination";
-import { IAppointment, BADGE_STYLES } from "../../types";
+import { BADGE_STYLES } from "../../types";
+import { TAppointment } from "@/types/appointment";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Clock } from "lucide-react";
 import {
   formatAppointmentTime,
   getAppointmentStatus,
@@ -15,13 +17,15 @@ import {
   getConsumeeName,
   getStartTime,
 } from "../../utils/appointmentHelpers";
+import { canManageAppointmentTimings } from "./utils/appointmentTimingHelpers";
 
 interface PaginatedAppointmentsProps {
-  appointments: IAppointment[];
+  appointments: TAppointment[];
   badgeStyles: typeof BADGE_STYLES;
+  onManageTimings?: (appointment: TAppointment) => void;
 }
 
-export function PaginatedAppointments({ appointments, badgeStyles }: PaginatedAppointmentsProps) {
+export function PaginatedAppointments({ appointments, badgeStyles, onManageTimings }: PaginatedAppointmentsProps) {
   // Expand appointments into individual slots for pagination
   const expandedAppointments = useMemo(() => {
     return appointments.flatMap((appointment) => {
@@ -117,18 +121,30 @@ export function PaginatedAppointments({ appointments, badgeStyles }: PaginatedAp
                   >
                     {status}
                   </Badge>
-                  <Button
-                    variant="default"
-                    size="sm"
-                    className={
-                      isJoinable
-                        ? "bg-blue-600 text-white hover:bg-blue-700"
-                        : "bg-gray-400 text-white cursor-not-allowed"
-                    }
-                    disabled={!isJoinable}
-                  >
-                    {isJoinable ? "Join" : "Chat"}
-                  </Button>
+                  <div className="flex items-center space-x-2">
+                    {canManageAppointmentTimings(appointment) && onManageTimings && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onManageTimings(appointment)}
+                      >
+                        <Clock className="w-4 h-4 mr-1" />
+                        Manage
+                      </Button>
+                    )}
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className={
+                        isJoinable
+                          ? "bg-blue-600 text-white hover:bg-blue-700"
+                          : "bg-gray-400 text-white cursor-not-allowed"
+                      }
+                      disabled={!isJoinable}
+                    >
+                      {isJoinable ? "Join" : "Chat"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>

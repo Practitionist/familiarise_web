@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,7 +8,9 @@ import { useToast } from "@/hooks/use-toast";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { useRouter } from "next/navigation";
-import { AppointmentsTabProps, IAppointment } from "../../types";
+import { Clock } from "lucide-react";
+import { AppointmentsTabProps } from "../../types";
+import { TAppointment } from "@/types/appointment";
 import {
   formatAppointmentTime,
   getAppointmentStatus,
@@ -19,6 +22,9 @@ import {
   getStartTime,
   groupRecurringAppointments,
 } from "../../utils/appointmentHelpers";
+import { EventTimingsCalendar } from "./components/EventTimingsCalendar";
+import { canManageAppointmentTimings } from "./utils/appointmentTimingHelpers";
+import { convertTAppointmentToIAppointment } from "./utils/appointmentTypeAdapter";
 
 export function AppointmentsTab({
   appointments,
@@ -27,12 +33,13 @@ export function AppointmentsTab({
   const router = useRouter();
   const client = useStreamVideoClient();
   const { toast } = useToast();
+  const [selectedAppointment, setSelectedAppointment] = useState<TAppointment | null>(null);
 
   const getStyleFromBadgeData = (status: string): string => {
     return badgeStyles[status] || badgeStyles.default;
   };
 
-  const handleJoinMeeting = async (appointment: IAppointment) => {
+  const handleJoinMeeting = async (appointment: TAppointment) => {
     if (!client) {
       console.warn("Stream client not ready");
       toast({
@@ -56,7 +63,7 @@ export function AppointmentsTab({
     try {
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
-        appointment,
+        convertTAppointmentToIAppointment(appointment),
         relevantSlot,
       );
       router.push(`/meetings/${meetingId}`);
@@ -184,24 +191,37 @@ export function AppointmentsTab({
                           >
                             {status}
                           </Badge>
-                          {status !== "Completed" && (
-                            <Button
-                              variant="default"
-                              className={joinButtonStyle}
-                              disabled={
-                                process.env.NODE_ENV === "production"
-                                  ? !isJoinable
-                                  : false
-                              }
-                              onClick={() => handleJoinMeeting(appointment)}
-                            >
-                              {process.env.NODE_ENV === "production"
-                                ? isJoinable
-                                  ? "Join meet"
-                                  : "Not available"
-                                : "Join (Dev)"}
-                            </Button>
-                          )}
+                          <div className="flex items-center space-x-2">
+                            {canManageAppointmentTimings(appointment) && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setSelectedAppointment(appointment)}
+                              >
+                                <Clock className="w-4 h-4 mr-1" />
+                                Manage Timings
+                              </Button>
+                            )}
+                            {status !== "Completed" && (
+                              <Button
+                                variant="default"
+                                size="sm"
+                                className={joinButtonStyle}
+                                disabled={
+                                  process.env.NODE_ENV === "production"
+                                    ? !isJoinable
+                                    : false
+                                }
+                                onClick={() => handleJoinMeeting(appointment)}
+                              >
+                                {process.env.NODE_ENV === "production"
+                                  ? isJoinable
+                                    ? "Join meet"
+                                    : "Not available"
+                                  : "Join (Dev)"}
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </li>
                     );
@@ -237,6 +257,14 @@ export function AppointmentsTab({
           </div>
         )}
       </div>
+      
+      {selectedAppointment && (
+        <EventTimingsCalendar
+          isOpen={!!selectedAppointment}
+          onClose={() => setSelectedAppointment(null)}
+          appointment={selectedAppointment}
+        />
+      )}
     </div>
   );
 }

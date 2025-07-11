@@ -1,10 +1,11 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { IActivity, IAppointment, IApproval, ApiResponse } from "../types";
+import { TAppointment } from "@/types/appointment";
+import { IActivity, IApproval, ApiResponse } from "../types";
 
 interface ConsultantDashboardData {
-  appointments: IAppointment[];
+  appointments: TAppointment[];
   activities: IActivity[];
   approvals: IApproval[];
 }
