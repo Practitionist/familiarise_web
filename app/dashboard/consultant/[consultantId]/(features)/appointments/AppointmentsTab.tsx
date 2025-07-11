@@ -23,7 +23,7 @@ import {
   groupRecurringAppointments,
 } from "../../utils/appointmentHelpers";
 import { EventTimingsCalendar } from "./components/EventTimingsCalendar";
-import { canManageAppointmentTimings } from "./utils/appointmentTimingHelpers";
+import { canManageAppointmentTimings, canManageGroupTimings } from "./utils/appointmentTimingHelpers";
 import { convertTAppointmentToIAppointment } from "./utils/appointmentTypeAdapter";
 
 export function AppointmentsTab({
@@ -123,12 +123,24 @@ export function AppointmentsTab({
                           <p className="text-sm text-gray-600">{groupTitle}</p>
                         </div>
                       </div>
-                      <Badge
-                        variant="secondary"
-                        className={getStyleFromBadgeData(groupStatus)}
-                      >
-                        {groupStatus}
-                      </Badge>
+                      <div className="flex items-center space-x-2">
+                        {canManageGroupTimings(groupAppointments) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setSelectedAppointment(firstAppointment)}
+                          >
+                            <Clock className="w-4 h-4 mr-1" />
+                            Manage Timings
+                          </Button>
+                        )}
+                        <Badge
+                          variant="secondary"
+                          className={getStyleFromBadgeData(groupStatus)}
+                        >
+                          {groupStatus}
+                        </Badge>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -192,7 +204,8 @@ export function AppointmentsTab({
                             {status}
                           </Badge>
                           <div className="flex items-center space-x-2">
-                            {canManageAppointmentTimings(appointment) && (
+                            {/* Only show individual Manage Timings button for non-recurring events */}
+                            {!isRecurring && canManageAppointmentTimings(appointment) && (
                               <Button
                                 variant="outline"
                                 size="sm"

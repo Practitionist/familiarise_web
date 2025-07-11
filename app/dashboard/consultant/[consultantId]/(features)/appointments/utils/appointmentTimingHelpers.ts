@@ -96,6 +96,21 @@ export function canManageAppointmentTimings(appointment: TAppointment): boolean 
 }
 
 /**
+ * Checks if a group of appointments supports timing management
+ * Used for recurring events (subscriptions, classes) to show timing management at group level
+ */
+export function canManageGroupTimings(groupAppointments: TAppointment[]): boolean {
+  if (!groupAppointments || groupAppointments.length === 0) {
+    return false;
+  }
+  
+  // Check if any appointment in the group supports timing management
+  // Use the first appointment as representative of the group
+  const firstAppointment = groupAppointments[0];
+  return canManageAppointmentTimings(firstAppointment);
+}
+
+/**
  * Gets the display name for an appointment's timing management
  */
 export function getAppointmentTimingDisplayName(appointment: TAppointment): string {
