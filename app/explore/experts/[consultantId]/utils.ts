@@ -70,7 +70,7 @@ export function getLocalDay(date: Date, timezone?: string | null): number {
 
   try {
     const localDate = new Date(
-      date.toLocaleString("en-US", { timeZone: timezone }),
+      date.toLocaleString("en-US", { timeZone: timezone })
     );
     return localDate.getDay();
   } catch (_) {
@@ -84,7 +84,7 @@ export function createWeeklySlot(
   selectedDate: Date,
   startDateTime: Date,
   endDateTime: Date,
-  timezone?: string | null,
+  timezone?: string | null
 ): TSlotTiming {
   const localDay = getLocalDay(selectedDate, timezone);
   const selectedDayOfWeek = dayMap[localDay];
@@ -99,6 +99,7 @@ export function createWeeklySlot(
     slotOfAppointmentId: "", // Not an appointment
     localStartTime: formatTime(startDateTime, timezone),
     localEndTime: formatTime(endDateTime, timezone),
+    type: "WEEKLY" as const,
   };
 }
 
@@ -107,7 +108,7 @@ export function createCustomSlot(
   selectedDate: Date,
   startDateTime: Date,
   endDateTime: Date,
-  timezone?: string | null,
+  timezone?: string | null
 ): TSlotTiming {
   let adjustedEndDateTime = new Date(endDateTime);
   const normalizedSlot = normalizeCustomSlot(slot);
@@ -142,12 +143,15 @@ export function createCustomSlot(
     crossesMidnight: adjustedEndDateTime.getDate() > startDateTime.getDate(),
   });
 
-  return slotTiming;
+  return {
+    ...slotTiming,
+    type: "CUSTOM" as const,
+  };
 }
 
 export function mergeOverlappingSlots(
   slots: TSlotTiming[],
-  timezone?: string | null,
+  timezone?: string | null
 ): TSlotTiming[] {
   // Don't merge slots that are more than 1 minute apart
   return slots.reduce((acc: TSlotTiming[], curr) => {

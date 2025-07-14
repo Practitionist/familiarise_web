@@ -57,7 +57,7 @@ export function hasTimeOverlap(
   start1: Date,
   end1: Date,
   start2: Date,
-  end2: Date,
+  end2: Date
 ): boolean {
   return start1 < end2 && start2 < end1;
 }
@@ -69,7 +69,7 @@ export function processWeeklySlots(
   weeklySlots: WeeklySlot[],
   startDate: Date,
   endDate: Date,
-  timezone: string,
+  timezone: string
 ): ProcessedSlot[] {
   const processedSlots: ProcessedSlot[] = [];
 
@@ -135,7 +135,7 @@ export function processWeeklySlots(
 export function processCustomSlots(
   customSlots: CustomSlot[],
   startDate: Date,
-  endDate: Date,
+  endDate: Date
 ): ProcessedSlot[] {
   return customSlots
     .filter((slot) => {
@@ -144,7 +144,7 @@ export function processCustomSlots(
         slot.slotStartTimeInUTC,
         slot.slotEndTimeInUTC,
         startDate,
-        endDate,
+        endDate
       );
     })
     .map((slot) => ({
@@ -160,7 +160,7 @@ export function processCustomSlots(
  */
 export function splitSlotsByDay(
   slots: ProcessedSlot[],
-  timezone: string,
+  timezone: string
 ): ProcessedSlot[] {
   const splitSlots: ProcessedSlot[] = [];
 
@@ -174,7 +174,7 @@ export function splitSlotsByDay(
 
       const slotPartEndCandidate = isBefore(
         slot.end,
-        fromZonedTime(dayEnd, timezone),
+        fromZonedTime(dayEnd, timezone)
       )
         ? slot.end
         : fromZonedTime(dayEnd, timezone);
@@ -216,15 +216,15 @@ export function splitSlotsByDay(
 export function isSlotAllocated(
   slotStart: Date,
   slotEnd: Date,
-  appointmentSlots: AppointmentSlot[],
+  appointmentSlots: AppointmentSlot[]
 ): boolean {
   return appointmentSlots.some((apptSlot) =>
     hasTimeOverlap(
       slotStart,
       slotEnd,
       apptSlot.slotStartTimeInUTC,
-      apptSlot.slotEndTimeInUTC,
-    ),
+      apptSlot.slotEndTimeInUTC
+    )
   );
 }
 
@@ -234,7 +234,7 @@ export function isSlotAllocated(
 export function getSlotBookingStatus(
   slotStart: Date,
   slotEnd: Date,
-  appointmentSlots: AppointmentSlot[],
+  appointmentSlots: AppointmentSlot[]
 ): "available" | "partially-booked" | "fully-booked" {
   const slotDuration = slotEnd.getTime() - slotStart.getTime();
 
@@ -244,8 +244,8 @@ export function getSlotBookingStatus(
       slotStart,
       slotEnd,
       apptSlot.slotStartTimeInUTC,
-      apptSlot.slotEndTimeInUTC,
-    ),
+      apptSlot.slotEndTimeInUTC
+    )
   );
 
   if (overlappingAppointments.length === 0) {
@@ -297,7 +297,7 @@ export function getSlotBookingStatus(
 export function convertToSlotTimings(
   processedSlots: ProcessedSlot[],
   appointmentSlots: AppointmentSlot[],
-  timezone: string,
+  timezone: string
 ): (TSlotTiming & {
   isAllocated: boolean;
   bookingStatus: "available" | "partially-booked" | "fully-booked";
@@ -307,7 +307,7 @@ export function convertToSlotTimings(
     const bookingStatus = getSlotBookingStatus(
       slot.start,
       slot.end,
-      appointmentSlots,
+      appointmentSlots
     );
     const zonedStart = toZonedTime(slot.start, timezone);
 
@@ -321,7 +321,7 @@ export function convertToSlotTimings(
       slotOfAppointmentId: "",
       localStartTime: format(slot.start, "p", { timeZone: timezone }),
       localEndTime: format(slot.end, "p", { timeZone: timezone }),
-      type: slot.type,
+      type: slot.type, // Explicitly set the type field
       isAllocated,
       bookingStatus,
     } as TSlotTiming & {
@@ -334,7 +334,7 @@ export function convertToSlotTimings(
   slotTimings.sort(
     (a, b) =>
       new Date(a.slotStartTimeInUTC).getTime() -
-      new Date(b.slotStartTimeInUTC).getTime(),
+      new Date(b.slotStartTimeInUTC).getTime()
   );
 
   return slotTimings;
@@ -350,7 +350,7 @@ export function breakDownSlotsByDuration(
   })[],
   durationInHours: number,
   appointmentSlots: AppointmentSlot[],
-  timezone: string,
+  timezone: string
 ): (TSlotTiming & {
   isAllocated: boolean;
   bookingStatus: "available" | "partially-booked" | "fully-booked";
@@ -386,7 +386,7 @@ export function breakDownSlotsByDuration(
       const segmentBookingStatus = getSlotBookingStatus(
         currentStart,
         currentEnd,
-        appointmentSlots,
+        appointmentSlots
       );
 
       brokenDownSlots.push({
@@ -409,7 +409,7 @@ export function breakDownSlotsByDuration(
   brokenDownSlots.sort(
     (a, b) =>
       new Date(a.slotStartTimeInUTC).getTime() -
-      new Date(b.slotStartTimeInUTC).getTime(),
+      new Date(b.slotStartTimeInUTC).getTime()
   );
 
   return brokenDownSlots;
@@ -423,7 +423,7 @@ export function groupSlotsByDate(
     isAllocated: boolean;
     bookingStatus: "available" | "partially-booked" | "fully-booked";
   })[],
-  timezone: string,
+  timezone: string
 ): Record<
   string,
   (TSlotTiming & {
@@ -435,7 +435,7 @@ export function groupSlotsByDate(
     (acc, slot) => {
       const dateKey = format(
         toZonedTime(new Date(slot.slotStartTimeInUTC), timezone),
-        "yyyy-MM-dd",
+        "yyyy-MM-dd"
       );
       if (!acc[dateKey]) {
         acc[dateKey] = [];
@@ -449,7 +449,7 @@ export function groupSlotsByDate(
         isAllocated: boolean;
         bookingStatus: "available" | "partially-booked" | "fully-booked";
       })[]
-    >,
+    >
   );
 
   // Sort slots within each day chronologically
@@ -457,7 +457,7 @@ export function groupSlotsByDate(
     slotsByDate[dateKey].sort(
       (a, b) =>
         new Date(a.slotStartTimeInUTC).getTime() -
-        new Date(b.slotStartTimeInUTC).getTime(),
+        new Date(b.slotStartTimeInUTC).getTime()
     );
   });
 
@@ -473,7 +473,7 @@ export function processAvailabilitySlots(
   appointmentSlots: AppointmentSlot[],
   startDate: Date,
   endDate: Date,
-  timezone: string,
+  timezone: string
 ): Record<
   string,
   (TSlotTiming & {
@@ -486,12 +486,12 @@ export function processAvailabilitySlots(
     weeklySlots,
     startDate,
     endDate,
-    timezone,
+    timezone
   );
   const processedCustomSlots = processCustomSlots(
     customSlots,
     startDate,
-    endDate,
+    endDate
   );
 
   // Combine all slots
@@ -504,7 +504,7 @@ export function processAvailabilitySlots(
   const slotTimings = convertToSlotTimings(
     splitSlots,
     appointmentSlots,
-    timezone,
+    timezone
   );
 
   // Group by date

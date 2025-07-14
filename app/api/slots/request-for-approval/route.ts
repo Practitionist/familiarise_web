@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
-        { status: 401 },
+        { status: 401 }
       );
     }
 
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Missing required fields" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -44,14 +44,14 @@ export async function POST(req: NextRequest) {
         {
           error: "Cannot provide both weekly and custom slot availability IDs",
         },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
     if (!slotOfAvailabilityWeeklyId && !slotOfAvailabilityCustomId) {
       return NextResponse.json(
         { error: "Must provide either weekly or custom slot availability ID" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -62,14 +62,14 @@ export async function POST(req: NextRequest) {
     if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
       return NextResponse.json(
         { error: "Invalid date format" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
     if (startTime >= endTime) {
       return NextResponse.json(
         { error: "Start time must be before end time" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
     if (!consulteeProfile) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 },
+        { status: 404 }
       );
     }
 
@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
     if (!consultationPlan) {
       return NextResponse.json(
         { error: "Consultation plan not found" },
-        { status: 404 },
+        { status: 404 }
       );
     }
 
@@ -128,6 +128,7 @@ export async function POST(req: NextRequest) {
                 slotStartTimeInUTC: startTime,
                 slotEndTimeInUTC: endTime,
                 isTentative: true, // Mark as tentative since it's pending approval
+                type: slotOfAvailabilityWeeklyId ? "WEEKLY" : "CUSTOM", // Set type based on availability source
                 user: {
                   connect: [
                     { id: session.user.id }, // Consultee
@@ -167,13 +168,13 @@ export async function POST(req: NextRequest) {
         message: "Request for approval submitted successfully",
         data: consultation,
       },
-      { status: 201 },
+      { status: 201 }
     );
   } catch (error) {
     console.error("Error creating approval request:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the approval request" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

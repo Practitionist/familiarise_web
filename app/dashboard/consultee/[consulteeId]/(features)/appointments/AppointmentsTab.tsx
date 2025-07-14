@@ -2,7 +2,9 @@
 
 import React from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useEvents } from "@/hooks/useEvents";
+// Standardized React Query usage: Replaced useEvents with useConsulteeEvents for consistency
+// This ensures all consultee components use the same data fetching pattern and API endpoint
+import { useConsulteeEvents } from "../../hooks/useConsulteeEvents";
 import { Overview } from "./Overview";
 import { Calendar } from "./Calendar";
 import { motion } from "framer-motion";
@@ -12,8 +14,20 @@ export default function AppointmentsTab({
 }: Readonly<{
   consulteeId: string;
 }>) {
-  const { consultations, subscriptions, webinars, classes, isLoading, error } =
-    useEvents(consulteeId);
+  // Updated data destructuring to match useConsulteeEvents hook return structure
+  // Previous: const { consultations, subscriptions, webinars, classes, isLoading, error } = useEvents(consulteeId);
+  // New: Destructure from data property with default empty arrays for type safety
+  const {
+    data: eventsData,
+    isLoading,
+    error,
+  } = useConsulteeEvents(consulteeId);
+  const {
+    consultations = [],
+    subscriptions = [],
+    webinars = [],
+    classes = [],
+  } = eventsData || {};
 
   if (isLoading) {
     return (

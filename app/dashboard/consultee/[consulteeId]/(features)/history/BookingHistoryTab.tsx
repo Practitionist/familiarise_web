@@ -13,12 +13,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  useEvents,
   ConsultationWithPlan,
   SubscriptionWithPlan,
   WebinarWithPlan,
   ClassWithPlan,
 } from "@/hooks/useEvents";
+// Standardized to use useConsulteeEvents for consistent React Query data fetching
+// This replaces the previous useEvents hook to ensure all consultee components use the same API endpoint
+import { useConsulteeEvents } from "../../hooks/useConsulteeEvents";
 import {
   getEventTitle,
   getConsultantName,
@@ -37,8 +39,8 @@ export default function BookingHistoryTab({
 }: {
   consulteeId: string;
 }) {
-  const { consultations, subscriptions, webinars, classes, isLoading, error } =
-    useEvents(consulteeId);
+  const { data: eventsData, isLoading, error } = useConsulteeEvents(consulteeId);
+  const { consultations = [], subscriptions = [], webinars = [], classes = [] } = eventsData || {};
 
   if (isLoading) {
     return (

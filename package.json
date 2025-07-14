@@ -38,7 +38,8 @@
     "start-watch": "WATCHPACK_POLLING=true next start",
     "studio": "prisma studio",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "update-slot-types": "ts-node scripts/update-slot-types.ts"
   },
   "dependencies": {
     "@faker-js/faker": "^9.3.0",

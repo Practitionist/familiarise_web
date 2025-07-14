@@ -23,7 +23,10 @@ import {
   groupRecurringAppointments,
 } from "../../utils/appointmentHelpers";
 import { EventTimingsCalendar } from "./components/EventTimingsCalendar";
-import { canManageAppointmentTimings, canManageGroupTimings } from "./utils/appointmentTimingHelpers";
+import {
+  canManageAppointmentTimings,
+  canManageGroupTimings,
+} from "./utils/appointmentTimingHelpers";
 import { convertTAppointmentToIAppointment } from "./utils/appointmentTypeAdapter";
 
 export function AppointmentsTab({
@@ -33,7 +36,8 @@ export function AppointmentsTab({
   const router = useRouter();
   const client = useStreamVideoClient();
   const { toast } = useToast();
-  const [selectedAppointment, setSelectedAppointment] = useState<TAppointment | null>(null);
+  const [selectedAppointment, setSelectedAppointment] =
+    useState<TAppointment | null>(null);
 
   const getStyleFromBadgeData = (status: string): string => {
     return badgeStyles[status] || badgeStyles.default;
@@ -64,7 +68,7 @@ export function AppointmentsTab({
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
         convertTAppointmentToIAppointment(appointment),
-        relevantSlot,
+        relevantSlot
       );
       router.push(`/meetings/${meetingId}`);
       toast({
@@ -128,7 +132,9 @@ export function AppointmentsTab({
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => setSelectedAppointment(firstAppointment)}
+                            onClick={() =>
+                              setSelectedAppointment(firstAppointment)
+                            }
                           >
                             <Clock className="w-4 h-4 mr-1" />
                             Manage Timings
@@ -190,10 +196,30 @@ export function AppointmentsTab({
                               {(() => {
                                 const startTime = getStartTime(appointment);
                                 return startTime
-                                  ? formatAppointmentTime(startTime.toISOString())
+                                  ? formatAppointmentTime(
+                                      startTime.toISOString()
+                                    )
                                   : "Time not set";
                               })()}
                             </div>
+                            {/* Show slot type if available */}
+                            {appointment.slotsOfAppointment?.[0] && (
+                              <div className="flex items-center gap-2 mt-1">
+                                <span
+                                  className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                    appointment.slotsOfAppointment[0].type ===
+                                    "WEEKLY"
+                                      ? "bg-blue-100 text-blue-800"
+                                      : "bg-green-100 text-green-800"
+                                  }`}
+                                >
+                                  {appointment.slotsOfAppointment[0].type ===
+                                  "WEEKLY"
+                                    ? "📅 Weekly"
+                                    : "🎯 Custom"}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center space-x-2">
@@ -205,16 +231,19 @@ export function AppointmentsTab({
                           </Badge>
                           <div className="flex items-center space-x-2">
                             {/* Only show individual Manage Timings button for non-recurring events */}
-                            {!isRecurring && canManageAppointmentTimings(appointment) && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setSelectedAppointment(appointment)}
-                              >
-                                <Clock className="w-4 h-4 mr-1" />
-                                Manage Timings
-                              </Button>
-                            )}
+                            {!isRecurring &&
+                              canManageAppointmentTimings(appointment) && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    setSelectedAppointment(appointment)
+                                  }
+                                >
+                                  <Clock className="w-4 h-4 mr-1" />
+                                  Manage Timings
+                                </Button>
+                              )}
                             {status !== "Completed" && (
                               <Button
                                 variant="default"
@@ -242,7 +271,7 @@ export function AppointmentsTab({
                 </ul>
               </div>
             );
-          },
+          }
         )}
         {!Object.keys(groupedAppointments).length && (
           <div className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-gray-50 rounded-lg">
@@ -270,7 +299,7 @@ export function AppointmentsTab({
           </div>
         )}
       </div>
-      
+
       {selectedAppointment && (
         <EventTimingsCalendar
           isOpen={!!selectedAppointment}

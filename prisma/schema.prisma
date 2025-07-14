@@ -370,6 +370,7 @@ model SlotOfAppointment {
   slotStartTimeInUTC DateTime @db.Timestamptz()
   slotEndTimeInUTC   DateTime @db.Timestamptz()
   isTentative        Boolean  @default(false)
+  type               SlotType @default(WEEKLY) // Track if slot came from weekly or custom availability
 
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
@@ -809,6 +810,11 @@ enum DayOfWeek {
 }
 
 enum ScheduleType {
+  WEEKLY
+  CUSTOM
+}
+
+enum SlotType {
   WEEKLY
   CUSTOM
 }

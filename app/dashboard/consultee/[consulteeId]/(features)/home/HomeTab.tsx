@@ -2,7 +2,9 @@
 
 import { User } from "@prisma/client";
 import React, { useState } from "react";
-import { useConsulteeEvents } from "hooks/useConsulteeEvents";
+// Fixed import path: Changed from "hooks/useConsulteeEvents" to relative path
+// This resolves build errors caused by incorrect module resolution
+import { useConsulteeEvents } from "../../hooks/useConsulteeEvents";
 import { EventWithType } from "../../utils/getMetadata";
 import {
   getActualMonthlyEvents,
@@ -37,8 +39,8 @@ export default function HomeTab({
           <p className="text-sm">
             {error.message || "Failed to load events data. Please try again."}
           </p>
-          <button 
-            onClick={() => window.location.reload()} 
+          <button
+            onClick={() => window.location.reload()}
             className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
           >
             Retry
@@ -64,13 +66,13 @@ export default function HomeTab({
 
   const goToPreviousMonth = () => {
     setCurrentMonth(
-      new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1),
+      new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1)
     );
   };
 
   const goToNextMonth = () => {
     setCurrentMonth(
-      new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1),
+      new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1)
     );
   };
 

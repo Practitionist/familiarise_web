@@ -64,10 +64,10 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const [customSlots, setCustomSlots] = useState<SlotsType>({});
   const [currentDate, setCurrentDate] = useState(new Date());
   const [scheduleType, setScheduleType] = useState<ScheduleType>(
-    consultant.scheduleType,
+    consultant.scheduleType
   );
   const [formData, setFormData] = useState<FormData>(
-    getInitialFormData(consultant),
+    getInitialFormData(consultant)
   );
   const [domains, setDomains] = useState<Domain[]>([]);
   const [subDomains, setSubDomains] = useState<SubDomain[]>([]);
@@ -180,7 +180,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   }, [formData.domainId, toast]);
 
   const handleInputChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
@@ -216,16 +216,17 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   }, []);
 
   // Update schedule type and clear irrelevant slots
-  const handleScheduleTypeChange = useCallback((value: ScheduleType) => {
+  const handleScheduleTypeChange = useCallback((value: string) => {
+    const scheduleTypeValue = value as ScheduleType;
     React.startTransition(() => {
-      setScheduleType(value);
+      setScheduleType(scheduleTypeValue);
       setFormData((prev) => ({
         ...prev,
-        scheduleType: value,
+        scheduleType: scheduleTypeValue,
       }));
 
       // Clear slots for the inactive schedule type to prevent corruption
-      if (value === ScheduleType.WEEKLY) {
+      if (scheduleTypeValue === ScheduleType.WEEKLY) {
         setCustomSlots({});
       } else {
         setWeeklySlots({});
@@ -251,7 +252,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         }
       });
     },
-    [scheduleType],
+    [scheduleType]
   );
 
   const handleUpdateSlot = useCallback(
@@ -259,7 +260,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       day: string,
       index: number,
       field: "startTime" | "endTime",
-      value: string,
+      value: string
     ) => {
       React.startTransition(() => {
         const currentSlots =
@@ -280,7 +281,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           updatedSlot,
           currentSlots[day]?.filter((_, i) => i !== index) || [],
           day,
-          scheduleType === ScheduleType.WEEKLY,
+          scheduleType === ScheduleType.WEEKLY
         );
 
         // Handle overnight slot splitting if needed
@@ -311,7 +312,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         }
       });
     },
-    [scheduleType, weeklySlots, customSlots],
+    [scheduleType, weeklySlots, customSlots]
   );
 
   const handleDeleteSlot = useCallback(
@@ -335,18 +336,18 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         }
       });
     },
-    [scheduleType],
+    [scheduleType]
   );
 
   const handlePrevMonth = useCallback(() => {
     setCurrentDate(
-      (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
+      (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)
     );
   }, []);
 
   const handleNextMonth = useCallback(() => {
     setCurrentDate(
-      (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
+      (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)
     );
   }, []);
 
@@ -365,7 +366,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       const date = new Date(
         currentDate.getFullYear(),
         currentDate.getMonth(),
-        i,
+        i
       );
       const dateString = getLocalDateString(date);
       const isSelected = customSlots[dateString] !== undefined;
@@ -393,7 +394,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           }}
         >
           {i}
-        </button>,
+        </button>
       );
     }
 
@@ -462,17 +463,17 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
 
       // Refetch the consultant data to show what was actually saved
       const updatedResponse = await fetch(
-        `/api/user/consultants/${consultant.id}`,
+        `/api/user/consultants/${consultant.id}`
       );
       if (updatedResponse.ok) {
         const { data: updatedConsultant } = await updatedResponse.json();
 
         // Update local state to match what was saved to database
         setWeeklySlots(
-          getInitialWeeklySlots(updatedConsultant, timezone || "UTC"),
+          getInitialWeeklySlots(updatedConsultant, timezone || "UTC")
         );
         setCustomSlots(
-          getInitialCustomSlots(updatedConsultant, timezone || "UTC"),
+          getInitialCustomSlots(updatedConsultant, timezone || "UTC")
         );
         setFormData(getInitialFormData(updatedConsultant));
         setScheduleType(updatedConsultant.scheduleType);
@@ -660,6 +661,17 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           Configure your availability and scheduling preferences
         </p>
 
+        <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <h3 className="font-medium text-blue-900 mb-2">
+            📅 Schedule Type Filtering
+          </h3>
+          <p className="text-sm text-blue-700">
+            <strong>Important:</strong> Consultees will only see slots from your
+            selected schedule type. Choose "Weekly Recurring" for regular
+            appointments or "Custom Schedule" for specific dates only.
+          </p>
+        </div>
+
         <RadioGroup
           value={scheduleType}
           onValueChange={handleScheduleTypeChange}
@@ -668,8 +680,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           {/* Weekly Schedule */}
           <div className="flex-1">
             <div className="flex items-center justify-between mb-4">
-              <Label htmlFor="WEEKLY" className="font-medium">
+              <Label htmlFor="WEEKLY" className="font-medium flex items-center">
+                <span className="mr-2">📅</span>
                 Weekly Recurring
+                <span className="ml-2 text-xs text-gray-500">
+                  (Shows recurring slots)
+                </span>
               </Label>
               <RadioGroupItem id="WEEKLY" value={ScheduleType.WEEKLY} />
             </div>
@@ -700,7 +716,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                               day.toLowerCase(),
                               slotIndex,
                               "startTime",
-                              e.target.value,
+                              e.target.value
                             )
                           }
                           className={`col-span-3 ${!slot.isValid ? "border-red-500" : ""}`}
@@ -715,7 +731,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                               day.toLowerCase(),
                               slotIndex,
                               "endTime",
-                              e.target.value,
+                              e.target.value
                             )
                           }
                           className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
@@ -747,8 +763,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           {/* Custom Schedule */}
           <div className="flex-1">
             <div className="flex items-center justify-between mb-4">
-              <Label htmlFor="CUSTOM" className="font-medium">
+              <Label htmlFor="CUSTOM" className="font-medium flex items-center">
+                <span className="mr-2">🎯</span>
                 Custom Schedule
+                <span className="ml-2 text-xs text-gray-500">
+                  (Shows specific date slots)
+                </span>
               </Label>
               <RadioGroupItem id="CUSTOM" value={ScheduleType.CUSTOM} />
             </div>
@@ -824,7 +844,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                                   dateString,
                                   slotIndex,
                                   "startTime",
-                                  e.target.value,
+                                  e.target.value
                                 )
                               }
                               className={`col-span-3 ${!slot.isValid ? "border-red-500" : ""}`}
@@ -839,7 +859,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                                   dateString,
                                   slotIndex,
                                   "endTime",
-                                  e.target.value,
+                                  e.target.value
                                 )
                               }
                               className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
@@ -881,10 +901,10 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               setFormData(getInitialFormData(consultant));
               setScheduleType(consultant.scheduleType);
               setWeeklySlots(
-                getInitialWeeklySlots(consultant, timezone || "UTC"),
+                getInitialWeeklySlots(consultant, timezone || "UTC")
               );
               setCustomSlots(
-                getInitialCustomSlots(consultant, timezone || "UTC"),
+                getInitialCustomSlots(consultant, timezone || "UTC")
               );
             });
           }}

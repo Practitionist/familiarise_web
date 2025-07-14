@@ -37,7 +37,7 @@ export function SlotCard({
   const now = new Date();
   const startTime = new Date(slot.slotStartTimeInUTC);
   const diffInMinutes = Math.floor(
-    (startTime.getTime() - now.getTime()) / 60000,
+    (startTime.getTime() - now.getTime()) / 60000
   );
   const isJoinable = !isTentative && diffInMinutes <= 10 && diffInMinutes >= 0;
 
@@ -219,7 +219,7 @@ export function SlotCard({
                   new Date(slot.slotStartTimeInUTC),
                   slot.slotEndTimeInUTC
                     ? new Date(slot.slotEndTimeInUTC)
-                    : undefined,
+                    : undefined
                 )}
               </p>
             </div>
@@ -238,6 +238,18 @@ export function SlotCard({
             >
               {status}
             </Badge>
+            {/* Show slot type if available */}
+            {(slot as any).type && (
+              <Badge
+                className={`text-xs rounded-full px-2 py-0.5 ${
+                  (slot as any).type === "WEEKLY"
+                    ? "bg-blue-100 text-blue-700"
+                    : "bg-green-100 text-green-700"
+                }`}
+              >
+                {(slot as any).type === "WEEKLY" ? "📅 Weekly" : "🎯 Custom"}
+              </Badge>
+            )}
             {isTentative && (
               <span className="text-red-500 text-xs italic">*Tentative</span>
             )}
