@@ -11,7 +11,7 @@ type PageProps = {
 
 export default function SettingsPage({ params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
-  
+
   return (
     <DashboardErrorBoundary>
       <SettingsTab consulteeId={consulteeId} />

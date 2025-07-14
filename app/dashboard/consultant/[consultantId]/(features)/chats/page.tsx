@@ -12,7 +12,11 @@ export default function ChatsPage({
   params: Promise<{ consultantId: string }>;
 }) {
   const { consultantId } = use(params);
-  const { data: consultantDetails, isLoading, error } = useConsultantDetails(consultantId);
+  const {
+    data: consultantDetails,
+    isLoading,
+    error,
+  } = useConsultantDetails(consultantId);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;
@@ -25,10 +29,11 @@ export default function ChatsPage({
           <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
             <h3 className="font-semibold mb-2">Error Loading Chat Data</h3>
             <p className="text-sm">
-              {error.message || "Failed to load consultant details for chat. Please try again."}
+              {error.message ||
+                "Failed to load consultant details for chat. Please try again."}
             </p>
-            <button 
-              onClick={() => window.location.reload()} 
+            <button
+              onClick={() => window.location.reload()}
               className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
             >
               Retry
@@ -56,9 +61,9 @@ export default function ChatsPage({
 
   return (
     <DashboardErrorBoundary>
-      <ChatsTab 
-        userId={consultantDetails.user.id} 
-        userRole={consultantDetails.user.role} 
+      <ChatsTab
+        userId={consultantDetails.user.id}
+        userRole={consultantDetails.user.role}
       />
     </DashboardErrorBoundary>
   );

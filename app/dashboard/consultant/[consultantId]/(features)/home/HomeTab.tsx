@@ -294,7 +294,9 @@ export function HomeTab({
                                   {(() => {
                                     const startTime = getStartTime(appointment);
                                     return startTime
-                                      ? formatAppointmentTime(startTime.toISOString())
+                                      ? formatAppointmentTime(
+                                          startTime.toISOString(),
+                                        )
                                       : "Time not set";
                                   })()}
                                 </div>

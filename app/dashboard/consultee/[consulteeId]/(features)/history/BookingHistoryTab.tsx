@@ -39,8 +39,17 @@ export default function BookingHistoryTab({
 }: {
   consulteeId: string;
 }) {
-  const { data: eventsData, isLoading, error } = useConsulteeEvents(consulteeId);
-  const { consultations = [], subscriptions = [], webinars = [], classes = [] } = eventsData || {};
+  const {
+    data: eventsData,
+    isLoading,
+    error,
+  } = useConsulteeEvents(consulteeId);
+  const {
+    consultations = [],
+    subscriptions = [],
+    webinars = [],
+    classes = [],
+  } = eventsData || {};
 
   if (isLoading) {
     return (

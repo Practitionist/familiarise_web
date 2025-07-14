@@ -64,10 +64,10 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const [customSlots, setCustomSlots] = useState<SlotsType>({});
   const [currentDate, setCurrentDate] = useState(new Date());
   const [scheduleType, setScheduleType] = useState<ScheduleType>(
-    consultant.scheduleType
+    consultant.scheduleType,
   );
   const [formData, setFormData] = useState<FormData>(
-    getInitialFormData(consultant)
+    getInitialFormData(consultant),
   );
   const [domains, setDomains] = useState<Domain[]>([]);
   const [subDomains, setSubDomains] = useState<SubDomain[]>([]);
@@ -180,7 +180,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   }, [formData.domainId, toast]);
 
   const handleInputChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
@@ -252,7 +252,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         }
       });
     },
-    [scheduleType]
+    [scheduleType],
   );
 
   const handleUpdateSlot = useCallback(
@@ -260,7 +260,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       day: string,
       index: number,
       field: "startTime" | "endTime",
-      value: string
+      value: string,
     ) => {
       React.startTransition(() => {
         const currentSlots =
@@ -281,7 +281,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           updatedSlot,
           currentSlots[day]?.filter((_, i) => i !== index) || [],
           day,
-          scheduleType === ScheduleType.WEEKLY
+          scheduleType === ScheduleType.WEEKLY,
         );
 
         // Handle overnight slot splitting if needed
@@ -312,7 +312,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         }
       });
     },
-    [scheduleType, weeklySlots, customSlots]
+    [scheduleType, weeklySlots, customSlots],
   );
 
   const handleDeleteSlot = useCallback(
@@ -336,18 +336,18 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         }
       });
     },
-    [scheduleType]
+    [scheduleType],
   );
 
   const handlePrevMonth = useCallback(() => {
     setCurrentDate(
-      (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)
+      (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
     );
   }, []);
 
   const handleNextMonth = useCallback(() => {
     setCurrentDate(
-      (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)
+      (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
     );
   }, []);
 
@@ -366,7 +366,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       const date = new Date(
         currentDate.getFullYear(),
         currentDate.getMonth(),
-        i
+        i,
       );
       const dateString = getLocalDateString(date);
       const isSelected = customSlots[dateString] !== undefined;
@@ -394,7 +394,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           }}
         >
           {i}
-        </button>
+        </button>,
       );
     }
 
@@ -463,17 +463,17 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
 
       // Refetch the consultant data to show what was actually saved
       const updatedResponse = await fetch(
-        `/api/user/consultants/${consultant.id}`
+        `/api/user/consultants/${consultant.id}`,
       );
       if (updatedResponse.ok) {
         const { data: updatedConsultant } = await updatedResponse.json();
 
         // Update local state to match what was saved to database
         setWeeklySlots(
-          getInitialWeeklySlots(updatedConsultant, timezone || "UTC")
+          getInitialWeeklySlots(updatedConsultant, timezone || "UTC"),
         );
         setCustomSlots(
-          getInitialCustomSlots(updatedConsultant, timezone || "UTC")
+          getInitialCustomSlots(updatedConsultant, timezone || "UTC"),
         );
         setFormData(getInitialFormData(updatedConsultant));
         setScheduleType(updatedConsultant.scheduleType);
@@ -716,7 +716,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                               day.toLowerCase(),
                               slotIndex,
                               "startTime",
-                              e.target.value
+                              e.target.value,
                             )
                           }
                           className={`col-span-3 ${!slot.isValid ? "border-red-500" : ""}`}
@@ -731,7 +731,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                               day.toLowerCase(),
                               slotIndex,
                               "endTime",
-                              e.target.value
+                              e.target.value,
                             )
                           }
                           className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
@@ -844,7 +844,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                                   dateString,
                                   slotIndex,
                                   "startTime",
-                                  e.target.value
+                                  e.target.value,
                                 )
                               }
                               className={`col-span-3 ${!slot.isValid ? "border-red-500" : ""}`}
@@ -859,7 +859,7 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
                                   dateString,
                                   slotIndex,
                                   "endTime",
-                                  e.target.value
+                                  e.target.value,
                                 )
                               }
                               className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
@@ -901,10 +901,10 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               setFormData(getInitialFormData(consultant));
               setScheduleType(consultant.scheduleType);
               setWeeklySlots(
-                getInitialWeeklySlots(consultant, timezone || "UTC")
+                getInitialWeeklySlots(consultant, timezone || "UTC"),
               );
               setCustomSlots(
-                getInitialCustomSlots(consultant, timezone || "UTC")
+                getInitialCustomSlots(consultant, timezone || "UTC"),
               );
             });
           }}

@@ -7,10 +7,7 @@ interface PaginationConfig {
   initialPage?: number;
 }
 
-export function usePagination<T>(
-  data: T[], 
-  config: PaginationConfig = {}
-) {
+export function usePagination<T>(data: T[], config: PaginationConfig = {}) {
   const { pageSize = 10, initialPage = 1 } = config;
   const [currentPage, setCurrentPage] = useState(initialPage);
 
@@ -57,19 +54,19 @@ export function usePagination<T>(
     totalPages,
     currentPage,
     pageSize,
-    
+
     // Status
     hasNextPage,
     hasPreviousPage,
     isEmpty: data.length === 0,
-    
+
     // Actions
     goToPage,
     goToNextPage,
     goToPreviousPage,
     goToFirstPage,
     goToLastPage,
-    
+
     // Computed values
     startIndex: (currentPage - 1) * pageSize + 1,
     endIndex: Math.min(currentPage * pageSize, data.length),

@@ -7,7 +7,11 @@ import { EventPlanner } from "./EventPlanner";
 import { WebinarEvent, ClassEvent, Event } from "../types/event";
 import { PlannerService } from "../services/planner";
 import { useToast } from "@/hooks/use-toast";
-import { useWebinarMutations, useClassMutations, usePlannerRefresh } from "../../../hooks/usePlanner";
+import {
+  useWebinarMutations,
+  useClassMutations,
+  usePlannerRefresh,
+} from "../../../hooks/usePlanner";
 
 interface PlannerData {
   webinars: any[];
@@ -21,9 +25,16 @@ interface Props {
   initialData?: PlannerData;
 }
 
-export function EventManagementDashboard({ consultantId, initialData }: Readonly<Props>) {
-  const [webinars, setWebinars] = useState<WebinarEvent[]>(initialData?.webinars || []);
-  const [classes, setClasses] = useState<ClassEvent[]>(initialData?.classes || []);
+export function EventManagementDashboard({
+  consultantId,
+  initialData,
+}: Readonly<Props>) {
+  const [webinars, setWebinars] = useState<WebinarEvent[]>(
+    initialData?.webinars || [],
+  );
+  const [classes, setClasses] = useState<ClassEvent[]>(
+    initialData?.classes || [],
+  );
   const [isWebinarDialogOpen, setIsWebinarDialogOpen] = useState(false);
   const [isClassDialogOpen, setIsClassDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
@@ -31,7 +42,7 @@ export function EventManagementDashboard({ consultantId, initialData }: Readonly
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
-  
+
   // React Query mutations
   const { deleteWebinar } = useWebinarMutations(consultantId);
   const { deleteClass } = useClassMutations(consultantId);

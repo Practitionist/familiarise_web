@@ -25,11 +25,18 @@ interface PaginatedAppointmentsProps {
   onManageTimings?: (appointment: TAppointment) => void;
 }
 
-export function PaginatedAppointments({ appointments, badgeStyles, onManageTimings }: PaginatedAppointmentsProps) {
+export function PaginatedAppointments({
+  appointments,
+  badgeStyles,
+  onManageTimings,
+}: PaginatedAppointmentsProps) {
   // Expand appointments into individual slots for pagination
   const expandedAppointments = useMemo(() => {
     return appointments.flatMap((appointment) => {
-      if (!appointment.slotsOfAppointment || appointment.slotsOfAppointment.length === 0) {
+      if (
+        !appointment.slotsOfAppointment ||
+        appointment.slotsOfAppointment.length === 0
+      ) {
         return [appointment];
       }
       return appointment.slotsOfAppointment.map((slot) => ({
@@ -103,7 +110,7 @@ export function PaginatedAppointments({ appointments, badgeStyles, onManageTimin
                   </p>
                 </div>
               </div>
-              
+
               <div className="space-y-2">
                 <div className="text-xs text-gray-500">
                   {(() => {
@@ -113,7 +120,7 @@ export function PaginatedAppointments({ appointments, badgeStyles, onManageTimin
                       : "Time not set";
                   })()}
                 </div>
-                
+
                 <div className="flex items-center justify-between">
                   <Badge
                     variant="secondary"
@@ -122,16 +129,17 @@ export function PaginatedAppointments({ appointments, badgeStyles, onManageTimin
                     {status}
                   </Badge>
                   <div className="flex items-center space-x-2">
-                    {canManageAppointmentTimings(appointment) && onManageTimings && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onManageTimings(appointment)}
-                      >
-                        <Clock className="w-4 h-4 mr-1" />
-                        Manage
-                      </Button>
-                    )}
+                    {canManageAppointmentTimings(appointment) &&
+                      onManageTimings && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onManageTimings(appointment)}
+                        >
+                          <Clock className="w-4 h-4 mr-1" />
+                          Manage
+                        </Button>
+                      )}
                     <Button
                       variant="default"
                       size="sm"

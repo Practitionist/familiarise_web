@@ -7,7 +7,7 @@ import { faqs, type FAQ } from "../(features)/help/questions";
 // but return the static data immediately
 export function useHelp() {
   return useQuery({
-    queryKey: ['help-faqs'],
+    queryKey: ["help-faqs"],
     queryFn: (): FAQ[] => {
       // Return static FAQ data immediately
       return faqs;

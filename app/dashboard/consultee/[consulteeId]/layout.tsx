@@ -84,12 +84,12 @@ function ConsulteeNav({
               prefetch={true}
               onMouseEnter={() => {
                 // Prefetch data when hovering over navigation items
-                if (item.path === 'home') {
-                  prefetchOnTabHover('home');
-                } else if (item.path === 'appointments') {
-                  prefetchOnTabHover('appointments');
+                if (item.path === "home") {
+                  prefetchOnTabHover("home");
+                } else if (item.path === "appointments") {
+                  prefetchOnTabHover("appointments");
                 } else {
-                  prefetchOnTabHover('other');
+                  prefetchOnTabHover("other");
                 }
               }}
             >
@@ -187,7 +187,7 @@ export default function ConsulteeLayout({
       preload([`consultee-${consulteeId}`, consulteeId], ([_, id]) =>
         fetchConsulteeDetails(id),
       );
-      
+
       // Prefetch all other dashboard tabs in background for instant navigation
       prefetchAllConsulteeData();
     }
@@ -276,9 +276,7 @@ export default function ConsulteeLayout({
           userName={userDetails.name}
         />
         <main className="flex-grow overflow-y-auto p-8">
-          <DashboardErrorBoundary>
-            {children}
-          </DashboardErrorBoundary>
+          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
         </main>
       </div>
     </UserProvider>

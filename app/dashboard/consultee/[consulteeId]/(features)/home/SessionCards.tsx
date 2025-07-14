@@ -37,7 +37,7 @@ export function SlotCard({
   const now = new Date();
   const startTime = new Date(slot.slotStartTimeInUTC);
   const diffInMinutes = Math.floor(
-    (startTime.getTime() - now.getTime()) / 60000
+    (startTime.getTime() - now.getTime()) / 60000,
   );
   const isJoinable = !isTentative && diffInMinutes <= 10 && diffInMinutes >= 0;
 
@@ -219,7 +219,7 @@ export function SlotCard({
                   new Date(slot.slotStartTimeInUTC),
                   slot.slotEndTimeInUTC
                     ? new Date(slot.slotEndTimeInUTC)
-                    : undefined
+                    : undefined,
                 )}
               </p>
             </div>

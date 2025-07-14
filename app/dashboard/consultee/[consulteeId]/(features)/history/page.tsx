@@ -13,7 +13,11 @@ type PageProps = {
 
 export default function HistoryPage({ params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
-  const { data: eventsData, isLoading, error } = useConsulteeEvents(consulteeId);
+  const {
+    data: eventsData,
+    isLoading,
+    error,
+  } = useConsulteeEvents(consulteeId);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;
@@ -26,10 +30,11 @@ export default function HistoryPage({ params }: Readonly<PageProps>) {
           <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
             <h3 className="font-semibold mb-2">Error Loading History</h3>
             <p className="text-sm">
-              {error.message || "Failed to load booking history. Please try again."}
+              {error.message ||
+                "Failed to load booking history. Please try again."}
             </p>
-            <button 
-              onClick={() => window.location.reload()} 
+            <button
+              onClick={() => window.location.reload()}
               className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
             >
               Retry
@@ -40,7 +45,12 @@ export default function HistoryPage({ params }: Readonly<PageProps>) {
     );
   }
 
-  const { consultations = [], subscriptions = [], webinars = [], classes = [] } = eventsData || {};
+  const {
+    consultations = [],
+    subscriptions = [],
+    webinars = [],
+    classes = [],
+  } = eventsData || {};
 
   return (
     <DashboardErrorBoundary>

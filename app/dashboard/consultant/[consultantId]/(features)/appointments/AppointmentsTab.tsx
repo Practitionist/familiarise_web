@@ -68,7 +68,7 @@ export function AppointmentsTab({
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
         convertTAppointmentToIAppointment(appointment),
-        relevantSlot
+        relevantSlot,
       );
       router.push(`/meetings/${meetingId}`);
       toast({
@@ -197,7 +197,7 @@ export function AppointmentsTab({
                                 const startTime = getStartTime(appointment);
                                 return startTime
                                   ? formatAppointmentTime(
-                                      startTime.toISOString()
+                                      startTime.toISOString(),
                                     )
                                   : "Time not set";
                               })()}
@@ -271,7 +271,7 @@ export function AppointmentsTab({
                 </ul>
               </div>
             );
-          }
+          },
         )}
         {!Object.keys(groupedAppointments).length && (
           <div className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-gray-50 rounded-lg">

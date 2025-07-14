@@ -11,7 +11,7 @@ type PageProps = {
 
 export default function PolicyPage({ params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
-  
+
   return (
     <DashboardErrorBoundary>
       <PolicyTab consulteeId={consulteeId} />

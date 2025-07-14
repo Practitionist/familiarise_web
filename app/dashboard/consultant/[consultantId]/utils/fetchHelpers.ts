@@ -4,12 +4,7 @@ import {
   TSubscription,
 } from "@/types/appointment";
 import { TConsultantProfile } from "@/types/consultant";
-import {
-  ApiResponse,
-  IActivity,
-  IApproval,
-  IDocument,
-} from "../types";
+import { ApiResponse, IActivity, IApproval, IDocument } from "../types";
 
 // Helper to get the base URL, preferring VERCEL_URL if available
 const getBaseUrl = () => {

@@ -27,8 +27,8 @@ export default function DocumentsPage({
             <p className="text-sm">
               {error.message || "Failed to load documents. Please try again."}
             </p>
-            <button 
-              onClick={() => window.location.reload()} 
+            <button
+              onClick={() => window.location.reload()}
               className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
             >
               Retry

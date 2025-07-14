@@ -8,26 +8,30 @@ interface PlannerData {
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ consultantId: string }> }
+  { params }: { params: Promise<{ consultantId: string }> },
 ) {
   try {
     const { consultantId } = await params;
-    
+
     if (!consultantId) {
       return NextResponse.json(
         { error: "Consultant ID is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    const baseUrl = process.env.VERCEL_URL 
-      ? `https://${process.env.VERCEL_URL}` 
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
       : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
     // Fetch webinars and classes in parallel
     const [webinarsRes, classesRes] = await Promise.all([
-      fetch(`${baseUrl}/api/events/webinars?consultantProfileId=${consultantId}`),
-      fetch(`${baseUrl}/api/events/classes?consultantProfileId=${consultantId}`),
+      fetch(
+        `${baseUrl}/api/events/webinars?consultantProfileId=${consultantId}`,
+      ),
+      fetch(
+        `${baseUrl}/api/events/classes?consultantProfileId=${consultantId}`,
+      ),
     ]);
 
     // Check for errors in responses
@@ -35,7 +39,7 @@ export async function GET(
       console.error("Failed to fetch webinars:", webinarsRes.statusText);
       return NextResponse.json(
         { error: "Failed to fetch webinars" },
-        { status: webinarsRes.status }
+        { status: webinarsRes.status },
       );
     }
 
@@ -43,7 +47,7 @@ export async function GET(
       console.error("Failed to fetch classes:", classesRes.statusText);
       return NextResponse.json(
         { error: "Failed to fetch classes" },
-        { status: classesRes.status }
+        { status: classesRes.status },
       );
     }
 
@@ -59,7 +63,7 @@ export async function GET(
       type: "webinar" as const,
     }));
 
-    // Transform classes to include type discriminator (same as PlannerService.fetchClasses) 
+    // Transform classes to include type discriminator (same as PlannerService.fetchClasses)
     const classes = (classesData.data || []).map((classEvent: any) => ({
       ...classEvent,
       type: "class" as const,
@@ -69,25 +73,41 @@ export async function GET(
     const participantCountPromises = [
       ...webinars.map(async (webinar: any) => {
         try {
-          const response = await fetch(`${baseUrl}/api/participants/webinar/${webinar.id}`);
+          const response = await fetch(
+            `${baseUrl}/api/participants/webinar/${webinar.id}`,
+          );
           if (response.ok) {
             const data = await response.json();
-            return { eventId: webinar.id, count: data.participants?.length || 0 };
+            return {
+              eventId: webinar.id,
+              count: data.participants?.length || 0,
+            };
           }
         } catch (error) {
-          console.error(`Failed to fetch participants for webinar ${webinar.id}:`, error);
+          console.error(
+            `Failed to fetch participants for webinar ${webinar.id}:`,
+            error,
+          );
         }
         return { eventId: webinar.id, count: 0 };
       }),
       ...classes.map(async (classEvent: any) => {
         try {
-          const response = await fetch(`${baseUrl}/api/participants/class/${classEvent.id}`);
+          const response = await fetch(
+            `${baseUrl}/api/participants/class/${classEvent.id}`,
+          );
           if (response.ok) {
             const data = await response.json();
-            return { eventId: classEvent.id, count: data.participants?.length || 0 };
+            return {
+              eventId: classEvent.id,
+              count: data.participants?.length || 0,
+            };
           }
         } catch (error) {
-          console.error(`Failed to fetch participants for class ${classEvent.id}:`, error);
+          console.error(
+            `Failed to fetch participants for class ${classEvent.id}:`,
+            error,
+          );
         }
         return { eventId: classEvent.id, count: 0 };
       }),
@@ -113,7 +133,7 @@ export async function GET(
     console.error("Error fetching planner data:", error);
     return NextResponse.json(
       { error: "Failed to fetch planner data" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

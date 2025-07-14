@@ -19,10 +19,10 @@ interface PaginatedApprovalsProps {
   onReject?: (id: string) => void;
 }
 
-export function PaginatedApprovals({ 
-  approvals, 
-  onApprove, 
-  onReject 
+export function PaginatedApprovals({
+  approvals,
+  onApprove,
+  onReject,
 }: PaginatedApprovalsProps) {
   const {
     paginatedData,
@@ -60,7 +60,9 @@ export function PaginatedApprovals({
                 </Avatar>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <h4 className="font-medium text-sm truncate">{approval.name}</h4>
+                    <h4 className="font-medium text-sm truncate">
+                      {approval.name}
+                    </h4>
                     <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
                       {approval.type}
                     </span>

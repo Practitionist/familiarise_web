@@ -12,20 +12,20 @@ interface RequestsData {
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ consultantId: string }> }
+  { params }: { params: Promise<{ consultantId: string }> },
 ) {
   try {
     const { consultantId } = await params;
-    
+
     if (!consultantId) {
       return NextResponse.json(
         { error: "Consultant ID is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    const baseUrl = process.env.VERCEL_URL 
-      ? `https://${process.env.VERCEL_URL}` 
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
       : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
     // Fetch all requests data in parallel
@@ -37,11 +37,21 @@ export async function GET(
       appointmentsRes,
       consultantRes,
     ] = await Promise.all([
-      fetch(`${baseUrl}/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`),
-      fetch(`${baseUrl}/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`),
-      fetch(`${baseUrl}/api/slots/availability/weekly?consultantProfileId=${consultantId}`),
-      fetch(`${baseUrl}/api/slots/availability/custom?consultantProfileId=${consultantId}`),
-      fetch(`${baseUrl}/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`),
+      fetch(
+        `${baseUrl}/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
+      ),
+      fetch(
+        `${baseUrl}/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
+      ),
+      fetch(
+        `${baseUrl}/api/slots/availability/weekly?consultantProfileId=${consultantId}`,
+      ),
+      fetch(
+        `${baseUrl}/api/slots/availability/custom?consultantProfileId=${consultantId}`,
+      ),
+      fetch(
+        `${baseUrl}/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
+      ),
       fetch(`${baseUrl}/api/user/consultants/${consultantId}`),
     ]);
 
@@ -60,7 +70,7 @@ export async function GET(
         console.error(`Failed to fetch ${name}:`, response.statusText);
         return NextResponse.json(
           { error: `Failed to fetch ${name} data` },
-          { status: response.status }
+          { status: response.status },
         );
       }
     }
@@ -99,7 +109,7 @@ export async function GET(
     console.error("Error fetching requests data:", error);
     return NextResponse.json(
       { error: "Failed to fetch requests data" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

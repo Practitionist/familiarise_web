@@ -148,7 +148,7 @@ type AppointmentInclude = Prisma.AppointmentGetPayload<{
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ appointmentId: string }> }
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
     const { appointmentId } = await params;
@@ -291,7 +291,7 @@ export async function GET(
     if (!appointment) {
       return NextResponse.json(
         { error: "Appointment not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -300,14 +300,14 @@ export async function GET(
     console.error("Error fetching appointment:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the appointment" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ appointmentId: string }> }
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
     const { appointmentId } = await params;
@@ -316,7 +316,7 @@ export async function PATCH(
     if (!body.slotsOfAppointment?.createMany?.data) {
       return NextResponse.json(
         { error: "Missing slots data" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -462,20 +462,20 @@ export async function PATCH(
       if (error.code === "P2025") {
         return NextResponse.json(
           { error: "Appointment not found" },
-          { status: 404 }
+          { status: 404 },
         );
       }
     }
     return NextResponse.json(
       { error: "An error occurred while updating the appointment slots" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ appointmentId: string }> }
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
     const { appointmentId } = await params;
@@ -487,7 +487,7 @@ export async function PUT(
     ) {
       return NextResponse.json(
         { error: "Invalid appointment type" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -647,20 +647,20 @@ export async function PUT(
       if (error.code === "P2025") {
         return NextResponse.json(
           { error: "Appointment not found" },
-          { status: 404 }
+          { status: 404 },
         );
       }
     }
     return NextResponse.json(
       { error: "An error occurred while updating the appointment" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ appointmentId: string }> }
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
     const { appointmentId } = await params;
@@ -686,7 +686,7 @@ export async function DELETE(
     if (appointment?.payment) {
       return NextResponse.json(
         { error: "Cannot delete appointment with associated payment" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -821,13 +821,13 @@ export async function DELETE(
       if (error.code === "P2025") {
         return NextResponse.json(
           { error: "Appointment not found" },
-          { status: 404 }
+          { status: 404 },
         );
       }
     }
     return NextResponse.json(
       { error: "An error occurred while deleting the appointment" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

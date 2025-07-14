@@ -38,17 +38,24 @@ export function EventTimingsCalendar({
           eventId: appointment.consultation?.id || "",
           callsPerWeek: 1,
           durationInMonths: 1,
-          durationInHours: appointment.consultation?.consultationPlan?.durationInHours || 1,
-          title: appointment.consultation?.consultationPlan?.title || "Consultation",
+          durationInHours:
+            appointment.consultation?.consultationPlan?.durationInHours || 1,
+          title:
+            appointment.consultation?.consultationPlan?.title || "Consultation",
         };
       case "SUBSCRIPTION":
         return {
           eventType: "subscription" as const,
           eventId: appointment.subscription?.id || "",
-          callsPerWeek: appointment.subscription?.subscriptionPlan?.callsPerWeek || 1,
-          durationInMonths: appointment.subscription?.subscriptionPlan?.durationInMonths || 1,
-          durationInHours: appointment.subscription?.subscriptionPlan?.sessionDurationInHours || 1,
-          title: appointment.subscription?.subscriptionPlan?.title || "Subscription",
+          callsPerWeek:
+            appointment.subscription?.subscriptionPlan?.callsPerWeek || 1,
+          durationInMonths:
+            appointment.subscription?.subscriptionPlan?.durationInMonths || 1,
+          durationInHours:
+            appointment.subscription?.subscriptionPlan
+              ?.sessionDurationInHours || 1,
+          title:
+            appointment.subscription?.subscriptionPlan?.title || "Subscription",
         };
       case "WEBINAR":
         return {
@@ -56,7 +63,8 @@ export function EventTimingsCalendar({
           eventId: appointment.webinar?.id || "",
           callsPerWeek: 1,
           durationInMonths: 1,
-          durationInHours: appointment.webinar?.webinarPlan?.durationInHours || 1,
+          durationInHours:
+            appointment.webinar?.webinarPlan?.durationInHours || 1,
           title: appointment.webinar?.webinarPlan?.title || "Webinar",
         };
       case "CLASS":
@@ -109,12 +117,8 @@ export function EventTimingsCalendar({
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-7xl">
         <DialogHeader>
-          <DialogTitle>
-            Manage {eventDetails.title} Timings
-          </DialogTitle>
-          <DialogDescription>
-            {getDescriptionText()}
-          </DialogDescription>
+          <DialogTitle>Manage {eventDetails.title} Timings</DialogTitle>
+          <DialogDescription>{getDescriptionText()}</DialogDescription>
         </DialogHeader>
 
         <UnifiedCalendar

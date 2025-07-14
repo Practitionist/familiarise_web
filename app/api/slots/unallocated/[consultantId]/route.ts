@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ consultantId: string }> }
+  { params }: { params: Promise<{ consultantId: string }> },
 ) {
   try {
     const { consultantId } = await params;
@@ -16,7 +16,7 @@ export async function GET(
     if (!startDateInUtc || !endDateInUtc) {
       return NextResponse.json(
         { error: "startDateInUtc and endDateInUtc are required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -30,7 +30,7 @@ export async function GET(
     } catch (error) {
       return NextResponse.json(
         { error: "Dates must be in UTC ISO format" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -85,7 +85,7 @@ export async function GET(
         const end = slot.slotEndTimeInUTC;
         allocatedSlots.set(
           `${start.toISOString()}-${end.toISOString()}`,
-          slot.isTentative
+          slot.isTentative,
         );
       });
     });
@@ -178,14 +178,14 @@ export async function GET(
         localStartTime: new Date(slot.slotStartTimeInUTC).toLocaleTimeString(),
         localEndTime: new Date(slot.slotEndTimeInUTC).toLocaleTimeString(),
         type: "CUSTOM" as const,
-      })
+      }),
     );
 
     // Combine and sort all slots by start time
     const allSlots = [...formattedCustomSlots, ...unallocatedWeeklySlots].sort(
       (a, b) =>
         new Date(a.slotStartTimeInUTC).getTime() -
-        new Date(b.slotStartTimeInUTC).getTime()
+        new Date(b.slotStartTimeInUTC).getTime(),
     );
 
     return NextResponse.json({ data: allSlots }, { status: 200 });
@@ -193,7 +193,7 @@ export async function GET(
     console.error("Error fetching unallocated slots:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching unallocated slots" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

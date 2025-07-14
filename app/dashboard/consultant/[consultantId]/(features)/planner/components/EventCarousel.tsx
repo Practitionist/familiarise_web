@@ -344,7 +344,6 @@ export function EventCarousel({
           </div>
         )}
       </div>
-
     </div>
   );
 }

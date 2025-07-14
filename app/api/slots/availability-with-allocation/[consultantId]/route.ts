@@ -43,7 +43,7 @@ function isValidOvernightSlot(startTime: Date, endTime: Date): boolean {
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ consultantId: string }> }
+  { params }: { params: Promise<{ consultantId: string }> },
 ) {
   try {
     const { consultantId } = await params;
@@ -59,7 +59,7 @@ export async function GET(
     if (!startDateInUtc || !endDateInUtc) {
       return NextResponse.json(
         { error: "startDateInUtc and endDateInUtc are required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -74,7 +74,7 @@ export async function GET(
     } catch (error) {
       return NextResponse.json(
         { error: "Dates must be in UTC ISO format" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -112,7 +112,7 @@ export async function GET(
     if (!consultant) {
       return NextResponse.json(
         { error: "Consultant not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -166,7 +166,7 @@ export async function GET(
       appt.slotsOfAppointment.map((slot) => ({
         slotStartTimeInUTC: slot.slotStartTimeInUTC,
         slotEndTimeInUTC: slot.slotEndTimeInUTC,
-      }))
+      })),
     );
 
     // Convert to utility interfaces
@@ -177,7 +177,7 @@ export async function GET(
           !isValidOvernightSlot(slot.slotStartTimeInUTC, slot.slotEndTimeInUTC)
         ) {
           console.warn(
-            `❌ Filtering out invalid weekly slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`
+            `❌ Filtering out invalid weekly slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`,
           );
           return false;
         }
@@ -198,7 +198,7 @@ export async function GET(
           !isValidOvernightSlot(slot.slotStartTimeInUTC, slot.slotEndTimeInUTC)
         ) {
           console.warn(
-            `❌ Filtering out invalid custom slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`
+            `❌ Filtering out invalid custom slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`,
           );
           return false;
         }
@@ -223,7 +223,7 @@ export async function GET(
       appointmentSlots,
       startDate,
       endDate,
-      timezone
+      timezone,
     );
 
     return NextResponse.json({ data: slotsByDate }, { status: 200 });
@@ -231,7 +231,7 @@ export async function GET(
     console.error("Error fetching availability slots:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching availability slots" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

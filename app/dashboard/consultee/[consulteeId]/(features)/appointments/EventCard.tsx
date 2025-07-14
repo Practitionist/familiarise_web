@@ -90,7 +90,7 @@ export function EventCard({
         `/api/appointments/${appointmentId}/reschedule`,
         {
           method: "POST",
-        }
+        },
       );
 
       if (!response.ok) {
@@ -130,7 +130,7 @@ export function EventCard({
         `/api/appointments/${appointmentId}/cancel`,
         {
           method: "POST",
-        }
+        },
       );
 
       if (!response.ok) {

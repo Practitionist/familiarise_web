@@ -16,7 +16,11 @@ type PageProps = {
 
 export default function AppointmentsPage({ params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
-  const { data: eventsData, isLoading, error } = useConsulteeEvents(consulteeId);
+  const {
+    data: eventsData,
+    isLoading,
+    error,
+  } = useConsulteeEvents(consulteeId);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;
@@ -29,10 +33,11 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
           <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
             <h3 className="font-semibold mb-2">Error Loading Appointments</h3>
             <p className="text-sm">
-              {error.message || "Failed to load appointments. Please try again."}
+              {error.message ||
+                "Failed to load appointments. Please try again."}
             </p>
-            <button 
-              onClick={() => window.location.reload()} 
+            <button
+              onClick={() => window.location.reload()}
               className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
             >
               Retry
@@ -43,9 +48,19 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
     );
   }
 
-  const { consultations = [], subscriptions = [], webinars = [], classes = [] } = eventsData || {};
+  const {
+    consultations = [],
+    subscriptions = [],
+    webinars = [],
+    classes = [],
+  } = eventsData || {};
 
-  if (!consultations.length && !subscriptions.length && !webinars.length && !classes.length) {
+  if (
+    !consultations.length &&
+    !subscriptions.length &&
+    !webinars.length &&
+    !classes.length
+  ) {
     return (
       <DashboardErrorBoundary>
         <motion.div
@@ -72,7 +87,8 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
             No Appointments Found
           </h3>
           <p className="text-gray-500 text-center">
-            You don't have any appointments scheduled yet. Book your first session to get started!
+            You don't have any appointments scheduled yet. Book your first
+            session to get started!
           </p>
         </motion.div>
       </DashboardErrorBoundary>
@@ -86,7 +102,7 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="calendar">Calendar</TabsTrigger>
         </TabsList>
-        
+
         <TabsContent value="overview">
           <Overview
             consultations={consultations}
@@ -95,7 +111,7 @@ export default function AppointmentsPage({ params }: Readonly<PageProps>) {
             classes={classes}
           />
         </TabsContent>
-        
+
         <TabsContent value="calendar">
           <Calendar
             consultations={consultations}

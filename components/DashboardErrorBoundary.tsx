@@ -9,7 +9,10 @@ interface DashboardErrorFallbackProps {
   resetError: () => void;
 }
 
-function DashboardErrorFallback({ error, resetError }: DashboardErrorFallbackProps) {
+function DashboardErrorFallback({
+  error,
+  resetError,
+}: DashboardErrorFallbackProps) {
   return (
     <div className="flex items-center justify-center min-h-[50vh] p-6">
       <div className="text-center max-w-lg">
@@ -33,11 +36,12 @@ function DashboardErrorFallback({ error, resetError }: DashboardErrorFallbackPro
             Dashboard Error
           </h3>
           <p className="text-orange-700 mb-4">
-            There was a problem loading your dashboard. This might be due to a temporary issue
-            with the data or a network connection problem.
+            There was a problem loading your dashboard. This might be due to a
+            temporary issue with the data or a network connection problem.
           </p>
           <p className="text-sm text-orange-600 mb-6">
-            {error?.message || "An unexpected error occurred while loading the dashboard"}
+            {error?.message ||
+              "An unexpected error occurred while loading the dashboard"}
           </p>
           <div className="space-y-3">
             <Button
@@ -82,7 +86,8 @@ function DashboardErrorFallback({ error, resetError }: DashboardErrorFallbackPro
           </div>
           <div className="mt-4 pt-4 border-t border-orange-200">
             <p className="text-xs text-orange-600">
-              If this problem persists, please contact support or try again later.
+              If this problem persists, please contact support or try again
+              later.
             </p>
           </div>
         </div>
@@ -95,7 +100,9 @@ interface DashboardErrorBoundaryProps {
   children: React.ReactNode;
 }
 
-export function DashboardErrorBoundary({ children }: DashboardErrorBoundaryProps) {
+export function DashboardErrorBoundary({
+  children,
+}: DashboardErrorBoundaryProps) {
   return (
     <ErrorBoundary
       fallback={DashboardErrorFallback}

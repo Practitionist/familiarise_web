@@ -176,7 +176,15 @@ export function CompactPagination({
   hasPreviousPage,
   onNextPage,
   onPreviousPage,
-}: Pick<PaginationProps, 'currentPage' | 'totalPages' | 'hasNextPage' | 'hasPreviousPage' | 'onNextPage' | 'onPreviousPage'>) {
+}: Pick<
+  PaginationProps,
+  | "currentPage"
+  | "totalPages"
+  | "hasNextPage"
+  | "hasPreviousPage"
+  | "onNextPage"
+  | "onPreviousPage"
+>) {
   if (totalPages <= 1) return null;
 
   return (

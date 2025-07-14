@@ -11,19 +11,21 @@ interface PlannerData {
 
 // Main planner data hook
 async function fetchPlannerData(consultantId: string): Promise<PlannerData> {
-  const response = await fetch(`/api/dashboard/consultant/${consultantId}/planner`);
-  
+  const response = await fetch(
+    `/api/dashboard/consultant/${consultantId}/planner`,
+  );
+
   if (!response.ok) {
     throw new Error(`Failed to fetch planner data: ${response.statusText}`);
   }
-  
+
   const data = await response.json();
   return data.data;
 }
 
 export function usePlanner(consultantId: string) {
   return useQuery({
-    queryKey: ['planner', consultantId],
+    queryKey: ["planner", consultantId],
     queryFn: () => fetchPlannerData(consultantId),
     staleTime: 2 * 60 * 1000, // 2 minutes - events change frequently
     gcTime: 5 * 60 * 1000, // 5 minutes
@@ -39,9 +41,12 @@ export function useWebinarMutations(consultantId: string) {
 
   const deleteWebinar = useMutation({
     mutationFn: async (webinarId: string) => {
-      const response = await fetch(`/api/events/webinars/crud-with-plan/${webinarId}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/events/webinars/crud-with-plan/${webinarId}`,
+        {
+          method: "DELETE",
+        },
+      );
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -52,7 +57,7 @@ export function useWebinarMutations(consultantId: string) {
     },
     onSuccess: (result) => {
       // Invalidate and refetch planner data
-      queryClient.invalidateQueries({ queryKey: ['planner', consultantId] });
+      queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
       toast({
         title: "Success",
         description: result.message || "Webinar deleted successfully.",
@@ -77,9 +82,12 @@ export function useClassMutations(consultantId: string) {
 
   const deleteClass = useMutation({
     mutationFn: async (classId: string) => {
-      const response = await fetch(`/api/events/classes/crud-with-plan/${classId}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/events/classes/crud-with-plan/${classId}`,
+        {
+          method: "DELETE",
+        },
+      );
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -90,7 +98,7 @@ export function useClassMutations(consultantId: string) {
     },
     onSuccess: (result) => {
       // Invalidate and refetch planner data
-      queryClient.invalidateQueries({ queryKey: ['planner', consultantId] });
+      queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
       toast({
         title: "Success",
         description: result.message || "Class deleted successfully.",
@@ -113,7 +121,7 @@ export function usePlannerRefresh(consultantId: string) {
   const queryClient = useQueryClient();
 
   const refreshPlanner = () => {
-    queryClient.invalidateQueries({ queryKey: ['planner', consultantId] });
+    queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
   };
 
   return { refreshPlanner };

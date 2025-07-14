@@ -71,12 +71,12 @@ export default function PricingToggle({
   const [activeConsultationOption, setActiveConsultationOption] = useState(
     consultationOptions.length > 0
       ? consultationOptions[0].title.toLowerCase().replace(" ", "-")
-      : defaultConsultationOptions[0].title.toLowerCase().replace(" ", "-")
+      : defaultConsultationOptions[0].title.toLowerCase().replace(" ", "-"),
   );
   const [activeSubscriptionOption, setActiveSubscriptionOption] = useState(
     subscriptionOptions.length > 0
       ? subscriptionOptions[0].title.toLowerCase().replace(" ", "-")
-      : defaultSubscriptionOptions[0].title.toLowerCase().replace(" ", "-")
+      : defaultSubscriptionOptions[0].title.toLowerCase().replace(" ", "-"),
   );
   const [isRequestingApproval, setIsRequestingApproval] = useState(false);
 
@@ -84,7 +84,7 @@ export default function PricingToggle({
   const selectedDuration = useMemo(() => {
     const option = consultationOptions.find(
       (opt) =>
-        opt.title.toLowerCase().replace(" ", "-") === activeConsultationOption
+        opt.title.toLowerCase().replace(" ", "-") === activeConsultationOption,
     );
     return option ? parseInt(option.duration.split(" ")[0], 10) : 1;
   }, [activeConsultationOption, consultationOptions]);
@@ -111,7 +111,7 @@ export default function PricingToggle({
       slotsWithAllocation,
       selectedDuration,
       [], // appointmentSlots - we'll rely on the isAllocated flag for now
-      timezone
+      timezone,
     );
 
     // Return all slots (both available and allocated) - the UI will handle them differently
@@ -140,7 +140,7 @@ export default function PricingToggle({
 
     // Get the active consultation plan
     const activePlan = consultantDetails.consultationPlans.find(
-      (plan: any) => plan.durationInHours === durationInHours
+      (plan: any) => plan.durationInHours === durationInHours,
     );
 
     if (!activePlan) {
@@ -374,8 +374,8 @@ export default function PricingToggle({
                                           new Date(
                                             currentDate.getFullYear(),
                                             currentDate.getMonth() - 1,
-                                            1
-                                          )
+                                            1,
+                                          ),
                                         )
                                       }
                                     >
@@ -394,8 +394,8 @@ export default function PricingToggle({
                                           new Date(
                                             currentDate.getFullYear(),
                                             currentDate.getMonth() + 1,
-                                            1
-                                          )
+                                            1,
+                                          ),
                                         )
                                       }
                                     >

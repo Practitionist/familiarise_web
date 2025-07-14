@@ -84,7 +84,7 @@ export const getSlotTimes = (appointment: TAppointment): Date[] => {
   if (!appointment?.slotsOfAppointment?.length) {
     return [];
   }
-  
+
   return appointment.slotsOfAppointment
     .map((slot) => {
       const time = slot.slotStartTimeInUTC;
@@ -92,7 +92,7 @@ export const getSlotTimes = (appointment: TAppointment): Date[] => {
       if (time instanceof Date) {
         return time;
       }
-      if (typeof time === 'string' || typeof time === 'number') {
+      if (typeof time === "string" || typeof time === "number") {
         const date = new Date(time);
         return isNaN(date.getTime()) ? null : date;
       }

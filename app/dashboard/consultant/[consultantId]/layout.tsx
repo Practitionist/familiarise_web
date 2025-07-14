@@ -64,7 +64,8 @@ export default function ConsultantLayout({
   const { data: session } = useSession();
 
   const userId = getEffectiveUserId(session);
-  const { prefetchOnTabHover, prefetchAllConsultantData } = usePrefetchDashboard({ consultantId });
+  const { prefetchOnTabHover, prefetchAllConsultantData } =
+    usePrefetchDashboard({ consultantId });
 
   // Use SWR to fetch and cache consultant data
   const { data: consultantData, error } = useSWR(
@@ -85,7 +86,7 @@ export default function ConsultantLayout({
       preload([`consultant-${consultantId}`, consultantId], ([_, id]) =>
         fetchConsultantData(id),
       );
-      
+
       // Prefetch all other dashboard tabs in background for instant navigation
       prefetchAllConsultantData();
     }
@@ -157,12 +158,12 @@ export default function ConsultantLayout({
                   prefetch={true}
                   onMouseEnter={() => {
                     // Prefetch data when hovering over navigation items
-                    if (item.path === 'home') {
-                      prefetchOnTabHover('home');
-                    } else if (item.path === 'appointments') {
-                      prefetchOnTabHover('appointments');
+                    if (item.path === "home") {
+                      prefetchOnTabHover("home");
+                    } else if (item.path === "appointments") {
+                      prefetchOnTabHover("appointments");
                     } else {
-                      prefetchOnTabHover('other');
+                      prefetchOnTabHover("other");
                     }
                   }}
                 >
@@ -233,9 +234,7 @@ export default function ConsultantLayout({
           </div>
         ) : (
           // Render children when data is loaded and no error with error boundary
-          <DashboardErrorBoundary>
-            {children}
-          </DashboardErrorBoundary>
+          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
         )}
       </main>
     </div>

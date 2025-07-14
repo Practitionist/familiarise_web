@@ -18,7 +18,10 @@ interface ErrorBoundaryProps {
   onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
 }
 
-class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+class ErrorBoundary extends React.Component<
+  ErrorBoundaryProps,
+  ErrorBoundaryState
+> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = {
@@ -44,7 +47,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
 
     // Log error to monitoring service
     console.error("ErrorBoundary caught an error:", error, errorInfo);
-    
+
     // Call optional error handler
     if (this.props.onError) {
       this.props.onError(error, errorInfo);
@@ -64,7 +67,12 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
       // Use custom fallback if provided
       if (this.props.fallback) {
         const FallbackComponent = this.props.fallback;
-        return <FallbackComponent error={this.state.error} resetError={this.resetError} />;
+        return (
+          <FallbackComponent
+            error={this.state.error}
+            resetError={this.resetError}
+          />
+        );
       }
 
       // Default error UI
@@ -108,17 +116,18 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
                   Reload page
                 </Button>
               </div>
-              {process.env.NODE_ENV === "development" && this.state.errorInfo && (
-                <details className="mt-4 text-left">
-                  <summary className="text-sm font-medium text-red-700 cursor-pointer">
-                    Error Details (Development)
-                  </summary>
-                  <pre className="mt-2 text-xs text-red-600 bg-red-100 p-2 rounded overflow-auto max-h-40">
-                    {this.state.error?.stack}
-                    {this.state.errorInfo.componentStack}
-                  </pre>
-                </details>
-              )}
+              {process.env.NODE_ENV === "development" &&
+                this.state.errorInfo && (
+                  <details className="mt-4 text-left">
+                    <summary className="text-sm font-medium text-red-700 cursor-pointer">
+                      Error Details (Development)
+                    </summary>
+                    <pre className="mt-2 text-xs text-red-600 bg-red-100 p-2 rounded overflow-auto max-h-40">
+                      {this.state.error?.stack}
+                      {this.state.errorInfo.componentStack}
+                    </pre>
+                  </details>
+                )}
             </div>
           </div>
         </div>

@@ -13,19 +13,21 @@ interface RequestsData {
 }
 
 async function fetchRequestsData(consultantId: string): Promise<RequestsData> {
-  const response = await fetch(`/api/dashboard/consultant/${consultantId}/requests`);
-  
+  const response = await fetch(
+    `/api/dashboard/consultant/${consultantId}/requests`,
+  );
+
   if (!response.ok) {
     throw new Error(`Failed to fetch requests data: ${response.statusText}`);
   }
-  
+
   const data = await response.json();
   return data.data;
 }
 
 export function useRequests(consultantId: string) {
   return useQuery({
-    queryKey: ['requests', consultantId],
+    queryKey: ["requests", consultantId],
     queryFn: () => fetchRequestsData(consultantId),
     staleTime: 1 * 60 * 1000, // 1 minute - requests change frequently
     gcTime: 5 * 60 * 1000, // 5 minutes
