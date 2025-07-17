@@ -136,7 +136,7 @@ const MultiStepForm: React.FC = () => {
         (slot: { slotStartTimeInUTC: string; slotEndTimeInUTC: string }) => ({
           slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC).toISOString(),
           slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC).toISOString(),
-        })
+        }),
       );
 
       const requestBody: Parameters<
@@ -158,7 +158,7 @@ const MultiStepForm: React.FC = () => {
                   experience: finalData.experience ?? null,
                   domain: { connect: { id: finalData.domain!.id } },
                   subDomains: finalData.subDomains?.filter(
-                    (sd) => sd.id !== undefined && sd.id !== null
+                    (sd) => sd.id !== undefined && sd.id !== null,
                   ).length
                     ? {
                         connect: finalData.subDomains
@@ -169,7 +169,7 @@ const MultiStepForm: React.FC = () => {
                       }
                     : undefined,
                   tags: finalData.tags?.filter(
-                    (t) => t.id !== undefined && t.id !== null
+                    (t) => t.id !== undefined && t.id !== null,
                   ).length
                     ? {
                         connect: finalData.tags
@@ -227,10 +227,10 @@ const MultiStepForm: React.FC = () => {
             : undefined,
       };
 
-              // console.log(
-        //   "Request Body for Action:",
-        //   JSON.stringify(requestBody, null, 2)
-        // );
+      // console.log(
+      //   "Request Body for Action:",
+      //   JSON.stringify(requestBody, null, 2)
+      // );
       toast({
         title: "Updating Onboarding Information",
         description: "Please wait...",

@@ -81,7 +81,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   const calculateAudioLevel = (
     analyser: AnalyserNode,
     dataArray: Uint8Array,
-    bufferLength: number
+    bufferLength: number,
   ) => {
     analyser.getByteFrequencyData(dataArray);
     // Calculate average volume level
@@ -102,16 +102,16 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
     const updateLevel = (
       analyser: AnalyserNode,
       dataArray: Uint8Array,
-      bufferLength: number
+      bufferLength: number,
     ) => {
       const normalizedLevel = calculateAudioLevel(
         analyser,
         dataArray,
-        bufferLength
+        bufferLength,
       );
       setMicLevel(normalizedLevel);
       animationFrame = requestAnimationFrame(() =>
-        updateLevel(analyser, dataArray, bufferLength)
+        updateLevel(analyser, dataArray, bufferLength),
       );
     };
 
