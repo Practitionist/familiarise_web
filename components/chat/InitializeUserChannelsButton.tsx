@@ -44,7 +44,7 @@ export const InitializeUserChannelsButton = ({
     setIsLoading(true);
 
     try {
-      console.log(`Initializing channels for user via action: ${userId}`);
+      // console.log(`Initializing channels for user via action: ${userId}`);
       const result = await syncUserEventChannels(userId);
 
       toast({
@@ -52,7 +52,7 @@ export const InitializeUserChannelsButton = ({
         description: "Channels synchronized successfully",
       });
 
-      console.log("Channels synchronized result:", result);
+      // console.log("Channels synchronized result:", result);
 
       if (onSuccess) {
         onSuccess();

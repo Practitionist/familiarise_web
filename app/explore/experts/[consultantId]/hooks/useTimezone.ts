@@ -8,7 +8,7 @@ export function useTimezone() {
     try {
       // Get timezone on client side
       const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      console.log("Browser timezone detected:", browserTimezone);
+      // console.log("Browser timezone detected:", browserTimezone);
       setTimezone(browserTimezone);
     } catch (error) {
       console.error("Error detecting timezone:", error);

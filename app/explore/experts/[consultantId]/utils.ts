@@ -134,14 +134,14 @@ export function createCustomSlot(
     localEndTime: formatTime(adjustedEndDateTime, timezone),
   };
 
-  console.log("Created custom slot:", {
-    utcStart: normalizedSlot.slotStartTimeInUTC,
-    utcEnd: normalizedSlot.slotEndTimeInUTC,
-    localStart: slotTiming.localStartTime,
-    localEnd: slotTiming.localEndTime,
-    timezone,
-    crossesMidnight: adjustedEndDateTime.getDate() > startDateTime.getDate(),
-  });
+      // console.log("Created custom slot:", {
+      //   utcStart: normalizedSlot.slotStartTimeInUTC,
+      //   utcEnd: normalizedSlot.slotEndTimeInUTC,
+      //   localStart: slotTiming.localStartTime,
+      //   localEnd: slotTiming.localEndTime,
+      //   timezone,
+      //   crossesMidnight: adjustedEndDateTime.getDate() > startDateTime.getDate(),
+      // });
 
   return {
     ...slotTiming,

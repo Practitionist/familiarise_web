@@ -81,7 +81,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
   const calculateAudioLevel = (
     analyser: AnalyserNode,
     dataArray: Uint8Array,
-    bufferLength: number,
+    bufferLength: number
   ) => {
     analyser.getByteFrequencyData(dataArray);
     // Calculate average volume level
@@ -102,16 +102,16 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
     const updateLevel = (
       analyser: AnalyserNode,
       dataArray: Uint8Array,
-      bufferLength: number,
+      bufferLength: number
     ) => {
       const normalizedLevel = calculateAudioLevel(
         analyser,
         dataArray,
-        bufferLength,
+        bufferLength
       );
       setMicLevel(normalizedLevel);
       animationFrame = requestAnimationFrame(() =>
-        updateLevel(analyser, dataArray, bufferLength),
+        updateLevel(analyser, dataArray, bufferLength)
       );
     };
 
@@ -166,7 +166,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
         // Use switch case for better readability
         switch (call.state.callingState) {
           case CallingState.JOINED:
-            console.log("Call is already joined");
+            // console.log("Call is already joined");
             toast({
               title: "Already joined meeting",
               description: "You are already connected to this meeting.",
@@ -175,7 +175,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
             return;
 
           case CallingState.JOINING:
-            console.log("Call is currently joining");
+            // console.log("Call is currently joining");
             toast({
               title: "Joining in progress",
               description: "Please wait while we connect you to the meeting.",
@@ -183,7 +183,7 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
             return;
 
           case CallingState.RECONNECTING:
-            console.log("Call is reconnecting");
+            // console.log("Call is reconnecting");
             toast({
               title: "Reconnecting to meeting",
               description: "Please wait while we reconnect you to the meeting.",
@@ -191,16 +191,16 @@ const MeetingSetup = ({ setIsSetupComplete }: MeetingSetupProps) => {
             return;
 
           case CallingState.IDLE:
-            console.log("Call is in idle state, attempting to join");
+            // console.log("Call is in idle state, attempting to join");
             await call.join();
             setIsSetupComplete(true);
             return;
 
           default:
             // For any other state, attempt to join
-            console.log(
-              `Call is in ${call.state.callingState} state, attempting to join`,
-            );
+            // console.log(
+            //   `Call is in ${call.state.callingState} state, attempting to join`
+            // );
             await call.join();
             setIsSetupComplete(true);
             return;
