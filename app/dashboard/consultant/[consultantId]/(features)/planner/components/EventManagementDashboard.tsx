@@ -314,95 +314,158 @@ export function EventManagementDashboard({
   }
 
   return (
-    <div className="container mx-auto p-4">
-      <h1 className="text-3xl font-bold mb-8">Event Management Dashboard</h1>
-
-      <div className="mb-8">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-semibold">Webinars</h2>
-          <Button onClick={() => setIsWebinarDialogOpen(true)}>
-            Create New Webinar
-          </Button>
+    <div className="min-h-screen bg-gray-50">
+      <div className="container mx-auto px-6 py-8">
+        {/* Page Header */}
+        <div className="mb-12">
+          <h1 className="text-4xl font-bold text-gray-900 tracking-tight">
+            Event Management Dashboard
+          </h1>
+          <p className="mt-2 text-lg text-gray-600">
+            Manage your service templates and scheduled sessions
+          </p>
         </div>
-        <EventCarousel
-          events={webinars}
-          onEdit={handleEditWebinar}
-          onDelete={handleWebinarDelete}
-          eventType="webinar"
-          participantCounts={initialData?.participantCounts || {}}
-        />
-      </div>
 
-      <div className="mb-8">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-semibold">Classes</h2>
-          <Button onClick={() => setIsClassDialogOpen(true)}>
-            Create New Class
-          </Button>
-        </div>
-        <EventCarousel
-          events={classes}
-          onEdit={handleEditClass}
-          onDelete={handleClassDelete}
-          eventType="class"
-          participantCounts={initialData?.participantCounts || {}}
-        />
-      </div>
-
-      <div className="mb-8">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-semibold">Consultation Plans</h2>
-          <Button onClick={() => setIsConsultationDialogOpen(true)}>
-            Create New Consultation Plan
-          </Button>
-        </div>
-        {consultationPlansLoading ? (
-          <div className="animate-pulse space-y-4">
-            <div className="h-32 bg-gray-200 rounded"></div>
+        {/* Section Divider */}
+        <div className="relative mb-16">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t-2 border-gray-300"></div>
           </div>
-        ) : (
-          <EventCarousel
-            events={
-              consultationPlans?.map((plan: any) => ({
-                type: "consultation" as const,
-                id: plan.id,
-                consultationPlan: plan,
-              })) || []
-            }
-            onEdit={handleEditConsultationPlan}
-            onDelete={handleConsultationPlanDelete}
-            eventType="consultation"
-            participantCounts={{}}
-          />
-        )}
-      </div>
-
-      <div className="mb-8">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-semibold">Subscription Plans</h2>
-          <Button onClick={() => setIsSubscriptionDialogOpen(true)}>
-            Create New Subscription Plan
-          </Button>
-        </div>
-        {subscriptionPlansLoading ? (
-          <div className="animate-pulse space-y-4">
-            <div className="h-32 bg-gray-200 rounded"></div>
+          <div className="relative flex justify-center">
+            <div className="bg-gray-50 px-8 py-2">
+              <h2 className="text-3xl font-bold text-gray-900">Plan Templates</h2>
+              <p className="text-sm text-gray-600 text-center mt-1">
+                Create reusable service templates for consultations and subscriptions
+              </p>
+            </div>
           </div>
-        ) : (
-          <EventCarousel
-            events={
-              subscriptionPlans?.map((plan: any) => ({
-                type: "subscription" as const,
-                id: plan.id,
-                subscriptionPlan: plan,
-              })) || []
-            }
-            onEdit={handleEditSubscriptionPlan}
-            onDelete={handleSubscriptionPlanDelete}
-            eventType="subscription"
-            participantCounts={{}}
-          />
-        )}
+        </div>
+
+        {/* Plan Templates Section */}
+        <section className="mb-16">
+
+          {/* Consultation Plans */}
+          <div className="mb-12">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold text-gray-800">Consultation Plans</h3>
+              <Button 
+                onClick={() => setIsConsultationDialogOpen(true)}
+                className="bg-black hover:bg-gray-800 text-white font-medium"
+              >
+                Create New Consultation Plan
+              </Button>
+            </div>
+            {consultationPlansLoading ? (
+              <div className="animate-pulse space-y-4">
+                <div className="h-32 bg-gray-200 rounded-lg"></div>
+              </div>
+            ) : (
+              <EventCarousel
+                events={
+                  consultationPlans?.map((plan: any) => ({
+                    type: "consultation" as const,
+                    id: plan.id,
+                    consultationPlan: plan,
+                  })) || []
+                }
+                onEdit={handleEditConsultationPlan}
+                onDelete={handleConsultationPlanDelete}
+                eventType="consultation"
+                participantCounts={{}}
+              />
+            )}
+          </div>
+
+          {/* Subscription Plans */}
+          <div className="mb-12">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold text-gray-800">Subscription Plans</h3>
+              <Button 
+                onClick={() => setIsSubscriptionDialogOpen(true)}
+                className="bg-black hover:bg-gray-800 text-white font-medium"
+              >
+                Create New Subscription Plan
+              </Button>
+            </div>
+            {subscriptionPlansLoading ? (
+              <div className="animate-pulse space-y-4">
+                <div className="h-32 bg-gray-200 rounded-lg"></div>
+              </div>
+            ) : (
+              <EventCarousel
+                events={
+                  subscriptionPlans?.map((plan: any) => ({
+                    type: "subscription" as const,
+                    id: plan.id,
+                    subscriptionPlan: plan,
+                  })) || []
+                }
+                onEdit={handleEditSubscriptionPlan}
+                onDelete={handleSubscriptionPlanDelete}
+                eventType="subscription"
+                participantCounts={{}}
+              />
+            )}
+          </div>
+        </section>
+
+        {/* Section Divider */}
+        <div className="relative my-16">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t-2 border-gray-300"></div>
+          </div>
+          <div className="relative flex justify-center">
+            <div className="bg-gray-50 px-8 py-2">
+              <h2 className="text-3xl font-bold text-gray-900">Live Sessions</h2>
+              <p className="text-sm text-gray-600 text-center mt-1">
+                Schedule and manage your live events
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Live Sessions Section */}
+        <section className="mb-16">
+          {/* Webinar Events */}
+          <div className="mb-12">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold text-gray-800">Webinar Events</h3>
+              <Button 
+                onClick={() => setIsWebinarDialogOpen(true)}
+                className="bg-black hover:bg-gray-800 text-white font-medium"
+              >
+                Create New Webinar
+              </Button>
+            </div>
+            <EventCarousel
+              events={webinars}
+              onEdit={handleEditWebinar}
+              onDelete={handleWebinarDelete}
+              eventType="webinar"
+              participantCounts={initialData?.participantCounts || {}}
+            />
+          </div>
+
+          {/* Class Events */}
+          <div className="mb-12">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-semibold text-gray-800">Class Events</h3>
+              <Button 
+                onClick={() => setIsClassDialogOpen(true)}
+                className="bg-black hover:bg-gray-800 text-white font-medium"
+              >
+                Create New Class
+              </Button>
+            </div>
+            <EventCarousel
+              events={classes}
+              onEdit={handleEditClass}
+              onDelete={handleClassDelete}
+              eventType="class"
+              participantCounts={initialData?.participantCounts || {}}
+            />
+          </div>
+        </section>
       </div>
 
       <EventPlanner

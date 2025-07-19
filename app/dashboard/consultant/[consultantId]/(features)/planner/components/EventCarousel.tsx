@@ -327,19 +327,22 @@ export function EventCarousel({
                         maxParticipants,
                       )}
                     </CardDescription>
-                    <div className="flex items-center gap-x-2 text-sm">
-                      <span className="text-gray-500 font-medium whitespace-nowrap">
-                        {formatDateTime(startDate)}
-                      </span>
-                      {startDate && status !== null && (
-                        <Badge
-                          variant={getStatusVariant(status)}
-                          className="text-xs"
-                        >
-                          {status.toString().replace("_", " ")}
-                        </Badge>
-                      )}
-                    </div>
+                    {/* Only show timing and status for scheduled events (webinar and class), not for plans (consultation and subscription) */}
+                    {(eventType === "webinar" || eventType === "class") && (
+                      <div className="flex items-center gap-x-2 text-sm">
+                        <span className="text-gray-500 font-medium whitespace-nowrap">
+                          {formatDateTime(startDate)}
+                        </span>
+                        {startDate && status !== null && (
+                          <Badge
+                            variant={getStatusVariant(status)}
+                            className="text-xs"
+                          >
+                            {status.toString().replace("_", " ")}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center space-x-1 flex-shrink-0">
                     <Button
