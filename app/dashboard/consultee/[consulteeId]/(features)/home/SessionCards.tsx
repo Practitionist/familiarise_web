@@ -3,6 +3,10 @@
 import { useToast } from "@/hooks/use-toast";
 import { isDevelopmentEnvironment } from "@/utils/env";
 import type { SlotOfAppointment } from "@prisma/client";
+import type {
+  IAppointment,
+  ISlotOfAppointment,
+} from "@/app/dashboard/consultant/[consultantId]/types";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Badge } from "components/ui/badge";
@@ -22,8 +26,8 @@ import { formatTimeUntil } from "../../utils/scheduleHelpers";
 import { formatDateTime, formatTimeString } from "./utils";
 
 interface SlotCardProps {
-  appointment: any;
-  slot: any;
+  appointment: IAppointment;
+  slot: ISlotOfAppointment;
   isTentative: boolean;
   isFirst?: boolean;
 }
@@ -238,18 +242,6 @@ export function SlotCard({
             >
               {status}
             </Badge>
-            {/* Show slot type if available */}
-            {(slot as any).type && (
-              <Badge
-                className={`text-xs rounded-full px-2 py-0.5 ${
-                  (slot as any).type === "WEEKLY"
-                    ? "bg-blue-100 text-blue-700"
-                    : "bg-green-100 text-green-700"
-                }`}
-              >
-                {(slot as any).type === "WEEKLY" ? "📅 Weekly" : "🎯 Custom"}
-              </Badge>
-            )}
             {isTentative && (
               <span className="text-red-500 text-xs italic">*Tentative</span>
             )}

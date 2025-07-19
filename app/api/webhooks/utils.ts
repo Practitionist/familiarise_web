@@ -207,7 +207,6 @@ async function createConsultation(tx: Prisma.TransactionClient, data: any) {
           slotStartTimeInUTC: new Date(data.slotStartTimeInUTC),
           slotEndTimeInUTC: new Date(data.slotEndTimeInUTC),
           isTentative: false,
-          type: data.slotType || "WEEKLY", // Include slot type
         },
       },
     },
@@ -247,7 +246,6 @@ async function createSubscription(tx: Prisma.TransactionClient, data: any) {
           slotStartTimeInUTC: new Date(data.slotStartTimeInUTC),
           slotEndTimeInUTC: new Date(data.slotEndTimeInUTC),
           isTentative: false,
-          type: data.slotType || "WEEKLY", // Include slot type
         },
       },
     },
@@ -287,7 +285,6 @@ async function createWebinar(tx: Prisma.TransactionClient, data: any) {
         webinar.appointment?.slotsOfAppointment[0]?.slotEndTimeInUTC ||
         new Date(),
       isTentative: false,
-      type: data.slotType || "WEEKLY", // Include slot type
       user: { connect: { id: data.userId } },
     },
   });
@@ -318,7 +315,6 @@ async function createClass(tx: Prisma.TransactionClient, data: any) {
           slotStartTimeInUTC: classInstance.startDate || new Date(),
           slotEndTimeInUTC: classInstance.endDate || new Date(),
           isTentative: false,
-          type: data.slotType || "WEEKLY", // Include slot type
           user: { connect: { id: data.userId } },
         },
       },

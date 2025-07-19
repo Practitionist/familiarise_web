@@ -128,7 +128,6 @@ export async function POST(req: NextRequest) {
                 slotStartTimeInUTC: startTime,
                 slotEndTimeInUTC: endTime,
                 isTentative: true, // Mark as tentative since it's pending approval
-                type: slotOfAvailabilityWeeklyId ? "WEEKLY" : "CUSTOM", // Set type based on availability source
                 user: {
                   connect: [
                     { id: session.user.id }, // Consultee

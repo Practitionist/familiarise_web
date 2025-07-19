@@ -202,8 +202,8 @@ export function AppointmentsTab({
                                   : "Time not set";
                               })()}
                             </div>
-                            {/* Show slot type if available */}
-                            {appointment.slotsOfAppointment?.[0] && (
+                            {/* TODO: Remove slot type and add booked indicator */}
+                            {/* {appointment.slotsOfAppointment?.[0] && (
                               <div className="flex items-center gap-2 mt-1">
                                 <span
                                   className={`px-2 py-1 rounded-full text-xs font-medium ${
@@ -219,7 +219,7 @@ export function AppointmentsTab({
                                     : "🎯 Custom"}
                                 </span>
                               </div>
-                            )}
+                            )} */}
                           </div>
                         </div>
                         <div className="flex items-center space-x-2">
