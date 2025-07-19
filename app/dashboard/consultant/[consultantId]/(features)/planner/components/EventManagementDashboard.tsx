@@ -4,12 +4,16 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { EventCarousel } from "./EventCarousel";
 import { EventPlanner } from "./EventPlanner";
-import { WebinarEvent, ClassEvent, Event } from "../types/event";
+import { WebinarEvent, ClassEvent, ConsultationPlanEvent, SubscriptionPlanEvent, Event } from "../types/event";
 import { PlannerService } from "../services/planner";
 import { useToast } from "@/hooks/use-toast";
 import {
   useWebinarMutations,
   useClassMutations,
+  useConsultationPlans,
+  useConsultationPlanMutations,
+  useSubscriptionPlans,
+  useSubscriptionPlanMutations,
   usePlannerRefresh,
 } from "../../../hooks/usePlanner";
 
@@ -37,15 +41,23 @@ export function EventManagementDashboard({
   );
   const [isWebinarDialogOpen, setIsWebinarDialogOpen] = useState(false);
   const [isClassDialogOpen, setIsClassDialogOpen] = useState(false);
+  const [isConsultationDialogOpen, setIsConsultationDialogOpen] = useState(false);
+  const [isSubscriptionDialogOpen, setIsSubscriptionDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
   const [isLoading, setIsLoading] = useState(!initialData);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
+  // React Query hooks for consultation and subscription plans
+  const { data: consultationPlans, isLoading: consultationPlansLoading } = useConsultationPlans(consultantId);
+  const { data: subscriptionPlans, isLoading: subscriptionPlansLoading } = useSubscriptionPlans(consultantId);
+  
   // React Query mutations
   const { deleteWebinar } = useWebinarMutations(consultantId);
   const { deleteClass } = useClassMutations(consultantId);
+  const { createConsultationPlan, updateConsultationPlan, deleteConsultationPlan } = useConsultationPlanMutations(consultantId);
+  const { createSubscriptionPlan, updateSubscriptionPlan, deleteSubscriptionPlan } = useSubscriptionPlanMutations(consultantId);
   const { refreshPlanner } = usePlannerRefresh(consultantId);
   const [currentDate, setCurrentDate] = useState(new Date());
 
@@ -161,6 +173,76 @@ export function EventManagementDashboard({
     deleteClass.mutate(classId);
   };
 
+  // Handle consultation plan saved event
+  const handleConsultationPlanSaved = async (data: Partial<ConsultationPlanEvent>) => {
+    try {
+      setIsSaving(true);
+      console.log("EventManagementDashboard - Saving consultation plan:", data);
+
+      if (data.consultationPlan?.id) {
+        // Update existing plan
+        updateConsultationPlan.mutate({ id: data.consultationPlan.id, ...data.consultationPlan });
+      } else {
+        // Create new plan
+        createConsultationPlan.mutate(data.consultationPlan);
+      }
+
+      setIsConsultationDialogOpen(false);
+      setEditingEvent(null);
+    } catch (error) {
+      console.error("Error saving consultation plan:", error);
+      throw error;
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Handle subscription plan saved event
+  const handleSubscriptionPlanSaved = async (data: Partial<SubscriptionPlanEvent>) => {
+    try {
+      setIsSaving(true);
+      console.log("EventManagementDashboard - Saving subscription plan:", data);
+
+      if (data.subscriptionPlan?.id) {
+        // Update existing plan
+        updateSubscriptionPlan.mutate({ id: data.subscriptionPlan.id, ...data.subscriptionPlan });
+      } else {
+        // Create new plan
+        createSubscriptionPlan.mutate(data.subscriptionPlan);
+      }
+
+      setIsSubscriptionDialogOpen(false);
+      setEditingEvent(null);
+    } catch (error) {
+      console.error("Error saving subscription plan:", error);
+      throw error;
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleEditConsultationPlan = (consultationPlan: ConsultationPlanEvent) => {
+    setEditingEvent(consultationPlan);
+    setIsConsultationDialogOpen(true);
+  };
+
+  const handleEditSubscriptionPlan = (subscriptionPlan: SubscriptionPlanEvent) => {
+    setEditingEvent(subscriptionPlan);
+    setIsSubscriptionDialogOpen(true);
+  };
+
+  // Handle consultation plan delete event using React Query
+  const handleConsultationPlanDelete = async (planId: string) => {
+    console.log(`EventManagementDashboard - Deleting consultation plan: ${planId}`);
+    deleteConsultationPlan.mutate(planId);
+  };
+
+  // Handle subscription plan delete event using React Query
+  const handleSubscriptionPlanDelete = async (planId: string) => {
+    console.log(`EventManagementDashboard - Deleting subscription plan: ${planId}`);
+    deleteSubscriptionPlan.mutate(planId);
+  };
+
   const handleMonthChange = (direction: "prev" | "next") => {
     setCurrentDate((prevDate) =>
       addMonths(prevDate, direction === "prev" ? -1 : 1),
@@ -231,6 +313,58 @@ export function EventManagementDashboard({
         />
       </div>
 
+      <div className="mb-8">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-2xl font-semibold">Consultation Plans</h2>
+          <Button onClick={() => setIsConsultationDialogOpen(true)}>
+            Create New Consultation Plan
+          </Button>
+        </div>
+        {consultationPlansLoading ? (
+          <div className="animate-pulse space-y-4">
+            <div className="h-32 bg-gray-200 rounded"></div>
+          </div>
+        ) : (
+          <EventCarousel
+            events={consultationPlans?.map((plan: any) => ({
+              type: "consultation" as const,
+              id: plan.id,
+              consultationPlan: plan,
+            })) || []}
+            onEdit={handleEditConsultationPlan}
+            onDelete={handleConsultationPlanDelete}
+            eventType="consultation"
+            participantCounts={{}}
+          />
+        )}
+      </div>
+
+      <div className="mb-8">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-2xl font-semibold">Subscription Plans</h2>
+          <Button onClick={() => setIsSubscriptionDialogOpen(true)}>
+            Create New Subscription Plan
+          </Button>
+        </div>
+        {subscriptionPlansLoading ? (
+          <div className="animate-pulse space-y-4">
+            <div className="h-32 bg-gray-200 rounded"></div>
+          </div>
+        ) : (
+          <EventCarousel
+            events={subscriptionPlans?.map((plan: any) => ({
+              type: "subscription" as const,
+              id: plan.id,
+              subscriptionPlan: plan,
+            })) || []}
+            onEdit={handleEditSubscriptionPlan}
+            onDelete={handleSubscriptionPlanDelete}
+            eventType="subscription"
+            participantCounts={{}}
+          />
+        )}
+      </div>
+
       <EventPlanner
         isOpen={isWebinarDialogOpen}
         onClose={() => {
@@ -252,6 +386,30 @@ export function EventManagementDashboard({
         onSaved={handleClassSaved}
         eventType="class"
         initialData={editingEvent as ClassEvent}
+        consultantId={consultantId}
+      />
+
+      <EventPlanner
+        isOpen={isConsultationDialogOpen}
+        onClose={() => {
+          setIsConsultationDialogOpen(false);
+          setEditingEvent(null);
+        }}
+        onSaved={handleConsultationPlanSaved}
+        eventType="consultation"
+        initialData={editingEvent as ConsultationPlanEvent}
+        consultantId={consultantId}
+      />
+
+      <EventPlanner
+        isOpen={isSubscriptionDialogOpen}
+        onClose={() => {
+          setIsSubscriptionDialogOpen(false);
+          setEditingEvent(null);
+        }}
+        onSaved={handleSubscriptionPlanSaved}
+        eventType="subscription"
+        initialData={editingEvent as SubscriptionPlanEvent}
         consultantId={consultantId}
       />
     </div>

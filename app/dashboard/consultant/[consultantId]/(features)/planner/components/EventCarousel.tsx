@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Users, Edit, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons";
-import { WebinarEvent, ClassEvent, Event } from "../types/event";
+import { WebinarEvent, ClassEvent, ConsultationPlanEvent, SubscriptionPlanEvent, Event } from "../types/event";
 import { Badge } from "@/components/ui/badge";
 import { WebinarStatus, ClassStatus } from "@prisma/client";
 
@@ -33,7 +33,23 @@ interface ClassCarouselProps {
   participantCounts: Record<string, number>;
 }
 
-type EventCarouselProps = WebinarCarouselProps | ClassCarouselProps;
+interface ConsultationCarouselProps {
+  events: ConsultationPlanEvent[];
+  onEdit: (event: ConsultationPlanEvent) => void;
+  onDelete: (eventId: string) => Promise<void>;
+  eventType: "consultation";
+  participantCounts: Record<string, number>;
+}
+
+interface SubscriptionCarouselProps {
+  events: SubscriptionPlanEvent[];
+  onEdit: (event: SubscriptionPlanEvent) => void;
+  onDelete: (eventId: string) => Promise<void>;
+  eventType: "subscription";
+  participantCounts: Record<string, number>;
+}
+
+type EventCarouselProps = WebinarCarouselProps | ClassCarouselProps | ConsultationCarouselProps | SubscriptionCarouselProps;
 
 function isWebinarEvent(event: Event): event is WebinarEvent {
   return event.type === "webinar";
@@ -41,6 +57,14 @@ function isWebinarEvent(event: Event): event is WebinarEvent {
 
 function isClassEvent(event: Event): event is ClassEvent {
   return event.type === "class";
+}
+
+function isConsultationPlanEvent(event: Event): event is ConsultationPlanEvent {
+  return event.type === "consultation";
+}
+
+function isSubscriptionPlanEvent(event: Event): event is SubscriptionPlanEvent {
+  return event.type === "subscription";
 }
 
 export function EventCarousel({
@@ -75,6 +99,12 @@ export function EventCarousel({
     if (isClassEvent(event)) {
       return event.classPlan.title;
     }
+    if (isConsultationPlanEvent(event)) {
+      return event.consultationPlan.title;
+    }
+    if (isSubscriptionPlanEvent(event)) {
+      return event.subscriptionPlan.title;
+    }
     throw new Error(`Unknown event type encountered.`);
   };
 
@@ -84,6 +114,12 @@ export function EventCarousel({
     }
     if (isClassEvent(event)) {
       return event.classPlan.description ?? "";
+    }
+    if (isConsultationPlanEvent(event)) {
+      return event.consultationPlan.description ?? "";
+    }
+    if (isSubscriptionPlanEvent(event)) {
+      return event.subscriptionPlan.description ?? "";
     }
     throw new Error(`Unknown event type encountered.`);
   };
@@ -95,6 +131,12 @@ export function EventCarousel({
     if (isClassEvent(event)) {
       return event.classPlan.price;
     }
+    if (isConsultationPlanEvent(event)) {
+      return event.consultationPlan.price;
+    }
+    if (isSubscriptionPlanEvent(event)) {
+      return event.subscriptionPlan.price;
+    }
     throw new Error(`Unknown event type encountered.`);
   };
 
@@ -105,6 +147,12 @@ export function EventCarousel({
     if (isClassEvent(event)) {
       return event.classPlan.priceCurrency ?? "INR"; // Default to INR if null/undefined
     }
+    if (isConsultationPlanEvent(event)) {
+      return "INR"; // Consultations don't have currency field
+    }
+    if (isSubscriptionPlanEvent(event)) {
+      return "INR"; // Subscriptions don't have currency field
+    }
     throw new Error(`Unknown event type encountered.`);
   };
 
@@ -114,6 +162,12 @@ export function EventCarousel({
     }
     if (isClassEvent(event)) {
       return `${event.classPlan.durationInMonths} months`;
+    }
+    if (isConsultationPlanEvent(event)) {
+      return `${event.consultationPlan.durationInHours} hours`;
+    }
+    if (isSubscriptionPlanEvent(event)) {
+      return `${event.subscriptionPlan.durationInMonths} months`;
     }
     throw new Error(`Unknown event type encountered.`);
   };
@@ -128,10 +182,16 @@ export function EventCarousel({
       maxParticipants = event.webinarPlan.maxParticipants;
     } else if (isClassEvent(event)) {
       maxParticipants = event.classPlan.maxParticipants;
+    } else if (isConsultationPlanEvent(event)) {
+      // Consultations are 1-on-1, so max participants is 1
+      maxParticipants = 1;
+    } else if (isSubscriptionPlanEvent(event)) {
+      // Subscriptions are 1-on-1, so max participants is 1
+      maxParticipants = 1;
     }
 
     return {
-      currentParticipants: participantCounts[event.id] ?? 0,
+      currentParticipants: participantCounts[event.id ?? ''] ?? 0,
       maxParticipants,
     };
   };
@@ -140,6 +200,10 @@ export function EventCarousel({
     if (eventType === "webinar" && isWebinarEvent(event)) {
       onEdit(event);
     } else if (eventType === "class" && isClassEvent(event)) {
+      onEdit(event);
+    } else if (eventType === "consultation" && isConsultationPlanEvent(event)) {
+      onEdit(event);
+    } else if (eventType === "subscription" && isSubscriptionPlanEvent(event)) {
       onEdit(event);
     }
   };
@@ -152,7 +216,7 @@ export function EventCarousel({
       )
     ) {
       try {
-        await onDelete(event.id);
+        await onDelete(event.id ?? '');
         // Optionally show a success toast, though parent might handle it
       } catch (error) {
         console.error(`Error deleting ${eventType}:`, error);
@@ -168,6 +232,12 @@ export function EventCarousel({
     }
     if (isClassEvent(event)) {
       return `/dashboard/consultant/${event.classPlan.consultantProfileId}/planner/participants/classes/${event.id}`;
+    }
+    if (isConsultationPlanEvent(event)) {
+      return `/dashboard/consultant/${event.consultationPlan.consultantProfileId}/planner/participants/consultations/${event.id}`;
+    }
+    if (isSubscriptionPlanEvent(event)) {
+      return `/dashboard/consultant/${event.subscriptionPlan.consultantProfileId}/planner/participants/subscriptions/${event.id}`;
     }
     return "#";
   };
