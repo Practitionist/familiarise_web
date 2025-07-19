@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,67 +15,78 @@ import {
 } from "@/components/ui/table";
 import { WebinarEvent } from "../../../types/event";
 import { useParams } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+
+interface WebinarParticipantsData {
+  webinarEvent: WebinarEvent;
+}
+
+// Fetcher function for webinar participants
+const fetchWebinarParticipants = async (webinarId: string): Promise<WebinarParticipantsData> => {
+  const response = await fetch(`/api/participants/webinar/${webinarId}`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch webinar data");
+  }
+  return response.json();
+};
+
+// Fetcher function for removing a participant
+const removeWebinarParticipant = async ({ webinarId, userId }: { webinarId: string; userId: string }) => {
+  const response = await fetch(
+    `/api/participants/webinar/${webinarId}?userId=${userId}`,
+    {
+      method: "DELETE",
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error("Failed to remove participant");
+  }
+
+  return response.json();
+};
 
 export default function WebinarParticipantsPage() {
   const params = useParams();
-  const [webinar, setWebinar] = useState<WebinarEvent | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const webinarId = params.webinarId as string;
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const response = await fetch(
-          `/api/participants/webinar/${params.webinarId}`,
-        );
-        if (!response.ok) {
-          throw new Error("Failed to fetch webinar data");
-        }
-        const data = await response.json();
-        setWebinar(data.webinarEvent);
-        setLoading(false);
-      } catch (error) {
-        console.error("Error fetching webinar data:", error);
-        setLoading(false);
-      }
-    };
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["webinar-participants", webinarId],
+    queryFn: () => fetchWebinarParticipants(webinarId),
+    enabled: !!webinarId,
+  });
 
-    fetchData();
-  }, [params.webinarId]);
-
-  const handleRemoveParticipant = async (userId: string) => {
-    try {
-      const response = await fetch(
-        `/api/participants/webinar/${params.webinarId}?userId=${userId}`,
-        {
-          method: "DELETE",
-        },
-      );
-
-      if (!response.ok) {
-        throw new Error("Failed to remove participant");
-      }
-
-      // Refresh the data
-      const updatedResponse = await fetch(
-        `/api/participants/webinar/${params.webinarId}`,
-      );
-      if (!updatedResponse.ok) {
-        throw new Error("Failed to fetch updated webinar data");
-      }
-      const updatedData = await updatedResponse.json();
-      setWebinar(updatedData.webinarEvent);
-    } catch (error) {
+  const removeParticipantMutation = useMutation({
+    mutationFn: removeWebinarParticipant,
+    onSuccess: () => {
+      // Invalidate and refetch the webinar participants data
+      queryClient.invalidateQueries({ 
+        queryKey: ["webinar-participants", webinarId] 
+      });
+    },
+    onError: (error) => {
       console.error("Error removing participant:", error);
-    }
+    },
+  });
+
+  const handleRemoveParticipant = (userId: string) => {
+    removeParticipantMutation.mutate({ webinarId, userId });
   };
 
-  if (loading) {
+  if (isLoading) {
     return <div>Loading...</div>;
   }
 
-  if (!webinar) {
+  if (error) {
+    return <div>Error loading webinar data</div>;
+  }
+
+  if (!data?.webinarEvent) {
     return <div>Webinar not found</div>;
   }
+
+  const { webinarEvent: webinar } = data;
 
   // Get unique participants by user ID
   const participants = Array.from(
@@ -91,12 +102,12 @@ export default function WebinarParticipantsPage() {
       <Card>
         <CardHeader>
           <Link
-            href={`/dashboard/consultant/${params.consultantId}/planner`}
+            href={`/dashboard/consultant/${params.consultantId}/appointments`}
             passHref
             className="mb-4"
           >
             <Button variant="outline" size="sm">
-              <ArrowLeft className="mr-2 h-4 w-4" /> Back to Planner
+              <ArrowLeft className="mr-2 h-4 w-4" /> Back to Appointments
             </Button>
           </Link>
           <div>
@@ -134,8 +145,9 @@ export default function WebinarParticipantsPage() {
                       variant="outline"
                       size="sm"
                       onClick={() => handleRemoveParticipant(participant.id)}
+                      disabled={removeParticipantMutation.isPending}
                     >
-                      Remove
+                      {removeParticipantMutation.isPending ? "Removing..." : "Remove"}
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -146,4 +158,4 @@ export default function WebinarParticipantsPage() {
       </Card>
     </div>
   );
-}
+} 

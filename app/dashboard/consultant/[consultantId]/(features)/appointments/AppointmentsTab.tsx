@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { useRouter } from "next/navigation";
-import { Clock } from "lucide-react";
+import { Clock, Users } from "lucide-react";
 import { AppointmentsTabProps } from "../../types";
 import { TAppointment } from "@/types/appointment";
 import {
@@ -28,6 +28,10 @@ import {
   canManageGroupTimings,
 } from "./utils/appointmentTimingHelpers";
 import { convertTAppointmentToIAppointment } from "./utils/appointmentTypeAdapter";
+import {
+  getParticipantManagementUrl,
+  supportsParticipantManagement,
+} from "./utils/participantHelpers";
 
 export function AppointmentsTab({
   appointments,
@@ -38,6 +42,22 @@ export function AppointmentsTab({
   const { toast } = useToast();
   const [selectedAppointment, setSelectedAppointment] =
     useState<TAppointment | null>(null);
+
+  // Helper to get consultant ID from appointment
+  const getConsultantIdFromAppointment = (appointment: TAppointment): string => {
+    switch (appointment.appointmentType) {
+      case "CONSULTATION":
+        return appointment.consultation?.consultationPlan?.consultantProfileId || "";
+      case "SUBSCRIPTION":
+        return appointment.subscription?.subscriptionPlan?.consultantProfileId || "";
+      case "WEBINAR":
+        return appointment.webinar?.webinarPlan?.consultantProfileId || "";
+      case "CLASS":
+        return appointment.class?.classPlan?.consultantProfileId || "";
+      default:
+        return "";
+    }
+  };
 
   const getStyleFromBadgeData = (status: string): string => {
     return badgeStyles[status] || badgeStyles.default;
@@ -89,9 +109,9 @@ export function AppointmentsTab({
   const groupedAppointments = groupRecurringAppointments(appointments || []);
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow">
-      <h2 className="text-xl font-semibold mb-4">All Appointments</h2>
-      <div className="space-y-6">
+    <div className="bg-white p-4 sm:p-6 rounded-lg shadow">
+      <h2 className="text-xl font-semibold mb-4 text-gray-800">All Appointments</h2>
+      <div className="space-y-4 sm:space-y-6">
         {Object.entries(groupedAppointments).map(
           ([groupKey, groupAppointments]) => {
             const isRecurring =
@@ -102,12 +122,12 @@ export function AppointmentsTab({
             const firstAppointment = groupAppointments[0];
 
             return (
-              <div key={groupKey} className="border rounded-lg overflow-hidden">
+              <div key={groupKey} className="border rounded-lg overflow-hidden shadow-sm">
                 {/* Group Header */}
                 {isRecurring && (
-                  <div className="bg-gray-50 p-4 border-b">
+                  <div className="bg-gray-50 p-3 sm:p-4 border-b">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-4">
+                      <div className="flex items-center space-x-3 sm:space-x-4 min-w-0">
                         <Avatar>
                           <AvatarImage
                             alt={getConsumeeName(firstAppointment)}
@@ -121,25 +141,49 @@ export function AppointmentsTab({
                           </AvatarFallback>
                         </Avatar>
                         <div>
-                          <h3 className="font-semibold">
+                          <h3 className="font-semibold text-gray-800">
                             {getConsumeeName(firstAppointment)}
                           </h3>
                           <p className="text-sm text-gray-600">{groupTitle}</p>
                         </div>
+                        
+                        {/* Management buttons right after user info */}
+                        <div className="flex items-center gap-2 ml-4">
+                          {canManageGroupTimings(groupAppointments) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 text-xs px-3"
+                              onClick={() =>
+                                setSelectedAppointment(firstAppointment)
+                              }
+                            >
+                              <Clock className="w-3 h-3 mr-1" />
+                              Timings
+                            </Button>
+                          )}
+                          {supportsParticipantManagement(firstAppointment) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 text-xs px-3"
+                              onClick={() =>
+                                router.push(
+                                  getParticipantManagementUrl(
+                                    firstAppointment,
+                                    getConsultantIdFromAppointment(firstAppointment),
+                                  ),
+                                )
+                              }
+                            >
+                              <Users className="w-3 h-3 mr-1" />
+                              Participants
+                            </Button>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex items-center space-x-2">
-                        {canManageGroupTimings(groupAppointments) && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              setSelectedAppointment(firstAppointment)
-                            }
-                          >
-                            <Clock className="w-4 h-4 mr-1" />
-                            Manage Timings
-                          </Button>
-                        )}
+                      
+                      <div className="flex items-center gap-2 flex-shrink-0">
                         <Badge
                           variant="secondary"
                           className={getStyleFromBadgeData(groupStatus)}
@@ -160,95 +204,109 @@ export function AppointmentsTab({
                       ? "bg-black text-white hover:bg-gray-800"
                       : "bg-gray-400 text-white cursor-not-allowed";
 
+                    // Check if this is a one-off event (consultation or webinar)
+                    const isOneOffEvent = !isRecurring && (
+                      appointment.appointmentType === "CONSULTATION" ||
+                      appointment.appointmentType === "WEBINAR"
+                    );
+
+                    const containerClasses = isOneOffEvent
+                      ? "flex items-center justify-between p-4 bg-gray-100 hover:bg-gray-150 border border-gray-200"
+                      : "flex items-center justify-between p-4 hover:bg-gray-50";
+
                     return (
                       <li
                         key={appointment.id}
-                        className="flex items-center justify-between p-4 hover:bg-gray-50"
+                        className={containerClasses}
                       >
-                        <div className="flex items-center space-x-4">
-                          {!isRecurring && (
-                            <Avatar>
-                              <AvatarImage
-                                alt={getConsumeeName(appointment)}
-                                src={getConsumeeImage(appointment)}
-                              />
-                              <AvatarFallback>
-                                {getConsumeeName(appointment)
-                                  .split(" ")
-                                  .map((n: string) => n[0])
-                                  .join("")}
-                              </AvatarFallback>
-                            </Avatar>
-                          )}
-                          <div>
+                        <div className="flex items-center justify-between w-full">
+                          {/* Left: Avatar and User info */}
+                          <div className="flex items-center space-x-3 min-w-0">
                             {!isRecurring && (
-                              <>
-                                <h3 className="font-semibold">
-                                  {getConsumeeName(appointment)}
-                                </h3>
-                                <p className="text-sm text-gray-600">
-                                  {getAppointmentTypeAndPlan(appointment)}
-                                </p>
-                              </>
+                              <Avatar className="flex-shrink-0">
+                                <AvatarImage
+                                  alt={getConsumeeName(appointment)}
+                                  src={getConsumeeImage(appointment)}
+                                />
+                                <AvatarFallback>
+                                  {getConsumeeName(appointment)
+                                    .split(" ")
+                                    .map((n: string) => n[0])
+                                    .join("")}
+                                </AvatarFallback>
+                              </Avatar>
                             )}
-                            <div className="text-sm text-gray-500">
-                              Starts:{" "}
-                              {(() => {
-                                const startTime = getStartTime(appointment);
-                                return startTime
-                                  ? formatAppointmentTime(
-                                      startTime.toISOString(),
-                                    )
-                                  : "Time not set";
-                              })()}
-                            </div>
-                            {/* TODO: Remove slot type and add booked indicator */}
-                            {/* {appointment.slotsOfAppointment?.[0] && (
-                              <div className="flex items-center gap-2 mt-1">
-                                <span
-                                  className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                    appointment.slotsOfAppointment[0].type ===
-                                    "WEEKLY"
-                                      ? "bg-blue-100 text-blue-800"
-                                      : "bg-green-100 text-green-800"
-                                  }`}
-                                >
-                                  {appointment.slotsOfAppointment[0].type ===
-                                  "WEEKLY"
-                                    ? "📅 Weekly"
-                                    : "🎯 Custom"}
-                                </span>
+                            <div className="min-w-0">
+                              {!isRecurring && (
+                                <>
+                                  <h3 className="font-semibold text-gray-800">
+                                    {getConsumeeName(appointment)}
+                                  </h3>
+                                  <p className="text-sm text-gray-600">
+                                    {getAppointmentTypeAndPlan(appointment)}
+                                  </p>
+                                </>
+                              )}
+                              <div className="text-sm text-gray-500">
+                                Starts:{" "}
+                                {(() => {
+                                  const startTime = getStartTime(appointment);
+                                  return startTime
+                                    ? formatAppointmentTime(
+                                        startTime.toISOString(),
+                                      )
+                                    : "Time not set";
+                                })()}
                               </div>
-                            )} */}
-                          </div>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <Badge
-                            variant="secondary"
-                            className={getStyleFromBadgeData(status)}
-                          >
-                            {status}
-                          </Badge>
-                          <div className="flex items-center space-x-2">
-                            {/* Only show individual Manage Timings button for non-recurring events */}
-                            {!isRecurring &&
-                              canManageAppointmentTimings(appointment) && (
+                            </div>
+                            
+                            {/* Management buttons right after user info */}
+                            <div className="flex items-center gap-2 ml-4">
+                              {!isRecurring && canManageAppointmentTimings(appointment) && (
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() =>
-                                    setSelectedAppointment(appointment)
-                                  }
+                                  className="h-8 text-xs px-3"
+                                  onClick={() => setSelectedAppointment(appointment)}
                                 >
-                                  <Clock className="w-4 h-4 mr-1" />
-                                  Manage Timings
+                                  <Clock className="w-3 h-3 mr-1" />
+                                  Timings
                                 </Button>
                               )}
+                              {!isRecurring && supportsParticipantManagement(appointment) && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 text-xs px-3"
+                                  onClick={() =>
+                                    router.push(
+                                      getParticipantManagementUrl(
+                                        appointment,
+                                        getConsultantIdFromAppointment(appointment),
+                                      ),
+                                    )
+                                  }
+                                >
+                                  <Users className="w-3 h-3 mr-1" />
+                                  Participants
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Right side: Status and Join button */}
+                          <div className="flex items-center gap-3 flex-shrink-0">
+                            <Badge
+                              variant="secondary"
+                              className={getStyleFromBadgeData(status)}
+                            >
+                              {status}
+                            </Badge>
                             {status !== "Completed" && (
                               <Button
                                 variant="default"
                                 size="sm"
-                                className={joinButtonStyle}
+                                className={`${joinButtonStyle} h-8 px-4 text-xs`}
                                 disabled={
                                   process.env.NODE_ENV === "production"
                                     ? !isJoinable

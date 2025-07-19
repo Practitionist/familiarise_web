@@ -10,7 +10,7 @@ import {
   CardFooter,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Users, Edit, Trash2 } from "lucide-react";
+import { Edit, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons";
 import {
@@ -235,22 +235,7 @@ export function EventCarousel({
     }
   };
 
-  // Helper function to get profile URL
-  const getProfileUrl = (event: Event) => {
-    if (isWebinarEvent(event)) {
-      return `/dashboard/consultant/${event.webinarPlan.consultantProfileId}/planner/participants/webinars/${event.id}`;
-    }
-    if (isClassEvent(event)) {
-      return `/dashboard/consultant/${event.classPlan.consultantProfileId}/planner/participants/classes/${event.id}`;
-    }
-    if (isConsultationPlanEvent(event)) {
-      return `/dashboard/consultant/${event.consultationPlan.consultantProfileId}/planner/participants/consultations/${event.id}`;
-    }
-    if (isSubscriptionPlanEvent(event)) {
-      return `/dashboard/consultant/${event.subscriptionPlan.consultantProfileId}/planner/participants/subscriptions/${event.id}`;
-    }
-    return "#";
-  };
+
 
   // Helper function for participant display text
   const getParticipantsDisplayText = (current: number, max: number) => {
@@ -386,14 +371,6 @@ export function EventCarousel({
                     Duration: {getEventDuration(event)}
                   </p>
                 </CardContent>
-                <CardFooter className="bg-gray-50 border-t p-4 flex justify-center flex-shrink-0">
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href={getProfileUrl(event)}>
-                      <Users className="w-4 h-4 mr-2" />
-                      Manage Participants
-                    </Link>
-                  </Button>
-                </CardFooter>
               </Card>
             );
           })}
