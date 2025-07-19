@@ -31,11 +31,15 @@ function isClassEvent(event: Event | undefined): event is ClassEvent {
   return event?.type === "class";
 }
 
-function isConsultationPlanEvent(event: Event | undefined): event is ConsultationPlanEvent {
+function isConsultationPlanEvent(
+  event: Event | undefined,
+): event is ConsultationPlanEvent {
   return event?.type === "consultation";
 }
 
-function isSubscriptionPlanEvent(event: Event | undefined): event is SubscriptionPlanEvent {
+function isSubscriptionPlanEvent(
+  event: Event | undefined,
+): event is SubscriptionPlanEvent {
   return event?.type === "subscription";
 }
 
@@ -50,7 +54,11 @@ export function EventPlanner({
   consultantId,
 }: EventPlannerProps & {
   consultantId: string;
-  onSaved?: WebinarCallback | ClassCallback | ConsultationCallback | SubscriptionCallback;
+  onSaved?:
+    | WebinarCallback
+    | ClassCallback
+    | ConsultationCallback
+    | SubscriptionCallback;
 }) {
   // Type safe callback selection based on event type
   if (eventType === "webinar") {
@@ -125,10 +133,13 @@ export function EventPlanner({
     );
   } else if (eventType === "consultation") {
     // Use type assertion to ensure type safety
-    const consultationSaveCallback = (onSave || onSaved) as ConsultationCallback;
+    const consultationSaveCallback = (onSave ||
+      onSaved) as ConsultationCallback;
 
     if (!consultationSaveCallback) {
-      console.error("No save callback provided to EventPlanner for consultation");
+      console.error(
+        "No save callback provided to EventPlanner for consultation",
+      );
     }
 
     // Use the type guard to properly narrow the type
@@ -159,10 +170,13 @@ export function EventPlanner({
     );
   } else if (eventType === "subscription") {
     // Use type assertion to ensure type safety
-    const subscriptionSaveCallback = (onSave || onSaved) as SubscriptionCallback;
+    const subscriptionSaveCallback = (onSave ||
+      onSaved) as SubscriptionCallback;
 
     if (!subscriptionSaveCallback) {
-      console.error("No save callback provided to EventPlanner for subscription");
+      console.error(
+        "No save callback provided to EventPlanner for subscription",
+      );
     }
 
     // Use the type guard to properly narrow the type

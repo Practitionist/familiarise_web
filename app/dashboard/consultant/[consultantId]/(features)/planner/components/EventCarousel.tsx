@@ -13,7 +13,13 @@ import { Button } from "@/components/ui/button";
 import { Users, Edit, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons";
-import { WebinarEvent, ClassEvent, ConsultationPlanEvent, SubscriptionPlanEvent, Event } from "../types/event";
+import {
+  WebinarEvent,
+  ClassEvent,
+  ConsultationPlanEvent,
+  SubscriptionPlanEvent,
+  Event,
+} from "../types/event";
 import { Badge } from "@/components/ui/badge";
 import { WebinarStatus, ClassStatus } from "@prisma/client";
 
@@ -49,7 +55,11 @@ interface SubscriptionCarouselProps {
   participantCounts: Record<string, number>;
 }
 
-type EventCarouselProps = WebinarCarouselProps | ClassCarouselProps | ConsultationCarouselProps | SubscriptionCarouselProps;
+type EventCarouselProps =
+  | WebinarCarouselProps
+  | ClassCarouselProps
+  | ConsultationCarouselProps
+  | SubscriptionCarouselProps;
 
 function isWebinarEvent(event: Event): event is WebinarEvent {
   return event.type === "webinar";
@@ -191,7 +201,7 @@ export function EventCarousel({
     }
 
     return {
-      currentParticipants: participantCounts[event.id ?? ''] ?? 0,
+      currentParticipants: participantCounts[event.id ?? ""] ?? 0,
       maxParticipants,
     };
   };
@@ -216,7 +226,7 @@ export function EventCarousel({
       )
     ) {
       try {
-        await onDelete(event.id ?? '');
+        await onDelete(event.id ?? "");
         // Optionally show a success toast, though parent might handle it
       } catch (error) {
         console.error(`Error deleting ${eventType}:`, error);

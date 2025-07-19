@@ -1,6 +1,13 @@
 import { toast } from "@/hooks/use-toast";
 import { ClassStatus, WebinarStatus } from "@prisma/client";
-import { ClassEvent, Event, FormData, WebinarEvent, ConsultationPlanEvent, SubscriptionPlanEvent } from "../types/event";
+import {
+  ClassEvent,
+  Event,
+  FormData,
+  WebinarEvent,
+  ConsultationPlanEvent,
+  SubscriptionPlanEvent,
+} from "../types/event";
 
 /**
  * Service to manage events (webinars and classes)
@@ -1100,7 +1107,6 @@ export class PlannerService {
     // Note: All rollbacks are handled in saveClass if an error occurs
   }
 
-
   /**
    * Format class contents for API submission
    */
@@ -1229,7 +1235,9 @@ export class PlannerService {
     consultantId: string,
   ): Promise<ConsultationPlanEvent[]> {
     try {
-      const response = await fetch(`/api/plans/consultations?consultantId=${consultantId}`);
+      const response = await fetch(
+        `/api/plans/consultations?consultantId=${consultantId}`,
+      );
 
       if (!response.ok) {
         throw new Error("Failed to fetch consultation plans");
@@ -1255,7 +1263,9 @@ export class PlannerService {
     consultantId: string,
   ): Promise<SubscriptionPlanEvent[]> {
     try {
-      const response = await fetch(`/api/plans/subscriptions?consultantId=${consultantId}`);
+      const response = await fetch(
+        `/api/plans/subscriptions?consultantId=${consultantId}`,
+      );
 
       if (!response.ok) {
         throw new Error("Failed to fetch subscription plans");
@@ -1287,7 +1297,7 @@ export class PlannerService {
       }
 
       const isUpdate = !!planData.consultationPlan.id;
-      const endpoint = isUpdate 
+      const endpoint = isUpdate
         ? `/api/plans/consultations/${planData.consultationPlan.id}`
         : "/api/plans/consultations";
       const method = isUpdate ? "PUT" : "POST";
@@ -1313,7 +1323,8 @@ export class PlannerService {
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(
-          errorData.error || `Failed to ${isUpdate ? "update" : "create"} consultation plan`,
+          errorData.error ||
+            `Failed to ${isUpdate ? "update" : "create"} consultation plan`,
         );
       }
 
@@ -1343,7 +1354,7 @@ export class PlannerService {
       }
 
       const isUpdate = !!planData.subscriptionPlan.id;
-      const endpoint = isUpdate 
+      const endpoint = isUpdate
         ? `/api/plans/subscriptions/${planData.subscriptionPlan.id}`
         : "/api/plans/subscriptions";
       const method = isUpdate ? "PUT" : "POST";
@@ -1369,7 +1380,8 @@ export class PlannerService {
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(
-          errorData.error || `Failed to ${isUpdate ? "update" : "create"} subscription plan`,
+          errorData.error ||
+            `Failed to ${isUpdate ? "update" : "create"} subscription plan`,
         );
       }
 

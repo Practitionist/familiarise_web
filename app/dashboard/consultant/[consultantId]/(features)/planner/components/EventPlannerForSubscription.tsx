@@ -32,7 +32,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import { SubscriptionPlanEvent, SubscriptionPlannerProps } from "../types/event";
+import {
+  SubscriptionPlanEvent,
+  SubscriptionPlannerProps,
+} from "../types/event";
 import iso6391 from "iso-639-1";
 
 // Define the level options
@@ -232,7 +235,8 @@ export function EventPlannerForSubscription({
   };
 
   // Calculate active subscriptions count
-  const activeSubscriptionsCount = initialData?.subscriptionPlan?.subscriptions?.length ?? 0;
+  const activeSubscriptionsCount =
+    initialData?.subscriptionPlan?.subscriptions?.length ?? 0;
 
   return (
     <Dialog
@@ -254,7 +258,8 @@ export function EventPlannerForSubscription({
               : "Fill in the details to create a new subscription plan."}
             {activeSubscriptionsCount > 0 && (
               <div className="mt-2 text-sm text-blue-600">
-                This plan has {activeSubscriptionsCount} subscription request(s).
+                This plan has {activeSubscriptionsCount} subscription
+                request(s).
               </div>
             )}
           </DialogDescription>

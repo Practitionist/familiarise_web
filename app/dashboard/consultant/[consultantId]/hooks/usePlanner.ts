@@ -123,7 +123,9 @@ export function useConsultationPlans(consultantId: string) {
   return useQuery({
     queryKey: ["consultationPlans", consultantId],
     queryFn: async () => {
-      const response = await fetch(`/api/plans/consultations?consultantId=${consultantId}`);
+      const response = await fetch(
+        `/api/plans/consultations?consultantId=${consultantId}`,
+      );
       if (!response.ok) {
         throw new Error("Failed to fetch consultation plans");
       }
@@ -146,16 +148,23 @@ export function useConsultationPlanMutations(consultantId: string) {
       const response = await fetch("/api/plans/consultations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...planData, consultantProfileId: consultantId }),
+        body: JSON.stringify({
+          ...planData,
+          consultantProfileId: consultantId,
+        }),
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to create consultation plan");
+        throw new Error(
+          errorData.error || "Failed to create consultation plan",
+        );
       }
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["consultationPlans", consultantId] });
+      queryClient.invalidateQueries({
+        queryKey: ["consultationPlans", consultantId],
+      });
       queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
       toast({
         title: "Success",
@@ -180,12 +189,16 @@ export function useConsultationPlanMutations(consultantId: string) {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to update consultation plan");
+        throw new Error(
+          errorData.error || "Failed to update consultation plan",
+        );
       }
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["consultationPlans", consultantId] });
+      queryClient.invalidateQueries({
+        queryKey: ["consultationPlans", consultantId],
+      });
       queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
       toast({
         title: "Success",
@@ -208,12 +221,16 @@ export function useConsultationPlanMutations(consultantId: string) {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to delete consultation plan");
+        throw new Error(
+          errorData.error || "Failed to delete consultation plan",
+        );
       }
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["consultationPlans", consultantId] });
+      queryClient.invalidateQueries({
+        queryKey: ["consultationPlans", consultantId],
+      });
       queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
       toast({
         title: "Success",
@@ -229,7 +246,11 @@ export function useConsultationPlanMutations(consultantId: string) {
     },
   });
 
-  return { createConsultationPlan, updateConsultationPlan, deleteConsultationPlan };
+  return {
+    createConsultationPlan,
+    updateConsultationPlan,
+    deleteConsultationPlan,
+  };
 }
 
 // Subscription plan hooks
@@ -237,7 +258,9 @@ export function useSubscriptionPlans(consultantId: string) {
   return useQuery({
     queryKey: ["subscriptionPlans", consultantId],
     queryFn: async () => {
-      const response = await fetch(`/api/plans/subscriptions?consultantId=${consultantId}`);
+      const response = await fetch(
+        `/api/plans/subscriptions?consultantId=${consultantId}`,
+      );
       if (!response.ok) {
         throw new Error("Failed to fetch subscription plans");
       }
@@ -260,16 +283,23 @@ export function useSubscriptionPlanMutations(consultantId: string) {
       const response = await fetch("/api/plans/subscriptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...planData, consultantProfileId: consultantId }),
+        body: JSON.stringify({
+          ...planData,
+          consultantProfileId: consultantId,
+        }),
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to create subscription plan");
+        throw new Error(
+          errorData.error || "Failed to create subscription plan",
+        );
       }
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["subscriptionPlans", consultantId] });
+      queryClient.invalidateQueries({
+        queryKey: ["subscriptionPlans", consultantId],
+      });
       queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
       toast({
         title: "Success",
@@ -294,12 +324,16 @@ export function useSubscriptionPlanMutations(consultantId: string) {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to update subscription plan");
+        throw new Error(
+          errorData.error || "Failed to update subscription plan",
+        );
       }
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["subscriptionPlans", consultantId] });
+      queryClient.invalidateQueries({
+        queryKey: ["subscriptionPlans", consultantId],
+      });
       queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
       toast({
         title: "Success",
@@ -322,12 +356,16 @@ export function useSubscriptionPlanMutations(consultantId: string) {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to delete subscription plan");
+        throw new Error(
+          errorData.error || "Failed to delete subscription plan",
+        );
       }
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["subscriptionPlans", consultantId] });
+      queryClient.invalidateQueries({
+        queryKey: ["subscriptionPlans", consultantId],
+      });
       queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
       toast({
         title: "Success",
@@ -343,7 +381,11 @@ export function useSubscriptionPlanMutations(consultantId: string) {
     },
   });
 
-  return { createSubscriptionPlan, updateSubscriptionPlan, deleteSubscriptionPlan };
+  return {
+    createSubscriptionPlan,
+    updateSubscriptionPlan,
+    deleteSubscriptionPlan,
+  };
 }
 
 // Hook for refetching planner data (useful after saves)
@@ -352,8 +394,12 @@ export function usePlannerRefresh(consultantId: string) {
 
   const refreshPlanner = () => {
     queryClient.invalidateQueries({ queryKey: ["planner", consultantId] });
-    queryClient.invalidateQueries({ queryKey: ["consultationPlans", consultantId] });
-    queryClient.invalidateQueries({ queryKey: ["subscriptionPlans", consultantId] });
+    queryClient.invalidateQueries({
+      queryKey: ["consultationPlans", consultantId],
+    });
+    queryClient.invalidateQueries({
+      queryKey: ["subscriptionPlans", consultantId],
+    });
   };
 
   return { refreshPlanner };

@@ -1,4 +1,9 @@
-import { TWebinar, TClass, TConsultation, TSubscription } from "@/types/appointment";
+import {
+  TWebinar,
+  TClass,
+  TConsultation,
+  TSubscription,
+} from "@/types/appointment";
 import { PlanEmailSupport } from "@prisma/client";
 import { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 
@@ -35,14 +40,24 @@ export type SubscriptionPlanEvent = {
 };
 
 // Update base Event type to be a union
-export type Event = WebinarEvent | ClassEvent | ConsultationPlanEvent | SubscriptionPlanEvent;
+export type Event =
+  | WebinarEvent
+  | ClassEvent
+  | ConsultationPlanEvent
+  | SubscriptionPlanEvent;
 
 export type EventPlannerProps = {
   isOpen: boolean;
   onClose: () => void;
   eventType: "webinar" | "class" | "consultation" | "subscription";
   initialData?: Event;
-  onSave?: (event: Partial<WebinarEvent> | Partial<ClassEvent> | Partial<ConsultationPlanEvent> | Partial<SubscriptionPlanEvent>) => void;
+  onSave?: (
+    event:
+      | Partial<WebinarEvent>
+      | Partial<ClassEvent>
+      | Partial<ConsultationPlanEvent>
+      | Partial<SubscriptionPlanEvent>,
+  ) => void;
   isSaving?: boolean;
 };
 

@@ -4,7 +4,13 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { EventCarousel } from "./EventCarousel";
 import { EventPlanner } from "./EventPlanner";
-import { WebinarEvent, ClassEvent, ConsultationPlanEvent, SubscriptionPlanEvent, Event } from "../types/event";
+import {
+  WebinarEvent,
+  ClassEvent,
+  ConsultationPlanEvent,
+  SubscriptionPlanEvent,
+  Event,
+} from "../types/event";
 import { PlannerService } from "../services/planner";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -41,8 +47,10 @@ export function EventManagementDashboard({
   );
   const [isWebinarDialogOpen, setIsWebinarDialogOpen] = useState(false);
   const [isClassDialogOpen, setIsClassDialogOpen] = useState(false);
-  const [isConsultationDialogOpen, setIsConsultationDialogOpen] = useState(false);
-  const [isSubscriptionDialogOpen, setIsSubscriptionDialogOpen] = useState(false);
+  const [isConsultationDialogOpen, setIsConsultationDialogOpen] =
+    useState(false);
+  const [isSubscriptionDialogOpen, setIsSubscriptionDialogOpen] =
+    useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
   const [isLoading, setIsLoading] = useState(!initialData);
   const [error, setError] = useState<string | null>(null);
@@ -50,14 +58,24 @@ export function EventManagementDashboard({
   const { toast } = useToast();
 
   // React Query hooks for consultation and subscription plans
-  const { data: consultationPlans, isLoading: consultationPlansLoading } = useConsultationPlans(consultantId);
-  const { data: subscriptionPlans, isLoading: subscriptionPlansLoading } = useSubscriptionPlans(consultantId);
-  
+  const { data: consultationPlans, isLoading: consultationPlansLoading } =
+    useConsultationPlans(consultantId);
+  const { data: subscriptionPlans, isLoading: subscriptionPlansLoading } =
+    useSubscriptionPlans(consultantId);
+
   // React Query mutations
   const { deleteWebinar } = useWebinarMutations(consultantId);
   const { deleteClass } = useClassMutations(consultantId);
-  const { createConsultationPlan, updateConsultationPlan, deleteConsultationPlan } = useConsultationPlanMutations(consultantId);
-  const { createSubscriptionPlan, updateSubscriptionPlan, deleteSubscriptionPlan } = useSubscriptionPlanMutations(consultantId);
+  const {
+    createConsultationPlan,
+    updateConsultationPlan,
+    deleteConsultationPlan,
+  } = useConsultationPlanMutations(consultantId);
+  const {
+    createSubscriptionPlan,
+    updateSubscriptionPlan,
+    deleteSubscriptionPlan,
+  } = useSubscriptionPlanMutations(consultantId);
   const { refreshPlanner } = usePlannerRefresh(consultantId);
   const [currentDate, setCurrentDate] = useState(new Date());
 
@@ -174,14 +192,19 @@ export function EventManagementDashboard({
   };
 
   // Handle consultation plan saved event
-  const handleConsultationPlanSaved = async (data: Partial<ConsultationPlanEvent>) => {
+  const handleConsultationPlanSaved = async (
+    data: Partial<ConsultationPlanEvent>,
+  ) => {
     try {
       setIsSaving(true);
       console.log("EventManagementDashboard - Saving consultation plan:", data);
 
       if (data.consultationPlan?.id) {
         // Update existing plan
-        updateConsultationPlan.mutate({ id: data.consultationPlan.id, ...data.consultationPlan });
+        updateConsultationPlan.mutate({
+          id: data.consultationPlan.id,
+          ...data.consultationPlan,
+        });
       } else {
         // Create new plan
         createConsultationPlan.mutate(data.consultationPlan);
@@ -198,14 +221,19 @@ export function EventManagementDashboard({
   };
 
   // Handle subscription plan saved event
-  const handleSubscriptionPlanSaved = async (data: Partial<SubscriptionPlanEvent>) => {
+  const handleSubscriptionPlanSaved = async (
+    data: Partial<SubscriptionPlanEvent>,
+  ) => {
     try {
       setIsSaving(true);
       console.log("EventManagementDashboard - Saving subscription plan:", data);
 
       if (data.subscriptionPlan?.id) {
         // Update existing plan
-        updateSubscriptionPlan.mutate({ id: data.subscriptionPlan.id, ...data.subscriptionPlan });
+        updateSubscriptionPlan.mutate({
+          id: data.subscriptionPlan.id,
+          ...data.subscriptionPlan,
+        });
       } else {
         // Create new plan
         createSubscriptionPlan.mutate(data.subscriptionPlan);
@@ -221,25 +249,33 @@ export function EventManagementDashboard({
     }
   };
 
-  const handleEditConsultationPlan = (consultationPlan: ConsultationPlanEvent) => {
+  const handleEditConsultationPlan = (
+    consultationPlan: ConsultationPlanEvent,
+  ) => {
     setEditingEvent(consultationPlan);
     setIsConsultationDialogOpen(true);
   };
 
-  const handleEditSubscriptionPlan = (subscriptionPlan: SubscriptionPlanEvent) => {
+  const handleEditSubscriptionPlan = (
+    subscriptionPlan: SubscriptionPlanEvent,
+  ) => {
     setEditingEvent(subscriptionPlan);
     setIsSubscriptionDialogOpen(true);
   };
 
   // Handle consultation plan delete event using React Query
   const handleConsultationPlanDelete = async (planId: string) => {
-    console.log(`EventManagementDashboard - Deleting consultation plan: ${planId}`);
+    console.log(
+      `EventManagementDashboard - Deleting consultation plan: ${planId}`,
+    );
     deleteConsultationPlan.mutate(planId);
   };
 
   // Handle subscription plan delete event using React Query
   const handleSubscriptionPlanDelete = async (planId: string) => {
-    console.log(`EventManagementDashboard - Deleting subscription plan: ${planId}`);
+    console.log(
+      `EventManagementDashboard - Deleting subscription plan: ${planId}`,
+    );
     deleteSubscriptionPlan.mutate(planId);
   };
 
@@ -326,11 +362,13 @@ export function EventManagementDashboard({
           </div>
         ) : (
           <EventCarousel
-            events={consultationPlans?.map((plan: any) => ({
-              type: "consultation" as const,
-              id: plan.id,
-              consultationPlan: plan,
-            })) || []}
+            events={
+              consultationPlans?.map((plan: any) => ({
+                type: "consultation" as const,
+                id: plan.id,
+                consultationPlan: plan,
+              })) || []
+            }
             onEdit={handleEditConsultationPlan}
             onDelete={handleConsultationPlanDelete}
             eventType="consultation"
@@ -352,11 +390,13 @@ export function EventManagementDashboard({
           </div>
         ) : (
           <EventCarousel
-            events={subscriptionPlans?.map((plan: any) => ({
-              type: "subscription" as const,
-              id: plan.id,
-              subscriptionPlan: plan,
-            })) || []}
+            events={
+              subscriptionPlans?.map((plan: any) => ({
+                type: "subscription" as const,
+                id: plan.id,
+                subscriptionPlan: plan,
+              })) || []
+            }
             onEdit={handleEditSubscriptionPlan}
             onDelete={handleSubscriptionPlanDelete}
             eventType="subscription"

@@ -32,7 +32,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import { ConsultationPlanEvent, ConsultationPlannerProps } from "../types/event";
+import {
+  ConsultationPlanEvent,
+  ConsultationPlannerProps,
+} from "../types/event";
 import iso6391 from "iso-639-1";
 
 // Define the level options
@@ -219,7 +222,8 @@ export function EventPlannerForConsultation({
   };
 
   // Calculate active consultations count
-  const activeConsultationsCount = initialData?.consultationPlan?.consultations?.length ?? 0;
+  const activeConsultationsCount =
+    initialData?.consultationPlan?.consultations?.length ?? 0;
 
   return (
     <Dialog
@@ -241,7 +245,8 @@ export function EventPlannerForConsultation({
               : "Fill in the details to create a new consultation plan."}
             {activeConsultationsCount > 0 && (
               <div className="mt-2 text-sm text-blue-600">
-                This plan has {activeConsultationsCount} consultation request(s).
+                This plan has {activeConsultationsCount} consultation
+                request(s).
               </div>
             )}
           </DialogDescription>
