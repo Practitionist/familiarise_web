@@ -38,8 +38,12 @@ interface ConsultationParticipantsData {
 }
 
 // Fetcher function for consultation participants
-const fetchConsultationParticipants = async (consultationId: string): Promise<ConsultationParticipantsData> => {
-  const response = await fetch(`/api/participants/consultations/${consultationId}`);
+const fetchConsultationParticipants = async (
+  consultationId: string,
+): Promise<ConsultationParticipantsData> => {
+  const response = await fetch(
+    `/api/participants/consultations/${consultationId}`,
+  );
   if (!response.ok) {
     throw new Error("Failed to fetch consultation data");
   }
@@ -47,7 +51,13 @@ const fetchConsultationParticipants = async (consultationId: string): Promise<Co
 };
 
 // Fetcher function for removing a participant
-const removeConsultationParticipant = async ({ consultationId, userId }: { consultationId: string; userId: string }) => {
+const removeConsultationParticipant = async ({
+  consultationId,
+  userId,
+}: {
+  consultationId: string;
+  userId: string;
+}) => {
   const response = await fetch(
     `/api/participants/consultations/${consultationId}?userId=${userId}`,
     {
@@ -77,8 +87,8 @@ export default function ConsultationParticipantsPage() {
     mutationFn: removeConsultationParticipant,
     onSuccess: () => {
       // Invalidate and refetch the consultation participants data
-      queryClient.invalidateQueries({ 
-        queryKey: ["consultation-participants", consultationId] 
+      queryClient.invalidateQueries({
+        queryKey: ["consultation-participants", consultationId],
       });
     },
     onError: (error) => {
@@ -153,7 +163,9 @@ export default function ConsultationParticipantsPage() {
                       onClick={() => handleRemoveParticipant(participant.id)}
                       disabled={removeParticipantMutation.isPending}
                     >
-                      {removeParticipantMutation.isPending ? "Removing..." : "Remove"}
+                      {removeParticipantMutation.isPending
+                        ? "Removing..."
+                        : "Remove"}
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -164,4 +176,4 @@ export default function ConsultationParticipantsPage() {
       </Card>
     </div>
   );
-} 
+}

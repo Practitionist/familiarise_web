@@ -22,7 +22,9 @@ interface WebinarParticipantsData {
 }
 
 // Fetcher function for webinar participants
-const fetchWebinarParticipants = async (webinarId: string): Promise<WebinarParticipantsData> => {
+const fetchWebinarParticipants = async (
+  webinarId: string,
+): Promise<WebinarParticipantsData> => {
   const response = await fetch(`/api/participants/webinar/${webinarId}`);
   if (!response.ok) {
     throw new Error("Failed to fetch webinar data");
@@ -31,7 +33,13 @@ const fetchWebinarParticipants = async (webinarId: string): Promise<WebinarParti
 };
 
 // Fetcher function for removing a participant
-const removeWebinarParticipant = async ({ webinarId, userId }: { webinarId: string; userId: string }) => {
+const removeWebinarParticipant = async ({
+  webinarId,
+  userId,
+}: {
+  webinarId: string;
+  userId: string;
+}) => {
   const response = await fetch(
     `/api/participants/webinar/${webinarId}?userId=${userId}`,
     {
@@ -61,8 +69,8 @@ export default function WebinarParticipantsPage() {
     mutationFn: removeWebinarParticipant,
     onSuccess: () => {
       // Invalidate and refetch the webinar participants data
-      queryClient.invalidateQueries({ 
-        queryKey: ["webinar-participants", webinarId] 
+      queryClient.invalidateQueries({
+        queryKey: ["webinar-participants", webinarId],
       });
     },
     onError: (error) => {
@@ -147,7 +155,9 @@ export default function WebinarParticipantsPage() {
                       onClick={() => handleRemoveParticipant(participant.id)}
                       disabled={removeParticipantMutation.isPending}
                     >
-                      {removeParticipantMutation.isPending ? "Removing..." : "Remove"}
+                      {removeParticipantMutation.isPending
+                        ? "Removing..."
+                        : "Remove"}
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -158,4 +168,4 @@ export default function WebinarParticipantsPage() {
       </Card>
     </div>
   );
-} 
+}

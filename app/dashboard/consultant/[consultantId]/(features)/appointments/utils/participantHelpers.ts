@@ -22,11 +22,13 @@ export const getParticipantManagementUrl = (
 };
 
 // Check if an appointment type supports participant management
-export const supportsParticipantManagement = (appointment: TAppointment): boolean => {
+export const supportsParticipantManagement = (
+  appointment: TAppointment,
+): boolean => {
   return !!(
     appointment.consultationId ||
     appointment.subscriptionId ||
     appointment.webinarId ||
     appointment.classId
   );
-}; 
+};

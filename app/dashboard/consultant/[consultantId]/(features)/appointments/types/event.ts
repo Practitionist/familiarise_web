@@ -38,4 +38,4 @@ export interface WebinarEvent {
   id: string;
   webinarPlan: WebinarPlan;
   appointment: Appointment | null;
-} 
+}

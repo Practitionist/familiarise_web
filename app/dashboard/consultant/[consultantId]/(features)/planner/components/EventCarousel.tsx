@@ -235,8 +235,6 @@ export function EventCarousel({
     }
   };
 
-
-
   // Helper function for participant display text
   const getParticipantsDisplayText = (current: number, max: number) => {
     return `${current}/${max} participants`;

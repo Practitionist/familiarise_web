@@ -22,7 +22,9 @@ interface ClassParticipantsData {
 }
 
 // Fetcher function for class participants
-const fetchClassParticipants = async (classId: string): Promise<ClassParticipantsData> => {
+const fetchClassParticipants = async (
+  classId: string,
+): Promise<ClassParticipantsData> => {
   const response = await fetch(`/api/participants/class/${classId}`);
   if (!response.ok) {
     throw new Error("Failed to fetch class data");
@@ -31,7 +33,13 @@ const fetchClassParticipants = async (classId: string): Promise<ClassParticipant
 };
 
 // Fetcher function for removing a participant
-const removeClassParticipant = async ({ classId, userId }: { classId: string; userId: string }) => {
+const removeClassParticipant = async ({
+  classId,
+  userId,
+}: {
+  classId: string;
+  userId: string;
+}) => {
   const response = await fetch(
     `/api/participants/class/${classId}?userId=${userId}`,
     {
@@ -61,8 +69,8 @@ export default function ClassParticipantsPage() {
     mutationFn: removeClassParticipant,
     onSuccess: () => {
       // Invalidate and refetch the class participants data
-      queryClient.invalidateQueries({ 
-        queryKey: ["class-participants", classId] 
+      queryClient.invalidateQueries({
+        queryKey: ["class-participants", classId],
       });
     },
     onError: (error) => {
@@ -152,7 +160,9 @@ export default function ClassParticipantsPage() {
                       onClick={() => handleRemoveParticipant(participant.id)}
                       disabled={removeParticipantMutation.isPending}
                     >
-                      {removeParticipantMutation.isPending ? "Removing..." : "Remove"}
+                      {removeParticipantMutation.isPending
+                        ? "Removing..."
+                        : "Remove"}
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -163,4 +173,4 @@ export default function ClassParticipantsPage() {
       </Card>
     </div>
   );
-} 
+}

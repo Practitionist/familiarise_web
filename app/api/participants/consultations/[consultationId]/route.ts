@@ -36,7 +36,7 @@ export async function GET(
 
     // For consultations, participants include the consultant and consultee
     const participants = [];
-    
+
     // Add the consultee who requested the consultation
     if (consultation.requestedBy.user) {
       participants.push(consultation.requestedBy.user);
@@ -44,16 +44,18 @@ export async function GET(
 
     // Add any users from appointment slots (typically the consultant)
     if (consultation.appointment) {
-      const slotUsers = consultation.appointment.slotsOfAppointment
-        ?.flatMap((slot) => slot.user || []) || [];
-      
+      const slotUsers =
+        consultation.appointment.slotsOfAppointment?.flatMap(
+          (slot) => slot.user || [],
+        ) || [];
+
       // Get unique participants by user ID (avoid duplicates)
       const uniqueUsers = Array.from(
         new Map(
-          [...participants, ...slotUsers].map((user) => [user.id, user])
-        ).values()
+          [...participants, ...slotUsers].map((user) => [user.id, user]),
+        ).values(),
       );
-      
+
       return NextResponse.json({
         consultation,
         participants: uniqueUsers,

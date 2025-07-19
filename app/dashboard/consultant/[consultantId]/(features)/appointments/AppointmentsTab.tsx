@@ -44,12 +44,18 @@ export function AppointmentsTab({
     useState<TAppointment | null>(null);
 
   // Helper to get consultant ID from appointment
-  const getConsultantIdFromAppointment = (appointment: TAppointment): string => {
+  const getConsultantIdFromAppointment = (
+    appointment: TAppointment,
+  ): string => {
     switch (appointment.appointmentType) {
       case "CONSULTATION":
-        return appointment.consultation?.consultationPlan?.consultantProfileId || "";
+        return (
+          appointment.consultation?.consultationPlan?.consultantProfileId || ""
+        );
       case "SUBSCRIPTION":
-        return appointment.subscription?.subscriptionPlan?.consultantProfileId || "";
+        return (
+          appointment.subscription?.subscriptionPlan?.consultantProfileId || ""
+        );
       case "WEBINAR":
         return appointment.webinar?.webinarPlan?.consultantProfileId || "";
       case "CLASS":
@@ -110,7 +116,9 @@ export function AppointmentsTab({
 
   return (
     <div className="bg-white p-4 sm:p-6 rounded-lg shadow">
-      <h2 className="text-xl font-semibold mb-4 text-gray-800">All Appointments</h2>
+      <h2 className="text-xl font-semibold mb-4 text-gray-800">
+        All Appointments
+      </h2>
       <div className="space-y-4 sm:space-y-6">
         {Object.entries(groupedAppointments).map(
           ([groupKey, groupAppointments]) => {
@@ -122,7 +130,10 @@ export function AppointmentsTab({
             const firstAppointment = groupAppointments[0];
 
             return (
-              <div key={groupKey} className="border rounded-lg overflow-hidden shadow-sm">
+              <div
+                key={groupKey}
+                className="border rounded-lg overflow-hidden shadow-sm"
+              >
                 {/* Group Header */}
                 {isRecurring && (
                   <div className="bg-gray-50 p-3 sm:p-4 border-b">
@@ -146,7 +157,7 @@ export function AppointmentsTab({
                           </h3>
                           <p className="text-sm text-gray-600">{groupTitle}</p>
                         </div>
-                        
+
                         {/* Management buttons right after user info */}
                         <div className="flex items-center gap-2 ml-4">
                           {canManageGroupTimings(groupAppointments) && (
@@ -171,7 +182,9 @@ export function AppointmentsTab({
                                 router.push(
                                   getParticipantManagementUrl(
                                     firstAppointment,
-                                    getConsultantIdFromAppointment(firstAppointment),
+                                    getConsultantIdFromAppointment(
+                                      firstAppointment,
+                                    ),
                                   ),
                                 )
                               }
@@ -182,7 +195,7 @@ export function AppointmentsTab({
                           )}
                         </div>
                       </div>
-                      
+
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <Badge
                           variant="secondary"
@@ -205,20 +218,17 @@ export function AppointmentsTab({
                       : "bg-gray-400 text-white cursor-not-allowed";
 
                     // Check if this is a one-off event (consultation or webinar)
-                    const isOneOffEvent = !isRecurring && (
-                      appointment.appointmentType === "CONSULTATION" ||
-                      appointment.appointmentType === "WEBINAR"
-                    );
+                    const isOneOffEvent =
+                      !isRecurring &&
+                      (appointment.appointmentType === "CONSULTATION" ||
+                        appointment.appointmentType === "WEBINAR");
 
                     const containerClasses = isOneOffEvent
                       ? "flex items-center justify-between p-4 bg-gray-100 hover:bg-gray-150 border border-gray-200"
                       : "flex items-center justify-between p-4 hover:bg-gray-50";
 
                     return (
-                      <li
-                        key={appointment.id}
-                        className={containerClasses}
-                      >
+                      <li key={appointment.id} className={containerClasses}>
                         <div className="flex items-center justify-between w-full">
                           {/* Left: Avatar and User info */}
                           <div className="flex items-center space-x-3 min-w-0">
@@ -259,38 +269,44 @@ export function AppointmentsTab({
                                 })()}
                               </div>
                             </div>
-                            
+
                             {/* Management buttons right after user info */}
                             <div className="flex items-center gap-2 ml-4">
-                              {!isRecurring && canManageAppointmentTimings(appointment) && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 text-xs px-3"
-                                  onClick={() => setSelectedAppointment(appointment)}
-                                >
-                                  <Clock className="w-3 h-3 mr-1" />
-                                  Timings
-                                </Button>
-                              )}
-                              {!isRecurring && supportsParticipantManagement(appointment) && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 text-xs px-3"
-                                  onClick={() =>
-                                    router.push(
-                                      getParticipantManagementUrl(
-                                        appointment,
-                                        getConsultantIdFromAppointment(appointment),
-                                      ),
-                                    )
-                                  }
-                                >
-                                  <Users className="w-3 h-3 mr-1" />
-                                  Participants
-                                </Button>
-                              )}
+                              {!isRecurring &&
+                                canManageAppointmentTimings(appointment) && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 text-xs px-3"
+                                    onClick={() =>
+                                      setSelectedAppointment(appointment)
+                                    }
+                                  >
+                                    <Clock className="w-3 h-3 mr-1" />
+                                    Timings
+                                  </Button>
+                                )}
+                              {!isRecurring &&
+                                supportsParticipantManagement(appointment) && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 text-xs px-3"
+                                    onClick={() =>
+                                      router.push(
+                                        getParticipantManagementUrl(
+                                          appointment,
+                                          getConsultantIdFromAppointment(
+                                            appointment,
+                                          ),
+                                        ),
+                                      )
+                                    }
+                                  >
+                                    <Users className="w-3 h-3 mr-1" />
+                                    Participants
+                                  </Button>
+                                )}
                             </div>
                           </div>
 

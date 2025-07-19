@@ -36,26 +36,25 @@ export async function GET(
 
     // For subscriptions, participants include the consultant and consultee
     const participants = [];
-    
+
     // Add the consultee who requested the subscription
     if (subscription.requestedBy.user) {
       participants.push(subscription.requestedBy.user);
     }
 
     // Add any users from appointment slots (typically the consultant)
-    const slotUsers = subscription.appointments
-      ?.flatMap(
+    const slotUsers =
+      subscription.appointments?.flatMap(
         (appointment) =>
-          appointment.slotsOfAppointment?.flatMap(
-            (slot) => slot.user || [],
-          ) || [],
+          appointment.slotsOfAppointment?.flatMap((slot) => slot.user || []) ||
+          [],
       ) || [];
 
     // Get unique participants by user ID (avoid duplicates)
     const uniqueUsers = Array.from(
       new Map(
-        [...participants, ...slotUsers].map((user) => [user.id, user])
-      ).values()
+        [...participants, ...slotUsers].map((user) => [user.id, user]),
+      ).values(),
     );
 
     return NextResponse.json({

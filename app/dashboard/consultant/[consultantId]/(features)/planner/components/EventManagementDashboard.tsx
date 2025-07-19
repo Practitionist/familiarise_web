@@ -333,9 +333,12 @@ export function EventManagementDashboard({
           </div>
           <div className="relative flex justify-center">
             <div className="bg-gray-50 px-8 py-2">
-              <h2 className="text-3xl font-bold text-gray-900">Plan Templates</h2>
+              <h2 className="text-3xl font-bold text-gray-900">
+                Plan Templates
+              </h2>
               <p className="text-sm text-gray-600 text-center mt-1">
-                Create reusable service templates for consultations and subscriptions
+                Create reusable service templates for consultations and
+                subscriptions
               </p>
             </div>
           </div>
@@ -343,12 +346,13 @@ export function EventManagementDashboard({
 
         {/* Plan Templates Section */}
         <section className="mb-16">
-
           {/* Consultation Plans */}
           <div className="mb-12">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-semibold text-gray-800">Consultation Plans</h3>
-              <Button 
+              <h3 className="text-xl font-semibold text-gray-800">
+                Consultation Plans
+              </h3>
+              <Button
                 onClick={() => setIsConsultationDialogOpen(true)}
                 className="bg-black hover:bg-gray-800 text-white font-medium"
               >
@@ -379,8 +383,10 @@ export function EventManagementDashboard({
           {/* Subscription Plans */}
           <div className="mb-12">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-semibold text-gray-800">Subscription Plans</h3>
-              <Button 
+              <h3 className="text-xl font-semibold text-gray-800">
+                Subscription Plans
+              </h3>
+              <Button
                 onClick={() => setIsSubscriptionDialogOpen(true)}
                 className="bg-black hover:bg-gray-800 text-white font-medium"
               >
@@ -416,7 +422,9 @@ export function EventManagementDashboard({
           </div>
           <div className="relative flex justify-center">
             <div className="bg-gray-50 px-8 py-2">
-              <h2 className="text-3xl font-bold text-gray-900">Live Sessions</h2>
+              <h2 className="text-3xl font-bold text-gray-900">
+                Live Sessions
+              </h2>
               <p className="text-sm text-gray-600 text-center mt-1">
                 Schedule and manage your live events
               </p>
@@ -429,8 +437,10 @@ export function EventManagementDashboard({
           {/* Webinar Events */}
           <div className="mb-12">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-semibold text-gray-800">Webinar Events</h3>
-              <Button 
+              <h3 className="text-xl font-semibold text-gray-800">
+                Webinar Events
+              </h3>
+              <Button
                 onClick={() => setIsWebinarDialogOpen(true)}
                 className="bg-black hover:bg-gray-800 text-white font-medium"
               >
@@ -449,8 +459,10 @@ export function EventManagementDashboard({
           {/* Class Events */}
           <div className="mb-12">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-semibold text-gray-800">Class Events</h3>
-              <Button 
+              <h3 className="text-xl font-semibold text-gray-800">
+                Class Events
+              </h3>
+              <Button
                 onClick={() => setIsClassDialogOpen(true)}
                 className="bg-black hover:bg-gray-800 text-white font-medium"
               >

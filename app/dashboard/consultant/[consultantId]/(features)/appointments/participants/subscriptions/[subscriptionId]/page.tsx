@@ -38,8 +38,12 @@ interface SubscriptionParticipantsData {
 }
 
 // Fetcher function for subscription participants
-const fetchSubscriptionParticipants = async (subscriptionId: string): Promise<SubscriptionParticipantsData> => {
-  const response = await fetch(`/api/participants/subscriptions/${subscriptionId}`);
+const fetchSubscriptionParticipants = async (
+  subscriptionId: string,
+): Promise<SubscriptionParticipantsData> => {
+  const response = await fetch(
+    `/api/participants/subscriptions/${subscriptionId}`,
+  );
   if (!response.ok) {
     throw new Error("Failed to fetch subscription data");
   }
@@ -47,7 +51,13 @@ const fetchSubscriptionParticipants = async (subscriptionId: string): Promise<Su
 };
 
 // Fetcher function for removing a participant
-const removeSubscriptionParticipant = async ({ subscriptionId, userId }: { subscriptionId: string; userId: string }) => {
+const removeSubscriptionParticipant = async ({
+  subscriptionId,
+  userId,
+}: {
+  subscriptionId: string;
+  userId: string;
+}) => {
   const response = await fetch(
     `/api/participants/subscriptions/${subscriptionId}?userId=${userId}`,
     {
@@ -77,8 +87,8 @@ export default function SubscriptionParticipantsPage() {
     mutationFn: removeSubscriptionParticipant,
     onSuccess: () => {
       // Invalidate and refetch the subscription participants data
-      queryClient.invalidateQueries({ 
-        queryKey: ["subscription-participants", subscriptionId] 
+      queryClient.invalidateQueries({
+        queryKey: ["subscription-participants", subscriptionId],
       });
     },
     onError: (error) => {
@@ -153,7 +163,9 @@ export default function SubscriptionParticipantsPage() {
                       onClick={() => handleRemoveParticipant(participant.id)}
                       disabled={removeParticipantMutation.isPending}
                     >
-                      {removeParticipantMutation.isPending ? "Removing..." : "Remove"}
+                      {removeParticipantMutation.isPending
+                        ? "Removing..."
+                        : "Remove"}
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -164,4 +176,4 @@ export default function SubscriptionParticipantsPage() {
       </Card>
     </div>
   );
-} 
+}
