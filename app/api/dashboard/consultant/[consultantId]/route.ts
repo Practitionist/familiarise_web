@@ -14,7 +14,7 @@ const getBaseUrl = () => {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ consultantId: string }> }
+  { params }: { params: Promise<{ consultantId: string }> },
 ) {
   try {
     const resolvedParams = await params;
@@ -26,32 +26,32 @@ export async function GET(
       await Promise.all([
         fetch(
           `${baseUrl}/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } }
+          { headers: { Cookie: request.headers.get("cookie") || "" } },
         ),
         fetch(
           `${baseUrl}/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } }
+          { headers: { Cookie: request.headers.get("cookie") || "" } },
         ),
         fetch(
           `${baseUrl}/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } }
+          { headers: { Cookie: request.headers.get("cookie") || "" } },
         ),
       ]);
 
     // Check for errors
     if (!appointmentsRes.ok) {
       throw new Error(
-        `Failed to fetch appointments: ${appointmentsRes.statusText}`
+        `Failed to fetch appointments: ${appointmentsRes.statusText}`,
       );
     }
     if (!consultationsRes.ok) {
       throw new Error(
-        `Failed to fetch consultations: ${consultationsRes.statusText}`
+        `Failed to fetch consultations: ${consultationsRes.statusText}`,
       );
     }
     if (!subscriptionsRes.ok) {
       throw new Error(
-        `Failed to fetch subscriptions: ${subscriptionsRes.statusText}`
+        `Failed to fetch subscriptions: ${subscriptionsRes.statusText}`,
       );
     }
 
@@ -135,7 +135,7 @@ export async function GET(
                 },
               },
               startDate: new Date(
-                appointment.subscription.startDate
+                appointment.subscription.startDate,
               ).toISOString(),
               endDate: new Date(appointment.subscription.endDate).toISOString(),
             }
@@ -162,7 +162,7 @@ export async function GET(
               status: appointment.class.status,
             }
           : undefined,
-      })
+      }),
     );
 
     // Transform approvals (same logic as fetchHelpers.ts)
@@ -172,7 +172,7 @@ export async function GET(
         type: "Consultation",
         name: consultation.requestedBy?.user?.name ?? "Unknown",
         requestedAt: consultation.requestedAt,
-      })
+      }),
     );
 
     const subscriptionApprovals = subscriptionsData.data.map(
@@ -181,7 +181,7 @@ export async function GET(
         type: "Subscription",
         name: subscription.requestedBy?.user?.name ?? "Unknown",
         requestedAt: subscription.requestedAt,
-      })
+      }),
     );
 
     // Sort by requestedAt (ISO string) for type safety
@@ -190,7 +190,7 @@ export async function GET(
       ...subscriptionApprovals,
     ].sort(
       (a, b) =>
-        new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime()
+        new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime(),
     );
 
     // Map to display format for response
@@ -222,7 +222,7 @@ export async function GET(
         error: "Failed to fetch dashboard data",
         message: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

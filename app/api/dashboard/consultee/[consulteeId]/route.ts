@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ consulteeId: string }> }
+  { params }: { params: Promise<{ consulteeId: string }> },
 ) {
   try {
     const resolvedParams = await params;
@@ -13,31 +13,31 @@ export async function GET(
       await Promise.all([
         fetch(
           `${request.nextUrl.origin}/api/events/consultations?consulteeProfileId=${consulteeId}`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } }
+          { headers: { Cookie: request.headers.get("cookie") || "" } },
         ),
         fetch(
           `${request.nextUrl.origin}/api/events/subscriptions?consulteeProfileId=${consulteeId}`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } }
+          { headers: { Cookie: request.headers.get("cookie") || "" } },
         ),
         fetch(
           `${request.nextUrl.origin}/api/events/webinars?consulteeProfileId=${consulteeId}`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } }
+          { headers: { Cookie: request.headers.get("cookie") || "" } },
         ),
         fetch(
           `${request.nextUrl.origin}/api/events/classes?consulteeProfileId=${consulteeId}`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } }
+          { headers: { Cookie: request.headers.get("cookie") || "" } },
         ),
       ]);
 
     // Check for errors
     if (!consultationsRes.ok) {
       throw new Error(
-        `Failed to fetch consultations: ${consultationsRes.statusText}`
+        `Failed to fetch consultations: ${consultationsRes.statusText}`,
       );
     }
     if (!subscriptionsRes.ok) {
       throw new Error(
-        `Failed to fetch subscriptions: ${subscriptionsRes.statusText}`
+        `Failed to fetch subscriptions: ${subscriptionsRes.statusText}`,
       );
     }
     if (!webinarsRes.ok) {
@@ -74,7 +74,7 @@ export async function GET(
         error: "Failed to fetch events data",
         message: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

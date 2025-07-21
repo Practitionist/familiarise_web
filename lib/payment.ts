@@ -38,7 +38,7 @@ const initializeRazorpayClient = () => {
   const keySecret = process.env.RAZORPAY_SECRET;
   if (!keyId || !keySecret) {
     console.warn(
-      "RAZORPAY_KEY_ID or RAZORPAY_SECRET not found in environment variables"
+      "RAZORPAY_KEY_ID or RAZORPAY_SECRET not found in environment variables",
     );
     return null;
   }
@@ -80,7 +80,7 @@ export async function createPaymentIntent({
     if (paymentGateway === "STRIPE") {
       if (!stripeClient) {
         throw new Error(
-          "Stripe client not initialized - check STRIPE_SECRET_KEY environment variable"
+          "Stripe client not initialized - check STRIPE_SECRET_KEY environment variable",
         );
       }
       // Create a Checkout Session instead of Payment Intent for better UX
@@ -115,7 +115,7 @@ export async function createPaymentIntent({
     } else if (paymentGateway === "RAZORPAY") {
       if (!razorpay) {
         throw new Error(
-          "Razorpay client not initialized - check RAZORPAY_KEY_ID and RAZORPAY_SECRET environment variables"
+          "Razorpay client not initialized - check RAZORPAY_KEY_ID and RAZORPAY_SECRET environment variables",
         );
       }
       const order = await razorpay.orders.create({
@@ -168,14 +168,14 @@ export async function createPaymentIntent({
 
 export async function cancelPaymentIntent(
   paymentIntentId: string,
-  reason: string = "requested_by_customer"
+  reason: string = "requested_by_customer",
 ): Promise<void> {
   try {
     if (paymentIntentId.startsWith("pi_")) {
       // Stripe payment intent
       if (!stripeClient) {
         console.warn(
-          "Stripe client not initialized - cannot cancel payment intent"
+          "Stripe client not initialized - cannot cancel payment intent",
         );
         return;
       }
@@ -186,25 +186,25 @@ export async function cancelPaymentIntent(
             : "abandoned",
       });
       console.log(
-        `✅ Stripe payment intent cancelled: ${paymentIntentId} - Reason: ${reason}`
+        `✅ Stripe payment intent cancelled: ${paymentIntentId} - Reason: ${reason}`,
       );
     } else if (paymentIntentId.startsWith("cs_")) {
       // Stripe checkout session - can't be cancelled directly, but we can expire it
       if (!stripeClient) {
         console.warn(
-          "Stripe client not initialized - cannot expire checkout session"
+          "Stripe client not initialized - cannot expire checkout session",
         );
         return;
       }
       try {
         await stripeClient.checkout.sessions.expire(paymentIntentId);
         console.log(
-          `✅ Stripe checkout session expired: ${paymentIntentId} - Reason: ${reason}`
+          `✅ Stripe checkout session expired: ${paymentIntentId} - Reason: ${reason}`,
         );
       } catch (expireError) {
         // If session can't be expired (already completed/expired), that's fine
         console.log(
-          `✅ Stripe checkout session was already expired/completed: ${paymentIntentId}`
+          `✅ Stripe checkout session was already expired/completed: ${paymentIntentId}`,
         );
       }
     } else if (paymentIntentId.startsWith("order_")) {
@@ -218,24 +218,24 @@ export async function cancelPaymentIntent(
         if (order.count === 0) {
           // No payments made yet, we can safely ignore
           console.log(
-            `✅ Razorpay order had no payments, safe to ignore: ${paymentIntentId}`
+            `✅ Razorpay order had no payments, safe to ignore: ${paymentIntentId}`,
           );
           return;
         }
         console.warn(
-          `⚠️ Cannot cancel Razorpay order with existing payments: ${paymentIntentId}`
+          `⚠️ Cannot cancel Razorpay order with existing payments: ${paymentIntentId}`,
         );
       } catch (fetchError) {
         // If we can't fetch payments, assume it's safe to ignore
         console.log(
-          `✅ Razorpay order fetch failed (likely safe to ignore): ${paymentIntentId}`
+          `✅ Razorpay order fetch failed (likely safe to ignore): ${paymentIntentId}`,
         );
         return;
       }
     } else {
       // For other payment gateways (LEMON_SQUEEZY, XFLOW), we'll need to implement
       console.warn(
-        `⚠️ Payment intent cancellation not implemented for: ${paymentIntentId}`
+        `⚠️ Payment intent cancellation not implemented for: ${paymentIntentId}`,
       );
       return;
     }
@@ -246,27 +246,27 @@ export async function cancelPaymentIntent(
     // This is a cleanup operation and should be best-effort
     if (error instanceof Error && error.message.includes("already_cancelled")) {
       console.log(
-        `✅ Payment intent was already cancelled: ${paymentIntentId}`
+        `✅ Payment intent was already cancelled: ${paymentIntentId}`,
       );
       return;
     }
 
     console.warn(
-      `⚠️ Failed to cancel payment intent ${paymentIntentId}, but continuing...`
+      `⚠️ Failed to cancel payment intent ${paymentIntentId}, but continuing...`,
     );
   }
 }
 
 export async function initiateRefund(
   paymentIntentId: string,
-  amount?: number
+  amount?: number,
 ): Promise<void> {
   try {
     if (paymentIntentId.startsWith("pi_")) {
       // Stripe refund
       if (!stripeClient) {
         throw new Error(
-          "Stripe client not initialized - cannot process refund"
+          "Stripe client not initialized - cannot process refund",
         );
       }
       await stripeClient.refunds.create({
@@ -277,7 +277,7 @@ export async function initiateRefund(
       // Razorpay refund
       if (!razorpay) {
         throw new Error(
-          "Razorpay client not initialized - cannot process refund"
+          "Razorpay client not initialized - cannot process refund",
         );
       }
       const payments = await razorpay.orders.fetchPayments(paymentIntentId);
@@ -304,7 +304,7 @@ export function getPaymentGateway(paymentIntentId: string): PaymentGateway {
 // Helper function to convert amount to smallest currency unit
 export function convertAmountToSmallestUnit(
   amount: number,
-  currency: string
+  currency: string,
 ): number {
   const multipliers: { [key: string]: number } = {
     USD: 100, // cents
