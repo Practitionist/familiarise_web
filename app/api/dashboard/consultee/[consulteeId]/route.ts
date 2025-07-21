@@ -60,10 +60,10 @@ export async function GET(
     return NextResponse.json({
       success: true,
       data: {
-        consultations: consultationsData.data,
-        subscriptions: subscriptionsData.data,
-        webinars: webinarsData.data,
-        classes: classesData.data,
+        consultations: consultationsData?.data || [],
+        subscriptions: subscriptionsData?.data || [],
+        webinars: webinarsData?.data || [],
+        classes: classesData?.data || [],
       },
     });
   } catch (error) {
