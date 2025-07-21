@@ -1,18 +1,58 @@
 import { NextResponse } from "next/server";
-import { TAppointment } from "@/types/appointment";
+import {
+  TAppointment,
+  TConsultation,
+  TSubscription,
+} from "@/types/appointment";
+import { TConsultantProfile } from "@/types/consultant";
+import { Prisma } from "@prisma/client";
+
+// Type for weekly availability slots
+type TWeeklyAvailability = Prisma.SlotOfAvailabilityWeeklyGetPayload<{
+  include: {
+    consultantProfile: {
+      select: {
+        id: true;
+        user: {
+          select: {
+            name: true;
+            email: true;
+          };
+        };
+      };
+    };
+  };
+}>;
+
+// Type for custom availability slots
+type TCustomAvailability = Prisma.SlotOfAvailabilityCustomGetPayload<{
+  include: {
+    consultantProfile: {
+      select: {
+        id: true;
+        user: {
+          select: {
+            name: true;
+            email: true;
+          };
+        };
+      };
+    };
+  };
+}>;
 
 interface RequestsData {
-  consultations: any[];
-  subscriptions: any[];
-  weeklyAvailability: any[];
-  customAvailability: any[];
+  consultations: TConsultation[];
+  subscriptions: TSubscription[];
+  weeklyAvailability: TWeeklyAvailability[];
+  customAvailability: TCustomAvailability[];
   appointments: TAppointment[];
-  consultant: any;
+  consultant: TConsultantProfile | null;
 }
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ consultantId: string }> },
+  { params }: { params: Promise<{ consultantId: string }> }
 ) {
   try {
     const { consultantId } = await params;
@@ -20,7 +60,7 @@ export async function GET(
     if (!consultantId) {
       return NextResponse.json(
         { error: "Consultant ID is required" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -38,19 +78,19 @@ export async function GET(
       consultantRes,
     ] = await Promise.all([
       fetch(
-        `${baseUrl}/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
+        `${baseUrl}/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`
       ),
       fetch(
-        `${baseUrl}/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
+        `${baseUrl}/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`
       ),
       fetch(
-        `${baseUrl}/api/slots/availability/weekly?consultantProfileId=${consultantId}`,
+        `${baseUrl}/api/slots/availability/weekly?consultantProfileId=${consultantId}`
       ),
       fetch(
-        `${baseUrl}/api/slots/availability/custom?consultantProfileId=${consultantId}`,
+        `${baseUrl}/api/slots/availability/custom?consultantProfileId=${consultantId}`
       ),
       fetch(
-        `${baseUrl}/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
+        `${baseUrl}/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`
       ),
       fetch(`${baseUrl}/api/user/consultants/${consultantId}`),
     ]);
@@ -70,12 +110,12 @@ export async function GET(
         console.error(`Failed to fetch ${name}:`, response.statusText);
         return NextResponse.json(
           { error: `Failed to fetch ${name} data` },
-          { status: response.status },
+          { status: response.status }
         );
       }
     }
 
-    // Parse all responses
+    // Parse all responses with proper typing
     const [
       consultationsData,
       subscriptionsData,
@@ -84,12 +124,12 @@ export async function GET(
       appointmentsData,
       consultantData,
     ] = await Promise.all([
-      consultationsRes.json(),
-      subscriptionsRes.json(),
-      weeklyAvailabilityRes.json(),
-      customAvailabilityRes.json(),
-      appointmentsRes.json(),
-      consultantRes.json(),
+      consultationsRes.json() as Promise<{ data: TConsultation[] }>,
+      subscriptionsRes.json() as Promise<{ data: TSubscription[] }>,
+      weeklyAvailabilityRes.json() as Promise<{ data: TWeeklyAvailability[] }>,
+      customAvailabilityRes.json() as Promise<{ data: TCustomAvailability[] }>,
+      appointmentsRes.json() as Promise<{ data: TAppointment[] }>,
+      consultantRes.json() as Promise<{ data: TConsultantProfile }>,
     ]);
 
     const requestsData: RequestsData = {
@@ -105,11 +145,11 @@ export async function GET(
       data: requestsData,
       success: true,
     });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Error fetching requests data:", error);
     return NextResponse.json(
       { error: "Failed to fetch requests data" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

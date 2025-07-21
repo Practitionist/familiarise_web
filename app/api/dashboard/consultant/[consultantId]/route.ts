@@ -14,7 +14,7 @@ const getBaseUrl = () => {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ consultantId: string }> },
+  { params }: { params: Promise<{ consultantId: string }> }
 ) {
   try {
     const resolvedParams = await params;
@@ -26,32 +26,32 @@ export async function GET(
       await Promise.all([
         fetch(
           `${baseUrl}/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } },
+          { headers: { Cookie: request.headers.get("cookie") || "" } }
         ),
         fetch(
           `${baseUrl}/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } },
+          { headers: { Cookie: request.headers.get("cookie") || "" } }
         ),
         fetch(
           `${baseUrl}/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } },
+          { headers: { Cookie: request.headers.get("cookie") || "" } }
         ),
       ]);
 
     // Check for errors
     if (!appointmentsRes.ok) {
       throw new Error(
-        `Failed to fetch appointments: ${appointmentsRes.statusText}`,
+        `Failed to fetch appointments: ${appointmentsRes.statusText}`
       );
     }
     if (!consultationsRes.ok) {
       throw new Error(
-        `Failed to fetch consultations: ${consultationsRes.statusText}`,
+        `Failed to fetch consultations: ${consultationsRes.statusText}`
       );
     }
     if (!subscriptionsRes.ok) {
       throw new Error(
-        `Failed to fetch subscriptions: ${subscriptionsRes.statusText}`,
+        `Failed to fetch subscriptions: ${subscriptionsRes.statusText}`
       );
     }
 
@@ -135,7 +135,7 @@ export async function GET(
                 },
               },
               startDate: new Date(
-                appointment.subscription.startDate,
+                appointment.subscription.startDate
               ).toISOString(),
               endDate: new Date(appointment.subscription.endDate).toISOString(),
             }
@@ -162,7 +162,7 @@ export async function GET(
               status: appointment.class.status,
             }
           : undefined,
-      }),
+      })
     );
 
     // Transform approvals (same logic as fetchHelpers.ts)
@@ -171,9 +171,8 @@ export async function GET(
         id: consultation.id,
         type: "Consultation",
         name: consultation.requestedBy?.user?.name ?? "Unknown",
-        date: formatDate(consultation.requestedAt),
-        time: formatTime(consultation.requestedAt),
-      }),
+        requestedAt: consultation.requestedAt,
+      })
     );
 
     const subscriptionApprovals = subscriptionsData.data.map(
@@ -181,16 +180,27 @@ export async function GET(
         id: subscription.id,
         type: "Subscription",
         name: subscription.requestedBy?.user?.name ?? "Unknown",
-        date: formatDate(subscription.requestedAt),
-        time: formatTime(subscription.requestedAt),
-      }),
+        requestedAt: subscription.requestedAt,
+      })
     );
 
-    const approvals = [...consultationApprovals, ...subscriptionApprovals].sort(
+    // Sort by requestedAt (ISO string) for type safety
+    const sortedApprovals = [
+      ...consultationApprovals,
+      ...subscriptionApprovals,
+    ].sort(
       (a, b) =>
-        new Date(`${b.date} ${b.time}`).getTime() -
-        new Date(`${a.date} ${a.time}`).getTime(),
+        new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime()
     );
+
+    // Map to display format for response
+    const approvals = sortedApprovals.map((approval) => ({
+      id: approval.id,
+      type: approval.type,
+      name: approval.name,
+      date: formatDate(approval.requestedAt),
+      time: formatTime(approval.requestedAt),
+    }));
 
     // Activities are empty for now (as in original)
     const activities: any[] = [];
@@ -212,7 +222,7 @@ export async function GET(
         error: "Failed to fetch dashboard data",
         message: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

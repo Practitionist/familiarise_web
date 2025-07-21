@@ -12,6 +12,7 @@ export async function POST(
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    
 
     const { appointmentId } = await params;
 
