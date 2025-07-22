@@ -23,11 +23,11 @@ export default function HomeTab({
 }: Readonly<HomeTabProps>) {
   const resolvedParams = React.use(params);
   const consulteeId = resolvedParams.consulteeId;
-  
+
   // Use the centralized query configuration
   const eventsQuery = createConsulteeQueries(consulteeId).events;
   const { data, isLoading, error } = useQuery(eventsQuery);
-  
+
   const [currentMonth, setCurrentMonth] = useState(new Date());
 
   if (!userDetails || isLoading) {
@@ -58,9 +58,15 @@ export default function HomeTab({
   }
 
   const allEvents: EventWithType[] = [
-    ...data.consultations.map((c: any) => ({ ...c, type: "Consultation" as const })),
+    ...data.consultations.map((c: any) => ({
+      ...c,
+      type: "Consultation" as const,
+    })),
     ...data.webinars.map((w: any) => ({ ...w, type: "Webinar" as const })),
-    ...data.subscriptions.map((s: any) => ({ ...s, type: "Subscription" as const })),
+    ...data.subscriptions.map((s: any) => ({
+      ...s,
+      type: "Subscription" as const,
+    })),
     ...data.classes.map((c: any) => ({ ...c, type: "Class" as const })),
   ];
 

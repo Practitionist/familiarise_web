@@ -16,10 +16,10 @@ export default function MessagesTab() {
 
   // Use the centralized query configuration
   const profileQuery = createConsulteeQueries(consulteeId as string).profile;
-  const { 
-    data: consulteeDetails, 
-    isLoading: loading, 
-    error 
+  const {
+    data: consulteeDetails,
+    isLoading: loading,
+    error,
   } = useQuery(profileQuery);
 
   const userId = consulteeDetails?.user?.id || null;

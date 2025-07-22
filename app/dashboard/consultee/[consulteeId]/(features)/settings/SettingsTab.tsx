@@ -38,11 +38,11 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
 
   // Use the centralized query configuration
   const settingsQuery = createConsulteeQueries(consulteeId).settings;
-  const { 
-    data: consulteeData, 
-    isLoading, 
+  const {
+    data: consulteeData,
+    isLoading,
     error,
-    refetch 
+    refetch,
   } = useQuery(settingsQuery);
 
   const [profileSettings, setProfileSettings] = React.useState<ProfileFormData>(

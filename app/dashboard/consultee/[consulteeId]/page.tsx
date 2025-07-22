@@ -18,7 +18,7 @@ export default function ConsulteePage({ params }: Readonly<PageProps>) {
   useEffect(() => {
     if (consulteeId) {
       setIsRedirecting(true);
-      
+
       // Use replace to avoid adding to browser history
       router.replace(`/dashboard/consultee/${consulteeId}/home`);
     }

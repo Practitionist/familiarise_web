@@ -1,11 +1,13 @@
 # Dashboard Prefetching Strategy
 
 ## Overview
+
 This document outlines the enhanced prefetching strategy implemented for both consultant and consultee dashboards, providing lightning-fast navigation and improved user experience.
 
 ## Architecture Overview
 
 ### File Structure
+
 ```
 hooks/
 ├── useCosultantPrefetchDashboard.ts   # Consultant-specific prefetching
@@ -23,22 +25,25 @@ app/dashboard/
 ## Key Improvements Made
 
 ### 1. **Separated Role-Specific Prefetching**
+
 - **Before**: Single hook handling both roles (confusing and inefficient)
 - **After**: Role-specific hooks with optimized queries for each dashboard type
 - **Benefits**: Better performance, cleaner code, easier maintenance
 
 ### 2. **Replaced SWR with React Query**
+
 - **Before**: Mixed SWR + React Query (problematic and inconsistent)
 - **After**: Pure React Query with consistent patterns
 - **Benefits**: Better caching, unified error handling, better dev tools
 
 ### 3. **Priority-Based Prefetching Strategy**
+
 ```typescript
 // Consultant Dashboard Priorities
 Priority 1 (0ms): Dashboard data, appointments, consultant details, help/FAQ
 Priority 2 (500ms): Requests, planner
 
-// Consultee Dashboard Priorities  
+// Consultee Dashboard Priorities
 Priority 1 (0ms): Events data, consultee profile
 Priority 2 (500ms): Feedback, support tickets, messages, settings
 ```
@@ -46,15 +51,18 @@ Priority 2 (500ms): Feedback, support tickets, messages, settings
 ## Consultant Dashboard Implementation
 
 ### Data Structure
+
 The consultant dashboard prefetches:
+
 - **Dashboard Overview**: `/api/dashboard/consultant/{id}`
 - **Appointments**: `/api/slots/appointments?consultantProfileId={id}`
 - **Consultant Details**: `/api/user/consultants/{id}`
-- **Requests**: `/api/dashboard/consultant/{id}/requests` 
+- **Requests**: `/api/dashboard/consultant/{id}/requests`
 - **Planner**: `/api/dashboard/consultant/{id}/planner`
 - **Help/FAQ**: Static import from questions file
 
 ### Navigation Items
+
 ```typescript
 const NAV_ITEMS = [
   { name: "Home", path: "home", icon: "🏠" },
@@ -68,12 +76,14 @@ const NAV_ITEMS = [
 ```
 
 ### Usage Example
+
 ```typescript
 // In consultant layout
 import { usePrefetchDashboard } from "@/hooks/useCosultantPrefetchDashboard";
 
-const { prefetchAllConsultantData, prefetchOnTabHover } = 
-  usePrefetchDashboard({ consultantId });
+const { prefetchAllConsultantData, prefetchOnTabHover } = usePrefetchDashboard({
+  consultantId,
+});
 
 // Auto-prefetch on mount
 useEffect(() => {
@@ -86,7 +96,9 @@ useEffect(() => {
 ## Consultee Dashboard Implementation
 
 ### Data Structure
+
 The consultee dashboard prefetches:
+
 - **Events Data**: `/api/dashboard/consultee/{id}/events`
 - **Consultee Profile**: `/api/user/consultees/{id}`
 - **User Details**: `/api/user/{userId}`
@@ -96,6 +108,7 @@ The consultee dashboard prefetches:
 - **Settings**: Same as profile data
 
 ### Navigation Items
+
 ```typescript
 const NAV_ITEMS = [
   { name: "Home", path: "home" },
@@ -109,11 +122,12 @@ const NAV_ITEMS = [
 ```
 
 ### Usage Example
+
 ```typescript
 // In consultee layout
 import { useConsulteePrefetchDashboard } from "@/hooks/useConsulteePrefetchDashboard";
 
-const { prefetchAllConsulteeData, prefetchUserData, prefetchOnTabHover } = 
+const { prefetchAllConsulteeData, prefetchUserData, prefetchOnTabHover } =
   useConsulteePrefetchDashboard({ consulteeId });
 
 // Auto-prefetch on mount
@@ -128,43 +142,45 @@ useEffect(() => {
 ## Smart Hover Prefetching
 
 ### Consultant Hover Logic
+
 ```typescript
 switch (tabType) {
   case "home":
-    safePrefetch([queries.dashboard], 'high');
+    safePrefetch([queries.dashboard], "high");
     break;
-  case "appointments": 
-    safePrefetch([queries.appointments], 'high');
+  case "appointments":
+    safePrefetch([queries.appointments], "high");
     break;
   case "planner":
-    safePrefetch([queries.planner], 'high');
+    safePrefetch([queries.planner], "high");
     break;
   case "requests":
-    safePrefetch([queries.requests], 'high');
+    safePrefetch([queries.requests], "high");
     break;
   default:
-    safePrefetch([queries.details], 'medium');
+    safePrefetch([queries.details], "medium");
 }
 ```
 
 ### Consultee Hover Logic
+
 ```typescript
 switch (tabType) {
   case "home":
-    safePrefetch([queries.events, queries.profile], 'high');
+    safePrefetch([queries.events, queries.profile], "high");
     break;
   case "appointments":
   case "history":
-    safePrefetch([queries.events], 'high');
+    safePrefetch([queries.events], "high");
     break;
   case "messages":
-    safePrefetch([queries.messages], 'high');
+    safePrefetch([queries.messages], "high");
     break;
   case "feedback":
-    safePrefetch([queries.feedback, queries.supportTickets], 'high');
+    safePrefetch([queries.feedback, queries.supportTickets], "high");
     break;
   case "settings":
-    safePrefetch([queries.settings], 'high');
+    safePrefetch([queries.settings], "high");
     break;
   case "policy":
     // Static content, no prefetching needed
@@ -175,6 +191,7 @@ switch (tabType) {
 ## Hybrid Route + Data Prefetching
 
 ### Route Prefetching (Both Dashboards)
+
 ```typescript
 // Critical routes are prefetched on component mount
 const criticalRoutes = [
@@ -183,17 +200,18 @@ const criticalRoutes = [
   `/dashboard/consultant/${consultantId}/chats`,
 ];
 
-criticalRoutes.forEach(route => {
+criticalRoutes.forEach((route) => {
   router.prefetch(route);
 });
 ```
 
 ### Hover-Based Route Prefetching
+
 ```typescript
 const handleNavHover = (path: string) => {
   // Prefetch the route
   router.prefetch(`/dashboard/consultant/${consultantId}/${path}`);
-  
+
   // Prefetch data for the tab
   prefetchOnTabHover(path);
 };
@@ -202,24 +220,28 @@ const handleNavHover = (path: string) => {
 ## Performance Optimizations
 
 ### 1. **Throttling Mechanism**
+
 Prevents excessive prefetching on rapid hover events:
+
 ```typescript
 const throttledPrefetch = (fn: () => void) => {
   const key = `hover-${tabType}-${consulteeId}`;
   if (prefetchedRef.current.has(key)) return;
-  
+
   prefetchedRef.current.add(key);
   fn();
-  
+
   // Clear throttle after 5 seconds
   setTimeout(() => prefetchedRef.current.delete(key), 5000);
 };
 ```
 
 ### 2. **requestIdleCallback Usage**
+
 Non-blocking prefetch execution:
+
 ```typescript
-if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+if (typeof window !== "undefined" && "requestIdleCallback" in window) {
   window.requestIdleCallback(prefetchCriticalData, { timeout: 2000 });
 } else {
   setTimeout(prefetchCriticalData, 100);
@@ -227,16 +249,18 @@ if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
 ```
 
 ### 3. **Promise.allSettled for Resilience**
+
 Graceful handling of partial failures:
+
 ```typescript
 const results = await Promise.allSettled(
-  queries.map(query => queryClient.prefetchQuery(query))
+  queries.map((query) => queryClient.prefetchQuery(query)),
 );
 
 // Log failures in development only
-if (process.env.NODE_ENV === 'development') {
+if (process.env.NODE_ENV === "development") {
   results.forEach((result, index) => {
-    if (result.status === 'rejected') {
+    if (result.status === "rejected") {
       console.warn(`Prefetch failed:`, queries[index].queryKey, result.reason);
     }
   });
@@ -244,7 +268,9 @@ if (process.env.NODE_ENV === 'development') {
 ```
 
 ### 4. **Memory Management**
+
 Proper cleanup of prefetch tracking:
+
 ```typescript
 useEffect(() => {
   return () => {
@@ -256,19 +282,22 @@ useEffect(() => {
 ## Query Factory Pattern
 
 ### Benefits
+
 - **Centralized Configuration**: All query configs in one place
 - **Type Safety**: Better TypeScript support
 - **Reusability**: Easily reuse queries across components
 - **Maintainability**: Easier to update API endpoints
 
 ### Example Structure
+
 ```typescript
 const createConsultantQueries = (consultantId: string) => ({
   dashboard: {
     queryKey: ["consultant-dashboard", consultantId],
     queryFn: async () => {
       const response = await fetch(`/api/dashboard/consultant/${consultantId}`);
-      if (!response.ok) throw new Error(`Dashboard fetch failed: ${response.statusText}`);
+      if (!response.ok)
+        throw new Error(`Dashboard fetch failed: ${response.statusText}`);
       const data = await response.json();
       return data.data;
     },
@@ -281,10 +310,12 @@ const createConsultantQueries = (consultantId: string) => ({
 ## Error Handling Strategy
 
 ### 1. **Graceful Degradation**
+
 Prefetching failures don't break the app:
+
 ```typescript
 try {
-  await safePrefetch([queries.dashboard], 'high');
+  await safePrefetch([queries.dashboard], "high");
 } catch (error) {
   console.warn("Dashboard data prefetching failed:", error);
   // App continues working normally
@@ -292,31 +323,39 @@ try {
 ```
 
 ### 2. **Development Logging**
+
 Enhanced debugging in development:
+
 ```typescript
-if (process.env.NODE_ENV === 'development') {
+if (process.env.NODE_ENV === "development") {
   console.warn(`Prefetch failed for query:`, queryKey, error);
 }
 ```
 
 ### 3. **API Fallbacks**
+
 Handle missing endpoints gracefully:
+
 ```typescript
 // Messages API might not exist yet
 queryFn: async () => {
-  const response = await fetch(`/api/dashboard/consultee/${consulteeId}/messages`);
+  const response = await fetch(
+    `/api/dashboard/consultee/${consulteeId}/messages`,
+  );
   if (!response.ok) {
     if (response.status === 404) return []; // Fallback for missing API
     throw new Error(`Messages fetch failed: ${response.statusText}`);
   }
   return response.json();
-}
+};
 ```
 
 ## Loading States & UI
 
 ### Enhanced Loading Components
+
 Both dashboards have improved loading states:
+
 ```typescript
 // Page-level loading during redirects
 if (isRedirecting || !consulteeId) {
@@ -330,7 +369,9 @@ if (isRedirecting || !consulteeId) {
 ```
 
 ### Layout-Level Loading
+
 Consistent skeleton loading in both layouts:
+
 ```typescript
 if (isLoading) {
   return (
@@ -349,16 +390,19 @@ if (isLoading) {
 ## Expected Performance Impact
 
 ### Consultant Dashboard
+
 - **60-80% faster** navigation between home, appointments, planner
 - **Instant loading** of frequently accessed tabs
 - **Reduced API calls** through intelligent caching
 
-### Consultee Dashboard  
+### Consultee Dashboard
+
 - **70-85% faster** navigation between events-related tabs
 - **Immediate feedback** display when hovering over feedback tab
 - **Seamless messaging** experience with prefetched chat data
 
 ### Overall Improvements
+
 - **Better Core Web Vitals**: Reduced LCP and CLS
 - **Improved User Experience**: "Instant app" feeling
 - **Network Efficiency**: Smarter request batching and caching
@@ -367,6 +411,7 @@ if (isLoading) {
 ## Monitoring & Debugging
 
 ### React Query DevTools
+
 ```typescript
 // Add to your app root
 {process.env.NODE_ENV === 'development' && (
@@ -375,17 +420,19 @@ if (isLoading) {
 ```
 
 ### Performance Monitoring
+
 ```typescript
 // Measure prefetch effectiveness
-performance.mark('prefetch-start');
+performance.mark("prefetch-start");
 await prefetchAllConsultantData();
-performance.mark('prefetch-end');
-performance.measure('prefetch-duration', 'prefetch-start', 'prefetch-end');
+performance.mark("prefetch-end");
+performance.measure("prefetch-duration", "prefetch-start", "prefetch-end");
 ```
 
 ## Next Steps & Future Enhancements
 
 ### 1. **Server-Side Prefetching**
+
 ```typescript
 // Future: Server Components with prefetched data
 export async function generateStaticParams() {
@@ -394,18 +441,20 @@ export async function generateStaticParams() {
 ```
 
 ### 2. **Service Worker Integration**
+
 ```typescript
 // Advanced caching with service workers
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/dashboard-sw.js');
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/dashboard-sw.js");
 }
 ```
 
 ### 3. **Intersection Observer**
+
 ```typescript
 // Viewport-based prefetching
 const observer = new IntersectionObserver((entries) => {
-  entries.forEach(entry => {
+  entries.forEach((entry) => {
     if (entry.isIntersecting) {
       prefetchTabData(entry.target.dataset.tab);
     }
@@ -414,12 +463,13 @@ const observer = new IntersectionObserver((entries) => {
 ```
 
 ### 4. **Analytics Integration**
+
 Track prefetch effectiveness and user navigation patterns to further optimize the strategy.
 
 ## Migration Checklist
 
 - ✅ **Consultant dashboard** - Converted to React Query + new prefetching
-- ✅ **Consultee dashboard** - Converted to React Query + new prefetching  
+- ✅ **Consultee dashboard** - Converted to React Query + new prefetching
 - ✅ **Role-specific hooks** - Separated concerns for better maintainability
 - ✅ **Enhanced loading states** - Better skeleton UIs and loading feedback
 - ✅ **Route + data prefetching** - Hybrid approach for complete optimization
@@ -427,4 +477,4 @@ Track prefetch effectiveness and user navigation patterns to further optimize th
 - 🔄 **Service worker caching** - Advanced offline capabilities
 - 🔄 **Server-side prefetching** - Initial page load optimization
 
-This implementation provides a solid foundation for high-performance dashboard navigation while maintaining clean, maintainable code that can scale with your application's growth. 
+This implementation provides a solid foundation for high-performance dashboard navigation while maintaining clean, maintainable code that can scale with your application's growth.

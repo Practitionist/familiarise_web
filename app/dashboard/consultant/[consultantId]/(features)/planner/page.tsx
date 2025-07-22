@@ -13,11 +13,7 @@ export default function PlannerPage() {
 
   // Use the centralized query configuration
   const plannerQuery = createConsultantQueries(consultantId).planner;
-  const { 
-    data: plannerData, 
-    isLoading, 
-    error 
-  } = useQuery(plannerQuery);
+  const { data: plannerData, isLoading, error } = useQuery(plannerQuery);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;

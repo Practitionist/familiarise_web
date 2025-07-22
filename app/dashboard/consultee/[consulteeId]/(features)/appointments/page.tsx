@@ -17,14 +17,10 @@ type PageProps = {
 
 export default function AppointmentsPage({ params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
-  
+
   // Use the centralized query configuration
   const eventsQuery = createConsulteeQueries(consulteeId).events;
-  const {
-    data: eventsData,
-    isLoading,
-    error,
-  } = useQuery(eventsQuery);
+  const { data: eventsData, isLoading, error } = useQuery(eventsQuery);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;

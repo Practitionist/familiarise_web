@@ -17,7 +17,7 @@ export default function ConsultantDashboard({
   useEffect(() => {
     if (consultantId) {
       setIsRedirecting(true);
-      
+
       // Use replace to avoid adding to browser history
       router.replace(`/dashboard/consultant/${consultantId}/home`);
     }

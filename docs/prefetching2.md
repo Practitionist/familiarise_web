@@ -1,29 +1,34 @@
 # Improved Prefetching Strategy for Next.js Dashboard
 
 ## Overview
+
 This document outlines the enhanced prefetching strategy implemented for better performance in the consultant/consultee dashboards.
 
 ## Key Improvements Made
 
 ### 1. **Consolidated Data Fetching Libraries**
+
 - **Before**: Mixed SWR + React Query (confusing and problematic)
 - **After**: Pure React Query with consistent patterns
 - **Benefits**: Better caching, simpler debugging, unified error handling
 
 ### 2. **Smart Prefetching Strategy**
+
 ```typescript
 // Priority-based prefetching
 Priority 1 (0ms delay): Critical data (home, appointments, consultant details)
-Priority 2 (500ms delay): Secondary data (requests, planner) 
+Priority 2 (500ms delay): Secondary data (requests, planner)
 Priority 3 (1000ms delay): Heavy data (large datasets)
 ```
 
 ### 3. **Query Factory Pattern**
+
 - Organized queries into factory functions for better maintainability
 - Centralized query configurations
 - Easier testing and debugging
 
 ### 4. **Enhanced Route Prefetching**
+
 - Uses `router.prefetch()` for route-level prefetching
 - Combined with data prefetching for holistic optimization
 - Hover-based prefetching with throttling
@@ -31,44 +36,52 @@ Priority 3 (1000ms delay): Heavy data (large datasets)
 ## Next.js Prefetching Options Comparison
 
 ### 1. **Next.js Link Prefetching (Automatic)**
+
 ```jsx
 <Link href="/dashboard/consultant/123/home" prefetch={true}>
   Home
 </Link>
 ```
+
 - ✅ Automatic viewport-based prefetching
 - ✅ Built-in and optimized by Next.js
 - ❌ Only prefetches routes, not data
 
 ### 2. **Manual Route Prefetching**
+
 ```javascript
-router.prefetch('/dashboard/consultant/123/home')
+router.prefetch("/dashboard/consultant/123/home");
 ```
+
 - ✅ Programmatic control
 - ✅ Can be triggered on hover/interaction
 - ❌ Route-only, no data prefetching
 
 ### 3. **React Query Prefetching (Recommended)**
+
 ```javascript
 queryClient.prefetchQuery({
-  queryKey: ['dashboard', consultantId],
+  queryKey: ["dashboard", consultantId],
   queryFn: fetchDashboardData,
   staleTime: 2 * 60 * 1000,
-})
+});
 ```
+
 - ✅ Data prefetching with caching
 - ✅ Error handling and retry logic
 - ✅ Stale-while-revalidate patterns
 - ✅ Background updates
 
 ### 4. **Hybrid Approach (Our Implementation)**
+
 ```javascript
 // Route prefetching
 router.prefetch(`/dashboard/consultant/${consultantId}/home`);
 
-// Data prefetching  
+// Data prefetching
 prefetchOnTabHover("home");
 ```
+
 - ✅ Best of both worlds
 - ✅ Covers routes AND data
 - ✅ Smart throttling and prioritization
@@ -76,8 +89,9 @@ prefetchOnTabHover("home");
 ## Performance Optimizations
 
 ### 1. **requestIdleCallback Usage**
+
 ```javascript
-if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+if (typeof window !== "undefined" && "requestIdleCallback" in window) {
   window.requestIdleCallback(prefetchCriticalData, { timeout: 2000 });
 } else {
   setTimeout(prefetchCriticalData, 100);
@@ -85,28 +99,30 @@ if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
 ```
 
 ### 2. **Throttling Mechanism**
+
 ```javascript
 const throttledPrefetch = (fn: () => void) => {
   const key = `hover-${tabType}`;
   if (prefetchedRef.current.has(key)) return;
-  
+
   prefetchedRef.current.add(key);
   fn();
-  
+
   // Clear throttle after 5 seconds
   setTimeout(() => prefetchedRef.current.delete(key), 5000);
 };
 ```
 
 ### 3. **Promise.allSettled for Resilience**
+
 ```javascript
 const results = await Promise.allSettled(
-  queries.map(query => queryClient.prefetchQuery(query))
+  queries.map((query) => queryClient.prefetchQuery(query)),
 );
 
 // Handle partial failures gracefully
 results.forEach((result, index) => {
-  if (result.status === 'rejected') {
+  if (result.status === "rejected") {
     console.warn(`Prefetch failed for query:`, queries[index].queryKey);
   }
 });
@@ -115,6 +131,7 @@ results.forEach((result, index) => {
 ## Alternative Approaches to Consider
 
 ### 1. **Server-Side Data Fetching** (Future Enhancement)
+
 ```javascript
 // In layout.tsx or page.tsx (App Router)
 export async function generateStaticParams() {
@@ -129,18 +146,20 @@ async function DashboardData({ consultantId }) {
 ```
 
 ### 2. **Service Worker Prefetching**
+
 ```javascript
 // Register service worker for aggressive caching
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js');
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js");
 }
 ```
 
 ### 3. **Intersection Observer API** (Advanced)
+
 ```javascript
 // Prefetch when elements come into viewport
 const observer = new IntersectionObserver((entries) => {
-  entries.forEach(entry => {
+  entries.forEach((entry) => {
     if (entry.isIntersecting) {
       prefetchTabData(entry.target.dataset.tab);
     }
@@ -160,28 +179,32 @@ const observer = new IntersectionObserver((entries) => {
 ## Monitoring & Debugging
 
 ### React Query DevTools
+
 ```javascript
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
+import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 
 // In your App component
-{process.env.NODE_ENV === 'development' && (
-  <ReactQueryDevtools initialIsOpen={false} />
-)}
+{
+  process.env.NODE_ENV === "development" && (
+    <ReactQueryDevtools initialIsOpen={false} />
+  );
+}
 ```
 
 ### Performance Monitoring
+
 ```javascript
 // Measure prefetch effectiveness
-performance.mark('prefetch-start');
+performance.mark("prefetch-start");
 await prefetchAllConsultantData();
-performance.mark('prefetch-end');
-performance.measure('prefetch-duration', 'prefetch-start', 'prefetch-end');
+performance.mark("prefetch-end");
+performance.measure("prefetch-duration", "prefetch-start", "prefetch-end");
 ```
 
 ## Migration Steps
 
 1. ✅ **Replace SWR with React Query** - Done
-2. ✅ **Implement query factory pattern** - Done  
+2. ✅ **Implement query factory pattern** - Done
 3. ✅ **Add smart hover prefetching** - Done
 4. ✅ **Combine route + data prefetching** - Done
 5. 🔄 **Add server-side prefetching** - Future enhancement
@@ -201,4 +224,4 @@ performance.measure('prefetch-duration', 'prefetch-start', 'prefetch-end');
 2. A/B test with and without aggressive prefetching
 3. Consider implementing service worker for offline capabilities
 4. Add performance monitoring and analytics
-5. Implement server-side prefetching for initial page loads 
+5. Implement server-side prefetching for initial page loads

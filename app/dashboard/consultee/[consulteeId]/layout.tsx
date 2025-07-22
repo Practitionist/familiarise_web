@@ -148,11 +148,15 @@ export default function ConsulteeLayout({
   const queryClient = useQueryClient();
 
   const userId = getEffectiveUserId(session);
-  const { prefetchAllConsulteeData, prefetchUserData, prefetchOnTabHover } = 
+  const { prefetchAllConsulteeData, prefetchUserData, prefetchOnTabHover } =
     useConsulteePrefetchDashboard({ consulteeId });
 
   // Replace SWR with React Query for user details
-  const { data: userDetails, error: userError, isLoading: isLoadingUser } = useQuery({
+  const {
+    data: userDetails,
+    error: userError,
+    isLoading: isLoadingUser,
+  } = useQuery({
     queryKey: ["user-details", userId],
     queryFn: () => fetchUserDetails(userId!),
     enabled: !!userId,
@@ -162,7 +166,11 @@ export default function ConsulteeLayout({
   });
 
   // Replace SWR with React Query for consultee details
-  const { data: profileDetails, error: profileError, isLoading: isLoadingProfile } = useQuery({
+  const {
+    data: profileDetails,
+    error: profileError,
+    isLoading: isLoadingProfile,
+  } = useQuery({
     queryKey: ["consultee-profile", consulteeId],
     queryFn: () => fetchConsulteeDetails(consulteeId),
     enabled: !!consulteeId,
@@ -179,25 +187,25 @@ export default function ConsulteeLayout({
     const prefetchCriticalData = async () => {
       // Prefetch user data
       prefetchUserData(userId);
-      
+
       // Prefetch all consultee dashboard data in background
       prefetchAllConsulteeData();
-      
+
       // Prefetch routes that are likely to be visited
       const criticalRoutes = [
         `/dashboard/consultee/${consulteeId}/home`,
         `/dashboard/consultee/${consulteeId}/appointments`,
         `/dashboard/consultee/${consulteeId}/messages`,
       ];
-      
+
       // Use Next.js router.prefetch for route-level prefetching
-      criticalRoutes.forEach(route => {
+      criticalRoutes.forEach((route) => {
         router.prefetch(route);
       });
     };
 
     // Use requestIdleCallback for non-blocking prefetch
-    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
       window.requestIdleCallback(prefetchCriticalData);
     } else {
       setTimeout(prefetchCriticalData, 100);
@@ -208,7 +216,7 @@ export default function ConsulteeLayout({
   const handleNavHover = (path: string) => {
     // Prefetch the route
     router.prefetch(`/dashboard/consultee/${consulteeId}/${path}`);
-    
+
     // Prefetch data for specific tabs
     prefetchOnTabHover(path);
   };

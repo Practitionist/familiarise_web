@@ -14,14 +14,10 @@ export default function AppointmentsPage({
   params: Promise<{ consultantId: string }>;
 }) {
   const { consultantId } = use(params);
-  
+
   // Use the centralized query configuration
   const appointmentsQuery = createConsultantQueries(consultantId).appointments;
-  const {
-    data: appointments,
-    isLoading,
-    error,
-  } = useQuery(appointmentsQuery);
+  const { data: appointments, isLoading, error } = useQuery(appointmentsQuery);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;

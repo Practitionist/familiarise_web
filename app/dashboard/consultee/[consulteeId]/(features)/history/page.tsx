@@ -13,14 +13,10 @@ type PageProps = {
 
 export default function HistoryPage({ params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
-  
+
   // Use the centralized query configuration
   const eventsQuery = createConsulteeQueries(consulteeId).events;
-  const {
-    data: eventsData,
-    isLoading,
-    error,
-  } = useQuery(eventsQuery);
+  const { data: eventsData, isLoading, error } = useQuery(eventsQuery);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;
@@ -33,7 +29,8 @@ export default function HistoryPage({ params }: Readonly<PageProps>) {
           <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
             <h3 className="font-semibold mb-2">Error Loading History</h3>
             <p className="text-sm">
-              {error.message || "Failed to load booking history. Please try again."}
+              {error.message ||
+                "Failed to load booking history. Please try again."}
             </p>
             <button
               onClick={() => window.location.reload()}

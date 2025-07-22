@@ -45,7 +45,6 @@ export function BookingHistoryTab({
   webinars = [],
   classes = [],
 }: BookingHistoryTabProps) {
-  
   const allEvents: EventWithType[] = [
     ...consultations.map((c) => ({ ...c, type: "Consultation" as const })),
     ...subscriptions.map((s) => ({ ...s, type: "Subscription" as const })),

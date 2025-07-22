@@ -13,12 +13,12 @@ export default function DocumentsPage({
   params: Promise<{ consultantId: string }>;
 }) {
   const { consultantId } = use(params);
-  
+
   // Use useQuery directly (documents are not currently prefetched, but using consistent pattern)
-  const { 
-    data: documents, 
-    isLoading, 
-    error 
+  const {
+    data: documents,
+    isLoading,
+    error,
   } = useQuery({
     queryKey: ["documents", consultantId],
     queryFn: () => fetchDocuments(consultantId),

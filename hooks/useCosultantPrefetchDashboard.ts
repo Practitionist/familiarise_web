@@ -12,37 +12,46 @@ interface PrefetchDashboardOptions {
 // Individual fetcher functions - can be imported separately
 export const fetchConsultantDashboard = async (consultantId: string) => {
   const response = await fetch(`/api/dashboard/consultant/${consultantId}`);
-  if (!response.ok) throw new Error(`Dashboard fetch failed: ${response.statusText}`);
+  if (!response.ok)
+    throw new Error(`Dashboard fetch failed: ${response.statusText}`);
   const data = await response.json();
   return data.data;
 };
 
 export const fetchConsultantAppointments = async (consultantId: string) => {
   const response = await fetch(
-    `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`
+    `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
   );
-  if (!response.ok) throw new Error(`Appointments fetch failed: ${response.statusText}`);
+  if (!response.ok)
+    throw new Error(`Appointments fetch failed: ${response.statusText}`);
   const data = await response.json();
   return data.data;
 };
 
 export const fetchConsultantDetails = async (consultantId: string) => {
   const response = await fetch(`/api/user/consultants/${consultantId}`);
-  if (!response.ok) throw new Error(`Consultant details fetch failed: ${response.statusText}`);
+  if (!response.ok)
+    throw new Error(`Consultant details fetch failed: ${response.statusText}`);
   const data = await response.json();
   return data.data;
 };
 
 export const fetchConsultantRequests = async (consultantId: string) => {
-  const response = await fetch(`/api/dashboard/consultant/${consultantId}/requests`);
-  if (!response.ok) throw new Error(`Requests fetch failed: ${response.statusText}`);
+  const response = await fetch(
+    `/api/dashboard/consultant/${consultantId}/requests`,
+  );
+  if (!response.ok)
+    throw new Error(`Requests fetch failed: ${response.statusText}`);
   const data = await response.json();
   return data.data;
 };
 
 export const fetchConsultantPlanner = async (consultantId: string) => {
-  const response = await fetch(`/api/dashboard/consultant/${consultantId}/planner`);
-  if (!response.ok) throw new Error(`Planner fetch failed: ${response.statusText}`);
+  const response = await fetch(
+    `/api/dashboard/consultant/${consultantId}/planner`,
+  );
+  if (!response.ok)
+    throw new Error(`Planner fetch failed: ${response.statusText}`);
   const data = await response.json();
   return data.data;
 };
@@ -97,8 +106,11 @@ export const createConsulteeQueries = (consulteeId: string) => ({
   events: {
     queryKey: ["consultee-events", consulteeId],
     queryFn: async () => {
-      const response = await fetch(`/api/dashboard/consultee/${consulteeId}/events`);
-      if (!response.ok) throw new Error(`Events fetch failed: ${response.statusText}`);
+      const response = await fetch(
+        `/api/dashboard/consultee/${consulteeId}/events`,
+      );
+      if (!response.ok)
+        throw new Error(`Events fetch failed: ${response.statusText}`);
       const data = await response.json();
       return data.data;
     },
@@ -108,7 +120,8 @@ export const createConsulteeQueries = (consulteeId: string) => ({
     queryKey: ["feedback"],
     queryFn: async () => {
       const response = await fetch(`/api/user/feedbacks`);
-      if (!response.ok) throw new Error(`Feedback fetch failed: ${response.statusText}`);
+      if (!response.ok)
+        throw new Error(`Feedback fetch failed: ${response.statusText}`);
       return response.json();
     },
     staleTime: 2 * 60 * 1000,
@@ -117,7 +130,8 @@ export const createConsulteeQueries = (consulteeId: string) => ({
     queryKey: ["support-tickets"],
     queryFn: async () => {
       const response = await fetch(`/api/user/support-tickets`);
-      if (!response.ok) throw new Error(`Support tickets fetch failed: ${response.statusText}`);
+      if (!response.ok)
+        throw new Error(`Support tickets fetch failed: ${response.statusText}`);
       return response.json();
     },
     staleTime: 2 * 60 * 1000,
@@ -144,34 +158,45 @@ export function usePrefetchDashboard({
   const prefetchedRef = useRef(new Set<string>());
 
   // Utility function to safely prefetch queries
-  const safePrefetch = useCallback(async (queries: any[], priority: 'high' | 'medium' | 'low' = 'medium') => {
-    const delay = priority === 'high' ? 0 : priority === 'medium' ? 500 : 1000;
-    
-    const executePrefetch = async () => {
-      const results = await Promise.allSettled(
-        queries.map(query => queryClient.prefetchQuery(query))
-      );
-      
-      // Log failures in development
-      if (process.env.NODE_ENV === 'development') {
-        results.forEach((result, index) => {
-          if (result.status === 'rejected') {
-            console.warn(`Prefetch failed for query:`, queries[index].queryKey, result.reason);
-          }
-        });
-      }
-    };
+  const safePrefetch = useCallback(
+    async (queries: any[], priority: "high" | "medium" | "low" = "medium") => {
+      const delay =
+        priority === "high" ? 0 : priority === "medium" ? 500 : 1000;
 
-    if (delay > 0) {
-      setTimeout(executePrefetch, delay);
-    } else {
-      executePrefetch();
-    }
-  }, [queryClient]);
+      const executePrefetch = async () => {
+        const results = await Promise.allSettled(
+          queries.map((query) => queryClient.prefetchQuery(query)),
+        );
+
+        // Log failures in development
+        if (process.env.NODE_ENV === "development") {
+          results.forEach((result, index) => {
+            if (result.status === "rejected") {
+              console.warn(
+                `Prefetch failed for query:`,
+                queries[index].queryKey,
+                result.reason,
+              );
+            }
+          });
+        }
+      };
+
+      if (delay > 0) {
+        setTimeout(executePrefetch, delay);
+      } else {
+        executePrefetch();
+      }
+    },
+    [queryClient],
+  );
 
   // Enhanced consultant dashboard prefetching
   const prefetchAllConsultantData = useCallback(async () => {
-    if (!consultantId || prefetchedRef.current.has(`consultant-${consultantId}`)) {
+    if (
+      !consultantId ||
+      prefetchedRef.current.has(`consultant-${consultantId}`)
+    ) {
       return;
     }
 
@@ -180,19 +205,18 @@ export function usePrefetchDashboard({
 
     try {
       // Priority 1: Critical data (home, appointments, details)
-      await safePrefetch([
-        queries.dashboard,
-        queries.appointments,
-        queries.details,
-        staticQueries.help
-      ], 'high');
+      await safePrefetch(
+        [
+          queries.dashboard,
+          queries.appointments,
+          queries.details,
+          staticQueries.help,
+        ],
+        "high",
+      );
 
       // Priority 2: Secondary data (requests, planner)
-      safePrefetch([
-        queries.requests,
-        queries.planner,
-      ], 'medium');
-
+      safePrefetch([queries.requests, queries.planner], "medium");
     } catch (error) {
       console.warn("Consultant data prefetching failed:", error);
     }
@@ -209,70 +233,71 @@ export function usePrefetchDashboard({
 
     try {
       // All consultee data has similar priority
-      await safePrefetch([
-        queries.events,
-        queries.feedback,
-        queries.supportTickets,
-      ], 'high');
-
+      await safePrefetch(
+        [queries.events, queries.feedback, queries.supportTickets],
+        "high",
+      );
     } catch (error) {
       console.warn("Consultee data prefetching failed:", error);
     }
   }, [consulteeId, safePrefetch]);
 
   // Smart hover prefetching for specific tabs
-  const prefetchOnTabHover = useCallback((tabType: string) => {
-    // Prevent excessive prefetching on rapid hover events
-    const throttledPrefetch = (fn: () => void) => {
-      const key = `hover-${tabType}`;
-      if (prefetchedRef.current.has(key)) return;
-      
-      prefetchedRef.current.add(key);
-      fn();
-      
-      // Clear throttle after 5 seconds
-      setTimeout(() => prefetchedRef.current.delete(key), 5000);
-    };
+  const prefetchOnTabHover = useCallback(
+    (tabType: string) => {
+      // Prevent excessive prefetching on rapid hover events
+      const throttledPrefetch = (fn: () => void) => {
+        const key = `hover-${tabType}`;
+        if (prefetchedRef.current.has(key)) return;
 
-    throttledPrefetch(() => {
-      if (consultantId) {
-        const queries = createConsultantQueries(consultantId);
-        
-        switch (tabType) {
-          case "home":
-            safePrefetch([queries.dashboard], 'high');
-            break;
-          case "appointments": 
-            safePrefetch([queries.appointments], 'high');
-            break;
-          case "planner":
-            safePrefetch([queries.planner], 'high');
-            break;
-          case "requests":
-            safePrefetch([queries.requests], 'high');
-            break;
-          default:
-            // For other tabs, prefetch consultant details as fallback
-            safePrefetch([queries.details], 'medium');
-        }
-      }
+        prefetchedRef.current.add(key);
+        fn();
 
-      if (consulteeId) {
-        const queries = createConsulteeQueries(consulteeId);
-        
-        switch (tabType) {
-          case "home":
-          case "appointments":
-          case "history":
-            safePrefetch([queries.events], 'high');
-            break;
-          case "feedback":
-            safePrefetch([queries.feedback], 'high');
-            break;
+        // Clear throttle after 5 seconds
+        setTimeout(() => prefetchedRef.current.delete(key), 5000);
+      };
+
+      throttledPrefetch(() => {
+        if (consultantId) {
+          const queries = createConsultantQueries(consultantId);
+
+          switch (tabType) {
+            case "home":
+              safePrefetch([queries.dashboard], "high");
+              break;
+            case "appointments":
+              safePrefetch([queries.appointments], "high");
+              break;
+            case "planner":
+              safePrefetch([queries.planner], "high");
+              break;
+            case "requests":
+              safePrefetch([queries.requests], "high");
+              break;
+            default:
+              // For other tabs, prefetch consultant details as fallback
+              safePrefetch([queries.details], "medium");
+          }
         }
-      }
-    });
-  }, [consultantId, consulteeId, safePrefetch]);
+
+        if (consulteeId) {
+          const queries = createConsulteeQueries(consulteeId);
+
+          switch (tabType) {
+            case "home":
+            case "appointments":
+            case "history":
+              safePrefetch([queries.events], "high");
+              break;
+            case "feedback":
+              safePrefetch([queries.feedback], "high");
+              break;
+          }
+        }
+      });
+    },
+    [consultantId, consulteeId, safePrefetch],
+  );
 
   // Auto-prefetch on hook initialization when aggressive prefetching is enabled
   useEffect(() => {
@@ -294,7 +319,13 @@ export function usePrefetchDashboard({
     if (consulteeId) {
       schedulePretech(() => prefetchAllConsulteeData());
     }
-  }, [consultantId, consulteeId, enableAggressivePrefetch, prefetchAllConsultantData, prefetchAllConsulteeData]);
+  }, [
+    consultantId,
+    consulteeId,
+    enableAggressivePrefetch,
+    prefetchAllConsultantData,
+    prefetchAllConsulteeData,
+  ]);
 
   // Cleanup function to clear prefetch tracking on unmount
   useEffect(() => {

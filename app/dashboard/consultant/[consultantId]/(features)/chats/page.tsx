@@ -13,14 +13,10 @@ export default function ChatsPage({
   params: Promise<{ consultantId: string }>;
 }) {
   const { consultantId } = use(params);
-  
+
   // Use the centralized query configuration
   const detailsQuery = createConsultantQueries(consultantId).details;
-  const {
-    data: consultantDetails,
-    isLoading,
-    error,
-  } = useQuery(detailsQuery);
+  const { data: consultantDetails, isLoading, error } = useQuery(detailsQuery);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;

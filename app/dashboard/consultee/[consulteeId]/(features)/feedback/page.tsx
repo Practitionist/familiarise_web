@@ -22,7 +22,7 @@ export default function FeedbackPage({ params }: Readonly<PageProps>) {
     isLoading: feedbackLoading,
     error: feedbackError,
   } = useQuery(consulteeQueries.feedback);
-  
+
   const {
     data: tickets,
     isLoading: ticketsLoading,

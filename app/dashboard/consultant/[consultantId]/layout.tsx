@@ -70,7 +70,11 @@ export default function ConsultantLayout({
     usePrefetchDashboard({ consultantId });
 
   // Replace SWR with React Query
-  const { data: consultantData, error, isLoading } = useQuery({
+  const {
+    data: consultantData,
+    error,
+    isLoading,
+  } = useQuery({
     queryKey: [`consultant-${consultantId}`, consultantId],
     queryFn: () => fetchConsultantData(consultantId),
     enabled: !!userId,
@@ -87,22 +91,22 @@ export default function ConsultantLayout({
     const prefetchCriticalData = async () => {
       // Prefetch all dashboard data in background
       prefetchAllConsultantData();
-      
+
       // Prefetch routes that are likely to be visited
       const criticalRoutes = [
         `/dashboard/consultant/${consultantId}/home`,
         `/dashboard/consultant/${consultantId}/appointments`,
         `/dashboard/consultant/${consultantId}/chats`,
       ];
-      
+
       // Use Next.js router.prefetch for route-level prefetching
-      criticalRoutes.forEach(route => {
+      criticalRoutes.forEach((route) => {
         router.prefetch(route);
       });
     };
 
     // Use requestIdleCallback for non-blocking prefetch
-    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
       window.requestIdleCallback(prefetchCriticalData);
     } else {
       setTimeout(prefetchCriticalData, 100);
@@ -113,14 +117,14 @@ export default function ConsultantLayout({
   const handleNavHover = (path: string) => {
     // Prefetch the route
     router.prefetch(`/dashboard/consultant/${consultantId}/${path}`);
-    
+
     // Prefetch data for specific tabs
     if (path === "home") {
       prefetchOnTabHover("home");
     } else if (path === "appointments") {
       prefetchOnTabHover("appointments");
     } else if (path === "planner") {
-      prefetchOnTabHover("planner");  
+      prefetchOnTabHover("planner");
     } else if (path === "requests") {
       prefetchOnTabHover("requests");
     }
@@ -214,7 +218,9 @@ export default function ConsultantLayout({
                 : "text-gray-600 hover:bg-gray-100"
             }`}
             prefetch={true}
-            onMouseEnter={() => router.prefetch(`/dashboard/consultant/${consultantId}/settings`)}
+            onMouseEnter={() =>
+              router.prefetch(`/dashboard/consultant/${consultantId}/settings`)
+            }
           >
             <span>⚙️</span>
             <span>Settings</span>

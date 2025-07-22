@@ -13,14 +13,10 @@ export default function RequestsPage({
   params: Promise<{ consultantId: string }>;
 }) {
   const { consultantId } = use(params);
-  
+
   // Use the centralized query configuration
   const requestsQuery = createConsultantQueries(consultantId).requests;
-  const { 
-    data: requestsData, 
-    isLoading, 
-    error 
-  } = useQuery(requestsQuery);
+  const { data: requestsData, isLoading, error } = useQuery(requestsQuery);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;

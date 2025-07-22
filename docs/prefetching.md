@@ -19,20 +19,24 @@ I've implemented a significantly better prefetching strategy for your Next.js da
 ## **✅ What I've Improved**
 
 ### 1. **Eliminated Mixed Libraries**
+
 - **Before**: Confusing mix of SWR + React Query
 - **After**: Pure React Query with consistent patterns
 
 ### 2. **Smart Priority-Based Prefetching**
+
 - **Priority 1** (immediate): Critical data (home, appointments, user details)
 - **Priority 2** (500ms delay): Secondary data (requests, planner)
 - **Resilient error handling** with Promise.allSettled
 
 ### 3. **Hybrid Route + Data Prefetching**
+
 - Uses `router.prefetch()` for route-level prefetching
 - Combined with React Query for data prefetching
 - Hover-based prefetching with intelligent throttling
 
 ### 4. **Performance Optimizations**
+
 - `requestIdleCallback` for non-blocking prefetch
 - Query factory pattern for better organization
 - Memory cleanup and throttling mechanisms

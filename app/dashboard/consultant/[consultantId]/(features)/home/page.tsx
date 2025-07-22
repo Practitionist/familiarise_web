@@ -14,14 +14,10 @@ export default function HomePage({
   params: Promise<{ consultantId: string }>;
 }) {
   const { consultantId } = use(params);
-  
+
   // Use the centralized query configuration
   const dashboardQuery = createConsultantQueries(consultantId).dashboard;
-  const {
-    data: dashboardData,
-    isLoading,
-    error,
-  } = useQuery(dashboardQuery);
+  const { data: dashboardData, isLoading, error } = useQuery(dashboardQuery);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;
