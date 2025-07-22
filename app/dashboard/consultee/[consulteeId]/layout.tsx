@@ -5,11 +5,13 @@ import { getEffectiveUserId } from "@/utils/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Button } from "components/ui/button";
 import { Skeleton } from "components/ui/skeleton";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { useConsulteePrefetchDashboard } from "@/hooks/useConsulteePrefetchDashboard";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect } from "react";
-import useSWR, { preload } from "swr";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { UserProvider } from "./UserContext";
 
 // Navigation configuration
@@ -42,6 +44,7 @@ interface ConsulteeNavProps {
   currentPath: string | undefined;
   userImage?: string | null;
   userName?: string | null;
+  onNavHover: (path: string) => void;
 }
 
 // Reusable components
@@ -67,6 +70,7 @@ function ConsulteeNav({
   currentPath,
   userImage,
   userName,
+  onNavHover,
 }: Readonly<ConsulteeNavProps>) {
   const firstName = userName?.split(" ")[0] || "User";
 
@@ -79,6 +83,7 @@ function ConsulteeNav({
               key={item.name}
               href={`/dashboard/consultee/${consulteeId}/${item.path}`}
               prefetch={true}
+              onMouseEnter={() => onNavHover(item.path)}
             >
               <Button
                 className={`${
@@ -139,45 +144,84 @@ export default function ConsulteeLayout({
   const pathname = usePathname();
   const currentPath = pathname.split("/").pop();
   const { data: session } = useSession();
+  const router = useRouter();
+  const queryClient = useQueryClient();
 
   const userId = getEffectiveUserId(session);
+  const { prefetchAllConsulteeData, prefetchUserData, prefetchOnTabHover } =
+    useConsulteePrefetchDashboard({ consulteeId });
 
-  // Use SWR to fetch user details
-  const { data: userDetails, error: userError } = useSWR(
-    userId ? [`user-${userId}`, userId] : null,
-    ([_, id]) => fetchUserDetails(id),
-    {
-      revalidateOnFocus: false,
-      revalidateIfStale: false,
-      dedupingInterval: 300000, // 5 minutes
-    },
-  );
+  // Replace SWR with React Query for user details
+  const {
+    data: userDetails,
+    error: userError,
+    isLoading: isLoadingUser,
+  } = useQuery({
+    queryKey: ["user-details", userId],
+    queryFn: () => fetchUserDetails(userId!),
+    enabled: !!userId,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
+    retry: 2,
+  });
 
-  // Use SWR to fetch consultee details
-  const { data: profileDetails, error: profileError } = useSWR(
-    consulteeId ? [`consultee-${consulteeId}`, consulteeId] : null,
-    ([_, id]) => fetchConsulteeDetails(id),
-    {
-      revalidateOnFocus: false,
-      revalidateIfStale: false,
-      dedupingInterval: 300000, // 5 minutes
-    },
-  );
+  // Replace SWR with React Query for consultee details
+  const {
+    data: profileDetails,
+    error: profileError,
+    isLoading: isLoadingProfile,
+  } = useQuery({
+    queryKey: ["consultee-profile", consulteeId],
+    queryFn: () => fetchConsulteeDetails(consulteeId),
+    enabled: !!consulteeId,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
+    retry: 2,
+  });
 
-  // Prefetch data for likely navigation paths
+  // Enhanced prefetching strategy
   useEffect(() => {
-    // If we have userId and consulteeId, prefetch data
-    if (userId && consulteeId) {
-      // Prefetch user and consultee data
-      preload([`user-${userId}`, userId], ([_, id]) => fetchUserDetails(id));
-      preload([`consultee-${consulteeId}`, consulteeId], ([_, id]) =>
-        fetchConsulteeDetails(id),
-      );
-    }
-  }, [userId, consulteeId]);
+    if (!userId || !consulteeId) return;
 
-  const isLoading =
-    (!userDetails && !userError) || (!profileDetails && !profileError);
+    // Immediate prefetch of critical data
+    const prefetchCriticalData = async () => {
+      // Prefetch user data
+      prefetchUserData(userId);
+
+      // Prefetch all consultee dashboard data in background
+      prefetchAllConsulteeData();
+
+      // Prefetch routes that are likely to be visited
+      const criticalRoutes = [
+        `/dashboard/consultee/${consulteeId}/home`,
+        `/dashboard/consultee/${consulteeId}/appointments`,
+        `/dashboard/consultee/${consulteeId}/messages`,
+      ];
+
+      // Use Next.js router.prefetch for route-level prefetching
+      criticalRoutes.forEach((route) => {
+        router.prefetch(route);
+      });
+    };
+
+    // Use requestIdleCallback for non-blocking prefetch
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      window.requestIdleCallback(prefetchCriticalData);
+    } else {
+      setTimeout(prefetchCriticalData, 100);
+    }
+  }, [userId, consulteeId, prefetchAllConsulteeData, prefetchUserData, router]);
+
+  // Smart hover prefetching with route prefetching
+  const handleNavHover = (path: string) => {
+    // Prefetch the route
+    router.prefetch(`/dashboard/consultee/${consulteeId}/${path}`);
+
+    // Prefetch data for specific tabs
+    prefetchOnTabHover(path);
+  };
+
+  const isLoading = isLoadingUser || isLoadingProfile;
   const error = userError || profileError;
 
   // Authentication check
@@ -206,7 +250,7 @@ export default function ConsulteeLayout({
     );
   }
 
-  // We'll provide a better loading UI instead of a loading message
+  // Enhanced loading UI
   if (isLoading) {
     return (
       <div className="bg-slate-50 min-h-screen flex flex-col">
@@ -257,8 +301,11 @@ export default function ConsulteeLayout({
           currentPath={currentPath}
           userImage={userDetails.image}
           userName={userDetails.name}
+          onNavHover={handleNavHover}
         />
-        <main className="flex-grow overflow-y-auto p-8">{children}</main>
+        <main className="flex-grow overflow-y-auto p-8">
+          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+        </main>
       </div>
     </UserProvider>
   );

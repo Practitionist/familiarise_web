@@ -124,7 +124,7 @@ const MultiStepForm: React.FC = () => {
 
   const handleSubmit = async (data: OnboardingFormData) => {
     const finalData = { ...formData, ...data };
-    console.log("Finally Submitted Data:", finalData);
+    // console.log("Finally Submitted Data:", finalData);
 
     try {
       const id = session?.user?.id;
@@ -227,10 +227,10 @@ const MultiStepForm: React.FC = () => {
             : undefined,
       };
 
-      console.log(
-        "Request Body for Action:",
-        JSON.stringify(requestBody, null, 2),
-      );
+      // console.log(
+      //   "Request Body for Action:",
+      //   JSON.stringify(requestBody, null, 2)
+      // );
       toast({
         title: "Updating Onboarding Information",
         description: "Please wait...",

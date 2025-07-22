@@ -14,21 +14,21 @@ export async function fetchSessionDurationFromPlan(
 ): Promise<number> {
   try {
     const endpoint = getEventEndpoint(eventType, eventId);
-    console.log(`[DEBUG] Fetching from endpoint: ${endpoint}`);
+    // console.log(`[DEBUG] Fetching from endpoint: ${endpoint}`);
 
     const response = await fetch(endpoint);
-    console.log(`[DEBUG] Response status: ${response.status}`);
+    // console.log(`[DEBUG] Response status: ${response.status}`);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`[DEBUG] Response error:`, errorText);
+      // console.error(`[DEBUG] Response error:`, errorText);
       throw new Error(
         `Failed to fetch ${eventType} plan: ${response.status} ${errorText}`,
       );
     }
 
     const data = await response.json();
-    console.log(`[DEBUG] Response data keys:`, Object.keys(data));
+    // console.log(`[DEBUG] Response data keys:`, Object.keys(data));
     return extractSessionDuration(eventType, data);
   } catch (error) {
     console.error(`Failed to fetch session duration for ${eventType}:`, error);

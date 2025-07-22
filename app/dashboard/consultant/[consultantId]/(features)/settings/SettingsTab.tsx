@@ -216,16 +216,17 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   }, []);
 
   // Update schedule type and clear irrelevant slots
-  const handleScheduleTypeChange = useCallback((value: ScheduleType) => {
+  const handleScheduleTypeChange = useCallback((value: string) => {
+    const scheduleTypeValue = value as ScheduleType;
     React.startTransition(() => {
-      setScheduleType(value);
+      setScheduleType(scheduleTypeValue);
       setFormData((prev) => ({
         ...prev,
-        scheduleType: value,
+        scheduleType: scheduleTypeValue,
       }));
 
       // Clear slots for the inactive schedule type to prevent corruption
-      if (value === ScheduleType.WEEKLY) {
+      if (scheduleTypeValue === ScheduleType.WEEKLY) {
         setCustomSlots({});
       } else {
         setWeeklySlots({});
@@ -660,6 +661,17 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           Configure your availability and scheduling preferences
         </p>
 
+        <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <h3 className="font-medium text-blue-900 mb-2">
+            📅 Schedule Type Filtering
+          </h3>
+          <p className="text-sm text-blue-700">
+            <strong>Important:</strong> Consultees will only see slots from your
+            selected schedule type. Choose "Weekly Recurring" for regular
+            appointments or "Custom Schedule" for specific dates only.
+          </p>
+        </div>
+
         <RadioGroup
           value={scheduleType}
           onValueChange={handleScheduleTypeChange}
@@ -668,8 +680,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           {/* Weekly Schedule */}
           <div className="flex-1">
             <div className="flex items-center justify-between mb-4">
-              <Label htmlFor="WEEKLY" className="font-medium">
+              <Label htmlFor="WEEKLY" className="font-medium flex items-center">
+                <span className="mr-2">📅</span>
                 Weekly Recurring
+                <span className="ml-2 text-xs text-gray-500">
+                  (Shows recurring slots)
+                </span>
               </Label>
               <RadioGroupItem id="WEEKLY" value={ScheduleType.WEEKLY} />
             </div>
@@ -747,8 +763,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           {/* Custom Schedule */}
           <div className="flex-1">
             <div className="flex items-center justify-between mb-4">
-              <Label htmlFor="CUSTOM" className="font-medium">
+              <Label htmlFor="CUSTOM" className="font-medium flex items-center">
+                <span className="mr-2">🎯</span>
                 Custom Schedule
+                <span className="ml-2 text-xs text-gray-500">
+                  (Shows specific date slots)
+                </span>
               </Label>
               <RadioGroupItem id="CUSTOM" value={ScheduleType.CUSTOM} />
             </div>

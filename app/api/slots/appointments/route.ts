@@ -315,9 +315,14 @@ export async function POST(request: NextRequest) {
       ...appointmentData,
       slotsOfAppointment: {
         create: slotsOfAppointment.createMany.data.map(
-          (slot: { slotStartTimeInUTC: string; slotEndTimeInUTC: string }) => ({
+          (slot: {
+            slotStartTimeInUTC: string;
+            slotEndTimeInUTC: string;
+            type?: "WEEKLY" | "CUSTOM";
+          }) => ({
             slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
             slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+            type: slot.type || "WEEKLY", // Default to WEEKLY if not specified
           }),
         ),
       },

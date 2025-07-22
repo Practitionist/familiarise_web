@@ -1,39 +1,73 @@
+"use client";
+
+import { use } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { BADGE_STYLES } from "../../types";
-import {
-  fetchActivities,
-  fetchAppointments,
-  fetchApprovals,
-} from "../../utils/fetchHelpers";
 import { HomeTab } from "./HomeTab";
 
-export default async function HomePage({
+export default function HomePage({
   params,
 }: {
   params: Promise<{ consultantId: string }>;
 }) {
-  const resolvedParams = await params;
-  const { consultantId } = resolvedParams;
+  const { consultantId } = use(params);
 
-  // Fetch data directly using await. Suspense will handle loading.
-  // Note: Error handling needs adjustment. Let's handle basic case first.
-  // A more robust solution might involve Error Boundaries or checking results.
-  const [appointments, activities, approvals] = await Promise.all([
-    fetchAppointments(consultantId),
-    fetchActivities(consultantId),
-    fetchApprovals(consultantId),
-  ]).catch((err) => {
-    // Basic error handling for now: log and return empty arrays
-    console.error("Error fetching home page data:", err);
-    // In a real app, you might throw error to an Error Boundary or display a message
-    return [[], [], []];
-  });
+  // Use the centralized query configuration
+  const dashboardQuery = createConsultantQueries(consultantId).dashboard;
+  const { data: dashboardData, isLoading, error } = useQuery(dashboardQuery);
+
+  if (isLoading) {
+    return <DashboardHomeSkeleton />;
+  }
+
+  if (error) {
+    return (
+      <DashboardErrorBoundary>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
+            <h3 className="font-semibold mb-2">Error Loading Dashboard</h3>
+            <p className="text-sm">
+              {error.message ||
+                "Failed to load dashboard data. Please try again."}
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </DashboardErrorBoundary>
+    );
+  }
+
+  if (!dashboardData) {
+    return (
+      <DashboardErrorBoundary>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="p-4 bg-orange-50 text-orange-600 rounded-lg max-w-md text-center">
+            <h3 className="font-semibold mb-2">No Data Available</h3>
+            <p className="text-sm">
+              Dashboard data not found for this consultant.
+            </p>
+          </div>
+        </div>
+      </DashboardErrorBoundary>
+    );
+  }
 
   return (
-    <HomeTab
-      appointments={appointments}
-      activities={activities}
-      approvals={approvals}
-      badgeStyles={BADGE_STYLES}
-    />
+    <DashboardErrorBoundary>
+      <HomeTab
+        appointments={dashboardData.appointments}
+        activities={dashboardData.activities}
+        approvals={dashboardData.approvals}
+        badgeStyles={BADGE_STYLES}
+      />
+    </DashboardErrorBoundary>
   );
 }

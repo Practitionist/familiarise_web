@@ -321,7 +321,7 @@ export function convertToSlotTimings(
       slotOfAppointmentId: "",
       localStartTime: format(slot.start, "p", { timeZone: timezone }),
       localEndTime: format(slot.end, "p", { timeZone: timezone }),
-      type: slot.type,
+      type: slot.type, // Explicitly set the type field
       isAllocated,
       bookingStatus,
     } as TSlotTiming & {

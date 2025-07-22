@@ -4,13 +4,7 @@ import {
   TSubscription,
 } from "@/types/appointment";
 import { TConsultantProfile } from "@/types/consultant";
-import {
-  ApiResponse,
-  IActivity,
-  IAppointment,
-  IApproval,
-  IDocument,
-} from "../types";
+import { ApiResponse, IActivity, IApproval, IDocument } from "../types";
 
 // Helper to get the base URL, preferring VERCEL_URL if available
 const getBaseUrl = () => {
@@ -28,23 +22,8 @@ export async function fetchConsultantData(
       `${baseUrl}/api/user/consultants/${consultantId}`,
     );
     if (!response.ok) {
-      if (response.status === 404) {
-        throw new Error(
-          "This consultant profile could not be found. The consultant may not exist or may have been removed.",
-        );
-      }
-      if (response.status === 401) {
-        throw new Error(
-          "You are not authorized to view this consultant profile. Please log in and try again.",
-        );
-      }
-      if (response.status === 500) {
-        throw new Error(
-          "We're experiencing technical difficulties. Please try again in a few moments.",
-        );
-      }
       throw new Error(
-        `Unable to load consultant profile. Please try again later. (Error: ${response.status})`,
+        `Failed to fetch consultant data: ${response.statusText}`,
       );
     }
     const data: ApiResponse<TConsultantProfile> = await response.json();
@@ -57,7 +36,7 @@ export async function fetchConsultantData(
 
 export async function fetchAppointments(
   consultantId: string,
-): Promise<IAppointment[]> {
+): Promise<TAppointment[]> {
   const baseUrl = getBaseUrl();
   try {
     const response = await fetch(
@@ -68,108 +47,8 @@ export async function fetchAppointments(
     }
     const data: ApiResponse<TAppointment[]> = await response.json();
 
-    // Transform the API response to match our IAppointment type (which expects Date objects)
-    return data.data.map((appointment) => ({
-      id: appointment.id,
-      appointmentType: appointment.appointmentType,
-      slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
-        id: slot.id,
-        // Convert string dates from API/TAppointment to Date objects for IAppointment
-        slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
-        slotEndTimeInUTC: slot.slotEndTimeInUTC
-          ? new Date(slot.slotEndTimeInUTC)
-          : null,
-        isTentative: slot.isTentative,
-        // Map the user array to match IUser[] type expected by ISlotOfAppointment
-        user: Array.isArray(slot.user)
-          ? slot.user.map((u) => ({
-              id: u.id,
-              name: u.name,
-              email: u.email,
-              image: u.image,
-              phone: u.phone || null,
-              address: u.address || null,
-              password: u.password || null,
-              passwordResetToken: u.passwordResetToken || null,
-              passwordResetExpires: u.passwordResetExpires || null,
-              onlineStatus: u.onlineStatus,
-              currentTimezone: u.currentTimezone || null,
-              onboardingCompleted: u.onboardingCompleted,
-              role: u.role,
-              consultantProfileId: u.consultantProfileId,
-              consulteeProfileId: u.consulteeProfileId,
-              staffProfileId: u.staffProfileId,
-            }))
-          : [],
-      })),
-      // Map other relations, ensuring nested types match IAppointment definitions
-      consultation: appointment.consultation
-        ? {
-            id: appointment.consultation.id,
-            consultationPlan: {
-              // Ensure consultationPlan structure matches IConsultationPlan
-              ...appointment.consultation.consultationPlan,
-              // consultantProfile needs to be mapped if IConsultationPlan expects it
-              consultantProfile: appointment.consultation.consultationPlan
-                .consultantProfile as any, // Cast if necessary
-            },
-            requestStatus: appointment.consultation.requestStatus,
-            requestedBy: {
-              id: appointment.consultation.requestedBy?.id ?? "",
-              user: {
-                name: appointment.consultation.requestedBy?.user?.name ?? null,
-                image:
-                  appointment.consultation.requestedBy?.user?.image ?? null,
-              },
-            },
-          }
-        : undefined,
-      subscription: appointment.subscription
-        ? {
-            id: appointment.subscription.id,
-            subscriptionPlan: {
-              ...appointment.subscription.subscriptionPlan,
-              consultantProfile: appointment.subscription.subscriptionPlan
-                .consultantProfile as any, // Cast if necessary
-            },
-            requestStatus: appointment.subscription.requestStatus,
-            requestedBy: {
-              id: appointment.subscription.requestedBy?.id ?? "",
-              user: {
-                name: appointment.subscription.requestedBy?.user?.name ?? null,
-                image:
-                  appointment.subscription.requestedBy?.user?.image ?? null,
-              },
-            },
-            startDate: new Date(
-              appointment.subscription.startDate,
-            ).toISOString(),
-            endDate: new Date(appointment.subscription.endDate).toISOString(),
-          }
-        : undefined,
-      webinar: appointment.webinar
-        ? {
-            id: appointment.webinar.id,
-            webinarPlan: {
-              ...appointment.webinar.webinarPlan,
-              consultantProfile: appointment.webinar.webinarPlan
-                .consultantProfile as any, // Cast if necessary
-            },
-            status: appointment.webinar.status,
-          }
-        : undefined,
-      class: appointment.class
-        ? {
-            id: appointment.class.id,
-            classPlan: {
-              ...appointment.class.classPlan,
-              consultantProfile: appointment.class.classPlan
-                .consultantProfile as any, // Cast if necessary
-            },
-            status: appointment.class.status,
-          }
-        : undefined,
-    }));
+    // Return the data directly as TAppointment[] since we're now using TAppointment everywhere
+    return data.data;
   } catch (error) {
     console.error("Error fetching appointments:", error);
     throw error;
@@ -191,15 +70,8 @@ export async function fetchApprovals(
       ),
     ]);
 
-    if (!consultationsRes.ok) {
-      throw new Error(
-        `Failed to fetch consultations: ${consultationsRes.statusText}`,
-      );
-    }
-    if (!subscriptionsRes.ok) {
-      throw new Error(
-        `Failed to fetch subscriptions: ${subscriptionsRes.statusText}`,
-      );
+    if (!consultationsRes.ok || !subscriptionsRes.ok) {
+      throw new Error("Failed to fetch approvals");
     }
 
     const consultationsData: ApiResponse<TConsultation[]> =
@@ -207,34 +79,38 @@ export async function fetchApprovals(
     const subscriptionsData: ApiResponse<TSubscription[]> =
       await subscriptionsRes.json();
 
-    // Transform consultations into approvals
-    const consultationApprovals = consultationsData.data.map(
-      (consultation: TConsultation) => ({
+    // Transform to IApproval format
+    const approvals: IApproval[] = [];
+
+    // Add consultations
+    consultationsData.data.forEach((consultation: TConsultation) => {
+      approvals.push({
         id: consultation.id,
+        name: consultation.requestedBy?.user?.name || "Unknown",
         type: "Consultation",
-        name: consultation.requestedBy?.user?.name ?? "Unknown",
-        date: formatDate(consultation.requestedAt),
-        time: formatTime(consultation.requestedAt),
-      }),
-    );
+        date: new Date(consultation.requestedAt).toLocaleDateString(),
+        time: new Date(consultation.requestedAt).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      });
+    });
 
-    // Transform subscriptions into approvals
-    const subscriptionApprovals = subscriptionsData.data.map(
-      (subscription: TSubscription) => ({
+    // Add subscriptions
+    subscriptionsData.data.forEach((subscription: TSubscription) => {
+      approvals.push({
         id: subscription.id,
+        name: subscription.requestedBy?.user?.name || "Unknown",
         type: "Subscription",
-        name: subscription.requestedBy?.user?.name ?? "Unknown",
-        date: formatDate(subscription.requestedAt),
-        time: formatTime(subscription.requestedAt),
-      }),
-    );
+        date: new Date(subscription.requestedAt).toLocaleDateString(),
+        time: new Date(subscription.requestedAt).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      });
+    });
 
-    // Combine and sort by requestedAt
-    return [...consultationApprovals, ...subscriptionApprovals].sort(
-      (a, b) =>
-        new Date(`${b.date} ${b.time}`).getTime() -
-        new Date(`${a.date} ${a.time}`).getTime(),
-    );
+    return approvals;
   } catch (error) {
     console.error("Error fetching approvals:", error);
     throw error;
@@ -242,39 +118,39 @@ export async function fetchApprovals(
 }
 
 export async function fetchActivities(
-  _consultantId: string,
+  consultantId: string,
 ): Promise<IActivity[]> {
-  // TODO: Implement activity tracking
-  return [];
+  const baseUrl = getBaseUrl();
+  try {
+    const response = await fetch(
+      `${baseUrl}/api/activities?consultantId=${consultantId}`,
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to fetch activities: ${response.statusText}`);
+    }
+    const data: ApiResponse<IActivity[]> = await response.json();
+    return data.data;
+  } catch (error) {
+    console.error("Error fetching activities:", error);
+    throw error;
+  }
 }
 
 export async function fetchDocuments(
-  _consultantId: string,
+  consultantId: string,
 ): Promise<IDocument[]> {
-  // TODO: Implement document management
-  return [];
-}
-
-function formatDate(dateString?: string | Date | null): string {
-  if (!dateString) return "Date not set";
-  const date = new Date(dateString);
-  if (isNaN(date.getTime())) return "Invalid date";
-
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function formatTime(dateString?: string | Date | null): string {
-  if (!dateString) return "Time not set";
-  const date = new Date(dateString);
-  if (isNaN(date.getTime())) return "Invalid time";
-
-  return date.toLocaleString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
+  const baseUrl = getBaseUrl();
+  try {
+    const response = await fetch(
+      `${baseUrl}/api/documents?consultantId=${consultantId}`,
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to fetch documents: ${response.statusText}`);
+    }
+    const data: ApiResponse<IDocument[]> = await response.json();
+    return data.data;
+  } catch (error) {
+    console.error("Error fetching documents:", error);
+    throw error;
+  }
 }

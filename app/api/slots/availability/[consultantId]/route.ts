@@ -267,6 +267,7 @@ function mapWeeklySlotToTiming(
     slotOfAppointmentId: "",
     localStartTime: formatInTimeZone(adjustedStart, userTimeZone, "HH:mm"),
     localEndTime: formatInTimeZone(adjustedEnd, userTimeZone, "HH:mm"),
+    type: "WEEKLY" as const,
   };
 }
 
@@ -306,5 +307,8 @@ function mapCustomSlotToTiming(
     slotOfAppointmentId: "",
     localStartTime: formatInTimeZone(slotStart, userTimeZone, "HH:mm"),
     localEndTime: formatInTimeZone(slotEnd, userTimeZone, "HH:mm"),
+    // Added type field to satisfy TSlotTiming interface requirements
+    // This field distinguishes between "WEEKLY" and "CUSTOM" slot types for filtering
+    type: "CUSTOM" as const,
   };
 }

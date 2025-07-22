@@ -3,6 +3,7 @@ import Footer from "@/components/Footer";
 import Navbar from "@/components/Navbar";
 import { Toaster } from "@/components/ui/toaster";
 import NextAuthProvider from "@/providers/NextAuthSessionProvider";
+import ReactQueryProvider from "@/providers/ReactQueryProvider";
 import StreamVideoProvider from "@/providers/StreamClientProvider";
 import type { Metadata } from "next";
 import { getServerSession } from "next-auth";
@@ -28,19 +29,21 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.className} flex flex-col min-h-screen`}>
-        <NextAuthProvider session={session}>
-          <Toaster />
-          <AnnouncementBar />
-          <Navbar />
-          {session?.user?.id && session.user.id !== "" ? (
-            <StreamVideoProvider userId={session.user.id}>
-              {children}
-            </StreamVideoProvider>
-          ) : (
-            children
-          )}
-          <Footer />
-        </NextAuthProvider>
+        <ReactQueryProvider>
+          <NextAuthProvider session={session}>
+            <Toaster />
+            <AnnouncementBar />
+            <Navbar />
+            {session?.user?.id && session.user.id !== "" ? (
+              <StreamVideoProvider userId={session.user.id}>
+                {children}
+              </StreamVideoProvider>
+            ) : (
+              children
+            )}
+            <Footer />
+          </NextAuthProvider>
+        </ReactQueryProvider>
       </body>
     </html>
   );

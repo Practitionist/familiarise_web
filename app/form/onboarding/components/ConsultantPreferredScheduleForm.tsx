@@ -168,17 +168,17 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
     const formattedWeeklySlots = Object.entries(sortedWeeklySlots).flatMap(
       ([day, slots]) => {
         // Debug logging for Friday slots
-        if (day === "friday") {
-          console.log(
-            "📅 Processing Friday slots:",
-            slots.map((s) => ({
-              startTime: s.startTime,
-              endTime: s.endTime,
-              isValid: s.isValid,
-              errorMessage: s.errorMessage,
-            })),
-          );
-        }
+        // if (day === "friday") {
+        //   console.log(
+        //     "📅 Processing Friday slots:",
+        //     slots.map((s) => ({
+        //       startTime: s.startTime,
+        //       endTime: s.endTime,
+        //       isValid: s.isValid,
+        //       errorMessage: s.errorMessage,
+        //     })),
+        //   );
+        // }
 
         return slots.filter(isValidSlot).flatMap((slot): WeeklySlot[] => {
           const baseDate = "1970-01-01"; // Use epoch date for consistency
@@ -186,14 +186,14 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           const overnight = isOvernight(slot.startTime, slot.endTime);
 
           // Debug logging for midnight slots
-          if (slot.startTime === "22:00" && slot.endTime === "00:00") {
-            console.log("🌙 Processing midnight slot:", {
-              day,
-              slot,
-              overnight,
-              timezone,
-            });
-          }
+          // if (slot.startTime === "22:00" && slot.endTime === "00:00") {
+          //   console.log("🌙 Processing midnight slot:", {
+          //     day,
+          //     slot,
+          //     overnight,
+          //     timezone,
+          //   });
+          // }
 
           // Convert timezone-aware time back to UTC
           const startUTC = convertTimezoneToUtc(
@@ -208,21 +208,21 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           );
 
           if (!startUTC || !endUTC) {
-            console.log("❌ Failed to convert times to UTC:", {
-              startUTC,
-              endUTC,
-            });
+            // console.log("❌ Failed to convert times to UTC:", {
+            //   startUTC,
+            //   endUTC,
+            // });
             return [];
           }
 
           if (overnight) {
             // Check if the slot ends exactly at midnight (00:00)
             if (slot.endTime === "00:00") {
-              console.log("✅ Creating midnight slot (no split):", {
-                startUTC,
-                endUTC,
-                day: day.toUpperCase(),
-              });
+              // console.log("✅ Creating midnight slot (no split):", {
+              //   startUTC,
+              //   endUTC,
+              //   day: day.toUpperCase(),
+              // });
               // This slot ends at midnight, don't split it
               return [
                 {

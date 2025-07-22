@@ -210,10 +210,16 @@ export async function GET(
         slotEndTimeInUTC: slot.slotEndTimeInUTC,
       }));
 
-    // Process all slots using the unified utility
+    // Apply schedule type filtering based on consultant's preference
+    const filteredWeeklySlots =
+      consultant.scheduleType === "WEEKLY" ? weeklySlots : [];
+    const filteredCustomSlots =
+      consultant.scheduleType === "CUSTOM" ? customSlots : [];
+
+    // Process slots using the unified utility with filtered slots
     const slotsByDate = processAvailabilitySlots(
-      weeklySlots,
-      customSlots,
+      filteredWeeklySlots,
+      filteredCustomSlots,
       appointmentSlots,
       startDate,
       endDate,

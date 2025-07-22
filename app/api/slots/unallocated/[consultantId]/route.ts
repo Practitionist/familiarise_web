@@ -155,6 +155,7 @@ export async function GET(
               slotOfAppointmentId: "",
               localStartTime: slotStart.toLocaleTimeString(),
               localEndTime: slotEnd.toLocaleTimeString(),
+              type: "WEEKLY" as const,
             });
           }
         }
@@ -176,6 +177,7 @@ export async function GET(
         slotOfAppointmentId: "",
         localStartTime: new Date(slot.slotStartTimeInUTC).toLocaleTimeString(),
         localEndTime: new Date(slot.slotEndTimeInUTC).toLocaleTimeString(),
+        type: "CUSTOM" as const,
       }),
     );
 

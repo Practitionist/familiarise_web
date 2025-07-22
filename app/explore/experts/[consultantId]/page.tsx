@@ -90,8 +90,8 @@ export default function ExpertProfile(
     async function fetchSlots() {
       if (selectedDate && consultantDetails && timezone && !isTimezoneLoading) {
         try {
-          console.log("Using timezone:", timezone);
-          console.log("Selected date:", selectedDate.toISOString());
+          // console.log("Using timezone:", timezone);
+          // console.log("Selected date:", selectedDate.toISOString());
 
           const startDateInUtc = new Date(selectedDate);
           startDateInUtc.setHours(0, 0, 0, 0);
@@ -120,12 +120,12 @@ export default function ExpertProfile(
           });
           const slotsForSelectedDate = data[selectedDateKey] || [];
 
-          console.log("Available dates in response:", Object.keys(data));
-          console.log("Looking for date:", selectedDateKey);
-          console.log(
-            "Slots found for selected date:",
-            slotsForSelectedDate.length,
-          );
+          // console.log("Available dates in response:", Object.keys(data));
+          // console.log("Looking for date:", selectedDateKey);
+          // console.log(
+          //   "Slots found for selected date:",
+          //   slotsForSelectedDate.length
+          // );
 
           setSlotTimings(slotsForSelectedDate);
         } catch (error) {
