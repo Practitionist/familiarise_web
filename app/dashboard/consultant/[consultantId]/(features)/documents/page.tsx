@@ -1,9 +1,10 @@
 "use client";
 
 import { use } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
-import { useDocuments } from "../../hooks/useDocuments";
+import { fetchDocuments } from "../../utils/fetchHelpers";
 import { DocumentsTab } from "./DocumentsTab";
 
 export default function DocumentsPage({
@@ -12,7 +13,19 @@ export default function DocumentsPage({
   params: Promise<{ consultantId: string }>;
 }) {
   const { consultantId } = use(params);
-  const { data: documents, isLoading, error } = useDocuments(consultantId);
+  
+  // Use useQuery directly (documents are not currently prefetched, but using consistent pattern)
+  const { 
+    data: documents, 
+    isLoading, 
+    error 
+  } = useQuery({
+    queryKey: ["documents", consultantId],
+    queryFn: () => fetchDocuments(consultantId),
+    staleTime: 2 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    retry: 2,
+  });
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;

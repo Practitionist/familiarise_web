@@ -1,9 +1,10 @@
 "use client";
 
 import { use } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
-import { useFeedback, useSupportTickets } from "../../hooks/useFeedback";
+import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
 import FeedbackSupportTab from "./FeedbackSupportTab";
 
 type PageProps = {
@@ -14,16 +15,19 @@ type PageProps = {
 export default function FeedbackPage({ params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
 
+  // Use the centralized query configurations
+  const consulteeQueries = createConsulteeQueries(consulteeId);
   const {
     data: feedbacks,
     isLoading: feedbackLoading,
     error: feedbackError,
-  } = useFeedback();
+  } = useQuery(consulteeQueries.feedback);
+  
   const {
     data: tickets,
     isLoading: ticketsLoading,
     error: ticketsError,
-  } = useSupportTickets();
+  } = useQuery(consulteeQueries.supportTickets);
 
   const isLoading = feedbackLoading || ticketsLoading;
   const error = feedbackError || ticketsError;

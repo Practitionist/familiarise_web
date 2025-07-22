@@ -18,9 +18,6 @@ import {
   WebinarWithPlan,
   ClassWithPlan,
 } from "@/hooks/useEvents";
-// Standardized to use useConsulteeEvents for consistent React Query data fetching
-// This replaces the previous useEvents hook to ensure all consultee components use the same API endpoint
-import { useConsulteeEvents } from "../../hooks/useConsulteeEvents";
 import {
   getEventTitle,
   getConsultantName,
@@ -34,41 +31,21 @@ type EventWithType =
   | (WebinarWithPlan & { type: "Webinar" })
   | (ClassWithPlan & { type: "Class" });
 
-export default function BookingHistoryTab({
-  consulteeId,
-}: {
-  consulteeId: string;
-}) {
-  const {
-    data: eventsData,
-    isLoading,
-    error,
-  } = useConsulteeEvents(consulteeId);
-  const {
-    consultations = [],
-    subscriptions = [],
-    webinars = [],
-    classes = [],
-  } = eventsData || {};
+// Updated to receive data as props instead of fetching internally
+interface BookingHistoryTabProps {
+  consultations: any[];
+  subscriptions: any[];
+  webinars: any[];
+  classes: any[];
+}
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-pulse text-gray-500">
-          Loading booking history...
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-4 bg-red-50 text-red-600 rounded-lg">
-        Error loading booking history: {error.message}
-      </div>
-    );
-  }
-
+export function BookingHistoryTab({
+  consultations = [],
+  subscriptions = [],
+  webinars = [],
+  classes = [],
+}: BookingHistoryTabProps) {
+  
   const allEvents: EventWithType[] = [
     ...consultations.map((c) => ({ ...c, type: "Consultation" as const })),
     ...subscriptions.map((s) => ({ ...s, type: "Subscription" as const })),

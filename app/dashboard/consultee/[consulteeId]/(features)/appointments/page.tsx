@@ -1,9 +1,10 @@
 "use client";
 
 import { use } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
-import { useConsulteeEvents } from "../../hooks/useConsulteeEvents";
+import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
 import { Overview } from "./Overview";
 import { Calendar } from "./Calendar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -16,11 +17,14 @@ type PageProps = {
 
 export default function AppointmentsPage({ params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
+  
+  // Use the centralized query configuration
+  const eventsQuery = createConsulteeQueries(consulteeId).events;
   const {
     data: eventsData,
     isLoading,
     error,
-  } = useConsulteeEvents(consulteeId);
+  } = useQuery(eventsQuery);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;

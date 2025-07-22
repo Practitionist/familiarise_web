@@ -2,9 +2,8 @@
 
 import { User } from "@prisma/client";
 import React, { useState } from "react";
-// Fixed import path: Changed from "hooks/useConsulteeEvents" to relative path
-// This resolves build errors caused by incorrect module resolution
-import { useConsulteeEvents } from "../../hooks/useConsulteeEvents";
+import { useQuery } from "@tanstack/react-query";
+import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
 import { EventWithType } from "../../utils/getMetadata";
 import {
   getActualMonthlyEvents,
@@ -24,7 +23,11 @@ export default function HomeTab({
 }: Readonly<HomeTabProps>) {
   const resolvedParams = React.use(params);
   const consulteeId = resolvedParams.consulteeId;
-  const { data, isLoading, error } = useConsulteeEvents(consulteeId);
+  
+  // Use the centralized query configuration
+  const eventsQuery = createConsulteeQueries(consulteeId).events;
+  const { data, isLoading, error } = useQuery(eventsQuery);
+  
   const [currentMonth, setCurrentMonth] = useState(new Date());
 
   if (!userDetails || isLoading) {
@@ -55,10 +58,10 @@ export default function HomeTab({
   }
 
   const allEvents: EventWithType[] = [
-    ...data.consultations.map((c) => ({ ...c, type: "Consultation" as const })),
-    ...data.webinars.map((w) => ({ ...w, type: "Webinar" as const })),
-    ...data.subscriptions.map((s) => ({ ...s, type: "Subscription" as const })),
-    ...data.classes.map((c) => ({ ...c, type: "Class" as const })),
+    ...data.consultations.map((c: any) => ({ ...c, type: "Consultation" as const })),
+    ...data.webinars.map((w: any) => ({ ...w, type: "Webinar" as const })),
+    ...data.subscriptions.map((s: any) => ({ ...s, type: "Subscription" as const })),
+    ...data.classes.map((c: any) => ({ ...c, type: "Class" as const })),
   ];
 
   const upcomingSlots = getActualUpcomingSlots(allEvents);

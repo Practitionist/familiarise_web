@@ -1,23 +1,26 @@
 "use client";
 
 import { use } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
-import { useConsulteeEvents } from "../../hooks/useConsulteeEvents";
-import BookingHistoryTab from "./BookingHistoryTab";
+import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
+import { BookingHistoryTab } from "./BookingHistoryTab";
 
 type PageProps = {
   params: Promise<{ consulteeId: string }>;
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
 export default function HistoryPage({ params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
+  
+  // Use the centralized query configuration
+  const eventsQuery = createConsulteeQueries(consulteeId).events;
   const {
     data: eventsData,
     isLoading,
     error,
-  } = useConsulteeEvents(consulteeId);
+  } = useQuery(eventsQuery);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;
@@ -30,8 +33,7 @@ export default function HistoryPage({ params }: Readonly<PageProps>) {
           <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
             <h3 className="font-semibold mb-2">Error Loading History</h3>
             <p className="text-sm">
-              {error.message ||
-                "Failed to load booking history. Please try again."}
+              {error.message || "Failed to load booking history. Please try again."}
             </p>
             <button
               onClick={() => window.location.reload()}
@@ -45,16 +47,14 @@ export default function HistoryPage({ params }: Readonly<PageProps>) {
     );
   }
 
-  const {
-    consultations = [],
-    subscriptions = [],
-    webinars = [],
-    classes = [],
-  } = eventsData || {};
-
   return (
     <DashboardErrorBoundary>
-      <BookingHistoryTab consulteeId={consulteeId} />
+      <BookingHistoryTab
+        consultations={eventsData?.consultations || []}
+        subscriptions={eventsData?.subscriptions || []}
+        webinars={eventsData?.webinars || []}
+        classes={eventsData?.classes || []}
+      />
     </DashboardErrorBoundary>
   );
 }

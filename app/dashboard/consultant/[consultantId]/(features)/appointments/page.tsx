@@ -1,9 +1,10 @@
 "use client";
 
 import { use } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
-import { useAppointments } from "../../hooks/useAppointments";
+import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { BADGE_STYLES } from "../../types";
 import { AppointmentsTab } from "./AppointmentsTab";
 
@@ -13,11 +14,14 @@ export default function AppointmentsPage({
   params: Promise<{ consultantId: string }>;
 }) {
   const { consultantId } = use(params);
+  
+  // Use the centralized query configuration
+  const appointmentsQuery = createConsultantQueries(consultantId).appointments;
   const {
     data: appointments,
     isLoading,
     error,
-  } = useAppointments(consultantId);
+  } = useQuery(appointmentsQuery);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;

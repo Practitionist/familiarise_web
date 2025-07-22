@@ -1,9 +1,10 @@
 "use client";
 
 import { use } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
-import { useConsultantDetails } from "../../hooks/useConsultantDetails";
+import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { ChatsTab } from "./ChatsTab";
 
 export default function ChatsPage({
@@ -12,11 +13,14 @@ export default function ChatsPage({
   params: Promise<{ consultantId: string }>;
 }) {
   const { consultantId } = use(params);
+  
+  // Use the centralized query configuration
+  const detailsQuery = createConsultantQueries(consultantId).details;
   const {
     data: consultantDetails,
     isLoading,
     error,
-  } = useConsultantDetails(consultantId);
+  } = useQuery(detailsQuery);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;

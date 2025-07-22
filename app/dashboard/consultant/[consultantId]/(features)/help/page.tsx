@@ -1,12 +1,14 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
-import { useHelp } from "../../hooks/useHelp";
+import { staticQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { HelpTab } from "./HelpTab";
 
 export default function HelpPage() {
-  const { data: faqs, isLoading, error } = useHelp();
+  // Use the centralized static query configuration
+  const { data: faqData, isLoading, error } = useQuery(staticQueries.help);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;
@@ -36,7 +38,7 @@ export default function HelpPage() {
 
   return (
     <DashboardErrorBoundary>
-      <HelpTab faqs={faqs || []} />
+      <HelpTab faqs={faqData || []} />
     </DashboardErrorBoundary>
   );
 }

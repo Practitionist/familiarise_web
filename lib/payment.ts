@@ -29,7 +29,7 @@ const initializeStripeClient = () => {
     return null;
   }
   return new Stripe(apiKey, {
-    apiVersion: "2025-06-30.basil",
+    apiVersion: "2025-05-28.basil",
   });
 };
 

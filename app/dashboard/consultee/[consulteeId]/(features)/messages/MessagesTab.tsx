@@ -3,55 +3,39 @@
 import { initializeAllChannels } from "@/actions/stream/chat/channel.action";
 import { ChatLayout } from "@/components/chat/ChatLayout";
 import { useToast } from "@/components/ui/use-toast";
-import { fetchConsulteeDetails } from "@/lib/user";
 import StreamChatProvider from "@/providers/StreamChatProvider";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
 
 export default function MessagesTab() {
   const { consulteeId } = useParams();
-  const [userId, setUserId] = useState<string | null>(null);
-  const [userRole, setUserRole] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [initializing, setInitializing] = useState(false);
   const { toast } = useToast();
 
+  // Use the centralized query configuration
+  const profileQuery = createConsulteeQueries(consulteeId as string).profile;
+  const { 
+    data: consulteeDetails, 
+    isLoading: loading, 
+    error 
+  } = useQuery(profileQuery);
+
+  const userId = consulteeDetails?.user?.id || null;
+  const userRole = consulteeDetails?.user?.role || null;
+
+  // Handle errors
   useEffect(() => {
-    const fetchUserId = async () => {
-      try {
-        const consulteeDetails = await fetchConsulteeDetails(
-          consulteeId as string,
-        );
-
-        // Check if user property exists before accessing its properties
-        if (consulteeDetails?.user) {
-          setUserId(consulteeDetails.user.id);
-          setUserRole(consulteeDetails.user.role);
-        } else {
-          console.error("User property missing in consultee details");
-          toast({
-            title: "Error",
-            description:
-              "Failed to get user information. Please try again later.",
-            variant: "destructive",
-          });
-        }
-      } catch (error) {
-        console.error("Error fetching consultee details:", error);
-        toast({
-          title: "Error",
-          description: "Failed to load user data. Please try again later.",
-          variant: "destructive",
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (consulteeId) {
-      fetchUserId();
+    if (error) {
+      console.error("Error fetching consultee details:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load user data. Please try again later.",
+        variant: "destructive",
+      });
     }
-  }, [consulteeId]);
+  }, [error, toast]);
 
   // Auto-initialize channels when the component loads
   useEffect(() => {

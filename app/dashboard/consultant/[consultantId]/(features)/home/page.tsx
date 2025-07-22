@@ -1,9 +1,10 @@
 "use client";
 
 import { use } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
-import { useConsultantDashboard } from "../../hooks/useConsultantDashboard";
+import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
 import { BADGE_STYLES } from "../../types";
 import { HomeTab } from "./HomeTab";
 
@@ -13,11 +14,14 @@ export default function HomePage({
   params: Promise<{ consultantId: string }>;
 }) {
   const { consultantId } = use(params);
+  
+  // Use the centralized query configuration
+  const dashboardQuery = createConsultantQueries(consultantId).dashboard;
   const {
     data: dashboardData,
     isLoading,
     error,
-  } = useConsultantDashboard(consultantId);
+  } = useQuery(dashboardQuery);
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;

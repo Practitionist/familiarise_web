@@ -1,10 +1,9 @@
 "use client";
 
 import React from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-// Standardized React Query usage: Replaced useEvents with useConsulteeEvents for consistency
-// This ensures all consultee components use the same data fetching pattern and API endpoint
-import { useConsulteeEvents } from "../../hooks/useConsulteeEvents";
+import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
 import { Overview } from "./Overview";
 import { Calendar } from "./Calendar";
 import { motion } from "framer-motion";
@@ -14,14 +13,14 @@ export default function AppointmentsTab({
 }: Readonly<{
   consulteeId: string;
 }>) {
-  // Updated data destructuring to match useConsulteeEvents hook return structure
-  // Previous: const { consultations, subscriptions, webinars, classes, isLoading, error } = useEvents(consulteeId);
-  // New: Destructure from data property with default empty arrays for type safety
+  // Use the centralized query configuration
+  const eventsQuery = createConsulteeQueries(consulteeId).events;
   const {
     data: eventsData,
     isLoading,
     error,
-  } = useConsulteeEvents(consulteeId);
+  } = useQuery(eventsQuery);
+  
   const {
     consultations = [],
     subscriptions = [],
