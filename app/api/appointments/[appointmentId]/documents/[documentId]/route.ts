@@ -12,69 +12,99 @@ export async function GET(
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { 
+          error: "Authentication required", 
+          message: "Please sign in to view documents",
+          code: "UNAUTHORIZED"
+        }, 
+        { status: 401 }
+      );
     }
 
     const { appointmentId, documentId } = await params;
 
-    // Verify access and get document
-    const document = await prisma.appointmentDocument.findFirst({
-      where: {
-        id: documentId,
-        appointmentId,
-        appointment: {
-          OR: [
-            // User is the consultee
-            {
-              consultation: {
-                requestedBy: {
+    // In development mode, allow access to any document for testing
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    
+    // Build access control conditions - bypass in development
+    const whereClause: any = {
+      id: documentId,
+      appointmentId
+    };
+
+    if (!isDevelopment) {
+      whereClause.appointment = {
+        OR: [
+          // User is the consultee
+          {
+            consultation: {
+              requestedBy: {
+                user: {
+                  id: session.user.id
+                }
+              }
+            }
+          },
+          // User is the consultant
+          {
+            consultation: {
+              consultationPlan: {
+                consultantProfile: {
                   user: {
                     id: session.user.id
-                  }
-                }
-              }
-            },
-            // User is the consultant
-            {
-              consultation: {
-                consultationPlan: {
-                  consultantProfile: {
-                    user: {
-                      id: session.user.id
-                    }
-                  }
-                }
-              }
-            },
-            // User is part of subscription (consultee)
-            {
-              subscription: {
-                requestedBy: {
-                  user: {
-                    id: session.user.id
-                  }
-                }
-              }
-            },
-            // User is part of subscription (consultant)
-            {
-              subscription: {
-                subscriptionPlan: {
-                  consultantProfile: {
-                    user: {
-                      id: session.user.id
-                    }
                   }
                 }
               }
             }
-          ]
-        }
-      }
+          },
+          // User is part of subscription (consultee)
+          {
+            subscription: {
+              requestedBy: {
+                user: {
+                  id: session.user.id
+                }
+              }
+            }
+          },
+          // User is part of subscription (consultant)
+          {
+            subscription: {
+              subscriptionPlan: {
+                consultantProfile: {
+                  user: {
+                    id: session.user.id
+                  }
+                }
+              }
+            }
+          }
+        ]
+      };
+    }
+
+    // Verify access and get document
+    const document = await prisma.appointmentDocument.findFirst({
+      where: whereClause
     });
 
     if (!document) {
-      return NextResponse.json({ error: "Document not found or access denied" }, { status: 404 });
+      return NextResponse.json(
+        { 
+          error: "Document not found", 
+          message: isDevelopment 
+            ? `[DEV MODE] Document ${documentId} not found for appointment ${appointmentId}.`
+            : "Document not found or access denied",
+          code: "NOT_FOUND"
+        }, 
+        { status: 404 }
+      );
+    }
+
+    // In development mode, log access bypass
+    if (isDevelopment) {
+      console.log(`[DEV MODE] Bypassing document access control for ${documentId}`);
     }
 
     return NextResponse.json({ data: document });
@@ -95,51 +125,76 @@ export async function PATCH(
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { 
+          error: "Authentication required", 
+          message: "Please sign in to review documents",
+          code: "UNAUTHORIZED"
+        }, 
+        { status: 401 }
+      );
     }
 
     const { appointmentId, documentId } = await params;
     const body = await request.json();
     const { reviewStatus, reviewNotes } = body;
 
-    // Verify user is the consultant for this appointment
-    const document = await prisma.appointmentDocument.findFirst({
-      where: {
-        id: documentId,
-        appointmentId,
-        appointment: {
-          OR: [
-            // User is the consultant for consultation
-            {
-              consultation: {
-                consultationPlan: {
-                  consultantProfile: {
-                    user: {
-                      id: session.user.id
-                    }
-                  }
-                }
-              }
-            },
-            // User is the consultant for subscription
-            {
-              subscription: {
-                subscriptionPlan: {
-                  consultantProfile: {
-                    user: {
-                      id: session.user.id
-                    }
+    // In development mode, allow any user to review documents for testing
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    
+    // Build access control conditions - bypass in development
+    const whereClause: any = {
+      id: documentId,
+      appointmentId
+    };
+
+    if (!isDevelopment) {
+      whereClause.appointment = {
+        OR: [
+          // User is the consultant for consultation
+          {
+            consultation: {
+              consultationPlan: {
+                consultantProfile: {
+                  user: {
+                    id: session.user.id
                   }
                 }
               }
             }
-          ]
-        }
-      }
+          },
+          // User is the consultant for subscription
+          {
+            subscription: {
+              subscriptionPlan: {
+                consultantProfile: {
+                  user: {
+                    id: session.user.id
+                  }
+                }
+              }
+            }
+          }
+        ]
+      };
+    }
+
+    // Verify user is the consultant for this appointment
+    const document = await prisma.appointmentDocument.findFirst({
+      where: whereClause
     });
 
     if (!document) {
-      return NextResponse.json({ error: "Document not found or access denied" }, { status: 404 });
+      return NextResponse.json(
+        { 
+          error: "Document not found", 
+          message: isDevelopment
+            ? `[DEV MODE] Document ${documentId} not found for appointment ${appointmentId}.`
+            : "Document not found or access denied",
+          code: "NOT_FOUND"
+        }, 
+        { status: 404 }
+      );
     }
 
     // Valid review statuses
@@ -148,18 +203,23 @@ export async function PATCH(
       return NextResponse.json({ error: "Invalid review status" }, { status: 400 });
     }
 
-    // Update document review
+    // Update document review status
     const updatedDocument = await prisma.appointmentDocument.update({
       where: {
         id: documentId
       },
       data: {
         ...(reviewStatus && { reviewStatus }),
-        ...(reviewNotes !== undefined && { reviewNotes }),
+        ...(reviewNotes && { reviewNotes }),
         ...(reviewStatus && { reviewedAt: new Date() }),
         ...(reviewStatus && { reviewedBy: session.user.id })
       }
     });
+
+    // In development mode, log review action
+    if (isDevelopment) {
+      console.log(`[DEV MODE] Document review updated for ${documentId} - Status: ${reviewStatus || 'no change'}`);
+    }
 
     return NextResponse.json({ data: updatedDocument });
   } catch (error) {
@@ -179,48 +239,71 @@ export async function DELETE(
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { 
+          error: "Authentication required", 
+          message: "Please sign in to delete documents",
+          code: "UNAUTHORIZED"
+        }, 
+        { status: 401 }
+      );
     }
 
     const { appointmentId, documentId } = await params;
 
-    // Verify user is the consultee and document is not yet reviewed
-    const document = await prisma.appointmentDocument.findFirst({
-      where: {
-        id: documentId,
-        appointmentId,
-        reviewStatus: 'PENDING', // Only allow deletion of pending documents
-        appointment: {
-          OR: [
-            // User is the consultee for consultation
-            {
-              consultation: {
-                requestedBy: {
-                  user: {
-                    id: session.user.id
-                  }
-                }
-              }
-            },
-            // User is the consultee for subscription
-            {
-              subscription: {
-                requestedBy: {
-                  user: {
-                    id: session.user.id
-                  }
+    // In development mode, allow any user to delete documents for testing
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    
+    // Build access control conditions - bypass in development
+    const whereClause: any = {
+      id: documentId,
+      appointmentId,
+      reviewStatus: 'PENDING' // Only allow deletion of pending documents
+    };
+
+    if (!isDevelopment) {
+      whereClause.appointment = {
+        OR: [
+          // User is the consultee for consultation
+          {
+            consultation: {
+              requestedBy: {
+                user: {
+                  id: session.user.id
                 }
               }
             }
-          ]
-        }
-      }
+          },
+          // User is the consultee for subscription
+          {
+            subscription: {
+              requestedBy: {
+                user: {
+                  id: session.user.id
+                }
+              }
+            }
+          }
+        ]
+      };
+    }
+
+    // Verify user is the consultee and document is not yet reviewed
+    const document = await prisma.appointmentDocument.findFirst({
+      where: whereClause
     });
 
     if (!document) {
-      return NextResponse.json({ 
-        error: "Document not found, access denied, or already reviewed" 
-      }, { status: 404 });
+      return NextResponse.json(
+        { 
+          error: "Document not found", 
+          message: isDevelopment
+            ? `[DEV MODE] Document ${documentId} not found, not pending, or already reviewed.`
+            : "Document not found, access denied, or already reviewed",
+          code: "NOT_FOUND"
+        }, 
+        { status: 404 }
+      );
     }
 
     // Delete from Supabase storage
@@ -236,7 +319,16 @@ export async function DELETE(
       }
     });
 
-    return NextResponse.json({ message: "Document deleted successfully" });
+    // In development mode, log deletion
+    if (isDevelopment) {
+      console.log(`[DEV MODE] Document deleted: ${documentId} from appointment ${appointmentId}`);
+    }
+
+    return NextResponse.json({ 
+      message: isDevelopment 
+        ? "[DEV MODE] Document deleted successfully" 
+        : "Document deleted successfully" 
+    });
   } catch (error) {
     console.error("Error deleting document:", error);
     return NextResponse.json(

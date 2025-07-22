@@ -4,8 +4,11 @@ import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { fetchDocuments } from "../../utils/fetchHelpers";
 import { DocumentsTab } from "./DocumentsTab";
+import { RefreshCw, WifiOff, Database, ShieldX, HelpCircle, AlertCircle } from "lucide-react";
 
 export default function DocumentsPage({
   params,
@@ -19,13 +22,85 @@ export default function DocumentsPage({
     data: documents,
     isLoading,
     error,
+    refetch,
+    isRefetching
   } = useQuery({
     queryKey: ["documents", consultantId],
     queryFn: () => fetchDocuments(consultantId),
     staleTime: 2 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
-    retry: 2,
+    retry: (failureCount, error) => {
+      // Don't retry on authentication or permission errors
+      if (error instanceof Error && (
+        error.message.includes('sign in') ||
+        error.message.includes('permission') ||
+        error.message.includes('Access denied')
+      )) {
+        return false;
+      }
+      // Retry up to 2 times for other errors
+      return failureCount < 2;
+    },
   });
+
+  const getErrorIcon = (error: Error) => {
+    if (error.message.includes('connection') || error.message.includes('Network')) {
+      return <WifiOff className="h-5 w-5" />;
+    } else if (error.message.includes('temporarily unavailable') || error.message.includes('Database')) {
+      return <Database className="h-5 w-5" />;
+    } else if (error.message.includes('permission') || error.message.includes('Access denied')) {
+      return <ShieldX className="h-5 w-5" />;
+    } else if (error.message.includes('not found') || error.message.includes('check the URL')) {
+      return <HelpCircle className="h-5 w-5" />;
+    }
+    return <AlertCircle className="h-5 w-5" />;
+  };
+
+  const getErrorActions = (error: Error) => {
+    const actions = [];
+
+    // Always show retry button unless it's a permission error
+    if (!error.message.includes('permission') && !error.message.includes('Access denied')) {
+      actions.push(
+        <Button
+          key="retry"
+          variant="outline"
+          size="sm"
+          onClick={() => refetch()}
+          disabled={isRefetching}
+        >
+          <RefreshCw className={`h-4 w-4 mr-1 ${isRefetching ? 'animate-spin' : ''}`} />
+          {isRefetching ? 'Retrying...' : 'Try Again'}
+        </Button>
+      );
+    }
+
+    // Show different additional actions based on error type
+    if (error.message.includes('sign in')) {
+      actions.push(
+        <Button
+          key="signin"
+          size="sm"
+          onClick={() => window.location.href = '/auth/signin'}
+        >
+          Sign In
+        </Button>
+      );
+    } else if (error.message.includes('Network') || error.message.includes('connection')) {
+      actions.push(
+        <Button
+          key="refresh"
+          variant="outline"
+          size="sm"
+          onClick={() => window.location.reload()}
+        >
+          Refresh Page
+        </Button>
+      );
+    }
+
+    return actions;
+  };
 
   if (isLoading) {
     return <DashboardHomeSkeleton />;
@@ -35,17 +110,56 @@ export default function DocumentsPage({
     return (
       <DashboardErrorBoundary>
         <div className="flex items-center justify-center min-h-[400px]">
-          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
-            <h3 className="font-semibold mb-2">Error Loading Documents</h3>
-            <p className="text-sm">
-              {error.message || "Failed to load documents. Please try again."}
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-            >
-              Retry
-            </button>
+          <div className="max-w-lg w-full">
+            <Alert variant="destructive" className="mb-4">
+              <div className="flex items-start space-x-2">
+                {getErrorIcon(error)}
+                <div className="flex-1">
+                  <AlertTitle className="text-base font-semibold mb-2">
+                    Unable to Load Documents
+                  </AlertTitle>
+                  <AlertDescription className="text-sm mb-4">
+                    {error.message}
+                  </AlertDescription>
+                  
+                  {/* Technical details for debugging (only show in development) */}
+                  {process.env.NODE_ENV === 'development' && (error as any).technicalMessage && (
+                    <details className="mt-3 text-xs opacity-75">
+                      <summary className="cursor-pointer">Technical Details</summary>
+                      <pre className="mt-2 whitespace-pre-wrap">
+                        {(error as any).technicalMessage}
+                      </pre>
+                    </details>
+                  )}
+                  
+                  <div className="flex flex-wrap gap-2 mt-4">
+                    {getErrorActions(error)}
+                  </div>
+                </div>
+              </div>
+            </Alert>
+            
+            {/* Helpful tips based on error type */}
+            {error.message.includes('Network') && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-4">
+                <h4 className="text-sm font-medium text-blue-800 mb-2">Connection Troubleshooting</h4>
+                <ul className="text-sm text-blue-700 space-y-1">
+                  <li>• Check your internet connection</li>
+                  <li>• Try refreshing the page</li>
+                  <li>• Contact your IT administrator if on a corporate network</li>
+                </ul>
+              </div>
+            )}
+            
+            {error.message.includes('temporarily unavailable') && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mt-4">
+                <h4 className="text-sm font-medium text-yellow-800 mb-2">System Status</h4>
+                <p className="text-sm text-yellow-700">
+                  The document system is temporarily experiencing issues. Please try again in a few moments. 
+                  If the problem persists, contact support.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </DashboardErrorBoundary>

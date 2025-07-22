@@ -15,8 +15,9 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
-import { Upload, FileText, X, AlertCircle, CheckCircle, Clock, Eye, Download } from "lucide-react";
+import { Upload, FileText, X, AlertCircle, CheckCircle, Clock, Eye, Download, RefreshCw, WifiOff, Database, HelpCircle } from "lucide-react";
 
 interface DocumentUploadProps {
   appointmentId: string;
@@ -38,6 +39,21 @@ interface UploadedDocument {
   uploadedAt: Date;
 }
 
+interface ApiError {
+  error: string;
+  message: string;
+  code?: string;
+}
+
+interface ApiResponse {
+  data?: UploadedDocument[];
+  message?: string;
+  count?: number;
+  appointmentTitle?: string;
+  consultantName?: string;
+  error?: string;
+}
+
 export function DocumentUpload({ appointmentId, appointmentTitle, appointmentType }: DocumentUploadProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -45,6 +61,12 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
   const [isUploading, setIsUploading] = useState(false);
   const [documents, setDocuments] = useState<UploadedDocument[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [contextInfo, setContextInfo] = useState<{
+    appointmentTitle?: string;
+    consultantName?: string;
+    message?: string;
+  }>({});
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -57,18 +79,74 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
 
   const fetchDocuments = async () => {
     setIsLoading(true);
+    setError(null);
+    
     try {
       const response = await fetch(`/api/appointments/${appointmentId}/documents`);
+      const result: ApiResponse | ApiError = await response.json();
+      
       if (!response.ok) {
-        throw new Error('Failed to fetch documents');
+        const errorResult = result as ApiError;
+        setError(errorResult);
+        
+        // Show different toast messages based on error type
+        if (errorResult.code === "NOT_FOUND") {
+          toast({
+            title: "Appointment not found",
+            description: "Please check if you have the correct appointment selected.",
+            variant: "destructive",
+          });
+        } else if (errorResult.code === "CONNECTION_ERROR") {
+          toast({
+            title: "Connection issue",
+            description: "Please check your internet connection and try again.",
+            variant: "destructive",
+          });
+        } else if (errorResult.code === "DATABASE_ERROR") {
+          toast({
+            title: "Service temporarily unavailable",
+            description: "Please try again in a few moments.",
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: "Unable to load documents",
+            description: errorResult.message || "Please try again later.",
+            variant: "destructive",
+          });
+        }
+        
+        return;
       }
-      const result = await response.json();
-      setDocuments(result.data || []);
+      
+      const successResult = result as ApiResponse;
+      setDocuments(successResult.data || []);
+      setContextInfo({
+        appointmentTitle: successResult.appointmentTitle,
+        consultantName: successResult.consultantName,
+        message: successResult.message
+      });
+      
+      // Show informational message if no documents exist yet
+      if (successResult.data?.length === 0 && successResult.message) {
+        toast({
+          title: "No documents yet",
+          description: successResult.message,
+        });
+      }
+      
     } catch (error) {
       console.error('Error fetching documents:', error);
+      const networkError: ApiError = {
+        error: "Network error",
+        message: "Unable to connect to the server. Please check your internet connection and try again.",
+        code: "NETWORK_ERROR"
+      };
+      setError(networkError);
+      
       toast({
-        title: "Error",
-        description: "Failed to load documents",
+        title: "Connection failed",
+        description: networkError.message,
         variant: "destructive",
       });
     } finally {
@@ -79,11 +157,11 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      // Check file size (10MB limit)
+      // Client-side validation for immediate feedback
       if (file.size > 10 * 1024 * 1024) {
         toast({
           title: "File too large",
-          description: "Please select a file smaller than 10MB",
+          description: `The selected file is ${Math.round(file.size / 1024 / 1024)}MB. Please select a file smaller than 10MB.`,
           variant: "destructive",
         });
         return;
@@ -95,6 +173,7 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
         'application/msword',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'image/jpeg',
+        'image/jpg',
         'image/png',
         'image/gif',
         'text/plain',
@@ -102,8 +181,8 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
 
       if (!allowedTypes.includes(file.type)) {
         toast({
-          title: "Invalid file type",
-          description: "Please select a PDF, Word document, image, or text file",
+          title: "Unsupported file type",
+          description: `Please select a PDF, Word document, image (JPG, PNG, GIF), or text file. The file "${file.name}" is not supported.`,
           variant: "destructive",
         });
         return;
@@ -129,16 +208,48 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
         body: formData,
       });
 
+      const result: ApiResponse | ApiError = await response.json();
+
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Upload failed');
+        const errorResult = result as ApiError;
+        
+        // Show specific error messages based on error codes
+        let toastTitle = "Upload failed";
+        let toastDescription = errorResult.message;
+        
+        switch (errorResult.code) {
+          case "FILE_TOO_LARGE":
+            toastTitle = "File too large";
+            break;
+          case "UNSUPPORTED_FILE_TYPE":
+            toastTitle = "Unsupported file type";
+            break;
+          case "NETWORK_ERROR":
+            toastTitle = "Network error";
+            break;
+          case "STORAGE_ERROR":
+            toastTitle = "Storage issue";
+            break;
+          case "NO_FILE":
+            toastTitle = "No file selected";
+            break;
+          default:
+            toastTitle = "Upload failed";
+        }
+        
+        toast({
+          title: toastTitle,
+          description: toastDescription,
+          variant: "destructive",
+        });
+        return;
       }
 
-      const result = await response.json();
+      const successResult = result as ApiResponse;
       
       toast({
-        title: "Document uploaded",
-        description: `${selectedFile.name} has been uploaded successfully`,
+        title: "Document uploaded successfully",
+        description: successResult.message || `${selectedFile.name} has been uploaded and is ready for review.`,
       });
 
       // Reset form
@@ -153,8 +264,8 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
     } catch (error) {
       console.error('Error uploading file:', error);
       toast({
-        title: "Upload failed",
-        description: error instanceof Error ? error.message : "Failed to upload file",
+        title: "Network error",
+        description: "Upload failed due to a connection issue. Please check your internet connection and try again.",
         variant: "destructive",
       });
     } finally {
@@ -168,9 +279,16 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
         method: 'DELETE',
       });
 
+      const result: ApiResponse | ApiError = await response.json();
+
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to delete document');
+        const errorResult = result as ApiError;
+        toast({
+          title: "Delete failed",
+          description: errorResult.message || "Failed to delete document. Please try again.",
+          variant: "destructive",
+        });
+        return;
       }
 
       toast({
@@ -183,8 +301,8 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
     } catch (error) {
       console.error('Error deleting document:', error);
       toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to delete document",
+        title: "Network error",
+        description: "Delete failed due to a connection issue. Please try again.",
         variant: "destructive",
       });
     }
@@ -232,6 +350,59 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
     }
   };
 
+  const getErrorIcon = (errorCode?: string) => {
+    switch (errorCode) {
+      case "CONNECTION_ERROR":
+      case "NETWORK_ERROR":
+        return <WifiOff className="h-5 w-5" />;
+      case "DATABASE_ERROR":
+      case "STORAGE_ERROR":
+        return <Database className="h-5 w-5" />;
+      case "NOT_FOUND":
+        return <HelpCircle className="h-5 w-5" />;
+      default:
+        return <AlertCircle className="h-5 w-5" />;
+    }
+  };
+
+  const renderErrorState = () => {
+    if (!error) return null;
+
+    return (
+      <Alert className="mb-4" variant="destructive">
+        <div className="flex items-start space-x-2">
+          {getErrorIcon(error.code)}
+          <div className="flex-1">
+            <AlertTitle className="text-sm font-medium">{error.error}</AlertTitle>
+            <AlertDescription className="text-sm mt-1">
+              {error.message}
+            </AlertDescription>
+            <div className="mt-3 flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchDocuments}
+                disabled={isLoading}
+              >
+                <RefreshCw className={`h-4 w-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
+                Try Again
+              </Button>
+              {error.code === "NOT_FOUND" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsOpen(false)}
+                >
+                  Close
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </Alert>
+    );
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger asChild>
@@ -244,99 +415,127 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
         <DialogHeader>
           <DialogTitle>Upload Documents</DialogTitle>
           <DialogDescription>
-            Upload documents for review for your {appointmentType.toLowerCase()}: {appointmentTitle}
+            Upload documents for review for your {appointmentType.toLowerCase()}: {contextInfo.appointmentTitle || appointmentTitle}
+            {contextInfo.consultantName && (
+              <span className="block mt-1 text-sm text-gray-500">
+                Consultant: {contextInfo.consultantName}
+              </span>
+            )}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* Upload New Document */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Upload New Document</CardTitle>
-              <CardDescription>
-                Select a document to upload for review (PDF, Word, Images, Text files - Max 10MB)
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <Input
-                  ref={fileInputRef}
-                  type="file"
-                  onChange={handleFileSelect}
-                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.txt"
-                  className="cursor-pointer"
-                />
-              </div>
-              
-              {selectedFile && (
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <div className="flex items-center space-x-3">
-                    <FileText className="h-8 w-8 text-blue-500" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">
-                        {selectedFile.name}
-                      </p>
-                      <p className="text-sm text-gray-500">
-                        {formatFileSize(selectedFile.size)}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setSelectedFile(null);
-                        if (fileInputRef.current) fileInputRef.current.value = "";
-                      }}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
+          {renderErrorState()}
+
+          {/* Upload New Document - Hide if there's a critical error */}
+          {(!error || error.code !== "NOT_FOUND") && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Upload New Document</CardTitle>
+                <CardDescription>
+                  Select a document to upload for review (PDF, Word, Images, Text files - Max 10MB)
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <Input
+                    ref={fileInputRef}
+                    type="file"
+                    onChange={handleFileSelect}
+                    accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.txt"
+                    className="cursor-pointer"
+                    disabled={isUploading}
+                  />
                 </div>
-              )}
+                
+                {selectedFile && (
+                  <div className="bg-gray-50 p-3 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <FileText className="h-8 w-8 text-blue-500" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {selectedFile.name}
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          {formatFileSize(selectedFile.size)}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedFile(null);
+                          if (fileInputRef.current) fileInputRef.current.value = "";
+                        }}
+                        disabled={isUploading}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
-              <div>
-                <label className="text-sm font-medium">Description (Optional)</label>
-                <Textarea
-                  placeholder="Describe what this document is (e.g., Resume, ITR, Legal document, etc.)"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  className="mt-1"
-                />
-              </div>
+                <div>
+                  <label className="text-sm font-medium">Description (Optional)</label>
+                  <Textarea
+                    placeholder="Describe what this document is (e.g., Resume, ITR, Legal document, etc.)"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    className="mt-1"
+                    disabled={isUploading}
+                  />
+                </div>
 
-              <Button
-                onClick={handleUpload}
-                disabled={!selectedFile || isUploading}
-                className="w-full"
-              >
-                {isUploading ? "Uploading..." : "Upload Document"}
-              </Button>
-            </CardContent>
-          </Card>
+                <Button
+                  onClick={handleUpload}
+                  disabled={!selectedFile || isUploading}
+                  className="w-full"
+                >
+                  {isUploading ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    "Upload Document"
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Existing Documents */}
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Uploaded Documents</CardTitle>
               <CardDescription>
-                Documents you've uploaded for this appointment
+                {contextInfo.message || "Documents you've uploaded for this appointment"}
               </CardDescription>
             </CardHeader>
             <CardContent>
               {isLoading ? (
-                <div className="text-center py-4">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
-                  <p className="text-sm text-gray-500 mt-2">Loading documents...</p>
+                <div className="text-center py-8">
+                  <RefreshCw className="h-8 w-8 text-blue-600 mx-auto animate-spin mb-3" />
+                  <p className="text-sm text-gray-500">Loading your documents...</p>
+                </div>
+              ) : error && error.code === "NOT_FOUND" ? (
+                <div className="text-center py-8">
+                  <HelpCircle className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                  <p className="text-sm text-gray-500 mb-2">Unable to load documents</p>
+                  <p className="text-xs text-gray-400">Please check your appointment details</p>
                 </div>
               ) : documents.length === 0 ? (
                 <div className="text-center py-8">
                   <FileText className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-                  <p className="text-sm text-gray-500">No documents uploaded yet</p>
+                  <p className="text-sm text-gray-500 mb-2">No documents uploaded yet</p>
+                  <p className="text-xs text-gray-400">
+                    Upload your first document to get feedback from {contextInfo.consultantName || 'your consultant'}
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-3">
                   {documents.map((doc) => (
-                    <div key={doc.id} className="border rounded-lg p-4">
+                    <div key={doc.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
                       <div className="flex items-start justify-between">
                         <div className="flex items-start space-x-3 flex-1">
                           <FileText className="h-8 w-8 text-gray-400 flex-shrink-0 mt-1" />
@@ -361,9 +560,9 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
                               )}
                             </div>
                             {doc.reviewNotes && (
-                              <div className="mt-2 p-2 bg-gray-50 rounded text-sm">
-                                <p className="font-medium text-gray-700">Review Notes:</p>
-                                <p className="text-gray-600">{doc.reviewNotes}</p>
+                              <div className="mt-2 p-2 bg-blue-50 rounded text-sm border border-blue-200">
+                                <p className="font-medium text-blue-800">Review Notes:</p>
+                                <p className="text-blue-700">{doc.reviewNotes}</p>
                               </div>
                             )}
                           </div>
@@ -373,13 +572,22 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
                             variant="ghost"
                             size="sm"
                             onClick={() => window.open(doc.fileUrl, '_blank')}
+                            title="View document"
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => window.open(doc.fileUrl, '_blank')}
+                            onClick={() => {
+                              const link = document.createElement('a');
+                              link.href = doc.fileUrl;
+                              link.download = doc.originalName;
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                            }}
+                            title="Download document"
                           >
                             <Download className="h-4 w-4" />
                           </Button>
@@ -389,6 +597,7 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
                               size="sm"
                               onClick={() => handleDeleteDocument(doc.id)}
                               className="text-red-600 hover:text-red-800"
+                              title="Delete document (only available for pending documents)"
                             >
                               <X className="h-4 w-4" />
                             </Button>
