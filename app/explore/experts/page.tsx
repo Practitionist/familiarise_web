@@ -129,14 +129,14 @@ function FindExperts() {
         ) : (
           <>
             {metadata?.domains.map((domain) => {
-              const domainConsultants = groupedConsultants.get(domain.id) || [];
+              const domainConsultants = groupedConsultants[domain.name] || [];
 
               if (domainConsultants.length === 0) return null;
 
               return (
                 <div key={domain.id} className="space-y-4">
                   <h2 className="text-2xl font-bold">{domain.name}</h2>
-                  {domainConsultants.map((consultant, index) => {
+                  {domainConsultants.map((consultant: any, index: number) => {
                     if (domainConsultants.length === index + 1) {
                       return (
                         <div key={consultant.id} ref={lastConsultantRef}>
