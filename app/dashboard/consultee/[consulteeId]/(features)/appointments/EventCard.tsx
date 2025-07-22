@@ -188,15 +188,15 @@ export function EventCard({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -20 }}
       transition={{ duration: 0.2 }}
-      className={`${className}`}
+      className={`w-full h-full ${className}`}
     >
-      <Card className="w-64 flex-shrink-0 transition-all duration-200 hover:shadow-md border border-gray-200 bg-white">
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Avatar className="w-8 h-8">
+      <Card className="w-full h-full min-h-[280px] max-w-none flex flex-col transition-all duration-200 hover:shadow-lg border border-gray-200 bg-white">
+        <CardHeader className="pb-3 flex-shrink-0">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start space-x-3 min-w-0 flex-1">
+              <Avatar className="w-10 h-10 flex-shrink-0">
                 <AvatarImage alt={consultant} src={image || undefined} />
-                <AvatarFallback className="text-xs bg-gray-100 text-gray-700">
+                <AvatarFallback className="text-sm bg-gray-100 text-gray-700 font-medium">
                   {consultant
                     ?.split(" ")
                     .slice(0, 2)
@@ -204,19 +204,20 @@ export function EventCard({
                     .join("")}
                 </AvatarFallback>
               </Avatar>
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0 flex-1">
                 <CardTitle
-                  className="text-sm font-semibold leading-tight truncate max-w-full break-words text-gray-900"
+                  className="text-sm font-semibold leading-tight text-gray-900 mb-1 line-clamp-2"
                   data-testid="card-title"
+                  title={title}
                 >
                   {title}
                 </CardTitle>
-                <p className="text-xs text-gray-600 truncate max-w-full break-words">
+                <p className="text-xs text-gray-600 line-clamp-1" title={consultant}>
                   {consultant}
                 </p>
               </div>
             </div>
-            <div className="flex flex-col items-end gap-1">
+            <div className="flex flex-col items-end gap-1 flex-shrink-0">
               <Badge
                 variant={
                   isTentative
@@ -225,7 +226,7 @@ export function EventCard({
                       ? "destructive"
                       : "default"
                 }
-                className="text-xs px-2 py-0.5 font-medium"
+                className="text-xs px-2 py-0.5 font-medium whitespace-nowrap"
               >
                 {isTentative
                   ? "Pending"
@@ -237,79 +238,72 @@ export function EventCard({
             </div>
           </div>
         </CardHeader>
-        <CardContent className="pt-0">
-          <div className="flex flex-col h-full gap-2">
-            {type === "Class" && actualSlots.length === 1 ? (
-              <div className="flex items-center justify-between">
-                <span
-                  data-testid="slot-time"
-                  className="text-sm text-gray-600 break-words"
-                >
+        <CardContent className="pt-0 flex-1 flex flex-col">
+          <div className="flex flex-col h-full gap-3">
+            {/* Time/Schedule Section */}
+            <div className="flex-shrink-0">
+              {type === "Class" && actualSlots.length === 1 ? (
+                <div>
                   {actualSlots && actualSlots.length > 0 ? (
-                    <div className="bg-gray-50 p-3 rounded-lg border border-gray-100 flex flex-col space-y-1">
-                      <div className="text-sm font-medium text-gray-700 break-words">
+                    <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                      <div className="text-sm font-medium text-gray-700 mb-2">
                         Scheduled Time
                       </div>
-                      <div>
-                        <span className="text-sm text-gray-600 break-words">
+                      <div className="space-y-1">
+                        <div className="text-sm text-gray-600">
                           {formatSlotDate(actualSlots[0].startTime)}
-                        </span>
-                        <span className="text-sm text-gray-600 ml-2 break-words">
+                        </div>
+                        <div className="text-sm text-gray-600">
                           {formatSlotTime(actualSlots[0].startTime)} -{" "}
                           {formatSlotTime(actualSlots[0].endTime)}
-                        </span>
+                        </div>
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200 text-yellow-700 break-words">
+                    <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200 text-yellow-700 text-sm">
                       {date}
                     </div>
                   )}
-                </span>
-              </div>
-            ) : showSessionDetails ? (
-              <Accordion type="single" collapsible className="w-full">
-                <AccordionItem value="sessions" className="border-none">
-                  <AccordionTrigger className="py-2 hover:no-underline text-left">
-                    <span className="text-sm font-medium text-gray-700 break-words">
-                      {type === "Subscription"
-                        ? "Scheduled Sessions"
-                        : "Class Schedule"}
-                    </span>
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    <div data-testid="slot-list" className="space-y-2">
-                      {actualSlots.map((slot, index) => (
-                        <div
-                          key={index}
-                          className="flex items-center justify-between bg-gray-50 p-2 rounded border border-gray-100"
-                        >
-                          <div className="flex flex-col">
-                            <span className="text-sm text-gray-600 break-words">
+                </div>
+              ) : showSessionDetails ? (
+                <Accordion type="single" collapsible className="w-full">
+                  <AccordionItem value="sessions" className="border-none">
+                    <AccordionTrigger className="py-2 hover:no-underline text-left">
+                      <span className="text-sm font-medium text-gray-700">
+                        {type === "Subscription"
+                          ? "Scheduled Sessions"
+                          : "Class Schedule"}
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <div data-testid="slot-list" className="space-y-2 max-h-32 overflow-y-auto">
+                        {actualSlots.map((slot, index) => (
+                          <div
+                            key={index}
+                            className="flex items-center justify-between bg-gray-50 p-2 rounded border border-gray-100 text-sm"
+                          >
+                            <div className="text-gray-600 min-w-0 flex-1">
                               {formatSlotDate(slot.startTime)}
-                            </span>
+                            </div>
+                            <div className="text-gray-600 text-xs ml-2 flex-shrink-0">
+                              {formatSlotTime(slot.startTime)} -{" "}
+                              {formatSlotTime(slot.endTime)}
+                            </div>
                           </div>
-                          <span className="text-sm text-gray-600 break-words">
-                            {formatSlotTime(slot.startTime)} -{" "}
-                            {formatSlotTime(slot.endTime)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </AccordionContent>
-                </AccordionItem>
-              </Accordion>
-            ) : (
-              <div className="flex items-center justify-between">
-                <span
-                  data-testid="slot-time"
-                  className="text-sm text-gray-600 break-words bg-gray-50 p-2 rounded border border-gray-100"
-                >
-                  {date}
-                </span>
-              </div>
-            )}
-            <div className="flex flex-col gap-3 mt-auto pt-3">
+                        ))}
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+              ) : (
+                <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                  <div className="text-sm text-gray-600">{date}</div>
+                </div>
+              )}
+            </div>
+
+            {/* Content Area - Takes up remaining space */}
+            <div className="flex-1 flex flex-col justify-end gap-3">
               {/* Document Upload Section */}
               {showDocumentUpload && (
                 <div className="border-t pt-3">
@@ -322,17 +316,17 @@ export function EventCard({
               )}
               
               {/* Action Buttons */}
-              <div className="flex justify-end gap-2">
+              <div className="flex flex-col sm:flex-row justify-end gap-2">
                 {!isTentative && status?.toLowerCase() !== "cancelled" && (
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={handleReschedule}
                     disabled={isLoading}
-                    className="flex items-center gap-1 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50 border-yellow-200 hover:border-yellow-300 transition-colors"
+                    className="flex items-center justify-center gap-1 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50 border-yellow-200 hover:border-yellow-300 transition-colors w-full sm:w-auto"
                   >
                     <ClockIcon className="h-4 w-4" />
-                    {isLoading ? "Requesting..." : "Request Reschedule"}
+                    <span className="text-xs">{isLoading ? "Requesting..." : "Request Reschedule"}</span>
                   </Button>
                 )}
                 {status?.toLowerCase() !== "cancelled" && (
@@ -341,10 +335,10 @@ export function EventCard({
                     size="sm"
                     onClick={handleCancel}
                     disabled={isLoading}
-                    className="flex items-center gap-1 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300 transition-colors"
+                    className="flex items-center justify-center gap-1 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300 transition-colors w-full sm:w-auto"
                   >
                     <XIcon className="h-4 w-4" />
-                    {isLoading ? "Cancelling..." : "Cancel"}
+                    <span className="text-xs">{isLoading ? "Cancelling..." : "Cancel"}</span>
                   </Button>
                 )}
               </div>
