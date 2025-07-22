@@ -74,36 +74,101 @@ export function EventCard({
     actualSlots.length > 1;
 
   const handleReschedule = async () => {
+    if (!appointmentId) {
+      toast({
+        title: "Error",
+        description: "Appointment ID is missing",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsLoading(true);
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    toast({
-      title: "Reschedule request sent",
-      description: `Your reschedule request for ${title} has been sent to ${consultant}.`,
-      duration: 3000,
-    });
-    setIsLoading(false);
+    try {
+      const response = await fetch(`/api/appointments/${appointmentId}/reschedule`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to request reschedule");
+      }
+
+      toast({
+        title: "Reschedule request sent",
+        description: `Your reschedule request for ${title} has been sent to ${consultant}.`,
+        variant: "default",
+      });
+
+      // Optionally refresh the page or update state
+      window.location.reload();
+    } catch (error) {
+      console.error("Error requesting reschedule:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to request reschedule",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleCancel = async () => {
+    if (!appointmentId) {
+      toast({
+        title: "Error",
+        description: "Appointment ID is missing",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (
       !window.confirm(
-        `Are you sure you want to cancel "${title}" with ${consultant}?`,
+        `Are you sure you want to cancel "${title}" with ${consultant}? This action cannot be undone.`,
       )
     ) {
       return;
     }
 
     setIsLoading(true);
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    toast({
-      title: "Appointment cancelled",
-      description: `Your ${type.toLowerCase()} "${title}" has been cancelled.`,
-      variant: "destructive",
-      duration: 3000,
-    });
-    setIsLoading(false);
+    try {
+      const response = await fetch(`/api/appointments/${appointmentId}/cancel`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to cancel appointment");
+      }
+
+      toast({
+        title: "Appointment cancelled",
+        description: `Your ${type.toLowerCase()} "${title}" has been cancelled successfully.`,
+        variant: "default",
+      });
+
+      // Refresh the page to reflect the cancellation
+      window.location.reload();
+    } catch (error) {
+      console.error("Error cancelling appointment:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to cancel appointment",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Determine if appointment is confirmed and scheduled
@@ -125,13 +190,13 @@ export function EventCard({
       transition={{ duration: 0.2 }}
       className={`${className}`}
     >
-      <Card className="w-64 flex-shrink-0 transition-all duration-200 hover:shadow-md">
+      <Card className="w-64 flex-shrink-0 transition-all duration-200 hover:shadow-md border border-gray-200 bg-white">
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Avatar className="w-8 h-8">
                 <AvatarImage alt={consultant} src={image || undefined} />
-                <AvatarFallback className="text-xs">
+                <AvatarFallback className="text-xs bg-gray-100 text-gray-700">
                   {consultant
                     ?.split(" ")
                     .slice(0, 2)
@@ -141,7 +206,7 @@ export function EventCard({
               </Avatar>
               <div className="flex-1 min-w-0">
                 <CardTitle
-                  className="text-sm leading-tight truncate max-w-full break-words"
+                  className="text-sm font-semibold leading-tight truncate max-w-full break-words text-gray-900"
                   data-testid="card-title"
                 >
                   {title}
@@ -160,13 +225,13 @@ export function EventCard({
                       ? "destructive"
                       : "default"
                 }
-                className="text-xs px-2 py-0.5"
+                className="text-xs px-2 py-0.5 font-medium"
               >
                 {isTentative
                   ? "Pending"
                   : status?.replace(/([A-Z])/g, " $1").trim() || "Active"}
               </Badge>
-              <Badge variant="secondary" className="text-xs px-2 py-0.5">
+              <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-gray-100 text-gray-700">
                 {type}
               </Badge>
             </div>
@@ -181,7 +246,7 @@ export function EventCard({
                   className="text-sm text-gray-600 break-words"
                 >
                   {actualSlots && actualSlots.length > 0 ? (
-                    <div className="bg-gray-50 p-2 rounded flex flex-col space-y-1">
+                    <div className="bg-gray-50 p-3 rounded-lg border border-gray-100 flex flex-col space-y-1">
                       <div className="text-sm font-medium text-gray-700 break-words">
                         Scheduled Time
                       </div>
@@ -196,16 +261,16 @@ export function EventCard({
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-yellow-50 p-2 rounded text-yellow-700 break-words">
+                    <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200 text-yellow-700 break-words">
                       {date}
                     </div>
                   )}
                 </span>
               </div>
             ) : showSessionDetails ? (
-              <Accordion type="single" collapsible>
+              <Accordion type="single" collapsible className="w-full">
                 <AccordionItem value="sessions" className="border-none">
-                  <AccordionTrigger className="py-2 hover:no-underline">
+                  <AccordionTrigger className="py-2 hover:no-underline text-left">
                     <span className="text-sm font-medium text-gray-700 break-words">
                       {type === "Subscription"
                         ? "Scheduled Sessions"
@@ -217,7 +282,7 @@ export function EventCard({
                       {actualSlots.map((slot, index) => (
                         <div
                           key={index}
-                          className="flex items-center justify-between bg-gray-50 p-2 rounded"
+                          className="flex items-center justify-between bg-gray-50 p-2 rounded border border-gray-100"
                         >
                           <div className="flex flex-col">
                             <span className="text-sm text-gray-600 break-words">
@@ -238,16 +303,16 @@ export function EventCard({
               <div className="flex items-center justify-between">
                 <span
                   data-testid="slot-time"
-                  className="text-sm text-gray-600 break-words"
+                  className="text-sm text-gray-600 break-words bg-gray-50 p-2 rounded border border-gray-100"
                 >
                   {date}
                 </span>
               </div>
             )}
-            <div className="flex flex-col gap-2 mt-auto pt-2">
+            <div className="flex flex-col gap-3 mt-auto pt-3">
               {/* Document Upload Section */}
               {showDocumentUpload && (
-                <div className="border-t pt-2">
+                <div className="border-t pt-3">
                   <DocumentUpload
                     appointmentId={appointmentId}
                     appointmentTitle={title}
@@ -264,10 +329,10 @@ export function EventCard({
                     size="sm"
                     onClick={handleReschedule}
                     disabled={isLoading}
-                    className="flex items-center gap-1 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50"
+                    className="flex items-center gap-1 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50 border-yellow-200 hover:border-yellow-300 transition-colors"
                   >
                     <ClockIcon className="h-4 w-4" />
-                    Request Reschedule
+                    {isLoading ? "Requesting..." : "Request Reschedule"}
                   </Button>
                 )}
                 {status?.toLowerCase() !== "cancelled" && (
@@ -276,10 +341,10 @@ export function EventCard({
                     size="sm"
                     onClick={handleCancel}
                     disabled={isLoading}
-                    className="flex items-center gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
+                    className="flex items-center gap-1 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300 transition-colors"
                   >
                     <XIcon className="h-4 w-4" />
-                    Cancel
+                    {isLoading ? "Cancelling..." : "Cancel"}
                   </Button>
                 )}
               </div>
