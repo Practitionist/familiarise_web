@@ -14,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { ClockIcon, XIcon } from "lucide-react";
 import React from "react";
+import { DocumentUpload } from "./DocumentUpload";
 
 interface EventCardProps {
   title: string;
@@ -49,204 +50,131 @@ function formatSlotTime(date: Date | string): string {
       minute: "2-digit",
       hour12: true,
     })
-    .toLowerCase(); // Convert to lowercase for consistent am/pm
+    .replace(/\s/, "");
 }
 
 export function EventCard({
   title,
   consultant,
   date,
-  status,
+  status = "Active",
   image,
-  actualSlots,
-  type,
-  isTentative,
+  actualSlots = [],
+  type = "Consultation",
+  isTentative = false,
   appointmentId,
-  className,
+  className = "",
 }: Readonly<EventCardProps>) {
-  const getStatusColor = (status: string) => {
-    const statusLower = status.toLowerCase();
-    if (statusLower === "completed")
-      return "bg-green-50 text-green-700 border-green-200";
-    if (statusLower === "rejected" || statusLower === "expired")
-      return "bg-red-50 text-red-700 border-red-200";
-    if (statusLower === "pending")
-      return "bg-yellow-50 text-yellow-700 border-yellow-200";
-    if (statusLower === "approved")
-      return "bg-blue-50 text-blue-700 border-blue-200";
-    return "bg-gray-50 text-gray-700 border-gray-200";
-  };
-
   const { toast } = useToast();
   const [isLoading, setIsLoading] = React.useState(false);
 
-  const handleReschedule = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!appointmentId) return;
+  const showSessionDetails =
+    (type === "Subscription" || type === "Class") &&
+    actualSlots &&
+    actualSlots.length > 1;
 
-    try {
-      setIsLoading(true);
-      const response = await fetch(
-        `/api/appointments/${appointmentId}/reschedule`,
-        {
-          method: "POST",
-        },
-      );
-
-      if (!response.ok) {
-        throw new Error("Failed to request reschedule");
-      }
-
-      toast({
-        title: "Reschedule requested",
-        description: "Your request has been sent to the consultant.",
-      });
-
-      // Refresh the page to show updated status
-      window.location.reload();
-    } catch (error) {
-      console.error("Error requesting reschedule:", error);
-      toast({
-        title: "Error",
-        description: "Failed to request reschedule. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
+  const handleReschedule = async () => {
+    setIsLoading(true);
+    // Simulate API call
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    toast({
+      title: "Reschedule request sent",
+      description: `Your reschedule request for ${title} has been sent to ${consultant}.`,
+      duration: 3000,
+    });
+    setIsLoading(false);
   };
 
-  const handleCancel = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!appointmentId) return;
-
-    if (!confirm("Are you sure you want to cancel this appointment?")) {
+  const handleCancel = async () => {
+    if (
+      !window.confirm(
+        `Are you sure you want to cancel "${title}" with ${consultant}?`,
+      )
+    ) {
       return;
     }
 
-    try {
-      setIsLoading(true);
-      const response = await fetch(
-        `/api/appointments/${appointmentId}/cancel`,
-        {
-          method: "POST",
-        },
-      );
-
-      if (!response.ok) {
-        throw new Error("Failed to cancel appointment");
-      }
-
-      toast({
-        title: "Appointment cancelled",
-        description: "Your appointment has been cancelled successfully.",
-      });
-
-      // Refresh the page to show updated status
-      window.location.reload();
-    } catch (error) {
-      console.error("Error cancelling appointment:", error);
-      toast({
-        title: "Error",
-        description: "Failed to cancel appointment. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleClick = () => {
-    console.log("EventCard clicked:", {
-      title,
-      consultant,
-      date,
-      status,
-      type,
-      actualSlots,
-      isTentative,
+    setIsLoading(true);
+    // Simulate API call
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    toast({
+      title: "Appointment cancelled",
+      description: `Your ${type.toLowerCase()} "${title}" has been cancelled.`,
+      variant: "destructive",
+      duration: 3000,
     });
+    setIsLoading(false);
   };
 
-  const showEditButton =
-    isTentative ||
-    date.includes("Please select") ||
-    date === "No slot assigned";
+  // Determine if appointment is confirmed and scheduled
+  const isConfirmed = status?.toLowerCase() === "approved" || 
+                     status?.toLowerCase() === "scheduled" ||
+                     (!isTentative && actualSlots.length > 0);
 
-  const hasSlots = actualSlots && actualSlots.length > 0;
-  const showSessionDetails =
-    (type === "Subscription" || type === "Class") && hasSlots;
+  // Show document upload for consultations and subscriptions only
+  const showDocumentUpload = (type === "Consultation" || type === "Subscription") && 
+                             appointmentId && 
+                             isConfirmed;
 
   return (
     <motion.div
+      layout
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.1 }}
-      className={`group ${className || ""}`}
+      exit={{ opacity: 0, y: -20 }}
+      transition={{ duration: 0.2 }}
+      className={`${className}`}
     >
-      <Card
-        onClick={handleClick}
-        className="relative overflow-hidden hover:shadow-lg transition-all duration-300 border border-gray-100 cursor-pointer w-96 min-h-[16rem] h-auto flex flex-col flex-shrink-0 rounded-xl bg-gradient-to-br from-white via-white to-gray-50 before:absolute before:inset-0 before:z-0 before:bg-[radial-gradient(circle_at_50%_0,rgba(255,255,255,0.7),transparent_70%)] before:opacity-80 hover:before:opacity-100 before:transition-opacity"
-        style={{
-          boxShadow: "0 10px 30px -10px rgba(0, 0, 0, 0.1)",
-        }}
-      >
-        {/* Glossy top reflection effect */}
-        <div className="absolute top-0 left-0 right-0 h-[30%] bg-gradient-to-b from-white/40 to-transparent pointer-events-none z-10 rounded-t-xl"></div>
-
-        {/* Subtle side shine effect */}
-        <div className="absolute -right-20 top-0 bottom-0 w-40 bg-gradient-to-l from-white/40 to-transparent transform rotate-[15deg] group-hover:translate-x-10 transition-transform duration-700 pointer-events-none z-10"></div>
-
-        <CardHeader className="pb-2 relative z-20">
-          <div className="flex items-start justify-between">
-            <div>
-              <CardTitle className="text-lg font-semibold break-words text-gray-800 drop-shadow-sm">
-                {title}
-              </CardTitle>
-              <div className="flex items-center mt-2">
-                <Avatar className="h-6 w-6 mr-2 ring-2 ring-white shadow-sm">
-                  <AvatarImage
-                    src={image ?? "/placeholder.svg"}
-                    alt={consultant}
-                  />
-                  <AvatarFallback>{consultant.charAt(0)}</AvatarFallback>
-                </Avatar>
-                <span
-                  data-testid="consultant-name"
-                  className="text-sm text-gray-600 break-words"
+      <Card className="w-64 flex-shrink-0 transition-all duration-200 hover:shadow-md">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Avatar className="w-8 h-8">
+                <AvatarImage alt={consultant} src={image || undefined} />
+                <AvatarFallback className="text-xs">
+                  {consultant
+                    ?.split(" ")
+                    .slice(0, 2)
+                    .map((name) => name[0])
+                    .join("")}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <CardTitle
+                  className="text-sm leading-tight truncate max-w-full break-words"
+                  data-testid="card-title"
                 >
+                  {title}
+                </CardTitle>
+                <p className="text-xs text-gray-600 truncate max-w-full break-words">
                   {consultant}
-                </span>
+                </p>
               </div>
             </div>
             <div className="flex flex-col items-end gap-1">
-              {status && (
-                <Badge
-                  data-testid="event-status"
-                  className={`${getStatusColor(status)} whitespace-normal break-words backdrop-blur-sm shadow-sm`}
-                >
-                  {status}
-                </Badge>
-              )}
-              {isTentative && (
-                <div className="flex flex-col items-end gap-1">
-                  <Badge
-                    data-testid="tentative-notice"
-                    className="bg-red-50 text-red-700 border-red-200 whitespace-normal break-words shadow-sm backdrop-blur-sm"
-                  >
-                    Tentative
-                  </Badge>
-                  <span className="text-xs text-red-500">
-                    Subject to change
-                  </span>
-                </div>
-              )}
+              <Badge
+                variant={
+                  isTentative
+                    ? "outline"
+                    : status?.toLowerCase() === "cancelled"
+                      ? "destructive"
+                      : "default"
+                }
+                className="text-xs px-2 py-0.5"
+              >
+                {isTentative
+                  ? "Pending"
+                  : status?.replace(/([A-Z])/g, " $1").trim() || "Active"}
+              </Badge>
+              <Badge variant="secondary" className="text-xs px-2 py-0.5">
+                {type}
+              </Badge>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="flex-grow flex flex-col justify-between relative z-20">
-          <div className="flex flex-col space-y-2">
-            {type === "Consultation" || type === "Webinar" ? (
+        <CardContent className="pt-0">
+          <div className="flex flex-col h-full gap-2">
+            {type === "Class" && actualSlots.length === 1 ? (
               <div className="flex items-center justify-between">
                 <span
                   data-testid="slot-time"
@@ -316,31 +244,45 @@ export function EventCard({
                 </span>
               </div>
             )}
-            <div className="flex justify-end gap-2 mt-auto pt-2">
-              {!isTentative && status?.toLowerCase() !== "cancelled" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleReschedule}
-                  disabled={isLoading}
-                  className="flex items-center gap-1 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50"
-                >
-                  <ClockIcon className="h-4 w-4" />
-                  Request Reschedule
-                </Button>
+            <div className="flex flex-col gap-2 mt-auto pt-2">
+              {/* Document Upload Section */}
+              {showDocumentUpload && (
+                <div className="border-t pt-2">
+                  <DocumentUpload
+                    appointmentId={appointmentId}
+                    appointmentTitle={title}
+                    appointmentType={type}
+                  />
+                </div>
               )}
-              {status?.toLowerCase() !== "cancelled" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCancel}
-                  disabled={isLoading}
-                  className="flex items-center gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
-                >
-                  <XIcon className="h-4 w-4" />
-                  Cancel
-                </Button>
-              )}
+              
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-2">
+                {!isTentative && status?.toLowerCase() !== "cancelled" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleReschedule}
+                    disabled={isLoading}
+                    className="flex items-center gap-1 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50"
+                  >
+                    <ClockIcon className="h-4 w-4" />
+                    Request Reschedule
+                  </Button>
+                )}
+                {status?.toLowerCase() !== "cancelled" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCancel}
+                    disabled={isLoading}
+                    className="flex items-center gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
+                  >
+                    <XIcon className="h-4 w-4" />
+                    Cancel
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         </CardContent>

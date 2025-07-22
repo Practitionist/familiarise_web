@@ -142,7 +142,7 @@ export async function fetchDocuments(
   const baseUrl = getBaseUrl();
   try {
     const response = await fetch(
-      `${baseUrl}/api/documents?consultantId=${consultantId}`,
+      `${baseUrl}/api/dashboard/consultant/${consultantId}/documents`,
     );
     if (!response.ok) {
       throw new Error(`Failed to fetch documents: ${response.statusText}`);
