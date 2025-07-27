@@ -3,6 +3,19 @@ import { addDays, endOfDay, isBefore, startOfDay } from "date-fns";
 import { format, toZonedTime, fromZonedTime } from "date-fns-tz";
 import { TSlotTiming } from "@/types/slots";
 
+// Booking status constants and types
+export const BOOKING_STATUS = {
+  AVAILABLE: "available",
+  PARTIALLY_BOOKED: "partially-booked",
+  FULLY_BOOKED: "fully-booked",
+} as const;
+
+export type BookingStatus =
+  (typeof BOOKING_STATUS)[keyof typeof BOOKING_STATUS];
+
+// Booking threshold constant
+export const FULLY_BOOKED_THRESHOLD = 0.99;
+
 // Helper mappings
 export const dayMap: Record<number, DayOfWeek> = {
   0: DayOfWeek.SUNDAY,
@@ -57,7 +70,7 @@ export function hasTimeOverlap(
   start1: Date,
   end1: Date,
   start2: Date,
-  end2: Date,
+  end2: Date
 ): boolean {
   return start1 < end2 && start2 < end1;
 }
@@ -69,7 +82,7 @@ export function processWeeklySlots(
   weeklySlots: WeeklySlot[],
   startDate: Date,
   endDate: Date,
-  timezone: string,
+  timezone: string
 ): ProcessedSlot[] {
   const processedSlots: ProcessedSlot[] = [];
 
@@ -135,7 +148,7 @@ export function processWeeklySlots(
 export function processCustomSlots(
   customSlots: CustomSlot[],
   startDate: Date,
-  endDate: Date,
+  endDate: Date
 ): ProcessedSlot[] {
   return customSlots
     .filter((slot) => {
@@ -144,7 +157,7 @@ export function processCustomSlots(
         slot.slotStartTimeInUTC,
         slot.slotEndTimeInUTC,
         startDate,
-        endDate,
+        endDate
       );
     })
     .map((slot) => ({
@@ -160,7 +173,7 @@ export function processCustomSlots(
  */
 export function splitSlotsByDay(
   slots: ProcessedSlot[],
-  timezone: string,
+  timezone: string
 ): ProcessedSlot[] {
   const splitSlots: ProcessedSlot[] = [];
 
@@ -174,7 +187,7 @@ export function splitSlotsByDay(
 
       const slotPartEndCandidate = isBefore(
         slot.end,
-        fromZonedTime(dayEnd, timezone),
+        fromZonedTime(dayEnd, timezone)
       )
         ? slot.end
         : fromZonedTime(dayEnd, timezone);
@@ -216,15 +229,15 @@ export function splitSlotsByDay(
 export function isSlotAllocated(
   slotStart: Date,
   slotEnd: Date,
-  appointmentSlots: AppointmentSlot[],
+  appointmentSlots: AppointmentSlot[]
 ): boolean {
   return appointmentSlots.some((apptSlot) =>
     hasTimeOverlap(
       slotStart,
       slotEnd,
       apptSlot.slotStartTimeInUTC,
-      apptSlot.slotEndTimeInUTC,
-    ),
+      apptSlot.slotEndTimeInUTC
+    )
   );
 }
 
@@ -234,8 +247,8 @@ export function isSlotAllocated(
 export function getSlotBookingStatus(
   slotStart: Date,
   slotEnd: Date,
-  appointmentSlots: AppointmentSlot[],
-): "available" | "partially-booked" | "fully-booked" {
+  appointmentSlots: AppointmentSlot[]
+): BookingStatus {
   const slotDuration = slotEnd.getTime() - slotStart.getTime();
 
   // Find all appointments that overlap with this slot
@@ -244,12 +257,12 @@ export function getSlotBookingStatus(
       slotStart,
       slotEnd,
       apptSlot.slotStartTimeInUTC,
-      apptSlot.slotEndTimeInUTC,
-    ),
+      apptSlot.slotEndTimeInUTC
+    )
   );
 
   if (overlappingAppointments.length === 0) {
-    return "available";
+    return BOOKING_STATUS.AVAILABLE;
   }
 
   // Calculate total covered duration by merging overlapping appointments
@@ -281,13 +294,13 @@ export function getSlotBookingStatus(
   // Determine booking status based on coverage percentage
   const coveragePercentage = totalCovered / slotDuration;
 
-  if (coveragePercentage >= 0.99) {
+  if (coveragePercentage >= FULLY_BOOKED_THRESHOLD) {
     // Allow for small rounding errors
-    return "fully-booked";
+    return BOOKING_STATUS.FULLY_BOOKED;
   } else if (coveragePercentage > 0) {
-    return "partially-booked";
+    return BOOKING_STATUS.PARTIALLY_BOOKED;
   } else {
-    return "available";
+    return BOOKING_STATUS.AVAILABLE;
   }
 }
 
@@ -297,17 +310,17 @@ export function getSlotBookingStatus(
 export function convertToSlotTimings(
   processedSlots: ProcessedSlot[],
   appointmentSlots: AppointmentSlot[],
-  timezone: string,
+  timezone: string
 ): (TSlotTiming & {
   isAllocated: boolean;
-  bookingStatus: "available" | "partially-booked" | "fully-booked";
+  bookingStatus: BookingStatus;
 })[] {
   const slotTimings = processedSlots.map((slot) => {
     const isAllocated = isSlotAllocated(slot.start, slot.end, appointmentSlots);
     const bookingStatus = getSlotBookingStatus(
       slot.start,
       slot.end,
-      appointmentSlots,
+      appointmentSlots
     );
     const zonedStart = toZonedTime(slot.start, timezone);
 
@@ -326,7 +339,7 @@ export function convertToSlotTimings(
       bookingStatus,
     } as TSlotTiming & {
       isAllocated: boolean;
-      bookingStatus: "available" | "partially-booked" | "fully-booked";
+      bookingStatus: BookingStatus;
     };
   });
 
@@ -334,7 +347,7 @@ export function convertToSlotTimings(
   slotTimings.sort(
     (a, b) =>
       new Date(a.slotStartTimeInUTC).getTime() -
-      new Date(b.slotStartTimeInUTC).getTime(),
+      new Date(b.slotStartTimeInUTC).getTime()
   );
 
   return slotTimings;
@@ -346,18 +359,18 @@ export function convertToSlotTimings(
 export function breakDownSlotsByDuration(
   slots: (TSlotTiming & {
     isAllocated: boolean;
-    bookingStatus?: "available" | "partially-booked" | "fully-booked";
+    bookingStatus?: BookingStatus;
   })[],
   durationInHours: number,
   appointmentSlots: AppointmentSlot[],
-  timezone: string,
+  timezone: string
 ): (TSlotTiming & {
   isAllocated: boolean;
-  bookingStatus: "available" | "partially-booked" | "fully-booked";
+  bookingStatus: BookingStatus;
 })[] {
   const brokenDownSlots: (TSlotTiming & {
     isAllocated: boolean;
-    bookingStatus: "available" | "partially-booked" | "fully-booked";
+    bookingStatus: BookingStatus;
   })[] = [];
 
   if (!slots || slots.length === 0) return brokenDownSlots;
@@ -386,7 +399,7 @@ export function breakDownSlotsByDuration(
       const segmentBookingStatus = getSlotBookingStatus(
         currentStart,
         currentEnd,
-        appointmentSlots,
+        appointmentSlots
       );
 
       brokenDownSlots.push({
@@ -409,7 +422,7 @@ export function breakDownSlotsByDuration(
   brokenDownSlots.sort(
     (a, b) =>
       new Date(a.slotStartTimeInUTC).getTime() -
-      new Date(b.slotStartTimeInUTC).getTime(),
+      new Date(b.slotStartTimeInUTC).getTime()
   );
 
   return brokenDownSlots;
@@ -421,21 +434,21 @@ export function breakDownSlotsByDuration(
 export function groupSlotsByDate(
   slotTimings: (TSlotTiming & {
     isAllocated: boolean;
-    bookingStatus: "available" | "partially-booked" | "fully-booked";
+    bookingStatus: BookingStatus;
   })[],
-  timezone: string,
+  timezone: string
 ): Record<
   string,
   (TSlotTiming & {
     isAllocated: boolean;
-    bookingStatus: "available" | "partially-booked" | "fully-booked";
+    bookingStatus: BookingStatus;
   })[]
 > {
   const slotsByDate = slotTimings.reduce(
     (acc, slot) => {
       const dateKey = format(
         toZonedTime(new Date(slot.slotStartTimeInUTC), timezone),
-        "yyyy-MM-dd",
+        "yyyy-MM-dd"
       );
       if (!acc[dateKey]) {
         acc[dateKey] = [];
@@ -447,9 +460,9 @@ export function groupSlotsByDate(
       string,
       (TSlotTiming & {
         isAllocated: boolean;
-        bookingStatus: "available" | "partially-booked" | "fully-booked";
+        bookingStatus: BookingStatus;
       })[]
-    >,
+    >
   );
 
   // Sort slots within each day chronologically
@@ -457,7 +470,7 @@ export function groupSlotsByDate(
     slotsByDate[dateKey].sort(
       (a, b) =>
         new Date(a.slotStartTimeInUTC).getTime() -
-        new Date(b.slotStartTimeInUTC).getTime(),
+        new Date(b.slotStartTimeInUTC).getTime()
     );
   });
 
@@ -473,12 +486,12 @@ export function processAvailabilitySlots(
   appointmentSlots: AppointmentSlot[],
   startDate: Date,
   endDate: Date,
-  timezone: string,
+  timezone: string
 ): Record<
   string,
   (TSlotTiming & {
     isAllocated: boolean;
-    bookingStatus: "available" | "partially-booked" | "fully-booked";
+    bookingStatus: BookingStatus;
   })[]
 > {
   // Process weekly and custom slots
@@ -486,12 +499,12 @@ export function processAvailabilitySlots(
     weeklySlots,
     startDate,
     endDate,
-    timezone,
+    timezone
   );
   const processedCustomSlots = processCustomSlots(
     customSlots,
     startDate,
-    endDate,
+    endDate
   );
 
   // Combine all slots
@@ -504,7 +517,7 @@ export function processAvailabilitySlots(
   const slotTimings = convertToSlotTimings(
     splitSlots,
     appointmentSlots,
-    timezone,
+    timezone
   );
 
   // Group by date
