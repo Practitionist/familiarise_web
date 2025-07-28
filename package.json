@@ -75,7 +75,7 @@
     "@types/bad-words": "^3.0.3",
     "@types/bcrypt": "^5.0.2",
     "@types/redlock": "^4.0.7",
-    "@upstash/ratelimit": "^2.0.5",
+    "@upstash/ratelimit": "^2.0.6",
     "@upstash/redis": "^1.34.6",
     "axios": "^1.10.0",
     "bad-words": "^4.0.0",
