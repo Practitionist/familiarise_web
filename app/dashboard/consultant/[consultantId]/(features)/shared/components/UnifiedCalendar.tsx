@@ -35,9 +35,10 @@ import {
   TimeSlot,
   AppointmentDetail,
   calculateRequiredSlots,
+  calculateCallProgress,
 } from "../utils/calendarUtils";
 import { useCalendarData } from "../hooks/useCalendarData";
-import { useSlotAllocation } from "../hooks/useSlotAllocation";
+import { useEventSlotAllocation } from "../hooks/useSlotAllocation";
 import { cn } from "@/utils/tailwind";
 
 export interface UnifiedCalendarProps {
@@ -45,8 +46,9 @@ export interface UnifiedCalendarProps {
   eventType: "consultation" | "subscription" | "webinar" | "class";
   eventId?: string;
   durationInMonths?: number;
+  durationInHours?: number; // For consultations/webinars
   callsPerWeek?: number;
-  sessionDurationInHours?: number; // Optional - will be fetched from plan if not provided
+  sessionDurationInHours?: number; // For subscriptions/classes - individual session duration
   mode: "view" | "select" | "allocate";
   onSlotsSelected?: (slots: TimeSlot[]) => void;
   onAllocationComplete?: (result: any) => void;
@@ -59,6 +61,7 @@ export interface UnifiedCalendarProps {
 export function UnifiedCalendar({
   consultantId,
   eventType,
+  durationInHours,
   sessionDurationInHours,
   eventId,
   durationInMonths,
@@ -110,11 +113,14 @@ export function UnifiedCalendar({
     manualAllocate,
     autoAllocate,
     preAllocate,
-  } = useSlotAllocation({
+  } = useEventSlotAllocation({
     eventType,
     eventId: eventId || "",
+    consultantId,
     durationInMonths,
+    durationInHours,
     callsPerWeek,
+    sessionDurationInHours,
     onSuccess: onAllocationComplete,
   });
 
@@ -157,7 +163,7 @@ export function UnifiedCalendar({
         toggleSlot(slot);
       }
     },
-    [mode, getSlotStatusForInterval, toggleSlot],
+    [mode, getSlotStatusForInterval, toggleSlot]
   );
 
   // Render time cell
@@ -208,8 +214,12 @@ export function UnifiedCalendar({
             " bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
           buttonText = "Available";
         } else {
-          cellClassName +=
-            " bg-green-300 text-green-950 hover:bg-green-400 border-green-400";
+          // Add special hover effect for consultations to show the selected duration
+          const hoverClass =
+            eventType === "consultation"
+              ? " hover:bg-green-400 hover:shadow-md"
+              : " hover:bg-green-400";
+          cellClassName += ` bg-green-300 text-green-950${hoverClass} border-green-400`;
           buttonText = "Available";
         }
       } else {
@@ -260,7 +270,7 @@ export function UnifiedCalendar({
                           </p>
                         )}
                       </div>
-                    ),
+                    )
                   )}
                 </div>
               </TooltipContent>
@@ -280,7 +290,7 @@ export function UnifiedCalendar({
       loading,
       error,
       mode,
-    ],
+    ]
   );
 
   // Render month view
@@ -353,7 +363,7 @@ export function UnifiedCalendar({
                 </div>
               </div>
             );
-          },
+          }
         )}
       </div>
     );
@@ -421,7 +431,7 @@ export function UnifiedCalendar({
               setCurrentDate(
                 view === "week"
                   ? subWeeks(currentDate, 1)
-                  : subMonths(currentDate, 1),
+                  : subMonths(currentDate, 1)
               )
             }
           >
@@ -439,7 +449,7 @@ export function UnifiedCalendar({
               setCurrentDate(
                 view === "week"
                   ? addWeeks(currentDate, 1)
-                  : addMonths(currentDate, 1),
+                  : addMonths(currentDate, 1)
               )
             }
           >
@@ -526,7 +536,7 @@ export function UnifiedCalendar({
                       0,
                       1,
                       interval.hour,
-                      interval.minute,
+                      interval.minute
                     ).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
@@ -553,27 +563,41 @@ export function UnifiedCalendar({
           <div className="text-sm">
             {(() => {
               try {
+                if (eventType === "subscription") {
+                  return calculateCallProgress(
+                    selectedSlots,
+                    sessionDurationInHours
+                  );
+                }
+
+                const duration =
+                  eventType === "consultation" || eventType === "webinar"
+                    ? durationInHours
+                    : sessionDurationInHours;
+
                 const requiredSlotsForThisEvent = calculateRequiredSlots(
                   eventType,
                   durationInMonths,
                   callsPerWeek,
-                  sessionDurationInHours,
+                  duration
                 );
 
-                if (selectedSlots.length === 0) {
-                  return `0 selected out of ${requiredSlotsForThisEvent} required slots for the session`;
-                }
-
-                return `${selectedSlots.length} selected out of ${requiredSlotsForThisEvent} required slots for the session`;
+                return `${selectedSlots.length} selected out of ${requiredSlotsForThisEvent} required slots`;
               } catch (error) {
                 console.error("Error calculating footer stats:", error);
+                if (error instanceof Error) {
+                  return error.message;
+                }
                 return `Selected: ${selectedSlots.length} slots`;
               }
             })()}
           </div>
           <div className="text-xs text-muted-foreground">
-            Required: {sessionDurationInHours || 1}h per session (
-            {Math.ceil((sessionDurationInHours || 1) * 2)} consecutive slots)
+            {eventType === "consultation"
+              ? `Required: ${durationInHours || 1}h consultation (1 slot)`
+              : eventType === "subscription"
+                ? `Required: ${sessionDurationInHours || 1}h per call (${Math.ceil((sessionDurationInHours || 1) * 2)} consecutive slots per call)`
+                : `Required: ${sessionDurationInHours || 1}h per session (${Math.ceil((sessionDurationInHours || 1) * 2)} consecutive slots)`}
           </div>
           {allocationError && (
             <div className="text-sm text-red-600">{allocationError}</div>

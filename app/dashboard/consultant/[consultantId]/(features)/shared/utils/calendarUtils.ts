@@ -98,7 +98,7 @@ export function mapWeeklySlots(
   consultantData: ConsultantData,
   currentDate: Date,
   view: "week" | "month" = "week",
-  intervalMinutes: number = 30, // Configurable interval duration
+  intervalMinutes: number = 30 // Configurable interval duration
 ): TimeSlot[] {
   if (
     consultantData.scheduleType !== ScheduleType.WEEKLY ||
@@ -127,7 +127,7 @@ export function mapWeeklySlots(
   while (iterDate <= endDate) {
     const dayOfWeek = iterDate.getDay();
     const matchingSlots = consultantData.slotsOfAvailabilityWeekly.filter(
-      (slot) => DAY_INDEX[slot.dayOfWeekforStartTimeInUTC] === dayOfWeek,
+      (slot) => DAY_INDEX[slot.dayOfWeekforStartTimeInUTC] === dayOfWeek
     );
 
     matchingSlots.forEach((slot) => {
@@ -140,7 +140,7 @@ export function mapWeeklySlots(
         startTime.getHours(),
         startTime.getMinutes(),
         0,
-        0,
+        0
       );
 
       const slotEndTime = new Date(iterDate);
@@ -183,7 +183,7 @@ export function mapWeeklySlots(
  */
 export function mapCustomSlots(
   consultantData: ConsultantData,
-  intervalMinutes: number = 30, // Configurable interval duration
+  intervalMinutes: number = 30 // Configurable interval duration
 ): TimeSlot[] {
   if (
     consultantData.scheduleType !== ScheduleType.CUSTOM ||
@@ -241,7 +241,7 @@ export function getSlotStatus(
   date: Date,
   availableSlots: TimeSlot[],
   existingAppointments: Appointment[],
-  intervalMinutes: number = 30, // Configurable interval duration
+  intervalMinutes: number = 30 // Configurable interval duration
 ): SlotStatus {
   const slotStart = new Date(date);
   slotStart.setHours(interval.hour, interval.minute, 0, 0);
@@ -339,28 +339,64 @@ export function calculateRequiredSlots(
   eventType: "consultation" | "subscription" | "webinar" | "class",
   durationInMonths?: number,
   callsPerWeek?: number,
-  sessionDurationInHours?: number,
+  sessionDurationInHours?: number
 ): number {
+  if (!eventType) {
+    throw new Error("Event type is required");
+  }
+
   switch (eventType) {
     case "consultation":
       return 1;
 
     case "webinar":
-      // For webinars, calculate based on session duration (default to 1 hour if not provided)
-      const webinarDuration = sessionDurationInHours || 1;
-      return Math.ceil(webinarDuration * 2); // 2 slots per hour (30-min each)
+      if (!sessionDurationInHours || sessionDurationInHours <= 0) {
+        // For webinars, if sessionDurationInHours is not provided, use a default of 1 hour
+        return Math.ceil(1 * 2);
+      }
+      return Math.ceil(sessionDurationInHours * 2);
 
     case "subscription":
-    case "class":
-      if (!durationInMonths || !callsPerWeek) {
+      if (!durationInMonths || durationInMonths <= 0) {
         throw new Error(
-          "Duration and calls per week are required for subscription/class",
+          "Duration in months must be a positive number for subscriptions"
         );
       }
-      return durationInMonths * 4 * callsPerWeek; // 4 weeks per month
+      if (!callsPerWeek || callsPerWeek <= 0) {
+        throw new Error(
+          "Calls per week must be a positive number for subscriptions"
+        );
+      }
+      if (!sessionDurationInHours || sessionDurationInHours <= 0) {
+        throw new Error(
+          "Session duration must be a positive number for subscriptions"
+        );
+      }
+      const totalCalls = durationInMonths * 4 * callsPerWeek;
+      const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5);
+      return totalCalls * slotsPerCall;
+
+    case "class":
+      if (!durationInMonths || durationInMonths <= 0) {
+        throw new Error(
+          "Duration in months must be a positive number for classes"
+        );
+      }
+      if (!callsPerWeek || callsPerWeek <= 0) {
+        throw new Error("Calls per week must be a positive number for classes");
+      }
+      if (!sessionDurationInHours || sessionDurationInHours <= 0) {
+        throw new Error(
+          "Session duration must be a positive number for classes"
+        );
+      }
+      const totalHours = durationInMonths * 4 * callsPerWeek;
+      const totalSessions = Math.ceil(totalHours / sessionDurationInHours);
+      const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5);
+      return totalSessions * slotsPerSession;
 
     default:
-      throw new Error("Invalid event type");
+      throw new Error(`Invalid event type: ${eventType}`);
   }
 }
 
@@ -371,72 +407,10 @@ export function validateSelectedSlots(
   selectedSlots: TimeSlot[],
   eventType: "consultation" | "subscription" | "webinar" | "class",
   requiredSlots?: number,
-  sessionDurationInHours?: number,
+  sessionDurationInHours?: number
 ): { isValid: boolean; errorMessage?: string } {
   if (selectedSlots.length === 0) {
-    return { isValid: false, errorMessage: "Please select at least one slot" };
-  }
-
-  switch (eventType) {
-    case "consultation":
-      if (selectedSlots.length !== 1) {
-        return {
-          isValid: false,
-          errorMessage: "Consultation requires exactly one slot",
-        };
-      }
-      break;
-
-    case "webinar":
-      // For webinars, calculate required slots based on session duration
-      const webinarRequiredSlots =
-        requiredSlots ||
-        calculateRequiredSlots(
-          eventType,
-          undefined,
-          undefined,
-          sessionDurationInHours,
-        );
-      if (selectedSlots.length !== webinarRequiredSlots) {
-        const durationText = sessionDurationInHours
-          ? `${sessionDurationInHours} hour${sessionDurationInHours > 1 ? "s" : ""}`
-          : "1 hour";
-        return {
-          isValid: false,
-          errorMessage: `Webinar (${durationText}) requires exactly ${webinarRequiredSlots} consecutive slot${webinarRequiredSlots > 1 ? "s" : ""}`,
-        };
-      }
-
-      // Validate that slots are consecutive for multi-slot webinars
-      if (webinarRequiredSlots > 1) {
-        const sortedSlots = [...selectedSlots].sort(
-          (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-        );
-        for (let i = 1; i < sortedSlots.length; i++) {
-          const prevSlot = sortedSlots[i - 1];
-          const currentSlot = sortedSlots[i];
-          if (currentSlot.startTime.getTime() !== prevSlot.endTime.getTime()) {
-            return {
-              isValid: false,
-              errorMessage: "Webinar slots must be consecutive",
-            };
-          }
-        }
-      }
-      break;
-
-    case "subscription":
-    case "class":
-      if (requiredSlots && selectedSlots.length !== requiredSlots) {
-        return {
-          isValid: false,
-          errorMessage: `${eventType === "subscription" ? "Subscription" : "Class"} requires exactly ${requiredSlots} slots`,
-        };
-      }
-      break;
-
-    default:
-      return { isValid: false, errorMessage: "Invalid event type" };
+    return { isValid: true, errorMessage: "" }; // Allow empty selection during interactive building
   }
 
   // Check for slots in the past
@@ -444,6 +418,63 @@ export function validateSelectedSlots(
   const pastSlots = selectedSlots.filter((slot) => slot.startTime < now);
   if (pastSlots.length > 0) {
     return { isValid: false, errorMessage: "Cannot select slots in the past" };
+  }
+
+  switch (eventType) {
+    case "consultation":
+      if (selectedSlots.length > 1) {
+        return {
+          isValid: false,
+          errorMessage: "Consultation requires only 1 slot",
+        };
+      }
+      break;
+
+    case "webinar":
+      const webinarRequiredSlots =
+        requiredSlots ||
+        calculateRequiredSlots(
+          eventType,
+          undefined,
+          undefined,
+          sessionDurationInHours
+        );
+      if (selectedSlots.length !== webinarRequiredSlots) {
+        return {
+          isValid: false,
+          errorMessage: `Webinar requires exactly ${webinarRequiredSlots} slots`,
+        };
+      }
+      if (!validateDayBasedConsecutiveSlots(selectedSlots)) {
+        return {
+          isValid: false,
+          errorMessage: "Webinar slots must be consecutive",
+        };
+      }
+      break;
+
+    case "subscription":
+      const { isValid, errorMessage } = validateSubscriptionCallStructure(
+        selectedSlots,
+        sessionDurationInHours
+      );
+      if (!isValid) {
+        return { isValid, errorMessage };
+      }
+      break;
+
+    case "class":
+      // More complex validation for classes can be added here
+      if (requiredSlots && selectedSlots.length > requiredSlots) {
+        return {
+          isValid: false,
+          errorMessage: `Class requires a maximum of ${requiredSlots} slots`,
+        };
+      }
+      break;
+
+    default:
+      return { isValid: false, errorMessage: "Invalid event type" };
   }
 
   return { isValid: true };
@@ -473,7 +504,7 @@ export function groupSlotsByWeek(slots: TimeSlot[]): Map<string, TimeSlot[]> {
  */
 export function validateSlotDistribution(
   slots: TimeSlot[],
-  callsPerWeek: number,
+  callsPerWeek: number
 ): { isValid: boolean; errorMessage?: string } {
   const slotsByWeek = groupSlotsByWeek(slots);
 
@@ -523,4 +554,106 @@ export function getAppointmentUser(appointment: Appointment): string {
     return appointment.subscription?.requestedBy?.user?.name || "";
   }
   return "";
+}
+
+/**
+ * NEW: Validates that slots are consecutive within a single day.
+ */
+export function validateDayBasedConsecutiveSlots(slots: TimeSlot[]): boolean {
+  if (slots.length <= 1) return true;
+
+  const sortedSlots = [...slots].sort(
+    (a, b) => a.startTime.getTime() - b.startTime.getTime()
+  );
+
+  for (let i = 1; i < sortedSlots.length; i++) {
+    const prevSlot = sortedSlots[i - 1];
+    const currentSlot = sortedSlots[i];
+
+    if (currentSlot.startTime.getTime() !== prevSlot.endTime.getTime()) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * NEW: Gets the completion status of subscription calls.
+ */
+export function getCallCompletionStatus(
+  slots: TimeSlot[],
+  sessionDurationInHours?: number
+): {
+  completedCalls: number;
+  incompleteCallSlots: number;
+  slotsPerCall: number;
+} {
+  if (!sessionDurationInHours || sessionDurationInHours <= 0) {
+    return { completedCalls: 0, incompleteCallSlots: 0, slotsPerCall: 0 };
+  }
+
+  const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5);
+  const completedCalls = Math.floor(slots.length / slotsPerCall);
+  const incompleteCallSlots = slots.length % slotsPerCall;
+
+  return { completedCalls, incompleteCallSlots, slotsPerCall };
+}
+
+/**
+ * NEW: Groups slots by date and validates the structure of subscription calls.
+ */
+export function validateSubscriptionCallStructure(
+  slots: TimeSlot[],
+  sessionDurationInHours?: number
+): { isValid: boolean; errorMessage?: string } {
+  if (!sessionDurationInHours || sessionDurationInHours <= 0) {
+    return { isValid: false, errorMessage: "Invalid session duration" };
+  }
+
+  const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5);
+  const slotsByDay = new Map<string, TimeSlot[]>();
+
+  for (const slot of slots) {
+    const dayKey = slot.startTime.toDateString();
+    if (!slotsByDay.has(dayKey)) {
+      slotsByDay.set(dayKey, []);
+    }
+    slotsByDay.get(dayKey)!.push(slot);
+  }
+
+  for (const [day, daySlots] of Array.from(slotsByDay.entries())) {
+    if (daySlots.length > slotsPerCall) {
+      return {
+        isValid: false,
+        errorMessage: `Maximum 1 call per day. Too many slots on ${day}.`,
+      };
+    }
+    if (!validateDayBasedConsecutiveSlots(daySlots)) {
+      return {
+        isValid: false,
+        errorMessage: `Slots on ${day} must be consecutive.`,
+      };
+    }
+  }
+
+  return { isValid: true };
+}
+
+/**
+ * NEW: Calculates the progress of subscription calls.
+ */
+export function calculateCallProgress(
+  slots: TimeSlot[],
+  sessionDurationInHours?: number
+): string {
+  const { completedCalls, incompleteCallSlots, slotsPerCall } =
+    getCallCompletionStatus(slots, sessionDurationInHours);
+
+  if (slotsPerCall === 0) return "";
+
+  if (incompleteCallSlots > 0) {
+    return `Building call ${completedCalls + 1}: ${incompleteCallSlots}/${slotsPerCall} slots`;
+  }
+  return `Completed ${completedCalls} calls`;
 }

@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useParams } from "next/navigation";
-import { UnifiedCalendar } from "../../shared/components/UnifiedCalendar";
+import { SafeUnifiedCalendar } from "../../shared/components/SafeUnifiedCalendar";
 import { TAppointment } from "@/types/appointment";
 
 interface EventTimingsCalendarProps {
@@ -121,13 +121,24 @@ export function EventTimingsCalendar({
           <DialogDescription>{getDescriptionText()}</DialogDescription>
         </DialogHeader>
 
-        <UnifiedCalendar
+        <SafeUnifiedCalendar
           consultantId={consultantId}
           eventType={eventDetails.eventType}
           eventId={eventDetails.eventId}
           durationInMonths={eventDetails.durationInMonths}
           callsPerWeek={eventDetails.callsPerWeek}
-          sessionDurationInHours={eventDetails.durationInHours}
+          durationInHours={
+            eventDetails.eventType === "webinar" ||
+            eventDetails.eventType === "consultation"
+              ? eventDetails.durationInHours
+              : undefined
+          }
+          sessionDurationInHours={
+            eventDetails.eventType === "subscription" ||
+            eventDetails.eventType === "class"
+              ? eventDetails.durationInHours
+              : undefined
+          }
           mode="allocate"
           onAllocationComplete={handleAllocationComplete}
           showAllocationButtons={true}

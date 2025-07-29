@@ -60,7 +60,7 @@ export interface ProcessedSlot {
   start: Date;
   end: Date;
   availabilityId: string;
-  type: "WEEKLY" | "CUSTOM";
+  type: "WEEKLY" | "CUSTOM"; // Keep as is to match TSlotTiming
 }
 
 /**
@@ -164,7 +164,7 @@ export function processCustomSlots(
       start: slot.slotStartTimeInUTC,
       end: slot.slotEndTimeInUTC,
       availabilityId: slot.id,
-      type: "CUSTOM" as const,
+      type: "CUSTOM",
     }));
 }
 

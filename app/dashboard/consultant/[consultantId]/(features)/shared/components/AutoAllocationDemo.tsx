@@ -155,8 +155,19 @@ export function AutoAllocationDemo({
       case "webinar":
         return Math.ceil(sessionDuration * 2); // 30-minute intervals for multi-hour events
       case "subscription":
+        // Subscription: total calls over duration × slots per call
+        const totalSubscriptionCalls = Math.ceil(
+          durationInMonths * 4.33 * callsPerWeek
+        );
+        const slotsPerSubscriptionCall = Math.ceil(sessionDuration / 0.5);
+        return totalSubscriptionCalls * slotsPerSubscriptionCall;
       case "class":
-        return Math.ceil(durationInMonths * 4.33 * callsPerWeek); // Weekly distribution calculation
+        // Class: total calls over duration × slots per session
+        const totalClassCalls = Math.ceil(
+          durationInMonths * 4.33 * callsPerWeek
+        );
+        const slotsPerClassSession = Math.ceil(sessionDuration / 0.5);
+        return totalClassCalls * slotsPerClassSession;
       default:
         return 1;
     }
@@ -170,7 +181,7 @@ export function AutoAllocationDemo({
         [key]: value,
       }));
     },
-    [],
+    []
   );
 
   /**
@@ -217,7 +228,7 @@ export function AutoAllocationDemo({
       const result = await AllocationAlgorithms.autoAllocate(
         availableSlots,
         options,
-        preferences,
+        preferences
       );
 
       setAllocationResult(result);
@@ -499,7 +510,7 @@ export function AutoAllocationDemo({
                     onChange={(e) =>
                       updatePreference(
                         "minTimeBetweenSessions",
-                        parseFloat(e.target.value),
+                        parseFloat(e.target.value)
                       )
                     }
                     max={8}
@@ -627,7 +638,7 @@ export function AutoAllocationDemo({
                         <span className="text-sm">
                           {format(
                             slot.startTime,
-                            "EEE, MMM d, yyyy 'at' h:mm a",
+                            "EEE, MMM d, yyyy 'at' h:mm a"
                           )}
                         </span>
                         <Badge variant="outline" className="text-xs">
