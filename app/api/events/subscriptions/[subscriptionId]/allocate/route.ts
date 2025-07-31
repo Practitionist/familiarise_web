@@ -58,6 +58,10 @@ async function allocateSlotsAuto(
   const { subscriptionPlan, requestedBy } = subscription;
   const { consultantProfile } = subscriptionPlan;
 
+  if (!consultantProfile) {
+    throw new Error("Consultant profile not found");
+  }
+
   // Get available slots based on schedule type
   const availableSlots =
     consultantProfile.scheduleType === ScheduleType.WEEKLY
@@ -284,6 +288,11 @@ async function allocateSlotsManual(
 ): Promise<Date[]> {
   const { subscriptionPlan, requestedBy } = subscription;
   const { consultantProfile } = subscriptionPlan;
+
+  if (!consultantProfile) {
+    throw new Error("Consultant profile not found");
+  }
+
   const consultantTimezone = consultantProfile.user.currentTimezone || "UTC";
 
   // Validate number of slots
@@ -457,6 +466,14 @@ export async function PATCH(
       );
     }
 
+    const { consultantProfile } = subscription.subscriptionPlan;
+    if (!consultantProfile) {
+      return NextResponse.json(
+        { error: "Consultant profile not found" },
+        { status: 400 },
+      );
+    }
+
     // Check if subscription is already approved
     if (subscription.requestStatus === RequestStatus.APPROVED) {
       return NextResponse.json(
@@ -566,7 +583,10 @@ export async function PATCH(
                   slotsOfAppointment: {
                     create: {
                       slotStartTimeInUTC: slotTime,
-                      slotEndTimeInUTC: addHours(slotTime, 1),
+                      slotEndTimeInUTC: addHours(
+                        slotTime,
+                        subscription.subscriptionPlan.sessionDurationInHours,
+                      ),
                       isTentative: false,
                       user: {
                         connect: [

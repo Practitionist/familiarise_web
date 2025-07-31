@@ -23,6 +23,7 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             durationInMonths: 1,
             price: faker.number.int({ min: 9900, max: 19900 }), // $99 to $199
             callsPerWeek: 1,
+            sessionDurationInHours: 1.0,
             videoMeetings: 1,
             emailSupport: PlanEmailSupport.GENERAL,
             language: faker.helpers.arrayElement([
@@ -51,6 +52,7 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             durationInMonths: 3,
             price: faker.number.int({ min: 24900, max: 49900 }), // $249 to $499
             callsPerWeek: 2,
+            sessionDurationInHours: 1.0,
             videoMeetings: 2,
             emailSupport: PlanEmailSupport.PRIORITY,
             language: faker.helpers.arrayElement([
@@ -79,6 +81,7 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             durationInMonths: 6,
             price: faker.number.int({ min: 39900, max: 79900 }), // $399 to $799
             callsPerWeek: 3,
+            sessionDurationInHours: 1.0,
             videoMeetings: 4,
             emailSupport: PlanEmailSupport.DEDICATED,
             language: faker.helpers.arrayElement([

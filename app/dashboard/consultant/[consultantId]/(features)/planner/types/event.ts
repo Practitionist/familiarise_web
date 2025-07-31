@@ -1,19 +1,63 @@
-import { TWebinar, TClass } from "@/types/appointment";
+import {
+  TWebinar,
+  TClass,
+  TConsultation,
+  TSubscription,
+} from "@/types/appointment";
 import { PlanEmailSupport } from "@prisma/client";
+import { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 
 // Define the final event types, intersecting with the literal type
 export type WebinarEvent = TWebinar & { type: "webinar" };
 export type ClassEvent = TClass & { type: "class" };
 
+// Plan-level event types for consultation and subscription
+export type ConsultationPlanEvent = {
+  type: "consultation";
+  id?: string;
+  consultationPlan: ConsultationPlan & {
+    id?: string;
+    consultantProfileId: string;
+    consultantProfile?: any;
+    consultations?: TConsultation[];
+    createdAt?: Date;
+    updatedAt?: Date;
+  };
+};
+
+export type SubscriptionPlanEvent = {
+  type: "subscription";
+  id?: string;
+  subscriptionPlan: SubscriptionPlan & {
+    id?: string;
+    consultantProfileId: string;
+    consultantProfile?: any;
+    subscriptions?: TSubscription[];
+    sessionDurationInHours?: number;
+    createdAt?: Date;
+    updatedAt?: Date;
+  };
+};
+
 // Update base Event type to be a union
-export type Event = WebinarEvent | ClassEvent;
+export type Event =
+  | WebinarEvent
+  | ClassEvent
+  | ConsultationPlanEvent
+  | SubscriptionPlanEvent;
 
 export type EventPlannerProps = {
   isOpen: boolean;
   onClose: () => void;
-  eventType: "webinar" | "class";
+  eventType: "webinar" | "class" | "consultation" | "subscription";
   initialData?: Event;
-  onSave?: (event: Partial<WebinarEvent> | Partial<ClassEvent>) => void;
+  onSave?: (
+    event:
+      | Partial<WebinarEvent>
+      | Partial<ClassEvent>
+      | Partial<ConsultationPlanEvent>
+      | Partial<SubscriptionPlanEvent>,
+  ) => void;
   isSaving?: boolean;
 };
 
@@ -75,6 +119,16 @@ export interface WebinarPlannerProps extends BasePlannerProps {
 export interface ClassPlannerProps extends BasePlannerProps {
   initialData?: ClassEvent;
   onSave: (data: Partial<ClassEvent>) => void;
+}
+
+export interface ConsultationPlannerProps extends BasePlannerProps {
+  initialData?: ConsultationPlanEvent;
+  onSave: (data: Partial<ConsultationPlanEvent>) => void;
+}
+
+export interface SubscriptionPlannerProps extends BasePlannerProps {
+  initialData?: SubscriptionPlanEvent;
+  onSave: (data: Partial<SubscriptionPlanEvent>) => void;
 }
 
 // Define input type for ClassContent based on usage

@@ -1,37 +1,56 @@
-import { fetchAppointments } from "../../utils/fetchHelpers";
-import { type IAppointment, BADGE_STYLES } from "../../types";
+"use client";
+
+import { use } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { createConsultantQueries } from "@/hooks/useCosultantPrefetchDashboard";
+import { BADGE_STYLES } from "../../types";
 import { AppointmentsTab } from "./AppointmentsTab";
 
-export default async function AppointmentsPage({
+export default function AppointmentsPage({
   params,
-}: Readonly<{
+}: {
   params: Promise<{ consultantId: string }>;
-}>) {
-  const resolvedParams = await params;
-  const consultantId = resolvedParams.consultantId;
+}) {
+  const { consultantId } = use(params);
 
-  let appointments: IAppointment[] = [];
-  let error: string | null = null;
+  // Use the centralized query configuration
+  const appointmentsQuery = createConsultantQueries(consultantId).appointments;
+  const { data: appointments, isLoading, error } = useQuery(appointmentsQuery);
 
-  try {
-    appointments = await fetchAppointments(consultantId);
-  } catch (err) {
-    console.error("Error fetching appointments:", err);
-    error =
-      err instanceof Error
-        ? err.message
-        : "An error occurred while fetching appointments.";
+  if (isLoading) {
+    return <DashboardHomeSkeleton />;
   }
 
   if (error) {
     return (
-      <div className="bg-white p-4 rounded-lg shadow-md">
-        <p className="text-red-600">Error loading appointments: {error}</p>
-      </div>
+      <DashboardErrorBoundary>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
+            <h3 className="font-semibold mb-2">Error Loading Appointments</h3>
+            <p className="text-sm">
+              {error.message ||
+                "Failed to load appointments. Please try again."}
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </DashboardErrorBoundary>
     );
   }
 
   return (
-    <AppointmentsTab appointments={appointments} badgeStyles={BADGE_STYLES} />
+    <DashboardErrorBoundary>
+      <AppointmentsTab
+        appointments={appointments || []}
+        badgeStyles={BADGE_STYLES}
+      />
+    </DashboardErrorBoundary>
   );
 }

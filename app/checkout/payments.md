@@ -32,7 +32,6 @@ The Familiarize platform implements a comprehensive payment system that supports
 The system supports two distinct flows:
 
 1. **Development Flow** (`SKIP_PAYMENT=true`):
-
    - Creates appointments immediately without payment
    - Used for testing and development
 

@@ -21,23 +21,30 @@ import { TConsultantProfile } from "types/consultant";
 import { MultiSelect } from "../../components/MultiSelect";
 import {
   DAYS_OF_WEEK,
-  formatDayDisplay,
   formatSlotsForApi,
-  getDaysInMonth,
-  getFirstDayOfMonth,
   getInitialCustomSlots,
   getInitialFormData,
   getInitialWeeklySlots,
-  getLocalDateString,
   getMonthYearString,
-  validateAllSlots,
-  validateSlot,
   type Domain,
   type FormData,
   type SlotsType,
   type SubDomain,
   type Tag,
 } from "./settings";
+import { useTimezone } from "@/app/explore/experts/[consultantId]/hooks/useTimezone";
+// Import functions from centralized utils
+import {
+  formatDayDisplay,
+  getDaysInMonth,
+  getFirstDayOfMonth,
+  getLocalDateString,
+  sortSlotsByTime,
+} from "@/utils/dateTimeUtils";
+import {
+  validateTimeSlot,
+  validateAllSlotsDetailed,
+} from "@/utils/timeSlotValidation";
 
 interface Option {
   value: string;
@@ -50,14 +57,11 @@ interface SettingsTabProps {
 
 export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const { toast } = useToast();
+  const { timezone, isLoading: timezoneLoading } = useTimezone();
   const [isLoading, setIsLoading] = useState(false);
   const [isContentLoading, setIsContentLoading] = useState(true);
-  const [weeklySlots, setWeeklySlots] = useState<SlotsType>(
-    getInitialWeeklySlots(consultant),
-  );
-  const [customSlots, setCustomSlots] = useState<SlotsType>(
-    getInitialCustomSlots(consultant),
-  );
+  const [weeklySlots, setWeeklySlots] = useState<SlotsType>({});
+  const [customSlots, setCustomSlots] = useState<SlotsType>({});
   const [currentDate, setCurrentDate] = useState(new Date());
   const [scheduleType, setScheduleType] = useState<ScheduleType>(
     consultant.scheduleType,
@@ -68,6 +72,14 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [subDomains, setSubDomains] = useState<SubDomain[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+
+  // Initialize slots data when timezone is available
+  useEffect(() => {
+    if (!timezoneLoading && timezone) {
+      setWeeklySlots(getInitialWeeklySlots(consultant, timezone));
+      setCustomSlots(getInitialCustomSlots(consultant, timezone));
+    }
+  }, [consultant, timezone, timezoneLoading]);
 
   // Convert subdomains and tags to options format with safety checks
   const subDomainOptions = React.useMemo<Option[]>(() => {
@@ -204,36 +216,41 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   }, []);
 
   // Update schedule type and clear irrelevant slots
-  const handleScheduleTypeChange = useCallback((value: ScheduleType) => {
-    setScheduleType(value);
-    setFormData((prev) => ({
-      ...prev,
-      scheduleType: value,
-    }));
+  const handleScheduleTypeChange = useCallback((value: string) => {
+    const scheduleTypeValue = value as ScheduleType;
+    React.startTransition(() => {
+      setScheduleType(scheduleTypeValue);
+      setFormData((prev) => ({
+        ...prev,
+        scheduleType: scheduleTypeValue,
+      }));
 
-    // Clear slots for the inactive schedule type
-    if (value === ScheduleType.WEEKLY) {
-      setCustomSlots({});
-    } else {
-      setWeeklySlots({});
-    }
+      // Clear slots for the inactive schedule type to prevent corruption
+      if (scheduleTypeValue === ScheduleType.WEEKLY) {
+        setCustomSlots({});
+      } else {
+        setWeeklySlots({});
+      }
+    });
   }, []);
 
   const handleAddSlot = useCallback(
     (day: string) => {
-      const updateSlots = (prev: SlotsType) => ({
-        ...prev,
-        [day]: [
-          ...(prev[day] || []),
-          { startTime: "", endTime: "", isValid: false },
-        ],
-      });
+      React.startTransition(() => {
+        const updateSlots = (prev: SlotsType) => ({
+          ...prev,
+          [day]: [
+            ...(prev[day] || []),
+            { startTime: "", endTime: "", isValid: false },
+          ],
+        });
 
-      if (scheduleType === ScheduleType.WEEKLY) {
-        setWeeklySlots(updateSlots);
-      } else {
-        setCustomSlots(updateSlots);
-      }
+        if (scheduleType === ScheduleType.WEEKLY) {
+          setWeeklySlots(updateSlots);
+        } else {
+          setCustomSlots(updateSlots);
+        }
+      });
     },
     [scheduleType],
   );
@@ -245,53 +262,79 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       field: "startTime" | "endTime",
       value: string,
     ) => {
-      const updateSlots = (prev: SlotsType) => {
-        const updatedSlots = {
-          ...prev,
-          [day]: prev[day].map((slot, i) =>
-            i === index ? { ...slot, [field]: value } : slot,
-          ),
-        };
-        // Pass the correct context for slot splitting
-        updatedSlots[day][index] = validateSlot(
-          updatedSlots[day][index],
-          updatedSlots[day].filter((_, i) => i !== index),
-          day,
+      React.startTransition(() => {
+        const currentSlots =
+          scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots;
+        const setSlots =
           scheduleType === ScheduleType.WEEKLY
             ? setWeeklySlots
-            : setCustomSlots,
+            : setCustomSlots;
+
+        // Create updated slot
+        const updatedSlot = {
+          ...currentSlots[day][index],
+          [field]: value,
+        };
+
+        // Validate the updated slot in isolation
+        const validationResult = validateTimeSlot(
+          updatedSlot,
+          currentSlots[day]?.filter((_, i) => i !== index) || [],
+          day,
           scheduleType === ScheduleType.WEEKLY,
         );
-        return updatedSlots;
-      };
 
-      if (scheduleType === ScheduleType.WEEKLY) {
-        setWeeklySlots(updateSlots);
-      } else {
-        setCustomSlots(updateSlots);
-      }
+        // Handle overnight slot splitting if needed
+        if (validationResult.needsSplitting) {
+          setSlots((prev) => {
+            const { currentDaySlot, nextDaySlot, nextKey } =
+              validationResult.needsSplitting!;
+            return {
+              ...prev,
+              [day]: [
+                ...(prev[day] || []).slice(0, index),
+                currentDaySlot,
+                ...(prev[day] || []).slice(index + 1),
+              ],
+              [nextKey]: [...(prev[nextKey] || []), nextDaySlot],
+            };
+          });
+        } else {
+          // Regular slot update
+          setSlots((prev) => ({
+            ...prev,
+            [day]: [
+              ...(prev[day] || []).slice(0, index),
+              validationResult.slot,
+              ...(prev[day] || []).slice(index + 1),
+            ],
+          }));
+        }
+      });
     },
-    [scheduleType],
+    [scheduleType, weeklySlots, customSlots],
   );
 
   const handleDeleteSlot = useCallback(
     (day: string, index: number) => {
-      const deleteSlot = (prev: SlotsType) => {
-        const updatedSlots = {
-          ...prev,
-          [day]: prev[day].filter((_, i) => i !== index),
+      React.startTransition(() => {
+        const deleteSlot = (prev: SlotsType) => {
+          const updatedSlots = {
+            ...prev,
+            [day]: prev[day].filter((_, i) => i !== index),
+          };
+          if (updatedSlots[day].length === 0) {
+            delete updatedSlots[day];
+          }
+          return updatedSlots;
         };
-        if (updatedSlots[day].length === 0) {
-          delete updatedSlots[day];
-        }
-        return updatedSlots;
-      };
 
-      if (scheduleType === ScheduleType.WEEKLY) {
-        setWeeklySlots(deleteSlot);
-      } else {
-        setCustomSlots(deleteSlot);
-      }
+        if (scheduleType === ScheduleType.WEEKLY) {
+          setWeeklySlots(deleteSlot);
+        } else {
+          setCustomSlots(deleteSlot);
+        }
+      });
     },
     [scheduleType],
   );
@@ -335,15 +378,19 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           className={`p-2 rounded-full hover:bg-gray-200
         ${isSelected ? "bg-black text-white" : ""}`}
           onClick={() => {
-            const newCustomSlots = { ...customSlots };
-            if (isSelected) {
-              delete newCustomSlots[dateString];
-            } else {
-              newCustomSlots[dateString] = [
-                { startTime: "", endTime: "", isValid: false },
-              ];
-            }
-            setCustomSlots(newCustomSlots);
+            React.startTransition(() => {
+              setCustomSlots((prev) => {
+                const newCustomSlots = { ...prev };
+                if (isSelected) {
+                  delete newCustomSlots[dateString];
+                } else {
+                  newCustomSlots[dateString] = [
+                    { startTime: "", endTime: "", isValid: false },
+                  ];
+                }
+                return newCustomSlots;
+              });
+            });
           }}
         >
           {i}
@@ -360,10 +407,18 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
 
     const currentSlots =
       scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots;
-    if (!validateAllSlots(currentSlots)) {
+
+    // Use improved validation with detailed feedback
+    const validation = validateAllSlotsDetailed(currentSlots);
+    if (!validation.isValid) {
+      const errorMessage =
+        validation.errors.length > 0
+          ? `Please fix the following issues:\n${validation.errors.slice(0, 3).join("\n")}${validation.errors.length > 3 ? "\n...and more" : ""}`
+          : "Please ensure all time slots are valid before saving.";
+
       toast({
         title: "Validation Error",
-        description: "Please ensure all time slots are valid before saving.",
+        description: errorMessage,
         variant: "destructive",
       });
       return;
@@ -386,11 +441,11 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         scheduleType,
         slotsOfAvailabilityWeekly:
           scheduleType === ScheduleType.WEEKLY
-            ? formatSlotsForApi(weeklySlots, true)
+            ? formatSlotsForApi(weeklySlots, true, timezone || "UTC")
             : [],
         slotsOfAvailabilityCustom:
           scheduleType === ScheduleType.CUSTOM
-            ? formatSlotsForApi(customSlots, false)
+            ? formatSlotsForApi(customSlots, false, timezone || "UTC")
             : [],
       };
 
@@ -404,6 +459,24 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
 
       if (!response.ok) {
         throw new Error("Failed to update settings");
+      }
+
+      // Refetch the consultant data to show what was actually saved
+      const updatedResponse = await fetch(
+        `/api/user/consultants/${consultant.id}`,
+      );
+      if (updatedResponse.ok) {
+        const { data: updatedConsultant } = await updatedResponse.json();
+
+        // Update local state to match what was saved to database
+        setWeeklySlots(
+          getInitialWeeklySlots(updatedConsultant, timezone || "UTC"),
+        );
+        setCustomSlots(
+          getInitialCustomSlots(updatedConsultant, timezone || "UTC"),
+        );
+        setFormData(getInitialFormData(updatedConsultant));
+        setScheduleType(updatedConsultant.scheduleType);
       }
 
       toast({
@@ -422,12 +495,14 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
     }
   };
 
-  if (isContentLoading) {
+  if (isContentLoading || timezoneLoading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-t-black border-r-black border-b-gray-200 border-l-gray-200 rounded-full animate-spin mb-4"></div>
-          <p className="text-gray-500">Loading settings...</p>
+          <p className="text-gray-500">
+            {timezoneLoading ? "Detecting timezone..." : "Loading settings..."}
+          </p>
         </div>
       </div>
     );
@@ -586,6 +661,17 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           Configure your availability and scheduling preferences
         </p>
 
+        <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <h3 className="font-medium text-blue-900 mb-2">
+            📅 Schedule Type Filtering
+          </h3>
+          <p className="text-sm text-blue-700">
+            <strong>Important:</strong> Consultees will only see slots from your
+            selected schedule type. Choose "Weekly Recurring" for regular
+            appointments or "Custom Schedule" for specific dates only.
+          </p>
+        </div>
+
         <RadioGroup
           value={scheduleType}
           onValueChange={handleScheduleTypeChange}
@@ -594,8 +680,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           {/* Weekly Schedule */}
           <div className="flex-1">
             <div className="flex items-center justify-between mb-4">
-              <Label htmlFor="WEEKLY" className="font-medium">
+              <Label htmlFor="WEEKLY" className="font-medium flex items-center">
+                <span className="mr-2">📅</span>
                 Weekly Recurring
+                <span className="ml-2 text-xs text-gray-500">
+                  (Shows recurring slots)
+                </span>
               </Label>
               <RadioGroupItem id="WEEKLY" value={ScheduleType.WEEKLY} />
             </div>
@@ -673,8 +763,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           {/* Custom Schedule */}
           <div className="flex-1">
             <div className="flex items-center justify-between mb-4">
-              <Label htmlFor="CUSTOM" className="font-medium">
+              <Label htmlFor="CUSTOM" className="font-medium flex items-center">
+                <span className="mr-2">🎯</span>
                 Custom Schedule
+                <span className="ml-2 text-xs text-gray-500">
+                  (Shows specific date slots)
+                </span>
               </Label>
               <RadioGroupItem id="CUSTOM" value={ScheduleType.CUSTOM} />
             </div>
@@ -803,12 +897,16 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           type="button"
           variant="outline"
           onClick={() => {
-            setFormData(getInitialFormData(consultant));
-            if (scheduleType === ScheduleType.WEEKLY) {
-              setWeeklySlots(getInitialWeeklySlots(consultant));
-            } else {
-              setCustomSlots({});
-            }
+            React.startTransition(() => {
+              setFormData(getInitialFormData(consultant));
+              setScheduleType(consultant.scheduleType);
+              setWeeklySlots(
+                getInitialWeeklySlots(consultant, timezone || "UTC"),
+              );
+              setCustomSlots(
+                getInitialCustomSlots(consultant, timezone || "UTC"),
+              );
+            });
           }}
           disabled={isLoading}
         >

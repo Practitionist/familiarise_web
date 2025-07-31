@@ -19,6 +19,7 @@ import { responsibilitiesAndPermissions } from "@/schemas/responsibbilities-perm
 import { StaffProfile, PersonalInfoAndRole } from "@/schemas/user";
 import React, { useEffect, useState } from "react";
 import { useFormContext } from "react-hook-form";
+import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (data: any) => void;
@@ -31,6 +32,7 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
   onBack,
   initialData,
 }) => {
+  const { classes, colors } = useThemeClasses();
   const [department, setDepartment] = useState<string | null>(null);
   const [position, setPosition] = useState<string | null>(null);
 
@@ -73,13 +75,13 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
 
   if (!department || !position) {
     return (
-      <Card className="w-full max-w-md">
-        <CardContent className="pt-6">
-          <p className="text-center text-gray-600">
-            Please complete the Staff Profile form first.
-          </p>
-        </CardContent>
-      </Card>
+      <div
+        className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full`}
+      >
+        <p className={`text-center ${colors.textPrimary}`}>
+          Please complete the Staff Profile form first.
+        </p>
+      </div>
     );
   }
 
@@ -88,14 +90,14 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
 
   if (!departmentData || !positionData) {
     return (
-      <Card className="w-full max-w-md">
-        <CardContent className="pt-6">
-          <p className="text-center text-gray-600">
-            Invalid department or position. Please go back and select valid
-            options.
-          </p>
-        </CardContent>
-      </Card>
+      <div
+        className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full`}
+      >
+        <p className={`text-center ${colors.textPrimary}`}>
+          Invalid department or position. Please go back and select valid
+          options.
+        </p>
+      </div>
     );
   }
 
@@ -120,28 +122,39 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
   };
 
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader>
-        <CardTitle>Staff Responsibilities</CardTitle>
-        <CardDescription>
+    <div
+      className={`glassmorphism2 rounded-2xl p-6 ${colors.glassBorder} shadow-2xl w-full space-y-6`}
+    >
+      <div>
+        <h3 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>
+          Staff Responsibilities
+        </h3>
+        <p className={colors.textSecondary}>
           Select your responsibilities and permissions
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
+        </p>
+      </div>
+      <div>
         <form onSubmit={handleSubmit} className="space-y-6">
           <Accordion type="single" collapsible className="w-full">
-            <AccordionItem value="responsibilities">
-              <AccordionTrigger>Responsibilities</AccordionTrigger>
-              <AccordionContent>
+            <AccordionItem value="responsibilities" className="border-white/20">
+              <AccordionTrigger className="text-white font-medium hover:text-purple-300 transition-colors">
+                📼 Responsibilities
+              </AccordionTrigger>
+              <AccordionContent className="pb-4">
                 <div className="space-y-4">
                   {Object.entries(positionData.responsibilities).map(
                     ([category, items]) => (
-                      <div key={category} className="space-y-2">
-                        <Label className="font-semibold">{category}</Label>
+                      <div
+                        key={category}
+                        className="space-y-3 p-3 rounded-lg bg-white/5 border border-white/10"
+                      >
+                        <Label className="font-semibold text-white text-sm">
+                          {category}
+                        </Label>
                         {items.map((item, index) => (
                           <div
                             key={index}
-                            className="flex items-center space-x-2"
+                            className="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 transition-colors"
                           >
                             <Checkbox
                               id={`responsibility-${category}-${index}`}
@@ -152,10 +165,11 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
                                   checked as boolean,
                                 )
                               }
+                              className="border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
                             />
                             <Label
                               htmlFor={`responsibility-${category}-${index}`}
-                              className="text-sm"
+                              className="text-sm text-white cursor-pointer"
                             >
                               {item}
                             </Label>
@@ -166,25 +180,32 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
                   )}
                 </div>
                 {errors.responsibilities && (
-                  <p className="text-red-500 text-sm mt-2">
+                  <p className="text-red-400 text-sm mt-2">
                     Please select at least one responsibility
                   </p>
                 )}
               </AccordionContent>
             </AccordionItem>
 
-            <AccordionItem value="permissions">
-              <AccordionTrigger>Permissions</AccordionTrigger>
-              <AccordionContent>
+            <AccordionItem value="permissions" className="border-white/20">
+              <AccordionTrigger className="text-white font-medium hover:text-purple-300 transition-colors">
+                🔐 Permissions
+              </AccordionTrigger>
+              <AccordionContent className="pb-4">
                 <div className="space-y-4">
                   {Object.entries(positionData.permissions).map(
                     ([category, items]) => (
-                      <div key={category} className="space-y-2">
-                        <Label className="font-semibold">{category}</Label>
+                      <div
+                        key={category}
+                        className="space-y-3 p-3 rounded-lg bg-white/5 border border-white/10"
+                      >
+                        <Label className="font-semibold text-white text-sm">
+                          {category}
+                        </Label>
                         {items.map((item, index) => (
                           <div
                             key={index}
-                            className="flex items-center space-x-2"
+                            className="flex items-center space-x-3 p-2 rounded-lg hover:bg-white/5 transition-colors"
                           >
                             <Checkbox
                               id={`permission-${category}-${index}`}
@@ -192,10 +213,11 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
                               onCheckedChange={(checked) =>
                                 handlePermissionChange(item, checked as boolean)
                               }
+                              className="border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
                             />
                             <Label
                               htmlFor={`permission-${category}-${index}`}
-                              className="text-sm"
+                              className="text-sm text-white cursor-pointer"
                             >
                               {item}
                             </Label>
@@ -206,7 +228,7 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
                   )}
                 </div>
                 {errors.permissions && (
-                  <p className="text-red-500 text-sm mt-2">
+                  <p className="text-red-400 text-sm mt-2">
                     Please select at least one permission
                   </p>
                 )}
@@ -214,16 +236,26 @@ const StaffResponsibilitiesForm: React.FC<Props> = ({
             </AccordionItem>
           </Accordion>
         </form>
-      </CardContent>
-      <CardFooter className="flex justify-between">
-        <Button type="button" onClick={onBack} variant="outline">
-          Back
+      </div>
+      <div
+        className={`flex justify-between gap-4 pt-6 border-t ${colors.glassBorder}`}
+      >
+        <Button
+          type="button"
+          onClick={onBack}
+          className={`flex-1 h-12 ${classes.secondaryButton}`}
+        >
+          ← Back
         </Button>
-        <Button type="submit" variant="night" onClick={handleSubmit}>
-          Next
+        <Button
+          type="submit"
+          onClick={handleSubmit}
+          className={`flex-1 h-12 ${classes.primaryButton}`}
+        >
+          Next Step →
         </Button>
-      </CardFooter>
-    </Card>
+      </div>
+    </div>
   );
 };
 

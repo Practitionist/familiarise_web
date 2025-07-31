@@ -12,7 +12,7 @@ export type TSlotTiming = {
   localEndTime: string;
   isAllocated?: boolean;
   allocatedTo?: string;
-  type?: "WEEKLY" | "CUSTOM";
+  type: "WEEKLY" | "CUSTOM"; // Make type required to distinguish slot source
 };
 
 export type TWeeklySlot = {

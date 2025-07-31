@@ -10,11 +10,16 @@ import {
   CardFooter,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Users, Edit, Clock, Trash2 } from "lucide-react";
-import { EventTimingsCalendar } from "./EventTimingsCalendar";
+import { Edit, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons";
-import { WebinarEvent, ClassEvent, Event } from "../types/event";
+import {
+  WebinarEvent,
+  ClassEvent,
+  ConsultationPlanEvent,
+  SubscriptionPlanEvent,
+  Event,
+} from "../types/event";
 import { Badge } from "@/components/ui/badge";
 import { WebinarStatus, ClassStatus } from "@prisma/client";
 
@@ -23,6 +28,7 @@ interface WebinarCarouselProps {
   onEdit: (event: WebinarEvent) => void;
   onDelete: (eventId: string) => Promise<void>;
   eventType: "webinar";
+  participantCounts: Record<string, number>;
 }
 
 interface ClassCarouselProps {
@@ -30,9 +36,30 @@ interface ClassCarouselProps {
   onEdit: (event: ClassEvent) => void;
   onDelete: (eventId: string) => Promise<void>;
   eventType: "class";
+  participantCounts: Record<string, number>;
 }
 
-type EventCarouselProps = WebinarCarouselProps | ClassCarouselProps;
+interface ConsultationCarouselProps {
+  events: ConsultationPlanEvent[];
+  onEdit: (event: ConsultationPlanEvent) => void;
+  onDelete: (eventId: string) => Promise<void>;
+  eventType: "consultation";
+  participantCounts: Record<string, number>;
+}
+
+interface SubscriptionCarouselProps {
+  events: SubscriptionPlanEvent[];
+  onEdit: (event: SubscriptionPlanEvent) => void;
+  onDelete: (eventId: string) => Promise<void>;
+  eventType: "subscription";
+  participantCounts: Record<string, number>;
+}
+
+type EventCarouselProps =
+  | WebinarCarouselProps
+  | ClassCarouselProps
+  | ConsultationCarouselProps
+  | SubscriptionCarouselProps;
 
 function isWebinarEvent(event: Event): event is WebinarEvent {
   return event.type === "webinar";
@@ -42,15 +69,21 @@ function isClassEvent(event: Event): event is ClassEvent {
   return event.type === "class";
 }
 
+function isConsultationPlanEvent(event: Event): event is ConsultationPlanEvent {
+  return event.type === "consultation";
+}
+
+function isSubscriptionPlanEvent(event: Event): event is SubscriptionPlanEvent {
+  return event.type === "subscription";
+}
+
 export function EventCarousel({
   events,
   onEdit,
   onDelete,
   eventType,
+  participantCounts,
 }: EventCarouselProps) {
-  const [selectedEventId, setSelectedEventId] = React.useState<string | null>(
-    null,
-  );
   const [currentPage, setCurrentPage] = React.useState(1);
   const itemsPerPage = 8; // Show 8 items per page (adjust as needed)
 
@@ -76,6 +109,12 @@ export function EventCarousel({
     if (isClassEvent(event)) {
       return event.classPlan.title;
     }
+    if (isConsultationPlanEvent(event)) {
+      return event.consultationPlan.title;
+    }
+    if (isSubscriptionPlanEvent(event)) {
+      return event.subscriptionPlan.title;
+    }
     throw new Error(`Unknown event type encountered.`);
   };
 
@@ -85,6 +124,12 @@ export function EventCarousel({
     }
     if (isClassEvent(event)) {
       return event.classPlan.description ?? "";
+    }
+    if (isConsultationPlanEvent(event)) {
+      return event.consultationPlan.description ?? "";
+    }
+    if (isSubscriptionPlanEvent(event)) {
+      return event.subscriptionPlan.description ?? "";
     }
     throw new Error(`Unknown event type encountered.`);
   };
@@ -96,6 +141,12 @@ export function EventCarousel({
     if (isClassEvent(event)) {
       return event.classPlan.price;
     }
+    if (isConsultationPlanEvent(event)) {
+      return event.consultationPlan.price;
+    }
+    if (isSubscriptionPlanEvent(event)) {
+      return event.subscriptionPlan.price;
+    }
     throw new Error(`Unknown event type encountered.`);
   };
 
@@ -105,6 +156,12 @@ export function EventCarousel({
     }
     if (isClassEvent(event)) {
       return event.classPlan.priceCurrency ?? "INR"; // Default to INR if null/undefined
+    }
+    if (isConsultationPlanEvent(event)) {
+      return "INR"; // Consultations don't have currency field
+    }
+    if (isSubscriptionPlanEvent(event)) {
+      return "INR"; // Subscriptions don't have currency field
     }
     throw new Error(`Unknown event type encountered.`);
   };
@@ -116,48 +173,17 @@ export function EventCarousel({
     if (isClassEvent(event)) {
       return `${event.classPlan.durationInMonths} months`;
     }
+    if (isConsultationPlanEvent(event)) {
+      return `${event.consultationPlan.durationInHours} hours`;
+    }
+    if (isSubscriptionPlanEvent(event)) {
+      return `${event.subscriptionPlan.durationInMonths} months`;
+    }
     throw new Error(`Unknown event type encountered.`);
   };
 
-  const [participantCounts, setParticipantCounts] = React.useState<
-    Record<string, number>
-  >({});
-  const [isLoadingCounts, setIsLoadingCounts] = React.useState(true);
-
-  React.useEffect(() => {
-    const fetchParticipantCounts = async () => {
-      setIsLoadingCounts(true);
-      try {
-        for (const event of events) {
-          try {
-            let endpoint: string;
-            if (isWebinarEvent(event)) {
-              endpoint = `/api/participants/webinar/${event.id}`;
-            } else {
-              endpoint = `/api/participants/class/${event.id}`;
-            }
-
-            const response = await fetch(endpoint);
-            if (response.ok) {
-              const data = await response.json();
-              setParticipantCounts((prev) => ({
-                ...prev,
-                [event.id]: data.participants.length,
-              }));
-            }
-          } catch (error) {
-            console.error("Error fetching participant count:", error);
-          }
-        }
-      } finally {
-        setIsLoadingCounts(false);
-      }
-    };
-
-    if (events.length > 0) {
-      fetchParticipantCounts();
-    }
-  }, [events]);
+  // No longer need local state or useEffect for participant counts
+  // Using the pre-fetched participantCounts prop
 
   const getParticipantsCount = (event: Event) => {
     let maxParticipants = 0;
@@ -166,10 +192,16 @@ export function EventCarousel({
       maxParticipants = event.webinarPlan.maxParticipants;
     } else if (isClassEvent(event)) {
       maxParticipants = event.classPlan.maxParticipants;
+    } else if (isConsultationPlanEvent(event)) {
+      // Consultations are 1-on-1, so max participants is 1
+      maxParticipants = 1;
+    } else if (isSubscriptionPlanEvent(event)) {
+      // Subscriptions are 1-on-1, so max participants is 1
+      maxParticipants = 1;
     }
 
     return {
-      currentParticipants: participantCounts[event.id] ?? 0,
+      currentParticipants: participantCounts[event.id ?? ""] ?? 0,
       maxParticipants,
     };
   };
@@ -178,6 +210,10 @@ export function EventCarousel({
     if (eventType === "webinar" && isWebinarEvent(event)) {
       onEdit(event);
     } else if (eventType === "class" && isClassEvent(event)) {
+      onEdit(event);
+    } else if (eventType === "consultation" && isConsultationPlanEvent(event)) {
+      onEdit(event);
+    } else if (eventType === "subscription" && isSubscriptionPlanEvent(event)) {
       onEdit(event);
     }
   };
@@ -190,7 +226,7 @@ export function EventCarousel({
       )
     ) {
       try {
-        await onDelete(event.id);
+        await onDelete(event.id ?? "");
         // Optionally show a success toast, though parent might handle it
       } catch (error) {
         console.error(`Error deleting ${eventType}:`, error);
@@ -199,26 +235,8 @@ export function EventCarousel({
     }
   };
 
-  // Helper function to get profile URL
-  const getProfileUrl = (event: Event) => {
-    if (isWebinarEvent(event)) {
-      return `/dashboard/consultant/${event.webinarPlan.consultantProfileId}/planner/participants/webinars/${event.id}`;
-    }
-    if (isClassEvent(event)) {
-      return `/dashboard/consultant/${event.classPlan.consultantProfileId}/planner/participants/classes/${event.id}`;
-    }
-    return "#";
-  };
-
   // Helper function for participant display text
-  const getParticipantsDisplayText = (
-    isLoading: boolean,
-    current: number,
-    max: number,
-  ) => {
-    if (isLoading) {
-      return "Loading participants...";
-    }
+  const getParticipantsDisplayText = (current: number, max: number) => {
     return `${current}/${max} participants`;
   };
 
@@ -303,24 +321,26 @@ export function EventCarousel({
                     </CardTitle>
                     <CardDescription className="text-sm text-gray-600">
                       {getParticipantsDisplayText(
-                        isLoadingCounts,
                         currentParticipants,
                         maxParticipants,
                       )}
                     </CardDescription>
-                    <div className="flex items-center gap-x-2 text-sm">
-                      <span className="text-gray-500 font-medium whitespace-nowrap">
-                        {formatDateTime(startDate)}
-                      </span>
-                      {startDate && status !== null && (
-                        <Badge
-                          variant={getStatusVariant(status)}
-                          className="text-xs"
-                        >
-                          {status.toString().replace("_", " ")}
-                        </Badge>
-                      )}
-                    </div>
+                    {/* Only show timing and status for scheduled events (webinar and class), not for plans (consultation and subscription) */}
+                    {(eventType === "webinar" || eventType === "class") && (
+                      <div className="flex items-center gap-x-2 text-sm">
+                        <span className="text-gray-500 font-medium whitespace-nowrap">
+                          {formatDateTime(startDate)}
+                        </span>
+                        {startDate && status !== null && (
+                          <Badge
+                            variant={getStatusVariant(status)}
+                            className="text-xs"
+                          >
+                            {status.toString().replace("_", " ")}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center space-x-1 flex-shrink-0">
                     <Button
@@ -352,22 +372,6 @@ export function EventCarousel({
                     Duration: {getEventDuration(event)}
                   </p>
                 </CardContent>
-                <CardFooter className="bg-gray-50 border-t p-4 flex justify-between flex-shrink-0">
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href={getProfileUrl(event)}>
-                      <Users className="w-4 h-4 mr-2" />
-                      Manage Participants
-                    </Link>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSelectedEventId(event.id)}
-                  >
-                    <Clock className="w-4 h-4 mr-2" />
-                    Manage Timings
-                  </Button>
-                </CardFooter>
               </Card>
             );
           })}
@@ -398,13 +402,6 @@ export function EventCarousel({
           </div>
         )}
       </div>
-
-      <EventTimingsCalendar
-        isOpen={!!selectedEventId}
-        onClose={() => setSelectedEventId(null)}
-        eventType={eventType}
-        eventId={selectedEventId ?? ""}
-      />
     </div>
   );
 }

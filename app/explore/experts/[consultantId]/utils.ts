@@ -99,6 +99,7 @@ export function createWeeklySlot(
     slotOfAppointmentId: "", // Not an appointment
     localStartTime: formatTime(startDateTime, timezone),
     localEndTime: formatTime(endDateTime, timezone),
+    type: "WEEKLY" as const,
   };
 }
 
@@ -133,16 +134,19 @@ export function createCustomSlot(
     localEndTime: formatTime(adjustedEndDateTime, timezone),
   };
 
-  console.log("Created custom slot:", {
-    utcStart: normalizedSlot.slotStartTimeInUTC,
-    utcEnd: normalizedSlot.slotEndTimeInUTC,
-    localStart: slotTiming.localStartTime,
-    localEnd: slotTiming.localEndTime,
-    timezone,
-    crossesMidnight: adjustedEndDateTime.getDate() > startDateTime.getDate(),
-  });
+  // console.log("Created custom slot:", {
+  //   utcStart: normalizedSlot.slotStartTimeInUTC,
+  //   utcEnd: normalizedSlot.slotEndTimeInUTC,
+  //   localStart: slotTiming.localStartTime,
+  //   localEnd: slotTiming.localEndTime,
+  //   timezone,
+  //   crossesMidnight: adjustedEndDateTime.getDate() > startDateTime.getDate(),
+  // });
 
-  return slotTiming;
+  return {
+    ...slotTiming,
+    type: "CUSTOM" as const,
+  };
 }
 
 export function mergeOverlappingSlots(

@@ -291,9 +291,11 @@ export function EventCard({
                           key={index}
                           className="flex items-center justify-between bg-gray-50 p-2 rounded"
                         >
-                          <span className="text-sm text-gray-600 break-words">
-                            {formatSlotDate(slot.startTime)}
-                          </span>
+                          <div className="flex flex-col">
+                            <span className="text-sm text-gray-600 break-words">
+                              {formatSlotDate(slot.startTime)}
+                            </span>
+                          </div>
                           <span className="text-sm text-gray-600 break-words">
                             {formatSlotTime(slot.startTime)} -{" "}
                             {formatSlotTime(slot.endTime)}

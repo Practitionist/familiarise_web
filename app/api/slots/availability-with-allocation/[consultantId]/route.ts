@@ -1,12 +1,45 @@
 import prisma from "@/lib/prisma";
-import { TSlotTiming } from "@/types/slots";
-import { NextRequest, NextResponse } from "next/server";
 import {
+  AppointmentSlot,
+  CustomSlot,
   processAvailabilitySlots,
   WeeklySlot,
-  CustomSlot,
-  AppointmentSlot,
 } from "@/utils/timeSlotsProcessing";
+import { NextRequest, NextResponse } from "next/server";
+
+// Helper function to check if a slot is a legitimate overnight slot
+function isValidOvernightSlot(startTime: Date, endTime: Date): boolean {
+  // For normal slots where end > start, they are always valid
+  if (endTime > startTime) {
+    return true;
+  }
+
+  // For slots where end <= start, check if they are legitimate overnight slots
+  if (endTime <= startTime) {
+    // Check if this is a midnight-ending slot (ends at 00:00)
+    const endHours = endTime.getUTCHours();
+    const endMinutes = endTime.getUTCMinutes();
+    const endSeconds = endTime.getUTCSeconds();
+
+    // If it ends at exactly midnight (00:00:00), it's a valid midnight-ending slot
+    if (endHours === 0 && endMinutes === 0 && endSeconds === 0) {
+      return true;
+    }
+
+    // Check if end date is actually the next day (true overnight slot)
+    const startDate = new Date(startTime);
+    const endDate = new Date(endTime);
+    startDate.setUTCHours(0, 0, 0, 0);
+    endDate.setUTCHours(0, 0, 0, 0);
+
+    // If end date is the day after start date, it's a valid overnight slot
+    const dayDifference =
+      (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+    return dayDifference === 1;
+  }
+
+  return false; // Invalid slot
+}
 
 export async function GET(
   req: NextRequest,
@@ -15,8 +48,12 @@ export async function GET(
   try {
     const { consultantId } = await params;
     const { searchParams } = new URL(req.url);
-    const startDateInUtc = searchParams.get("startDateInUtc");
-    const endDateInUtc = searchParams.get("endDateInUtc");
+
+    // Support both old and new parameter names for backward compatibility
+    const startDateInUtc =
+      searchParams.get("startDateInUtc") || searchParams.get("startDate");
+    const endDateInUtc =
+      searchParams.get("endDateInUtc") || searchParams.get("endDate");
     const timezone = searchParams.get("timezone") || "UTC";
 
     if (!startDateInUtc || !endDateInUtc) {
@@ -133,30 +170,56 @@ export async function GET(
     );
 
     // Convert to utility interfaces
-    const weeklySlots: WeeklySlot[] = consultant.slotsOfAvailabilityWeekly.map(
-      (slot) => ({
+    const weeklySlots: WeeklySlot[] = consultant.slotsOfAvailabilityWeekly
+      .filter((slot) => {
+        // Filter out invalid slots, but allow legitimate overnight slots
+        if (
+          !isValidOvernightSlot(slot.slotStartTimeInUTC, slot.slotEndTimeInUTC)
+        ) {
+          console.warn(
+            `❌ Filtering out invalid weekly slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`,
+          );
+          return false;
+        }
+        return true;
+      })
+      .map((slot) => ({
         id: slot.id,
         dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
         slotStartTimeInUTC: slot.slotStartTimeInUTC,
         dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
         slotEndTimeInUTC: slot.slotEndTimeInUTC,
-      }),
-    );
+      }));
 
-    const customSlots: CustomSlot[] = consultant.slotsOfAvailabilityCustom.map(
-      (slot) => ({
+    const customSlots: CustomSlot[] = consultant.slotsOfAvailabilityCustom
+      .filter((slot) => {
+        // Filter out invalid slots, but allow legitimate overnight slots
+        if (
+          !isValidOvernightSlot(slot.slotStartTimeInUTC, slot.slotEndTimeInUTC)
+        ) {
+          console.warn(
+            `❌ Filtering out invalid custom slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`,
+          );
+          return false;
+        }
+        return true;
+      })
+      .map((slot) => ({
         id: slot.id,
         slotStartTimeInUTC: slot.slotStartTimeInUTC,
         slotEndTimeInUTC: slot.slotEndTimeInUTC,
-      }),
-    );
+      }));
 
-    // Process all slots using the unified utility
-    // Note: Allow both weekly and custom slots to be processed regardless of scheduleType
-    // to support cases where consultants with weekly schedules add one-off custom availability
+    // Apply schedule type filtering based on consultant's preference
+    const filteredWeeklySlots =
+      consultant.scheduleType === "WEEKLY" ? weeklySlots : [];
+    const filteredCustomSlots =
+      consultant.scheduleType === "CUSTOM" ? customSlots : [];
+
+    // Process slots using the unified utility with filtered slots
     const slotsByDate = processAvailabilitySlots(
-      weeklySlots,
-      customSlots,
+      filteredWeeklySlots,
+      filteredCustomSlots,
       appointmentSlots,
       startDate,
       endDate,

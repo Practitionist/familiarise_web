@@ -1,125 +1,506 @@
 import prisma from "@/lib/prisma";
-import { AppointmentsType } from "@prisma/client";
+import {
+  AppointmentsType,
+  Prisma,
+  RequestStatus,
+  ScheduleType,
+} from "@prisma/client";
+import { addHours } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
 
-// Define the expected structure of the request body
-interface AllocationRequestBody {
-  slots: string[]; // Array of ISO 8601 date strings for start times
+type PrismaTransaction = Omit<
+  Prisma.TransactionClient,
+  "$connect" | "$disconnect" | "$on" | "$transaction" | "$use"
+>;
+
+interface AllocationRequest {
+  isAuto: boolean;
+  slots?: string[]; // Required for manual allocation
+  useRequestedSlots?: boolean; // For using pre-allocated slots
+}
+
+const webinarInclude = {
+  webinarPlan: {
+    include: {
+      consultantProfile: {
+        select: {
+          user: true,
+          scheduleType: true,
+          slotsOfAvailabilityWeekly: true,
+          slotsOfAvailabilityCustom: true,
+        },
+      },
+    },
+  },
+  appointment: {
+    include: {
+      slotsOfAppointment: true,
+    },
+  },
+} as const;
+
+type WebinarWithRelations = Prisma.WebinarGetPayload<{
+  include: typeof webinarInclude;
+}>;
+
+async function allocateSlotAuto(
+  webinar: WebinarWithRelations,
+  tx: PrismaTransaction,
+): Promise<Date> {
+  const { webinarPlan } = webinar;
+  const { consultantProfile } = webinarPlan;
+
+  if (!consultantProfile) {
+    throw new Error("Consultant profile not found");
+  }
+
+  // Get available slots based on schedule type
+  const availableSlots =
+    consultantProfile.scheduleType === ScheduleType.WEEKLY
+      ? consultantProfile.slotsOfAvailabilityWeekly
+      : consultantProfile.slotsOfAvailabilityCustom;
+
+  if (!availableSlots.length) {
+    throw new Error("No available slots found for consultant");
+  }
+
+  // Sort slots by time of day to prioritize earlier slots
+  const sortedSlots = [...availableSlots].sort((a, b) => {
+    const timeA = new Date(a.slotStartTimeInUTC).getHours();
+    const timeB = new Date(b.slotStartTimeInUTC).getHours();
+    return timeA - timeB;
+  });
+
+  // Get all existing appointments to check for conflicts
+  const existingAppointments = await tx.appointment.findMany({
+    where: {
+      AND: [
+        {
+          OR: [
+            {
+              subscription: {
+                requestStatus: RequestStatus.APPROVED,
+              },
+            },
+            {
+              consultation: {
+                requestStatus: RequestStatus.APPROVED,
+              },
+            },
+            {
+              webinar: {
+                status: "SCHEDULED",
+              },
+            },
+            {
+              class: {
+                status: "SCHEDULED",
+              },
+            },
+          ],
+        },
+        {
+          slotsOfAppointment: {
+            some: {
+              user: {
+                some: {
+                  id: consultantProfile.user.id,
+                },
+              },
+            },
+          },
+        },
+      ],
+    },
+    include: {
+      slotsOfAppointment: true,
+    },
+  });
+
+  // Get booked time slots
+  const bookedSlots = new Set(
+    existingAppointments.flatMap((app) =>
+      app.slotsOfAppointment.map((slot: { slotStartTimeInUTC: Date }) =>
+        slot.slotStartTimeInUTC.toISOString(),
+      ),
+    ),
+  );
+
+  // Find first available slot
+  const now = new Date();
+  for (const slot of sortedSlots) {
+    let slotTime: Date;
+
+    if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
+      // For weekly slots, find the next occurrence of this weekday
+      const slotDate = new Date();
+      const currentDay = slotDate.getDay();
+      const targetDay = new Date(slot.slotStartTimeInUTC).getDay();
+      const daysToAdd = (targetDay - currentDay + 7) % 7;
+      slotDate.setDate(slotDate.getDate() + daysToAdd);
+      slotDate.setHours(
+        new Date(slot.slotStartTimeInUTC).getHours(),
+        new Date(slot.slotStartTimeInUTC).getMinutes(),
+        0,
+        0,
+      );
+      slotTime = slotDate;
+    } else {
+      // For custom slots, use the exact date
+      slotTime = new Date(slot.slotStartTimeInUTC);
+    }
+
+    // Skip if slot is already booked or in the past
+    if (bookedSlots.has(slotTime.toISOString()) || slotTime < now) {
+      continue;
+    }
+
+    return slotTime;
+  }
+
+  throw new Error("No available slots found");
+}
+
+async function allocateSlotRequested(
+  webinar: WebinarWithRelations,
+  tx: PrismaTransaction,
+): Promise<Date> {
+  // Get the requested slot from the appointment
+  const requestedSlot =
+    webinar.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+  if (!requestedSlot) {
+    throw new Error("No requested slot found");
+  }
+  const selectedSlot = new Date(requestedSlot);
+
+  // Validate the slot is still available
+  const existingAppointment = await tx.appointment.findFirst({
+    where: {
+      AND: [
+        {
+          OR: [
+            { subscription: { requestStatus: RequestStatus.APPROVED } },
+            { consultation: { requestStatus: RequestStatus.APPROVED } },
+            { webinar: { status: "SCHEDULED" } },
+            { class: { status: "SCHEDULED" } },
+          ],
+        },
+        {
+          slotsOfAppointment: {
+            some: { slotStartTimeInUTC: selectedSlot },
+          },
+        },
+      ],
+    },
+  });
+
+  if (existingAppointment) {
+    throw new Error("Requested slot is no longer available");
+  }
+
+  return selectedSlot;
+}
+
+async function allocateSlotManual(
+  webinar: WebinarWithRelations,
+  slots: string[],
+  tx: PrismaTransaction,
+): Promise<Date> {
+  const { webinarPlan } = webinar;
+  const { consultantProfile } = webinarPlan;
+
+  if (!consultantProfile) {
+    throw new Error("Consultant profile not found");
+  }
+
+  // Validate number of slots
+  if (slots.length !== 1) {
+    throw new Error("Webinar requires exactly one slot");
+  }
+
+  const slotDate = new Date(slots[0]);
+
+  // Validate slot is in the future
+  if (slotDate <= new Date()) {
+    throw new Error("Cannot allocate slots in the past");
+  }
+
+  // Validate slot matches consultant's schedule type
+  if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
+    // For weekly schedule, validate slot follows the weekly pattern
+    const availableWeeklySlots =
+      consultantProfile.slotsOfAvailabilityWeekly.some((slot) => {
+        const slotDay = new Date(slot.slotStartTimeInUTC).getDay();
+        const slotHours = new Date(slot.slotStartTimeInUTC).getHours();
+        const slotMinutes = new Date(slot.slotStartTimeInUTC).getMinutes();
+
+        return (
+          slotDate.getDay() === slotDay &&
+          slotDate.getHours() === slotHours &&
+          slotDate.getMinutes() === slotMinutes
+        );
+      });
+
+    if (!availableWeeklySlots) {
+      throw new Error(
+        `Slot ${slotDate.toLocaleString()} does not match consultant's weekly schedule`,
+      );
+    }
+  } else {
+    // For custom schedule, validate slot exists in custom slots
+    const availableCustomSlots =
+      consultantProfile.slotsOfAvailabilityCustom.some(
+        (slot) =>
+          new Date(slot.slotStartTimeInUTC).toISOString() ===
+          slotDate.toISOString(),
+      );
+
+    if (!availableCustomSlots) {
+      throw new Error(
+        `Slot ${slotDate.toLocaleString()} is not in consultant's custom schedule`,
+      );
+    }
+  }
+
+  // Check for conflicts
+  const existingAppointment = await tx.appointment.findFirst({
+    where: {
+      AND: [
+        {
+          OR: [
+            {
+              subscription: {
+                requestStatus: RequestStatus.APPROVED,
+              },
+            },
+            {
+              consultation: {
+                requestStatus: RequestStatus.APPROVED,
+              },
+            },
+            {
+              webinar: {
+                status: "SCHEDULED",
+              },
+            },
+            {
+              class: {
+                status: "SCHEDULED",
+              },
+            },
+          ],
+        },
+        {
+          slotsOfAppointment: {
+            some: {
+              slotStartTimeInUTC: slotDate,
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  if (existingAppointment) {
+    throw new Error("Selected slot is already booked");
+  }
+
+  return slotDate;
 }
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ webinarId: string }> },
 ) {
-  const { webinarId } = await params;
-
-  if (!webinarId) {
-    return NextResponse.json(
-      { error: "Webinar ID is required" },
-      { status: 400 },
-    );
-  }
-
-  let requestBody: AllocationRequestBody;
   try {
-    requestBody = await request.json();
-  } catch (error) {
-    // Log the specific error before returning generic response
-    console.error("Failed to parse request body:", error);
-    return NextResponse.json(
-      { error: "Invalid request body" },
-      { status: 400 },
-    );
-  }
+    const { webinarId } = await params;
+    const body: AllocationRequest = await request.json();
 
-  const { slots } = requestBody;
+    // Validate request body
+    if (typeof body.isAuto !== "boolean") {
+      return NextResponse.json(
+        { error: "isAuto flag is required" },
+        { status: 400 },
+      );
+    }
 
-  // Webinars typically only have one slot
-  if (!Array.isArray(slots) || slots.length !== 1) {
-    return NextResponse.json(
-      { error: "Webinar requires exactly one slot" },
-      { status: 400 },
-    );
-  }
+    if (body.useRequestedSlots) {
+      // When using requested slots, we don't need manual slots
+      body.isAuto = false;
+    } else if (!body.isAuto && !Array.isArray(body.slots)) {
+      return NextResponse.json(
+        { error: "slots array is required for manual allocation" },
+        { status: 400 },
+      );
+    }
 
-  // Validate slot string as a date
-  const slotData: { slotStartTimeInUTC: Date; slotEndTimeInUTC: Date }[] = [];
-  const startTime = new Date(slots[0]);
-  if (isNaN(startTime.getTime())) {
-    return NextResponse.json(
-      { error: `Invalid date format for slot: ${slots[0]}` },
-      { status: 400 },
-    );
-  }
-  // Assuming 30-minute slots for webinars based on EventTimingsCalendar logic
-  const endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
-  slotData.push({ slotStartTimeInUTC: startTime, slotEndTimeInUTC: endTime });
+    // Fetch webinar with necessary relations
+    const webinar = await prisma.webinar.findUnique({
+      where: { id: webinarId },
+      include: webinarInclude,
+    });
 
-  try {
-    await prisma.$transaction(async (tx) => {
-      // 1. Find the webinar to ensure it exists
-      const webinar = await tx.webinar.findUnique({
-        where: { id: webinarId },
-      });
+    if (!webinar) {
+      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
+    }
 
-      if (!webinar) {
-        throw new Error("Webinar not found");
-      }
+    // Validate user information
+    if (!webinar.webinarPlan?.consultantProfile?.user?.id) {
+      return NextResponse.json(
+        { error: "Missing consultant information" },
+        { status: 400 },
+      );
+    }
 
-      // 2. Find existing appointment for this webinar
-      // Webinars should only have one appointment
-      const existingAppointment = await tx.appointment.findUnique({
-        where: { webinarId: webinarId },
-        select: { id: true },
-      });
+    const { consultantProfile } = webinar.webinarPlan;
+    if (!consultantProfile) {
+      return NextResponse.json(
+        { error: "Consultant profile not found" },
+        { status: 400 },
+      );
+    }
 
-      // 3. If an appointment exists, delete its existing slots
-      if (existingAppointment) {
-        await tx.slotOfAppointment.deleteMany({
-          where: { appointmentId: existingAppointment.id },
-        });
-      }
+    try {
+      // Use transaction to ensure atomic updates
+      const result = await prisma.$transaction(async (tx) => {
+        // If using requested slots and appointment exists, just update status
+        if (body.useRequestedSlots && webinar.appointment) {
+          // Validate the slot is still available
+          const existingAppointment = await tx.appointment.findFirst({
+            where: {
+              AND: [
+                {
+                  OR: [
+                    { subscription: { requestStatus: RequestStatus.APPROVED } },
+                    { consultation: { requestStatus: RequestStatus.APPROVED } },
+                    { webinar: { status: "SCHEDULED" } },
+                    { class: { status: "SCHEDULED" } },
+                  ],
+                },
+                {
+                  slotsOfAppointment: {
+                    some: {
+                      slotStartTimeInUTC:
+                        webinar.appointment.slotsOfAppointment[0]
+                          .slotStartTimeInUTC,
+                    },
+                  },
+                },
+              ],
+            },
+          });
 
-      // 4. Determine the appointment ID (create if doesn't exist)
-      let appointmentId: string;
-      if (!existingAppointment) {
-        const newAppointment = await tx.appointment.create({
+          if (existingAppointment) {
+            throw new Error("Requested slot is no longer available");
+          }
+
+          // Update webinar status
+          const updatedWebinar = await tx.webinar.update({
+            where: { id: webinarId },
+            data: {
+              status: "SCHEDULED",
+            },
+            include: webinarInclude,
+          });
+
+          return {
+            webinar: updatedWebinar,
+            appointment: webinar.appointment,
+          };
+        }
+
+        // For auto/manual allocation, delete existing appointment if any
+        if (!body.useRequestedSlots && webinar.appointment) {
+          await tx.appointment.delete({
+            where: { id: webinar.appointment.id },
+          });
+        }
+
+        // Get slot based on allocation method
+        let selectedSlot;
+        if (body.useRequestedSlots) {
+          selectedSlot = await allocateSlotRequested(webinar, tx);
+        } else if (body.isAuto) {
+          selectedSlot = await allocateSlotAuto(webinar, tx);
+        } else {
+          selectedSlot = await allocateSlotManual(webinar, body.slots!, tx);
+        }
+
+        // Create appointment for selected slot
+        const appointment = await tx.appointment.create({
           data: {
             appointmentType: AppointmentsType.WEBINAR,
             webinar: {
               connect: { id: webinarId },
             },
+            slotsOfAppointment: {
+              create: {
+                slotStartTimeInUTC: selectedSlot,
+                slotEndTimeInUTC: addHours(
+                  selectedSlot,
+                  webinar.webinarPlan.durationInHours,
+                ),
+                isTentative: false,
+                user: {
+                  connect: [
+                    {
+                      id: (() => {
+                        if (!webinar.webinarPlan.consultantProfile?.user?.id) {
+                          throw new Error(
+                            "Missing consultant user information",
+                          );
+                        }
+                        return webinar.webinarPlan.consultantProfile.user.id;
+                      })(),
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          include: {
+            slotsOfAppointment: {
+              include: {
+                user: true,
+              },
+            },
           },
         });
-        appointmentId = newAppointment.id;
-      } else {
-        appointmentId = existingAppointment.id;
-      }
 
-      // 5. Create the new slot
-      await tx.slotOfAppointment.create({
-        data: {
-          appointmentId: appointmentId,
-          slotStartTimeInUTC: slotData[0].slotStartTimeInUTC,
-          slotEndTimeInUTC: slotData[0].slotEndTimeInUTC,
-          // Add user connections if necessary based on webinar participants/host
-        },
+        // Update webinar status
+        const updatedWebinar = await tx.webinar.update({
+          where: { id: webinarId },
+          data: {
+            status: "SCHEDULED",
+          },
+          include: webinarInclude,
+        });
+
+        return {
+          webinar: updatedWebinar,
+          appointment,
+        };
       });
 
-      // Potential future step: Update Webinar status if needed (e.g., to SCHEDULED)
-    });
-
-    return NextResponse.json(
-      { message: "Webinar slot allocated successfully" },
-      { status: 200 },
-    );
-  } catch (error: any) {
-    console.error("Error allocating webinar slot:", error);
-    if (error.message === "Webinar not found") {
-      return NextResponse.json({ error: error.message }, { status: 404 });
+      return NextResponse.json({ data: result });
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error("Error: ", error.stack);
+      }
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error ? error.message : "Failed to allocate slot",
+        },
+        { status: 500 },
+      );
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      console.error("Error: ", error.stack);
     }
     return NextResponse.json(
-      { error: "Failed to allocate webinar slot" },
+      { error: "An error occurred during slot allocation" },
       { status: 500 },
     );
   }

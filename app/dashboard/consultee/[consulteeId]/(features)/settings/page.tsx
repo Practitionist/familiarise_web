@@ -1,6 +1,7 @@
 "use client";
 
 import { use } from "react";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import SettingsTab from "./SettingsTab";
 
 type PageProps = {
@@ -9,6 +10,11 @@ type PageProps = {
 };
 
 export default function SettingsPage({ params }: Readonly<PageProps>) {
-  const resolvedParams = use(params);
-  return <SettingsTab consulteeId={resolvedParams.consulteeId} />;
+  const { consulteeId } = use(params);
+
+  return (
+    <DashboardErrorBoundary>
+      <SettingsTab consulteeId={consulteeId} />
+    </DashboardErrorBoundary>
+  );
 }

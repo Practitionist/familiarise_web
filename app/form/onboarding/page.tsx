@@ -29,6 +29,9 @@ import StaffAgreementForm from "./components/StaffAgreementForm";
 import StaffProfileForm from "./components/StaffProfileForm";
 import StaffResponsibilitiesForm from "./components/StaffResponsibilitiesForm";
 import StaffReviewForm from "./components/StaffReviewForm";
+import { ThemeName } from "./themes";
+import { getOccasionTheme } from "./themeUtils";
+import { useThemeClasses } from "./useTheme";
 
 type OnboardingFormData = PersonalInfoAndRole &
   Partial<ConsultantProfile> &
@@ -78,6 +81,10 @@ const MultiStepForm: React.FC = () => {
   const router = useRouter();
   const { toast } = useToast();
 
+  // Theme configuration - auto-detects festivals or use default ShadCN style
+  const currentTheme: ThemeName = getOccasionTheme(); // Auto-detect or default to ShadCN theme
+  const { theme, classes, colors } = useThemeClasses(currentTheme);
+
   const methods = useForm<OnboardingFormData>({
     resolver: zodResolver(PersonalInfoAndRoleSchema),
     defaultValues: {
@@ -117,7 +124,7 @@ const MultiStepForm: React.FC = () => {
 
   const handleSubmit = async (data: OnboardingFormData) => {
     const finalData = { ...formData, ...data };
-    console.log("Finally Submitted Data:", finalData);
+    // console.log("Finally Submitted Data:", finalData);
 
     try {
       const id = session?.user?.id;
@@ -220,10 +227,10 @@ const MultiStepForm: React.FC = () => {
             : undefined,
       };
 
-      console.log(
-        "Request Body for Action:",
-        JSON.stringify(requestBody, null, 2),
-      );
+      // console.log(
+      //   "Request Body for Action:",
+      //   JSON.stringify(requestBody, null, 2)
+      // );
       toast({
         title: "Updating Onboarding Information",
         description: "Please wait...",
@@ -438,29 +445,64 @@ const MultiStepForm: React.FC = () => {
 
   return (
     <FormProvider {...methods}>
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
-        <Header />
-        <Progress value={((step + 1) / 4) * 100} className="w-[60%] mb-8" />
-        <WelcomeMessage />
-        {renderFormStep()}
+      <div className="relative flex flex-col items-center justify-center min-h-screen overflow-hidden">
+        {/* Background with gradient and animated blobs */}
+        <div className={`absolute inset-0 ${colors.backgroundGradient}`}>
+          <div
+            className={`absolute -top-40 -right-40 w-80 h-80 ${colors.blob1} rounded-full opacity-30 animate-blob`}
+          ></div>
+          <div
+            className={`absolute -bottom-40 -left-40 w-80 h-80 ${colors.blob2} rounded-full opacity-30 animate-blob animation-delay-2000`}
+          ></div>
+          <div
+            className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-60 h-60 ${colors.blob3} rounded-full opacity-20 animate-blob animation-delay-4000`}
+          ></div>
+        </div>
+
+        {/* Content */}
+        <div className="relative z-10 flex flex-col items-center w-full max-w-7xl px-6">
+          <Header />
+          <div
+            className={`glassmorphism rounded-2xl p-8 w-full max-w-5xl ${colors.glassBorder} shadow-2xl`}
+          >
+            <Progress
+              value={((step + 1) / 4) * 100}
+              className={`w-full mb-8 h-2 ${colors.glassBg}`}
+            />
+            <WelcomeMessage />
+            {renderFormStep()}
+          </div>
+        </div>
       </div>
     </FormProvider>
   );
 };
 
-const Header: React.FC = () => (
-  <header className="flex items-center space-x-2 mb-8">
-    <LogInIcon className="w-8 h-8 text-primary" />
-    <h1 className="text-2xl font-bold">Familiarise</h1>
-  </header>
-);
+const Header: React.FC = () => {
+  const { colors } = useThemeClasses();
+  return (
+    <header className="flex items-center space-x-3 mb-8">
+      <div className={`p-2 rounded-xl ${colors.primaryGradient} shadow-lg`}>
+        <LogInIcon className={`w-8 h-8 ${colors.textPrimary}`} />
+      </div>
+      <h1 className={`text-3xl font-bold ${colors.textPrimary}`}>
+        Familiarise
+      </h1>
+    </header>
+  );
+};
 
-const WelcomeMessage: React.FC = () => (
-  <div className="text-center mb-8">
-    <h2 className="text-2xl font-bold">Welcome! First things first...</h2>
-    <p className="text-muted-foreground">You can always change them later.</p>
-  </div>
-);
+const WelcomeMessage: React.FC = () => {
+  const { colors } = useThemeClasses();
+  return (
+    <div className="text-center mb-8">
+      <h2 className={`text-2xl font-bold ${colors.textPrimary} mb-2`}>
+        Welcome! First things first...
+      </h2>
+      <p className={colors.textSecondary}>You can always change them later.</p>
+    </div>
+  );
+};
 
 function LogInIcon(props: Readonly<React.SVGProps<SVGSVGElement>>) {
   return (

@@ -13,7 +13,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  useEvents,
   ConsultationWithPlan,
   SubscriptionWithPlan,
   WebinarWithPlan,
@@ -32,32 +31,20 @@ type EventWithType =
   | (WebinarWithPlan & { type: "Webinar" })
   | (ClassWithPlan & { type: "Class" });
 
-export default function BookingHistoryTab({
-  consulteeId,
-}: {
-  consulteeId: string;
-}) {
-  const { consultations, subscriptions, webinars, classes, isLoading, error } =
-    useEvents(consulteeId);
+// Updated to receive data as props instead of fetching internally
+interface BookingHistoryTabProps {
+  consultations: any[];
+  subscriptions: any[];
+  webinars: any[];
+  classes: any[];
+}
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-pulse text-gray-500">
-          Loading booking history...
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-4 bg-red-50 text-red-600 rounded-lg">
-        Error loading booking history: {error.message}
-      </div>
-    );
-  }
-
+export function BookingHistoryTab({
+  consultations = [],
+  subscriptions = [],
+  webinars = [],
+  classes = [],
+}: BookingHistoryTabProps) {
   const allEvents: EventWithType[] = [
     ...consultations.map((c) => ({ ...c, type: "Consultation" as const })),
     ...subscriptions.map((s) => ({ ...s, type: "Subscription" as const })),
