@@ -130,9 +130,8 @@ async function allocateSlotsAuto(
     )
   );
 
-  // Calculate required number of slots - FIXED: Account for session duration
-  const totalWeeks = classDetails.durationInMonths * 4;
-  const totalCalls = totalWeeks * classDetails.callsPerWeek;
+  // Calculate required number of slots - FIXED: Use actual duration and frequency
+  const totalCalls = classDetails.durationInMonths * classDetails.callsPerWeek;
 
   // Get session duration from class contents or use default
   const classContents = classDetails.classContents || [];
@@ -155,7 +154,7 @@ async function allocateSlotsAuto(
 
   while (
     selectedSlots.length < totalRequiredSlots &&
-    currentWeek < totalWeeks
+    currentWeek < totalCalls
   ) {
     const weekStart = addWeeks(startDate, currentWeek);
     let slotsThisWeek = 0;
@@ -199,11 +198,16 @@ async function allocateSlotsAuto(
         // Check if we can fit the entire session starting from this time
         let canFitSession = true;
         const sessionSlots: Date[] = [];
-        
+
         for (let slotIndex = 0; slotIndex < slotsPerSession; slotIndex++) {
-          const slotTime = new Date(sessionStartTime.getTime() + (slotIndex * 30 * 60 * 1000)); // 30 min intervals
-          
-          if (bookedSlots.has(slotTime.toISOString()) || slotTime < new Date()) {
+          const slotTime = new Date(
+            sessionStartTime.getTime() + slotIndex * 30 * 60 * 1000
+          ); // 30 min intervals
+
+          if (
+            bookedSlots.has(slotTime.toISOString()) ||
+            slotTime < new Date()
+          ) {
             canFitSession = false;
             break;
           }
@@ -212,7 +216,7 @@ async function allocateSlotsAuto(
 
         if (canFitSession) {
           // Add all slots for this session
-          sessionSlots.forEach(slotTime => {
+          sessionSlots.forEach((slotTime) => {
             selectedSlots.push(slotTime);
             bookedSlots.add(slotTime.toISOString());
           });
@@ -323,17 +327,20 @@ async function allocateSlotsManual(
   }
 
   // Calculate expected slots accounting for session duration
-  const totalWeeks = classDetails.durationInMonths * 4;
-  const totalCalls = totalWeeks * classDetails.callsPerWeek;
-  
+  // FIXED: Use actual duration and frequency instead of hardcoded weeks calculation
+  const totalCalls = classDetails.durationInMonths * classDetails.callsPerWeek;
+
   // Get session duration from class contents
   const classContents = classDetails.classContents || [];
   let sessionDurationInHours = 1; // Default
   if (classContents.length > 0) {
-    const totalHours = classContents.reduce((sum, content) => sum + content.hoursAllotted, 0);
+    const totalHours = classContents.reduce(
+      (sum, content) => sum + content.hoursAllotted,
+      0
+    );
     sessionDurationInHours = totalHours / classContents.length;
   }
-  
+
   const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5); // 30-min slots
   const totalRequiredSlots = totalCalls * slotsPerSession;
 
