@@ -82,6 +82,7 @@ export function AutoAllocationDemo({
   const [durationInMonths, setDurationInMonths] = useState(1);
   const [callsPerWeek, setCallsPerWeek] = useState(1);
   const [sessionDuration, setSessionDuration] = useState(1);
+  const [consultationDuration, setConsultationDuration] = useState(1); // ADDED: Consultation duration
 
   // PREFERENCE SYSTEM STATE - Interactive configuration
   const [preferences, setPreferences] = useState<AutoAllocationPreferences>({
@@ -151,27 +152,30 @@ export function AutoAllocationDemo({
   const requiredSlots = useMemo(() => {
     switch (eventType) {
       case "consultation":
-        return 1; // Single 30-minute slot
+        // FIXED: Use consultation duration instead of hardcoded value
+        return Math.ceil(consultationDuration / 0.5); // 30-minute intervals
       case "webinar":
         return Math.ceil(sessionDuration * 2); // 30-minute intervals for multi-hour events
       case "subscription":
-        // Subscription: total calls over duration × slots per call
-        const totalSubscriptionCalls = Math.ceil(
-          durationInMonths * 4.33 * callsPerWeek
-        );
+        // FIXED: Use actual subscription plan data instead of hardcoded calculations
+        const totalSubscriptionCalls = durationInMonths * callsPerWeek; // Use actual duration and frequency
         const slotsPerSubscriptionCall = Math.ceil(sessionDuration / 0.5);
         return totalSubscriptionCalls * slotsPerSubscriptionCall;
       case "class":
-        // Class: total calls over duration × slots per session
-        const totalClassCalls = Math.ceil(
-          durationInMonths * 4.33 * callsPerWeek
-        );
+        // FIXED: Use actual class plan data instead of hardcoded calculations
+        const totalClassCalls = durationInMonths * callsPerWeek; // Use actual duration and frequency
         const slotsPerClassSession = Math.ceil(sessionDuration / 0.5);
         return totalClassCalls * slotsPerClassSession;
       default:
         return 1;
     }
-  }, [eventType, durationInMonths, callsPerWeek, sessionDuration]);
+  }, [
+    eventType,
+    durationInMonths,
+    callsPerWeek,
+    sessionDuration,
+    consultationDuration,
+  ]); // ADDED: consultationDuration dependency
 
   // PREFERENCE UPDATE HANDLER - Real-time preference changes
   const updatePreference = useCallback(
@@ -222,6 +226,8 @@ export function AutoAllocationDemo({
             : undefined,
         sessionDurationInHours:
           eventType === "webinar" ? sessionDuration : undefined,
+        durationInHours:
+          eventType === "consultation" ? consultationDuration : undefined, // FIXED: Add consultation duration
       };
 
       // EXECUTION: Run enhanced auto allocation with preferences
@@ -269,6 +275,7 @@ export function AutoAllocationDemo({
     durationInMonths,
     callsPerWeek,
     sessionDuration,
+    consultationDuration, // ADDED: Include consultation duration
     preferences,
     availableSlots,
     onSlotSelected,
@@ -280,6 +287,7 @@ export function AutoAllocationDemo({
   const handleReset = useCallback(() => {
     setAllocationResult(null);
     setSelectedSlots([]);
+    setConsultationDuration(1); // ADDED: Reset consultation duration
     setPreferences({
       preferWeekdays: true,
       preferMorning: false,
@@ -336,6 +344,31 @@ export function AutoAllocationDemo({
             </div>
 
             {/* Dynamic fields based on event type */}
+            {eventType === "consultation" && (
+              <div>
+                <Label htmlFor="consultation-duration">
+                  Consultation Duration (hours)
+                </Label>
+                <Select
+                  value={consultationDuration.toString()}
+                  onValueChange={(value) =>
+                    setConsultationDuration(parseFloat(value))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0.5">30 minutes</SelectItem>
+                    <SelectItem value="1">1 hour</SelectItem>
+                    <SelectItem value="1.5">1.5 hours</SelectItem>
+                    <SelectItem value="2">2 hours</SelectItem>
+                    <SelectItem value="3">3 hours</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             {eventType === "webinar" && (
               <div>
                 <Label htmlFor="session-duration">
