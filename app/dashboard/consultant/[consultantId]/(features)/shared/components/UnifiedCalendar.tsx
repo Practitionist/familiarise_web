@@ -113,6 +113,7 @@ export function UnifiedCalendar({
     manualAllocate,
     autoAllocate,
     preAllocate,
+    slotLimits,
   } = useEventSlotAllocation({
     eventType,
     eventId: eventId || "",
@@ -566,7 +567,8 @@ export function UnifiedCalendar({
                 if (eventType === "subscription") {
                   return calculateCallProgress(
                     selectedSlots,
-                    sessionDurationInHours
+                    sessionDurationInHours,
+                    slotLimits.maxSlots // Use maxSlots which contains maxTotalCalls for subscriptions
                   );
                 }
 
@@ -594,10 +596,10 @@ export function UnifiedCalendar({
           </div>
           <div className="text-xs text-muted-foreground">
             {eventType === "consultation"
-              ? `Required: ${durationInHours || 1}h consultation (1 slot)`
+              ? `Required: ${durationInHours || 1}h consultation (${Math.ceil((durationInHours || 1) / 0.5)} consecutive slots)`
               : eventType === "subscription"
-                ? `Required: ${sessionDurationInHours || 1}h per call (${Math.ceil((sessionDurationInHours || 1) * 2)} consecutive slots per call)`
-                : `Required: ${sessionDurationInHours || 1}h per session (${Math.ceil((sessionDurationInHours || 1) * 2)} consecutive slots)`}
+                ? `Required: ${sessionDurationInHours || 1}h per call (${Math.ceil((sessionDurationInHours || 1) / 0.5)} consecutive slots per call)`
+                : `Required: ${sessionDurationInHours || 1}h per session (${Math.ceil((sessionDurationInHours || 1) / 0.5)} consecutive slots)`}
           </div>
           {allocationError && (
             <div className="text-sm text-red-600">{allocationError}</div>
