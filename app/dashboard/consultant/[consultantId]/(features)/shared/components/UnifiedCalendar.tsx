@@ -164,7 +164,7 @@ export function UnifiedCalendar({
         toggleSlot(slot);
       }
     },
-    [mode, getSlotStatusForInterval, toggleSlot]
+    [mode, getSlotStatusForInterval, toggleSlot],
   );
 
   // Render time cell
@@ -271,7 +271,7 @@ export function UnifiedCalendar({
                           </p>
                         )}
                       </div>
-                    )
+                    ),
                   )}
                 </div>
               </TooltipContent>
@@ -291,7 +291,7 @@ export function UnifiedCalendar({
       loading,
       error,
       mode,
-    ]
+    ],
   );
 
   // Render month view
@@ -364,7 +364,7 @@ export function UnifiedCalendar({
                 </div>
               </div>
             );
-          }
+          },
         )}
       </div>
     );
@@ -432,7 +432,7 @@ export function UnifiedCalendar({
               setCurrentDate(
                 view === "week"
                   ? subWeeks(currentDate, 1)
-                  : subMonths(currentDate, 1)
+                  : subMonths(currentDate, 1),
               )
             }
           >
@@ -450,7 +450,7 @@ export function UnifiedCalendar({
               setCurrentDate(
                 view === "week"
                   ? addWeeks(currentDate, 1)
-                  : addMonths(currentDate, 1)
+                  : addMonths(currentDate, 1),
               )
             }
           >
@@ -537,7 +537,7 @@ export function UnifiedCalendar({
                       0,
                       1,
                       interval.hour,
-                      interval.minute
+                      interval.minute,
                     ).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
@@ -568,7 +568,7 @@ export function UnifiedCalendar({
                   return calculateCallProgress(
                     selectedSlots,
                     sessionDurationInHours,
-                    slotLimits.maxSlots // Use maxSlots which contains maxTotalCalls for subscriptions
+                    slotLimits.maxSlots, // Use maxSlots which contains maxTotalCalls for subscriptions
                   );
                 }
 
@@ -581,7 +581,7 @@ export function UnifiedCalendar({
                   eventType,
                   durationInMonths,
                   callsPerWeek,
-                  duration
+                  duration,
                 );
 
                 return `${selectedSlots.length} selected out of ${requiredSlotsForThisEvent} required slots`;

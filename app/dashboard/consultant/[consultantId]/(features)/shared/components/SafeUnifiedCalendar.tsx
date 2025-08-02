@@ -9,4 +9,4 @@ export function SafeUnifiedCalendar(props: UnifiedCalendarProps) {
       <UnifiedCalendar {...props} />
     </CalendarErrorBoundary>
   );
-} 
+}

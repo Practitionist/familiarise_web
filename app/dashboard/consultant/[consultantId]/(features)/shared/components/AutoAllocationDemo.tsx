@@ -40,7 +40,6 @@ export interface AutoAllocationDemoProps {
   onDemoComplete?: (result: AllocationResult) => void;
 }
 
-
 // auto allocation alogirthm neeeds to be implemented
 /**
  * AUTO ALLOCATION DEMO COMPONENT
@@ -187,7 +186,7 @@ export function AutoAllocationDemo({
         [key]: value,
       }));
     },
-    []
+    [],
   );
 
   /**
@@ -236,7 +235,7 @@ export function AutoAllocationDemo({
       const result = await AllocationAlgorithms.autoAllocate(
         availableSlots,
         options,
-        preferences
+        preferences,
       );
 
       setAllocationResult(result);
@@ -545,7 +544,7 @@ export function AutoAllocationDemo({
                     onChange={(e) =>
                       updatePreference(
                         "minTimeBetweenSessions",
-                        parseFloat(e.target.value)
+                        parseFloat(e.target.value),
                       )
                     }
                     max={8}
@@ -673,7 +672,7 @@ export function AutoAllocationDemo({
                         <span className="text-sm">
                           {format(
                             slot.startTime,
-                            "EEE, MMM d, yyyy 'at' h:mm a"
+                            "EEE, MMM d, yyyy 'at' h:mm a",
                           )}
                         </span>
                         <Badge variant="outline" className="text-xs">

@@ -52,4 +52,4 @@ class CalendarErrorBoundary extends Component<Props, State> {
   }
 }
 
-export default CalendarErrorBoundary; 
+export default CalendarErrorBoundary;
