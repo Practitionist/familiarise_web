@@ -40,6 +40,8 @@ export interface AutoAllocationDemoProps {
   onDemoComplete?: (result: AllocationResult) => void;
 }
 
+
+// auto allocation alogirthm neeeds to be implemented
 /**
  * AUTO ALLOCATION DEMO COMPONENT
  * ===============================
