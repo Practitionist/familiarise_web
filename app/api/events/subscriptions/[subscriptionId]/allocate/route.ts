@@ -135,6 +135,9 @@ async function allocateSlotsAuto(
   const totalRequiredSlots =
     subscriptionPlan.durationInMonths * subscriptionPlan.callsPerWeek;
 
+  // Calculate total weeks needed for the subscription duration
+  const totalWeeks = subscriptionPlan.durationInMonths * 4; // 4 weeks per month
+
   // Find best available slots
   const selectedSlots: Date[] = [];
   const startDate = new Date();
