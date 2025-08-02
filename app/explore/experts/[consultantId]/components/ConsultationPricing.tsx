@@ -6,6 +6,34 @@ import PricingToggle from "./PricingToggle";
 
 import { PricingOption } from "../defaults";
 
+// Utility function to map duration hours to labels
+const getDurationLabel = (durationInHours: number): string => {
+  switch (durationInHours) {
+    case 1:
+      return "Basic";
+    case 2:
+      return "Extended";
+    case 4:
+      return "Comprehensive";
+    default:
+      return `${durationInHours} Hour${durationInHours > 1 ? "s" : ""}`;
+  }
+};
+
+// Utility function to map subscription duration months to labels
+const getSubscriptionDurationLabel = (durationInMonths: number): string => {
+  switch (durationInMonths) {
+    case 1:
+      return "Basic";
+    case 3:
+      return "Extended";
+    case 6:
+      return "Comprehensive";
+    default:
+      return `${durationInMonths} Month${durationInMonths > 1 ? "s" : ""}`;
+  }
+};
+
 interface ConsultationPricingProps {
   userDetails: User;
   consultantDetails: TConsultantProfile;
@@ -39,19 +67,23 @@ export function ConsultationPricing({
 }: Readonly<ConsultationPricingProps>) {
   const formatPricingOptions = (
     plans: (ConsultationPlan | SubscriptionPlan)[],
-    type: "consultation" | "subscription",
+    type: "consultation" | "subscription"
   ): PricingOption[] => {
     return plans.map((plan) => {
       if (type === "consultation" && "durationInHours" in plan) {
+        const durationLabel = getDurationLabel(plan.durationInHours);
         return {
-          title: `${plan.durationInHours} Hour${plan.durationInHours > 1 ? "s" : ""}`,
+          title: durationLabel,
           description: `${plan.durationInHours} hour consultation`,
           price: plan.price,
           duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`,
         };
       } else if (type === "subscription" && "durationInMonths" in plan) {
+        const durationLabel = getSubscriptionDurationLabel(
+          plan.durationInMonths
+        );
         return {
-          title: `${plan.durationInMonths} Month${plan.durationInMonths > 1 ? "s" : ""}`,
+          title: durationLabel,
           description: `${plan.durationInMonths} month subscription`,
           price: plan.price,
           duration: `${plan.durationInMonths}`,
@@ -73,15 +105,15 @@ export function ConsultationPricing({
 
   const consultationOptions = formatPricingOptions(
     consultantDetails.consultationPlans.sort(
-      (a, b) => a.durationInHours - b.durationInHours,
+      (a, b) => a.durationInHours - b.durationInHours
     ),
-    "consultation",
+    "consultation"
   );
   const subscriptionOptions = formatPricingOptions(
     consultantDetails.subscriptionPlans.sort(
-      (a, b) => a.durationInMonths - b.durationInMonths,
+      (a, b) => a.durationInMonths - b.durationInMonths
     ),
-    "subscription",
+    "subscription"
   );
 
   return (
