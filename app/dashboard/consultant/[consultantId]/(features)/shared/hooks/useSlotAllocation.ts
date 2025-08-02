@@ -356,7 +356,7 @@ function getEventConstraints(
 
     case "subscription":
       return {
-        requireConsecutive: false,
+        requireConsecutive: true, // FIXED: Individual calls must be consecutive within the same day
         maxCallsPerDay: options.maxCallsPerDay || 1,
         maxTotalCalls: options.maxTotalCalls,
         allowMultipleSessions: false,
@@ -366,9 +366,9 @@ function getEventConstraints(
 
     case "consultation":
       return {
-        requireConsecutive: false,
+        requireConsecutive: true, // FIXED: Consultations must be consecutive (same day)
         allowMultipleSessions: false,
-        isDailyLimited: false,
+        isDailyLimited: true, // FIXED: Consultations must happen on the same day
         isOneTimeEvent: true,
       };
 
@@ -473,14 +473,14 @@ function validateEventSlots(
   if (slots.length > limits.maxSlots) {
     result.isValid = false;
     result.errors.push(
-      `Maximum ${limits.maxSlots} slots allowed, ${slots.length} selected`
+      `Maximum ${limits.maxSlots} slots allowed for this ${eventType} (${slots.length} selected)`
     );
   }
 
   // For interactive selection, only warn about minimum slots
   if (slots.length < limits.minSlots) {
     result.warnings.push(
-      `Need ${limits.minSlots - slots.length} more slots (${slots.length}/${limits.minSlots} selected)`
+      `Need ${limits.minSlots - slots.length} more slots for this ${eventType} (${slots.length}/${limits.minSlots} selected)`
     );
   }
 
@@ -546,10 +546,31 @@ function validateEventSlots(
       break;
 
     case "consultation":
-      // Simple validation for consultations
+      // FIXED: Enhanced validation for consultations with multiple slots
+
+      // FIXED: Check same-day requirement FIRST (before consecutive check)
       if (slots.length > 1) {
-        result.isValid = false;
-        result.errors.push("Consultation requires only 1 slot");
+        const firstSlotDay = slots[0].startTime.toDateString();
+        const allSameDay = slots.every(
+          (slot) => slot.startTime.toDateString() === firstSlotDay
+        );
+        if (!allSameDay) {
+          result.isValid = false;
+          result.errors.push(
+            "Consultation is a one-day event - all slots must be on the same day"
+          );
+        }
+      }
+
+      // FIXED: Only check consecutiveness if all slots are on the same day
+      if (slots.length > 1) {
+        result.consecutiveSlotsValid = validateConsecutiveSlots(slots);
+        if (!result.consecutiveSlotsValid) {
+          result.isValid = false;
+          result.errors.push(
+            "Consultation slots must be consecutive within the same day"
+          );
+        }
       }
       break;
   }
@@ -749,7 +770,7 @@ function validateSubscriptionSlots(
     // Check if slots for this day exceed the per-call limit
     if (daySlots.length > slotsPerCall) {
       dailyCallsValid = false;
-      dailyCallsError = `Too many slots selected for ${day}. Maximum ${slotsPerCall} slots (${sessionDurationHours}h) per call allowed.`;
+      dailyCallsError = `Too many slots selected for ${day}. Maximum ${slotsPerCall} slots (${sessionDurationHours}h) per call allowed. Each call must be completed on the same day.`;
       break;
     }
 
