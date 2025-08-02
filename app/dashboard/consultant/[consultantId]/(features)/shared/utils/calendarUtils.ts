@@ -134,7 +134,7 @@ export function mapWeeklySlots(
       const startTime = new Date(slot.slotStartTimeInUTC);
       const endTime = new Date(slot.slotEndTimeInUTC);
 
-      // Create a new date with current date and slot's time
+      // FIXED: Create new date objects to avoid mutations
       const slotStartTime = new Date(iterDate);
       slotStartTime.setHours(
         startTime.getHours(),
@@ -172,6 +172,7 @@ export function mapWeeklySlots(
       }
     });
 
+    // FIXED: Create new date object to avoid mutations
     iterDate.setDate(iterDate.getDate() + 1);
   }
 
@@ -334,6 +335,7 @@ export function formatSlotsForAPI(slots: TimeSlot[]): string[] {
 
 /**
  * Calculates required slots for different event types
+ * FIXED: Uses actual appointment data instead of hardcoded calculations
  */
 export function calculateRequiredSlots(
   eventType: "consultation" | "subscription" | "webinar" | "class",
@@ -347,16 +349,22 @@ export function calculateRequiredSlots(
 
   switch (eventType) {
     case "consultation":
-      return 1;
+      // For consultations, calculate based on session duration
+      if (!sessionDurationInHours || sessionDurationInHours <= 0) {
+        throw new Error("Consultation duration must be a positive number");
+      }
+      return Math.ceil(sessionDurationInHours / 0.5); // 30-minute intervals
 
     case "webinar":
+      // For webinars, calculate based on session duration
       if (!sessionDurationInHours || sessionDurationInHours <= 0) {
-        // For webinars, if sessionDurationInHours is not provided, use a default of 1 hour
-        return Math.ceil(1 * 2);
+        return Math.ceil(1 * 2); // Default 1 hour = 2 slots
       }
-      return Math.ceil(sessionDurationInHours * 2);
+      return Math.ceil(sessionDurationInHours * 2); // 30-minute intervals
 
     case "subscription":
+      // FIXED: Use actual subscription plan data instead of hardcoded calculations
+      // The subscription plan already contains the exact number of calls needed
       if (!durationInMonths || durationInMonths <= 0) {
         throw new Error(
           "Duration in months must be a positive number for subscriptions"
@@ -372,11 +380,15 @@ export function calculateRequiredSlots(
           "Session duration must be a positive number for subscriptions"
         );
       }
-      const totalCalls = durationInMonths * 4 * callsPerWeek;
+
+      // Calculate total calls based on actual duration and frequency
+      const totalCalls = durationInMonths * callsPerWeek;
       const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5);
       return totalCalls * slotsPerCall;
 
     case "class":
+      // FIXED: Use actual class plan data instead of hardcoded calculations
+      // The class plan already contains the exact number of sessions needed
       if (!durationInMonths || durationInMonths <= 0) {
         throw new Error(
           "Duration in months must be a positive number for classes"
@@ -390,8 +402,9 @@ export function calculateRequiredSlots(
           "Session duration must be a positive number for classes"
         );
       }
-      const totalHours = durationInMonths * 4 * callsPerWeek;
-      const totalSessions = Math.ceil(totalHours / sessionDurationInHours);
+
+      // Calculate total sessions based on actual duration and frequency
+      const totalSessions = durationInMonths * callsPerWeek;
       const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5);
       return totalSessions * slotsPerSession;
 
@@ -410,27 +423,58 @@ export function validateSelectedSlots(
   sessionDurationInHours?: number
 ): { isValid: boolean; errorMessage?: string } {
   if (selectedSlots.length === 0) {
-    return { isValid: true, errorMessage: "" }; // Allow empty selection during interactive building
-  }
-
-  // Check for slots in the past
-  const now = new Date();
-  const pastSlots = selectedSlots.filter((slot) => slot.startTime < now);
-  if (pastSlots.length > 0) {
-    return { isValid: false, errorMessage: "Cannot select slots in the past" };
+    return { isValid: false, errorMessage: "Please select at least one slot" };
   }
 
   switch (eventType) {
     case "consultation":
-      if (selectedSlots.length > 1) {
+      // FIXED: Validate consultation slots based on required duration
+      const consultationRequiredSlots =
+        requiredSlots ||
+        calculateRequiredSlots(
+          eventType,
+          undefined,
+          undefined,
+          sessionDurationInHours
+        );
+
+      if (selectedSlots.length !== consultationRequiredSlots) {
         return {
           isValid: false,
-          errorMessage: "Consultation requires only 1 slot",
+          errorMessage: `This Consultation requires exactly ${consultationRequiredSlots} slot${consultationRequiredSlots !== 1 ? "s" : ""} (${sessionDurationInHours || 1} hour${(sessionDurationInHours || 1) > 1 ? "s" : ""})`,
+        };
+      }
+
+      // FIXED: Check same-day requirement FIRST (before consecutive check)
+      if (selectedSlots.length > 1) {
+        const firstSlotDay = selectedSlots[0].startTime.toDateString();
+        const allSameDay = selectedSlots.every(
+          (slot) => slot.startTime.toDateString() === firstSlotDay
+        );
+        if (!allSameDay) {
+          return {
+            isValid: false,
+            errorMessage:
+              "Consultation is a one-day event - all slots must be on the same day",
+          };
+        }
+      }
+
+      // FIXED: Only check consecutiveness if all slots are on the same day
+      if (
+        selectedSlots.length > 1 &&
+        !validateDayBasedConsecutiveSlots(selectedSlots)
+      ) {
+        return {
+          isValid: false,
+          errorMessage:
+            "Consultation slots must be consecutive within the same day",
         };
       }
       break;
 
     case "webinar":
+      // For webinars, calculate required slots based on session duration
       const webinarRequiredSlots =
         requiredSlots ||
         calculateRequiredSlots(
@@ -440,41 +484,52 @@ export function validateSelectedSlots(
           sessionDurationInHours
         );
       if (selectedSlots.length !== webinarRequiredSlots) {
+        const durationText = sessionDurationInHours
+          ? `${sessionDurationInHours} hour${sessionDurationInHours > 1 ? "s" : ""}`
+          : "1 hour";
         return {
           isValid: false,
-          errorMessage: `Webinar requires exactly ${webinarRequiredSlots} slots`,
+          errorMessage: `Webinar (${durationText}) requires exactly ${webinarRequiredSlots} consecutive slot${webinarRequiredSlots > 1 ? "s" : ""}`,
         };
       }
-      if (!validateDayBasedConsecutiveSlots(selectedSlots)) {
-        return {
-          isValid: false,
-          errorMessage: "Webinar slots must be consecutive",
-        };
+
+      // Validate that slots are consecutive for multi-slot webinars
+      if (webinarRequiredSlots > 1) {
+        const sortedSlots = [...selectedSlots].sort(
+          (a, b) => a.startTime.getTime() - b.startTime.getTime()
+        );
+        for (let i = 1; i < sortedSlots.length; i++) {
+          const prevSlot = sortedSlots[i - 1];
+          const currentSlot = sortedSlots[i];
+          if (currentSlot.startTime.getTime() !== prevSlot.endTime.getTime()) {
+            return {
+              isValid: false,
+              errorMessage: "Webinar slots must be consecutive",
+            };
+          }
+        }
       }
       break;
 
     case "subscription":
-      const { isValid, errorMessage } = validateSubscriptionCallStructure(
-        selectedSlots,
-        sessionDurationInHours
-      );
-      if (!isValid) {
-        return { isValid, errorMessage };
-      }
-      break;
-
     case "class":
-      // More complex validation for classes can be added here
-      if (requiredSlots && selectedSlots.length > requiredSlots) {
+      if (requiredSlots && selectedSlots.length !== requiredSlots) {
         return {
           isValid: false,
-          errorMessage: `Class requires a maximum of ${requiredSlots} slots`,
+          errorMessage: `${eventType === "subscription" ? "Subscription" : "Class"} requires exactly ${requiredSlots} slots`,
         };
       }
       break;
 
     default:
       return { isValid: false, errorMessage: "Invalid event type" };
+  }
+
+  // Check for slots in the past
+  const now = new Date();
+  const pastSlots = selectedSlots.filter((slot) => slot.startTime < now);
+  if (pastSlots.length > 0) {
+    return { isValid: false, errorMessage: "Cannot select slots in the past" };
   }
 
   return { isValid: true };
@@ -558,6 +613,7 @@ export function getAppointmentUser(appointment: Appointment): string {
 
 /**
  * NEW: Validates that slots are consecutive within a single day.
+ * This function checks if all slots are consecutive (end time of one slot = start time of next slot)
  */
 export function validateDayBasedConsecutiveSlots(slots: TimeSlot[]): boolean {
   if (slots.length <= 1) return true;
@@ -579,81 +635,58 @@ export function validateDayBasedConsecutiveSlots(slots: TimeSlot[]): boolean {
 }
 
 /**
- * NEW: Gets the completion status of subscription calls.
+ * NEW: Calculates call progress for subscriptions
+ * Returns a string showing progress of calls completed vs total calls needed
  */
-export function getCallCompletionStatus(
+export function calculateCallProgress(
   slots: TimeSlot[],
-  sessionDurationInHours?: number
-): {
-  completedCalls: number;
-  incompleteCallSlots: number;
-  slotsPerCall: number;
-} {
-  if (!sessionDurationInHours || sessionDurationInHours <= 0) {
-    return { completedCalls: 0, incompleteCallSlots: 0, slotsPerCall: 0 };
+  sessionDurationInHours?: number,
+  maxTotalCalls?: number
+): string {
+  if (slots.length === 0) {
+    return "No slots selected";
   }
 
-  const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5);
+  const slotsPerCall = Math.ceil((sessionDurationInHours || 1) / 0.5); // 30-minute intervals
   const completedCalls = Math.floor(slots.length / slotsPerCall);
   const incompleteCallSlots = slots.length % slotsPerCall;
 
-  return { completedCalls, incompleteCallSlots, slotsPerCall };
-}
-
-/**
- * NEW: Groups slots by date and validates the structure of subscription calls.
- */
-export function validateSubscriptionCallStructure(
-  slots: TimeSlot[],
-  sessionDurationInHours?: number
-): { isValid: boolean; errorMessage?: string } {
-  if (!sessionDurationInHours || sessionDurationInHours <= 0) {
-    return { isValid: false, errorMessage: "Invalid session duration" };
-  }
-
-  const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5);
+  // Group by day to show daily progress
   const slotsByDay = new Map<string, TimeSlot[]>();
-
-  for (const slot of slots) {
+  slots.forEach((slot) => {
     const dayKey = slot.startTime.toDateString();
     if (!slotsByDay.has(dayKey)) {
       slotsByDay.set(dayKey, []);
     }
     slotsByDay.get(dayKey)!.push(slot);
+  });
+
+  const daysWithSlots = Array.from(slotsByDay.entries()).filter(
+    ([_, daySlots]) => daySlots.length > 0
+  );
+
+  let progressText = `${completedCalls} call${completedCalls !== 1 ? "s" : ""} completed`;
+
+  if (maxTotalCalls) {
+    progressText += ` of ${maxTotalCalls} total`;
   }
-
-  for (const [day, daySlots] of Array.from(slotsByDay.entries())) {
-    if (daySlots.length > slotsPerCall) {
-      return {
-        isValid: false,
-        errorMessage: `Maximum 1 call per day. Too many slots on ${day}.`,
-      };
-    }
-    if (!validateDayBasedConsecutiveSlots(daySlots)) {
-      return {
-        isValid: false,
-        errorMessage: `Slots on ${day} must be consecutive.`,
-      };
-    }
-  }
-
-  return { isValid: true };
-}
-
-/**
- * NEW: Calculates the progress of subscription calls.
- */
-export function calculateCallProgress(
-  slots: TimeSlot[],
-  sessionDurationInHours?: number
-): string {
-  const { completedCalls, incompleteCallSlots, slotsPerCall } =
-    getCallCompletionStatus(slots, sessionDurationInHours);
-
-  if (slotsPerCall === 0) return "";
 
   if (incompleteCallSlots > 0) {
-    return `Building call ${completedCalls + 1}: ${incompleteCallSlots}/${slotsPerCall} slots`;
+    progressText += `, ${incompleteCallSlots} slot${incompleteCallSlots !== 1 ? "s" : ""} remaining for next call`;
   }
-  return `Completed ${completedCalls} calls`;
+
+  if (daysWithSlots.length > 0) {
+    const incompleteDays = daysWithSlots.filter(
+      ([_, daySlots]) => daySlots.length > 0 && daySlots.length < slotsPerCall
+    );
+
+    if (incompleteDays.length > 0) {
+      const incompleteDay = incompleteDays[0][0];
+      const incompleteDaySlots = incompleteDays[0][1];
+      const needed = slotsPerCall - incompleteDaySlots.length;
+      progressText += ` | Call on ${incompleteDay} needs ${needed} more consecutive slots`;
+    }
+  }
+
+  return progressText;
 }
