@@ -72,11 +72,38 @@ export function ConsultationPricing({
     return plans.map((plan) => {
       if (type === "consultation" && "durationInHours" in plan) {
         const durationLabel = getDurationLabel(plan.durationInHours);
+
+        // Define features based on consultation duration
+        let features: string[] = [];
+        switch (plan.durationInHours) {
+          case 1: // Basic
+            features = ["Document verification", "1 on 1 call"];
+            break;
+          case 2: // Extended
+            features = [
+              "Document verification",
+              "1 on 1 call",
+              "Extended chat facility",
+            ];
+            break;
+          case 4: // Comprehensive
+            features = [
+              "Document verification",
+              "1 on 1 call",
+              "Extended chat facility",
+              "Priority support",
+            ];
+            break;
+          default:
+            features = [`${plan.durationInHours} hour consultation`];
+        }
+
         return {
           title: durationLabel,
           description: `${plan.durationInHours} hour consultation`,
           price: plan.price,
           duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`,
+          features: features,
         };
       } else if (type === "subscription" && "durationInMonths" in plan) {
         const durationLabel = getSubscriptionDurationLabel(
