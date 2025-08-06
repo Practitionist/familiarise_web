@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
-import { uploadAppointmentDocument } from "@/lib/supabase";
+import { uploadAppointmentDocument, getManualBucketInstructions } from "@/lib/supabase";
 
 // GET - List documents for an appointment
 export async function GET(
@@ -471,11 +471,17 @@ export async function POST(
     }
 
     if (!uploadResult.success) {
+      const isBucketError = uploadResult.error?.includes('bucket') || uploadResult.error?.includes('storage');
+      
       return NextResponse.json(
         { 
           error: "Upload failed", 
           message: uploadResult.error || "The file upload was unsuccessful. Please try again.",
-          code: "UPLOAD_FAILED"
+          code: isBucketError ? "BUCKET_NOT_FOUND" : "UPLOAD_FAILED",
+          ...(isBucketError && {
+            instructions: getManualBucketInstructions('documents'),
+            technical: uploadResult.error
+          })
         }, 
         { status: 400 }
       );

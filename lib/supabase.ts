@@ -35,6 +35,7 @@ export interface DocumentUploadOptions {
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl) {
   throw new Error(
@@ -47,6 +48,7 @@ if (!supabaseKey) {
   );
 }
 
+// Regular client for public operations
 let supabaseInstance: SupabaseClient;
 try {
   supabaseInstance = createClient(supabaseUrl, supabaseKey);
@@ -57,7 +59,109 @@ try {
   );
 }
 
+// Admin client for administrative operations (bucket creation, etc.)
+let supabaseAdminInstance: SupabaseClient | null = null;
+if (supabaseServiceKey) {
+  try {
+    supabaseAdminInstance = createClient(supabaseUrl, supabaseServiceKey);
+  } catch (error) {
+    console.error("Error creating Supabase admin client:", error);
+    // Don't throw error here - some operations might work without admin privileges
+  }
+} else {
+  console.warn('⚠️  SUPABASE_SERVICE_ROLE_KEY not found in environment variables');
+  console.warn('   Automatic bucket creation will fail - you may need to create buckets manually');
+  console.warn('   To fix: Add SUPABASE_SERVICE_ROLE_KEY to your .env.local file');
+  console.warn('   Get it from: Supabase Dashboard → Settings → API → service_role key (⚠️  Keep this secret!)');
+}
+
 const supabase: SupabaseClient = supabaseInstance;
+const supabaseAdmin: SupabaseClient | null = supabaseAdminInstance;
+
+/**
+ * Ensure a storage bucket exists, create it if it doesn't
+ */
+const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
+  try {
+    // First check if bucket exists by trying to list files
+    const { data: _files, error: listError } = await supabase.storage
+      .from(bucketName)
+      .list('', { limit: 1 });
+
+    // If no error, bucket exists
+    if (!listError) {
+      return true;
+    }
+
+    // If error is "Bucket not found", create the bucket
+    if (listError.message.includes('Bucket not found') || listError.message.includes('not found')) {
+      console.log(`Creating bucket: ${bucketName}`);
+      
+      // Use admin client for bucket creation if available
+      const clientToUse = supabaseAdmin || supabase;
+      
+      if (!supabaseAdmin) {
+        console.warn('Service role key not available - trying with anon key (may fail)');
+      }
+      
+      const { data: _createData, error: createError } = await clientToUse.storage
+        .createBucket(bucketName, { 
+          public: true,
+          allowedMimeTypes: [
+            'application/pdf',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'image/jpeg',
+            'image/png',
+            'image/gif',
+            'text/plain',
+          ],
+          fileSizeLimit: 10485760, // 10MB
+        });
+
+      if (createError) {
+        console.error(`Failed to create bucket ${bucketName}:`, createError);
+        return false;
+      }
+
+      console.log(`Successfully created bucket: ${bucketName}`);
+      return true;
+    }
+
+    // Other errors
+    console.error(`Error checking bucket ${bucketName}:`, listError);
+    return false;
+  } catch (error) {
+    console.error(`Unexpected error ensuring bucket ${bucketName}:`, error);
+    return false;
+  }
+};
+
+/**
+ * Ensure a folder exists in storage by creating a placeholder file if needed
+ * Note: Supabase doesn't have "folders" per se, but we can simulate them with file paths
+ */
+const ensureFolderExists = async (bucketName: string, folderPath: string): Promise<boolean> => {
+  try {
+    // Check if folder has any files (which means it exists)
+    const { data: _files, error: listError } = await supabase.storage
+      .from(bucketName)
+      .list(folderPath, { limit: 1 });
+
+    // If we can list without error and there are files, folder "exists"
+    if (!listError) {
+      return true;
+    }
+
+    // If folder doesn't exist, we don't need to create it explicitly
+    // Supabase will create the folder structure when we upload the first file
+    // So we just return true here
+    return true;
+  } catch (error) {
+    console.error(`Error ensuring folder exists ${folderPath}:`, error);
+    return false;
+  }
+};
 
 const fetchImagesFromSupabaseStorage = async (
   bucket: string,
@@ -150,18 +254,31 @@ const uploadAppointmentDocument = async (
       return { success: false, error: "File type not supported" };
     }
 
+    // Ensure the documents bucket exists (create if it doesn't)
+    const bucketReady = await ensureBucketExists('documents');
+    if (!bucketReady) {
+      return { 
+        success: false, 
+        error: "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard with public access enabled, or add SUPABASE_SERVICE_ROLE_KEY to your environment variables for automatic bucket creation." 
+      };
+    }
+
     // Generate unique filename
     const timestamp = Date.now();
-    const fileExt = file.name.split('.').pop();
+    const _fileExt = file.name.split('.').pop();
     const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
     const fileName = `${timestamp}_${safeFileName}`;
 
     // Create folder structure: appointments/{appointmentId}/consultee-{consulteeId}/
-    const storagePath = `appointments/${appointmentId}/consultee-${consulteeId}/${fileName}`;
+    const folderPath = `appointments/${appointmentId}/consultee-${consulteeId}`;
+    const storagePath = `${folderPath}/${fileName}`;
+
+    // Ensure folder structure exists (this is mostly for clarity - Supabase creates folders on upload)
+    await ensureFolderExists('documents', folderPath);
 
     // Upload file to Supabase storage
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('documents') // Make sure this bucket exists
+    const { data: _uploadData, error: uploadError } = await supabase.storage
+      .from('documents')
       .upload(storagePath, file, {
         cacheControl: '3600',
         upsert: false,
@@ -240,10 +357,35 @@ const listAppointmentDocuments = async (folderPath: string): Promise<FileObject[
   }
 };
 
+/**
+ * Get manual bucket creation instructions
+ */
+const getManualBucketInstructions = (bucketName: string): string => {
+  return `
+To manually create the '${bucketName}' bucket:
+
+1. Go to your Supabase Dashboard: https://supabase.com/dashboard
+2. Select your project
+3. Navigate to Storage > Buckets
+4. Click "Create Bucket"
+5. Set bucket name: "${bucketName}"
+6. Enable "Public bucket" option
+7. Click "Create bucket"
+
+OR
+
+Add SUPABASE_SERVICE_ROLE_KEY environment variable for automatic bucket creation.
+You can find this key in: Dashboard > Settings > API > service_role key
+`.trim();
+};
+
 export default supabase;
 export { 
   fetchImagesFromSupabaseStorage, 
   uploadAppointmentDocument, 
   deleteAppointmentDocument, 
-  listAppointmentDocuments 
+  listAppointmentDocuments,
+  ensureBucketExists,
+  ensureFolderExists,
+  getManualBucketInstructions
 };

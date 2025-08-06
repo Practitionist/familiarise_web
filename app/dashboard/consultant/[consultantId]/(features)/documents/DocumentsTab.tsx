@@ -116,8 +116,14 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
 
   const handleDownload = async (document: any) => {
     try {
-      // Open the file URL in a new tab for download
-      window.open(document.fileUrl, '_blank');
+      // Use our download API endpoint instead of direct Supabase URL
+      const downloadUrl = `/api/appointments/${document.appointmentId}/documents/${document.id}/download`;
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = document.originalName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     } catch (error) {
       console.error('Error downloading file:', error);
       toast({

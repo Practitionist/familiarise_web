@@ -43,6 +43,8 @@ interface ApiError {
   error: string;
   message: string;
   code?: string;
+  instructions?: string; // Manual bucket creation instructions
+  technical?: string; // Technical error details
 }
 
 interface ApiResponse {
@@ -230,6 +232,13 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
           case "STORAGE_ERROR":
             toastTitle = "Storage issue";
             break;
+          case "BUCKET_NOT_FOUND":
+            toastTitle = "Storage not configured";
+            // For bucket errors, show a longer description with instructions
+            if ('instructions' in errorResult) {
+              toastDescription = `${errorResult.message}\n\n${errorResult.instructions}`;
+            }
+            break;
           case "NO_FILE":
             toastTitle = "No file selected";
             break;
@@ -411,7 +420,7 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
           Upload Documents
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="max-w-[90vw] sm:max-w-[500px] lg:max-w-[600px] max-h-[85vh] overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>Upload Documents</DialogTitle>
           <DialogDescription>
@@ -424,15 +433,15 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           {renderErrorState()}
 
           {/* Upload New Document - Hide if there's a critical error */}
           {(!error || error.code !== "NOT_FOUND") && (
             <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Upload New Document</CardTitle>
-                <CardDescription>
+              <CardHeader className="pb-3 sm:pb-6">
+                <CardTitle className="text-base sm:text-lg">Upload New Document</CardTitle>
+                <CardDescription className="text-xs sm:text-sm">
                   Select a document to upload for review (PDF, Word, Images, Text files - Max 10MB)
                 </CardDescription>
               </CardHeader>
@@ -452,14 +461,14 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
                   <div className="bg-gray-50 p-3 rounded-lg">
                     <div className="flex items-center space-x-3">
                       <FileText className="h-8 w-8 text-blue-500" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">
-                          {selectedFile.name}
-                        </p>
-                        <p className="text-sm text-gray-500">
-                          {formatFileSize(selectedFile.size)}
-                        </p>
-                      </div>
+                                                <div className="flex-1 min-w-0">
+                            <p className="text-xs sm:text-sm font-medium text-gray-900 truncate max-w-[200px] sm:max-w-none">
+                              {selectedFile.name.length > 30 ? `${selectedFile.name.substring(0, 30)}...` : selectedFile.name}
+                            </p>
+                            <p className="text-xs sm:text-sm text-gray-500">
+                              {formatFileSize(selectedFile.size)}
+                            </p>
+                          </div>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -476,13 +485,14 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
                 )}
 
                 <div>
-                  <label className="text-sm font-medium">Description (Optional)</label>
+                  <label className="text-xs sm:text-sm font-medium">Description (Optional)</label>
                   <Textarea
                     placeholder="Describe what this document is (e.g., Resume, ITR, Legal document, etc.)"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    className="mt-1"
+                    className="mt-1 text-xs sm:text-sm"
                     disabled={isUploading}
+                    rows={2}
                   />
                 </div>
 
@@ -506,9 +516,9 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
 
           {/* Existing Documents */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Uploaded Documents</CardTitle>
-              <CardDescription>
+            <CardHeader className="pb-3 sm:pb-6">
+              <CardTitle className="text-base sm:text-lg">Uploaded Documents</CardTitle>
+              <CardDescription className="text-xs sm:text-sm">
                 {contextInfo.message || "Documents you've uploaded for this appointment"}
               </CardDescription>
             </CardHeader>
@@ -535,19 +545,21 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
               ) : (
                 <div className="space-y-3">
                   {documents.map((doc) => (
-                    <div key={doc.id} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start space-x-3 flex-1">
-                          <FileText className="h-8 w-8 text-gray-400 flex-shrink-0 mt-1" />
+                    <div key={doc.id} className="border rounded-lg p-3 sm:p-4 hover:bg-gray-50 transition-colors">
+                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between space-y-3 sm:space-y-0">
+                        <div className="flex items-start space-x-3 flex-1 min-w-0">
+                          <FileText className="h-6 w-6 sm:h-8 sm:w-8 text-gray-400 flex-shrink-0 mt-1" />
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center space-x-2">
-                              <p className="text-sm font-medium text-gray-900 truncate">
-                                {doc.originalName}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-xs sm:text-sm font-medium text-gray-900 truncate max-w-[180px] sm:max-w-[250px]">
+                                {doc.originalName.length > 25 ? `${doc.originalName.substring(0, 25)}...` : doc.originalName}
                               </p>
-                              {getStatusIcon(doc.reviewStatus)}
-                              <Badge variant="secondary" className={`${getStatusColor(doc.reviewStatus)} text-xs`}>
-                                {doc.reviewStatus.replace('_', ' ')}
-                              </Badge>
+                              <div className="flex items-center gap-1">
+                                {getStatusIcon(doc.reviewStatus)}
+                                <Badge variant="secondary" className={`${getStatusColor(doc.reviewStatus)} text-xs`}>
+                                  {doc.reviewStatus.replace('_', ' ')}
+                                </Badge>
+                              </div>
                             </div>
                             {doc.description && (
                               <p className="text-sm text-gray-500 mt-1">{doc.description}</p>
@@ -567,39 +579,43 @@ export function DocumentUpload({ appointmentId, appointmentTitle, appointmentTyp
                             )}
                           </div>
                         </div>
-                        <div className="flex space-x-1 ml-4">
+                        <div className="flex space-x-1 ml-0 sm:ml-4 justify-end sm:justify-start">
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => window.open(doc.fileUrl, '_blank')}
                             title="View document"
+                            className="h-7 w-7 sm:h-9 sm:w-9 p-0"
                           >
-                            <Eye className="h-4 w-4" />
+                            <Eye className="h-3 w-3 sm:h-4 sm:w-4" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => {
+                              // Use our download API endpoint instead of direct Supabase URL
+                              const downloadUrl = `/api/appointments/${appointmentId}/documents/${doc.id}/download`;
                               const link = document.createElement('a');
-                              link.href = doc.fileUrl;
+                              link.href = downloadUrl;
                               link.download = doc.originalName;
                               document.body.appendChild(link);
                               link.click();
                               document.body.removeChild(link);
                             }}
                             title="Download document"
+                            className="h-7 w-7 sm:h-9 sm:w-9 p-0"
                           >
-                            <Download className="h-4 w-4" />
+                            <Download className="h-3 w-3 sm:h-4 sm:w-4" />
                           </Button>
                           {doc.reviewStatus === 'PENDING' && (
                             <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => handleDeleteDocument(doc.id)}
-                              className="text-red-600 hover:text-red-800"
+                              className="text-red-600 hover:text-red-800 h-7 w-7 sm:h-9 sm:w-9 p-0"
                               title="Delete document (only available for pending documents)"
                             >
-                              <X className="h-4 w-4" />
+                              <X className="h-3 w-3 sm:h-4 sm:w-4" />
                             </Button>
                           )}
                         </div>
