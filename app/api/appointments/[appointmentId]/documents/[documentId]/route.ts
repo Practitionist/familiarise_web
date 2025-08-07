@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import authOptions from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import { deleteAppointmentDocument } from "@/lib/supabase";
+import { Prisma } from "@prisma/client";
 
 // GET - Get specific document details
 export async function GET(
@@ -28,7 +29,7 @@ export async function GET(
     const isDevelopment = process.env.NODE_ENV === 'development';
     
     // Build access control conditions - bypass in development
-    const whereClause: any = {
+    const whereClause: Prisma.AppointmentDocumentWhereInput = {
       id: documentId,
       appointmentId
     };
@@ -143,7 +144,7 @@ export async function PATCH(
     const isDevelopment = process.env.NODE_ENV === 'development';
     
     // Build access control conditions - bypass in development
-    const whereClause: any = {
+    const whereClause: Prisma.AppointmentDocumentWhereInput = {
       id: documentId,
       appointmentId
     };
@@ -255,7 +256,7 @@ export async function DELETE(
     const isDevelopment = process.env.NODE_ENV === 'development';
     
     // Build access control conditions - bypass in development
-    const whereClause: any = {
+    const whereClause: Prisma.AppointmentDocumentWhereInput = {
       id: documentId,
       appointmentId,
       reviewStatus: 'PENDING' // Only allow deletion of pending documents

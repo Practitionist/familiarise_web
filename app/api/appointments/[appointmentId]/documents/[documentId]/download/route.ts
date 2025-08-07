@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import options from "@/app/api/auth/[...nextauth]/options";
 import prisma from "@/lib/prisma";
 import supabase from "@/lib/supabase";
+import { Prisma } from "@prisma/client";
 
 export async function GET(
   request: NextRequest,
@@ -26,10 +27,9 @@ export async function GET(
     const isDevelopment = process.env.NODE_ENV === 'development';
     
     // Build appointment access control - same as in the documents API
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const appointmentWhereClause = {
+    const appointmentWhereClause: Prisma.AppointmentWhereInput = {
       id: appointmentId
-    } as any;
+    };
 
     if (!isDevelopment) {
       appointmentWhereClause.OR = [
