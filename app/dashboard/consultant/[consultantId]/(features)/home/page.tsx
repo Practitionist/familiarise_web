@@ -15,15 +15,21 @@ export default function HomePage({
 }) {
   const { consultantId } = use(params);
 
-  // Use the centralized query configuration
-  const dashboardQuery = createConsultantQueries(consultantId).dashboard;
-  const { data: dashboardData, isLoading, error } = useQuery(dashboardQuery);
+  // Use the centralized query configuration with optimized settings for immediate rendering
+  const dashboardQuery = {
+    ...createConsultantQueries(consultantId).dashboard,
+    // Show stale data immediately while fetching in background
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+  };
+  const { data: dashboardData, isLoading, error, isStale } = useQuery(dashboardQuery);
 
-  if (isLoading) {
+  // Show skeleton only for initial load when no data exists
+  if (isLoading && !dashboardData) {
     return <DashboardHomeSkeleton />;
   }
 
-  if (error) {
+  if (error && !dashboardData) {
     return (
       <DashboardErrorBoundary>
         <div className="flex items-center justify-center min-h-[400px]">
@@ -62,6 +68,12 @@ export default function HomePage({
 
   return (
     <DashboardErrorBoundary>
+      {/* Show subtle loading indicator when refreshing */}
+      {isLoading && dashboardData && (
+        <div className="fixed top-4 right-4 bg-blue-500 text-white px-3 py-1 rounded-md text-sm z-50">
+          Refreshing...
+        </div>
+      )}
       <HomeTab
         appointments={dashboardData.appointments}
         activities={dashboardData.activities}
