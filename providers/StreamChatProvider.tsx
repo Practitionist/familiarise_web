@@ -1,7 +1,10 @@
 "use client";
 
 import { tokenProvider } from "@/actions/stream/chat/stream.action";
+import { upsertUserToStream } from "@/actions/stream/chat/user.action";
+import { syncUserEventChannels } from "@/actions/stream/chat/event-channel.action";
 import { useUserData } from "@/hooks/useUserData";
+import { mapRoleToStream } from "@/lib/user";
 import { useEffect, useState } from "react";
 import { StreamChat } from "stream-chat";
 import { Chat } from "stream-chat-react";
@@ -18,6 +21,7 @@ type StreamChatProviderProps = {
 
 const StreamChatProvider = ({ children, userId }: StreamChatProviderProps) => {
   const [chatClient, setChatClient] = useState<StreamChat | null>(null);
+  const [hasInitialSyncCompleted, setHasInitialSyncCompleted] = useState(false);
   const { userDetails, isLoading } = useUserData(userId);
 
   useEffect(() => {
@@ -42,25 +46,19 @@ const StreamChatProvider = ({ children, userId }: StreamChatProviderProps) => {
     // Connect the user to Stream Chat
     const connectUser = async () => {
       try {
-        // Map our application roles to Stream Chat roles
-        // Stream Chat roles are: admin, user, guest, anonymous
-        let streamRole = "user"; // Default role
-
-        if (userDetails.role) {
-          // Map our application roles to Stream Chat roles
-          switch (userDetails.role.toUpperCase()) {
-            case "ADMIN":
-              streamRole = "admin";
-              break;
-            case "CONSULTANT":
-            case "CONSULTEE":
-            case "USER":
-              streamRole = "user";
-              break;
-            default:
-              streamRole = "user";
-          }
+        console.log(`Upserting and connecting user ${userDetails.id} to Stream Chat`);
+        
+        // First, ensure the user exists in Stream's database
+        try {
+          await upsertUserToStream(userDetails.id);
+          console.log(`User ${userDetails.id} successfully upserted to Stream`);
+        } catch (upsertError) {
+          console.warn("User upserting failed, but continuing with connection:", upsertError);
+          // Continue with connection even if upserting fails
         }
+
+        // Use the shared role mapping function
+        const streamRole = mapRoleToStream(userDetails.role);
 
         console.log(
           `Connecting user ${userDetails.id} with role ${streamRole}`,
@@ -76,6 +74,22 @@ const StreamChatProvider = ({ children, userId }: StreamChatProviderProps) => {
           async () => await tokenProvider(userId),
         );
         setChatClient(client);
+        console.log(`User ${userDetails.id} successfully connected to Stream Chat`);
+
+        // Only sync channels on the very first connection, not on every reconnection
+        if (!hasInitialSyncCompleted) {
+          try {
+            console.log(`Performing initial auto-sync of channels for user ${userDetails.id}`);
+            await syncUserEventChannels(userDetails.id);
+            console.log(`Successfully completed initial auto-sync for user ${userDetails.id}`);
+            setHasInitialSyncCompleted(true);
+          } catch (syncError) {
+            console.warn(`Failed to auto-sync channels for user ${userDetails.id}:`, syncError);
+            // Don't block the UI if channel sync fails, but don't mark as completed either
+          }
+        } else {
+          console.log(`Skipping channel sync for user ${userDetails.id} - already completed initial sync`);
+        }
       } catch (error) {
         console.error("Error connecting user to Stream Chat:", error);
       }
@@ -89,7 +103,7 @@ const StreamChatProvider = ({ children, userId }: StreamChatProviderProps) => {
         console.log("User disconnected from Stream Chat");
       });
     };
-  }, [apiKey, isLoading, userDetails, userId]);
+  }, [apiKey, isLoading, userDetails, userId, hasInitialSyncCompleted]);
 
   if (!chatClient) {
     return (

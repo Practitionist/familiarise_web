@@ -105,56 +105,76 @@ export const CreateChannelDialog = ({
     setIsLoading(true);
 
     try {
-      // OPTIMIZATION: Removed explicit upsert block.
-      // Stream's client.channel().create() typically handles creating the user if they don't exist.
-      /*
-      console.log("Ensuring current user exists in Stream via action...");
-      try {
-        await upsertUserToStream(currentUserId);
-        } catch (error) {
-        console.warn(
-          `Could not upsert current user ${currentUserId} via action:`, error
-        );
-        // Allow proceeding, Stream might handle it
-      }
-      */
-
-      // Determine channel ID based on selection
-      // Use a UUID for custom channels to avoid potential naming conflicts
-      const channelId =
-        selectedEvent && selectedEvent !== "custom"
-          ? selectedEvent
-          : crypto.randomUUID();
-
-      console.log(
-        `Creating team channel: ${channelId} with name: ${channelName}`,
-      );
-
-      // Create a new team channel
-      const channel = client.channel("team", channelId, {
-        name: channelName,
-        members: [currentUserId], // Start with only the creator
-        created_by_id: currentUserId,
-        // Add event type/id if linked to an event
-        ...(selectedEvent &&
-          selectedEvent !== "custom" && {
-            event_id: selectedEvent.split("-").pop(), // e.g., webinarId or classId
-            event_type: selectedEvent.split("-")[0], // e.g., 'webinar' or 'class'
+      if (selectedEvent && selectedEvent !== "custom") {
+        // Event-linked channel creation - use server-side API with full participant lists
+        const [eventType, eventId] = selectedEvent.split("-");
+        
+        console.log(`Creating ${eventType} channel for event ${eventId} via API`);
+        
+        const response = await fetch("/api/stream/channels/create", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            channelType: "team",
+            eventType,
+            eventId,
+            createdById: currentUserId,
           }),
-      });
+        });
 
-      await channel.create();
-      console.log(`Created channel ${channel.cid}`);
+        const result = await response.json();
 
-      // Set the new channel as active
-      setActiveChannel(channel);
+        if (!result.success) {
+          throw new Error(result.error || "Failed to create channel");
+        }
 
-      toast({
-        title: "Success",
-        description: `Channel "${channelName}" created successfully`,
-      });
+        console.log("Channel created via API:", result.data);
 
-      // Call the onChannelCreated callback if provided
+        // Find the created channel and set it as active
+        const channelId = `${eventType}-${eventId}`;
+        const channel = client.channel("team", channelId);
+        
+        // Query the channel to ensure it's loaded and properly synchronized
+        try {
+          await channel.query();
+          console.log("Channel queried successfully:", channel.cid);
+          setActiveChannel(channel);
+        } catch (queryError) {
+          console.error("Error querying created channel:", queryError);
+          // Still show success but mention refresh might be needed
+        }
+
+        toast({
+          title: "Success",
+          description: result.message || `Channel "${channelName}" created successfully`,
+        });
+      } else {
+        // Custom channel creation - use client-side creation (no predefined participants)
+        const channelId = crypto.randomUUID();
+
+        console.log(`Creating custom team channel: ${channelId} with name: ${channelName}`);
+
+        const channel = client.channel("team", channelId, {
+          name: channelName,
+          members: [currentUserId], // Only creator for custom channels
+          created_by_id: currentUserId,
+        });
+
+        await channel.create();
+        console.log(`Created custom channel ${channel.cid}`);
+
+        // Set the new channel as active
+        setActiveChannel(channel);
+
+        toast({
+          title: "Success",
+          description: `Channel "${channelName}" created successfully`,
+        });
+      }
+
+      // Call the onChannelCreated callback if provided (this should trigger sidebar refresh for just this channel)
       if (onChannelCreated) {
         onChannelCreated();
       }

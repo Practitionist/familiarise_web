@@ -128,9 +128,10 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Get webinars for the user
+    // Get webinars for the user (BOTH waitlist AND appointment participation)
     let webinars: any[] = [];
     if (user.consultantProfile) {
+      // For consultants, get webinars they host
       webinars = await prisma.webinar.findMany({
         where: {
           webinarPlan: {
@@ -144,10 +145,20 @@ export async function GET(req: NextRequest) {
               user: true,
             },
           },
+          appointment: {
+            include: {
+              slotsOfAppointment: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
         },
       });
     } else {
-      webinars = await prisma.webinar.findMany({
+      // For consultees, get webinars from both waitlist AND appointments
+      const webinarsFromWaitlist = await prisma.webinar.findMany({
         where: {
           waitlist: {
             some: {
@@ -165,13 +176,83 @@ export async function GET(req: NextRequest) {
               },
             },
           },
+          waitlist: {
+            include: {
+              user: true,
+            },
+          },
+          appointment: {
+            include: {
+              slotsOfAppointment: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
         },
       });
+
+      const webinarsFromAppointments = await prisma.webinar.findMany({
+        where: {
+          appointment: {
+            slotsOfAppointment: {
+              some: {
+                user: {
+                  some: {
+                    id: user.id,
+                  },
+                },
+              },
+            },
+          },
+        },
+        include: {
+          webinarPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+          waitlist: {
+            include: {
+              user: true,
+            },
+          },
+          appointment: {
+            include: {
+              slotsOfAppointment: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // Combine and deduplicate
+      const allWebinarIds = Array.from(new Set([
+        ...webinarsFromWaitlist.map(w => w.id),
+        ...webinarsFromAppointments.map(w => w.id)
+      ]));
+      
+      // Merge webinars, preferring the one with more complete data
+      const webinarMap = new Map();
+      [...webinarsFromWaitlist, ...webinarsFromAppointments].forEach(webinar => {
+        webinarMap.set(webinar.id, webinar);
+      });
+      
+      webinars = Array.from(webinarMap.values());
     }
 
-    // Get classes for the user
+    // Get classes for the user (BOTH waitlist AND appointment participation)
     let classes: any[] = [];
     if (user.consultantProfile) {
+      // For consultants, get classes they host
       classes = await prisma.class.findMany({
         where: {
           classPlan: {
@@ -185,10 +266,20 @@ export async function GET(req: NextRequest) {
               user: true,
             },
           },
+          appointments: {
+            include: {
+              slotsOfAppointment: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
         },
       });
     } else {
-      classes = await prisma.class.findMany({
+      // For consultees, get classes from both waitlist AND appointments
+      const classesFromWaitlist = await prisma.class.findMany({
         where: {
           waitlist: {
             some: {
@@ -206,8 +297,79 @@ export async function GET(req: NextRequest) {
               },
             },
           },
+          waitlist: {
+            include: {
+              user: true,
+            },
+          },
+          appointments: {
+            include: {
+              slotsOfAppointment: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
         },
       });
+
+      const classesFromAppointments = await prisma.class.findMany({
+        where: {
+          appointments: {
+            some: {
+              slotsOfAppointment: {
+                some: {
+                  user: {
+                    some: {
+                      id: user.id,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        include: {
+          classPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+          waitlist: {
+            include: {
+              user: true,
+            },
+          },
+          appointments: {
+            include: {
+              slotsOfAppointment: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // Combine and deduplicate
+      const allClassIds = Array.from(new Set([
+        ...classesFromWaitlist.map(c => c.id),
+        ...classesFromAppointments.map(c => c.id)
+      ]));
+      
+      // Merge classes, preferring the one with more complete data
+      const classMap = new Map();
+      [...classesFromWaitlist, ...classesFromAppointments].forEach(classData => {
+        classMap.set(classData.id, classData);
+      });
+      
+      classes = Array.from(classMap.values());
     }
 
     return NextResponse.json({
@@ -254,28 +416,58 @@ export async function GET(req: NextRequest) {
           ? subscription.requestedBy.user.id
           : user.id,
       })),
-      webinars: webinars.map((webinar) => ({
-        id: webinar.id,
-        status: webinar.status,
-        webinarPlanId: webinar.webinarPlanId,
-        webinarPlanTitle: webinar.webinarPlan.title,
-        consultantId: user.consultantProfileId
-          ? user.id
-          : webinar.webinarPlan.consultantProfile.user.id,
-        participantIds:
-          webinar.waitlist?.map((entry: any) => entry.userId) || [],
-      })),
-      classes: classes.map((classData) => ({
-        id: classData.id,
-        status: classData.status,
-        classPlanId: classData.classPlanId,
-        classPlanTitle: classData.classPlan.title,
-        consultantId: user.consultantProfileId
-          ? user.id
-          : classData.classPlan.consultantProfile.user.id,
-        participantIds:
-          classData.waitlist?.map((entry: any) => entry.userId) || [],
-      })),
+      webinars: webinars.map((webinar) => {
+        const waitlistParticipantIds = webinar.waitlist?.map((entry: any) => entry.userId) || [];
+        const appointmentParticipantIds = webinar.appointment?.slotsOfAppointment?.flatMap(
+          (slot: any) => slot.user.map((user: any) => user.id)
+        ) || [];
+        const allParticipantIds = Array.from(new Set([...waitlistParticipantIds, ...appointmentParticipantIds]));
+        
+        return {
+          id: webinar.id,
+          status: webinar.status,
+          webinarPlanId: webinar.webinarPlanId,
+          webinarPlanTitle: webinar.webinarPlan.title,
+          consultantId: user.consultantProfileId
+            ? user.id
+            : webinar.webinarPlan.consultantProfile.user.id,
+          participantIds: allParticipantIds,
+          waitlistParticipantIds,
+          appointmentParticipantIds,
+          participantBreakdown: {
+            fromWaitlist: waitlistParticipantIds.length,
+            fromAppointments: appointmentParticipantIds.length,
+            totalUnique: allParticipantIds.length
+          }
+        };
+      }),
+      classes: classes.map((classData) => {
+        const waitlistParticipantIds = classData.waitlist?.map((entry: any) => entry.userId) || [];
+        const appointmentParticipantIds = classData.appointments?.flatMap(
+          (appointment: any) => appointment.slotsOfAppointment?.flatMap(
+            (slot: any) => slot.user.map((user: any) => user.id)
+          )
+        ) || [];
+        const allParticipantIds = Array.from(new Set([...waitlistParticipantIds, ...appointmentParticipantIds]));
+        
+        return {
+          id: classData.id,
+          status: classData.status,
+          classPlanId: classData.classPlanId,
+          classPlanTitle: classData.classPlan.title,
+          consultantId: user.consultantProfileId
+            ? user.id
+            : classData.classPlan.consultantProfile.user.id,
+          participantIds: allParticipantIds,
+          waitlistParticipantIds,
+          appointmentParticipantIds,
+          participantBreakdown: {
+            fromWaitlist: waitlistParticipantIds.length,
+            fromAppointments: appointmentParticipantIds.length,
+            totalUnique: allParticipantIds.length
+          }
+        };
+      }),
     });
   } catch (error) {
     console.error("Error debugging Stream Chat:", error);

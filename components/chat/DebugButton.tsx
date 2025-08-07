@@ -4,7 +4,13 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { useState } from "react";
 
-export const DebugButton = ({ userId }: { userId: string }) => {
+interface DebugButtonProps {
+  userId: string;
+  variant?: "default" | "outline" | "ghost" | "secondary";
+  className?: string;
+}
+
+export const DebugButton = ({ userId, variant = "outline", className = "w-full" }: DebugButtonProps) => {
   const [isLoading, setIsLoading] = useState(false);
   const [debugData, setDebugData] = useState<any>(null);
   const { toast } = useToast();
@@ -48,7 +54,12 @@ export const DebugButton = ({ userId }: { userId: string }) => {
 
   return (
     <div className="space-y-4">
-      <Button onClick={handleDebug} disabled={isLoading} className="w-full">
+      <Button 
+        onClick={handleDebug} 
+        disabled={isLoading} 
+        className={className}
+        variant={variant}
+      >
         {isLoading ? "Debugging..." : "Debug Stream Chat"}
       </Button>
 

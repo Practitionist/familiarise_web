@@ -9,6 +9,7 @@ import { ChannelSearch } from "./ChannelSearch";
 import { CreateChannelDialog } from "./CreateChannelDialog";
 import { CreateDirectMessageDialog } from "./CreateDirectMessageDialog";
 import { InitializeUserChannelsButton } from "./InitializeUserChannelsButton";
+import { DebugButton } from "./DebugButton";
 import { Button } from "../ui/button";
 
 // Empty state component for when there are no channels
@@ -114,7 +115,7 @@ export const ChatSidebar = () => {
 
     setIsLoading(true);
     setError(null);
-    console.log("Fetching channels for user:", client.userID);
+    console.log("Fetching channels for user:", client.userID, "with role:", client.user?.role);
 
     try {
       const filter = { members: { $in: [client.userID] } };
@@ -127,6 +128,9 @@ export const ChatSidebar = () => {
         presence: true,
       };
 
+      console.log("Channel query filter:", filter);
+      console.log("Channel query options:", options);
+
       // Fetch channels in parallel
       const [teamResponse, dmResponse] = await Promise.all([
         client.queryChannels({ ...filter, type: "team" }, sort, options),
@@ -136,23 +140,127 @@ export const ChatSidebar = () => {
       console.log(
         "Team channels found:",
         teamResponse.length,
-        teamResponse.map((c) => ({ id: c.cid, name: c.data?.name })),
+        teamResponse.map((c) => ({ 
+          id: c.cid, 
+          name: c.data?.name,
+          memberCount: Object.keys(c.state.members || {}).length,
+          members: Object.keys(c.state.members || {}),
+          userIsMember: client.userID ? (c.state.members?.[client.userID] ? true : false) : false
+        })),
       );
       console.log(
         "DM channels found:",
         dmResponse.length,
-        dmResponse.map((c) => ({ id: c.cid })),
+        dmResponse.map((c) => ({ 
+          id: c.cid,
+          memberCount: Object.keys(c.state.members || {}).length,
+          userIsMember: client.userID ? (c.state.members?.[client.userID] ? true : false) : false
+        })),
       );
 
       setTeamChannels(teamResponse);
       setDirectMessages(dmResponse);
     } catch (err) {
       console.error("Error fetching channels:", err);
+      console.error("Error details:", {
+        error: err,
+        userId: client.userID,
+        userRole: client.user?.role,
+        timestamp: new Date().toISOString()
+      });
       setError("Failed to load channels. Please try refreshing.");
     } finally {
       setIsLoading(false);
     }
   }, [client]);
+
+  // Handle individual channel deletion without full refresh
+  const handleChannelDeleted = useCallback((deletedChannelId: string) => {
+    console.log("Individual channel deleted:", deletedChannelId);
+    
+    // Remove from team channels
+    setTeamChannels(prevChannels => {
+      const filtered = prevChannels.filter(ch => ch.cid !== deletedChannelId);
+      if (filtered.length !== prevChannels.length) {
+        console.log("Removed team channel:", deletedChannelId);
+      }
+      return filtered;
+    });
+    
+    // Remove from direct messages
+    setDirectMessages(prevChannels => {
+      const filtered = prevChannels.filter(ch => ch.cid !== deletedChannelId);
+      if (filtered.length !== prevChannels.length) {
+        console.log("Removed DM channel:", deletedChannelId);
+      }
+      return filtered;
+    });
+    
+    // Clear active channel if it was the deleted one
+    if (activeChannelId === deletedChannelId) {
+      setActiveChannel(undefined);
+      setActiveChannelId(null);
+    }
+  }, [activeChannelId, setActiveChannel]);
+
+  // Handle user being removed from channel
+  const handleUserRemovedFromChannel = useCallback((channelId: string) => {
+    console.log("User removed from channel:", channelId);
+    handleChannelDeleted(channelId); // Same logic as deletion
+  }, [handleChannelDeleted]);
+
+  // Handle individual channel creation without full refresh
+  const handleChannelCreated = useCallback(async () => {
+    console.log("Individual channel created - checking for new channels");
+    
+    if (!client?.userID) return;
+    
+    try {
+      // Only query for channels that might have been just created
+      // Use a more recent timestamp filter to avoid loading all channels
+      const recentFilter = { 
+        members: { $in: [client.userID] },
+        // created_at: { $gte: new Date(Date.now() - 60000) } // Last minute
+      };
+      
+      const [recentTeamChannels, recentDMChannels] = await Promise.all([
+        client.queryChannels({ ...recentFilter, type: "team" }, { created_at: -1 }, { limit: 5, state: true }),
+        client.queryChannels({ ...recentFilter, type: "messaging" }, { created_at: -1 }, { limit: 5, state: true }),
+      ]);
+      
+      // Add any new channels to existing lists (avoiding duplicates)
+      setTeamChannels(prevChannels => {
+        const existingIds = new Set(prevChannels.map(ch => ch.cid));
+        const newChannels = recentTeamChannels.filter(ch => !existingIds.has(ch.cid));
+        if (newChannels.length > 0) {
+          console.log("Adding new team channels:", newChannels.map(ch => ch.cid));
+          return [...newChannels, ...prevChannels]; // New channels at top
+        }
+        return prevChannels;
+      });
+      
+      setDirectMessages(prevChannels => {
+        const existingIds = new Set(prevChannels.map(ch => ch.cid));
+        const newChannels = recentDMChannels.filter(ch => !existingIds.has(ch.cid));
+        if (newChannels.length > 0) {
+          console.log("Adding new DM channels:", newChannels.map(ch => ch.cid));
+          return [...newChannels, ...prevChannels]; // New channels at top
+        }
+        return prevChannels;
+      });
+      
+    } catch (err) {
+      console.error("Error handling individual channel creation:", err);
+      // Fallback to full refresh if individual handling fails
+      fetchChannels();
+    }
+  }, [client, fetchChannels]);
+
+  // Manual refresh function
+  const handleRefresh = () => {
+    console.log("Manual refresh triggered");
+    fetchChannels();
+  };
 
   // Initial fetch and setup listeners
   useEffect(() => {
@@ -188,29 +296,11 @@ export const ChatSidebar = () => {
           event.user?.id === client.userID
         ) {
           console.log(`Removed from channel ${event.channel.cid}`);
-          if (event.channel.type === "team") {
-            setTeamChannels((prev) =>
-              prev.filter((ch) => ch.cid !== event.channel?.id),
-            );
-          } else if (event.channel.type === "messaging") {
-            setDirectMessages((prev) =>
-              prev.filter((ch) => ch.cid !== event.channel?.id),
-            );
-          }
-          if (activeChannelId === event.channel.id) setActiveChannel(undefined);
+          handleUserRemovedFromChannel(event.channel.cid || event.channel.id);
           channelUpdated = true;
         } else if (event.type === "channel.deleted" && event.channel) {
           console.log(`Channel deleted ${event.channel.cid}`);
-          if (event.channel.type === "team") {
-            setTeamChannels((prev) =>
-              prev.filter((ch) => ch.cid !== event.channel?.id),
-            );
-          } else if (event.channel.type === "messaging") {
-            setDirectMessages((prev) =>
-              prev.filter((ch) => ch.cid !== event.channel?.id),
-            );
-          }
-          if (activeChannelId === event.channel.id) setActiveChannel(undefined);
+          handleChannelDeleted(event.channel.cid || event.channel.id);
           channelUpdated = true;
         }
 
@@ -258,13 +348,7 @@ export const ChatSidebar = () => {
       setTeamChannels([]);
       setDirectMessages([]);
     }
-  }, [client, fetchChannels, activeChannelId, setActiveChannel]); // Add dependencies
-
-  // Manual refresh function
-  const handleRefresh = () => {
-    console.log("Manual refresh triggered");
-    fetchChannels();
-  };
+  }, [client, fetchChannels, activeChannelId, setActiveChannel, handleChannelDeleted, handleUserRemovedFromChannel]); // Add dependencies
 
   const handleChannelSelect = (channel: Channel) => {
     setActiveChannelId(channel.cid || null);
@@ -302,7 +386,7 @@ export const ChatSidebar = () => {
         {/* Team Channels Section */}
         <div className="px-4 py-2 flex justify-between items-center sticky top-0 bg-blue-600 z-10">
           <h2 className="font-semibold">Channels</h2>
-          <CreateChannelDialog onChannelCreated={handleRefresh} />
+          <CreateChannelDialog onChannelCreated={handleChannelCreated} />
         </div>
         {isLoading ? (
           <div className="p-4">
@@ -344,7 +428,7 @@ export const ChatSidebar = () => {
         {/* Direct Messages Section */}
         <div className="mt-4 px-4 py-2 flex justify-between items-center sticky top-0 bg-blue-600 z-10">
           <h2 className="font-semibold">Direct Messages</h2>
-          <CreateDirectMessageDialog onChannelCreated={handleRefresh} />
+          <CreateDirectMessageDialog onChannelCreated={handleChannelCreated} />
         </div>
         {isLoading ? (
           <div className="p-4">
@@ -378,11 +462,16 @@ export const ChatSidebar = () => {
       </div>
 
       {/* Footer Section */}
-      <div className="p-4 border-t border-blue-700 mt-auto">
+      <div className="p-4 border-t border-blue-700 mt-auto space-y-2">
         <InitializeUserChannelsButton
           userId={client?.userID || ""}
           className="w-full"
           onSuccess={handleRefresh}
+        />
+        <DebugButton 
+          userId={client?.userID || ""} 
+          variant="ghost"
+          className="w-full text-blue-200 hover:bg-blue-700 hover:text-white"
         />
       </div>
     </div>

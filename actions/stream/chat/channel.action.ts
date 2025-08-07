@@ -8,7 +8,7 @@ const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 const apiSecret = process.env.STREAM_API_SECRET;
 
 // Generic function to create a channel
-async function createChannel({
+export async function createChannel({
   channelType,
   channelId,
   channelName,
@@ -29,15 +29,37 @@ async function createChannel({
 
   const serverClient = StreamChat.getInstance(apiKey, apiSecret);
 
+  // Ensure creator is always included in members list
+  const allMembers = Array.from(new Set([createdById, ...members]));
+  console.log(`Creating ${channelType} channel ${channelId} with ${allMembers.length} members including creator ${createdById}`);
+
   // Create the channel
   const channel = serverClient.channel(channelType, channelId, {
     name: channelName,
-    members,
     created_by_id: createdById,
     ...additionalData,
   });
 
   await channel.create();
+  console.log(`Channel ${channelId} created successfully`);
+  
+  // Add all members (including creator) after creation to ensure membership is established
+  if (allMembers && allMembers.length > 0) {
+    try {
+      await channel.addMembers(allMembers);
+      console.log(`Successfully added ${allMembers.length} members to channel ${channelId}:`, allMembers);
+      
+      // Verify membership was established
+      const channelData = await channel.query();
+      const actualMembers = Object.keys(channelData.members || {});
+      console.log(`Channel ${channelId} actual members after creation:`, actualMembers);
+      
+      return { channelId, members: actualMembers, channelData };
+    } catch (memberError) {
+      console.error(`Failed to add members to channel ${channelId}:`, memberError);
+      throw memberError; // Throw error instead of continuing, as membership is critical
+    }
+  }
 
   return { channelId };
 }
@@ -62,7 +84,7 @@ export async function createDirectMessageChannel(
 
 // Create a webinar channel
 export async function createWebinarChannel(webinarId: string) {
-  // Get webinar details
+  // Get webinar details including both waitlist AND appointment participants
   const webinar = await prisma.webinar.findUnique({
     where: { id: webinarId },
     include: {
@@ -74,6 +96,15 @@ export async function createWebinarChannel(webinarId: string) {
       waitlist: {
         include: {
           user: true,
+        },
+      },
+      appointment: {
+        include: {
+          slotsOfAppointment: {
+            include: {
+              user: true,
+            },
+          },
         },
       },
     },
@@ -89,14 +120,24 @@ export async function createWebinarChannel(webinarId: string) {
     throw new Error("Consultant not found for webinar");
   }
 
-  // Get all participant IDs
-  const participantIds = webinar.waitlist.map((entry) => entry.userId);
+  // Get participant IDs from waitlist
+  const waitlistParticipantIds = webinar.waitlist.map((entry) => entry.userId);
+  
+  // Get participant IDs from appointments
+  const appointmentParticipantIds = webinar.appointment?.slotsOfAppointment?.flatMap(
+    (slot) => slot.user.map((user) => user.id)
+  ) || [];
+
+  // Combine both sets and remove duplicates
+  const allParticipantIds = Array.from(new Set([...waitlistParticipantIds, ...appointmentParticipantIds]));
+
+  console.log(`Webinar ${webinarId} participants: ${waitlistParticipantIds.length} from waitlist, ${appointmentParticipantIds.length} from appointments, ${allParticipantIds.length} total unique`);
 
   return createChannel({
     channelType: "team",
     channelId: `webinar-${webinarId}`,
     channelName: webinar.webinarPlan.title,
-    members: [consultantId, ...participantIds],
+    members: [consultantId, ...allParticipantIds],
     createdById: consultantId,
     additionalData: { webinar_id: webinarId },
   });
@@ -104,7 +145,7 @@ export async function createWebinarChannel(webinarId: string) {
 
 // Create a class channel
 export async function createClassChannel(classId: string) {
-  // Get class details
+  // Get class details including both waitlist AND appointment participants
   const classData = await prisma.class.findUnique({
     where: { id: classId },
     include: {
@@ -116,6 +157,15 @@ export async function createClassChannel(classId: string) {
       waitlist: {
         include: {
           user: true,
+        },
+      },
+      appointments: {
+        include: {
+          slotsOfAppointment: {
+            include: {
+              user: true,
+            },
+          },
         },
       },
     },
@@ -131,14 +181,26 @@ export async function createClassChannel(classId: string) {
     throw new Error("Consultant not found for class");
   }
 
-  // Get all participant IDs
-  const participantIds = classData.waitlist.map((entry) => entry.userId);
+  // Get participant IDs from waitlist
+  const waitlistParticipantIds = classData.waitlist.map((entry) => entry.userId);
+  
+  // Get participant IDs from appointments
+  const appointmentParticipantIds = classData.appointments?.flatMap(
+    (appointment) => appointment.slotsOfAppointment?.flatMap(
+      (slot) => slot.user.map((user) => user.id)
+    )
+  ) || [];
+
+  // Combine both sets and remove duplicates
+  const allParticipantIds = Array.from(new Set([...waitlistParticipantIds, ...appointmentParticipantIds]));
+
+  console.log(`Class ${classId} participants: ${waitlistParticipantIds.length} from waitlist, ${appointmentParticipantIds.length} from appointments, ${allParticipantIds.length} total unique`);
 
   return createChannel({
     channelType: "team",
     channelId: `class-${classId}`,
     channelName: classData.classPlan.title,
-    members: [consultantId, ...participantIds],
+    members: [consultantId, ...allParticipantIds],
     createdById: consultantId,
     additionalData: { class_id: classId },
   });

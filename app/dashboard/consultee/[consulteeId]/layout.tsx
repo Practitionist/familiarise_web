@@ -7,6 +7,7 @@ import { Button } from "components/ui/button";
 import { Skeleton } from "components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import StreamChatProvider from "@/providers/StreamChatProvider";
+import StreamVideoProvider from "@/providers/StreamClientProvider";
 // Removed aggressive prefetching import - using lightweight approach instead
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
@@ -314,7 +315,9 @@ export default function ConsulteeLayout({
         />
         <main className="flex-grow overflow-y-auto p-8">
           <StreamChatProvider userId={userDetails.id}>
-            <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+            <StreamVideoProvider userId={userDetails.id}>
+              <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+            </StreamVideoProvider>
           </StreamChatProvider>
         </main>
       </div>
