@@ -9,7 +9,7 @@ import { ChannelSearch } from "./ChannelSearch";
 import { CreateChannelDialog } from "./CreateChannelDialog";
 import { CreateDirectMessageDialog } from "./CreateDirectMessageDialog";
 import { InitializeUserChannelsButton } from "./InitializeUserChannelsButton";
-import { DebugButton } from "./DebugButton";
+import { DebugDialog } from "./DebugDialog";
 import { Button } from "../ui/button";
 
 // Empty state component for when there are no channels
@@ -468,7 +468,7 @@ export const ChatSidebar = () => {
           className="w-full"
           onSuccess={handleRefresh}
         />
-        <DebugButton 
+        <DebugDialog 
           userId={client?.userID || ""} 
           variant="ghost"
           className="w-full text-blue-200 hover:bg-blue-700 hover:text-white"

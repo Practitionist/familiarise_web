@@ -396,24 +396,24 @@ export async function GET(req: NextRequest) {
         id: consultation.id,
         status: consultation.requestStatus,
         consultationPlanId: consultation.consultationPlanId,
-        consultationPlanTitle: consultation.consultationPlan.title,
+        consultationPlanTitle: consultation.consultationPlan?.title || 'Unknown',
         consultantId: user.consultantProfileId
-          ? consultation.requestedBy.user.id
-          : consultation.consultationPlan.consultantProfile.user.id,
+          ? consultation.requestedBy?.user?.id || 'Unknown'
+          : consultation.consultationPlan?.consultantProfile?.user?.id || 'Unknown',
         consulteeId: user.consultantProfileId
-          ? consultation.requestedBy.user.id
+          ? consultation.requestedBy?.user?.id || 'Unknown'
           : user.id,
       })),
       subscriptions: subscriptions.map((subscription) => ({
         id: subscription.id,
         status: subscription.requestStatus,
         subscriptionPlanId: subscription.subscriptionPlanId,
-        subscriptionPlanTitle: subscription.subscriptionPlan.title,
+        subscriptionPlanTitle: subscription.subscriptionPlan?.title || 'Unknown',
         consultantId: user.consultantProfileId
           ? user.id
-          : subscription.subscriptionPlan.consultantProfile.user.id,
+          : subscription.subscriptionPlan?.consultantProfile?.user?.id || 'Unknown',
         consulteeId: user.consultantProfileId
-          ? subscription.requestedBy.user.id
+          ? subscription.requestedBy?.user?.id || 'Unknown'
           : user.id,
       })),
       webinars: webinars.map((webinar) => {
@@ -427,10 +427,10 @@ export async function GET(req: NextRequest) {
           id: webinar.id,
           status: webinar.status,
           webinarPlanId: webinar.webinarPlanId,
-          webinarPlanTitle: webinar.webinarPlan.title,
+          webinarPlanTitle: webinar.webinarPlan?.title || 'Unknown',
           consultantId: user.consultantProfileId
             ? user.id
-            : webinar.webinarPlan.consultantProfile.user.id,
+            : webinar.webinarPlan?.consultantProfile?.user?.id || 'Unknown',
           participantIds: allParticipantIds,
           waitlistParticipantIds,
           appointmentParticipantIds,
@@ -454,10 +454,10 @@ export async function GET(req: NextRequest) {
           id: classData.id,
           status: classData.status,
           classPlanId: classData.classPlanId,
-          classPlanTitle: classData.classPlan.title,
+          classPlanTitle: classData.classPlan?.title || 'Unknown',
           consultantId: user.consultantProfileId
             ? user.id
-            : classData.classPlan.consultantProfile.user.id,
+            : classData.classPlan?.consultantProfile?.user?.id || 'Unknown',
           participantIds: allParticipantIds,
           waitlistParticipantIds,
           appointmentParticipantIds,

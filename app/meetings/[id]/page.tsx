@@ -14,7 +14,7 @@ import { useSession } from "next-auth/react";
 const MeetingPage = () => {
   const { id } = useParams();
   const { data: session, status } = useSession();
-  const { call, isCallLoading } = useGetCallById(id as string);
+  const { call, isCallLoading, error } = useGetCallById(id as string);
   const [isSetupComplete, setIsSetupComplete] = useState(false);
 
   if (status === "loading" || isCallLoading) {
@@ -23,6 +23,15 @@ const MeetingPage = () => {
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
         <p className="mt-4 text-lg">Loading meeting...</p>
       </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <Alert
+        title="Meeting Error"
+        description={`Failed to load meeting: ${error.message}`}
+      />
     );
   }
 
