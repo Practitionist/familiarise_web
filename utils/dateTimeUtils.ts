@@ -104,7 +104,7 @@ export const getFirstDayOfMonth = (date: Date): number => {
 
 export const formatTime = (
   utcTimeString: string,
-  format: "12h" | "24h" = "12h",
+  format: "12h" | "24h" = "12h"
 ): string => {
   try {
     // Handle empty string
@@ -130,7 +130,7 @@ export const formatTime = (
 
 export const formatDate = (
   utcTimeString: string,
-  includeWeekday: boolean = true,
+  includeWeekday: boolean = true
 ): string => {
   try {
     // Handle empty string
@@ -158,7 +158,7 @@ export const formatDate = (
 // Timezone-aware utility functions for consistent slot handling
 export const convertUtcToTimezone = (
   utcTimeString: string,
-  timezone: string = "UTC",
+  timezone: string = "UTC"
 ): string => {
   try {
     if (!utcTimeString) return "";
@@ -183,7 +183,7 @@ export const convertUtcToTimezone = (
 export const convertTimezoneToUtc = (
   timeStr: string,
   dateStr: string,
-  timezone: string = "UTC",
+  timezone: string = "UTC"
 ): string => {
   try {
     if (!timeStr || !dateStr) return "";
@@ -218,7 +218,7 @@ export const convertTimezoneToUtcWithOvernight = (
   dateStr: string,
   timezone: string = "UTC",
   isEndTime: boolean = false,
-  startTimeStr?: string,
+  startTimeStr?: string
 ): string => {
   try {
     if (!timeStr || !dateStr) return "";
@@ -284,7 +284,7 @@ export const convertTimezoneToUtcWithOvernight = (
 
 export const extractTimeFromUtcSlot = (
   utcTimeString: string,
-  timezone: string = "UTC",
+  timezone: string = "UTC"
 ): string => {
   try {
     if (!utcTimeString) return "";
@@ -325,9 +325,9 @@ export const timeToMinutes = (timeString: string): number => {
 
 // Sort slots chronologically by start time
 export const sortSlotsByTime = <T extends { startTime: string }>(
-  slots: T[],
+  slots: T[]
 ): T[] => {
   return slots.sort(
-    (a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime),
+    (a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime)
   );
 };
