@@ -3,6 +3,7 @@ import { ClassPlanSchema } from "@/schemas/plans";
 import { ClassStatus } from "@prisma/client"; // Import Enum
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { addMonthsSafely } from "@/utils/dateUtils";
 
 // Schema for POST request body based on ClassPlanSchema
 // Topics field name matches PlanSchema ('topics' instead of 'topicIds')
@@ -57,7 +58,7 @@ export async function POST(request: NextRequest) {
       console.error("Validation Error (POST):", validationResult.error.issues);
       return NextResponse.json(
         { error: "Invalid input", details: validationResult.error.issues },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -90,11 +91,11 @@ export async function POST(request: NextRequest) {
     let start: Date | undefined = startDate ? new Date(startDate) : undefined;
     let end: Date | undefined = undefined;
     if (start && !isNaN(start.getTime())) {
-      // Check if date is valid
+      // FIXED: Check if date is valid and handle month-end overflow
       end = new Date(start);
       // Ensure durationInMonths is valid before using
       if (typeof durationInMonths === "number" && durationInMonths > 0) {
-        end.setMonth(end.getMonth() + durationInMonths);
+        end = addMonthsSafely(start, durationInMonths);
       } else {
         // Handle invalid durationInMonths if necessary, maybe throw error or default
         console.warn("Invalid durationInMonths provided:", durationInMonths);
@@ -162,7 +163,7 @@ export async function POST(request: NextRequest) {
                   const appointmentDate = new Date(start!);
                   appointmentDate.setDate(
                     appointmentDate.getDate() +
-                      Math.floor(index / callsPerWeek) * 7,
+                      Math.floor(index / callsPerWeek) * 7
                   );
                   const slotStart = new Date(appointmentDate);
                   const slotEnd = new Date(appointmentDate);
@@ -213,7 +214,7 @@ export async function POST(request: NextRequest) {
       console.error("Validation Error (POST Catch):", error.issues);
       return NextResponse.json(
         { error: "Invalid input", details: error.issues },
-        { status: 400 },
+        { status: 400 }
       );
     }
     // --- End Zod Error Handling ---
@@ -235,7 +236,7 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json(
       { error: errorMessage, details: errorDetails }, // Return more details
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
@@ -245,7 +246,7 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json();
     console.log(
       "Received class update request body:",
-      JSON.stringify(body, null, 2),
+      JSON.stringify(body, null, 2)
     );
 
     // --- Zod Validation ---
@@ -255,7 +256,7 @@ export async function PATCH(request: NextRequest) {
       console.error("Validation Error (PATCH):", validationResult.error.issues);
       return NextResponse.json(
         { error: "Invalid input", details: validationResult.error.issues },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -311,7 +312,7 @@ export async function PATCH(request: NextRequest) {
     if (!existingPlan) {
       return NextResponse.json(
         { error: `Class plan with ID ${id} not found` },
-        { status: 404 },
+        { status: 404 }
       );
     }
 
@@ -333,7 +334,7 @@ export async function PATCH(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Cannot update status or dates: no class instance found" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -342,11 +343,11 @@ export async function PATCH(request: NextRequest) {
       async (tx) => {
         // Use topics from existingPlan fetched *before* the transaction
         const currentTopicIdsFromOuterScope = existingPlan.topics.map(
-          (t) => t.id,
+          (t) => t.id
         );
         console.log(
           `[Before Transaction Update] Topics from initial fetch for class plan ${id}:`,
-          currentTopicIdsFromOuterScope,
+          currentTopicIdsFromOuterScope
         );
 
         // Handle class contents update logic (only if provided in validated data)
@@ -373,7 +374,7 @@ export async function PATCH(request: NextRequest) {
             },
           };
           console.log(
-            `Updating class contents for plan ${id}. Creating ${classContents.length} new entries.`,
+            `Updating class contents for plan ${id}. Creating ${classContents.length} new entries.`
           );
         } else {
           console.log(`No class contents provided for update on plan ${id}.`);
@@ -422,7 +423,7 @@ export async function PATCH(request: NextRequest) {
             // This case should be caught by Zod validation, but double-check defensively
             console.error(
               "topicIds was provided but is not an array:",
-              topicIds,
+              topicIds
             );
             throw new Error("Invalid format for topicIds");
           }
@@ -433,14 +434,14 @@ export async function PATCH(request: NextRequest) {
           });
           if (topics.length !== topicIds.length) {
             const missingIds = topicIds.filter(
-              (reqId) => !topics.some((dbTopic) => dbTopic.id === reqId),
+              (reqId) => !topics.some((dbTopic) => dbTopic.id === reqId)
             );
             console.error(
               "Attempted to set non-existent topic IDs:",
-              missingIds,
+              missingIds
             );
             throw new Error(
-              `The following topic IDs do not exist: ${missingIds.join(", ")}`,
+              `The following topic IDs do not exist: ${missingIds.join(", ")}`
             );
           }
 
@@ -448,13 +449,13 @@ export async function PATCH(request: NextRequest) {
             set: topicIds.map((topicId: string) => ({ id: topicId })),
           };
           console.log(
-            `Syncing class topics with provided IDs: [${topicIds.join(", ")}]`,
+            `Syncing class topics with provided IDs: [${topicIds.join(", ")}]`
           );
         } else {
           // If topicIds (validatedData.topics) is undefined, do *not* include the topics key in the updateData.
           // This leaves the existing topic relations untouched.
           console.log(
-            "Class topics is undefined in the request. Existing topics will not be modified.",
+            "Class topics is undefined in the request. Existing topics will not be modified."
           );
           // No `updateData.topics = ...` line here
         }
@@ -514,7 +515,7 @@ export async function PATCH(request: NextRequest) {
             ) {
               console.warn(
                 "Invalid startDate received in PATCH:",
-                startDateString,
+                startDateString
               );
               // Decide how to handle: throw error, ignore, set null?
               // For now, let's ignore the invalid date update for startDate
@@ -599,11 +600,11 @@ export async function PATCH(request: NextRequest) {
         timeout: 10000, // 10 second timeout
         maxWait: 5000, // 5 second max wait
         isolationLevel: "Serializable", // Highest isolation level
-      },
+      }
     );
 
     console.log(
-      "Update transaction completed successfully. Returning updated class data.",
+      "Update transaction completed successfully. Returning updated class data."
     );
 
     // Return the appropriate response based on whether we had a class instance
@@ -619,7 +620,7 @@ export async function PATCH(request: NextRequest) {
       console.error("Validation Error (PATCH Catch):", error.issues);
       return NextResponse.json(
         { error: "Invalid input", details: error.issues },
-        { status: 400 },
+        { status: 400 }
       );
     }
     // --- End Zod Error Handling ---
@@ -633,7 +634,7 @@ export async function PATCH(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: `Invalid topics provided: ${error.message}` },
-        { status: 400 },
+        { status: 400 }
       );
     }
     if (
@@ -642,13 +643,13 @@ export async function PATCH(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Invalid class contents provided." },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
     return NextResponse.json(
       { error: "An error occurred while updating the class" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

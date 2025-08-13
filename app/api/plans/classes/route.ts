@@ -36,13 +36,13 @@ export async function GET(request: NextRequest) {
           totalPages: Math.ceil(total / limit),
         },
       },
-      { status: 200 },
+      { status: 200 }
     );
   } catch (error) {
     console.error("Error fetching class plans:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching class plans" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
@@ -56,6 +56,7 @@ export async function POST(request: NextRequest) {
       durationInMonths,
       price,
       callsPerWeek,
+      sessionDurationInHours,
       videoMeetings,
       emailSupport,
       maxParticipants,
@@ -79,7 +80,7 @@ export async function POST(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Missing required fields" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -87,19 +88,20 @@ export async function POST(request: NextRequest) {
       durationInMonths <= 0 ||
       price <= 0 ||
       callsPerWeek < 0 ||
+      (sessionDurationInHours && sessionDurationInHours <= 0) ||
       videoMeetings < 0 ||
       maxParticipants <= 0
     ) {
       return NextResponse.json(
         { error: "Invalid numeric values" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
     if (!Object.values(PlanEmailSupport).includes(emailSupport)) {
       return NextResponse.json(
         { error: "Invalid email support value" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -110,6 +112,7 @@ export async function POST(request: NextRequest) {
         durationInMonths,
         price,
         callsPerWeek,
+        sessionDurationInHours: sessionDurationInHours || 1,
         videoMeetings,
         emailSupport,
         maxParticipants,
@@ -145,7 +148,7 @@ export async function POST(request: NextRequest) {
     console.error("Error creating class plan:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the class plan" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

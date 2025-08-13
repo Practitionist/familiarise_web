@@ -49,7 +49,7 @@ type ClassWithRelations = Prisma.ClassGetPayload<{
 
 async function allocateSlotsAuto(
   classPlan: ClassWithRelations,
-  tx: PrismaTransaction,
+  tx: PrismaTransaction
 ): Promise<Date[]> {
   const { classPlan: classDetails } = classPlan;
   const { consultantProfile } = classDetails;
@@ -125,9 +125,9 @@ async function allocateSlotsAuto(
   const bookedSlots = new Set(
     existingAppointments.flatMap((app) =>
       app.slotsOfAppointment.map((slot: { slotStartTimeInUTC: Date }) =>
-        slot.slotStartTimeInUTC.toISOString(),
-      ),
-    ),
+        slot.slotStartTimeInUTC.toISOString()
+      )
+    )
   );
 
   // Calculate required number of slots - FIXED: Use actual duration and frequency
@@ -139,7 +139,7 @@ async function allocateSlotsAuto(
   if (classContents.length > 0) {
     const totalHours = classContents.reduce(
       (sum, content) => sum + content.hoursAllotted,
-      0,
+      0
     );
     sessionDurationInHours = totalHours / classContents.length;
   }
@@ -184,7 +184,7 @@ async function allocateSlotsAuto(
             weeklySlot.slotStartTimeInUTC.getHours(),
             weeklySlot.slotStartTimeInUTC.getMinutes(),
             0,
-            0,
+            0
           );
         } else {
           const customSlot = slot as SlotOfAvailabilityCustom;
@@ -201,7 +201,7 @@ async function allocateSlotsAuto(
 
         for (let slotIndex = 0; slotIndex < slotsPerSession; slotIndex++) {
           const slotTime = new Date(
-            sessionStartTime.getTime() + slotIndex * 30 * 60 * 1000,
+            sessionStartTime.getTime() + slotIndex * 30 * 60 * 1000
           ); // 30 min intervals
 
           if (
@@ -228,7 +228,7 @@ async function allocateSlotsAuto(
 
     if (slotsThisWeek < classDetails.callsPerWeek) {
       throw new Error(
-        `Could not find enough available slots for week ${currentWeek + 1}`,
+        `Could not find enough available slots for week ${currentWeek + 1}`
       );
     }
 
@@ -237,7 +237,7 @@ async function allocateSlotsAuto(
 
   if (selectedSlots.length < totalRequiredSlots) {
     throw new Error(
-      `Required ${totalRequiredSlots} slots but could only find ${selectedSlots.length}`,
+      `Required ${totalRequiredSlots} slots but could only find ${selectedSlots.length}`
     );
   }
 
@@ -246,14 +246,14 @@ async function allocateSlotsAuto(
 
 async function allocateSlotsRequested(
   classPlan: ClassWithRelations,
-  tx: PrismaTransaction,
+  tx: PrismaTransaction
 ): Promise<Date[]> {
   // Get the requested slots from appointments
   const requestedSlots = classPlan.appointments?.flatMap(
     (appt) =>
       appt.slotsOfAppointment?.map(
-        (slot) => new Date(slot.slotStartTimeInUTC),
-      ) || [],
+        (slot) => new Date(slot.slotStartTimeInUTC)
+      ) || []
   );
 
   if (!requestedSlots?.length) {
@@ -317,7 +317,7 @@ function isSameDay(date1: Date, date2: Date): boolean {
 async function allocateSlotsManual(
   classPlan: ClassWithRelations,
   slots: string[],
-  tx: PrismaTransaction,
+  tx: PrismaTransaction
 ): Promise<Date[]> {
   const { classPlan: classDetails } = classPlan;
   const { consultantProfile } = classDetails;
@@ -336,7 +336,7 @@ async function allocateSlotsManual(
   if (classContents.length > 0) {
     const totalHours = classContents.reduce(
       (sum, content) => sum + content.hoursAllotted,
-      0,
+      0
     );
     sessionDurationInHours = totalHours / classContents.length;
   }
@@ -346,7 +346,7 @@ async function allocateSlotsManual(
 
   if (slots.length !== totalRequiredSlots) {
     throw new Error(
-      `Expected ${totalRequiredSlots} slots (${totalCalls} calls × ${slotsPerSession} slots/session) but received ${slots.length}`,
+      `Expected ${totalRequiredSlots} slots (${totalCalls} calls × ${slotsPerSession} slots/session) but received ${slots.length}`
     );
   }
 
@@ -370,14 +370,14 @@ async function allocateSlotsManual(
         const hours = new Date(slot.slotStartTimeInUTC).getHours();
         const minutes = new Date(slot.slotStartTimeInUTC).getMinutes();
         return `${dayNum}-${hours}-${minutes}`;
-      }),
+      })
     );
 
     for (const slotDate of slotDates) {
       const slotPattern = `${getDayOfWeek(slotDate)}-${slotDate.getHours()}-${slotDate.getMinutes()}`;
       if (!availableWeeklySlots.has(slotPattern)) {
         throw new Error(
-          `Slot ${slotDate.toLocaleString()} does not match consultant's weekly schedule`,
+          `Slot ${slotDate.toLocaleString()} does not match consultant's weekly schedule`
         );
       }
     }
@@ -385,14 +385,14 @@ async function allocateSlotsManual(
     // For custom schedule, validate slots exist in custom slots
     const availableCustomSlots = new Set(
       consultantProfile.slotsOfAvailabilityCustom.map((slot) =>
-        new Date(slot.slotStartTimeInUTC).toISOString(),
-      ),
+        new Date(slot.slotStartTimeInUTC).toISOString()
+      )
     );
 
     for (const slotDate of slotDates) {
       if (!availableCustomSlots.has(slotDate.toISOString())) {
         throw new Error(
-          `Slot ${slotDate.toLocaleString()} is not in consultant's custom schedule`,
+          `Slot ${slotDate.toLocaleString()} is not in consultant's custom schedule`
         );
       }
     }
@@ -457,7 +457,7 @@ async function allocateSlotsManual(
   for (const [week, count] of Array.from(slotsByWeek.entries())) {
     if (count > maxSlotsPerWeek) {
       throw new Error(
-        `Too many slots allocated for week of ${new Date(week).toLocaleDateString()} (max ${maxSlotsPerWeek} slots for ${classDetails.callsPerWeek} sessions)`,
+        `Too many slots allocated for week of ${new Date(week).toLocaleDateString()} (max ${maxSlotsPerWeek} slots for ${classDetails.callsPerWeek} sessions)`
       );
     }
   }
@@ -468,7 +468,7 @@ async function allocateSlotsManual(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> },
+  { params }: { params: Promise<{ classId: string }> }
 ) {
   try {
     const { classId } = await params;
@@ -478,7 +478,7 @@ export async function PATCH(
     if (typeof body.isAuto !== "boolean") {
       return NextResponse.json(
         { error: "isAuto flag is required" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -488,7 +488,7 @@ export async function PATCH(
     } else if (!body.isAuto && !Array.isArray(body.slots)) {
       return NextResponse.json(
         { error: "slots array is required for manual allocation" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -506,7 +506,7 @@ export async function PATCH(
     if (!classPlan.classPlan?.consultantProfile?.user?.id) {
       return NextResponse.json(
         { error: "Missing consultant information" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -514,7 +514,7 @@ export async function PATCH(
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -526,7 +526,7 @@ export async function PATCH(
           if (body.useRequestedSlots && classPlan.appointments?.length > 0) {
             // Validate all slots are still available
             const requestedSlots = classPlan.appointments.flatMap((appt) =>
-              appt.slotsOfAppointment.map((slot) => slot.slotStartTimeInUTC),
+              appt.slotsOfAppointment.map((slot) => slot.slotStartTimeInUTC)
             );
 
             const existingAppointments = await tx.appointment.findMany({
@@ -573,7 +573,7 @@ export async function PATCH(
                 startDate: requestedSlots[0],
                 endDate: addWeeks(
                   requestedSlots[0],
-                  classPlan.classPlan.durationInMonths * 4,
+                  classPlan.classPlan.durationInMonths * 4
                 ),
               },
               include: classInclude,
@@ -591,8 +591,8 @@ export async function PATCH(
               classPlan.appointments.map((appointment) =>
                 tx.appointment.delete({
                   where: { id: appointment.id },
-                }),
-              ),
+                })
+              )
             );
           }
 
@@ -606,7 +606,7 @@ export async function PATCH(
             selectedSlots = await allocateSlotsManual(
               classPlan,
               body.slots!,
-              tx,
+              tx
             );
           }
 
@@ -632,7 +632,7 @@ export async function PATCH(
                           const content =
                             classContents[sessionIndex % classContents.length];
                           return content?.hoursAllotted || 1; // Use content-specific duration or default 1 hour
-                        })(),
+                        })()
                       ),
                       isTentative: false,
                       user: {
@@ -643,7 +643,7 @@ export async function PATCH(
                                 !classPlan.classPlan.consultantProfile?.user?.id
                               ) {
                                 throw new Error(
-                                  "Missing consultant user information",
+                                  "Missing consultant user information"
                                 );
                               }
                               return classPlan.classPlan.consultantProfile.user
@@ -662,8 +662,8 @@ export async function PATCH(
                     },
                   },
                 },
-              }),
-            ),
+              })
+            )
           );
 
           // Update class status
@@ -674,7 +674,7 @@ export async function PATCH(
               startDate: selectedSlots[0],
               endDate: addWeeks(
                 selectedSlots[0],
-                classPlan.classPlan.durationInMonths * 4,
+                classPlan.classPlan.durationInMonths * 4
               ),
             },
             include: classInclude,
@@ -687,7 +687,7 @@ export async function PATCH(
         },
         {
           timeout: 30000, // Increase timeout to 30 seconds for class allocations
-        },
+        }
       );
 
       return NextResponse.json({ data: result });
@@ -700,7 +700,7 @@ export async function PATCH(
           error:
             error instanceof Error ? error.message : "Failed to allocate slots",
         },
-        { status: 500 },
+        { status: 500 }
       );
     }
   } catch (error) {
@@ -709,7 +709,7 @@ export async function PATCH(
     }
     return NextResponse.json(
       { error: "An error occurred during slot allocation" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
