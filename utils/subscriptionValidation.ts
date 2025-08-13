@@ -1,4 +1,4 @@
-import { PrismaClient, RequestStatus } from "@prisma/client";
+import { PrismaClient, Prisma, RequestStatus } from "@prisma/client";
 import { addWeeks, startOfWeek, endOfWeek, isWithinInterval } from "date-fns";
 import { countSundayWeeksInclusive } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/calendarUtils";
 
@@ -47,7 +47,9 @@ interface SubscriptionValidationResult {
  * - Example: Jan 1 (Mon) to Feb 1 (Thu) = 5 weeks (not 4.33)
  */
 export class SubscriptionValidationService {
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma: PrismaClient | Prisma.TransactionClient
+  ) {}
 
   /**
    * Validates subscription slot allocation based on weekly limits and subscription period
