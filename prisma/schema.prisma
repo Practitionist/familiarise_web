@@ -546,7 +546,7 @@ model ClassPlan {
   certificateProvided    Boolean          @default(false)
   durationInMonths       Int              @default(1) // Duration in months
   callsPerWeek           Int              @default(1)
-  sessionDurationInHours Int            @default(1) // Duration of each session in hours
+  sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
   videoMeetings          Int              @default(1)
   emailSupport           PlanEmailSupport @default(GENERAL)
   maxParticipants        Int              @default(1)
