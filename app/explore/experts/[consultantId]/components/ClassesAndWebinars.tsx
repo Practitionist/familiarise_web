@@ -54,13 +54,23 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
           <div className="flex items-center">
             <ClockIcon className="w-4 h-4 mr-1" />
             {classPlan.durationInMonths} month
-            {classPlan.durationInMonths > 1 ? "s" : ""}
+            {classPlan.durationInMonths > 1 ? "s" : ""} 
+            ({classPlan.callsPerWeek * 4 * classPlan.durationInMonths} total hours)
           </div>
         </div>
         <p className="text-gray-700 mb-4 line-clamp-3">
           {classPlan.description}
         </p>
         <div className="space-y-3 mb-4 flex-grow">
+          <div className="flex items-start gap-2">
+            <ClockIcon className="w-4 h-4 mt-1 text-gray-500" />
+            <div>
+              <p className="text-sm font-medium">Learning Schedule</p>
+              <p className="text-sm text-gray-600">
+                {classPlan.callsPerWeek} session{classPlan.callsPerWeek > 1 ? "s" : ""} per week × {classPlan.durationInMonths} month{classPlan.durationInMonths > 1 ? "s" : ""} = {classPlan.callsPerWeek * 4 * classPlan.durationInMonths} total hours
+              </p>
+            </div>
+          </div>
           <div className="flex items-start gap-2">
             <BookOpenIcon className="w-4 h-4 mt-1 text-gray-500" />
             <div>

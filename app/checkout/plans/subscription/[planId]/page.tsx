@@ -318,8 +318,20 @@ export default function SubscriptionCheckoutPage({
               <div>{planData?.data?.durationInMonths || 1} months</div>
             </div>
             <div className="flex items-center justify-between">
+              <div className="text-muted-foreground">Total Hours</div>
+              <div>
+                {(() => {
+                  const callsPerWeek = planData?.data?.callsPerWeek || 1;
+                  const durationMonths = planData?.data?.durationInMonths || 1;
+                  const sessionDuration = (planData?.data as any)?.sessionDurationInHours || 1;
+                  const totalHours = callsPerWeek * 4 * sessionDuration * durationMonths;
+                  return `${totalHours} hours`;
+                })()}
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Calls per Week</div>
-              <div>{planData?.data?.callsPerWeek || 1} calls</div>
+              <div>{planData?.data?.callsPerWeek || 1} calls ({(planData?.data as any)?.sessionDurationInHours || 1}h each)</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Video Meetings</div>
@@ -393,12 +405,18 @@ export default function SubscriptionCheckoutPage({
                 </div>
                 <div className="font-semibold">
                   <ul className="list-disc">
-                    <li>{planData?.data?.callsPerWeek || 1} calls per week</li>
+                    <li>{planData?.data?.callsPerWeek || 1} calls per week ({(planData?.data as any)?.sessionDurationInHours || 1}h each)</li>
                     <li>{planData?.data?.videoMeetings || 1} video meetings</li>
                     <li>
                       {planData?.data?.emailSupport || "General"} email support
                     </li>
                     <li>Learning materials</li>
+                    <li>Total: {(() => {
+                      const callsPerWeek = planData?.data?.callsPerWeek || 1;
+                      const durationMonths = planData?.data?.durationInMonths || 1;
+                      const sessionDuration = (planData?.data as any)?.sessionDurationInHours || 1;
+                      return callsPerWeek * 4 * sessionDuration * durationMonths;
+                    })()} hours of consultation time</li>
                   </ul>
                 </div>
               </div>

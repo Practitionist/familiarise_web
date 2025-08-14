@@ -114,12 +114,12 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                   <FeatureItem
                     icon={<Calendar className="h-5 w-5" />}
                     label="Duration"
-                    value={`${plan.durationInMonths} months`}
+                    value={`${plan.durationInMonths} months (${plan.callsPerWeek * 4 * plan.durationInMonths} total hours)`}
                   />
                   <FeatureItem
                     icon={<Clock className="h-5 w-5" />}
                     label="Time Commitment"
-                    value={`${plan.callsPerWeek} hours/week`}
+                    value={`${plan.callsPerWeek} sessions per week`}
                   />
                   <FeatureItem
                     icon={<Users className="h-5 w-5" />}

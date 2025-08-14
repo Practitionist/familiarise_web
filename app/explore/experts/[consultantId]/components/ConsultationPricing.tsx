@@ -50,15 +50,22 @@ export function ConsultationPricing({
           duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`,
         };
       } else if (type === "subscription" && "durationInMonths" in plan) {
+        // Calculate total hours: sessions per week * weeks per month * duration of each session * number of months
+        const sessionsPerWeek = plan.callsPerWeek;
+        const weeksPerMonth = 4; // Approximate weeks per month
+        const sessionDuration = (plan as any).sessionDurationInHours || 1; // Default to 1 hour if not specified
+        const totalHours = sessionsPerWeek * weeksPerMonth * sessionDuration * plan.durationInMonths;
+        
         return {
           title: `${plan.durationInMonths} Month${plan.durationInMonths > 1 ? "s" : ""}`,
-          description: `${plan.durationInMonths} month subscription`,
+          description: `${plan.durationInMonths} month subscription (${totalHours} total hours)`,
           price: plan.price,
           duration: `${plan.durationInMonths}`,
           features: [
-            `${plan.callsPerWeek} call${plan.callsPerWeek > 1 ? "s" : ""} per week`,
+            `${plan.callsPerWeek} call${plan.callsPerWeek > 1 ? "s" : ""} per week (${sessionDuration}h each)`,
             `${plan.videoMeetings} video meeting${plan.videoMeetings > 1 ? "s" : ""}`,
             `${plan.emailSupport} email support`,
+            `Total: ${totalHours} hours of consultation time`,
           ],
         };
       }
