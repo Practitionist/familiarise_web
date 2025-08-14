@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
-import { Prisma, RequestStatus, ScheduleType } from "@prisma/client";
+import { RequestStatus, ScheduleType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { SubscriptionValidationService } from "@/utils/subscriptionValidation";
 
 interface ValidationRequest {
   slots: string[];
@@ -19,6 +20,25 @@ interface ValidationResult {
     slot: string;
   }[];
   validSlots: string[];
+  subscriptionValidation?: {
+    isValid: boolean;
+    errors: string[];
+    warnings: string[];
+    weeklyInfo: Array<{
+      weekStart: Date;
+      weekEnd: Date;
+      existingCalls: number;
+      maxCalls: number;
+      canScheduleMore: boolean;
+      availableSlots: number;
+    }>;
+    totalCallsScheduled: number;
+    maxTotalCalls: number;
+    subscriptionPeriod: {
+      start: Date;
+      end: Date;
+    };
+  };
 }
 
 const subscriptionInclude = {
@@ -43,7 +63,7 @@ const subscriptionInclude = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ subscriptionId: string }> },
+  { params }: { params: Promise<{ subscriptionId: string }> }
 ) {
   try {
     const { subscriptionId } = await params;
@@ -58,17 +78,17 @@ export async function POST(
     if (!subscription) {
       return NextResponse.json(
         { error: "Subscription not found" },
-        { status: 404 },
+        { status: 404 }
       );
     }
 
-    const { subscriptionPlan, requestedBy } = subscription;
+    const { subscriptionPlan } = subscription;
     const { consultantProfile } = subscriptionPlan;
 
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -126,9 +146,8 @@ export async function POST(
     for (const appointment of existingAppointments) {
       const conflictingSlots = appointment.slotsOfAppointment.filter((slot) =>
         slotDates.some(
-          (date) =>
-            date.toISOString() === slot.slotStartTimeInUTC.toISOString(),
-        ),
+          (date) => date.toISOString() === slot.slotStartTimeInUTC.toISOString()
+        )
       );
 
       for (const slot of conflictingSlots) {
@@ -167,7 +186,7 @@ export async function POST(
         isAvailable = availableSlots.some(
           (slot) =>
             new Date(slot.slotStartTimeInUTC).toISOString() ===
-            slotDate.toISOString(),
+            slotDate.toISOString()
         );
       }
 
@@ -189,12 +208,31 @@ export async function POST(
       })
       .map((date) => date.toISOString());
 
+    // Add subscription-specific validation
+    const validationService = new SubscriptionValidationService(prisma);
+    const subscriptionValidation =
+      await validationService.validateSubscriptionSlots(
+        subscriptionId,
+        body.slots
+      );
+
+    result.subscriptionValidation = subscriptionValidation;
+
+    // Mark slots as invalid if they violate subscription rules
+    if (!subscriptionValidation.isValid) {
+      result.validSlots = result.validSlots.filter((slot) => {
+        // Additional filtering based on subscription validation errors
+        // For now, if subscription validation fails, no slots are valid
+        return false;
+      });
+    }
+
     return NextResponse.json({ data: result });
   } catch (error) {
     console.error("Validation error:", error);
     return NextResponse.json(
       { error: "Failed to validate slots" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
