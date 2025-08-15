@@ -6,8 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Button } from "components/ui/button";
 import { Skeleton } from "components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import StreamChatProvider from "@/providers/StreamChatProvider";
-import StreamVideoProvider from "@/providers/StreamClientProvider";
+import StreamProvider from "@/providers/StreamProvider";
 // Removed aggressive prefetching import - using lightweight approach instead
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
@@ -314,11 +313,9 @@ export default function ConsulteeLayout({
           isLoadingProfile={isLoadingProfile}
         />
         <main className="flex-grow overflow-y-auto p-8">
-          <StreamChatProvider userId={userDetails.id}>
-            <StreamVideoProvider userId={userDetails.id}>
-              <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
-            </StreamVideoProvider>
-          </StreamChatProvider>
+          <StreamProvider userId={userDetails.id} enableChat={true} enableVideo={true}>
+            <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+          </StreamProvider>
         </main>
       </div>
     </UserProvider>

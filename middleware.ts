@@ -18,6 +18,7 @@ const ROUTE_PATTERNS = {
     "/settings/",
     "/profile/",
     "/checkout/",
+    "/meetings/",
   ],
   PUBLIC_AUTH_PREFIXES: ["/auth/"],
 
@@ -173,6 +174,12 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PROTECTED_PREFIXES)) {
     // Require authentication
     if (!isAuthenticated) {
+      // For meeting routes, preserve the meeting URL as callbackUrl
+      if (pathname.startsWith('/meetings/')) {
+        const signInUrl = new URL(URLS.SIGNIN, req.url);
+        signInUrl.searchParams.set('callbackUrl', pathname);
+        return NextResponse.redirect(signInUrl);
+      }
       return NextResponse.redirect(new URL(URLS.SIGNIN, req.url));
     }
 

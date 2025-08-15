@@ -104,6 +104,11 @@ export const ChatSidebar = () => {
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Pagination state
+  const [hasMoreTeamChannels, setHasMoreTeamChannels] = useState(true);
+  const [hasMoreDMChannels, setHasMoreDMChannels] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   // Function to fetch channels initially and on significant changes
   const fetchChannels = useCallback(async () => {
@@ -123,9 +128,9 @@ export const ChatSidebar = () => {
       const options = {
         watch: true, // Crucial for real-time updates
         state: true,
-        limit: 30, // Adjust limit as needed
-        message_limit: 1, // Only need 1 message for unread status usually
-        presence: true,
+        limit: 20, // Reduced initial limit for faster loading
+        message_limit: 0, // Don't load messages initially - only need channel metadata
+        presence: false, // Disable presence for initial load to improve performance
       };
 
       console.log("Channel query filter:", filter);
@@ -160,6 +165,10 @@ export const ChatSidebar = () => {
 
       setTeamChannels(teamResponse);
       setDirectMessages(dmResponse);
+      
+      // Update pagination state
+      setHasMoreTeamChannels(teamResponse.length === options.limit);
+      setHasMoreDMChannels(dmResponse.length === options.limit);
     } catch (err) {
       console.error("Error fetching channels:", err);
       console.error("Error details:", {
@@ -173,6 +182,54 @@ export const ChatSidebar = () => {
       setIsLoading(false);
     }
   }, [client]);
+
+  // Function to load more channels (pagination)
+  const loadMoreChannels = useCallback(async (type: 'team' | 'messaging') => {
+    if (!client?.userID || isLoadingMore) return;
+    
+    const currentChannels = type === 'team' ? teamChannels : directMessages;
+    const hasMore = type === 'team' ? hasMoreTeamChannels : hasMoreDMChannels;
+    
+    if (!hasMore) return;
+
+    setIsLoadingMore(true);
+    
+    try {
+      const filter = { members: { $in: [client.userID] }, type };
+      const sort: { last_message_at: -1 } = { last_message_at: -1 };
+      
+      // Get the last channel's last_message_at for pagination
+      const lastChannel = currentChannels[currentChannels.length - 1];
+      const offset = currentChannels.length;
+      
+      const options = {
+        watch: true,
+        state: true,
+        limit: 20,
+        message_limit: 0,
+        presence: false,
+        offset,
+      };
+
+      console.log(`Loading more ${type} channels from offset ${offset}`);
+      
+      const response = await client.queryChannels(filter, sort, options);
+      
+      if (type === 'team') {
+        setTeamChannels(prev => [...prev, ...response]);
+        setHasMoreTeamChannels(response.length === options.limit);
+      } else {
+        setDirectMessages(prev => [...prev, ...response]);
+        setHasMoreDMChannels(response.length === options.limit);
+      }
+      
+      console.log(`Loaded ${response.length} more ${type} channels`);
+    } catch (error) {
+      console.error(`Error loading more ${type} channels:`, error);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [client, teamChannels, directMessages, hasMoreTeamChannels, hasMoreDMChannels, isLoadingMore]);
 
   // Handle individual channel deletion without full refresh
   const handleChannelDeleted = useCallback((deletedChannelId: string) => {
@@ -418,6 +475,19 @@ export const ChatSidebar = () => {
                 onClick={() => handleChannelSelect(channel)}
               />
             ))}
+            {hasMoreTeamChannels && (
+              <div className="p-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => loadMoreChannels('team')}
+                  disabled={isLoadingMore}
+                  className="w-full text-blue-200 hover:bg-blue-700 text-sm"
+                >
+                  {isLoadingMore ? "Loading..." : `Load More Channels`}
+                </Button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="p-4 text-center text-blue-200 text-sm">
@@ -453,6 +523,19 @@ export const ChatSidebar = () => {
                 onClick={() => handleChannelSelect(channel)}
               />
             ))}
+            {hasMoreDMChannels && (
+              <div className="p-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => loadMoreChannels('messaging')}
+                  disabled={isLoadingMore}
+                  className="w-full text-blue-200 hover:bg-blue-700 text-sm"
+                >
+                  {isLoadingMore ? "Loading..." : `Load More Messages`}
+                </Button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="p-4 text-center text-blue-200 text-sm">

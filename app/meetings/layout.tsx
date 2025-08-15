@@ -1,4 +1,4 @@
-import StreamVideoProvider from "@/providers/StreamClientProvider";
+import StreamProvider from "@/providers/StreamProvider";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import authOptions from "../api/auth/[...nextauth]/options";
@@ -16,8 +16,8 @@ export default async function MeetingsLayout({
   }
 
   return (
-    <StreamVideoProvider userId={session.user.id}>
+    <StreamProvider userId={session.user.id} enableChat={false} enableVideo={true}>
       {children}
-    </StreamVideoProvider>
+    </StreamProvider>
   );
 }

@@ -4,8 +4,7 @@ import { getEffectiveUserId } from "@/utils/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Skeleton } from "components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import StreamChatProvider from "@/providers/StreamChatProvider";
-import StreamVideoProvider from "@/providers/StreamClientProvider";
+import StreamProvider from "@/providers/StreamProvider";
 // Removed aggressive prefetching import - using lightweight approach instead
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
@@ -239,12 +238,10 @@ export default function ConsultantLayout({
             </div>
           </div>
         ) : consultantData?.user?.id ? (
-          // Wrap content with StreamChatProvider and StreamVideoProvider when user ID is available
-          <StreamChatProvider userId={consultantData.user.id}>
-            <StreamVideoProvider userId={consultantData.user.id}>
-              <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
-            </StreamVideoProvider>
-          </StreamChatProvider>
+          // Wrap content with combined StreamProvider when user ID is available
+          <StreamProvider userId={consultantData.user.id} enableChat={true} enableVideo={true}>
+            <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+          </StreamProvider>
         ) : (
           // Fallback without Stream providers while loading user data
           <DashboardErrorBoundary>{children}</DashboardErrorBoundary>

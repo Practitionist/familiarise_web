@@ -12,7 +12,7 @@ export const useGetCallById = (callId: string) => {
   useEffect(() => {
     const getCall = async () => {
       if (!client) {
-        console.error("StreamVideoClient not available - StreamVideoProvider may be missing");
+        console.error("StreamVideoClient not available - StreamProvider may be missing");
         setError(new Error("Video client not available"));
         setIsCallLoading(false);
         return;
