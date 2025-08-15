@@ -104,27 +104,29 @@ export const addUserToEventChannel = async (
       if (eventType === "webinar") {
         const webinar = await prisma.webinar.findUnique({
           where: { id: eventId },
-          include: { webinarPlan: { include: { consultantProfile: true } } },
+          include: { webinarPlan: { include: { consultantProfile: { include: { user: true } } } } },
         });
         if (!webinar) throw new Error(`Webinar ${eventId} not found`);
         channelName = webinar.webinarPlan.title;
         // Use the consultant as the creator if available
-        if (webinar.webinarPlan.consultantProfileId) {
+        if (webinar.webinarPlan.consultantProfile?.user?.id) {
+          const consultantUserId = webinar.webinarPlan.consultantProfile.user.id;
           // Ensure consultant user exists in Stream before making them a creator
-          await upsertUserToStream(webinar.webinarPlan.consultantProfileId);
-          channelCreatorId = webinar.webinarPlan.consultantProfileId;
+          await upsertUserToStream(consultantUserId);
+          channelCreatorId = consultantUserId;
         }
       } else {
         // class
         const classData = await prisma.class.findUnique({
           where: { id: eventId },
-          include: { classPlan: { include: { consultantProfile: true } } },
+          include: { classPlan: { include: { consultantProfile: { include: { user: true } } } } },
         });
         if (!classData) throw new Error(`Class ${eventId} not found`);
         channelName = classData.classPlan.title;
-        if (classData.classPlan.consultantProfileId) {
-          await upsertUserToStream(classData.classPlan.consultantProfileId);
-          channelCreatorId = classData.classPlan.consultantProfileId;
+        if (classData.classPlan.consultantProfile?.user?.id) {
+          const consultantUserId = classData.classPlan.consultantProfile.user.id;
+          await upsertUserToStream(consultantUserId);
+          channelCreatorId = consultantUserId;
         }
       }
 

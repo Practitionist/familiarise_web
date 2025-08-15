@@ -84,11 +84,7 @@ export type TWebinar = Prisma.WebinarGetPayload<{
       };
     };
     waitlist: true;
-    meetingRoom: {
-      include: {
-        recordings: true;
-      };
-    };
+    meetingRoom: true;
   };
 }>;
 

@@ -13,6 +13,7 @@ import { Badge } from "components/ui/badge";
 import { Button } from "components/ui/button";
 import { Card } from "components/ui/card";
 import { useRouter } from "next/navigation";
+import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import {
   EventWithType,
   getConsultantImage,
@@ -63,40 +64,13 @@ export function SlotCard({
         return;
       }
 
-      const meetingId = `appointment-${appointment.id}`;
-
-      const call = client.call("default", meetingId);
-
-      if (!call) {
-        toast({
-          title: "Error",
-          description: "Failed to create call",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      await call.getOrCreate({
-        data: {
-          starts_at: startTime.toISOString(),
-          custom: {
-            title:
-              appointment.webinar?.webinarPlan?.title ??
-              appointment.subscription?.subscriptionPlan?.title ??
-              appointment.consultation?.consultationPlan?.title ??
-              appointment.class?.classPlan?.title ??
-              "Session",
-            description: `${appointment.webinar?.webinarPlan?.title ?? appointment.subscription?.subscriptionPlan?.title ?? appointment.consultation?.consultationPlan?.title ?? appointment.class?.classPlan?.title ?? "Session"} Meeting`,
-            eventId: appointment.id,
-            eventType:
-              appointment.webinar?.webinarPlan?.title ??
-              appointment.subscription?.subscriptionPlan?.title ??
-              appointment.consultation?.consultationPlan?.title ??
-              appointment.class?.classPlan?.title ??
-              "Session",
-          },
-        },
-      });
+      const meetingId = await getOrCreateAppointmentMeeting(
+        client,
+        {
+          ...appointment,
+        } as any,
+        slot,
+      );
 
       router.push(`/meetings/${meetingId}`);
       toast({

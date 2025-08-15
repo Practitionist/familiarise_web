@@ -1,6 +1,6 @@
 "use client";
 
-import { tokenProvider } from "@/actions/stream/chat/stream.action";
+import { chatTokenProvider } from "@/actions/stream/chat/stream.action";
 import { upsertUserToStream } from "@/actions/stream/chat/user.action";
 import { syncUserEventChannels } from "@/actions/stream/chat/event-channel.action";
 import { useUserData } from "@/hooks/useUserData";
@@ -71,7 +71,7 @@ const StreamChatProvider = ({ children, userId }: StreamChatProviderProps) => {
             image: userDetails.image ?? undefined,
             role: streamRole,
           },
-          async () => await tokenProvider(userId),
+          async () => await chatTokenProvider(userId),
         );
         setChatClient(client);
         console.log(`User ${userDetails.id} successfully connected to Stream Chat`);

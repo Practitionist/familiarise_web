@@ -33,35 +33,23 @@ export async function createChannel({
   const allMembers = Array.from(new Set([createdById, ...members]));
   console.log(`Creating ${channelType} channel ${channelId} with ${allMembers.length} members including creator ${createdById}`);
 
-  // Create the channel
+  // Create the channel with members atomically
   const channel = serverClient.channel(channelType, channelId, {
     name: channelName,
     created_by_id: createdById,
+    members: allMembers,
     ...additionalData,
   });
 
   await channel.create();
-  console.log(`Channel ${channelId} created successfully`);
-  
-  // Add all members (including creator) after creation to ensure membership is established
-  if (allMembers && allMembers.length > 0) {
-    try {
-      await channel.addMembers(allMembers);
-      console.log(`Successfully added ${allMembers.length} members to channel ${channelId}:`, allMembers);
-      
-      // Verify membership was established
-      const channelData = await channel.query();
-      const actualMembers = Object.keys(channelData.members || {});
-      console.log(`Channel ${channelId} actual members after creation:`, actualMembers);
-      
-      return { channelId, members: actualMembers, channelData };
-    } catch (memberError) {
-      console.error(`Failed to add members to channel ${channelId}:`, memberError);
-      throw memberError; // Throw error instead of continuing, as membership is critical
-    }
-  }
+  console.log(`Channel ${channelId} created successfully with ${allMembers.length} members`);
 
-  return { channelId };
+  // Verify membership was established
+  const channelData = await channel.query();
+  const actualMembers = Object.keys(channelData.members || {});
+  console.log(`Channel ${channelId} actual members after creation:`, actualMembers);
+
+  return { channelId, members: actualMembers, channelData };
 }
 
 // Create a direct message channel
@@ -90,7 +78,11 @@ export async function createWebinarChannel(webinarId: string) {
     include: {
       webinarPlan: {
         include: {
-          consultantProfile: true,
+          consultantProfile: {
+            include: {
+              user: true,
+            },
+          },
         },
       },
       waitlist: {
@@ -114,9 +106,9 @@ export async function createWebinarChannel(webinarId: string) {
     throw new Error("Webinar not found");
   }
 
-  const consultantId = webinar.webinarPlan.consultantProfileId;
+  const consultantUserId = webinar.webinarPlan.consultantProfile?.user?.id;
 
-  if (!consultantId) {
+  if (!consultantUserId) {
     throw new Error("Consultant not found for webinar");
   }
 
@@ -137,8 +129,8 @@ export async function createWebinarChannel(webinarId: string) {
     channelType: "team",
     channelId: `webinar-${webinarId}`,
     channelName: webinar.webinarPlan.title,
-    members: [consultantId, ...allParticipantIds],
-    createdById: consultantId,
+    members: [consultantUserId, ...allParticipantIds],
+    createdById: consultantUserId,
     additionalData: { webinar_id: webinarId },
   });
 }
@@ -151,7 +143,11 @@ export async function createClassChannel(classId: string) {
     include: {
       classPlan: {
         include: {
-          consultantProfile: true,
+          consultantProfile: {
+            include: {
+              user: true,
+            },
+          },
         },
       },
       waitlist: {
@@ -175,9 +171,9 @@ export async function createClassChannel(classId: string) {
     throw new Error("Class not found");
   }
 
-  const consultantId = classData.classPlan.consultantProfileId;
+  const consultantUserId = classData.classPlan.consultantProfile?.user?.id;
 
-  if (!consultantId) {
+  if (!consultantUserId) {
     throw new Error("Consultant not found for class");
   }
 
@@ -200,8 +196,8 @@ export async function createClassChannel(classId: string) {
     channelType: "team",
     channelId: `class-${classId}`,
     channelName: classData.classPlan.title,
-    members: [consultantId, ...allParticipantIds],
-    createdById: consultantId,
+    members: [consultantUserId, ...allParticipantIds],
+    createdById: consultantUserId,
     additionalData: { class_id: classId },
   });
 }
@@ -534,9 +530,10 @@ export async function addMemberToChannel(channelId: string, userId: string) {
   // Stream's addMembers should handle user creation if needed.
   // await upsertUserToStream(userId); // Removed this line
 
-  // TODO: Determine channel type dynamically if needed, assuming 'team' for now
-  // This might need adjustment if you add members to 'messaging' channels this way.
-  const channelType = "team";
+  // Infer channel type from ID pattern
+  const channelType = channelId.startsWith("consultation-") || channelId.startsWith("subscription-")
+    ? "messaging"
+    : "team";
   console.log(
     `Adding member ${userId} to ${channelType} channel ${channelId} via action`,
   );
