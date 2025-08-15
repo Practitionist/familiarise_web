@@ -1,6 +1,11 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useToast } from "@/components/ui/use-toast";
-import { TimeSlot, calculateRequiredSlots } from "../utils/calendarUtils";
+import {
+  TimeSlot,
+  calculateRequiredSlots,
+  countSundayWeeksInclusive,
+} from "../utils/calendarUtils";
+import { startOfWeek } from "date-fns";
 import {
   AllocationAlgorithms,
   AllocationOptions,
@@ -1557,19 +1562,38 @@ export function useEventSlotAllocation(
             currentDate.setHours(0, 0, 0, 0); // Start of today
 
             // Calculate how many calls should be completed based on current date
-            // If subscription started July 1 and today is July 17 (2+ weeks later), mark some calls as completed
-            const subscriptionStartDate = new Date(); // TODO: Get actual subscription start date from options
-            subscriptionStartDate.setHours(0, 0, 0, 0);
+            // Use the same logic as the footer calculation for consistency
+            const allowedStart = options.startDate;
+            const allowedEnd = options.endDate;
 
-            // Calculate weeks passed since subscription started
-            const weeksPassed = Math.floor(
-              (currentDate.getTime() - subscriptionStartDate.getTime()) /
-                (7 * 24 * 60 * 60 * 1000)
-            );
-            const pastCallsCompleted = Math.min(
-              weeksPassed * callsPerWeek,
-              maxTotalCalls
-            );
+            let pastCallsCompleted: number;
+
+            if (allowedStart && allowedEnd) {
+              // Use the same logic as computeSubscriptionFooter
+              const prevSaturday = new Date(startOfWeek(currentDate));
+              prevSaturday.setDate(prevSaturday.getDate() - 1);
+              const pastEnd =
+                prevSaturday < allowedEnd ? prevSaturday : allowedEnd;
+              const pastWeeks =
+                pastEnd >= allowedStart
+                  ? countSundayWeeksInclusive(allowedStart, pastEnd)
+                  : 0;
+              pastCallsCompleted = pastWeeks * callsPerWeek;
+            } else {
+              // Fallback to simple calculation if dates not provided
+              const subscriptionStartDate = new Date(); // TODO: Get actual subscription start date from options
+              subscriptionStartDate.setHours(0, 0, 0, 0);
+
+              // Calculate weeks passed since subscription started
+              const weeksPassed = Math.floor(
+                (currentDate.getTime() - subscriptionStartDate.getTime()) /
+                  (7 * 24 * 60 * 60 * 1000)
+              );
+              pastCallsCompleted = Math.min(
+                weeksPassed * callsPerWeek,
+                maxTotalCalls
+              );
+            }
 
             // FIXED: Simple validation: count confirmed calls + past completed calls
             // But don't count the call we're about to complete if it's completing an existing incomplete call
@@ -1670,19 +1694,7 @@ export function useEventSlotAllocation(
 
             if (currentCallProgress === 0 && newSelection.length > 0) {
               // Just completed a call
-              // Calculate progress including past calls
-              const currentDate = new Date();
-              currentDate.setHours(0, 0, 0, 0);
-              const subscriptionStartDate = new Date(); // TODO: Get actual subscription start
-              subscriptionStartDate.setHours(0, 0, 0, 0);
-              const weeksPassed = Math.floor(
-                (currentDate.getTime() - subscriptionStartDate.getTime()) /
-                  (7 * 24 * 60 * 60 * 1000)
-              );
-              const pastCallsCompleted = Math.min(
-                weeksPassed * callsPerWeek,
-                maxTotalCalls
-              );
+              // Calculate progress including past calls using the same logic as above
               const totalProgress = pastCallsCompleted + completedCalls;
 
               setTimeout(() => {
