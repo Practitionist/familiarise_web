@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { StreamCall, StreamTheme } from "@stream-io/video-react-sdk";
+import { StreamCall, StreamTheme, CallingState } from "@stream-io/video-react-sdk";
 import { Loader2 } from "lucide-react";
 
 import { useGetCallById } from "./hooks/useGetCallById";
@@ -16,6 +16,21 @@ const MeetingPage = () => {
   const { data: session, status } = useSession();
   const { call, isCallLoading, error } = useGetCallById(id as string);
   const [isSetupComplete, setIsSetupComplete] = useState(false);
+
+  // Cleanup on component unmount
+  useEffect(() => {
+    return () => {
+      console.log("Meeting page unmounting, cleaning up call...");
+      
+      // Cleanup call if still active
+      if (call?.state.callingState !== CallingState.LEFT) {
+        console.log("Leaving call on unmount");
+        call?.leave().catch(error => {
+          console.warn("Error leaving call on unmount:", error);
+        });
+      }
+    };
+  }, [call]);
 
   if (status === "loading" || isCallLoading) {
     return (

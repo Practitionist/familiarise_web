@@ -12,6 +12,7 @@ import {
   useCallStateHooks,
 } from "@stream-io/video-react-sdk";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { Users, LayoutList } from "lucide-react";
 
 import {
@@ -49,6 +50,7 @@ const MeetingRoom = () => {
   const searchParams = useSearchParams();
   const isPersonalRoom = !!searchParams.get("personal");
   const router = useRouter();
+  const { data: session } = useSession();
   const [layout, setLayout] = useState<CallLayoutType>("speaker-left");
   const [showParticipants, setShowParticipants] = useState(false);
   const call = useCall();
@@ -60,6 +62,15 @@ const MeetingRoom = () => {
 
   // Track if we're trying to rejoin
   const [isRejoining, setIsRejoining] = useState(false);
+
+  // Monitor call state for cleanup
+  useEffect(() => {
+    if (callEndedAt) {
+      console.log("Call ended at:", callEndedAt);
+      // Call has ended - cleanup will be handled by EndCallButton
+      // or by component unmount effect
+    }
+  }, [callEndedAt, callingState]);
 
   // Check if the user is the call owner
   const { useLocalParticipant } = useCallStateHooks();
@@ -132,7 +143,33 @@ const MeetingRoom = () => {
 
         {/* Video layout and call controls */}
         <div className="fixed bottom-0 flex w-full items-center justify-center gap-5">
-          <CallControls onLeave={() => router.push("/")} />
+          <CallControls onLeave={async () => {
+            // Handle participant leaving call (not ending for everyone)
+            console.log("Participant leaving call");
+            try {
+              await call?.leave();
+              
+              // Navigate to appropriate dashboard
+              if (session?.user) {
+                const { role, consultantProfileId, consulteeProfileId, staffProfileId } = session.user;
+                
+                if (role === "CONSULTANT" && consultantProfileId) {
+                  router.push(`/dashboard/consultant/${consultantProfileId}/home`);
+                } else if (role === "CONSULTEE" && consulteeProfileId) {
+                  router.push(`/dashboard/consultee/${consulteeProfileId}/home`);
+                } else if (role === "STAFF" && staffProfileId) {
+                  router.push(`/dashboard/staff/${staffProfileId}/home`);
+                } else {
+                  router.push("/");
+                }
+              } else {
+                router.push("/");
+              }
+            } catch (error) {
+              console.error("Error leaving call:", error);
+              router.push("/");
+            }
+          }} />
 
           <DropdownMenu>
             <div className="flex items-center">
