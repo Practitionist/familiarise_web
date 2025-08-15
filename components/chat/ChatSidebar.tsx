@@ -129,7 +129,7 @@ export const ChatSidebar = () => {
         watch: true, // Crucial for real-time updates
         state: true,
         limit: 20, // Reduced initial limit for faster loading
-        message_limit: 0, // Don't load messages initially - only need channel metadata
+        message_limit: 100, // Load recent messages for proper chat history and scroll functionality
         presence: false, // Disable presence for initial load to improve performance
       };
 
@@ -206,7 +206,7 @@ export const ChatSidebar = () => {
         watch: true,
         state: true,
         limit: 20,
-        message_limit: 0,
+        message_limit: 100, // Load messages for paginated channels too
         presence: false,
         offset,
       };
@@ -410,8 +410,10 @@ export const ChatSidebar = () => {
   const handleChannelSelect = (channel: Channel) => {
     setActiveChannelId(channel.cid || null);
     setActiveChannel(channel);
-    // Optionally mark channel as read here if needed
-    // channel.markRead();
+    // Mark channel as read to clear unread indicators
+    channel.markRead().catch(error => {
+      console.warn("Failed to mark channel as read:", error);
+    });
   };
 
   return (
