@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useChatContext } from "stream-chat-react";
 import { SearchIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -18,22 +18,11 @@ type SearchResult = {
 export const ChannelSearch = () => {
   const { client, setActiveChannel } = useChatContext();
   const [query, setQuery] = useState("");
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
 
-  useEffect(() => {
-    if (!query) {
-      setSearchResults([]);
-    }
-  }, [query]);
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!query) {
-      return;
-    }
+  const handleSearch = useCallback(async () => {
+    if (!client || !query.trim()) return;
 
     try {
       setLoading(true);
@@ -75,23 +64,43 @@ export const ChannelSearch = () => {
     } finally {
       setLoading(false);
     }
+  }, [client, query]);
+
+  // Debounced search effect
+  useEffect(() => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      handleSearch();
+    }, 300); // 300ms delay
+
+    return () => clearTimeout(timeoutId);
+  }, [query, handleSearch]);
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleSearch();
   };
 
   return (
-    <div className="channel-search">
-      <form onSubmit={handleSearch} className="relative">
-        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+    <div className="channel-search relative">
+      <form onSubmit={handleSearchSubmit} className="relative">
+        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-300" />
         <Input
           type="text"
-          placeholder="Search"
+          placeholder={loading ? "Searching..." : "Search"}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="pl-9 w-full text-sm bg-blue-700 border-blue-700 text-white placeholder-blue-300"
+          className="pl-9 w-full text-sm bg-blue-700 border-blue-600 text-white placeholder-blue-300 focus:border-blue-500 focus:ring-blue-500"
+          disabled={loading}
         />
       </form>
 
       {searchResults.length > 0 && (
-        <div className="absolute z-10 mt-1 w-full bg-white rounded-md shadow-lg max-h-60 overflow-auto">
+        <div className="absolute z-50 mt-1 w-full bg-white rounded-md shadow-xl border max-h-60 overflow-auto">
           {searchResults.map((result) => (
             <button
               key={result.id}
@@ -124,8 +133,8 @@ export const ChannelSearch = () => {
                   </div>
                 )}
                 <div>
-                  <div className="font-medium">{result.name}</div>
-                  <div className="text-xs text-gray-500">
+                  <div className="text-sm font-semibold text-gray-900">{result.name}</div>
+                  <div className="text-xs text-gray-600">
                     {result.type === "channel" ? "Channel" : "User"}
                   </div>
                 </div>

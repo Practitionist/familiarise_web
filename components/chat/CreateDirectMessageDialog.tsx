@@ -21,6 +21,7 @@ type User = {
   id: string;
   name?: string;
   image?: string;
+  hasRelationship?: boolean;
 };
 
 interface CreateDirectMessageDialogProps {
@@ -90,10 +91,10 @@ export const CreateDirectMessageDialog = ({
         return;
       }
 
-      // If no results from Stream search (or after client-side filtering), try API search
-      console.log("No relevant users found in Stream, trying API search");
+      // If no results from Stream search (or after client-side filtering), try API search with relationships
+      console.log("No relevant users found in Stream, trying API search with relationships");
       const apiResponse = await fetch(
-        `/api/stream/search?term=${encodeURIComponent(searchTerm)}`,
+        `/api/stream/search?term=${encodeURIComponent(searchTerm)}&relationships=true`,
       );
 
       if (apiResponse.ok) {
@@ -105,6 +106,7 @@ export const CreateDirectMessageDialog = ({
               id: user.id,
               name: user.name || user.id,
               image: user.image,
+              hasRelationship: user.hasRelationship || false,
             })),
           );
         } else {
@@ -289,7 +291,18 @@ export const CreateDirectMessageDialog = ({
               {users.map((user) => (
                 <div
                   key={user.id}
-                  className="flex items-center space-x-2 p-1 rounded hover:bg-slate-100"
+                  className={`flex items-center space-x-2 p-1 rounded hover:bg-slate-100 ${
+                    user.hasRelationship === false 
+                      ? "opacity-50" 
+                      : ""
+                  }`}
+                  title={
+                    user.hasRelationship === false
+                      ? "No appointment relationship with this user"
+                      : user.hasRelationship
+                      ? "Connected through appointments"
+                      : ""
+                  }
                 >
                   <Checkbox
                     id={`user-${user.id}`}
@@ -301,9 +314,21 @@ export const CreateDirectMessageDialog = ({
                     <AvatarImage src={user.image} />
                     <AvatarFallback>{user.name?.charAt(0)}</AvatarFallback>
                   </Avatar>
-                  <Label htmlFor={`user-${user.id}`} className="cursor-pointer">
-                    {user.name} ({user.id})
-                  </Label>
+                  <div className="flex flex-col">
+                    <Label htmlFor={`user-${user.id}`} className="cursor-pointer">
+                      {user.name || "Unknown User"}
+                    </Label>
+                    {user.hasRelationship === true && (
+                      <span className="text-xs text-green-600">
+                        ✓ Connected
+                      </span>
+                    )}
+                    {user.hasRelationship === false && (
+                      <span className="text-xs text-gray-400">
+                        No appointments
+                      </span>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

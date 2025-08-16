@@ -2,7 +2,7 @@
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { MessageSquareIcon, RefreshCwIcon } from "lucide-react";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, memo, startTransition } from "react";
 import type { Channel, Event } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
 import { ChannelSearch } from "./ChannelSearch";
@@ -21,8 +21,8 @@ const EmptyChannelState = () => (
   </div>
 );
 
-// Custom channel item component for the sidebar
-const ChannelItem = ({
+// Custom channel item component for the sidebar - memoized for performance
+const ChannelItem = memo(({
   channel,
   isActive,
   onClick,
@@ -95,7 +95,9 @@ const ChannelItem = ({
       </div>
     </button>
   );
-};
+});
+
+ChannelItem.displayName = "ChannelItem";
 
 export const ChatSidebar = () => {
   const { client, setActiveChannel } = useChatContext();
@@ -464,14 +466,20 @@ export const ChatSidebar = () => {
     handleUserRemovedFromChannel,
   ]); // Add dependencies
 
-  const handleChannelSelect = (channel: Channel) => {
-    setActiveChannelId(channel.cid || null);
+  const handleChannelSelect = useCallback((channel: Channel) => {
+    // Use startTransition for non-urgent updates to improve perceived performance
+    startTransition(() => {
+      setActiveChannelId(channel.cid || null);
+    });
+    
+    // Set active channel immediately for instant feedback
     setActiveChannel(channel);
-    // Mark channel as read to clear unread indicators
+    
+    // Mark channel as read asynchronously
     channel.markRead().catch((error) => {
       console.warn("Failed to mark channel as read:", error);
     });
-  };
+  }, [setActiveChannel]);
 
   return (
     <div className="w-64 bg-blue-600 text-white flex flex-col h-full">
