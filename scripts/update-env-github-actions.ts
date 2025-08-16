@@ -84,6 +84,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import _sodium from 'libsodium-wrappers';
 
 interface GitHubConfig {
   owner: string;
@@ -186,6 +187,10 @@ async function updateGitHubSecret(
   secretValue: string
 ): Promise<boolean> {
   try {
+    // Initialize libsodium
+    await _sodium.ready;
+    const sodium = _sodium;
+
     // First, get the repository's public key for encryption
     const publicKeyUrl = `https://api.github.com/repos/${config.owner}/${config.repo}/actions/secrets/public-key`;
     console.log(`🔑 Getting public key from: ${publicKeyUrl}`);
@@ -217,9 +222,27 @@ async function updateGitHubSecret(
 
     const publicKeyData = await publicKeyResponse.json();
     
-    // For simplicity, we'll use the GitHub CLI approach instead of manual encryption
-    // This requires the value to be base64 encoded
-    const encodedValue = Buffer.from(secretValue).toString('base64');
+    // Debug: log the public key format
+    console.log(`   - Public key: ${publicKeyData.key.substring(0, 20)}...`);
+    console.log(`   - Key ID: ${publicKeyData.key_id}`);
+    
+    // Encrypt the secret value using libsodium sealed box encryption  
+    // GitHub uses libsodium sealed box for repository secrets
+    let publicKeyBytes: Uint8Array;
+    try {
+      publicKeyBytes = sodium.from_base64(publicKeyData.key, sodium.base64_variants.ORIGINAL);
+    } catch (e) {
+      console.error(`   - Failed to decode public key: ${e}`);
+      return false;
+    }
+    
+    const secretBytes = sodium.from_string(secretValue);
+    
+    // Use sealed box encryption (anonymous encryption)
+    const encrypted = sodium.crypto_box_seal(secretBytes, publicKeyBytes);
+    
+    // Encode as base64
+    const encryptedValue = sodium.to_base64(encrypted, sodium.base64_variants.ORIGINAL);
 
     // Update the secret
     const updateResponse = await fetch(
@@ -233,7 +256,7 @@ async function updateGitHubSecret(
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          encrypted_value: encodedValue,
+          encrypted_value: encryptedValue,
           key_id: publicKeyData.key_id,
         }),
       }
@@ -268,7 +291,6 @@ async function syncEnvToGitHub(): Promise<void> {
 
     // Extract GitHub credentials from .env
     const githubToken = envVariables.find(({ key }) => key === 'GITHUB_TOKEN')?.value;
-    const githubOwner = envVariables.find(({ key }) => key === 'GITHUB_OWNER')?.value;
 
     // Configuration using values from .env (override with correct repository owner)
     const config: GitHubConfig = {
@@ -299,20 +321,16 @@ async function syncEnvToGitHub(): Promise<void> {
     }
     console.log(''); // Add spacing
 
-    // Filter variables you want to sync (add/remove as needed)
+    // Sync ALL environment variables except GitHub credentials
     // IMPORTANT: Exclude GitHub credentials to avoid uploading them to GitHub Actions
     const secretsToSync = envVariables.filter(({ key }) => 
-      [
-        'DATABASE_URL',
-        'NEXT_PUBLIC_STREAM_API_KEY',
-        'STREAM_API_SECRET',
-        'NEXTAUTH_SECRET',
-        'NEXTAUTH_URL',
-        // Add other environment variables you want to sync
-      ].includes(key) && 
       // Never sync GitHub credentials to avoid security issues
       !['GITHUB_TOKEN', 'GITHUB_OWNER'].includes(key)
     );
+
+    console.log(`📋 Environment variables to sync:`);
+    secretsToSync.forEach(({ key }) => console.log(`   - ${key}`));
+    console.log('');
 
     console.log(`🔄 Syncing ${secretsToSync.length} secrets to GitHub repository: ${config.owner}/${config.repo}\n`);
 
