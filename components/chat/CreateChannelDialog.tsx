@@ -108,9 +108,11 @@ export const CreateChannelDialog = ({
       if (selectedEvent && selectedEvent !== "custom") {
         // Event-linked channel creation - use server-side API with full participant lists
         const [eventType, eventId] = selectedEvent.split("-");
-        
-        console.log(`Creating ${eventType} channel for event ${eventId} via API`);
-        
+
+        console.log(
+          `Creating ${eventType} channel for event ${eventId} via API`,
+        );
+
         const response = await fetch("/api/stream/channels/create", {
           method: "POST",
           headers: {
@@ -135,7 +137,7 @@ export const CreateChannelDialog = ({
         // Find the created channel and set it as active
         const channelId = `${eventType}-${eventId}`;
         const channel = client.channel("team", channelId);
-        
+
         // Query the channel to ensure it's loaded and properly synchronized
         try {
           await channel.query();
@@ -148,13 +150,16 @@ export const CreateChannelDialog = ({
 
         toast({
           title: "Success",
-          description: result.message || `Channel "${channelName}" created successfully`,
+          description:
+            result.message || `Channel "${channelName}" created successfully`,
         });
       } else {
         // Custom channel creation - use client-side creation (no predefined participants)
         const channelId = crypto.randomUUID();
 
-        console.log(`Creating custom team channel: ${channelId} with name: ${channelName}`);
+        console.log(
+          `Creating custom team channel: ${channelId} with name: ${channelName}`,
+        );
 
         const channel = client.channel("team", channelId, {
           name: channelName,

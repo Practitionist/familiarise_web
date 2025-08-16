@@ -22,7 +22,12 @@ export default function HomePage({
     staleTime: 0,
     refetchOnWindowFocus: false,
   };
-  const { data: dashboardData, isLoading, error, isStale } = useQuery(dashboardQuery);
+  const {
+    data: dashboardData,
+    isLoading,
+    error,
+    isStale,
+  } = useQuery(dashboardQuery);
 
   // Show skeleton only for initial load when no data exists
   if (isLoading && !dashboardData) {

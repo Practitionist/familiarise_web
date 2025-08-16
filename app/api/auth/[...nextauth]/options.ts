@@ -287,12 +287,18 @@ const authOptions: NextAuthOptions = {
      * @param {Object} params - Contains the base URL and callback URL
      * @returns {Promise<string>} - Redirect URL
      */
-    async redirect({ url, baseUrl }: { url: string; baseUrl: string }): Promise<string> {
+    async redirect({
+      url,
+      baseUrl,
+    }: {
+      url: string;
+      baseUrl: string;
+    }): Promise<string> {
       // Check if there's a callbackUrl in the URL parameters
       try {
         const urlObj = new URL(url);
-        const callbackUrl = urlObj.searchParams.get('callbackUrl');
-        
+        const callbackUrl = urlObj.searchParams.get("callbackUrl");
+
         // If there's a valid callback URL and it's from the same origin, use it
         if (callbackUrl) {
           const callbackUrlObj = new URL(callbackUrl, baseUrl);
@@ -302,9 +308,9 @@ const authOptions: NextAuthOptions = {
           }
         }
       } catch (error) {
-        console.warn('Error parsing redirect URL:', error);
+        console.warn("Error parsing redirect URL:", error);
       }
-      
+
       // Default redirect to explore page
       return `${baseUrl}/explore/experts`;
     },

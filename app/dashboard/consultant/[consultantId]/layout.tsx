@@ -88,14 +88,14 @@ export default function ConsultantLayout({
 
     // Only prefetch current route and one likely next route after a delay
     const prefetchMinimalData = () => {
-      // Prefetch only the current route 
+      // Prefetch only the current route
       const currentRoute = pathname;
       if (currentRoute) {
         router.prefetch(currentRoute);
       }
 
       // Prefetch home route only if not already there, after a longer delay
-      if (!pathname.includes('/home')) {
+      if (!pathname.includes("/home")) {
         setTimeout(() => {
           router.prefetch(`/dashboard/consultant/${consultantId}/home`);
         }, 2000);
@@ -239,7 +239,11 @@ export default function ConsultantLayout({
           </div>
         ) : consultantData?.user?.id ? (
           // Wrap content with combined StreamProvider when user ID is available
-          <StreamProvider userId={consultantData.user.id} enableChat={true} enableVideo={true}>
+          <StreamProvider
+            userId={consultantData.user.id}
+            enableChat={true}
+            enableVideo={true}
+          >
             <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
           </StreamProvider>
         ) : (

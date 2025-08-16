@@ -194,14 +194,14 @@ export default function ConsulteeLayout({
 
     // Only prefetch current route and one likely next route after a delay
     const prefetchMinimalData = () => {
-      // Prefetch only the current route 
+      // Prefetch only the current route
       const currentRoute = pathname;
       if (currentRoute) {
         router.prefetch(currentRoute);
       }
 
       // Prefetch home route only if not already there, after a longer delay
-      if (!pathname.includes('/home')) {
+      if (!pathname.includes("/home")) {
         setTimeout(() => {
           router.prefetch(`/dashboard/consultee/${consulteeId}/home`);
         }, 2000);
@@ -259,8 +259,8 @@ export default function ConsulteeLayout({
         <MessageContainer
           title="Error"
           message={
-            (userError as Error)?.message || 
-            (profileError as Error)?.message || 
+            (userError as Error)?.message ||
+            (profileError as Error)?.message ||
             "Failed to load user details"
           }
         />
@@ -313,7 +313,11 @@ export default function ConsulteeLayout({
           isLoadingProfile={isLoadingProfile}
         />
         <main className="flex-grow overflow-y-auto p-8">
-          <StreamProvider userId={userDetails.id} enableChat={true} enableVideo={true}>
+          <StreamProvider
+            userId={userDetails.id}
+            enableChat={true}
+            enableVideo={true}
+          >
             <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
           </StreamProvider>
         </main>

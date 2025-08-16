@@ -39,7 +39,8 @@ export default function HomePage({ params }: Readonly<PageProps>) {
           <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
             <h3 className="font-semibold mb-2">Error Loading Events</h3>
             <p className="text-sm">
-              {(error as Error)?.message || "Failed to load events data. Please try again."}
+              {(error as Error)?.message ||
+                "Failed to load events data. Please try again."}
             </p>
             <button
               onClick={() => window.location.reload()}
@@ -65,7 +66,7 @@ export default function HomePage({ params }: Readonly<PageProps>) {
           Refreshing...
         </div>
       )}
-      <HomeTab 
+      <HomeTab
         eventsData={eventsData}
         userDetails={userDetails}
         isRefreshing={isLoading && !!eventsData}

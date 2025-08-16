@@ -1,10 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState, createContext, useContext } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  createContext,
+  useContext,
+} from "react";
 import { StreamChat } from "stream-chat";
 import { Chat } from "stream-chat-react";
 import { StreamVideo, StreamVideoClient } from "@stream-io/video-react-sdk";
-import { chatTokenProvider, tokenProvider } from "@/actions/stream/chat/stream.action";
+import {
+  chatTokenProvider,
+  tokenProvider,
+} from "@/actions/stream/chat/stream.action";
 import { upsertUserToStream } from "@/actions/stream/chat/user.action";
 import { syncUserEventChannels } from "@/actions/stream/chat/event-channel.action";
 import { useUserData } from "@/hooks/useUserData";
@@ -25,7 +34,9 @@ interface StreamConnectionState {
   retryConnection: () => void;
 }
 
-const StreamConnectionContext = createContext<StreamConnectionState | null>(null);
+const StreamConnectionContext = createContext<StreamConnectionState | null>(
+  null,
+);
 
 export const useStreamConnection = () => {
   const context = useContext(StreamConnectionContext);
@@ -42,15 +53,17 @@ interface StreamProviderProps {
   enableVideo?: boolean;
 }
 
-const StreamProvider = ({ 
-  children, 
-  userId, 
-  enableChat = true, 
-  enableVideo = true 
+const StreamProvider = ({
+  children,
+  userId,
+  enableChat = true,
+  enableVideo = true,
 }: StreamProviderProps) => {
   // Connection states
   const [chatClient, setChatClient] = useState<StreamChat | null>(null);
-  const [videoClient, setVideoClient] = useState<StreamVideoClient | null>(null);
+  const [videoClient, setVideoClient] = useState<StreamVideoClient | null>(
+    null,
+  );
   const [chatConnected, setChatConnected] = useState(false);
   const [videoConnected, setVideoConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -67,37 +80,45 @@ const StreamProvider = ({
     expiresAt?: number;
   }>({});
 
-  const isTokenValid = useCallback((type: 'chat' | 'video') => {
-    const token = type === 'chat' ? tokenCache.chatToken : tokenCache.videoToken;
-    const expiresAt = tokenCache.expiresAt;
-    
-    if (!token || !expiresAt) return false;
-    
-    // Check if token expires within next 5 minutes
-    return Date.now() < (expiresAt - 5 * 60 * 1000);
-  }, [tokenCache]);
+  const isTokenValid = useCallback(
+    (type: "chat" | "video") => {
+      const token =
+        type === "chat" ? tokenCache.chatToken : tokenCache.videoToken;
+      const expiresAt = tokenCache.expiresAt;
 
-  const getCachedToken = useCallback(async (type: 'chat' | 'video'): Promise<string> => {
-    if (isTokenValid(type)) {
-      return type === 'chat' ? tokenCache.chatToken! : tokenCache.videoToken!;
-    }
+      if (!token || !expiresAt) return false;
 
-    // Generate new token
-    const newToken = type === 'chat' 
-      ? await chatTokenProvider(userId)
-      : await tokenProvider(userId);
+      // Check if token expires within next 5 minutes
+      return Date.now() < expiresAt - 5 * 60 * 1000;
+    },
+    [tokenCache],
+  );
 
-    // Cache with 50-minute expiry (tokens usually last 1 hour)
-    const expiresAt = Date.now() + 50 * 60 * 1000;
-    
-    setTokenCache(prev => ({
-      ...prev,
-      [`${type}Token`]: newToken,
-      expiresAt
-    }));
+  const getCachedToken = useCallback(
+    async (type: "chat" | "video"): Promise<string> => {
+      if (isTokenValid(type)) {
+        return type === "chat" ? tokenCache.chatToken! : tokenCache.videoToken!;
+      }
 
-    return newToken;
-  }, [userId, tokenCache, isTokenValid]);
+      // Generate new token
+      const newToken =
+        type === "chat"
+          ? await chatTokenProvider(userId)
+          : await tokenProvider(userId);
+
+      // Cache with 50-minute expiry (tokens usually last 1 hour)
+      const expiresAt = Date.now() + 50 * 60 * 1000;
+
+      setTokenCache((prev) => ({
+        ...prev,
+        [`${type}Token`]: newToken,
+        expiresAt,
+      }));
+
+      return newToken;
+    },
+    [userId, tokenCache, isTokenValid],
+  );
 
   // Exponential backoff retry logic
   const getRetryDelay = useCallback((attempt: number) => {
@@ -109,9 +130,9 @@ const StreamProvider = ({
 
     try {
       console.log(`Connecting user ${userDetails.id} to Stream Chat`);
-      
+
       const client = StreamChat.getInstance(apiKey);
-      
+
       // Ensure user exists in Stream's database
       try {
         await upsertUserToStream(userDetails.id);
@@ -121,7 +142,7 @@ const StreamProvider = ({
       }
 
       const streamRole = mapRoleToStream(userDetails.role);
-      
+
       await client.connectUser(
         {
           id: userDetails.id,
@@ -129,21 +150,26 @@ const StreamProvider = ({
           image: userDetails.image ?? undefined,
           role: streamRole,
         },
-        () => getCachedToken('chat')
+        () => getCachedToken("chat"),
       );
 
       setChatClient(client);
       setChatConnected(true);
-      
+
       // Initial channel sync only once
       if (!hasInitialSyncCompleted) {
         try {
-          console.log(`Performing initial channel sync for user ${userDetails.id}`);
+          console.log(
+            `Performing initial channel sync for user ${userDetails.id}`,
+          );
           await syncUserEventChannels(userDetails.id);
           setHasInitialSyncCompleted(true);
           console.log(`Completed initial sync for user ${userDetails.id}`);
         } catch (syncError) {
-          console.warn(`Channel sync failed for user ${userDetails.id}:`, syncError);
+          console.warn(
+            `Channel sync failed for user ${userDetails.id}:`,
+            syncError,
+          );
         }
       }
 
@@ -153,14 +179,21 @@ const StreamProvider = ({
       setChatConnected(false);
       throw error;
     }
-  }, [enableChat, userDetails, apiKey, chatConnected, hasInitialSyncCompleted, getCachedToken]);
+  }, [
+    enableChat,
+    userDetails,
+    apiKey,
+    chatConnected,
+    hasInitialSyncCompleted,
+    getCachedToken,
+  ]);
 
   const connectVideo = useCallback(async () => {
     if (!enableVideo || !userDetails || !apiKey || videoConnected) return;
 
     try {
       console.log(`Connecting user ${userDetails.id} to Stream Video`);
-      
+
       const client = new StreamVideoClient({
         apiKey: apiKey,
         user: {
@@ -168,7 +201,7 @@ const StreamProvider = ({
           name: userDetails.name ?? userDetails.id,
           image: userDetails.image ?? undefined,
         },
-        tokenProvider: () => getCachedToken('video'),
+        tokenProvider: () => getCachedToken("video"),
       });
 
       setVideoClient(client);
@@ -191,20 +224,24 @@ const StreamProvider = ({
       const promises = [];
       if (enableChat && !chatConnected) promises.push(connectChat());
       if (enableVideo && !videoConnected) promises.push(connectVideo());
-      
+
       await Promise.all(promises);
       setConnectionAttempts(0); // Reset on success
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Connection failed";
+      const errorMessage =
+        error instanceof Error ? error.message : "Connection failed";
       setError(errorMessage);
-      
+
       // Implement exponential backoff retry
       const newAttempts = connectionAttempts + 1;
       setConnectionAttempts(newAttempts);
-      
-      if (newAttempts < 5) { // Max 5 attempts
+
+      if (newAttempts < 5) {
+        // Max 5 attempts
         const delay = getRetryDelay(newAttempts);
-        console.log(`Retrying connection in ${delay}ms (attempt ${newAttempts})`);
+        console.log(
+          `Retrying connection in ${delay}ms (attempt ${newAttempts})`,
+        );
         setTimeout(() => {
           setIsConnecting(false);
           connectServices();
@@ -217,17 +254,17 @@ const StreamProvider = ({
       setIsConnecting(false);
     }
   }, [
-    isLoading, 
-    userDetails, 
-    isConnecting, 
-    enableChat, 
-    enableVideo, 
-    chatConnected, 
-    videoConnected, 
-    connectChat, 
-    connectVideo, 
-    connectionAttempts, 
-    getRetryDelay
+    isLoading,
+    userDetails,
+    isConnecting,
+    enableChat,
+    enableVideo,
+    chatConnected,
+    videoConnected,
+    connectChat,
+    connectVideo,
+    connectionAttempts,
+    getRetryDelay,
   ]);
 
   const retryConnection = useCallback(() => {
@@ -238,14 +275,14 @@ const StreamProvider = ({
 
   const disconnect = useCallback(async () => {
     const promises = [];
-    
+
     if (chatClient) {
       promises.push(
         chatClient.disconnectUser().then(() => {
           console.log("Chat client disconnected");
           setChatClient(null);
           setChatConnected(false);
-        })
+        }),
       );
     }
 
@@ -281,11 +318,17 @@ const StreamProvider = ({
   };
 
   // Loading state
-  if ((enableChat && !chatClient && !error) || (enableVideo && !videoClient && !error) || isConnecting) {
+  if (
+    (enableChat && !chatClient && !error) ||
+    (enableVideo && !videoClient && !error) ||
+    isConnecting
+  ) {
     return (
       <div className="flex items-center justify-center min-h-[200px]">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
-        {isConnecting && <p className="ml-4 text-sm text-gray-600">Connecting to Stream...</p>}
+        {isConnecting && (
+          <p className="ml-4 text-sm text-gray-600">Connecting to Stream...</p>
+        )}
       </div>
     );
   }
@@ -297,7 +340,7 @@ const StreamProvider = ({
         <div className="text-red-600 text-center">
           <h3 className="font-semibold mb-2">Connection Failed</h3>
           <p className="text-sm mb-4">{error}</p>
-          <button 
+          <button
             onClick={retryConnection}
             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
           >
@@ -313,20 +356,12 @@ const StreamProvider = ({
 
   // Wrap with video provider if enabled and connected
   if (enableVideo && videoClient) {
-    content = (
-      <StreamVideo client={videoClient}>
-        {content}
-      </StreamVideo>
-    );
+    content = <StreamVideo client={videoClient}>{content}</StreamVideo>;
   }
 
   // Wrap with chat provider if enabled and connected
   if (enableChat && chatClient) {
-    content = (
-      <Chat client={chatClient}>
-        {content}
-      </Chat>
-    );
+    content = <Chat client={chatClient}>{content}</Chat>;
   }
 
   return (

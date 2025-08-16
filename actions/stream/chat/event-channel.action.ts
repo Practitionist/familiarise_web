@@ -104,13 +104,18 @@ export const addUserToEventChannel = async (
       if (eventType === "webinar") {
         const webinar = await prisma.webinar.findUnique({
           where: { id: eventId },
-          include: { webinarPlan: { include: { consultantProfile: { include: { user: true } } } } },
+          include: {
+            webinarPlan: {
+              include: { consultantProfile: { include: { user: true } } },
+            },
+          },
         });
         if (!webinar) throw new Error(`Webinar ${eventId} not found`);
         channelName = webinar.webinarPlan.title;
         // Use the consultant as the creator if available
         if (webinar.webinarPlan.consultantProfile?.user?.id) {
-          const consultantUserId = webinar.webinarPlan.consultantProfile.user.id;
+          const consultantUserId =
+            webinar.webinarPlan.consultantProfile.user.id;
           // Ensure consultant user exists in Stream before making them a creator
           await upsertUserToStream(consultantUserId);
           channelCreatorId = consultantUserId;
@@ -119,12 +124,17 @@ export const addUserToEventChannel = async (
         // class
         const classData = await prisma.class.findUnique({
           where: { id: eventId },
-          include: { classPlan: { include: { consultantProfile: { include: { user: true } } } } },
+          include: {
+            classPlan: {
+              include: { consultantProfile: { include: { user: true } } },
+            },
+          },
         });
         if (!classData) throw new Error(`Class ${eventId} not found`);
         channelName = classData.classPlan.title;
         if (classData.classPlan.consultantProfile?.user?.id) {
-          const consultantUserId = classData.classPlan.consultantProfile.user.id;
+          const consultantUserId =
+            classData.classPlan.consultantProfile.user.id;
           await upsertUserToStream(consultantUserId);
           channelCreatorId = consultantUserId;
         }
@@ -275,12 +285,16 @@ export const syncUserEventChannels = async (userId: string) => {
     });
 
     // Combine and deduplicate webinar IDs
-    const allWebinarIds = Array.from(new Set([
-      ...webinarsFromWaitlist.map(w => w.id),
-      ...webinarsFromAppointments.map(w => w.id)
-    ]));
+    const allWebinarIds = Array.from(
+      new Set([
+        ...webinarsFromWaitlist.map((w) => w.id),
+        ...webinarsFromAppointments.map((w) => w.id),
+      ]),
+    );
 
-    console.log(`User ${userId}: Found ${webinarsFromWaitlist.length} webinars from waitlist, ${webinarsFromAppointments.length} from appointments, ${allWebinarIds.length} total unique webinars`);
+    console.log(
+      `User ${userId}: Found ${webinarsFromWaitlist.length} webinars from waitlist, ${webinarsFromAppointments.length} from appointments, ${allWebinarIds.length} total unique webinars`,
+    );
 
     // Add the user to all webinar channels
     for (const webinarId of allWebinarIds) {
@@ -300,7 +314,7 @@ export const syncUserEventChannels = async (userId: string) => {
       select: { id: true },
     });
 
-    // Method 2: Appointment participation  
+    // Method 2: Appointment participation
     const classesFromAppointments = await prisma.class.findMany({
       where: {
         appointments: {
@@ -321,12 +335,16 @@ export const syncUserEventChannels = async (userId: string) => {
     });
 
     // Combine and deduplicate class IDs
-    const allClassIds = Array.from(new Set([
-      ...classesFromWaitlist.map(c => c.id),
-      ...classesFromAppointments.map(c => c.id)
-    ]));
+    const allClassIds = Array.from(
+      new Set([
+        ...classesFromWaitlist.map((c) => c.id),
+        ...classesFromAppointments.map((c) => c.id),
+      ]),
+    );
 
-    console.log(`User ${userId}: Found ${classesFromWaitlist.length} classes from waitlist, ${classesFromAppointments.length} from appointments, ${allClassIds.length} total unique classes`);
+    console.log(
+      `User ${userId}: Found ${classesFromWaitlist.length} classes from waitlist, ${classesFromAppointments.length} from appointments, ${allClassIds.length} total unique classes`,
+    );
 
     // Add the user to all class channels
     for (const classId of allClassIds) {

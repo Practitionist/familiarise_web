@@ -104,7 +104,7 @@ export const ChatSidebar = () => {
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
+
   // Pagination state
   const [hasMoreTeamChannels, setHasMoreTeamChannels] = useState(true);
   const [hasMoreDMChannels, setHasMoreDMChannels] = useState(true);
@@ -120,7 +120,12 @@ export const ChatSidebar = () => {
 
     setIsLoading(true);
     setError(null);
-    console.log("Fetching channels for user:", client.userID, "with role:", client.user?.role);
+    console.log(
+      "Fetching channels for user:",
+      client.userID,
+      "with role:",
+      client.user?.role,
+    );
 
     try {
       const filter = { members: { $in: [client.userID] } };
@@ -145,27 +150,35 @@ export const ChatSidebar = () => {
       console.log(
         "Team channels found:",
         teamResponse.length,
-        teamResponse.map((c) => ({ 
-          id: c.cid, 
+        teamResponse.map((c) => ({
+          id: c.cid,
           name: c.data?.name,
           memberCount: Object.keys(c.state.members || {}).length,
           members: Object.keys(c.state.members || {}),
-          userIsMember: client.userID ? (c.state.members?.[client.userID] ? true : false) : false
+          userIsMember: client.userID
+            ? c.state.members?.[client.userID]
+              ? true
+              : false
+            : false,
         })),
       );
       console.log(
         "DM channels found:",
         dmResponse.length,
-        dmResponse.map((c) => ({ 
+        dmResponse.map((c) => ({
           id: c.cid,
           memberCount: Object.keys(c.state.members || {}).length,
-          userIsMember: client.userID ? (c.state.members?.[client.userID] ? true : false) : false
+          userIsMember: client.userID
+            ? c.state.members?.[client.userID]
+              ? true
+              : false
+            : false,
         })),
       );
 
       setTeamChannels(teamResponse);
       setDirectMessages(dmResponse);
-      
+
       // Update pagination state
       setHasMoreTeamChannels(teamResponse.length === options.limit);
       setHasMoreDMChannels(dmResponse.length === options.limit);
@@ -175,7 +188,7 @@ export const ChatSidebar = () => {
         error: err,
         userId: client.userID,
         userRole: client.user?.role,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
       setError("Failed to load channels. Please try refreshing.");
     } finally {
@@ -184,128 +197,165 @@ export const ChatSidebar = () => {
   }, [client]);
 
   // Function to load more channels (pagination)
-  const loadMoreChannels = useCallback(async (type: 'team' | 'messaging') => {
-    if (!client?.userID || isLoadingMore) return;
-    
-    const currentChannels = type === 'team' ? teamChannels : directMessages;
-    const hasMore = type === 'team' ? hasMoreTeamChannels : hasMoreDMChannels;
-    
-    if (!hasMore) return;
+  const loadMoreChannels = useCallback(
+    async (type: "team" | "messaging") => {
+      if (!client?.userID || isLoadingMore) return;
 
-    setIsLoadingMore(true);
-    
-    try {
-      const filter = { members: { $in: [client.userID] }, type };
-      const sort: { last_message_at: -1 } = { last_message_at: -1 };
-      
-      // Get the last channel's last_message_at for pagination
-      const lastChannel = currentChannels[currentChannels.length - 1];
-      const offset = currentChannels.length;
-      
-      const options = {
-        watch: true,
-        state: true,
-        limit: 20,
-        message_limit: 100, // Load messages for paginated channels too
-        presence: false,
-        offset,
-      };
+      const currentChannels = type === "team" ? teamChannels : directMessages;
+      const hasMore = type === "team" ? hasMoreTeamChannels : hasMoreDMChannels;
 
-      console.log(`Loading more ${type} channels from offset ${offset}`);
-      
-      const response = await client.queryChannels(filter, sort, options);
-      
-      if (type === 'team') {
-        setTeamChannels(prev => [...prev, ...response]);
-        setHasMoreTeamChannels(response.length === options.limit);
-      } else {
-        setDirectMessages(prev => [...prev, ...response]);
-        setHasMoreDMChannels(response.length === options.limit);
+      if (!hasMore) return;
+
+      setIsLoadingMore(true);
+
+      try {
+        const filter = { members: { $in: [client.userID] }, type };
+        const sort: { last_message_at: -1 } = { last_message_at: -1 };
+
+        // Get the last channel's last_message_at for pagination
+        const lastChannel = currentChannels[currentChannels.length - 1];
+        const offset = currentChannels.length;
+
+        const options = {
+          watch: true,
+          state: true,
+          limit: 20,
+          message_limit: 100, // Load messages for paginated channels too
+          presence: false,
+          offset,
+        };
+
+        console.log(`Loading more ${type} channels from offset ${offset}`);
+
+        const response = await client.queryChannels(filter, sort, options);
+
+        if (type === "team") {
+          setTeamChannels((prev) => [...prev, ...response]);
+          setHasMoreTeamChannels(response.length === options.limit);
+        } else {
+          setDirectMessages((prev) => [...prev, ...response]);
+          setHasMoreDMChannels(response.length === options.limit);
+        }
+
+        console.log(`Loaded ${response.length} more ${type} channels`);
+      } catch (error) {
+        console.error(`Error loading more ${type} channels:`, error);
+      } finally {
+        setIsLoadingMore(false);
       }
-      
-      console.log(`Loaded ${response.length} more ${type} channels`);
-    } catch (error) {
-      console.error(`Error loading more ${type} channels:`, error);
-    } finally {
-      setIsLoadingMore(false);
-    }
-  }, [client, teamChannels, directMessages, hasMoreTeamChannels, hasMoreDMChannels, isLoadingMore]);
+    },
+    [
+      client,
+      teamChannels,
+      directMessages,
+      hasMoreTeamChannels,
+      hasMoreDMChannels,
+      isLoadingMore,
+    ],
+  );
 
   // Handle individual channel deletion without full refresh
-  const handleChannelDeleted = useCallback((deletedChannelId: string) => {
-    console.log("Individual channel deleted:", deletedChannelId);
-    
-    // Remove from team channels
-    setTeamChannels(prevChannels => {
-      const filtered = prevChannels.filter(ch => ch.cid !== deletedChannelId);
-      if (filtered.length !== prevChannels.length) {
-        console.log("Removed team channel:", deletedChannelId);
+  const handleChannelDeleted = useCallback(
+    (deletedChannelId: string) => {
+      console.log("Individual channel deleted:", deletedChannelId);
+
+      // Remove from team channels
+      setTeamChannels((prevChannels) => {
+        const filtered = prevChannels.filter(
+          (ch) => ch.cid !== deletedChannelId,
+        );
+        if (filtered.length !== prevChannels.length) {
+          console.log("Removed team channel:", deletedChannelId);
+        }
+        return filtered;
+      });
+
+      // Remove from direct messages
+      setDirectMessages((prevChannels) => {
+        const filtered = prevChannels.filter(
+          (ch) => ch.cid !== deletedChannelId,
+        );
+        if (filtered.length !== prevChannels.length) {
+          console.log("Removed DM channel:", deletedChannelId);
+        }
+        return filtered;
+      });
+
+      // Clear active channel if it was the deleted one
+      if (activeChannelId === deletedChannelId) {
+        setActiveChannel(undefined);
+        setActiveChannelId(null);
       }
-      return filtered;
-    });
-    
-    // Remove from direct messages
-    setDirectMessages(prevChannels => {
-      const filtered = prevChannels.filter(ch => ch.cid !== deletedChannelId);
-      if (filtered.length !== prevChannels.length) {
-        console.log("Removed DM channel:", deletedChannelId);
-      }
-      return filtered;
-    });
-    
-    // Clear active channel if it was the deleted one
-    if (activeChannelId === deletedChannelId) {
-      setActiveChannel(undefined);
-      setActiveChannelId(null);
-    }
-  }, [activeChannelId, setActiveChannel]);
+    },
+    [activeChannelId, setActiveChannel],
+  );
 
   // Handle user being removed from channel
-  const handleUserRemovedFromChannel = useCallback((channelId: string) => {
-    console.log("User removed from channel:", channelId);
-    handleChannelDeleted(channelId); // Same logic as deletion
-  }, [handleChannelDeleted]);
+  const handleUserRemovedFromChannel = useCallback(
+    (channelId: string) => {
+      console.log("User removed from channel:", channelId);
+      handleChannelDeleted(channelId); // Same logic as deletion
+    },
+    [handleChannelDeleted],
+  );
 
   // Handle individual channel creation without full refresh
   const handleChannelCreated = useCallback(async () => {
     console.log("Individual channel created - checking for new channels");
-    
+
     if (!client?.userID) return;
-    
+
     try {
       // Only query for channels that might have been just created
       // Use a more recent timestamp filter to avoid loading all channels
-      const recentFilter = { 
+      const recentFilter = {
         members: { $in: [client.userID] },
         // created_at: { $gte: new Date(Date.now() - 60000) } // Last minute
       };
-      
+
       const [recentTeamChannels, recentDMChannels] = await Promise.all([
-        client.queryChannels({ ...recentFilter, type: "team" }, { created_at: -1 }, { limit: 5, state: true }),
-        client.queryChannels({ ...recentFilter, type: "messaging" }, { created_at: -1 }, { limit: 5, state: true }),
+        client.queryChannels(
+          { ...recentFilter, type: "team" },
+          { created_at: -1 },
+          { limit: 5, state: true },
+        ),
+        client.queryChannels(
+          { ...recentFilter, type: "messaging" },
+          { created_at: -1 },
+          { limit: 5, state: true },
+        ),
       ]);
-      
+
       // Add any new channels to existing lists (avoiding duplicates)
-      setTeamChannels(prevChannels => {
-        const existingIds = new Set(prevChannels.map(ch => ch.cid));
-        const newChannels = recentTeamChannels.filter(ch => !existingIds.has(ch.cid));
+      setTeamChannels((prevChannels) => {
+        const existingIds = new Set(prevChannels.map((ch) => ch.cid));
+        const newChannels = recentTeamChannels.filter(
+          (ch) => !existingIds.has(ch.cid),
+        );
         if (newChannels.length > 0) {
-          console.log("Adding new team channels:", newChannels.map(ch => ch.cid));
+          console.log(
+            "Adding new team channels:",
+            newChannels.map((ch) => ch.cid),
+          );
           return [...newChannels, ...prevChannels]; // New channels at top
         }
         return prevChannels;
       });
-      
-      setDirectMessages(prevChannels => {
-        const existingIds = new Set(prevChannels.map(ch => ch.cid));
-        const newChannels = recentDMChannels.filter(ch => !existingIds.has(ch.cid));
+
+      setDirectMessages((prevChannels) => {
+        const existingIds = new Set(prevChannels.map((ch) => ch.cid));
+        const newChannels = recentDMChannels.filter(
+          (ch) => !existingIds.has(ch.cid),
+        );
         if (newChannels.length > 0) {
-          console.log("Adding new DM channels:", newChannels.map(ch => ch.cid));
+          console.log(
+            "Adding new DM channels:",
+            newChannels.map((ch) => ch.cid),
+          );
           return [...newChannels, ...prevChannels]; // New channels at top
         }
         return prevChannels;
       });
-      
     } catch (err) {
       console.error("Error handling individual channel creation:", err);
       // Fallback to full refresh if individual handling fails
@@ -405,13 +455,20 @@ export const ChatSidebar = () => {
       setTeamChannels([]);
       setDirectMessages([]);
     }
-  }, [client, fetchChannels, activeChannelId, setActiveChannel, handleChannelDeleted, handleUserRemovedFromChannel]); // Add dependencies
+  }, [
+    client,
+    fetchChannels,
+    activeChannelId,
+    setActiveChannel,
+    handleChannelDeleted,
+    handleUserRemovedFromChannel,
+  ]); // Add dependencies
 
   const handleChannelSelect = (channel: Channel) => {
     setActiveChannelId(channel.cid || null);
     setActiveChannel(channel);
     // Mark channel as read to clear unread indicators
-    channel.markRead().catch(error => {
+    channel.markRead().catch((error) => {
       console.warn("Failed to mark channel as read:", error);
     });
   };
@@ -482,7 +539,7 @@ export const ChatSidebar = () => {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => loadMoreChannels('team')}
+                  onClick={() => loadMoreChannels("team")}
                   disabled={isLoadingMore}
                   className="w-full text-blue-200 hover:bg-blue-700 text-sm"
                 >
@@ -530,7 +587,7 @@ export const ChatSidebar = () => {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => loadMoreChannels('messaging')}
+                  onClick={() => loadMoreChannels("messaging")}
                   disabled={isLoadingMore}
                   className="w-full text-blue-200 hover:bg-blue-700 text-sm"
                 >
@@ -553,8 +610,8 @@ export const ChatSidebar = () => {
           className="w-full"
           onSuccess={handleRefresh}
         />
-        <DebugDialog 
-          userId={client?.userID || ""} 
+        <DebugDialog
+          userId={client?.userID || ""}
           variant="ghost"
           className="w-full text-blue-200 hover:bg-blue-700 hover:text-white"
         />

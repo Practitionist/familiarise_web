@@ -82,16 +82,16 @@ export const fetchReviews = async (
 
 /**
  * Maps application user roles to Stream Chat roles
- * 
+ *
  * Standard Stream Chat roles:
  * - admin: Full permissions (create, read, update, delete channels)
  * - user: Basic user permissions (but may not have team channel access by default)
  * - guest: Limited permissions
  * - anonymous: Very limited permissions
- * 
+ *
  * For now, using admin for consultants and consultees to ensure team channel access.
  * This can be refined later with custom roles configured in Stream Chat dashboard.
- * 
+ *
  * @param role The application user role
  * @returns The corresponding Stream Chat role
  */
@@ -103,7 +103,7 @@ export function mapRoleToStream(role: string | null | undefined): string {
       return "admin";
     case "CONSULTANT":
       // Consultants need to create and manage their event channels
-      return "admin"; 
+      return "admin";
     case "CONSULTEE":
       // Consultees need to read and participate in team channels they join
       return "admin";

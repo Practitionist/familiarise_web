@@ -143,33 +143,44 @@ const MeetingRoom = () => {
 
         {/* Video layout and call controls */}
         <div className="fixed bottom-0 flex w-full items-center justify-center gap-5">
-          <CallControls onLeave={async () => {
-            // Handle participant leaving call (not ending for everyone)
-            console.log("Participant leaving call");
-            try {
-              await call?.leave();
-              
-              // Navigate to appropriate dashboard
-              if (session?.user) {
-                const { role, consultantProfileId, consulteeProfileId, staffProfileId } = session.user;
-                
-                if (role === "CONSULTANT" && consultantProfileId) {
-                  router.push(`/dashboard/consultant/${consultantProfileId}/home`);
-                } else if (role === "CONSULTEE" && consulteeProfileId) {
-                  router.push(`/dashboard/consultee/${consulteeProfileId}/home`);
-                } else if (role === "STAFF" && staffProfileId) {
-                  router.push(`/dashboard/staff/${staffProfileId}/home`);
+          <CallControls
+            onLeave={async () => {
+              // Handle participant leaving call (not ending for everyone)
+              console.log("Participant leaving call");
+              try {
+                await call?.leave();
+
+                // Navigate to appropriate dashboard
+                if (session?.user) {
+                  const {
+                    role,
+                    consultantProfileId,
+                    consulteeProfileId,
+                    staffProfileId,
+                  } = session.user;
+
+                  if (role === "CONSULTANT" && consultantProfileId) {
+                    router.push(
+                      `/dashboard/consultant/${consultantProfileId}/home`,
+                    );
+                  } else if (role === "CONSULTEE" && consulteeProfileId) {
+                    router.push(
+                      `/dashboard/consultee/${consulteeProfileId}/home`,
+                    );
+                  } else if (role === "STAFF" && staffProfileId) {
+                    router.push(`/dashboard/staff/${staffProfileId}/home`);
+                  } else {
+                    router.push("/");
+                  }
                 } else {
                   router.push("/");
                 }
-              } else {
+              } catch (error) {
+                console.error("Error leaving call:", error);
                 router.push("/");
               }
-            } catch (error) {
-              console.error("Error leaving call:", error);
-              router.push("/");
-            }
-          }} />
+            }}
+          />
 
           <DropdownMenu>
             <div className="flex items-center">

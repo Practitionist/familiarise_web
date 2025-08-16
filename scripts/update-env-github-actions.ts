@@ -64,8 +64,8 @@
 
 // ***
 
-// **In summary:**  
-// To bulk update GitHub Actions environment variables, use the GitHub REST API programmatically with a script that loops through your variables. There is no official GUI for bulk editing; scripting is the standard approach. 
+// **In summary:**
+// To bulk update GitHub Actions environment variables, use the GitHub REST API programmatically with a script that loops through your variables. There is no official GUI for bulk editing; scripting is the standard approach.
 
 // If you need code for a specific language or workflow, let me know!
 
@@ -82,9 +82,9 @@
 
 // ===== IMPLEMENTATION =====
 
-import * as fs from 'fs';
-import * as path from 'path';
-import _sodium from 'libsodium-wrappers';
+import * as fs from "fs";
+import * as path from "path";
+import _sodium from "libsodium-wrappers";
 
 interface GitHubConfig {
   owner: string;
@@ -105,18 +105,18 @@ function parseEnvFile(envPath: string): EnvVariable[] {
     throw new Error(`Environment file not found: ${envPath}`);
   }
 
-  const envContent = fs.readFileSync(envPath, 'utf-8');
+  const envContent = fs.readFileSync(envPath, "utf-8");
   const variables: EnvVariable[] = [];
 
-  envContent.split('\n').forEach((line, index) => {
+  envContent.split("\n").forEach((line, index) => {
     const trimmedLine = line.trim();
-    
+
     // Skip empty lines and comments
-    if (!trimmedLine || trimmedLine.startsWith('#')) {
+    if (!trimmedLine || trimmedLine.startsWith("#")) {
       return;
     }
 
-    const equalIndex = trimmedLine.indexOf('=');
+    const equalIndex = trimmedLine.indexOf("=");
     if (equalIndex === -1) {
       console.warn(`Warning: Invalid line ${index + 1} in .env file: ${line}`);
       return;
@@ -126,7 +126,7 @@ function parseEnvFile(envPath: string): EnvVariable[] {
     const value = trimmedLine.substring(equalIndex + 1).trim();
 
     // Remove surrounding quotes if present
-    const cleanValue = value.replace(/^["']|["']$/g, '');
+    const cleanValue = value.replace(/^["']|["']$/g, "");
 
     variables.push({ key, value: cleanValue });
   });
@@ -139,37 +139,43 @@ function parseEnvFile(envPath: string): EnvVariable[] {
  */
 async function testRepositoryAccess(config: GitHubConfig): Promise<boolean> {
   try {
-    console.log(`🔍 Testing access to repository: ${config.owner}/${config.repo}`);
+    console.log(
+      `🔍 Testing access to repository: ${config.owner}/${config.repo}`,
+    );
     const repoResponse = await fetch(
       `https://api.github.com/repos/${config.owner}/${config.repo}`,
       {
         headers: {
-          'Accept': 'application/vnd.github+json',
-          'Authorization': `Bearer ${config.token}`,
-          'X-GitHub-Api-Version': '2022-11-28',
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${config.token}`,
+          "X-GitHub-Api-Version": "2022-11-28",
         },
-      }
+      },
     );
 
     if (repoResponse.ok) {
       const repoData = await repoResponse.json();
-      console.log(`✅ Repository access confirmed: ${repoData.full_name} (${repoData.private ? 'private' : 'public'})`);
+      console.log(
+        `✅ Repository access confirmed: ${repoData.full_name} (${repoData.private ? "private" : "public"})`,
+      );
       return true;
     } else {
-      console.error(`❌ Repository access failed: ${repoResponse.status} ${repoResponse.statusText}`);
+      console.error(
+        `❌ Repository access failed: ${repoResponse.status} ${repoResponse.statusText}`,
+      );
       if (repoResponse.status === 404) {
-        console.error('   - Repository not found or token lacks access');
-        console.error('   - Check repository name and token permissions');
+        console.error("   - Repository not found or token lacks access");
+        console.error("   - Check repository name and token permissions");
       }
-      
+
       // Try to get more error details
       try {
         const errorData = await repoResponse.json();
-        console.error('   - Error details:', errorData.message);
+        console.error("   - Error details:", errorData.message);
       } catch (e) {
         // Ignore JSON parse errors
       }
-      
+
       return false;
     }
   } catch (error) {
@@ -184,7 +190,7 @@ async function testRepositoryAccess(config: GitHubConfig): Promise<boolean> {
 async function updateGitHubSecret(
   config: GitHubConfig,
   secretName: string,
-  secretValue: string
+  secretValue: string,
 ): Promise<boolean> {
   try {
     // Initialize libsodium
@@ -194,77 +200,87 @@ async function updateGitHubSecret(
     // First, get the repository's public key for encryption
     const publicKeyUrl = `https://api.github.com/repos/${config.owner}/${config.repo}/actions/secrets/public-key`;
     // Get repository public key for encryption
-    
+
     const publicKeyResponse = await fetch(publicKeyUrl, {
       headers: {
-        'Accept': 'application/vnd.github+json',
-        'Authorization': `Bearer ${config.token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${config.token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
       },
     });
 
     if (!publicKeyResponse.ok) {
-      console.error(`Failed to get public key: ${publicKeyResponse.status} ${publicKeyResponse.statusText}`);
-      
+      console.error(
+        `Failed to get public key: ${publicKeyResponse.status} ${publicKeyResponse.statusText}`,
+      );
+
       // Try to get more error details
       try {
         const errorData = await publicKeyResponse.json();
-        console.error('   - Error details:', errorData.message);
+        console.error("   - Error details:", errorData.message);
         if (errorData.documentation_url) {
-          console.error('   - Documentation:', errorData.documentation_url);
+          console.error("   - Documentation:", errorData.documentation_url);
         }
       } catch (e) {
         // Ignore JSON parse errors
       }
-      
+
       return false;
     }
 
     const publicKeyData = await publicKeyResponse.json();
-    
+
     // GitHub public key received successfully
-    
-    // Encrypt the secret value using libsodium sealed box encryption  
+
+    // Encrypt the secret value using libsodium sealed box encryption
     // GitHub uses libsodium sealed box for repository secrets
     let publicKeyBytes: Uint8Array;
     try {
-      publicKeyBytes = sodium.from_base64(publicKeyData.key, sodium.base64_variants.ORIGINAL);
+      publicKeyBytes = sodium.from_base64(
+        publicKeyData.key,
+        sodium.base64_variants.ORIGINAL,
+      );
     } catch (e) {
       console.error(`   - Failed to decode public key: ${e}`);
       return false;
     }
-    
+
     const secretBytes = sodium.from_string(secretValue);
-    
+
     // Use sealed box encryption (anonymous encryption)
     const encrypted = sodium.crypto_box_seal(secretBytes, publicKeyBytes);
-    
+
     // Encode as base64
-    const encryptedValue = sodium.to_base64(encrypted, sodium.base64_variants.ORIGINAL);
+    const encryptedValue = sodium.to_base64(
+      encrypted,
+      sodium.base64_variants.ORIGINAL,
+    );
 
     // Update the secret
     const updateResponse = await fetch(
       `https://api.github.com/repos/${config.owner}/${config.repo}/actions/secrets/${secretName}`,
       {
-        method: 'PUT',
+        method: "PUT",
         headers: {
-          'Accept': 'application/vnd.github+json',
-          'Authorization': `Bearer ${config.token}`,
-          'X-GitHub-Api-Version': '2022-11-28',
-          'Content-Type': 'application/json',
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${config.token}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           encrypted_value: encryptedValue,
           key_id: publicKeyData.key_id,
         }),
-      }
+      },
     );
 
     if (updateResponse.ok) {
       console.log(`✅ Successfully updated secret: ${secretName}`);
       return true;
     } else {
-      console.error(`❌ Failed to update secret ${secretName}: ${updateResponse.status} ${updateResponse.statusText}`);
+      console.error(
+        `❌ Failed to update secret ${secretName}: ${updateResponse.status} ${updateResponse.statusText}`,
+      );
       return false;
     }
   } catch (error) {
@@ -277,31 +293,35 @@ async function updateGitHubSecret(
  * Main function to sync .env file to GitHub Actions secrets
  */
 async function syncEnvToGitHub(): Promise<void> {
-  console.log('🚀 Starting environment variable sync to GitHub Actions...\n');
+  console.log("🚀 Starting environment variable sync to GitHub Actions...\n");
 
   try {
     // Parse .env file first to get GitHub credentials
-    const envPath = path.join(process.cwd(), '.env');
+    const envPath = path.join(process.cwd(), ".env");
     console.log(`📁 Reading environment file: ${envPath}`);
-    
+
     const envVariables = parseEnvFile(envPath);
     console.log(`📊 Found ${envVariables.length} environment variables\n`);
 
     // Extract GitHub credentials from .env
-    const githubToken = envVariables.find(({ key }) => key === 'GITHUB_TOKEN')?.value;
+    const githubToken = envVariables.find(
+      ({ key }) => key === "GITHUB_TOKEN",
+    )?.value;
 
     // Configuration using values from .env (override with correct repository owner)
     const config: GitHubConfig = {
-      owner: 'Practitionist', // Detected from git remote
-      repo: 'familiarise_web',
-      token: githubToken || '',
+      owner: "Practitionist", // Detected from git remote
+      repo: "familiarise_web",
+      token: githubToken || "",
     };
 
     // Validate configuration
     if (!config.token) {
-      console.error('❌ Error: GITHUB_TOKEN not found in .env file');
-      console.log('Add GITHUB_TOKEN=your_token to .env file');
-      console.log('Create a Personal Access Token with "repo" scope at: https://github.com/settings/tokens');
+      console.error("❌ Error: GITHUB_TOKEN not found in .env file");
+      console.log("Add GITHUB_TOKEN=your_token to .env file");
+      console.log(
+        'Create a Personal Access Token with "repo" scope at: https://github.com/settings/tokens',
+      );
       process.exit(1);
     }
 
@@ -311,28 +331,31 @@ async function syncEnvToGitHub(): Promise<void> {
     // Test repository access before attempting to sync secrets
     console.log(`🔍 Validating GitHub repository access...\n`);
     if (!(await testRepositoryAccess(config))) {
-      console.error('\n❌ Cannot access repository. Please check:');
-      console.error('   1. Repository name is correct');
+      console.error("\n❌ Cannot access repository. Please check:");
+      console.error("   1. Repository name is correct");
       console.error('   2. GitHub token has "repo" scope');
-      console.error('   3. Token has access to the repository');
+      console.error("   3. Token has access to the repository");
       process.exit(1);
     }
-    console.log(''); // Add spacing
+    console.log(""); // Add spacing
 
     // Sync ALL environment variables except GitHub credentials and empty values
     // IMPORTANT: Exclude GitHub credentials to avoid uploading them to GitHub Actions
-    const secretsToSync = envVariables.filter(({ key, value }) => 
-      // Never sync GitHub credentials to avoid security issues
-      !['GITHUB_TOKEN', 'GITHUB_OWNER'].includes(key) &&
-      // Skip empty values to avoid 422 errors
-      value.trim() !== ''
+    const secretsToSync = envVariables.filter(
+      ({ key, value }) =>
+        // Never sync GitHub credentials to avoid security issues
+        !["GITHUB_TOKEN", "GITHUB_OWNER"].includes(key) &&
+        // Skip empty values to avoid 422 errors
+        value.trim() !== "",
     );
 
     console.log(`📋 Environment variables to sync:`);
     secretsToSync.forEach(({ key }) => console.log(`   - ${key}`));
-    console.log('');
+    console.log("");
 
-    console.log(`🔄 Syncing ${secretsToSync.length} secrets to GitHub repository: ${config.owner}/${config.repo}\n`);
+    console.log(
+      `🔄 Syncing ${secretsToSync.length} secrets to GitHub repository: ${config.owner}/${config.repo}\n`,
+    );
 
     let successCount = 0;
     let failureCount = 0;
@@ -340,43 +363,48 @@ async function syncEnvToGitHub(): Promise<void> {
     // Update each secret
     for (const { key, value } of secretsToSync) {
       console.log(`⏳ Updating secret: ${key}...`);
-      
+
       if (await updateGitHubSecret(config, key, value)) {
         successCount++;
       } else {
         failureCount++;
       }
-      
+
       // Add small delay to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
-    console.log('\n📈 Sync Summary:');
+    console.log("\n📈 Sync Summary:");
     console.log(`✅ Successful: ${successCount}`);
     console.log(`❌ Failed: ${failureCount}`);
-    
-    if (failureCount === 0) {
-      console.log('\n🎉 All environment variables synced successfully!');
-      console.log('💡 You can now re-run your GitHub Actions workflow.');
-    } else {
-      console.log('\n⚠️  Some secrets failed to sync. Please check the errors above.');
-    }
 
+    if (failureCount === 0) {
+      console.log("\n🎉 All environment variables synced successfully!");
+      console.log("💡 You can now re-run your GitHub Actions workflow.");
+    } else {
+      console.log(
+        "\n⚠️  Some secrets failed to sync. Please check the errors above.",
+      );
+    }
   } catch (error) {
-    console.error('❌ Error during sync process:', error);
+    console.error("❌ Error during sync process:", error);
     process.exit(1);
   }
 }
 
 // Run the sync if this file is executed directly
 if (require.main === module) {
-  console.log('🔧 GitHub Actions Environment Variable Sync Tool\n');
-  console.log('Usage:');
-  console.log('1. Add GITHUB_TOKEN=your_token to .env file (Personal Access Token with "repo" scope)');
-  console.log('2. Add GITHUB_OWNER=your_github_username to .env file');
-  console.log('3. Run: npm run scripts:sync-env-github\n');
-  console.log('📋 Required GitHub Token Permissions: ✅ repo (Full control of private repositories)\n');
-  
+  console.log("🔧 GitHub Actions Environment Variable Sync Tool\n");
+  console.log("Usage:");
+  console.log(
+    '1. Add GITHUB_TOKEN=your_token to .env file (Personal Access Token with "repo" scope)',
+  );
+  console.log("2. Add GITHUB_OWNER=your_github_username to .env file");
+  console.log("3. Run: npm run scripts:sync-env-github\n");
+  console.log(
+    "📋 Required GitHub Token Permissions: ✅ repo (Full control of private repositories)\n",
+  );
+
   syncEnvToGitHub().catch(console.error);
 }
 

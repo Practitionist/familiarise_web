@@ -31,7 +31,9 @@ export async function createChannel({
 
   // Ensure creator is always included in members list
   const allMembers = Array.from(new Set([createdById, ...members]));
-  console.log(`Creating ${channelType} channel ${channelId} with ${allMembers.length} members including creator ${createdById}`);
+  console.log(
+    `Creating ${channelType} channel ${channelId} with ${allMembers.length} members including creator ${createdById}`,
+  );
 
   // Create the channel with members atomically
   const channel = serverClient.channel(channelType, channelId, {
@@ -42,12 +44,17 @@ export async function createChannel({
   });
 
   await channel.create();
-  console.log(`Channel ${channelId} created successfully with ${allMembers.length} members`);
+  console.log(
+    `Channel ${channelId} created successfully with ${allMembers.length} members`,
+  );
 
   // Verify membership was established
   const channelData = await channel.query();
   const actualMembers = Object.keys(channelData.members || {});
-  console.log(`Channel ${channelId} actual members after creation:`, actualMembers);
+  console.log(
+    `Channel ${channelId} actual members after creation:`,
+    actualMembers,
+  );
 
   return { channelId, members: actualMembers, channelData };
 }
@@ -114,16 +121,21 @@ export async function createWebinarChannel(webinarId: string) {
 
   // Get participant IDs from waitlist
   const waitlistParticipantIds = webinar.waitlist.map((entry) => entry.userId);
-  
+
   // Get participant IDs from appointments
-  const appointmentParticipantIds = webinar.appointment?.slotsOfAppointment?.flatMap(
-    (slot) => slot.user.map((user) => user.id)
-  ) || [];
+  const appointmentParticipantIds =
+    webinar.appointment?.slotsOfAppointment?.flatMap((slot) =>
+      slot.user.map((user) => user.id),
+    ) || [];
 
   // Combine both sets and remove duplicates
-  const allParticipantIds = Array.from(new Set([...waitlistParticipantIds, ...appointmentParticipantIds]));
+  const allParticipantIds = Array.from(
+    new Set([...waitlistParticipantIds, ...appointmentParticipantIds]),
+  );
 
-  console.log(`Webinar ${webinarId} participants: ${waitlistParticipantIds.length} from waitlist, ${appointmentParticipantIds.length} from appointments, ${allParticipantIds.length} total unique`);
+  console.log(
+    `Webinar ${webinarId} participants: ${waitlistParticipantIds.length} from waitlist, ${appointmentParticipantIds.length} from appointments, ${allParticipantIds.length} total unique`,
+  );
 
   return createChannel({
     channelType: "team",
@@ -178,19 +190,26 @@ export async function createClassChannel(classId: string) {
   }
 
   // Get participant IDs from waitlist
-  const waitlistParticipantIds = classData.waitlist.map((entry) => entry.userId);
-  
+  const waitlistParticipantIds = classData.waitlist.map(
+    (entry) => entry.userId,
+  );
+
   // Get participant IDs from appointments
-  const appointmentParticipantIds = classData.appointments?.flatMap(
-    (appointment) => appointment.slotsOfAppointment?.flatMap(
-      (slot) => slot.user.map((user) => user.id)
-    )
-  ) || [];
+  const appointmentParticipantIds =
+    classData.appointments?.flatMap((appointment) =>
+      appointment.slotsOfAppointment?.flatMap((slot) =>
+        slot.user.map((user) => user.id),
+      ),
+    ) || [];
 
   // Combine both sets and remove duplicates
-  const allParticipantIds = Array.from(new Set([...waitlistParticipantIds, ...appointmentParticipantIds]));
+  const allParticipantIds = Array.from(
+    new Set([...waitlistParticipantIds, ...appointmentParticipantIds]),
+  );
 
-  console.log(`Class ${classId} participants: ${waitlistParticipantIds.length} from waitlist, ${appointmentParticipantIds.length} from appointments, ${allParticipantIds.length} total unique`);
+  console.log(
+    `Class ${classId} participants: ${waitlistParticipantIds.length} from waitlist, ${appointmentParticipantIds.length} from appointments, ${allParticipantIds.length} total unique`,
+  );
 
   return createChannel({
     channelType: "team",
@@ -531,9 +550,11 @@ export async function addMemberToChannel(channelId: string, userId: string) {
   // await upsertUserToStream(userId); // Removed this line
 
   // Infer channel type from ID pattern
-  const channelType = channelId.startsWith("consultation-") || channelId.startsWith("subscription-")
-    ? "messaging"
-    : "team";
+  const channelType =
+    channelId.startsWith("consultation-") ||
+    channelId.startsWith("subscription-")
+      ? "messaging"
+      : "team";
   console.log(
     `Adding member ${userId} to ${channelType} channel ${channelId} via action`,
   );

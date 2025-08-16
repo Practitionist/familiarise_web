@@ -175,9 +175,9 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     // Require authentication
     if (!isAuthenticated) {
       // For meeting routes, preserve the meeting URL as callbackUrl
-      if (pathname.startsWith('/meetings/')) {
+      if (pathname.startsWith("/meetings/")) {
         const signInUrl = new URL(URLS.SIGNIN, req.url);
-        signInUrl.searchParams.set('callbackUrl', pathname);
+        signInUrl.searchParams.set("callbackUrl", pathname);
         return NextResponse.redirect(signInUrl);
       }
       return NextResponse.redirect(new URL(URLS.SIGNIN, req.url));

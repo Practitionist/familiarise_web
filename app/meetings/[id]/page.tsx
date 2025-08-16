@@ -2,7 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { StreamCall, StreamTheme, CallingState } from "@stream-io/video-react-sdk";
+import {
+  StreamCall,
+  StreamTheme,
+  CallingState,
+} from "@stream-io/video-react-sdk";
 import { Loader2 } from "lucide-react";
 
 import { useGetCallById } from "./hooks/useGetCallById";
@@ -21,11 +25,11 @@ const MeetingPage = () => {
   useEffect(() => {
     return () => {
       console.log("Meeting page unmounting, cleaning up call...");
-      
+
       // Cleanup call if still active
       if (call?.state.callingState !== CallingState.LEFT) {
         console.log("Leaving call on unmount");
-        call?.leave().catch(error => {
+        call?.leave().catch((error) => {
           console.warn("Error leaving call on unmount:", error);
         });
       }

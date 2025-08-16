@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { StreamChat } from "stream-chat";
 import prisma from "@/lib/prisma";
-import type { TConsultation, TSubscription, TWebinar, TClass } from "@/types/appointment";
+import type {
+  TConsultation,
+  TSubscription,
+  TWebinar,
+  TClass,
+} from "@/types/appointment";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 const apiSecret = process.env.STREAM_API_SECRET;
@@ -167,7 +172,7 @@ export async function GET(req: NextRequest) {
     let webinars: TWebinar[] = [];
     if (user.consultantProfile) {
       // For consultants, get webinars they host
-      webinars = await prisma.webinar.findMany({
+      webinars = (await prisma.webinar.findMany({
         where: {
           webinarPlan: {
             consultantProfileId: user.consultantProfile.id,
@@ -183,12 +188,14 @@ export async function GET(req: NextRequest) {
           waitlist: true,
           appointment: {
             include: {
-              slotsOfAppointment: { include: { user: true, meetingSession: true } },
+              slotsOfAppointment: {
+                include: { user: true, meetingSession: true },
+              },
               payment: true,
             },
           },
         },
-      }) as TWebinar[];
+      })) as TWebinar[];
     } else {
       // For consultees, get webinars from both waitlist AND appointments
       const webinarsFromWaitlist = await prisma.webinar.findMany({
@@ -209,7 +216,9 @@ export async function GET(req: NextRequest) {
           waitlist: true,
           appointment: {
             include: {
-              slotsOfAppointment: { include: { user: true, meetingSession: true } },
+              slotsOfAppointment: {
+                include: { user: true, meetingSession: true },
+              },
               payment: true,
             },
           },
@@ -240,7 +249,9 @@ export async function GET(req: NextRequest) {
           waitlist: true,
           appointment: {
             include: {
-              slotsOfAppointment: { include: { user: true, meetingSession: true } },
+              slotsOfAppointment: {
+                include: { user: true, meetingSession: true },
+              },
               payment: true,
             },
           },
@@ -248,11 +259,13 @@ export async function GET(req: NextRequest) {
       });
 
       // Combine and deduplicate
-      const allWebinarIds = Array.from(new Set([
-        ...webinarsFromWaitlist.map(w => w.id),
-        ...webinarsFromAppointments.map(w => w.id)
-      ]));
-      
+      const allWebinarIds = Array.from(
+        new Set([
+          ...webinarsFromWaitlist.map((w) => w.id),
+          ...webinarsFromAppointments.map((w) => w.id),
+        ]),
+      );
+
       // Merge webinars, preferring the one with more complete data
       const webinarMap = new Map<string, TWebinar>();
       [...webinarsFromWaitlist, ...webinarsFromAppointments].forEach((w) => {
@@ -265,7 +278,7 @@ export async function GET(req: NextRequest) {
     let classes: TClass[] = [];
     if (user.consultantProfile) {
       // For consultants, get classes they host
-      classes = await prisma.class.findMany({
+      classes = (await prisma.class.findMany({
         where: {
           classPlan: {
             consultantProfileId: user.consultantProfile.id,
@@ -282,12 +295,14 @@ export async function GET(req: NextRequest) {
           waitlist: true,
           appointments: {
             include: {
-              slotsOfAppointment: { include: { user: true, meetingSession: true } },
+              slotsOfAppointment: {
+                include: { user: true, meetingSession: true },
+              },
               payment: true,
             },
           },
         },
-      }) as TClass[];
+      })) as TClass[];
     } else {
       // For consultees, get classes from both waitlist AND appointments
       const classesFromWaitlist = await prisma.class.findMany({
@@ -309,7 +324,9 @@ export async function GET(req: NextRequest) {
           waitlist: true,
           appointments: {
             include: {
-              slotsOfAppointment: { include: { user: true, meetingSession: true } },
+              slotsOfAppointment: {
+                include: { user: true, meetingSession: true },
+              },
               payment: true,
             },
           },
@@ -343,7 +360,9 @@ export async function GET(req: NextRequest) {
           waitlist: true,
           appointments: {
             include: {
-              slotsOfAppointment: { include: { user: true, meetingSession: true } },
+              slotsOfAppointment: {
+                include: { user: true, meetingSession: true },
+              },
               payment: true,
             },
           },
@@ -351,11 +370,13 @@ export async function GET(req: NextRequest) {
       });
 
       // Combine and deduplicate
-      const allClassIds = Array.from(new Set([
-        ...classesFromWaitlist.map(c => c.id),
-        ...classesFromAppointments.map(c => c.id)
-      ]));
-      
+      const allClassIds = Array.from(
+        new Set([
+          ...classesFromWaitlist.map((c) => c.id),
+          ...classesFromAppointments.map((c) => c.id),
+        ]),
+      );
+
       // Merge classes, preferring the one with more complete data
       const classMap = new Map<string, TClass>();
       [...classesFromWaitlist, ...classesFromAppointments].forEach((c) => {
@@ -388,76 +409,90 @@ export async function GET(req: NextRequest) {
         id: consultation.id,
         status: consultation.requestStatus,
         consultationPlanId: consultation.consultationPlanId,
-        consultationPlanTitle: consultation.consultationPlan?.title || 'Unknown',
+        consultationPlanTitle:
+          consultation.consultationPlan?.title || "Unknown",
         consultantId: user.consultantProfileId
-          ? consultation.requestedBy?.user?.id || 'Unknown'
-          : consultation.consultationPlan?.consultantProfile?.user?.id || 'Unknown',
+          ? consultation.requestedBy?.user?.id || "Unknown"
+          : consultation.consultationPlan?.consultantProfile?.user?.id ||
+            "Unknown",
         consulteeId: user.consultantProfileId
-          ? consultation.requestedBy?.user?.id || 'Unknown'
+          ? consultation.requestedBy?.user?.id || "Unknown"
           : user.id,
       })),
       subscriptions: subscriptions.map((subscription) => ({
         id: subscription.id,
         status: subscription.requestStatus,
         subscriptionPlanId: subscription.subscriptionPlanId,
-        subscriptionPlanTitle: subscription.subscriptionPlan?.title || 'Unknown',
+        subscriptionPlanTitle:
+          subscription.subscriptionPlan?.title || "Unknown",
         consultantId: user.consultantProfileId
           ? user.id
-          : subscription.subscriptionPlan?.consultantProfile?.user?.id || 'Unknown',
+          : subscription.subscriptionPlan?.consultantProfile?.user?.id ||
+            "Unknown",
         consulteeId: user.consultantProfileId
-          ? subscription.requestedBy?.user?.id || 'Unknown'
+          ? subscription.requestedBy?.user?.id || "Unknown"
           : user.id,
       })),
       webinars: webinars.map((webinar) => {
-        const waitlistParticipantIds = (webinar.waitlist || []).map((entry) => entry.userId);
-        const appointmentParticipantIds = (webinar.appointment?.slotsOfAppointment || []).flatMap(
-          (slot) => slot.user.map((user) => user.id)
+        const waitlistParticipantIds = (webinar.waitlist || []).map(
+          (entry) => entry.userId,
         );
-        const allParticipantIds = Array.from(new Set([...waitlistParticipantIds, ...appointmentParticipantIds]));
-        
+        const appointmentParticipantIds = (
+          webinar.appointment?.slotsOfAppointment || []
+        ).flatMap((slot) => slot.user.map((user) => user.id));
+        const allParticipantIds = Array.from(
+          new Set([...waitlistParticipantIds, ...appointmentParticipantIds]),
+        );
+
         return {
           id: webinar.id,
           status: webinar.status,
           webinarPlanId: webinar.webinarPlanId,
-          webinarPlanTitle: webinar.webinarPlan?.title || 'Unknown',
+          webinarPlanTitle: webinar.webinarPlan?.title || "Unknown",
           consultantId: user.consultantProfileId
             ? user.id
-            : webinar.webinarPlan?.consultantProfile?.user?.id || 'Unknown',
+            : webinar.webinarPlan?.consultantProfile?.user?.id || "Unknown",
           participantIds: allParticipantIds,
           waitlistParticipantIds,
           appointmentParticipantIds,
           participantBreakdown: {
             fromWaitlist: waitlistParticipantIds.length,
             fromAppointments: appointmentParticipantIds.length,
-            totalUnique: allParticipantIds.length
-          }
+            totalUnique: allParticipantIds.length,
+          },
         };
       }),
       classes: classes.map((classData) => {
-        const waitlistParticipantIds = (classData.waitlist || []).map((entry) => entry.userId);
-        const appointmentParticipantIds = (classData.appointments || []).flatMap(
-          (appointment) => (appointment.slotsOfAppointment || []).flatMap(
-            (slot) => slot.user.map((user) => user.id)
-          )
+        const waitlistParticipantIds = (classData.waitlist || []).map(
+          (entry) => entry.userId,
         );
-        const allParticipantIds = Array.from(new Set([...waitlistParticipantIds, ...appointmentParticipantIds]));
-        
+        const appointmentParticipantIds = (
+          classData.appointments || []
+        ).flatMap((appointment) =>
+          (appointment.slotsOfAppointment || []).flatMap((slot) =>
+            slot.user.map((user) => user.id),
+          ),
+        );
+        const allParticipantIds = Array.from(
+          new Set([...waitlistParticipantIds, ...appointmentParticipantIds]),
+        );
+
         return {
           id: classData.id,
           status: classData.status,
           classPlanId: classData.classPlanId,
-          classPlanTitle: classData.classPlan?.title || 'Unknown',
+          classPlanTitle: classData.classPlan?.title || "Unknown",
           consultantId: user.consultantProfileId
             ? user.id
-            : classData.classPlan?.consultantProfile?.user?.id || 'Unknown',
+            : classData.classPlan?.consultantProfile?.user?.id || "Unknown",
           participantIds: allParticipantIds,
           waitlistParticipantIds,
           appointmentParticipantIds,
           participantBreakdown: {
             fromWaitlist: waitlistParticipantIds.length,
             fromAppointments: appointmentParticipantIds.length,
-            totalUnique: allParticipantIds.length
-          }
+            totalUnique: allParticipantIds.length,
+          },
         };
       }),
     });

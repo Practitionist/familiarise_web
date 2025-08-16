@@ -22,10 +22,10 @@ export default function SignIn() {
   const [callbackUrl, setCallbackUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    const url = searchParams.get('callbackUrl');
+    const url = searchParams.get("callbackUrl");
     if (url) {
       setCallbackUrl(url);
-      console.log('Sign-in page loaded with callbackUrl:', url);
+      console.log("Sign-in page loaded with callbackUrl:", url);
     }
   }, [searchParams]);
 
@@ -54,7 +54,9 @@ export default function SignIn() {
       } else if (result?.ok) {
         toast({
           title: "Sign In Successful",
-          description: callbackUrl ? "Redirecting to your destination..." : "Redirecting to dashboard...",
+          description: callbackUrl
+            ? "Redirecting to your destination..."
+            : "Redirecting to dashboard...",
         });
         // Redirect to callbackUrl if available, otherwise to root
         router.push(callbackUrl || "/");

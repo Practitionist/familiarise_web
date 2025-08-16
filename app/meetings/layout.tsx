@@ -10,13 +10,17 @@ export default async function MeetingsLayout({
 }) {
   // Ensure user is authenticated for meetings
   const session = await getServerSession(authOptions);
-  
+
   if (!session?.user?.id) {
     redirect("/auth/signin");
   }
 
   return (
-    <StreamProvider userId={session.user.id} enableChat={false} enableVideo={true}>
+    <StreamProvider
+      userId={session.user.id}
+      enableChat={false}
+      enableVideo={true}
+    >
       {children}
     </StreamProvider>
   );

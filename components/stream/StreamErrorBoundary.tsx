@@ -8,7 +8,7 @@ interface StreamErrorBoundaryState {
   hasError: boolean;
   error: Error | null;
   errorInfo: React.ErrorInfo | null;
-  errorType: 'chat' | 'video' | 'general';
+  errorType: "chat" | "video" | "general";
 }
 
 interface StreamErrorBoundaryProps {
@@ -19,36 +19,40 @@ interface StreamErrorBoundaryProps {
 }
 
 // Default error fallback component
-const DefaultStreamErrorFallback: React.FC<StreamErrorBoundaryState & { onRetry?: () => void }> = ({ 
-  error, 
-  errorType, 
-  onRetry 
-}) => {
+const DefaultStreamErrorFallback: React.FC<
+  StreamErrorBoundaryState & { onRetry?: () => void }
+> = ({ error, errorType, onRetry }) => {
   const getErrorMessage = () => {
     if (!error) return "An unknown error occurred";
-    
+
     // Stream-specific error handling
-    if (error.message.includes('token') || error.message.includes('authentication')) {
+    if (
+      error.message.includes("token") ||
+      error.message.includes("authentication")
+    ) {
       return "Authentication failed. Please refresh the page to reconnect.";
     }
-    
-    if (error.message.includes('network') || error.message.includes('connection')) {
+
+    if (
+      error.message.includes("network") ||
+      error.message.includes("connection")
+    ) {
       return "Network connection failed. Please check your internet and try again.";
     }
-    
-    if (error.message.includes('permission')) {
+
+    if (error.message.includes("permission")) {
       return "Permission denied. Please ensure you have the necessary permissions.";
     }
-    
+
     // Default to the original error message for debugging
     return error.message;
   };
 
   const getIcon = () => {
     switch (errorType) {
-      case 'chat':
+      case "chat":
         return <MessageSquare className="h-8 w-8 text-red-500" />;
-      case 'video':
+      case "video":
         return <Video className="h-8 w-8 text-red-500" />;
       default:
         return <AlertCircle className="h-8 w-8 text-red-500" />;
@@ -57,9 +61,9 @@ const DefaultStreamErrorFallback: React.FC<StreamErrorBoundaryState & { onRetry?
 
   const getTitle = () => {
     switch (errorType) {
-      case 'chat':
+      case "chat":
         return "Chat Service Error";
-      case 'video':
+      case "video":
         return "Video Service Error";
       default:
         return "Stream Service Error";
@@ -70,14 +74,12 @@ const DefaultStreamErrorFallback: React.FC<StreamErrorBoundaryState & { onRetry?
     <div className="flex flex-col items-center justify-center min-h-[200px] p-6 bg-gray-50 rounded-lg border border-gray-200">
       <div className="flex flex-col items-center text-center space-y-4">
         {getIcon()}
-        
+
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-2">
             {getTitle()}
           </h3>
-          <p className="text-sm text-gray-600 max-w-md">
-            {getErrorMessage()}
-          </p>
+          <p className="text-sm text-gray-600 max-w-md">{getErrorMessage()}</p>
         </div>
 
         {onRetry && (
@@ -92,7 +94,7 @@ const DefaultStreamErrorFallback: React.FC<StreamErrorBoundaryState & { onRetry?
           </Button>
         )}
 
-        {process.env.NODE_ENV === 'development' && error && (
+        {process.env.NODE_ENV === "development" && error && (
           <details className="mt-4 text-xs text-gray-500 max-w-md">
             <summary className="cursor-pointer hover:text-gray-700">
               Technical Details (Development Only)
@@ -120,34 +122,44 @@ export class StreamErrorBoundary extends React.Component<
       hasError: false,
       error: null,
       errorInfo: null,
-      errorType: 'general'
+      errorType: "general",
     };
   }
 
-  static getDerivedStateFromError(error: Error): Partial<StreamErrorBoundaryState> {
+  static getDerivedStateFromError(
+    error: Error,
+  ): Partial<StreamErrorBoundaryState> {
     // Determine error type based on error message or stack trace
-    let errorType: 'chat' | 'video' | 'general' = 'general';
-    
+    let errorType: "chat" | "video" | "general" = "general";
+
     const errorString = error.toString().toLowerCase();
-    if (errorString.includes('chat') || errorString.includes('message') || errorString.includes('channel')) {
-      errorType = 'chat';
-    } else if (errorString.includes('video') || errorString.includes('call') || errorString.includes('stream')) {
-      errorType = 'video';
+    if (
+      errorString.includes("chat") ||
+      errorString.includes("message") ||
+      errorString.includes("channel")
+    ) {
+      errorType = "chat";
+    } else if (
+      errorString.includes("video") ||
+      errorString.includes("call") ||
+      errorString.includes("stream")
+    ) {
+      errorType = "video";
     }
 
     return {
       hasError: true,
       error,
-      errorType
+      errorType,
     };
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('StreamErrorBoundary caught an error:', error, errorInfo);
-    
+    console.error("StreamErrorBoundary caught an error:", error, errorInfo);
+
     this.setState({
       error,
-      errorInfo
+      errorInfo,
     });
 
     // Call custom error handler if provided
@@ -156,14 +168,14 @@ export class StreamErrorBoundary extends React.Component<
     }
 
     // Log to monitoring service in production
-    if (process.env.NODE_ENV === 'production') {
+    if (process.env.NODE_ENV === "production") {
       // You can integrate with error monitoring services like Sentry here
-      console.error('Stream Error Boundary:', {
+      console.error("Stream Error Boundary:", {
         error: error.message,
         stack: error.stack,
         componentStack: errorInfo.componentStack,
         errorType: this.state.errorType,
-        retryCount: this.retryCount
+        retryCount: this.retryCount,
       });
     }
   }
@@ -171,27 +183,32 @@ export class StreamErrorBoundary extends React.Component<
   handleRetry = () => {
     if (this.retryCount < this.maxRetries) {
       this.retryCount++;
-      console.log(`Retrying Stream component (attempt ${this.retryCount}/${this.maxRetries})`);
-      
+      console.log(
+        `Retrying Stream component (attempt ${this.retryCount}/${this.maxRetries})`,
+      );
+
       this.setState({
         hasError: false,
         error: null,
         errorInfo: null,
-        errorType: 'general'
+        errorType: "general",
       });
     } else {
-      console.warn('Maximum retry attempts reached for Stream component');
+      console.warn("Maximum retry attempts reached for Stream component");
     }
   };
 
   render() {
     if (this.state.hasError) {
-      const FallbackComponent = this.props.fallback || DefaultStreamErrorFallback;
-      
+      const FallbackComponent =
+        this.props.fallback || DefaultStreamErrorFallback;
+
       return (
         <FallbackComponent
           {...this.state}
-          onRetry={this.props.enableRetry !== false ? this.handleRetry : undefined}
+          onRetry={
+            this.props.enableRetry !== false ? this.handleRetry : undefined
+          }
         />
       );
     }
@@ -201,22 +218,16 @@ export class StreamErrorBoundary extends React.Component<
 }
 
 // Convenience wrapper components for specific Stream services
-export const StreamChatErrorBoundary: React.FC<Omit<StreamErrorBoundaryProps, 'children'> & { children: React.ReactNode }> = ({ 
-  children, 
-  ...props 
-}) => (
-  <StreamErrorBoundary {...props}>
-    {children}
-  </StreamErrorBoundary>
+export const StreamChatErrorBoundary: React.FC<
+  Omit<StreamErrorBoundaryProps, "children"> & { children: React.ReactNode }
+> = ({ children, ...props }) => (
+  <StreamErrorBoundary {...props}>{children}</StreamErrorBoundary>
 );
 
-export const StreamVideoErrorBoundary: React.FC<Omit<StreamErrorBoundaryProps, 'children'> & { children: React.ReactNode }> = ({ 
-  children, 
-  ...props 
-}) => (
-  <StreamErrorBoundary {...props}>
-    {children}
-  </StreamErrorBoundary>
+export const StreamVideoErrorBoundary: React.FC<
+  Omit<StreamErrorBoundaryProps, "children"> & { children: React.ReactNode }
+> = ({ children, ...props }) => (
+  <StreamErrorBoundary {...props}>{children}</StreamErrorBoundary>
 );
 
 export default StreamErrorBoundary;

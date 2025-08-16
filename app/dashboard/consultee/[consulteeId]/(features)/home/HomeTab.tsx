@@ -26,12 +26,8 @@ export default function HomeTab({
     return (
       <div className="space-y-6 min-h-[calc(100vh-200px)] p-6 bg-gray-50">
         <div className="bg-white rounded-xl p-6">
-          <h2 className="text-2xl font-bold text-blue-600">
-            Welcome back
-          </h2>
-          <p className="mt-1 text-gray-600">
-            Loading your dashboard...
-          </p>
+          <h2 className="text-2xl font-bold text-blue-600">Welcome back</h2>
+          <p className="mt-1 text-gray-600">Loading your dashboard...</p>
         </div>
       </div>
     );
@@ -42,7 +38,10 @@ export default function HomeTab({
       ...c,
       type: "Consultation" as const,
     })),
-    ...eventsData.webinars.map((w: any) => ({ ...w, type: "Webinar" as const })),
+    ...eventsData.webinars.map((w: any) => ({
+      ...w,
+      type: "Webinar" as const,
+    })),
     ...eventsData.subscriptions.map((s: any) => ({
       ...s,
       type: "Subscription" as const,
@@ -73,7 +72,7 @@ export default function HomeTab({
           Refreshing...
         </div>
       )}
-      
+
       {/* Welcome Section */}
       <div className="bg-white rounded-xl p-6">
         <h2 className="text-2xl font-bold text-blue-600">
