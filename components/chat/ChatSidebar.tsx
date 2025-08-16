@@ -34,19 +34,42 @@ const ChannelItem = memo(({
   const { client } = useChatContext();
   const isTeamChannel = channel.type === "team";
 
-  // For direct messages, get the other user's details
+  // For direct messages, get the other user's details or group info
   let displayName = channel.data?.name || channel.id || "";
   let displayImage: string | undefined = undefined;
+  let isGroupDM = false;
+  let memberCount = 0;
 
   if (!isTeamChannel && client) {
-    // Find the other member in the channel
-    const otherMember = Object.values(channel.state.members || {}).find(
-      (member) => member.user?.id !== client.userID,
-    )?.user;
+    // Get all members except current user
+    const otherMembers = Object.values(channel.state.members || {})
+      .filter((member) => member.user?.id !== client.userID)
+      .map((member) => member.user)
+      .filter(Boolean);
 
-    if (otherMember) {
-      displayName = otherMember.name || otherMember.id || "Unknown User";
-      displayImage = (otherMember.image as string) || undefined;
+    isGroupDM = otherMembers.length > 1;
+    memberCount = otherMembers.length;
+
+    if (isGroupDM) {
+      // Group DM: Show first few names + count if needed
+      const firstTwoNames = otherMembers
+        .slice(0, 2)
+        .map((user) => user?.name || user?.id || "Unknown")
+        .join(", ");
+      
+      if (otherMembers.length > 2) {
+        displayName = `${firstTwoNames} +${otherMembers.length - 2} more`;
+      } else {
+        displayName = firstTwoNames;
+      }
+      
+      // For group DMs, use the first member's image or a default group icon
+      displayImage = (otherMembers[0]?.image as string) || undefined;
+    } else if (otherMembers.length === 1) {
+      // 1-on-1 DM: Use the other user's details
+      const otherMember = otherMembers[0];
+      displayName = otherMember?.name || otherMember?.id || "Unknown User";
+      displayImage = (otherMember?.image as string) || undefined;
     }
   }
 
@@ -73,12 +96,20 @@ const ChannelItem = memo(({
             </div>
           ) : (
             <div className="flex items-center min-w-0">
-              <Avatar className="w-6 h-6 mr-2 flex-shrink-0">
-                <AvatarImage src={displayImage || "/placeholder-user.jpg"} />
-                <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
-              </Avatar>
+              <div className="relative mr-2 flex-shrink-0">
+                <Avatar className="w-6 h-6">
+                  <AvatarImage src={displayImage || "/placeholder-user.jpg"} />
+                  <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
+                </Avatar>
+                {isGroupDM && (
+                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-blue-500 rounded-full border border-blue-600 flex items-center justify-center">
+                    <span className="text-[8px] text-white font-bold">G</span>
+                  </div>
+                )}
+              </div>
               <span
                 className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
+                title={isGroupDM ? `Group chat with ${memberCount} members` : displayName}
               >
                 {displayName}
               </span>
