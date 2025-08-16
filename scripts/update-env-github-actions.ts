@@ -134,17 +134,13 @@ function parseEnvFile(envPath: string): EnvVariable[] {
 }
 
 /**
- * Update a GitHub repository secret via REST API
+ * Test if repository exists and token has access
  */
-async function updateGitHubSecret(
-  config: GitHubConfig,
-  secretName: string,
-  secretValue: string
-): Promise<boolean> {
+async function testRepositoryAccess(config: GitHubConfig): Promise<boolean> {
   try {
-    // First, get the repository's public key for encryption
-    const publicKeyResponse = await fetch(
-      `https://api.github.com/repos/${config.owner}/${config.repo}/actions/secrets/public-key`,
+    console.log(`🔍 Testing access to repository: ${config.owner}/${config.repo}`);
+    const repoResponse = await fetch(
+      `https://api.github.com/repos/${config.owner}/${config.repo}`,
       {
         headers: {
           'Accept': 'application/vnd.github+json',
@@ -154,8 +150,68 @@ async function updateGitHubSecret(
       }
     );
 
+    if (repoResponse.ok) {
+      const repoData = await repoResponse.json();
+      console.log(`✅ Repository access confirmed: ${repoData.full_name} (${repoData.private ? 'private' : 'public'})`);
+      return true;
+    } else {
+      console.error(`❌ Repository access failed: ${repoResponse.status} ${repoResponse.statusText}`);
+      if (repoResponse.status === 404) {
+        console.error('   - Repository not found or token lacks access');
+        console.error('   - Check repository name and token permissions');
+      }
+      
+      // Try to get more error details
+      try {
+        const errorData = await repoResponse.json();
+        console.error('   - Error details:', errorData.message);
+      } catch (e) {
+        // Ignore JSON parse errors
+      }
+      
+      return false;
+    }
+  } catch (error) {
+    console.error(`❌ Network error testing repository access:`, error);
+    return false;
+  }
+}
+
+/**
+ * Update a GitHub repository secret via REST API
+ */
+async function updateGitHubSecret(
+  config: GitHubConfig,
+  secretName: string,
+  secretValue: string
+): Promise<boolean> {
+  try {
+    // First, get the repository's public key for encryption
+    const publicKeyUrl = `https://api.github.com/repos/${config.owner}/${config.repo}/actions/secrets/public-key`;
+    console.log(`🔑 Getting public key from: ${publicKeyUrl}`);
+    
+    const publicKeyResponse = await fetch(publicKeyUrl, {
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'Authorization': `Bearer ${config.token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+
     if (!publicKeyResponse.ok) {
       console.error(`Failed to get public key: ${publicKeyResponse.status} ${publicKeyResponse.statusText}`);
+      
+      // Try to get more error details
+      try {
+        const errorData = await publicKeyResponse.json();
+        console.error('   - Error details:', errorData.message);
+        if (errorData.documentation_url) {
+          console.error('   - Documentation:', errorData.documentation_url);
+        }
+      } catch (e) {
+        // Ignore JSON parse errors
+      }
+      
       return false;
     }
 
@@ -214,10 +270,10 @@ async function syncEnvToGitHub(): Promise<void> {
     const githubToken = envVariables.find(({ key }) => key === 'GITHUB_TOKEN')?.value;
     const githubOwner = envVariables.find(({ key }) => key === 'GITHUB_OWNER')?.value;
 
-    // Configuration using values from .env
+    // Configuration using values from .env (override with correct repository owner)
     const config: GitHubConfig = {
-      owner: githubOwner || 'your-github-username',
-      repo: process.env.GITHUB_REPO || 'familiarise_web',
+      owner: 'Practitionist', // Detected from git remote
+      repo: 'familiarise_web',
       token: githubToken || '',
     };
 
@@ -229,11 +285,19 @@ async function syncEnvToGitHub(): Promise<void> {
       process.exit(1);
     }
 
-    if (!githubOwner || config.owner === 'your-github-username') {
-      console.error('❌ Error: GITHUB_OWNER not found in .env file');
-      console.log('Add GITHUB_OWNER=your_github_username to .env file');
+    // Note: Using hardcoded repository owner 'Practitionist' detected from git remote
+    console.log(`📋 Repository: ${config.owner}/${config.repo}`);
+
+    // Test repository access before attempting to sync secrets
+    console.log(`🔍 Validating GitHub repository access...\n`);
+    if (!(await testRepositoryAccess(config))) {
+      console.error('\n❌ Cannot access repository. Please check:');
+      console.error('   1. Repository name is correct');
+      console.error('   2. GitHub token has "repo" scope');
+      console.error('   3. Token has access to the repository');
       process.exit(1);
     }
+    console.log(''); // Add spacing
 
     // Filter variables you want to sync (add/remove as needed)
     // IMPORTANT: Exclude GitHub credentials to avoid uploading them to GitHub Actions
