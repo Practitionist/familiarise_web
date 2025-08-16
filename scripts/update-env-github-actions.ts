@@ -193,7 +193,7 @@ async function updateGitHubSecret(
 
     // First, get the repository's public key for encryption
     const publicKeyUrl = `https://api.github.com/repos/${config.owner}/${config.repo}/actions/secrets/public-key`;
-    console.log(`🔑 Getting public key from: ${publicKeyUrl}`);
+    // Get repository public key for encryption
     
     const publicKeyResponse = await fetch(publicKeyUrl, {
       headers: {
@@ -222,9 +222,7 @@ async function updateGitHubSecret(
 
     const publicKeyData = await publicKeyResponse.json();
     
-    // Debug: log the public key format
-    console.log(`   - Public key: ${publicKeyData.key.substring(0, 20)}...`);
-    console.log(`   - Key ID: ${publicKeyData.key_id}`);
+    // GitHub public key received successfully
     
     // Encrypt the secret value using libsodium sealed box encryption  
     // GitHub uses libsodium sealed box for repository secrets
@@ -321,11 +319,13 @@ async function syncEnvToGitHub(): Promise<void> {
     }
     console.log(''); // Add spacing
 
-    // Sync ALL environment variables except GitHub credentials
+    // Sync ALL environment variables except GitHub credentials and empty values
     // IMPORTANT: Exclude GitHub credentials to avoid uploading them to GitHub Actions
-    const secretsToSync = envVariables.filter(({ key }) => 
+    const secretsToSync = envVariables.filter(({ key, value }) => 
       // Never sync GitHub credentials to avoid security issues
-      !['GITHUB_TOKEN', 'GITHUB_OWNER'].includes(key)
+      !['GITHUB_TOKEN', 'GITHUB_OWNER'].includes(key) &&
+      // Skip empty values to avoid 422 errors
+      value.trim() !== ''
     );
 
     console.log(`📋 Environment variables to sync:`);
