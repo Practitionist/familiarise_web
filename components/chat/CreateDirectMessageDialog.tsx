@@ -13,7 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
-import { PlusIcon, SearchIcon } from "lucide-react";
+import { PlusIcon, SearchIcon, InfoIcon } from "lucide-react";
 import { useState } from "react";
 import { useChatContext } from "stream-chat-react";
 
@@ -39,6 +39,9 @@ export const CreateDirectMessageDialog = ({
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const { client, setActiveChannel } = useChatContext();
   const { toast } = useToast();
+  
+  // Check if we're in development mode for bypassing relationship restrictions
+  const isDevelopmentMode = process.env.NODE_ENV === 'development';
 
   const handleSearch = async () => {
     if (!client || !searchTerm.trim()) return;
@@ -135,6 +138,17 @@ export const CreateDirectMessageDialog = ({
   };
 
   const toggleUserSelection = (userId: string) => {
+    // In production, check if user has relationship before allowing selection
+    const user = users.find(u => u.id === userId);
+    if (!isDevelopmentMode && user?.hasRelationship === false) {
+      toast({
+        title: "Unable to message",
+        description: "You can only message consultants and consultees you're connected with through appointments.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
     setSelectedUsers((prev) =>
       prev.includes(userId)
         ? prev.filter((id) => id !== userId)
@@ -262,7 +276,24 @@ export const CreateDirectMessageDialog = ({
         <DialogHeader>
           <DialogTitle>Create Direct Message</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4 pt-4">
+        
+        {/* Professional Info Bar */}
+        <div className="bg-blue-50 border border-blue-200 rounded-md p-3 flex items-start space-x-2">
+          <InfoIcon className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+          <div className="text-sm text-blue-800">
+            <p className="font-medium">Messaging Guidelines</p>
+            <p className="text-blue-700 mt-1">
+              You can message consultants and consultees you're connected with through appointments or waitlists.
+              {isDevelopmentMode && (
+                <span className="block mt-1 text-blue-600 font-medium">
+                  Development Mode: All users are available for messaging.
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+        
+        <div className="space-y-4">
           <div className="flex space-x-2">
             <Input
               id="searchUsers"
@@ -288,19 +319,23 @@ export const CreateDirectMessageDialog = ({
           {users.length > 0 && (
             <div className="max-h-60 overflow-y-auto border rounded-md p-2 space-y-2">
               <Label>Select Users:</Label>
-              {users.map((user) => (
+              {users.map((user) => {
+                const isDisabledInProduction = !isDevelopmentMode && user.hasRelationship === false;
+                return (
                 <div
                   key={user.id}
-                  className={`flex items-center space-x-2 p-1 rounded hover:bg-slate-100 ${
-                    user.hasRelationship === false 
-                      ? "opacity-50" 
-                      : ""
+                  className={`flex items-center space-x-2 p-1 rounded transition-colors ${
+                    isDisabledInProduction
+                      ? "opacity-50 cursor-not-allowed bg-gray-50" 
+                      : "hover:bg-slate-100 cursor-pointer"
                   }`}
                   title={
-                    user.hasRelationship === false
-                      ? "No appointment relationship with this user"
+                    isDisabledInProduction
+                      ? "You can only message users you're connected with through appointments"
                       : user.hasRelationship
                       ? "Connected through appointments"
+                      : isDevelopmentMode 
+                      ? "Development mode: All users available"
                       : ""
                   }
                 >
@@ -308,14 +343,17 @@ export const CreateDirectMessageDialog = ({
                     id={`user-${user.id}`}
                     checked={selectedUsers.includes(user.id)}
                     onCheckedChange={() => toggleUserSelection(user.id)}
-                    disabled={isLoading}
+                    disabled={isLoading || isDisabledInProduction}
                   />
                   <Avatar className="w-8 h-8">
                     <AvatarImage src={user.image} />
                     <AvatarFallback>{user.name?.charAt(0)}</AvatarFallback>
                   </Avatar>
                   <div className="flex flex-col">
-                    <Label htmlFor={`user-${user.id}`} className="cursor-pointer">
+                    <Label 
+                      htmlFor={`user-${user.id}`} 
+                      className={isDisabledInProduction ? "cursor-not-allowed" : "cursor-pointer"}
+                    >
                       {user.name || "Unknown User"}
                     </Label>
                     {user.hasRelationship === true && (
@@ -325,12 +363,18 @@ export const CreateDirectMessageDialog = ({
                     )}
                     {user.hasRelationship === false && (
                       <span className="text-xs text-gray-400">
-                        No appointments
+                        {isDevelopmentMode ? "No appointments (Dev bypass)" : "No appointments"}
+                      </span>
+                    )}
+                    {isDevelopmentMode && user.hasRelationship === undefined && (
+                      <span className="text-xs text-blue-500">
+                        Development mode
                       </span>
                     )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
           {isSearching && <p>Searching for users...</p>}
