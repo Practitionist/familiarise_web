@@ -33,11 +33,9 @@ jobs:
       - name: Run Stream User Sync Script
         run: |
           echo "Running Stream user sync script..."
-          # Assuming ts-node is a dev dependency or installed globally in the CI environment
-          # If you compile TS to JS as part of a build step, you might run the .js file directly:
-          # e.g., node dist/jobs/run-stream-sync.js
-          npx ts-node jobs/run-stream-sync.ts
-        # No need to check HTTP response code here, script will exit with 0 or 1
+          # Execute the merged standalone stream sync script
+          npx ts-node jobs/stream-sync.ts
+        # Script will exit with 0 on success or 1 on failure
 
       - name: Sync Complete
         if: success()
