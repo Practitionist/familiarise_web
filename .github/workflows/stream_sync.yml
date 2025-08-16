@@ -34,7 +34,7 @@ jobs:
         run: |
           echo "Running Stream user sync script..."
           # Execute the merged standalone stream sync script
-          npx ts-node jobs/stream-sync.ts
+          npm run scripts:stream-sync
         # Script will exit with 0 on success or 1 on failure
 
       - name: Sync Complete

@@ -1,6 +1,6 @@
 // This script handles Stream user synchronization and can be run directly by Node.js (e.g., by GitHub Actions)
 import { StreamChat, UserResponse } from "stream-chat";
-import prisma from "@/lib/prisma"; // Assuming prisma client is in lib, adjust if different
+import prisma from "../lib/prisma";
 
 interface FailedDeletionFromSDK {
   user_id: string;
@@ -85,7 +85,7 @@ export async function performStreamUserSync(): Promise<SyncSummary> {
         select: { id: true },
       });
       const activePrismaUserIdsOnPageSet = new Set(
-        activePrismaUsersOnPage.map((user) => user.id),
+        activePrismaUsersOnPage.map((user: { id: string }) => user.id),
       );
       console.log(
         `[Stream Sync Job] Found ${activePrismaUserIdsOnPageSet.size} active Prisma users among the current Stream page.`,

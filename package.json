@@ -34,7 +34,7 @@
     "scripts:update-postman": "npx ts-node scripts/typescript/update-postman-collection.ts",
     "scripts:cleanup-abandoned-payments": "npx ts-node scripts/cleanup-abandoned-payments.ts",
     "scripts:delete-dependabot-prs": "npx ts-node scripts/delete-dependabot-prs.ts",
-    "scripts:stream-sync": "npx ts-node jobs/stream-sync.ts",
+    "scripts:stream-sync": "npx ts-node -P tsconfig.scripts.json jobs/stream-sync.ts",
     "start": "next start",
     "start-watch": "WATCHPACK_POLLING=true next start",
     "studio": "prisma studio",
