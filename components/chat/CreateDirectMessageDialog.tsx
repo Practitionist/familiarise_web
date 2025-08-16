@@ -191,8 +191,30 @@ export const CreateDirectMessageDialog = ({
       // Include current user in members
       const members = [currentUserId, ...selectedUsers];
 
-      // Create a unique channel ID based on sorted member IDs
-      const channelId = members.sort().join("-");
+      // Create a unique channel ID that stays under Stream's 64 character limit
+      const sortedMembers = members.sort();
+      
+      // For 1-on-1 chats, use a simple format with truncated IDs
+      let channelId: string;
+      if (sortedMembers.length === 2) {
+        // For direct messages between 2 users, use first 8 chars of each ID
+        const id1 = sortedMembers[0].substring(0, 8);
+        const id2 = sortedMembers[1].substring(0, 8);
+        channelId = `dm-${id1}-${id2}`;
+      } else {
+        // For group chats, create a hash-based ID
+        const memberString = sortedMembers.join(',');
+        // Simple hash function to create a shorter unique ID
+        let hash = 0;
+        for (let i = 0; i < memberString.length; i++) {
+          const char = memberString.charCodeAt(i);
+          hash = ((hash << 5) - hash) + char;
+          hash = hash & hash; // Convert to 32-bit integer
+        }
+        const hashString = Math.abs(hash).toString(36);
+        const timestamp = Date.now().toString(36).slice(-4); // Last 4 chars of timestamp
+        channelId = `group-${hashString}-${timestamp}`;
+      }
 
       console.log(
         `Creating messaging channel: ${channelId} with members:`,
