@@ -11,6 +11,7 @@ import { CreateDirectMessageDialog } from "./CreateDirectMessageDialog";
 import { InitializeUserChannelsButton } from "./InitializeUserChannelsButton";
 import { DebugDialog } from "./DebugDialog";
 import { Button } from "../ui/button";
+import { getChannelDisplayInfo } from "./utils/channelUtils";
 
 // Empty state component for when there are no channels
 const EmptyChannelState = () => (
@@ -34,44 +35,22 @@ const ChannelItem = memo(({
   const { client } = useChatContext();
   const isTeamChannel = channel.type === "team";
 
-  // For direct messages, get the other user's details or group info
-  let displayName = channel.data?.name || channel.id || "";
-  let displayImage: string | undefined = undefined;
-  let isGroupDM = false;
-  let memberCount = 0;
+  // Get display info using shared utility
+  const displayInfo = !isTeamChannel 
+    ? getChannelDisplayInfo(channel, client?.userID)
+    : { 
+        displayName: channel.data?.name || channel.id || "",
+        displayImage: undefined,
+        isGroupDM: false,
+        memberCount: Object.keys(channel.state.members || {}).length,
+        statusText: "",
+        fullGroupName: undefined
+      };
 
-  if (!isTeamChannel && client) {
-    // Get all members except current user
-    const otherMembers = Object.values(channel.state.members || {})
-      .filter((member) => member.user?.id !== client.userID)
-      .map((member) => member.user)
-      .filter(Boolean);
-
-    isGroupDM = otherMembers.length > 1;
-    memberCount = otherMembers.length;
-
-    if (isGroupDM) {
-      // Group DM: Show first few names + count if needed
-      const firstTwoNames = otherMembers
-        .slice(0, 2)
-        .map((user) => user?.name || user?.id || "Unknown")
-        .join(", ");
-      
-      if (otherMembers.length > 2) {
-        displayName = `${firstTwoNames} +${otherMembers.length - 2} more`;
-      } else {
-        displayName = firstTwoNames;
-      }
-      
-      // For group DMs, use the first member's image or a default group icon
-      displayImage = (otherMembers[0]?.image as string) || undefined;
-    } else if (otherMembers.length === 1) {
-      // 1-on-1 DM: Use the other user's details
-      const otherMember = otherMembers[0];
-      displayName = otherMember?.name || otherMember?.id || "Unknown User";
-      displayImage = (otherMember?.image as string) || undefined;
-    }
-  }
+  const displayName = displayInfo.displayName;
+  const displayImage = displayInfo.displayImage;
+  const isGroupDM = displayInfo.isGroupDM;
+  const memberCount = displayInfo.memberCount;
 
   // Get unread count directly from the channel
   const unreadCount = channel.countUnread();
@@ -109,7 +88,7 @@ const ChannelItem = memo(({
               </div>
               <span
                 className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
-                title={isGroupDM ? `Group chat with ${memberCount} members` : displayName}
+                title={isGroupDM ? (displayInfo.fullGroupName || `Group chat with ${memberCount} members`) : displayName}
               >
                 {displayName}
               </span>

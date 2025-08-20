@@ -19,10 +19,12 @@ import {
   UserMinusIcon,
   UserPlusIcon,
   XIcon,
+  UsersIcon,
 } from "lucide-react";
 import { useState } from "react";
 import { Channel } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
+import { getChannelDisplayInfo } from "./utils/channelUtils";
 
 interface ChannelInfoAndManageDialogProps {
   channel: Channel;
@@ -44,24 +46,18 @@ export const ChannelInfoAndManageDialog = ({
     channel.id?.startsWith("webinar-") || channel.id?.startsWith("class-");
   const memberCount = Object.keys(channel.state.members || {}).length;
 
-  // Get a user-friendly display name for the channel
-  let displayName = channel.data?.name || "";
+  // Get display info using shared utility
+  const displayInfo = isDirectMessage 
+    ? getChannelDisplayInfo(channel, client?.userID)
+    : { 
+        displayName: channel.data?.name || channel.id || "",
+        isGroupDM: false,
+        memberCount,
+        statusText: `${memberCount} ${memberCount === 1 ? "member" : "members"}`,
+        fullGroupName: undefined
+      };
 
-  // For direct messages, use the other user's name
-  if (isDirectMessage && client) {
-    const otherMember = Object.values(channel.state.members || {}).find(
-      (member) => member.user?.id !== client.userID,
-    )?.user;
-
-    if (otherMember) {
-      displayName = otherMember.name || otherMember.id || "Unknown User";
-    }
-  }
-
-  // Fallback to channel ID if no name is available
-  if (!displayName) {
-    displayName = channel.id || "";
-  }
+  const displayName = displayInfo.displayName;
 
   // Check if current user is the event owner consultant
   const isEventOwner =
@@ -177,6 +173,11 @@ export const ChannelInfoAndManageDialog = ({
                   <span className="text-gray-500 mr-2">#</span>
                   <span>{displayName}</span>
                 </div>
+              ) : displayInfo.isGroupDM ? (
+                <div className="flex items-center">
+                  <UsersIcon className="h-4 w-4 text-gray-500 mr-2" />
+                  <span className="truncate">{displayName}</span>
+                </div>
               ) : (
                 <span>{displayName}</span>
               )}
@@ -193,7 +194,11 @@ export const ChannelInfoAndManageDialog = ({
               <div className="space-y-2">
                 <h3 className="text-sm font-medium">Channel Type</h3>
                 <p className="text-sm text-gray-500">
-                  {isTeamChannel ? "Team Channel" : "Direct Message"}
+                  {isTeamChannel 
+                    ? "Team Channel" 
+                    : displayInfo.isGroupDM 
+                    ? "Group Direct Message" 
+                    : "Direct Message"}
                   {isEventChannel && " (Event Channel)"}
                 </p>
               </div>
@@ -209,79 +214,131 @@ export const ChannelInfoAndManageDialog = ({
               </div>
 
               <div className="pt-4">
-                <h3 className="text-sm font-medium mb-2">Channel Actions</h3>
+                <h3 className="text-sm font-medium mb-2">
+                  {isDirectMessage && displayInfo.isGroupDM ? "Group Actions" : "Channel Actions"}
+                </h3>
                 <div className="space-y-2">
                   {!isTeamChannel ? (
-                    // Direct Message Actions
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full flex items-center justify-center gap-2"
-                        onClick={() =>
-                          toast({
-                            title: "Info",
-                            description:
-                              "Clear chat functionality would be implemented here",
-                          })
-                        }
-                        disabled={isLoading}
-                      >
-                        <Trash2Icon className="h-4 w-4" />
-                        Clear Chat
-                      </Button>
+                    displayInfo.isGroupDM ? (
+                      // Group DM Actions
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full flex items-center justify-center gap-2"
+                          onClick={() =>
+                            toast({
+                              title: "Info",
+                              description:
+                                "Add members functionality would be implemented here",
+                            })
+                          }
+                          disabled={isLoading}
+                        >
+                          <UserPlusIcon className="h-4 w-4" />
+                          Add Members
+                        </Button>
 
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full flex items-center justify-center gap-2"
-                        onClick={() =>
-                          toast({
-                            title: "Info",
-                            description:
-                              "Delete chat functionality would be implemented here",
-                          })
-                        }
-                        disabled={isLoading}
-                      >
-                        <XIcon className="h-4 w-4" />
-                        Delete Chat
-                      </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full flex items-center justify-center gap-2"
+                          onClick={() =>
+                            toast({
+                              title: "Info",
+                              description:
+                                "Clear chat functionality would be implemented here",
+                            })
+                          }
+                          disabled={isLoading}
+                        >
+                          <Trash2Icon className="h-4 w-4" />
+                          Clear Chat
+                        </Button>
 
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full flex items-center justify-center gap-2"
-                        onClick={() =>
-                          toast({
-                            title: "Info",
-                            description:
-                              "Report user functionality would be implemented here",
-                          })
-                        }
-                        disabled={isLoading}
-                      >
-                        <AlertTriangleIcon className="h-4 w-4" />
-                        Report User
-                      </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="w-full flex items-center justify-center gap-2"
+                          onClick={handleLeaveChannel}
+                          disabled={isLoading}
+                        >
+                          <UserMinusIcon className="h-4 w-4" />
+                          Leave Group
+                        </Button>
+                      </>
+                    ) : (
+                      // Individual DM Actions
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full flex items-center justify-center gap-2"
+                          onClick={() =>
+                            toast({
+                              title: "Info",
+                              description:
+                                "Clear chat functionality would be implemented here",
+                            })
+                          }
+                          disabled={isLoading}
+                        >
+                          <Trash2Icon className="h-4 w-4" />
+                          Clear Chat
+                        </Button>
 
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        className="w-full flex items-center justify-center gap-2"
-                        onClick={() =>
-                          toast({
-                            title: "Info",
-                            description:
-                              "Block user functionality would be implemented here",
-                          })
-                        }
-                        disabled={isLoading}
-                      >
-                        <BanIcon className="h-4 w-4" />
-                        Block User
-                      </Button>
-                    </>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full flex items-center justify-center gap-2"
+                          onClick={() =>
+                            toast({
+                              title: "Info",
+                              description:
+                                "Delete chat functionality would be implemented here",
+                            })
+                          }
+                          disabled={isLoading}
+                        >
+                          <XIcon className="h-4 w-4" />
+                          Delete Chat
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full flex items-center justify-center gap-2"
+                          onClick={() =>
+                            toast({
+                              title: "Info",
+                              description:
+                                "Report user functionality would be implemented here",
+                            })
+                          }
+                          disabled={isLoading}
+                        >
+                          <AlertTriangleIcon className="h-4 w-4" />
+                          Report User
+                        </Button>
+
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="w-full flex items-center justify-center gap-2"
+                          onClick={() =>
+                            toast({
+                              title: "Info",
+                              description:
+                                "Block user functionality would be implemented here",
+                            })
+                          }
+                          disabled={isLoading}
+                        >
+                          <BanIcon className="h-4 w-4" />
+                          Block User
+                        </Button>
+                      </>
+                    )
                   ) : (
                     // Team/Event Channel Actions
                     <Button
