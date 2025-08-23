@@ -23,89 +23,98 @@ const EmptyChannelState = () => (
 );
 
 // Custom channel item component for the sidebar - memoized for performance
-const ChannelItem = memo(({
-  channel,
-  isActive,
-  onClick,
-}: {
-  channel: Channel;
-  isActive: boolean;
-  onClick: () => void;
-}) => {
-  const { client } = useChatContext();
-  const isTeamChannel = channel.type === "team";
+const ChannelItem = memo(
+  ({
+    channel,
+    isActive,
+    onClick,
+  }: {
+    channel: Channel;
+    isActive: boolean;
+    onClick: () => void;
+  }) => {
+    const { client } = useChatContext();
+    const isTeamChannel = channel.type === "team";
 
-  // Get display info using shared utility
-  const displayInfo = !isTeamChannel 
-    ? getChannelDisplayInfo(channel, client?.userID)
-    : { 
-        displayName: channel.data?.name || channel.id || "",
-        displayImage: undefined,
-        isGroupDM: false,
-        memberCount: Object.keys(channel.state.members || {}).length,
-        statusText: "",
-        fullGroupName: undefined
-      };
+    // Get display info using shared utility
+    const displayInfo = !isTeamChannel
+      ? getChannelDisplayInfo(channel, client?.userID)
+      : {
+          displayName: channel.data?.name || channel.id || "",
+          displayImage: undefined,
+          isGroupDM: false,
+          memberCount: Object.keys(channel.state.members || {}).length,
+          statusText: "",
+          fullGroupName: undefined,
+        };
 
-  const displayName = displayInfo.displayName;
-  const displayImage = displayInfo.displayImage;
-  const isGroupDM = displayInfo.isGroupDM;
-  const memberCount = displayInfo.memberCount;
+    const displayName = displayInfo.displayName;
+    const displayImage = displayInfo.displayImage;
+    const isGroupDM = displayInfo.isGroupDM;
+    const memberCount = displayInfo.memberCount;
 
-  // Get unread count directly from the channel
-  const unreadCount = channel.countUnread();
-  const hasUnread = unreadCount > 0;
+    // Get unread count directly from the channel
+    const unreadCount = channel.countUnread();
+    const hasUnread = unreadCount > 0;
 
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full text-left px-4 py-2 hover:bg-blue-700 transition-colors ${isActive ? "bg-blue-700" : ""}`}
-      title={displayName}
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center min-w-0">
-          {isTeamChannel ? (
-            <div className="flex items-center min-w-0">
-              <span className="text-blue-200 mr-2">#</span>
-              <span
-                className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
-              >
-                {displayName}
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-center min-w-0">
-              <div className="relative mr-2 flex-shrink-0">
-                <Avatar className="w-6 h-6">
-                  <AvatarImage src={displayImage || "/placeholder-user.jpg"} />
-                  <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
-                </Avatar>
-                {isGroupDM && (
-                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-blue-500 rounded-full border border-blue-600 flex items-center justify-center">
-                    <span className="text-[8px] text-white font-bold">G</span>
-                  </div>
-                )}
+    return (
+      <button
+        onClick={onClick}
+        className={`w-full text-left px-4 py-2 hover:bg-blue-700 transition-colors ${isActive ? "bg-blue-700" : ""}`}
+        title={displayName}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center min-w-0">
+            {isTeamChannel ? (
+              <div className="flex items-center min-w-0">
+                <span className="text-blue-200 mr-2">#</span>
+                <span
+                  className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
+                >
+                  {displayName}
+                </span>
               </div>
-              <span
-                className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
-                title={isGroupDM ? (displayInfo.fullGroupName || `Group chat with ${memberCount} members`) : displayName}
-              >
-                {displayName}
-              </span>
+            ) : (
+              <div className="flex items-center min-w-0">
+                <div className="relative mr-2 flex-shrink-0">
+                  <Avatar className="w-6 h-6">
+                    <AvatarImage
+                      src={displayImage || "/placeholder-user.jpg"}
+                    />
+                    <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
+                  </Avatar>
+                  {isGroupDM && (
+                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-blue-500 rounded-full border border-blue-600 flex items-center justify-center">
+                      <span className="text-[8px] text-white font-bold">G</span>
+                    </div>
+                  )}
+                </div>
+                <span
+                  className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
+                  title={
+                    isGroupDM
+                      ? displayInfo.fullGroupName ||
+                        `Group chat with ${memberCount} members`
+                      : displayName
+                  }
+                >
+                  {displayName}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Unread indicator */}
+          {hasUnread && (
+            <div className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center ml-2 flex-shrink-0">
+              {unreadCount > 9 ? "9+" : unreadCount}
             </div>
           )}
         </div>
-
-        {/* Unread indicator */}
-        {hasUnread && (
-          <div className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center ml-2 flex-shrink-0">
-            {unreadCount > 9 ? "9+" : unreadCount}
-          </div>
-        )}
-      </div>
-    </button>
-  );
-});
+      </button>
+    );
+  },
+);
 
 ChannelItem.displayName = "ChannelItem";
 
@@ -476,20 +485,23 @@ export const ChatSidebar = () => {
     handleUserRemovedFromChannel,
   ]); // Add dependencies
 
-  const handleChannelSelect = useCallback((channel: Channel) => {
-    // Use startTransition for non-urgent updates to improve perceived performance
-    startTransition(() => {
-      setActiveChannelId(channel.cid || null);
-    });
-    
-    // Set active channel immediately for instant feedback
-    setActiveChannel(channel);
-    
-    // Mark channel as read asynchronously
-    channel.markRead().catch((error) => {
-      console.warn("Failed to mark channel as read:", error);
-    });
-  }, [setActiveChannel]);
+  const handleChannelSelect = useCallback(
+    (channel: Channel) => {
+      // Use startTransition for non-urgent updates to improve perceived performance
+      startTransition(() => {
+        setActiveChannelId(channel.cid || null);
+      });
+
+      // Set active channel immediately for instant feedback
+      setActiveChannel(channel);
+
+      // Mark channel as read asynchronously
+      channel.markRead().catch((error) => {
+        console.warn("Failed to mark channel as read:", error);
+      });
+    },
+    [setActiveChannel],
+  );
 
   return (
     <div className="w-64 bg-blue-600 text-white flex flex-col h-full">

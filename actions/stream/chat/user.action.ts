@@ -131,7 +131,7 @@ export const searchUsersWithRelationships = async (
       return [];
     }
     console.log(`Searching DB for users with term: ${searchTerm}`);
-    
+
     const users = await prisma.user.findMany({
       where: {
         AND: [
@@ -167,8 +167,11 @@ export const searchUsersWithRelationships = async (
     // For each user, check if they have any relationship with the current user
     const usersWithRelationships = await Promise.all(
       users.map(async (user) => {
-        const hasRelationship = await checkUserRelationship(currentUserId, user.id);
-        
+        const hasRelationship = await checkUserRelationship(
+          currentUserId,
+          user.id,
+        );
+
         return {
           id: user.id,
           name: user.name,
@@ -177,7 +180,7 @@ export const searchUsersWithRelationships = async (
           role: user.role,
           hasRelationship,
         };
-      })
+      }),
     );
 
     // Sort by relationship status (connected users first), then by name
@@ -187,7 +190,9 @@ export const searchUsersWithRelationships = async (
       return (a.name || "").localeCompare(b.name || "");
     });
 
-    console.log(`Found ${usersWithRelationships.length} users with relationship status.`);
+    console.log(
+      `Found ${usersWithRelationships.length} users with relationship status.`,
+    );
     return usersWithRelationships;
   } catch (error) {
     console.error("Error searching users with relationships:", error);
@@ -224,10 +229,10 @@ export const checkUserRelationship = async (
     const relationshipChecks = await Promise.all([
       // Check consultations (user1 as consultant, user2 as consultee or vice versa)
       checkConsultationRelationship(user1, user2),
-      
+
       // Check subscriptions
       checkSubscriptionRelationship(user1, user2),
-      
+
       // Check webinars/classes through shared appointments
       checkSharedAppointments(userId1, userId2),
     ]);
@@ -243,8 +248,14 @@ export const checkUserRelationship = async (
  * Check consultation relationships between two users
  */
 async function checkConsultationRelationship(
-  user1: { consultantProfileId: string | null; consulteeProfileId: string | null },
-  user2: { consultantProfileId: string | null; consulteeProfileId: string | null },
+  user1: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
+  user2: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
 ): Promise<boolean> {
   if (!user1.consultantProfileId && !user1.consulteeProfileId) return false;
   if (!user2.consultantProfileId && !user2.consulteeProfileId) return false;
@@ -288,8 +299,14 @@ async function checkConsultationRelationship(
  * Check subscription relationships between two users
  */
 async function checkSubscriptionRelationship(
-  user1: { consultantProfileId: string | null; consulteeProfileId: string | null },
-  user2: { consultantProfileId: string | null; consulteeProfileId: string | null },
+  user1: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
+  user2: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
 ): Promise<boolean> {
   if (!user1.consultantProfileId && !user1.consulteeProfileId) return false;
   if (!user2.consultantProfileId && !user2.consulteeProfileId) return false;

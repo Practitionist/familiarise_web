@@ -3,7 +3,10 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useChatContext } from "stream-chat-react";
 import { ChannelInfoAndManageDialog } from "./ChannelInfoAndManageDialog";
-import { getChannelDisplayInfo, getTruncatedDisplayName } from "./utils/channelUtils";
+import {
+  getChannelDisplayInfo,
+  getTruncatedDisplayName,
+} from "./utils/channelUtils";
 
 export const CustomChannelHeader = () => {
   const { channel, client } = useChatContext();
@@ -21,7 +24,9 @@ export const CustomChannelHeader = () => {
       <div className="flex items-center px-4 py-2 border-b">
         <div className="relative mr-3">
           <Avatar className="h-8 w-8">
-            <AvatarImage src={displayInfo.displayImage || "/placeholder-user.jpg"} />
+            <AvatarImage
+              src={displayInfo.displayImage || "/placeholder-user.jpg"}
+            />
             <AvatarFallback>{displayInfo.displayName.charAt(0)}</AvatarFallback>
           </Avatar>
           {displayInfo.isGroupDM && (
@@ -32,15 +37,17 @@ export const CustomChannelHeader = () => {
         </div>
 
         <div className="flex-1 min-w-0">
-          <div 
+          <div
             className="font-medium truncate"
-            title={showTooltip ? (displayInfo.fullGroupName || displayInfo.displayName) : undefined}
+            title={
+              showTooltip
+                ? displayInfo.fullGroupName || displayInfo.displayName
+                : undefined
+            }
           >
             {truncatedName}
           </div>
-          <div className="text-xs text-gray-500">
-            {displayInfo.statusText}
-          </div>
+          <div className="text-xs text-gray-500">{displayInfo.statusText}</div>
         </div>
 
         <ChannelInfoAndManageDialog channel={channel} />

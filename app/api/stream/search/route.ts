@@ -20,17 +20,22 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    console.log(`Searching for users with term: ${searchTerm}, with relationships: ${withRelationships}`);
+    console.log(
+      `Searching for users with term: ${searchTerm}, with relationships: ${withRelationships}`,
+    );
 
     let users;
-    
+
     if (withRelationships) {
       // Get current user session for relationship checking
       const session = await getServerSession(authOptions);
-      
+
       if (!session?.user?.id) {
         return NextResponse.json(
-          { success: false, error: "Authentication required for relationship search" },
+          {
+            success: false,
+            error: "Authentication required for relationship search",
+          },
           { status: 401 },
         );
       }

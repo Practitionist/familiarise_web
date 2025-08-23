@@ -25,15 +25,15 @@ export const ChannelPreview = ({
   const isDirectMessage = type === "messaging";
 
   // Get display info using shared utility
-  const displayInfo = isDirectMessage 
+  const displayInfo = isDirectMessage
     ? getChannelDisplayInfo(channel, client?.userID)
-    : { 
+    : {
         displayName: channel.data?.name ?? channel.id ?? "",
         displayImage: channel.data?.image,
         isGroupDM: false,
         memberCount: 0,
         statusText: "",
-        fullGroupName: undefined
+        fullGroupName: undefined,
       };
 
   const displayName = displayInfo.displayName;
@@ -79,9 +79,13 @@ export const ChannelPreview = ({
         </div>
 
         <div className="flex-1 min-w-0">
-          <div 
+          <div
             className="font-medium text-sm truncate"
-            title={displayInfo.isGroupDM && displayInfo.fullGroupName ? displayInfo.fullGroupName : displayName}
+            title={
+              displayInfo.isGroupDM && displayInfo.fullGroupName
+                ? displayInfo.fullGroupName
+                : displayName
+            }
           >
             {displayName}
           </div>

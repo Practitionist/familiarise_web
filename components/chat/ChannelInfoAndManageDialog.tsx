@@ -47,14 +47,14 @@ export const ChannelInfoAndManageDialog = ({
   const memberCount = Object.keys(channel.state.members || {}).length;
 
   // Get display info using shared utility
-  const displayInfo = isDirectMessage 
+  const displayInfo = isDirectMessage
     ? getChannelDisplayInfo(channel, client?.userID)
-    : { 
+    : {
         displayName: channel.data?.name || channel.id || "",
         isGroupDM: false,
         memberCount,
         statusText: `${memberCount} ${memberCount === 1 ? "member" : "members"}`,
-        fullGroupName: undefined
+        fullGroupName: undefined,
       };
 
   const displayName = displayInfo.displayName;
@@ -194,11 +194,11 @@ export const ChannelInfoAndManageDialog = ({
               <div className="space-y-2">
                 <h3 className="text-sm font-medium">Channel Type</h3>
                 <p className="text-sm text-gray-500">
-                  {isTeamChannel 
-                    ? "Team Channel" 
-                    : displayInfo.isGroupDM 
-                    ? "Group Direct Message" 
-                    : "Direct Message"}
+                  {isTeamChannel
+                    ? "Team Channel"
+                    : displayInfo.isGroupDM
+                      ? "Group Direct Message"
+                      : "Direct Message"}
                   {isEventChannel && " (Event Channel)"}
                 </p>
               </div>
@@ -215,7 +215,9 @@ export const ChannelInfoAndManageDialog = ({
 
               <div className="pt-4">
                 <h3 className="text-sm font-medium mb-2">
-                  {isDirectMessage && displayInfo.isGroupDM ? "Group Actions" : "Channel Actions"}
+                  {isDirectMessage && displayInfo.isGroupDM
+                    ? "Group Actions"
+                    : "Channel Actions"}
                 </h3>
                 <div className="space-y-2">
                   {!isTeamChannel ? (

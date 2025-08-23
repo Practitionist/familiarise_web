@@ -14,7 +14,7 @@ export interface ChannelDisplayInfo {
  */
 export const getChannelDisplayInfo = (
   channel: Channel,
-  currentUserId?: string
+  currentUserId?: string,
 ): ChannelDisplayInfo => {
   const isTeamChannel = channel.type === "team";
   const isDirectMessage = channel.type === "messaging";
@@ -23,7 +23,7 @@ export const getChannelDisplayInfo = (
     // Team channel logic
     const displayName = channel.data?.name || channel.id || "";
     const memberCount = Object.keys(channel.state.members || {}).length;
-    
+
     return {
       displayName,
       displayImage: channel.data?.image as string,
@@ -49,10 +49,10 @@ export const getChannelDisplayInfo = (
         .slice(0, 2)
         .map((user) => user?.name || user?.id || "Unknown")
         .join(", ");
-      
+
       let displayName: string;
       let fullGroupName: string;
-      
+
       if (otherMembers.length > 2) {
         displayName = `${firstTwoNames} +${otherMembers.length - 2} more`;
         fullGroupName = otherMembers
@@ -62,7 +62,7 @@ export const getChannelDisplayInfo = (
         displayName = firstTwoNames;
         fullGroupName = firstTwoNames;
       }
-      
+
       return {
         displayName,
         displayImage: (otherMembers[0]?.image as string) || undefined,
@@ -74,7 +74,7 @@ export const getChannelDisplayInfo = (
     } else if (otherMembers.length === 1) {
       // 1-on-1 DM logic
       const otherMember = otherMembers[0];
-      
+
       return {
         displayName: otherMember?.name || otherMember?.id || "Unknown User",
         displayImage: (otherMember?.image as string) || undefined,
@@ -100,12 +100,12 @@ export const getChannelDisplayInfo = (
  */
 export const getTruncatedDisplayName = (
   displayInfo: ChannelDisplayInfo,
-  maxLength: number = 30
+  maxLength: number = 30,
 ): string => {
   if (displayInfo.displayName.length <= maxLength) {
     return displayInfo.displayName;
   }
-  
+
   if (displayInfo.isGroupDM) {
     // For group DMs, try to show at least first name + indicator
     const parts = displayInfo.displayName.split(", ");
@@ -113,13 +113,13 @@ export const getTruncatedDisplayName = (
       const firstName = parts[0];
       const remaining = displayInfo.memberCount - 1;
       const truncated = `${firstName} +${remaining} more`;
-      
+
       if (truncated.length <= maxLength) {
         return truncated;
       }
     }
   }
-  
+
   // Generic truncation
   return displayInfo.displayName.substring(0, maxLength - 3) + "...";
 };
