@@ -157,7 +157,10 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
           </p>
 
           <div className="space-y-2">
-            <ConsultantInfo label="Experience" value={consultant.experience} />
+            <ConsultantInfo 
+              label="Experience" 
+              value={consultant.experience ? `${consultant.experience} years` : null} 
+            />
             <ConsultantInfo
               label="Specialization"
               value={consultant.specialization}

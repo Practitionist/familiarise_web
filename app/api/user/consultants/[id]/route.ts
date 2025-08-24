@@ -47,7 +47,7 @@ const updateConsultantSchema = z
     description: z.string().optional(),
     qualifications: z.string().optional(),
     specialization: z.string().optional(),
-    experience: z.string().optional(),
+    experience: z.number().min(0).max(50).optional(),
     scheduleType: z.enum(["WEEKLY", "CUSTOM"]),
     domainId: uuidSchema,
     subDomainIds: z.array(uuidSchema),

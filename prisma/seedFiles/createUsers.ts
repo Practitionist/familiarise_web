@@ -219,12 +219,7 @@ async function createConsultantProfileData() {
   return {
     rating: faker.number.float({ min: 1, max: 5, multipleOf: 0.1 }),
     specialization: faker.person.jobArea(),
-    experience: faker.helpers.arrayElement([
-      "1-3 years",
-      "3-5 years",
-      "5-10 years",
-      "10+ years",
-    ]),
+    experience: faker.number.float({ min: 0.5, max: 25, multipleOf: 0.5 }),
     description: faker.lorem.paragraph(),
     domain: { connect: { id: domain.id } },
     subDomains: {

@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
     if (experience > 0) {
       where.AND.push({
         experience: {
-          contains: experience.toString(),
+          gte: experience,
         },
       });
     }

@@ -14,7 +14,7 @@ export interface FormData {
   description: string;
   qualifications: string;
   specialization: string;
-  experience: string;
+  experience: number;
   scheduleType: ScheduleType;
   domainId: string;
   subDomainIds: string[];
@@ -66,7 +66,7 @@ export const getInitialFormData = (
   description: consultant?.description || "",
   qualifications: consultant?.qualifications || "",
   specialization: consultant?.specialization || "",
-  experience: consultant?.experience || "",
+  experience: consultant?.experience || 0,
   scheduleType: consultant?.scheduleType || ScheduleType.WEEKLY,
   domainId: consultant?.domain?.id || "",
   subDomainIds: consultant?.subDomains?.map((sd) => sd.id) || [],

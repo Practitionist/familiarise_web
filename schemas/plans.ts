@@ -58,7 +58,7 @@ export const ConsultantProfileSchema = z.object({
   description: z.string().optional(),
   qualifications: z.string().optional(),
   specialization: z.string().optional(),
-  experience: z.string().optional(),
+  experience: z.number().min(0, "Experience must be at least 0 years").max(50, "Experience cannot exceed 50 years").optional(),
   rating: z.number().optional(),
   domain: DomainSchema,
   subDomains: z.array(SubDomainSchema),

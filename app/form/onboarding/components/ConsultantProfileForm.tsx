@@ -60,7 +60,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
       description: initialData.description || "",
       qualifications: initialData.qualifications || "",
       specialization: initialData.specialization || "",
-      experience: initialData.experience || "",
+      experience: initialData.experience || 0,
       scheduleType: initialData.scheduleType || "WEEKLY",
       domain: initialData.domain,
       subDomains: initialData.subDomains || [],
@@ -207,8 +207,16 @@ const ConsultantProfileForm: React.FC<Props> = ({
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="experience">Experience</Label>
-              <Input id="experience" placeholder="e.g., 7+ years in early-stage growth" {...register("experience")} />
+              <Label htmlFor="experience">Years of Experience</Label>
+              <Input 
+                id="experience" 
+                type="number" 
+                min="0" 
+                max="50" 
+                step="0.5"
+                placeholder="e.g., 7"
+                {...register("experience", { valueAsNumber: true })} 
+              />
               {errors.experience && (
                 <p className="text-sm text-destructive">{errors.experience?.message}</p>
               )}
