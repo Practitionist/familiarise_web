@@ -10,6 +10,7 @@ import {
   RequestStatus,
   WebinarStatus,
 } from "@prisma/client";
+import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -37,7 +38,6 @@ export class PaymentIntentManager {
 
       return paymentResponse;
     } catch (error) {
-      console.error("Payment intent creation failed:", error);
       throw new Error(
         "Failed to create payment intent. Please try again later.",
       );
@@ -55,19 +55,11 @@ export class PaymentIntentManager {
 
       if (typeof cancelPaymentIntent === "function") {
         await cancelPaymentIntent(intentId, reason);
-        console.log(
-          `🚫 Payment intent cancelled: ${intentId} - Reason: ${reason}`,
-        );
-      } else {
-        console.warn(
-          `⚠️ Payment intent cancellation not implemented for intent: ${intentId}`,
-        );
       }
 
       // Remove from tracking
       this.activeIntents.delete(intentId);
     } catch (error) {
-      console.error(`Failed to cancel payment intent ${intentId}:`, error);
       // Don't throw here - this is cleanup, shouldn't break the main flow
     }
   }
@@ -487,10 +479,12 @@ export async function handleSubscriptionCheckout(
   // Check slot availability
   await validateSlotAvailability(tx, data, consulteeProfileId);
 
-  // Calculate subscription end date
+  // FIXED: Calculate subscription end date with proper month-end handling
   const startDate = new Date();
-  const endDate = new Date(startDate);
-  endDate.setMonth(endDate.getMonth() + plan.durationInMonths);
+  const endDate = calculateSubscriptionEndDate(
+    startDate,
+    plan.durationInMonths,
+  );
 
   // Create subscription
   const subscription = await tx.subscription.create({

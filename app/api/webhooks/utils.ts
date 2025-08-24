@@ -8,6 +8,7 @@ import {
 import crypto from "crypto";
 import { stripeClient } from "../../../lib/payment";
 import Stripe from "stripe";
+import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 
 // Generic webhook verification
 export async function verifyWebhookSignature(
@@ -223,8 +224,10 @@ async function createSubscription(tx: Prisma.TransactionClient, data: any) {
   if (!plan) throw new Error("Subscription plan not found");
 
   const startDate = new Date();
-  const endDate = new Date(startDate);
-  endDate.setMonth(endDate.getMonth() + plan.durationInMonths);
+  const endDate = calculateSubscriptionEndDate(
+    startDate,
+    plan.durationInMonths,
+  );
 
   const subscription = await tx.subscription.create({
     data: {

@@ -536,24 +536,25 @@ enum WebinarStatus {
 
 // Many-Many Class
 model ClassPlan {
-  id                  String           @id @default(cuid())
-  title               String
-  description         String           @db.Text
-  topics              Topic[]
-  classContents       ClassContent[]
-  price               Int
-  priceCurrency       String           @default("INR")
-  certificateProvided Boolean          @default(false)
-  durationInMonths    Int              @default(1) // Duration in months
-  callsPerWeek        Int              @default(1)
-  videoMeetings       Int              @default(1)
-  emailSupport        PlanEmailSupport @default(GENERAL)
-  maxParticipants     Int              @default(1)
-  language            String?          @default("English")
-  level               String?          @default("Beginner")
-  prerequisites       String?          @default("None")
-  materialProvided    String?          @default("None")
-  learningOutcomes    String[]         @default([])
+  id                     String           @id @default(cuid())
+  title                  String
+  description            String           @db.Text
+  topics                 Topic[]
+  classContents          ClassContent[]
+  price                  Int
+  priceCurrency          String           @default("INR")
+  certificateProvided    Boolean          @default(false)
+  durationInMonths       Int              @default(1) // Duration in months
+  callsPerWeek           Int              @default(1)
+  sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
+  videoMeetings          Int              @default(1)
+  emailSupport           PlanEmailSupport @default(GENERAL)
+  maxParticipants        Int              @default(1)
+  language               String?          @default("English")
+  level                  String?          @default("Beginner")
+  prerequisites          String?          @default("None")
+  materialProvided       String?          @default("None")
+  learningOutcomes       String[]         @default([])
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
