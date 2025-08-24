@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConsulteeProfile } from "@/schemas/user";
 import { Textarea } from "@/components/ui/textarea";
 import { ConsulteeProfileFormSchema } from "@/utils/onboarding";
@@ -44,43 +45,49 @@ const ConsulteeProfileForm: React.FC<Props> = ({
   };
 
   return (
-    <form
-      onSubmit={handleSubmit(onSubmit)}
-      className="w-full max-w-md space-y-4"
-    >
-      <div className="space-y-2">
-        <Label htmlFor="education">Education</Label>
-        <Input id="education" {...register("education")} />
-        {errors.education && (
-          <p className="text-red-500">{errors.education.message}</p>
-        )}
-      </div>
+    <Card className="w-full max-w-2xl">
+      <CardHeader>
+        <CardTitle>Consultee profile</CardTitle>
+        <CardDescription>Help us tailor recommendations and match you with the right expert.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="education">Education</Label>
+              <Input id="education" placeholder="e.g., B.Tech in CS" {...register("education")} />
+              {errors.education && (
+                <p className="text-sm text-destructive">{errors.education.message}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="occupation">Occupation</Label>
+              <Input id="occupation" placeholder="e.g., Founder at Acme" {...register("occupation")} />
+              {errors.occupation && (
+                <p className="text-sm text-destructive">{errors.occupation.message}</p>
+              )}
+            </div>
+          </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="occupation">Occupation</Label>
-        <Input id="occupation" {...register("occupation")} />
-        {errors.occupation && (
-          <p className="text-red-500">{errors.occupation.message}</p>
-        )}
-      </div>
+          <div className="space-y-2">
+            <Label htmlFor="aboutMe">About me</Label>
+            <Textarea id="aboutMe" placeholder="What are you building or learning? What kind of help would be most useful right now?" {...register("aboutMe")} />
+            {errors.aboutMe && (
+              <p className="text-sm text-destructive">{errors.aboutMe.message}</p>
+            )}
+          </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="aboutMe">About Me</Label>
-        <Textarea id="aboutMe" {...register("aboutMe")} />
-        {errors.aboutMe && (
-          <p className="text-red-500">{errors.aboutMe.message}</p>
-        )}
-      </div>
-
-      <div className="flex justify-between">
-        <Button type="button" onClick={onBack} variant="outline">
-          Back
-        </Button>
-        <Button type="submit" variant="night" disabled={isSubmitting}>
-          {isSubmitting ? "Submitting..." : "Next"}
-        </Button>
-      </div>
-    </form>
+          <div className="flex items-center justify-between pt-2">
+            <Button type="button" onClick={onBack} variant="outline">
+              Back
+            </Button>
+            <Button type="submit" variant="night" disabled={isSubmitting}>
+              {isSubmitting ? "Submitting..." : "Next"}
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
   );
 };
 

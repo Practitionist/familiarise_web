@@ -1,6 +1,7 @@
 "use client";
 import { updateOnboardingInformationAction } from "@/actions/forms/onboarding.action";
 import { Progress } from "@/components/ui/progress";
+import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Domain, SubDomain, Tag } from "@/schemas/plans";
 import {
@@ -439,29 +440,50 @@ const MultiStepForm: React.FC = () => {
     }
   };
 
+  // There are 5 total steps for CONSULTANT/CONSULTEE/STAFF flows when including review in step 4
+  const totalSteps = 5;
+  const progressValue = Math.min(100, Math.max(0, ((step + 1) / totalSteps) * 100));
+
   return (
     <FormProvider {...methods}>
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
-        <Header />
-        <Progress value={((step + 1) / 4) * 100} className="w-[60%] mb-8" />
-        <WelcomeMessage />
-        {renderFormStep()}
+      <div className="min-h-screen w-full bg-gradient-to-b from-background to-muted/30">
+        <div className="container mx-auto px-4 py-10 flex flex-col items-center">
+          <Header />
+          <div className="w-full max-w-3xl">
+            <div className="mb-6">
+              <Progress value={progressValue} />
+            </div>
+            <Card>
+              <CardContent className="pt-6">
+                <WelcomeMessage />
+                <div className="flex justify-center">
+                  {renderFormStep()}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
       </div>
     </FormProvider>
   );
 };
 
 const Header: React.FC = () => (
-  <header className="flex items-center space-x-2 mb-8">
-    <LogInIcon className="w-8 h-8 text-primary" />
-    <h1 className="text-2xl font-bold">Familiarise</h1>
+  <header className="flex items-center gap-3 mb-8">
+    <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+      <LogInIcon className="w-5 h-5 text-primary" />
+    </div>
+    <div>
+      <h1 className="text-xl font-semibold leading-tight">Familiarise</h1>
+      <p className="text-sm text-muted-foreground">Set up your profile in a few quick steps</p>
+    </div>
   </header>
 );
 
 const WelcomeMessage: React.FC = () => (
-  <div className="text-center mb-8">
-    <h2 className="text-2xl font-bold">Welcome! First things first...</h2>
-    <p className="text-muted-foreground">You can always change them later.</p>
+  <div className="text-center mb-6">
+    <h2 className="text-xl font-semibold">Welcome! First things first…</h2>
+    <p className="text-sm text-muted-foreground">These details help us personalize your experience. You can change them anytime.</p>
   </div>
 );
 
