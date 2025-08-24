@@ -13,12 +13,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  ConsultantProfile,
-  ConsultantProfileSchema,
-  PersonalInfoAndRole,
-} from "@/schemas/user";
+import { ConsultantProfile, PersonalInfoAndRole } from "@/schemas/user";
 import { Domain, SubDomain, Tag } from "@/schemas/plans";
+import { ConsultantProfileFormSchema } from "@/utils/onboarding";
+import { z } from "zod";
 
 interface Props {
   onNext: (data: FormData) => void;
@@ -53,9 +51,19 @@ const ConsultantProfileForm: React.FC<Props> = ({
     watch,
     setValue,
     formState: { errors },
-  } = useForm<FormData>({
-    resolver: zodResolver(ConsultantProfileSchema),
-    defaultValues: initialData,
+  } = useForm<z.infer<typeof ConsultantProfileFormSchema>>({
+    resolver: zodResolver(ConsultantProfileFormSchema),
+    mode: "onChange",
+    defaultValues: {
+      description: initialData.description || "",
+      qualifications: initialData.qualifications || "",
+      specialization: initialData.specialization || "",
+      experience: initialData.experience || "",
+      scheduleType: initialData.scheduleType || "WEEKLY",
+      domain: initialData.domain,
+      subDomains: initialData.subDomains || [],
+      tags: initialData.tags || [],
+    },
   });
 
   const selectedDomain = watch("domain");
@@ -121,8 +129,8 @@ const ConsultantProfileForm: React.FC<Props> = ({
     }
   }, [selectedDomain?.id]); // Only depend on the domain ID
 
-  const onSubmit = (data: FormData) => {
-    onNext(data);
+  const onSubmit = (data: z.infer<typeof ConsultantProfileFormSchema>) => {
+    onNext(data as FormData);
   };
 
   if (isLoading) {

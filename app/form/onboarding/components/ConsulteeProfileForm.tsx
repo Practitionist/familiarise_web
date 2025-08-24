@@ -4,8 +4,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ConsulteeProfile, ConsulteeProfileSchema } from "@/schemas/user";
+import { ConsulteeProfile } from "@/schemas/user";
 import { Textarea } from "@/components/ui/textarea";
+import { ConsulteeProfileFormSchema } from "@/utils/onboarding";
+import { z } from "zod";
 
 interface Props {
   onNext: (data: Partial<ConsulteeProfile>) => void;
@@ -22,13 +24,23 @@ const ConsulteeProfileForm: React.FC<Props> = ({
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<ConsulteeProfile>({
-    resolver: zodResolver(ConsulteeProfileSchema),
-    defaultValues: initialData,
+  } = useForm<z.infer<typeof ConsulteeProfileFormSchema>>({
+    resolver: zodResolver(ConsulteeProfileFormSchema),
+    mode: "onChange",
+    defaultValues: {
+      education: initialData.education || "",
+      occupation: initialData.occupation || "",
+      aboutMe: initialData.aboutMe || "",
+      preferredCommunicationMethod: initialData.preferredCommunicationMethod || "VIDEO",
+      preferredLanguage: initialData.preferredLanguage || "",
+      specialRequirements: initialData.specialRequirements || "",
+      interests: initialData.interests || [],
+      goals: initialData.goals || [],
+    },
   });
 
-  const onSubmit = (data: ConsulteeProfile) => {
-    onNext(data);
+  const onSubmit = (data: z.infer<typeof ConsulteeProfileFormSchema>) => {
+    onNext(data as Partial<ConsulteeProfile>);
   };
 
   return (

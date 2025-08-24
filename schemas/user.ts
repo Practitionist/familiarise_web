@@ -8,15 +8,15 @@ export const PersonalInfoAndRoleSchema = z.object({
   image: z.string().optional(),
   phone: z.string().optional(),
   address: z.string().optional(),
-  onlineStatus: z.boolean().default(false),
+  onlineStatus: z.boolean().optional().default(false),
   currentTimezone: z.string().optional(),
-  onboardingCompleted: z.boolean().default(false),
+  onboardingCompleted: z.boolean().optional().default(false),
   role: z.enum(["CONSULTANT", "CONSULTEE", "ADMIN", "STAFF"]),
 });
 
 export type PersonalInfoAndRole = z.infer<typeof PersonalInfoAndRoleSchema>;
 
-const slotSchema = z.object({
+const _slotSchema = z.object({
   dayOfWeek: z.enum([
     "MONDAY",
     "TUESDAY",

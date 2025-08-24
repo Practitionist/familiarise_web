@@ -4,8 +4,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { PersonalInfoAndRole, PersonalInfoAndRoleSchema } from "@/schemas/user";
+import { PersonalInfoAndRole } from "@/schemas/user";
+import { PersonalInfoAndRoleFormSchema } from "@/utils/onboarding";
 import { useSession } from "next-auth/react";
+import { z } from "zod";
 
 interface Props {
   onNext: (data: PersonalInfoAndRole) => void;
@@ -19,21 +21,26 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
     handleSubmit,
     control,
     formState: { errors },
-  } = useForm<PersonalInfoAndRole>({
-    resolver: zodResolver(PersonalInfoAndRoleSchema),
+  } = useForm<z.infer<typeof PersonalInfoAndRoleFormSchema>>({
+    resolver: zodResolver(PersonalInfoAndRoleFormSchema),
+    mode: "onChange",
     defaultValues: {
-      ...initialData,
+      name: "",
       email: session?.user?.email || "",
+      onlineStatus: false,
+      onboardingCompleted: false,
+      role: "CONSULTEE",
+      ...initialData,
     },
   });
 
-  const onSubmit = (data: PersonalInfoAndRole) => {
+  const onSubmit = (data: z.infer<typeof PersonalInfoAndRoleFormSchema>) => {
     // Ensure email from session is used
     const submissionData = {
       ...data,
       email: session?.user?.email || "",
     };
-    onNext(submissionData);
+    onNext(submissionData as PersonalInfoAndRole);
   };
 
   return (
