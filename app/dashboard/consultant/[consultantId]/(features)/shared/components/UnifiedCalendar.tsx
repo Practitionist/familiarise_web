@@ -15,7 +15,6 @@ import {
   startOfWeek,
   endOfWeek,
   isSameDay,
-  subDays,
   addWeeks,
   subWeeks,
   addMonths,
@@ -35,18 +34,227 @@ import {
   TimeSlot,
   AppointmentDetail,
   calculateRequiredSlots,
+  calculateCallProgress,
+  countSundayWeeksInclusive,
+  validateDayBasedConsecutiveSlots,
 } from "../utils/calendarUtils";
 import { useCalendarData } from "../hooks/useCalendarData";
-import { useSlotAllocation } from "../hooks/useSlotAllocation";
-import { cn } from "@/utils/tailwind";
+import { useEventSlotAllocation } from "../hooks/useSlotAllocation";
+// Note: remove unused imports to keep the component lean
+import { useToast } from "@/hooks/use-toast";
+
+/**
+ * Small pure helpers for clarity and reuse. These do not cause side effects.
+ */
+function getSlotsPerCall(sessionDurationInHours?: number): number {
+  return Math.ceil((sessionDurationInHours || 1) / 0.5); // 30-min increments
+}
+
+/** Returns true if a UTC date is outside the [allowedStart, allowedEnd] bounds. */
+function isOutsideAllowedRange(
+  dateUtc: Date,
+  allowedStart?: Date,
+  allowedEnd?: Date,
+): boolean {
+  if (allowedStart && dateUtc < allowedStart) return true;
+  if (allowedEnd && dateUtc > allowedEnd) return true;
+  return false;
+}
+
+/** Formats the allowed [start, end] range for user-facing messages. */
+function formatAllowedRange(allowedStart?: Date, allowedEnd?: Date): string {
+  const startText = allowedStart ? allowedStart.toLocaleString() : "-";
+  const endText = allowedEnd ? allowedEnd.toLocaleString() : "-";
+  return `${startText} – ${endText}`;
+}
+
+/**
+ * Counts completed calls (appointments with a full slot block) for a given
+ * subscription inside a specific week window.
+ */
+function countCompletedCallsForWeek(
+  existingAppointments: any[],
+  subscriptionId: string,
+  slotsPerCall: number,
+  weekStart: Date,
+  weekEnd: Date,
+): number {
+  if (!Array.isArray(existingAppointments)) return 0;
+
+  return existingAppointments.filter((appt: any) => {
+    if (appt.appointmentType !== "SUBSCRIPTION") return false;
+    if (!appt.subscription || appt.subscription.id !== subscriptionId)
+      return false;
+    const slots = appt.slotsOfAppointment || [];
+    // A completed call is an appointment that has exactly the per-call slot count
+    if (slots.length !== slotsPerCall) return false;
+    const start = new Date(slots[0].slotStartTimeInUTC);
+    return start >= weekStart && start <= weekEnd;
+  }).length;
+}
+
+/**
+ * Counts completed calls from the user's current selection for a specific week.
+ * A completed call is exactly `slotsPerCall` consecutive 30-min slots on the same day.
+ */
+function countCompletedSelectedCallsForWeek(
+  selectedSlots: TimeSlot[],
+  slotsPerCall: number,
+  weekStart: Date,
+  weekEnd: Date,
+): number {
+  if (!selectedSlots?.length) return 0;
+
+  // Group selected slots by day within the target week
+  const byDay = new Map<string, TimeSlot[]>();
+  for (const s of selectedSlots) {
+    const start = s.startTime;
+    if (start < weekStart || start > weekEnd) continue;
+    const key = start.toDateString();
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key)!.push(s);
+  }
+
+  let completed = 0;
+  byDay.forEach((daySlots) => {
+    if (daySlots.length !== slotsPerCall) return;
+    if (validateDayBasedConsecutiveSlots(daySlots)) completed += 1;
+  });
+  return completed;
+}
+
+/** Counts in-progress (started but not complete) selected calls for a week. */
+function countInProgressSelectedCallsForWeek(
+  selectedSlots: TimeSlot[],
+  slotsPerCall: number,
+  weekStart: Date,
+  weekEnd: Date,
+): number {
+  if (!selectedSlots?.length) return 0;
+  const byDay = new Map<string, TimeSlot[]>();
+  for (const s of selectedSlots) {
+    const start = s.startTime;
+    if (start < weekStart || start > weekEnd) continue;
+    const key = start.toDateString();
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key)!.push(s);
+  }
+
+  // (moved down) countCompletedSelectedClasses / computeClassFooter helpers
+  let started = 0;
+  byDay.forEach((daySlots) => {
+    if (daySlots.length === 0) return;
+    if (daySlots.length < slotsPerCall) started += 1;
+  });
+  return started;
+}
+
+/**
+ * Computes the dynamic footer text for subscriptions:
+ * - Max calls derived from (weeks between start/end) × callsPerWeek
+ * - Past fully elapsed weeks are counted as completed calls
+ * - Currently selected consecutive slots add to completed calls
+ */
+function computeSubscriptionFooter(
+  params: Readonly<{
+    selectedSlots: TimeSlot[];
+    allowedStart?: Date;
+    allowedEnd?: Date;
+    callsPerWeek?: number;
+    sessionDurationInHours?: number;
+  }>,
+): string | null {
+  const {
+    selectedSlots,
+    allowedStart,
+    allowedEnd,
+    callsPerWeek,
+    sessionDurationInHours,
+  } = params;
+  if (!allowedStart || !allowedEnd || !callsPerWeek) return null;
+
+  const weeks = countSundayWeeksInclusive(allowedStart, allowedEnd);
+  const maxTotalCalls = weeks * callsPerWeek;
+  const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
+  const selectedCompleted = Math.floor(selectedSlots.length / slotsPerCall);
+
+  // Fully elapsed weeks (up to prev Saturday) are assumed completed
+  const now = new Date();
+  const prevSaturday = new Date(startOfWeek(now));
+  prevSaturday.setDate(prevSaturday.getDate() - 1);
+  const pastEnd = prevSaturday < allowedEnd ? prevSaturday : allowedEnd;
+  const pastWeeks =
+    pastEnd >= allowedStart
+      ? countSundayWeeksInclusive(allowedStart, pastEnd)
+      : 0;
+  const pastCompleted = pastWeeks * callsPerWeek;
+
+  const totalCompleted = Math.min(
+    maxTotalCalls,
+    pastCompleted + selectedCompleted,
+  );
+  return `Calls completed: ${totalCompleted}/${maxTotalCalls} (${pastCompleted} past + ${selectedCompleted} selected)`;
+}
+
+/** Counts total completed class sessions across all selected slots. */
+function countCompletedSelectedClasses(
+  selectedSlots: TimeSlot[],
+  slotsPerSession: number,
+): number {
+  if (!selectedSlots?.length) return 0;
+  // Group by day and count full consecutive runs
+  const byDay = new Map<string, TimeSlot[]>();
+  for (const s of selectedSlots) {
+    const key = s.startTime.toDateString();
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key)!.push(s);
+  }
+  let sessions = 0;
+  byDay.forEach((daySlots) => {
+    const sorted = [...daySlots].sort(
+      (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+    );
+    let run = 0;
+    let lastEnd: number | null = null;
+    for (const slot of sorted) {
+      if (lastEnd !== null && slot.startTime.getTime() !== lastEnd) {
+        sessions += Math.floor(run / slotsPerSession);
+        run = 0;
+      }
+      run += 1;
+      lastEnd = slot.endTime.getTime();
+    }
+    sessions += Math.floor(run / slotsPerSession);
+  });
+  return sessions;
+}
+
+/** Footer text for classes: show classes completed vs required. */
+function computeClassFooter(params: {
+  selectedSlots: TimeSlot[];
+  sessionDurationInHours?: number;
+  totalSessions?: number;
+}): string {
+  const { selectedSlots, sessionDurationInHours, totalSessions } = params;
+  const slotsPerSession = Math.ceil((sessionDurationInHours || 1) / 0.5);
+  const completed = countCompletedSelectedClasses(
+    selectedSlots,
+    slotsPerSession,
+  );
+  if (typeof totalSessions === "number" && totalSessions > 0) {
+    return `Classes completed: ${completed}/${totalSessions}`;
+  }
+  return `Classes completed: ${completed}`;
+}
 
 export interface UnifiedCalendarProps {
   consultantId: string;
   eventType: "consultation" | "subscription" | "webinar" | "class";
   eventId?: string;
   durationInMonths?: number;
+  durationInHours?: number; // For consultations/webinars
   callsPerWeek?: number;
-  sessionDurationInHours?: number; // Optional - will be fetched from plan if not provided
+  sessionDurationInHours?: number; // For subscriptions/classes - individual session duration
   mode: "view" | "select" | "allocate";
   onSlotsSelected?: (slots: TimeSlot[]) => void;
   onAllocationComplete?: (result: any) => void;
@@ -54,11 +262,15 @@ export interface UnifiedCalendarProps {
   preSelectedSlots?: TimeSlot[];
   requestedSlots?: TimeSlot[];
   className?: string;
+  // Optional hard boundaries to restrict interactive selection
+  allowedStart?: Date;
+  allowedEnd?: Date;
 }
 
 export function UnifiedCalendar({
   consultantId,
   eventType,
+  durationInHours,
   sessionDurationInHours,
   eventId,
   durationInMonths,
@@ -70,7 +282,10 @@ export function UnifiedCalendar({
   preSelectedSlots = [],
   requestedSlots = [],
   className = "",
+  allowedStart,
+  allowedEnd,
 }: UnifiedCalendarProps) {
+  const { toast } = useToast();
   // State
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [view, setView] = useState<"week" | "month">("week");
@@ -110,11 +325,23 @@ export function UnifiedCalendar({
     manualAllocate,
     autoAllocate,
     preAllocate,
-  } = useSlotAllocation({
+    slotLimits,
+  } = useEventSlotAllocation({
     eventType,
     eventId: eventId || "",
+    consultantId,
     durationInMonths,
+    durationInHours,
     callsPerWeek,
+    sessionDurationInHours,
+    startDate: allowedStart,
+    endDate: allowedEnd,
+    // Provide dynamic maxTotalCalls so validation/toasts show the real limit
+    maxTotalCalls:
+      eventType === "subscription" && allowedStart && allowedEnd && callsPerWeek
+        ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
+          (callsPerWeek || 1)
+        : undefined,
     onSuccess: onAllocationComplete,
   });
 
@@ -144,7 +371,71 @@ export function UnifiedCalendar({
       if (mode === "view") return;
 
       const status = getSlotStatusForInterval(interval, date);
-      if (status.isDisabled) return;
+      // First-line guard: allow click but block selection with feedback if outside allowed range
+      if (allowedStart || allowedEnd) {
+        const intervalStart = new Date(status.intervalStartUTCString);
+        if (isOutsideAllowedRange(intervalStart, allowedStart, allowedEnd)) {
+          const label =
+            eventType === "subscription"
+              ? "subscription"
+              : eventType === "class"
+                ? "class"
+                : "event";
+          toast({
+            variant: "destructive",
+            title: "Slot outside allowed period",
+            description: `This ${label} allows scheduling only between ${formatAllowedRange(allowedStart, allowedEnd)}.`,
+          });
+          return;
+        }
+      }
+      // Weekly limit guard for subscriptions: fire on FIRST slot of a new day (prevents overbooking a week)
+      if (
+        eventType === "subscription" &&
+        eventId &&
+        callsPerWeek &&
+        sessionDurationInHours
+      ) {
+        const intervalStart = new Date(status.intervalStartUTCString);
+        const isStartingNewDay = !selectedSlots.some(
+          (s) => s.startTime.toDateString() === intervalStart.toDateString(),
+        );
+
+        if (isStartingNewDay) {
+          const weekStart = startOfWeek(intervalStart);
+          const weekEnd = endOfWeek(intervalStart);
+          const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
+          const completedCalls = countCompletedCallsForWeek(
+            existingAppointments,
+            eventId,
+            slotsPerCall,
+            weekStart,
+            weekEnd,
+          );
+
+          // Also include already selected complete calls in this same week
+          const selectedCompleted = countCompletedSelectedCallsForWeek(
+            selectedSlots,
+            slotsPerCall,
+            weekStart,
+            weekEnd,
+          );
+          const totalCompletedThisWeek = completedCalls + selectedCompleted;
+
+          if (totalCompletedThisWeek >= (callsPerWeek || 1)) {
+            toast({
+              variant: "destructive",
+              title: "Weekly Call Limit Reached",
+              description: `Week of ${weekStart.toLocaleDateString()} already has ${totalCompletedThisWeek}/${callsPerWeek} completed call(s). Start a call in another week.`,
+            });
+            return;
+          }
+        }
+      }
+
+      // Allow selection even if booked or not available; server will validate conflicts
+      // Still block past intervals for UX sanity
+      if (status.isInPast) return;
 
       const slot: TimeSlot = {
         startTime: new Date(status.intervalStartUTCString),
@@ -157,7 +448,21 @@ export function UnifiedCalendar({
         toggleSlot(slot);
       }
     },
-    [mode, getSlotStatusForInterval, toggleSlot],
+    [
+      mode,
+      getSlotStatusForInterval,
+      toggleSlot,
+      // Dependencies used inside the callback
+      eventType,
+      eventId,
+      callsPerWeek,
+      sessionDurationInHours,
+      allowedStart,
+      allowedEnd,
+      selectedSlots,
+      existingAppointments,
+      toast,
+    ],
   );
 
   // Render time cell
@@ -208,8 +513,12 @@ export function UnifiedCalendar({
             " bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
           buttonText = "Available";
         } else {
-          cellClassName +=
-            " bg-green-300 text-green-950 hover:bg-green-400 border-green-400";
+          // Add special hover effect for consultations to show the selected duration
+          const hoverClass =
+            eventType === "consultation"
+              ? " hover:bg-green-400 hover:shadow-md"
+              : " hover:bg-green-400";
+          cellClassName += ` bg-green-300 text-green-950${hoverClass} border-green-400`;
           buttonText = "Available";
         }
       } else {
@@ -222,7 +531,7 @@ export function UnifiedCalendar({
       }
 
       const isButtonDisabled =
-        status.isDisabled && !isCurrentlySelected && mode !== "view";
+        status.isInPast && !isCurrentlySelected && mode !== "view";
 
       const buttonElement = (
         <Button
@@ -553,27 +862,57 @@ export function UnifiedCalendar({
           <div className="text-sm">
             {(() => {
               try {
+                if (eventType === "subscription") {
+                  const computed = computeSubscriptionFooter({
+                    selectedSlots,
+                    allowedStart,
+                    allowedEnd,
+                    callsPerWeek,
+                    sessionDurationInHours,
+                  });
+                  if (computed) return computed;
+                  // Fallback to existing text if boundaries not provided
+                  return calculateCallProgress(
+                    selectedSlots,
+                    sessionDurationInHours,
+                    slotLimits.maxSlots,
+                  );
+                } else if (eventType === "class") {
+                  return computeClassFooter({
+                    selectedSlots,
+                    sessionDurationInHours,
+                    totalSessions: slotLimits.totalSessions,
+                  });
+                }
+
+                const duration =
+                  eventType === "consultation" || eventType === "webinar"
+                    ? durationInHours
+                    : sessionDurationInHours;
+
                 const requiredSlotsForThisEvent = calculateRequiredSlots(
                   eventType,
                   durationInMonths,
                   callsPerWeek,
-                  sessionDurationInHours,
+                  duration,
                 );
 
-                if (selectedSlots.length === 0) {
-                  return `0 selected out of ${requiredSlotsForThisEvent} required slots for the session`;
-                }
-
-                return `${selectedSlots.length} selected out of ${requiredSlotsForThisEvent} required slots for the session`;
+                return `${selectedSlots.length} selected out of ${requiredSlotsForThisEvent} required slots`;
               } catch (error) {
                 console.error("Error calculating footer stats:", error);
+                if (error instanceof Error) {
+                  return error.message;
+                }
                 return `Selected: ${selectedSlots.length} slots`;
               }
             })()}
           </div>
           <div className="text-xs text-muted-foreground">
-            Required: {sessionDurationInHours || 1}h per session (
-            {Math.ceil((sessionDurationInHours || 1) * 2)} consecutive slots)
+            {eventType === "consultation"
+              ? `Required: ${durationInHours || 1}h consultation (${Math.ceil((durationInHours || 1) / 0.5)} consecutive slots)`
+              : eventType === "subscription"
+                ? `Required: ${sessionDurationInHours || 1}h per call (${Math.ceil((sessionDurationInHours || 1) / 0.5)} consecutive slots per call)`
+                : `Required: ${sessionDurationInHours || 1}h per session (2 consecutive slots)`}
           </div>
           {allocationError && (
             <div className="text-sm text-red-600">{allocationError}</div>

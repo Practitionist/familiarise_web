@@ -130,9 +130,22 @@ async function allocateSlotsAuto(
     ),
   );
 
-  // Calculate required number of slots
-  const totalWeeks = classDetails.durationInMonths * 4;
-  const totalRequiredSlots = totalWeeks * classDetails.callsPerWeek;
+  // Calculate required number of slots - FIXED: Use actual duration and frequency
+  const totalCalls = classDetails.durationInMonths * classDetails.callsPerWeek;
+
+  // Get session duration from class contents or use default
+  const classContents = classDetails.classContents || [];
+  let sessionDurationInHours = 1; // Default
+  if (classContents.length > 0) {
+    const totalHours = classContents.reduce(
+      (sum, content) => sum + content.hoursAllotted,
+      0,
+    );
+    sessionDurationInHours = totalHours / classContents.length;
+  }
+
+  const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5); // 30-min slots
+  const totalRequiredSlots = totalCalls * slotsPerSession;
 
   // Find best available slots
   const selectedSlots: Date[] = [];
@@ -141,7 +154,7 @@ async function allocateSlotsAuto(
 
   while (
     selectedSlots.length < totalRequiredSlots &&
-    currentWeek < totalWeeks
+    currentWeek < totalCalls
   ) {
     const weekStart = addWeeks(startDate, currentWeek);
     let slotsThisWeek = 0;
@@ -155,9 +168,9 @@ async function allocateSlotsAuto(
       const currentDay = new Date(weekStart);
       currentDay.setDate(currentDay.getDate() + dayOffset);
 
-      // Try to find the first available slot for this day
+      // Try to find consecutive slots for a session on this day
       for (const slot of sortedSlots) {
-        const slotTime = new Date(currentDay);
+        const sessionStartTime = new Date(currentDay);
 
         if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
           const weeklySlot = slot as SlotOfAvailabilityWeekly;
@@ -167,7 +180,7 @@ async function allocateSlotsAuto(
           ) {
             continue;
           }
-          slotTime.setHours(
+          sessionStartTime.setHours(
             weeklySlot.slotStartTimeInUTC.getHours(),
             weeklySlot.slotStartTimeInUTC.getMinutes(),
             0,
@@ -179,19 +192,37 @@ async function allocateSlotsAuto(
           if (!isSameDay(customSlot.slotStartTimeInUTC, currentDay)) {
             continue;
           }
-          slotTime.setTime(customSlot.slotStartTimeInUTC.getTime());
+          sessionStartTime.setTime(customSlot.slotStartTimeInUTC.getTime());
         }
 
-        // Skip if slot is already booked or in the past
-        if (bookedSlots.has(slotTime.toISOString()) || slotTime < new Date()) {
-          continue;
+        // Check if we can fit the entire session starting from this time
+        let canFitSession = true;
+        const sessionSlots: Date[] = [];
+
+        for (let slotIndex = 0; slotIndex < slotsPerSession; slotIndex++) {
+          const slotTime = new Date(
+            sessionStartTime.getTime() + slotIndex * 30 * 60 * 1000,
+          ); // 30 min intervals
+
+          if (
+            bookedSlots.has(slotTime.toISOString()) ||
+            slotTime < new Date()
+          ) {
+            canFitSession = false;
+            break;
+          }
+          sessionSlots.push(slotTime);
         }
 
-        // Found a valid slot for this day
-        selectedSlots.push(slotTime);
-        bookedSlots.add(slotTime.toISOString());
-        slotsThisWeek++;
-        break; // Move to next day after finding first available slot
+        if (canFitSession) {
+          // Add all slots for this session
+          sessionSlots.forEach((slotTime) => {
+            selectedSlots.push(slotTime);
+            bookedSlots.add(slotTime.toISOString());
+          });
+          slotsThisWeek++;
+          break; // Move to next day after finding a session
+        }
       }
     }
 
@@ -295,13 +326,27 @@ async function allocateSlotsManual(
     throw new Error("Consultant profile not found");
   }
 
-  // Validate number of slots
-  const totalWeeks = classDetails.durationInMonths * 4;
-  const totalRequiredSlots = totalWeeks * classDetails.callsPerWeek;
+  // Calculate expected slots accounting for session duration
+  // FIXED: Use actual duration and frequency instead of hardcoded weeks calculation
+  const totalCalls = classDetails.durationInMonths * classDetails.callsPerWeek;
+
+  // Get session duration from class contents
+  const classContents = classDetails.classContents || [];
+  let sessionDurationInHours = 1; // Default
+  if (classContents.length > 0) {
+    const totalHours = classContents.reduce(
+      (sum, content) => sum + content.hoursAllotted,
+      0,
+    );
+    sessionDurationInHours = totalHours / classContents.length;
+  }
+
+  const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5); // 30-min slots
+  const totalRequiredSlots = totalCalls * slotsPerSession;
 
   if (slots.length !== totalRequiredSlots) {
     throw new Error(
-      `Expected ${totalRequiredSlots} slots but received ${slots.length}`,
+      `Expected ${totalRequiredSlots} slots (${totalCalls} calls × ${slotsPerSession} slots/session) but received ${slots.length}`,
     );
   }
 
@@ -398,7 +443,7 @@ async function allocateSlotsManual(
     throw new Error("Some selected slots are already booked");
   }
 
-  // Validate slots per week quota
+  // Validate slots per week quota - FIXED: Account for session slots
   const slotsByWeek = new Map<string, number>();
   for (const slotDate of slotDates) {
     const weekStart = new Date(slotDate);
@@ -407,10 +452,12 @@ async function allocateSlotsManual(
     slotsByWeek.set(weekKey, (slotsByWeek.get(weekKey) || 0) + 1);
   }
 
+  // Convert slots back to sessions for validation
+  const maxSlotsPerWeek = classDetails.callsPerWeek * slotsPerSession;
   for (const [week, count] of Array.from(slotsByWeek.entries())) {
-    if (count > classDetails.callsPerWeek) {
+    if (count > maxSlotsPerWeek) {
       throw new Error(
-        `Too many slots allocated for week of ${new Date(week).toLocaleDateString()} (max ${classDetails.callsPerWeek} allowed)`,
+        `Too many slots allocated for week of ${new Date(week).toLocaleDateString()} (max ${maxSlotsPerWeek} slots for ${classDetails.callsPerWeek} sessions)`,
       );
     }
   }
