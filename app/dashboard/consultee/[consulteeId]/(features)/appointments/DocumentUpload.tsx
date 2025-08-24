@@ -689,12 +689,12 @@ export function DocumentUpload({
                             onClick={() => {
                               // Use our download API endpoint instead of direct Supabase URL
                               const downloadUrl = `/api/appointments/${appointmentId}/documents/${doc.id}/download`;
-                              const link = document.createElement("a");
+                              const link = window.document.createElement("a");
                               link.href = downloadUrl;
                               link.download = doc.originalName;
-                              document.body.appendChild(link);
+                              window.document.body.appendChild(link);
                               link.click();
-                              document.body.removeChild(link);
+                              window.document.body.removeChild(link);
                             }}
                             title="Download document"
                             className="h-7 w-7 sm:h-9 sm:w-9 p-0"

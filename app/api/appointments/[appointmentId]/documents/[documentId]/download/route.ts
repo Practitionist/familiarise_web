@@ -7,7 +7,9 @@ import { Prisma } from "@prisma/client";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ appointmentId: string; documentId: string }> },
+  {
+    params,
+  }: { params: Promise<{ appointmentId: string; documentId: string }> },
 ) {
   try {
     const { appointmentId, documentId } = await params;
