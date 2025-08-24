@@ -71,10 +71,9 @@ export async function POST(
 
     // Validate correct number of slots
     if (body.slots.length !== requiredSlots) {
-      const durationText = `${webinarDuration} hour${webinarDuration > 1 ? "s" : ""}`;
       return NextResponse.json(
         {
-          error: `Webinar (${durationText}) requires exactly ${requiredSlots} consecutive slot${requiredSlots > 1 ? "s" : ""}`,
+          error: `This webinar requires only ${requiredSlots} slots`,
         },
         { status: 400 },
       );

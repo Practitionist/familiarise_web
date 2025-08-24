@@ -8,7 +8,8 @@ import {
   SlotOfAvailabilityCustom,
   SlotOfAvailabilityWeekly,
 } from "@prisma/client";
-import { addHours, addWeeks } from "date-fns";
+import { addHours, addWeeks, addMonths } from "date-fns";
+// Note: countSundayWeeksInclusive not needed directly here; validation service handles week counting
 import { NextRequest, NextResponse } from "next/server";
 
 type PrismaTransaction = Omit<
@@ -55,7 +56,7 @@ async function allocateSlotsAuto(
   subscription: SubscriptionWithRelations,
   tx: PrismaTransaction,
 ): Promise<Date[]> {
-  const { subscriptionPlan, requestedBy } = subscription;
+  const { subscriptionPlan } = subscription;
   const { consultantProfile } = subscriptionPlan;
 
   if (!consultantProfile) {
@@ -103,7 +104,10 @@ async function allocateSlotsAuto(
               user: {
                 some: {
                   id: {
-                    in: [consultantProfile.user.id, requestedBy.user.id],
+                    in: [
+                      consultantProfile.user.id,
+                      subscription.requestedBy.user.id,
+                    ],
                   },
                 },
               },
@@ -130,17 +134,31 @@ async function allocateSlotsAuto(
     ),
   );
 
-  // Calculate required number of slots
-  const totalWeeks = subscriptionPlan.durationInMonths * 4;
-  const totalRequiredSlots = totalWeeks * subscriptionPlan.callsPerWeek;
+  // Calculate required number of calls (not 30-min slots) for the plan
+  // Using durationInMonths × callsPerWeek
+  const totalRequiredCalls =
+    subscriptionPlan.durationInMonths * subscriptionPlan.callsPerWeek;
+
+  // Determine allocation window strictly from subscription
+  const allocationStart = new Date(subscription.startDate);
+  const allocationEnd = new Date(subscription.endDate);
+
+  // Calculate a safe upper bound of weeks to iterate
+  const totalWeeks = Math.max(
+    1,
+    Math.ceil(
+      (allocationEnd.getTime() - allocationStart.getTime()) /
+        (7 * 24 * 60 * 60 * 1000),
+    ),
+  );
 
   // Find best available slots
   const selectedSlots: Date[] = [];
-  const startDate = new Date();
+  const startDate = allocationStart;
   let currentWeek = 0;
 
   while (
-    selectedSlots.length < totalRequiredSlots &&
+    selectedSlots.length < totalRequiredCalls &&
     currentWeek < totalWeeks
   ) {
     const weekStart = addWeeks(startDate, currentWeek);
@@ -182,8 +200,13 @@ async function allocateSlotsAuto(
           slotTime.setTime(customSlot.slotStartTimeInUTC.getTime());
         }
 
-        // Skip if slot is already booked or in the past
-        if (bookedSlots.has(slotTime.toISOString()) || slotTime < new Date()) {
+        // Skip if slot is outside subscription window, already booked, or in the past
+        if (
+          slotTime < allocationStart ||
+          slotTime > allocationEnd ||
+          bookedSlots.has(slotTime.toISOString()) ||
+          slotTime < new Date()
+        ) {
           continue;
         }
 
@@ -204,13 +227,32 @@ async function allocateSlotsAuto(
     currentWeek++;
   }
 
-  if (selectedSlots.length < totalRequiredSlots) {
+  if (selectedSlots.length < totalRequiredCalls) {
     throw new Error(
-      `Required ${totalRequiredSlots} slots but could only find ${selectedSlots.length}`,
+      `Required ${totalRequiredCalls} calls but could only find ${selectedSlots.length}`,
     );
   }
 
-  return selectedSlots.sort((a, b) => a.getTime() - b.getTime());
+  // Before returning, validate against subscription rules and window
+  const sorted = selectedSlots.sort((a, b) => a.getTime() - b.getTime());
+
+  const { SubscriptionValidationService } = await import(
+    "@/utils/subscriptionValidation"
+  );
+  const validationService = new SubscriptionValidationService(
+    tx as unknown as Prisma.TransactionClient,
+  );
+  const validationResult = await validationService.validateSubscriptionSlots(
+    subscription.id,
+    sorted.map((d) => d.toISOString()),
+  );
+
+  if (!validationResult.isValid) {
+    const errorMessage = validationResult.errors.join("; ");
+    throw new Error(`Subscription validation failed: ${errorMessage}`);
+  }
+
+  return sorted;
 }
 
 async function allocateSlotsRequested(
@@ -286,24 +328,16 @@ async function allocateSlotsManual(
   slots: string[],
   tx: PrismaTransaction,
 ): Promise<Date[]> {
-  const { subscriptionPlan, requestedBy } = subscription;
+  const { subscriptionPlan } = subscription;
   const { consultantProfile } = subscriptionPlan;
 
   if (!consultantProfile) {
     throw new Error("Consultant profile not found");
   }
 
-  const consultantTimezone = consultantProfile.user.currentTimezone || "UTC";
+  const _consultantTimezone = consultantProfile.user.currentTimezone || "UTC";
 
-  // Validate number of slots
-  const totalWeeks = subscriptionPlan.durationInMonths * 4;
-  const totalRequiredSlots = totalWeeks * subscriptionPlan.callsPerWeek;
-
-  if (slots.length !== totalRequiredSlots) {
-    throw new Error(
-      `Expected ${totalRequiredSlots} slots but received ${slots.length}`,
-    );
-  }
+  // Do not enforce raw slot count here; server-side validation will check calls per week/period
 
   // Convert string dates to Date objects for validation
   const slotDates = slots.map((slot) => new Date(slot));
@@ -395,25 +429,70 @@ async function allocateSlotsManual(
     throw new Error("Some selected slots are already booked");
   }
 
-  // Validate slots per week quota
-  const slotsByWeek = new Map<string, number>();
-  for (const slotDate of slotDates) {
-    const weekStart = new Date(slotDate);
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Get start of week
-    const weekKey = weekStart.toISOString();
-    slotsByWeek.set(weekKey, (slotsByWeek.get(weekKey) || 0) + 1);
-  }
-
-  for (const [week, count] of Array.from(slotsByWeek.entries())) {
-    if (count > subscriptionPlan.callsPerWeek) {
+  // Boundary guard: all selected slots must be within existing subscription window
+  const sortedSlotDates = [...slotDates].sort(
+    (a, b) => a.getTime() - b.getTime(),
+  );
+  for (const d of sortedSlotDates) {
+    if (d < subscription.startDate || d > subscription.endDate) {
       throw new Error(
-        `Too many slots allocated for week of ${new Date(week).toLocaleDateString()} (max ${subscriptionPlan.callsPerWeek} allowed)`,
+        `Slot ${d.toISOString()} is outside subscription period (${subscription.startDate.toISOString()} - ${subscription.endDate.toISOString()})`,
       );
     }
   }
 
-  // Return sorted slots
-  return slotDates.sort((a, b) => a.getTime() - b.getTime());
+  // Enhanced subscription validation using the new service
+  const { SubscriptionValidationService } = await import(
+    "@/utils/subscriptionValidation"
+  );
+  const validationService = new SubscriptionValidationService(
+    tx as unknown as Prisma.TransactionClient,
+  );
+
+  const validationResult = await validationService.validateSubscriptionSlots(
+    subscription.id,
+    slots,
+  );
+
+  if (!validationResult.isValid) {
+    const errorMessage = validationResult.errors.join("; ");
+    throw new Error(`Subscription validation failed: ${errorMessage}`);
+  }
+
+  // Handle warnings if any
+  if (validationResult.warnings.length > 0) {
+    // Warnings are handled in validation result
+  }
+
+  // Convert selected 30-min slots into call start times (one per complete call/day)
+  const slotsPerCall = Math.ceil(subscriptionPlan.sessionDurationInHours / 0.5);
+  const slotsByDay = new Map<string, Date[]>();
+  for (const d of sortedSlotDates) {
+    const key = d.toDateString();
+    if (!slotsByDay.has(key)) slotsByDay.set(key, []);
+    slotsByDay.get(key)!.push(d);
+  }
+
+  const callStartTimes: Date[] = [];
+  for (const key of Array.from(slotsByDay.keys())) {
+    const daySlots = slotsByDay.get(key)!;
+    const sorted = [...daySlots].sort((a, b) => a.getTime() - b.getTime());
+    if (sorted.length < slotsPerCall) {
+      throw new Error(
+        "Incomplete call selected: not enough consecutive slots in a day",
+      );
+    }
+    for (let i = 1; i < slotsPerCall; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      if (curr.getTime() !== prev.getTime() + 30 * 60 * 1000) {
+        throw new Error("Selected slots must be consecutive within a day");
+      }
+    }
+    callStartTimes.push(sorted[0]);
+  }
+
+  return callStartTimes.sort((a, b) => a.getTime() - b.getTime());
 }
 
 export async function PATCH(
@@ -529,9 +608,9 @@ export async function PATCH(
               data: {
                 requestStatus: RequestStatus.APPROVED,
                 startDate: requestedSlots[0],
-                endDate: addWeeks(
+                endDate: addMonths(
                   requestedSlots[0],
-                  subscription.subscriptionPlan.durationInMonths * 4,
+                  subscription.subscriptionPlan.durationInMonths,
                 ),
               },
               include: subscriptionInclude,
@@ -617,9 +696,9 @@ export async function PATCH(
             data: {
               requestStatus: RequestStatus.APPROVED,
               startDate: selectedSlots[0],
-              endDate: addWeeks(
+              endDate: addMonths(
                 selectedSlots[0],
-                subscription.subscriptionPlan.durationInMonths * 4,
+                subscription.subscriptionPlan.durationInMonths,
               ),
             },
             include: subscriptionInclude,
@@ -638,9 +717,7 @@ export async function PATCH(
       return NextResponse.json({ data: result });
     } catch (error) {
       if (error instanceof Error) {
-        // Fixes the below error:
-        //  ⨯ TypeError: The "payload" argument must be of type object. Received null
-        console.error("Error: ", error.stack);
+        // Handle error silently or use proper error reporting
       }
       return NextResponse.json(
         {
@@ -652,9 +729,7 @@ export async function PATCH(
     }
   } catch (error) {
     if (error instanceof Error) {
-      // Fixes the below error:
-      //  ⨯ TypeError: The "payload" argument must be of type object. Received null
-      console.error("Error: ", error.stack);
+      // Handle error silently or use proper error reporting
     }
     return NextResponse.json(
       { error: "An error occurred during slot allocation" },

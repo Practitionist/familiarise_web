@@ -17,10 +17,10 @@ const BATCH_SIZE = 10; // Process appointments in smaller batches
 
 // Distribution helpers
 const getAppointmentType = (index: number): AppointmentsType => {
-  // More even distribution
-  if (index < 125) return AppointmentsType.CONSULTATION;
-  if (index < 250) return AppointmentsType.SUBSCRIPTION;
-  if (index < 375) return AppointmentsType.WEBINAR;
+  // More realistic distribution with more subscriptions for testing validation
+  if (index < 100) return AppointmentsType.CONSULTATION;
+  if (index < 300) return AppointmentsType.SUBSCRIPTION; // More subscriptions for testing
+  if (index < 400) return AppointmentsType.WEBINAR;
   return AppointmentsType.CLASS;
 };
 
@@ -80,7 +80,22 @@ const getNumSlots = (appointmentType: AppointmentsType): number => {
     case AppointmentsType.CONSULTATION:
       return 1;
     case AppointmentsType.SUBSCRIPTION:
-      return faker.number.int({ min: 4, max: 12 });
+      // Create realistic subscription slots based on plan types
+      const planType = faker.helpers.arrayElement([
+        "basic",
+        "extended",
+        "comprehensive",
+      ]);
+      switch (planType) {
+        case "basic":
+          return faker.number.int({ min: 4, max: 5 }); // 1 call/week for 1 month
+        case "extended":
+          return faker.number.int({ min: 48, max: 52 }); // 2 calls/week for 6 months
+        case "comprehensive":
+          return faker.number.int({ min: 72, max: 78 }); // 3 calls/week for 6 months
+        default:
+          return faker.number.int({ min: 4, max: 12 });
+      }
     case AppointmentsType.WEBINAR:
       return 1;
     case AppointmentsType.CLASS:
@@ -183,36 +198,76 @@ const createSubscriptionAppointment = (
   endDate: Date,
   numSlots: number,
 ): Prisma.AppointmentCreateInput => {
-  // Limit slots to prevent transaction timeout
-  const limitedSlots = Math.min(numSlots, 6);
+  // Select a random subscription plan
+  const selectedPlan = faker.helpers.arrayElement(subscriptionPlans);
+
+  // Calculate realistic number of slots based on plan
+  const callsPerWeek = selectedPlan.callsPerWeek;
+  const durationInMonths = selectedPlan.durationInMonths;
+  const totalWeeks = Math.ceil(durationInMonths * 4.33); // Approximate weeks
+  const maxTotalCalls = callsPerWeek * totalWeeks;
+
+  // Limit slots to realistic number based on plan
+  const realisticSlots = Math.min(numSlots, maxTotalCalls);
+
+  // Create slots distributed across weeks
+  const slots = [];
+  const weekStart = new Date(startDate);
+
+  for (
+    let weekIndex = 0;
+    weekIndex < Math.ceil(realisticSlots / callsPerWeek);
+    weekIndex++
+  ) {
+    const weekStartDate = new Date(
+      weekStart.getTime() + weekIndex * 7 * 24 * 60 * 60 * 1000,
+    );
+
+    // Create 1-3 calls per week based on plan
+    const callsThisWeek = Math.min(
+      callsPerWeek,
+      realisticSlots - weekIndex * callsPerWeek,
+    );
+
+    for (let callIndex = 0; callIndex < callsThisWeek; callIndex++) {
+      // Distribute calls across different days of the week (Mon-Fri)
+      const dayOffset = (callIndex * 2) % 5; // Spread across weekdays
+      const callDate = new Date(
+        weekStartDate.getTime() + dayOffset * 24 * 60 * 60 * 1000,
+      );
+
+      // Set time to business hours (9 AM - 5 PM)
+      const hour = 9 + (callIndex % 8); // 9 AM to 5 PM
+      callDate.setHours(hour, 0, 0, 0);
+
+      const slotStart = new Date(callDate);
+      const slotEnd = new Date(callDate.getTime() + 60 * 60 * 1000); // 1 hour session
+
+      slots.push({
+        user: {
+          connect: [{ id: consultee.id }],
+        },
+        slotStartTimeInUTC: slotStart,
+        slotEndTimeInUTC: slotEnd,
+        isTentative: defaultStatus === RequestStatus.PENDING,
+        meetingSession: createMeetingSessionData(
+          isPastAppointment &&
+            weekIndex < Math.floor(realisticSlots / callsPerWeek) - 1,
+        ),
+      });
+    }
+  }
 
   return {
     appointmentType: AppointmentsType.SUBSCRIPTION,
     slotsOfAppointment: {
-      create: Array.from({ length: limitedSlots }, (_, index) => {
-        const slotStart = new Date(
-          startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000,
-        );
-        const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
-
-        return {
-          user: {
-            connect: [{ id: consultee.id }],
-          },
-          slotStartTimeInUTC: slotStart,
-          slotEndTimeInUTC: slotEnd,
-          isTentative: defaultStatus === RequestStatus.PENDING,
-          meetingSession: createMeetingSessionData(
-            isPastAppointment && index === limitedSlots - 1,
-          ),
-        };
-      }),
+      create: slots,
     },
     subscription: {
       create: {
         subscriptionPlan: {
           connect: {
-            id: faker.helpers.arrayElement(subscriptionPlans).id,
+            id: selectedPlan.id,
           },
         },
         requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
