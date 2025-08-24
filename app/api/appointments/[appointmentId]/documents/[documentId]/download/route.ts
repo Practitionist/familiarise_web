@@ -7,10 +7,10 @@ import { Prisma } from "@prisma/client";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { appointmentId: string; documentId: string } },
+  { params }: { params: Promise<{ appointmentId: string; documentId: string }> },
 ) {
   try {
-    const { appointmentId, documentId } = params;
+    const { appointmentId, documentId } = await params;
 
     // Get user session
     const session = await getServerSession(options);
