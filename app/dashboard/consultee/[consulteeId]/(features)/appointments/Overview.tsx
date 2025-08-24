@@ -202,15 +202,16 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 1024); // lg breakpoint
     };
-    
+
     checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
   const updateScrollButtonStates = useCallback(() => {
     if (scrollContainerRef.current && !isMobile) {
-      const { scrollLeft, scrollWidth, clientWidth } = scrollContainerRef.current;
+      const { scrollLeft, scrollWidth, clientWidth } =
+        scrollContainerRef.current;
       setCanScrollLeft(scrollLeft > 5);
       setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 5);
     }
@@ -262,13 +263,19 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
     return (
       <Card className="bg-gradient-to-br from-white via-white to-gray-50 border-gray-100 shadow-sm">
         <CardHeader>
-          <CardTitle className="text-lg lg:text-xl text-gray-800">{title}</CardTitle>
+          <CardTitle className="text-lg lg:text-xl text-gray-800">
+            {title}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-center py-8 lg:py-12">
             <div className="text-center">
-              <p className="text-gray-500 mb-2">No {title.toLowerCase()} found.</p>
-              <p className="text-sm text-gray-400">Your {title.toLowerCase()} will appear here once scheduled.</p>
+              <p className="text-gray-500 mb-2">
+                No {title.toLowerCase()} found.
+              </p>
+              <p className="text-sm text-gray-400">
+                Your {title.toLowerCase()} will appear here once scheduled.
+              </p>
             </div>
           </div>
         </CardContent>
@@ -279,7 +286,9 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
   return (
     <Card className="relative overflow-hidden rounded-xl bg-gradient-to-br from-white via-white to-gray-50 border-gray-100 shadow-sm">
       <CardHeader className="relative z-10 flex flex-row justify-between items-center px-4 lg:px-6 py-4 lg:py-6">
-        <CardTitle className="text-lg lg:text-xl text-gray-800">{title}</CardTitle>
+        <CardTitle className="text-lg lg:text-xl text-gray-800">
+          {title}
+        </CardTitle>
 
         {/* Scroll Buttons - Only show on desktop when scrollable */}
         {!isMobile && (canScrollLeft || canScrollRight) && (
@@ -341,7 +350,10 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
                        [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']"
           >
             {items.map((item) => (
-              <div key={item.id} className="snap-start flex-shrink-0 w-80 h-auto">
+              <div
+                key={item.id}
+                className="snap-start flex-shrink-0 w-80 h-auto"
+              >
                 <EventCard
                   title={item.title}
                   consultant={item.consultant}

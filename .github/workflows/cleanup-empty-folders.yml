@@ -3,7 +3,7 @@ name: Cleanup Empty Folders
 on:
   schedule:
     # Runs daily at 9:00 AM IST (3:30 AM UTC)
-    - cron: '30 3 * * *'
+    - cron: "30 3 * * *"
   workflow_dispatch: # Allows manual triggering
 
 jobs:
@@ -17,8 +17,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
@@ -28,4 +28,4 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: npm run scripts:cleanup-empty-folders 
+        run: npm run scripts:cleanup-empty-folders

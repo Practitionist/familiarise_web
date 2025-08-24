@@ -69,10 +69,18 @@ if (supabaseServiceKey) {
     // Don't throw error here - some operations might work without admin privileges
   }
 } else {
-  console.warn('⚠️  SUPABASE_SERVICE_ROLE_KEY not found in environment variables');
-  console.warn('   Automatic bucket creation will fail - you may need to create buckets manually');
-  console.warn('   To fix: Add SUPABASE_SERVICE_ROLE_KEY to your .env.local file');
-  console.warn('   Get it from: Supabase Dashboard → Settings → API → service_role key (⚠️  Keep this secret!)');
+  console.warn(
+    "⚠️  SUPABASE_SERVICE_ROLE_KEY not found in environment variables",
+  );
+  console.warn(
+    "   Automatic bucket creation will fail - you may need to create buckets manually",
+  );
+  console.warn(
+    "   To fix: Add SUPABASE_SERVICE_ROLE_KEY to your .env.local file",
+  );
+  console.warn(
+    "   Get it from: Supabase Dashboard → Settings → API → service_role key (⚠️  Keep this secret!)",
+  );
 }
 
 const supabase: SupabaseClient = supabaseInstance;
@@ -86,7 +94,7 @@ const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
     // First check if bucket exists by trying to list files
     const { data: _files, error: listError } = await supabase.storage
       .from(bucketName)
-      .list('', { limit: 1 });
+      .list("", { limit: 1 });
 
     // If no error, bucket exists
     if (!listError) {
@@ -94,27 +102,32 @@ const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
     }
 
     // If error is "Bucket not found", create the bucket
-    if (listError.message.includes('Bucket not found') || listError.message.includes('not found')) {
+    if (
+      listError.message.includes("Bucket not found") ||
+      listError.message.includes("not found")
+    ) {
       console.log(`Creating bucket: ${bucketName}`);
-      
+
       // Use admin client for bucket creation if available
       const clientToUse = supabaseAdmin || supabase;
-      
+
       if (!supabaseAdmin) {
-        console.warn('Service role key not available - trying with anon key (may fail)');
+        console.warn(
+          "Service role key not available - trying with anon key (may fail)",
+        );
       }
-      
-      const { data: _createData, error: createError } = await clientToUse.storage
-        .createBucket(bucketName, { 
+
+      const { data: _createData, error: createError } =
+        await clientToUse.storage.createBucket(bucketName, {
           public: true,
           allowedMimeTypes: [
-            'application/pdf',
-            'application/msword',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'image/jpeg',
-            'image/png',
-            'image/gif',
-            'text/plain',
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "image/jpeg",
+            "image/png",
+            "image/gif",
+            "text/plain",
           ],
           fileSizeLimit: 10485760, // 10MB
         });
@@ -141,7 +154,10 @@ const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
  * Ensure a folder exists in storage by creating a placeholder file if needed
  * Note: Supabase doesn't have "folders" per se, but we can simulate them with file paths
  */
-const ensureFolderExists = async (bucketName: string, folderPath: string): Promise<boolean> => {
+const ensureFolderExists = async (
+  bucketName: string,
+  folderPath: string,
+): Promise<boolean> => {
   try {
     // Check if folder has any files (which means it exists)
     const { data: _files, error: listError } = await supabase.storage
@@ -241,13 +257,13 @@ const uploadAppointmentDocument = async (
 
     // Validate file type (common document types)
     const allowedTypes = [
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'image/jpeg',
-      'image/png',
-      'image/gif',
-      'text/plain',
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "image/jpeg",
+      "image/png",
+      "image/gif",
+      "text/plain",
     ];
 
     if (!allowedTypes.includes(file.type)) {
@@ -255,18 +271,19 @@ const uploadAppointmentDocument = async (
     }
 
     // Ensure the documents bucket exists (create if it doesn't)
-    const bucketReady = await ensureBucketExists('documents');
+    const bucketReady = await ensureBucketExists("documents");
     if (!bucketReady) {
-      return { 
-        success: false, 
-        error: "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard with public access enabled, or add SUPABASE_SERVICE_ROLE_KEY to your environment variables for automatic bucket creation." 
+      return {
+        success: false,
+        error:
+          "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard with public access enabled, or add SUPABASE_SERVICE_ROLE_KEY to your environment variables for automatic bucket creation.",
       };
     }
 
     // Generate unique filename
     const timestamp = Date.now();
-    const _fileExt = file.name.split('.').pop();
-    const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const _fileExt = file.name.split(".").pop();
+    const safeFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
     const fileName = `${timestamp}_${safeFileName}`;
 
     // Create folder structure: appointments/{appointmentId}/consultee-{consulteeId}/
@@ -274,24 +291,24 @@ const uploadAppointmentDocument = async (
     const storagePath = `${folderPath}/${fileName}`;
 
     // Ensure folder structure exists (this is mostly for clarity - Supabase creates folders on upload)
-    await ensureFolderExists('documents', folderPath);
+    await ensureFolderExists("documents", folderPath);
 
     // Upload file to Supabase storage
     const { data: _uploadData, error: uploadError } = await supabase.storage
-      .from('documents')
+      .from("documents")
       .upload(storagePath, file, {
-        cacheControl: '3600',
+        cacheControl: "3600",
         upsert: false,
       });
 
     if (uploadError) {
-      console.error('Supabase upload error:', uploadError);
+      console.error("Supabase upload error:", uploadError);
       return { success: false, error: uploadError.message };
     }
 
     // Get public URL
     const { data: urlData } = supabase.storage
-      .from('documents')
+      .from("documents")
       .getPublicUrl(storagePath);
 
     return {
@@ -314,14 +331,16 @@ const uploadAppointmentDocument = async (
 /**
  * Delete document from Supabase storage
  */
-const deleteAppointmentDocument = async (storagePath: string): Promise<boolean> => {
+const deleteAppointmentDocument = async (
+  storagePath: string,
+): Promise<boolean> => {
   try {
     const { error } = await supabase.storage
-      .from('documents')
+      .from("documents")
       .remove([storagePath]);
 
     if (error) {
-      console.error('Error deleting document:', error);
+      console.error("Error deleting document:", error);
       return false;
     }
 
@@ -335,18 +354,20 @@ const deleteAppointmentDocument = async (storagePath: string): Promise<boolean> 
 /**
  * List documents in a folder
  */
-const listAppointmentDocuments = async (folderPath: string): Promise<FileObject[]> => {
+const listAppointmentDocuments = async (
+  folderPath: string,
+): Promise<FileObject[]> => {
   try {
     const { data: files, error } = await supabase.storage
-      .from('documents')
+      .from("documents")
       .list(folderPath, {
         limit: 100,
         offset: 0,
-        sortBy: { column: 'created_at', order: 'desc' },
+        sortBy: { column: "created_at", order: "desc" },
       });
 
     if (error) {
-      console.error('Error listing documents:', error);
+      console.error("Error listing documents:", error);
       return [];
     }
 
@@ -380,12 +401,12 @@ You can find this key in: Dashboard > Settings > API > service_role key
 };
 
 export default supabase;
-export { 
-  fetchImagesFromSupabaseStorage, 
-  uploadAppointmentDocument, 
-  deleteAppointmentDocument, 
+export {
+  fetchImagesFromSupabaseStorage,
+  uploadAppointmentDocument,
+  deleteAppointmentDocument,
   listAppointmentDocuments,
   ensureBucketExists,
   ensureFolderExists,
-  getManualBucketInstructions
+  getManualBucketInstructions,
 };

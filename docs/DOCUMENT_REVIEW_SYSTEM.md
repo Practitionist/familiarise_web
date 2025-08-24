@@ -5,6 +5,7 @@ A comprehensive document review feature that allows consultees to upload documen
 ## 🌟 Features
 
 ### 📤 For Consultees
+
 - **Upload Documents**: Support for PDF, Word documents, images, and text files (up to 10MB)
 - **Document Management**: View, download, and delete pending documents
 - **Real-time Status**: Track review status (Pending, In Review, Approved, Rejected, Needs Revision)
@@ -12,6 +13,7 @@ A comprehensive document review feature that allows consultees to upload documen
 - **Context-Aware Interface**: Smart UI that only shows document upload for appropriate appointment types
 
 ### 📋 For Consultants
+
 - **Review Dashboard**: Centralized view of all documents requiring review
 - **Filtering Options**: Filter by status, appointment type, and client
 - **Review Tools**: Update status, add detailed review notes
@@ -25,25 +27,30 @@ The system now includes comprehensive error handling that provides user-friendly
 #### 🔍 Error Categories
 
 **Authentication Errors**
+
 - Clear messages when user needs to sign in
 - Automatic redirect to sign-in page when appropriate
 - Session expiration handling
 
 **Permission Errors**
+
 - Specific messages about access levels (consultee vs consultant)
 - Helpful guidance on what the user can and cannot do
 
 **Network Errors**
+
 - Connection failure detection
 - Offline state handling
 - Retry mechanisms with exponential backoff
 
 **Storage Errors**
+
 - File upload failures with specific causes
 - Storage quota and size limit violations
 - Temporary storage unavailability
 
 **Data Corruption/Missing Data**
+
 - Graceful handling of missing or corrupt documents
 - Empty folder states with helpful guidance
 - Database inconsistency recovery
@@ -53,10 +60,11 @@ The system now includes comprehensive error handling that provides user-friendly
 Instead of generic "Error 404" messages, users now see:
 
 **Before**: `"Failed to fetch documents: Not Found"`
-**After**: 
+**After**:
+
 ```
 🔍 Appointment not found
-This appointment doesn't exist or you don't have permission to view it. 
+This appointment doesn't exist or you don't have permission to view it.
 Please check the appointment details or contact support if you believe this is an error.
 
 [Try Again] [Contact Support]
@@ -64,8 +72,9 @@ Please check the appointment details or contact support if you believe this is a
 
 **Before**: `"Upload failed"`
 **After**:
+
 ```
-📁 File too large  
+📁 File too large
 The selected file is 15MB. Please select a file smaller than 10MB.
 
 Supported formats: PDF, Word documents, images (JPG, PNG, GIF), text files
@@ -76,16 +85,19 @@ Supported formats: PDF, Word documents, images (JPG, PNG, GIF), text files
 #### 🛠️ Error Recovery Features
 
 **Smart Retry Logic**
+
 - Network errors: Automatic retry with exponential backoff
 - Temporary failures: Smart retry suggestions
 - Permanent failures: Clear next steps
 
 **Context-Aware Help**
+
 - Connection troubleshooting tips for network issues
 - File format guidance for upload errors
 - Permission clarification for access errors
 
 **Graceful Degradation**
+
 - Empty states with helpful onboarding
 - Partial data loading when possible
 - Offline-friendly error messages
@@ -93,6 +105,7 @@ Supported formats: PDF, Word documents, images (JPG, PNG, GIF), text files
 #### 🔧 Error Handling Implementation
 
 **API Layer Error Codes**
+
 ```typescript
 // Standardized error response format
 {
@@ -103,6 +116,7 @@ Supported formats: PDF, Word documents, images (JPG, PNG, GIF), text files
 ```
 
 **Frontend Error Handling**
+
 ```typescript
 // Enhanced error detection and user guidance
 switch (errorData.code) {
@@ -120,6 +134,7 @@ switch (errorData.code) {
 ```
 
 **Error Recovery UI Components**
+
 - Retry buttons with loading states
 - Contextual help sections
 - Progressive disclosure of technical details (dev mode)
@@ -128,11 +143,13 @@ switch (errorData.code) {
 #### 📊 Error Monitoring
 
 **Development Mode**
+
 - Detailed technical error information
 - Stack traces and debugging context
 - API response inspection tools
 
 **Production Mode**
+
 - User-friendly messages only
 - Automatic error reporting
 - Performance impact tracking
@@ -142,6 +159,7 @@ switch (errorData.code) {
 ### Database Schema
 
 #### AppointmentDocument Model
+
 ```prisma
 model AppointmentDocument {
   id           String  @id @default(uuid())
@@ -181,6 +199,7 @@ enum DocumentReviewStatus {
 ```
 
 ### File Storage Structure
+
 ```
 supabase-bucket: documents/
 ├── appointments/
@@ -194,6 +213,7 @@ supabase-bucket: documents/
 ### API Endpoints
 
 #### Document Management
+
 - `GET /api/appointments/{appointmentId}/documents` - List documents
 - `POST /api/appointments/{appointmentId}/documents` - Upload document
 - `GET /api/appointments/{appointmentId}/documents/{documentId}` - Get document details
@@ -201,21 +221,24 @@ supabase-bucket: documents/
 - `DELETE /api/appointments/{appointmentId}/documents/{documentId}` - Delete document
 
 #### Consultant Dashboard
+
 - `GET /api/dashboard/consultant/{consultantId}/documents` - List all documents for review
 
 ### Error Handling Specifications
 
 #### API Error Response Format
+
 ```typescript
 interface ApiError {
-  error: string;        // User-friendly title
-  message: string;      // Detailed explanation
-  code?: string;        // Programmatic error code
-  timestamp?: string;   // When the error occurred
+  error: string; // User-friendly title
+  message: string; // Detailed explanation
+  code?: string; // Programmatic error code
+  timestamp?: string; // When the error occurred
 }
 ```
 
 #### Error Codes Reference
+
 - `UNAUTHORIZED` - User needs to sign in
 - `ACCESS_DENIED` - User lacks necessary permissions
 - `NOT_FOUND` - Resource doesn't exist or user can't access it
@@ -232,6 +255,7 @@ interface ApiError {
 ### 1. Supabase Configuration
 
 Create a "documents" bucket in your Supabase dashboard:
+
 ```sql
 -- Enable RLS for security
 CREATE POLICY "Documents access policy" ON storage.objects
@@ -239,6 +263,7 @@ FOR SELECT USING (bucket_id = 'documents' AND auth.uid()::text = (storage.folder
 ```
 
 ### 2. Environment Variables
+
 ```bash
 # Required for file storage
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
@@ -247,6 +272,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key # For GitHub Actions
 ```
 
 ### 3. Database Migration
+
 ```bash
 npx prisma generate
 npx prisma db push
@@ -277,6 +303,7 @@ The GitHub Action runs daily and can also be triggered manually:
 ## 🔒 Security Features
 
 ### Access Control
+
 - **Consultees**: Can only upload/delete documents for their own appointments
 - **Consultants**: Can only review documents for their own consultation/subscription plans
 - **Document Isolation**: Each appointment's documents are stored in separate folders
@@ -284,6 +311,7 @@ The GitHub Action runs daily and can also be triggered manually:
 - **Size Limits**: Maximum 10MB per file to prevent abuse
 
 ### Storage Security
+
 - **Signed URLs**: All file access uses temporary, signed URLs
 - **Folder Structure**: Organized by appointment and user to prevent cross-access
 - **Automatic Cleanup**: Empty folders are cleaned up daily to maintain organization
@@ -291,6 +319,7 @@ The GitHub Action runs daily and can also be triggered manually:
 ## 🎨 UI Components
 
 ### DocumentUpload Component (Consultee)
+
 - Modal dialog with file upload interface
 - Real-time validation and preview
 - Document list with status indicators
@@ -298,6 +327,7 @@ The GitHub Action runs daily and can also be triggered manually:
 - Enhanced error states and recovery
 
 ### DocumentsTab Component (Consultant)
+
 - Table view with sorting and filtering
 - Inline review status updates
 - Bulk operations support
@@ -330,15 +360,19 @@ curl -X GET /api/appointments/{appointmentId}/documents
 ### Common Issues
 
 **Error: "Documents bucket not found"**
+
 - Solution: Create "documents" bucket in Supabase dashboard
 
 **Error: "Permission denied"**
+
 - Solution: Check RLS policies and user authentication
 
 **Error: "Upload fails silently"**
+
 - Solution: Verify SUPABASE_SERVICE_ROLE_KEY is set correctly
 
 **Error: "Cannot load documents"**
+
 - Check network connection
 - Verify API endpoints are accessible
 - Check browser console for detailed errors
@@ -346,18 +380,21 @@ curl -X GET /api/appointments/{appointmentId}/documents
 ### Error Recovery Procedures
 
 **For Users:**
+
 1. Check internet connection
 2. Refresh the page
 3. Try uploading a different file format
 4. Contact support if issues persist
 
 **For Developers:**
+
 1. Check API logs for specific error codes
 2. Verify database connections
 3. Test file storage permissions
 4. Monitor Supabase dashboard for quotas
 
 **For System Administrators:**
+
 1. Monitor error rates in application logs
 2. Check Supabase storage quotas
 3. Verify GitHub Actions are running
@@ -366,6 +403,7 @@ curl -X GET /api/appointments/{appointmentId}/documents
 ## 🚀 Future Enhancements
 
 ### Planned Features
+
 - **Document Versioning**: Track multiple versions of the same document
 - **Collaborative Review**: Multiple consultants reviewing the same document
 - **Document Templates**: Pre-built templates for common document types
@@ -373,6 +411,7 @@ curl -X GET /api/appointments/{appointmentId}/documents
 - **Notifications**: Email/push notifications for status changes
 
 ### Potential Improvements
+
 - **Real-time Status Updates**: WebSocket-based live updates
 - **Document Preview**: In-browser preview for PDFs and images
 - **Batch Upload**: Upload multiple documents at once
@@ -381,4 +420,4 @@ curl -X GET /api/appointments/{appointmentId}/documents
 
 ---
 
-*For support or questions about the document review system, please contact the development team or create an issue in the project repository.* 
+_For support or questions about the document review system, please contact the development team or create an issue in the project repository._

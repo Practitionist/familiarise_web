@@ -144,129 +144,146 @@ export async function fetchDocuments(
     const response = await fetch(
       `${baseUrl}/api/dashboard/consultant/${consultantId}/documents`,
     );
-    
+
     if (!response.ok) {
-      let errorMessage = 'Failed to load documents';
-      let userFriendlyMessage = 'Unable to load documents for review. Please try again.';
-      
+      let errorMessage = "Failed to load documents";
+      let userFriendlyMessage =
+        "Unable to load documents for review. Please try again.";
+
       try {
         const errorData = await response.json();
-        
+
         // Use the enhanced error messages from the API
         if (errorData.message) {
           userFriendlyMessage = errorData.message;
         }
-        
+
         // Provide specific messages based on error codes
         switch (errorData.code) {
-          case 'UNAUTHORIZED':
-            userFriendlyMessage = 'Please sign in again to view documents.';
+          case "UNAUTHORIZED":
+            userFriendlyMessage = "Please sign in again to view documents.";
             break;
-          case 'ACCESS_DENIED':
-            userFriendlyMessage = 'You don\'t have permission to view these documents. Please check that you\'re accessing the correct consultant dashboard.';
+          case "ACCESS_DENIED":
+            userFriendlyMessage =
+              "You don't have permission to view these documents. Please check that you're accessing the correct consultant dashboard.";
             break;
-          case 'CONNECTION_ERROR':
-            userFriendlyMessage = 'Connection issue detected. Please check your internet connection and try again.';
+          case "CONNECTION_ERROR":
+            userFriendlyMessage =
+              "Connection issue detected. Please check your internet connection and try again.";
             break;
-          case 'DATABASE_ERROR':
-            userFriendlyMessage = 'Document system is temporarily unavailable. Please try again in a few moments.';
+          case "DATABASE_ERROR":
+            userFriendlyMessage =
+              "Document system is temporarily unavailable. Please try again in a few moments.";
             break;
-          case 'INVALID_FILTER':
-            userFriendlyMessage = errorData.message || 'Invalid filter applied. Please check your search criteria.';
+          case "INVALID_FILTER":
+            userFriendlyMessage =
+              errorData.message ||
+              "Invalid filter applied. Please check your search criteria.";
             break;
           default:
             // Use the message from API if available, otherwise fall back to default
             userFriendlyMessage = errorData.message || userFriendlyMessage;
         }
-        
-        errorMessage = errorData.error || `HTTP ${response.status}: ${response.statusText}`;
+
+        errorMessage =
+          errorData.error || `HTTP ${response.status}: ${response.statusText}`;
       } catch (parseError) {
         // If we can't parse the error response, provide helpful messages based on status codes
         switch (response.status) {
           case 401:
-            userFriendlyMessage = 'Please sign in again to view documents.';
+            userFriendlyMessage = "Please sign in again to view documents.";
             break;
           case 403:
-            userFriendlyMessage = 'Access denied. Please check that you have permission to view these documents.';
+            userFriendlyMessage =
+              "Access denied. Please check that you have permission to view these documents.";
             break;
           case 404:
-            userFriendlyMessage = 'Consultant profile not found. Please check the URL and try again.';
+            userFriendlyMessage =
+              "Consultant profile not found. Please check the URL and try again.";
             break;
           case 500:
-            userFriendlyMessage = 'Server error occurred. Please try again later or contact support.';
+            userFriendlyMessage =
+              "Server error occurred. Please try again later or contact support.";
             break;
           case 503:
-            userFriendlyMessage = 'Document system is temporarily unavailable. Please try again in a few moments.';
+            userFriendlyMessage =
+              "Document system is temporarily unavailable. Please try again in a few moments.";
             break;
           default:
             userFriendlyMessage = `Unable to load documents (Error ${response.status}). Please try again.`;
         }
         errorMessage = `HTTP ${response.status}: ${response.statusText}`;
       }
-      
+
       // Create an enhanced error with both technical and user-friendly messages
       const enhancedError = new Error(userFriendlyMessage);
-      enhancedError.name = 'DocumentFetchError';
+      enhancedError.name = "DocumentFetchError";
       (enhancedError as any).technicalMessage = errorMessage;
       (enhancedError as any).status = response.status;
-      
+
       throw enhancedError;
     }
-    
+
     const data: ApiResponse<IDocument[]> = await response.json();
-    
+
     // Handle successful response but validate data structure
     if (!data.data) {
-      console.warn('API response missing data array, returning empty array');
+      console.warn("API response missing data array, returning empty array");
       return [];
     }
-    
+
     // Log helpful information for debugging
     if (data.message) {
-      console.info('Documents API message:', data.message);
+      console.info("Documents API message:", data.message);
     }
-    
+
     return data.data;
   } catch (error) {
     // Handle network errors and other exceptions
     if (error instanceof Error) {
       // If it's already our enhanced error, re-throw it
-      if (error.name === 'DocumentFetchError') {
+      if (error.name === "DocumentFetchError") {
         throw error;
       }
-      
+
       // Handle network and other errors
-      let userFriendlyMessage = 'Unable to connect to the document system.';
-      
-      if (error.message.includes('fetch')) {
-        userFriendlyMessage = 'Network error: Please check your internet connection and try again.';
-      } else if (error.message.includes('timeout')) {
-        userFriendlyMessage = 'Request timed out: The server is taking too long to respond. Please try again.';
-      } else if (error.message.includes('JSON')) {
-        userFriendlyMessage = 'Data format error: Please refresh the page and try again.';
+      let userFriendlyMessage = "Unable to connect to the document system.";
+
+      if (error.message.includes("fetch")) {
+        userFriendlyMessage =
+          "Network error: Please check your internet connection and try again.";
+      } else if (error.message.includes("timeout")) {
+        userFriendlyMessage =
+          "Request timed out: The server is taking too long to respond. Please try again.";
+      } else if (error.message.includes("JSON")) {
+        userFriendlyMessage =
+          "Data format error: Please refresh the page and try again.";
       } else {
-        userFriendlyMessage = 'An unexpected error occurred while loading documents. Please try again.';
+        userFriendlyMessage =
+          "An unexpected error occurred while loading documents. Please try again.";
       }
-      
+
       const enhancedError = new Error(userFriendlyMessage);
-      enhancedError.name = 'DocumentFetchError';
+      enhancedError.name = "DocumentFetchError";
       (enhancedError as any).technicalMessage = error.message;
       (enhancedError as any).originalError = error;
-      
+
       console.error("Enhanced error fetching documents:", {
         userMessage: userFriendlyMessage,
         technicalMessage: error.message,
-        stack: error.stack
+        stack: error.stack,
       });
-      
+
       throw enhancedError;
     }
-    
+
     // Handle non-Error objects (shouldn't happen, but just in case)
-    const fallbackError = new Error('An unknown error occurred while loading documents. Please try again.');
-    fallbackError.name = 'DocumentFetchError';
+    const fallbackError = new Error(
+      "An unknown error occurred while loading documents. Please try again.",
+    );
+    fallbackError.name = "DocumentFetchError";
     (fallbackError as any).technicalMessage = String(error);
-    
+
     console.error("Unknown error fetching documents:", error);
     throw fallbackError;
   }

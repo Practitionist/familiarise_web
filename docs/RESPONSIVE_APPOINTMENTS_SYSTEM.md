@@ -14,12 +14,14 @@ The responsive appointments system uses a **mobile-first approach** with adaptiv
 ## 🎯 Key Features
 
 ### Adaptive Layout System
+
 - **Grid Layout**: Mobile and tablet use CSS Grid for optimal card distribution
 - **Horizontal Scroll**: Desktop uses horizontal scrolling with smooth navigation
 - **Dynamic Detection**: JavaScript detects screen size changes in real-time
 - **Flexible Containers**: Cards adapt to available space automatically
 
 ### Enhanced Card Design
+
 - **Responsive Dimensions**: Cards scale from mobile-optimized to desktop-optimized sizes
 - **Flexible Content**: Text truncation and optimal information display
 - **Touch-Friendly**: Larger touch targets on mobile devices
@@ -28,6 +30,7 @@ The responsive appointments system uses a **mobile-first approach** with adaptiv
 ## 📱 Mobile Experience (< 640px)
 
 ### Layout Structure
+
 ```scss
 // Single column layout with full-width cards
 .mobile-layout {
@@ -38,12 +41,14 @@ The responsive appointments system uses a **mobile-first approach** with adaptiv
 ```
 
 ### Card Features
+
 - **Full Width**: Cards use 100% of available width
 - **Vertical Stacking**: Action buttons stack vertically for easier tapping
 - **Optimized Text**: Smaller font sizes with line-clamping for better readability
 - **Touch Targets**: Minimum 44px height for buttons (accessibility standard)
 
 ### Navigation
+
 - **Tab Navigation**: Clean tab interface without scroll buttons
 - **Swipe Gestures**: Cards support touch scrolling within sections
 - **Modal Interactions**: Document upload opens in full-screen modal
@@ -51,6 +56,7 @@ The responsive appointments system uses a **mobile-first approach** with adaptiv
 ## 📊 Tablet Experience (640px - 1024px)
 
 ### Layout Structure
+
 ```scss
 // Two-column responsive grid
 .tablet-layout {
@@ -61,6 +67,7 @@ The responsive appointments system uses a **mobile-first approach** with adaptiv
 ```
 
 ### Card Features
+
 - **Two-Column Grid**: Optimal use of tablet screen real estate
 - **Balanced Layout**: Cards maintain consistent height and proportions
 - **Flexible Buttons**: Action buttons can be horizontal or vertical based on content
@@ -69,6 +76,7 @@ The responsive appointments system uses a **mobile-first approach** with adaptiv
 ## 💻 Desktop Experience (> 1024px)
 
 ### Layout Structure
+
 ```scss
 // Horizontal scrolling with navigation
 .desktop-layout {
@@ -81,12 +89,14 @@ The responsive appointments system uses a **mobile-first approach** with adaptiv
 ```
 
 ### Card Features
+
 - **Fixed Width**: Cards maintain consistent 320px width for predictable layout
 - **Horizontal Scrolling**: Smooth scrolling with snap-to-card behavior
 - **Navigation Buttons**: Left/Right chevron buttons for easy navigation
 - **Hover Effects**: Subtle elevation and shadow changes on hover
 
 ### Advanced Features
+
 - **Scroll Indicators**: Visual indicators show when more content is available
 - **Keyboard Navigation**: Arrow keys support for accessibility
 - **Smooth Animations**: Framer Motion animations for card transitions
@@ -94,6 +104,7 @@ The responsive appointments system uses a **mobile-first approach** with adaptiv
 ## 🎨 Design System
 
 ### Typography Scale
+
 ```scss
 // Responsive typography
 .text-responsive {
@@ -102,13 +113,13 @@ The responsive appointments system uses a **mobile-first approach** with adaptiv
     font-size: 0.875rem;
     line-height: 1.25rem;
   }
-  
+
   // Tablet
   @media (min-width: 640px) {
     font-size: 1rem;
     line-height: 1.5rem;
   }
-  
+
   // Desktop
   @media (min-width: 1024px) {
     font-size: 1.125rem;
@@ -118,11 +129,13 @@ The responsive appointments system uses a **mobile-first approach** with adaptiv
 ```
 
 ### Spacing System
+
 - **Mobile**: Compact spacing (0.5rem - 1rem)
 - **Tablet**: Balanced spacing (0.75rem - 1.5rem)
 - **Desktop**: Generous spacing (1rem - 2rem)
 
 ### Color Scheme
+
 - **Primary**: Blue-based color scheme for actions and focus states
 - **Status Colors**: Contextual colors for appointment statuses
 - **Neutral Grays**: Consistent gray scale for text and backgrounds
@@ -130,6 +143,7 @@ The responsive appointments system uses a **mobile-first approach** with adaptiv
 ## 🔧 Implementation Details
 
 ### EventCard Component
+
 ```typescript
 // Responsive card with flexible dimensions
 <Card className="w-full h-full min-h-[280px] max-w-none flex flex-col">
@@ -145,7 +159,7 @@ The responsive appointments system uses a **mobile-first approach** with adaptiv
       </Avatar>
     </div>
   </CardHeader>
-  
+
   {/* Flexible content area */}
   <CardContent className="pt-0 flex-1 flex flex-col">
     {/* Action buttons adapt to screen size */}
@@ -159,17 +173,18 @@ The responsive appointments system uses a **mobile-first approach** with adaptiv
 ```
 
 ### Overview Component
+
 ```typescript
 // Adaptive layout system
 function DashboardCard({ title, items }) {
   const [isMobile, setIsMobile] = useState(false);
-  
+
   // Detect screen size changes
   useEffect(() => {
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 1024);
     };
-    
+
     checkMobile();
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
@@ -202,11 +217,13 @@ function DashboardCard({ title, items }) {
 ## 🎭 Animation System
 
 ### Card Transitions
+
 - **Entry Animation**: Fade-in with slide-up effect using Framer Motion
 - **Hover States**: Subtle scale and shadow transformations
 - **Loading States**: Skeleton animations for better perceived performance
 
 ### Scroll Animations
+
 - **Smooth Scrolling**: CSS `scroll-behavior: smooth` for desktop navigation
 - **Snap Scrolling**: Cards snap to position for better UX
 - **Parallax Effects**: Subtle parallax on scroll for depth perception
@@ -214,16 +231,19 @@ function DashboardCard({ title, items }) {
 ## ♿ Accessibility Features
 
 ### Keyboard Navigation
+
 - **Tab Order**: Logical tab sequence through all interactive elements
 - **Focus Indicators**: Clear visual focus states with blue ring
 - **Skip Links**: Hidden skip navigation for screen readers
 
 ### Screen Reader Support
+
 - **ARIA Labels**: Descriptive labels for all interactive elements
 - **Semantic HTML**: Proper heading hierarchy and landmark regions
 - **Status Updates**: Live regions announce important state changes
 
 ### Touch Accessibility
+
 - **Minimum Touch Targets**: 44px minimum size for all touch targets
 - **Gesture Support**: Swipe gestures work alongside button navigation
 - **High Contrast**: Sufficient color contrast ratios (4.5:1 minimum)
@@ -231,24 +251,31 @@ function DashboardCard({ title, items }) {
 ## 🛠️ Technical Specifications
 
 ### Breakpoint System
+
 ```scss
 // Tailwind CSS breakpoints
 $breakpoints: (
-  'sm': 640px,   // Small tablets
-  'md': 768px,   // Medium tablets
-  'lg': 1024px,  // Laptops
-  'xl': 1280px,  // Desktops
-  '2xl': 1536px  // Large desktops
+  "sm": 640px,
+  // Small tablets
+  "md": 768px,
+  // Medium tablets
+  "lg": 1024px,
+  // Laptops
+  "xl": 1280px,
+  // Desktops
+  "2xl": 1536px, // Large desktops
 );
 ```
 
 ### Performance Optimizations
+
 - **Lazy Loading**: Cards load as needed to improve initial performance
 - **Virtual Scrolling**: For large datasets (future enhancement)
 - **Debounced Resize**: Resize handlers are debounced for better performance
 - **CSS-Only Animations**: Most animations use CSS transforms for GPU acceleration
 
 ### Browser Support
+
 - **Modern Browsers**: Full support for Chrome, Firefox, Safari, Edge
 - **Mobile Browsers**: Optimized for iOS Safari and Android Chrome
 - **Progressive Enhancement**: Graceful degradation for older browsers
@@ -256,6 +283,7 @@ $breakpoints: (
 ## 🚀 Usage Examples
 
 ### Basic Implementation
+
 ```typescript
 import { Overview } from './Overview';
 
@@ -276,6 +304,7 @@ function AppointmentsPage() {
 ```
 
 ### Custom Responsive Grid
+
 ```typescript
 // Using the responsive grid utility
 <div className="responsive-grid">
@@ -290,18 +319,21 @@ function AppointmentsPage() {
 ## 🎯 Best Practices
 
 ### Mobile-First Design
+
 1. **Start Small**: Design for mobile first, then enhance for larger screens
 2. **Touch-Friendly**: Ensure all interactive elements are easily tappable
 3. **Content Priority**: Show the most important information prominently
 4. **Performance**: Optimize for slower mobile connections
 
 ### Responsive Development
+
 1. **Test Early**: Test responsive behavior throughout development
 2. **Real Devices**: Test on actual devices, not just browser dev tools
 3. **Multiple Orientations**: Test both portrait and landscape orientations
 4. **Edge Cases**: Test with very long text and minimal content
 
 ### Accessibility Standards
+
 1. **WCAG 2.1 AA**: Follow accessibility guidelines consistently
 2. **Keyboard Navigation**: Ensure all functionality is keyboard accessible
 3. **Screen Readers**: Test with actual screen reader software
@@ -310,12 +342,14 @@ function AppointmentsPage() {
 ## 🔮 Future Enhancements
 
 ### Planned Features
+
 - **Drag & Drop**: Reorder appointments on desktop
 - **Advanced Filtering**: Filter appointments by status, date, type
 - **Bulk Actions**: Select multiple appointments for batch operations
 - **Custom Views**: Save and recall custom layout preferences
 
 ### Performance Improvements
+
 - **Virtual Scrolling**: Handle thousands of appointments efficiently
 - **Image Optimization**: Lazy load and optimize consultant avatars
 - **Caching Strategy**: Implement intelligent data caching
@@ -323,4 +357,4 @@ function AppointmentsPage() {
 
 ---
 
-*This responsive system provides a solid foundation for a great user experience across all devices while maintaining performance and accessibility standards.* 
+_This responsive system provides a solid foundation for a great user experience across all devices while maintaining performance and accessibility standards._

@@ -31,6 +31,7 @@ If you're getting a "bucket not found" error when uploading documents, you need 
    - Copy the **service_role** key (not the anon key)
 
 2. **Add Environment Variable**
+
    ```bash
    # Add this to your .env.local file
    SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
@@ -57,6 +58,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 ## Testing the Setup
 
 After creating the bucket, try uploading a document again. You should see:
+
 - ✅ Successful upload
 - ✅ Document appears in the documents list
 - ✅ File is stored in Supabase Storage under `documents/appointments/{appointmentId}/consultee-{consulteeId}/`

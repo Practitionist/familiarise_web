@@ -151,7 +151,12 @@ export interface IDocument {
   mimeType: string;
   fileUrl: string;
   description: string | null;
-  reviewStatus: 'PENDING' | 'IN_REVIEW' | 'APPROVED' | 'REJECTED' | 'NEEDS_REVISION';
+  reviewStatus:
+    | "PENDING"
+    | "IN_REVIEW"
+    | "APPROVED"
+    | "REJECTED"
+    | "NEEDS_REVISION";
   reviewNotes: string | null;
   reviewedAt: Date | null;
   uploadedAt: Date;

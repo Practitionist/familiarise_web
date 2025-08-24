@@ -85,12 +85,15 @@ export function EventCard({
 
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/appointments/${appointmentId}/reschedule`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/appointments/${appointmentId}/reschedule`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
         },
-      });
+      );
 
       const data = await response.json();
 
@@ -110,7 +113,10 @@ export function EventCard({
       console.error("Error requesting reschedule:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to request reschedule",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to request reschedule",
         variant: "destructive",
       });
     } finally {
@@ -138,12 +144,15 @@ export function EventCard({
 
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/appointments/${appointmentId}/cancel`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/appointments/${appointmentId}/cancel`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
         },
-      });
+      );
 
       const data = await response.json();
 
@@ -163,7 +172,10 @@ export function EventCard({
       console.error("Error cancelling appointment:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to cancel appointment",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to cancel appointment",
         variant: "destructive",
       });
     } finally {
@@ -172,14 +184,16 @@ export function EventCard({
   };
 
   // Determine if appointment is confirmed and scheduled
-  const isConfirmed = status?.toLowerCase() === "approved" || 
-                     status?.toLowerCase() === "scheduled" ||
-                     (!isTentative && actualSlots.length > 0);
+  const isConfirmed =
+    status?.toLowerCase() === "approved" ||
+    status?.toLowerCase() === "scheduled" ||
+    (!isTentative && actualSlots.length > 0);
 
   // Show document upload for consultations and subscriptions only
-  const showDocumentUpload = (type === "Consultation" || type === "Subscription") && 
-                             appointmentId && 
-                             isConfirmed;
+  const showDocumentUpload =
+    (type === "Consultation" || type === "Subscription") &&
+    appointmentId &&
+    isConfirmed;
 
   return (
     <motion.div
@@ -212,7 +226,10 @@ export function EventCard({
                 >
                   {title}
                 </CardTitle>
-                <p className="text-xs text-gray-600 line-clamp-1" title={consultant}>
+                <p
+                  className="text-xs text-gray-600 line-clamp-1"
+                  title={consultant}
+                >
                   {consultant}
                 </p>
               </div>
@@ -232,7 +249,10 @@ export function EventCard({
                   ? "Pending"
                   : status?.replace(/([A-Z])/g, " $1").trim() || "Active"}
               </Badge>
-              <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-gray-100 text-gray-700">
+              <Badge
+                variant="secondary"
+                className="text-xs px-2 py-0.5 bg-gray-100 text-gray-700"
+              >
                 {type}
               </Badge>
             </div>
@@ -276,7 +296,10 @@ export function EventCard({
                       </span>
                     </AccordionTrigger>
                     <AccordionContent>
-                      <div data-testid="slot-list" className="space-y-2 max-h-32 overflow-y-auto">
+                      <div
+                        data-testid="slot-list"
+                        className="space-y-2 max-h-32 overflow-y-auto"
+                      >
                         {actualSlots.map((slot, index) => (
                           <div
                             key={index}
@@ -314,7 +337,7 @@ export function EventCard({
                   />
                 </div>
               )}
-              
+
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row justify-end gap-2">
                 {!isTentative && status?.toLowerCase() !== "cancelled" && (
@@ -326,7 +349,9 @@ export function EventCard({
                     className="flex items-center justify-center gap-1 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50 border-yellow-200 hover:border-yellow-300 transition-colors w-full sm:w-auto"
                   >
                     <ClockIcon className="h-4 w-4" />
-                    <span className="text-xs">{isLoading ? "Requesting..." : "Request Reschedule"}</span>
+                    <span className="text-xs">
+                      {isLoading ? "Requesting..." : "Request Reschedule"}
+                    </span>
                   </Button>
                 )}
                 {status?.toLowerCase() !== "cancelled" && (
@@ -338,7 +363,9 @@ export function EventCard({
                     className="flex items-center justify-center gap-1 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300 transition-colors w-full sm:w-auto"
                   >
                     <XIcon className="h-4 w-4" />
-                    <span className="text-xs">{isLoading ? "Cancelling..." : "Cancel"}</span>
+                    <span className="text-xs">
+                      {isLoading ? "Cancelling..." : "Cancel"}
+                    </span>
                   </Button>
                 )}
               </div>

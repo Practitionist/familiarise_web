@@ -40,27 +40,27 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'PENDING':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'IN_REVIEW':
-        return 'bg-blue-100 text-blue-800';
-      case 'APPROVED':
-        return 'bg-green-100 text-green-800';
-      case 'REJECTED':
-        return 'bg-red-100 text-red-800';
-      case 'NEEDS_REVISION':
-        return 'bg-orange-100 text-orange-800';
+      case "PENDING":
+        return "bg-yellow-100 text-yellow-800";
+      case "IN_REVIEW":
+        return "bg-blue-100 text-blue-800";
+      case "APPROVED":
+        return "bg-green-100 text-green-800";
+      case "REJECTED":
+        return "bg-red-100 text-red-800";
+      case "NEEDS_REVISION":
+        return "bg-orange-100 text-orange-800";
       default:
-        return 'bg-gray-100 text-gray-800';
+        return "bg-gray-100 text-gray-800";
     }
   };
 
   const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
+    if (bytes === 0) return "0 Bytes";
     const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const sizes = ["Bytes", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
   const handleReviewClick = (document: any) => {
@@ -78,35 +78,36 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
       const response = await fetch(
         `/api/appointments/${selectedDocument.appointmentId}/documents/${selectedDocument.id}`,
         {
-          method: 'PATCH',
+          method: "PATCH",
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
           body: JSON.stringify({
             reviewStatus,
             reviewNotes: reviewNotes.trim() || null,
           }),
-        }
+        },
       );
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || 'Failed to update review');
+        throw new Error(error.error || "Failed to update review");
       }
 
       toast({
         title: "Review Updated",
-        description: `Document review status updated to ${reviewStatus.toLowerCase().replace('_', ' ')}`,
+        description: `Document review status updated to ${reviewStatus.toLowerCase().replace("_", " ")}`,
       });
 
       setReviewDialogOpen(false);
       // Refresh the page to show updated data
       window.location.reload();
     } catch (error) {
-      console.error('Error updating review:', error);
+      console.error("Error updating review:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to update review",
+        description:
+          error instanceof Error ? error.message : "Failed to update review",
         variant: "destructive",
       });
     } finally {
@@ -118,14 +119,14 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
     try {
       // Use our download API endpoint instead of direct Supabase URL
       const downloadUrl = `/api/appointments/${document.appointmentId}/documents/${document.id}/download`;
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = downloadUrl;
       link.download = document.originalName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
     } catch (error) {
-      console.error('Error downloading file:', error);
+      console.error("Error downloading file:", error);
       toast({
         title: "Error",
         description: "Failed to download file",
@@ -136,7 +137,7 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
 
   const handleView = (document: any) => {
     // Open file in new tab for viewing
-    window.open(document.fileUrl, '_blank');
+    window.open(document.fileUrl, "_blank");
   };
 
   return (
@@ -149,7 +150,7 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
           </p>
         </div>
         <div className="text-sm text-gray-500">
-          {documents.length} document{documents.length !== 1 ? 's' : ''}
+          {documents.length} document{documents.length !== 1 ? "s" : ""}
         </div>
       </div>
 
@@ -191,12 +192,16 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
                 <TableCell>
                   <div className="text-sm">
                     <div className="font-medium">{document.clientName}</div>
-                    <div className="text-gray-500 text-xs">{document.invoiceNo}</div>
+                    <div className="text-gray-500 text-xs">
+                      {document.invoiceNo}
+                    </div>
                   </div>
                 </TableCell>
                 <TableCell>
                   <div className="text-sm">
-                    <div className="font-medium">{document.appointmentTitle}</div>
+                    <div className="font-medium">
+                      {document.appointmentTitle}
+                    </div>
                     <div className="text-gray-500 text-xs">
                       {document.appointmentType?.toLowerCase()}
                     </div>
@@ -215,11 +220,12 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
                     variant="secondary"
                     className={getStatusColor(document.reviewStatus)}
                   >
-                    {document.reviewStatus.replace('_', ' ')}
+                    {document.reviewStatus.replace("_", " ")}
                   </Badge>
                   {document.reviewedAt && (
                     <div className="text-xs text-gray-500 mt-1">
-                      Reviewed {new Date(document.reviewedAt).toLocaleDateString()}
+                      Reviewed{" "}
+                      {new Date(document.reviewedAt).toLocaleDateString()}
                     </div>
                   )}
                 </TableCell>
@@ -256,10 +262,15 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
             ))}
             {documents.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-gray-500 py-12">
+                <TableCell
+                  colSpan={6}
+                  className="text-center text-gray-500 py-12"
+                >
                   <FileText className="h-12 w-12 text-gray-300 mx-auto mb-4" />
                   <p className="text-lg font-medium">No documents for review</p>
-                  <p className="text-sm">Documents uploaded by your consultees will appear here</p>
+                  <p className="text-sm">
+                    Documents uploaded by your consultees will appear here
+                  </p>
                 </TableCell>
               </TableRow>
             )}
@@ -273,7 +284,8 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
           <DialogHeader>
             <DialogTitle>Review Document</DialogTitle>
             <DialogDescription>
-              Update the review status and add notes for {selectedDocument?.originalName}
+              Update the review status and add notes for{" "}
+              {selectedDocument?.originalName}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -303,11 +315,20 @@ export function DocumentsTab({ documents }: Readonly<DocumentsTabProps>) {
             </div>
             {selectedDocument && (
               <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded">
-                <p><strong>Client:</strong> {selectedDocument.clientName}</p>
-                <p><strong>File:</strong> {selectedDocument.originalName}</p>
-                <p><strong>Size:</strong> {formatFileSize(selectedDocument.fileSize)}</p>
+                <p>
+                  <strong>Client:</strong> {selectedDocument.clientName}
+                </p>
+                <p>
+                  <strong>File:</strong> {selectedDocument.originalName}
+                </p>
+                <p>
+                  <strong>Size:</strong>{" "}
+                  {formatFileSize(selectedDocument.fileSize)}
+                </p>
                 {selectedDocument.description && (
-                  <p><strong>Description:</strong> {selectedDocument.description}</p>
+                  <p>
+                    <strong>Description:</strong> {selectedDocument.description}
+                  </p>
                 )}
               </div>
             )}
