@@ -14,7 +14,7 @@ import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 export async function verifyWebhookSignature(
   req: Request,
   secret: string,
-  gateway: "stripe" | "razorpay"
+  gateway: "stripe" | "razorpay",
 ): Promise<{ isValid: boolean; body: string }> {
   const signature =
     req.headers.get("stripe-signature") ||
@@ -30,7 +30,7 @@ export async function verifyWebhookSignature(
     if (gateway === "stripe") {
       if (!stripeClient) {
         console.error(
-          "Stripe client not initialized - cannot verify webhook signature"
+          "Stripe client not initialized - cannot verify webhook signature",
         );
         return { isValid: false, body: "" };
       }
@@ -46,7 +46,7 @@ export async function verifyWebhookSignature(
   } catch (error) {
     console.error(
       `Webhook signature verification failed for ${gateway}:`,
-      error
+      error,
     );
     return { isValid: false, body };
   }
@@ -55,7 +55,7 @@ export async function verifyWebhookSignature(
 // Shared payment success handler
 export async function handlePaymentSuccess(
   paymentIntentId: string,
-  metadata: Record<string, string>
+  metadata: Record<string, string>,
 ) {
   return await prisma.$transaction(async (tx) => {
     const payment = await tx.payment.findUnique({
@@ -65,7 +65,7 @@ export async function handlePaymentSuccess(
 
     if (!payment) {
       throw new Error(
-        `Payment record not found for intent: ${paymentIntentId}`
+        `Payment record not found for intent: ${paymentIntentId}`,
       );
     }
 
@@ -95,7 +95,7 @@ export async function handlePaymentSuccess(
     await confirmExistingAppointment(tx, appointment.id);
 
     console.log(
-      `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`
+      `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
     );
   });
 }
@@ -110,7 +110,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
 
     if (!payment) {
       console.warn(
-        `Payment record not found for failed intent: ${paymentIntentId}`
+        `Payment record not found for failed intent: ${paymentIntentId}`,
       );
       return;
     }
@@ -130,7 +130,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
 async function createAppointmentFromWebhook(
   tx: Prisma.TransactionClient,
   metadata: Record<string, string>,
-  payment: any
+  payment: any,
 ) {
   const {
     appointmentType,
@@ -226,7 +226,7 @@ async function createSubscription(tx: Prisma.TransactionClient, data: any) {
   const startDate = new Date();
   const endDate = calculateSubscriptionEndDate(
     startDate,
-    plan.durationInMonths
+    plan.durationInMonths,
   );
 
   const subscription = await tx.subscription.create({
@@ -337,7 +337,7 @@ async function createClass(tx: Prisma.TransactionClient, data: any) {
 // Appointment confirmation
 async function confirmExistingAppointment(
   tx: Prisma.TransactionClient,
-  appointmentId: string
+  appointmentId: string,
 ) {
   await tx.slotOfAppointment.updateMany({
     where: { appointmentId },
@@ -383,7 +383,7 @@ async function confirmExistingAppointment(
 // Cleanup for failed payments
 async function cleanupFailedPaymentAppointment(
   tx: Prisma.TransactionClient,
-  appointmentId: string
+  appointmentId: string,
 ) {
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
@@ -397,7 +397,7 @@ async function cleanupFailedPaymentAppointment(
   if (!appointment) return;
 
   const tentativeSlots = appointment.slotsOfAppointment.filter(
-    (slot) => slot.isTentative
+    (slot) => slot.isTentative,
   );
 
   if (tentativeSlots.length > 0) {

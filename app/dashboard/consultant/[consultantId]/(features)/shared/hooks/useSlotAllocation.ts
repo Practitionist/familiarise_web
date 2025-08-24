@@ -333,7 +333,7 @@ export interface UseEventSlotAllocationReturn {
  */
 function getEventConstraints(
   eventType: UseEventSlotAllocationOptions["eventType"],
-  options: UseEventSlotAllocationOptions
+  options: UseEventSlotAllocationOptions,
 ): EventConstraints {
   switch (eventType) {
     case "webinar":
@@ -384,7 +384,7 @@ function getEventConstraints(
  */
 function getSlotLimits(
   eventType: UseEventSlotAllocationOptions["eventType"],
-  options: UseEventSlotAllocationOptions
+  options: UseEventSlotAllocationOptions,
 ): SlotLimits {
   // Use the appropriate duration field based on event type
   const duration =
@@ -398,7 +398,7 @@ function getSlotLimits(
     options.callsPerWeek,
     duration,
     options.startDate,
-    options.endDate
+    options.endDate,
   );
 
   switch (eventType) {
@@ -414,7 +414,7 @@ function getSlotLimits(
 
     case "class": {
       const sessionSlots = Math.ceil(
-        (options.sessionDurationInHours || 1) / 0.5
+        (options.sessionDurationInHours || 1) / 0.5,
       );
       return {
         minSlots: requiredSlots,
@@ -426,7 +426,7 @@ function getSlotLimits(
 
     case "subscription": {
       const subscriptionSessionSlots = Math.ceil(
-        (options.sessionDurationInHours || 1) / 0.5
+        (options.sessionDurationInHours || 1) / 0.5,
       );
       // FIXED: Calculate actual call count for maxSlots (not slot count)
       const totalCalls = Math.ceil(requiredSlots / subscriptionSessionSlots);
@@ -466,7 +466,7 @@ function validateEventSlots(
   eventType: UseEventSlotAllocationOptions["eventType"],
   constraints: EventConstraints,
   limits: SlotLimits,
-  options: UseEventSlotAllocationOptions
+  options: UseEventSlotAllocationOptions,
 ): ValidationResult {
   const result: ValidationResult = {
     isValid: true,
@@ -485,13 +485,13 @@ function validateEventSlots(
     const slotsByDay = groupSlotsByDay(slots);
     const completeCalls = countCompleteCallsInMap(
       slotsByDay,
-      limits.slotsPerSession
+      limits.slotsPerSession,
     );
 
     if (completeCalls > limits.maxSlots) {
       result.isValid = false;
       result.errors.push(
-        `Maximum ${limits.maxSlots} calls allowed for this subscription (${completeCalls} complete calls selected)`
+        `Maximum ${limits.maxSlots} calls allowed for this subscription (${completeCalls} complete calls selected)`,
       );
     }
   } else {
@@ -499,7 +499,7 @@ function validateEventSlots(
     if (slots.length > limits.maxSlots) {
       result.isValid = false;
       result.errors.push(
-        `Maximum ${limits.maxSlots} slots allowed for this ${eventType} (${slots.length} selected)`
+        `Maximum ${limits.maxSlots} slots allowed for this ${eventType} (${slots.length} selected)`,
       );
     }
   }
@@ -510,21 +510,21 @@ function validateEventSlots(
     const slotsByDay = groupSlotsByDay(slots);
     const completeCalls = countCompleteCallsInMap(
       slotsByDay,
-      limits.slotsPerSession
+      limits.slotsPerSession,
     );
 
     const requiredCalls = Math.ceil(limits.minSlots / limits.slotsPerSession);
 
     if (completeCalls < requiredCalls) {
       result.warnings.push(
-        `Need ${requiredCalls - completeCalls} more calls for this subscription (${completeCalls}/${requiredCalls} complete calls selected)`
+        `Need ${requiredCalls - completeCalls} more calls for this subscription (${completeCalls}/${requiredCalls} complete calls selected)`,
       );
     }
   } else {
     // For other event types, warn based on slot count
     if (slots.length < limits.minSlots) {
       result.warnings.push(
-        `Need ${limits.minSlots - slots.length} more slots for this ${eventType} (${slots.length}/${limits.minSlots} selected)`
+        `Need ${limits.minSlots - slots.length} more slots for this ${eventType} (${slots.length}/${limits.minSlots} selected)`,
       );
     }
   }
@@ -543,7 +543,7 @@ function validateEventSlots(
       const slotsPerSession = limits.slotsPerSession;
       result.dailyHoursValid = validateDailyHours(
         slots,
-        constraints.maxHoursPerDay!
+        constraints.maxHoursPerDay!,
       );
 
       // Detect any day where selected slot count is not a multiple of slotsPerSession (in-progress)
@@ -551,21 +551,21 @@ function validateEventSlots(
       // users can start a class by selecting the first slot.
       const byDay = groupSlotsByDay(slots);
       const hasInProgress = Array.from(byDay.values()).some(
-        (count) => count.length % slotsPerSession !== 0
+        (count) => count.length % slotsPerSession !== 0,
       );
 
       // Validate max 2 classes/day using completed-session counting
       const sessionsPerDayOk = validateClassSessionDistributionByCount(
         slots,
         constraints.maxSessionsPerDay || 2,
-        slotsPerSession
+        slotsPerSession,
       );
 
       // Validate weekly class cap using complete sessions per week
       const weeklyOk = validateWeeklySessionsDistribution(
         slots,
         options.callsPerWeek || 1,
-        slotsPerSession
+        slotsPerSession,
       );
 
       // Do not mark invalid just because a class is in progress. This allows the first slot to be selected.
@@ -575,25 +575,25 @@ function validateEventSlots(
       if (!result.dailyHoursValid) {
         result.isValid = false;
         result.errors.push(
-          `Maximum ${constraints.maxHoursPerDay} hours per day exceeded`
+          `Maximum ${constraints.maxHoursPerDay} hours per day exceeded`,
         );
       }
       // If in-progress exists, surface as a warning rather than hard error; interactive guards ensure correctness.
       if (hasInProgress) {
         result.warnings.push(
-          `A class is in progress. Select the adjacent slot to complete it.`
+          `A class is in progress. Select the adjacent slot to complete it.`,
         );
       }
       if (!sessionsPerDayOk) {
         result.isValid = false;
         result.errors.push(
-          `Maximum ${constraints.maxSessionsPerDay || 2} classes per day exceeded`
+          `Maximum ${constraints.maxSessionsPerDay || 2} classes per day exceeded`,
         );
       }
       if (!weeklyOk) {
         result.isValid = false;
         result.errors.push(
-          `Maximum ${options.callsPerWeek || 1} classes per week exceeded`
+          `Maximum ${options.callsPerWeek || 1} classes per week exceeded`,
         );
       }
       break;
@@ -604,7 +604,7 @@ function validateEventSlots(
       const subscriptionValidation = validateSubscriptionSlots(
         slots,
         options,
-        limits
+        limits,
       );
       result.dailyCallsValid = subscriptionValidation.dailyCallsValid;
       result.totalCallsValid = subscriptionValidation.totalCallsValid;
@@ -613,14 +613,14 @@ function validateEventSlots(
       if (!result.dailyCallsValid) {
         result.isValid = false;
         result.errors.push(
-          subscriptionValidation.dailyCallsError || "Daily call limit exceeded"
+          subscriptionValidation.dailyCallsError || "Daily call limit exceeded",
         );
       }
 
       if (!result.totalCallsValid) {
         result.isValid = false;
         result.errors.push(
-          subscriptionValidation.totalCallsError || "Total call limit exceeded"
+          subscriptionValidation.totalCallsError || "Total call limit exceeded",
         );
       }
 
@@ -628,7 +628,7 @@ function validateEventSlots(
         result.isValid = false;
         result.errors.push(
           subscriptionValidation.weeklyCallsError ||
-            "Weekly call limit exceeded"
+            "Weekly call limit exceeded",
         );
       }
 
@@ -646,12 +646,12 @@ function validateEventSlots(
       if (slots.length > 1) {
         const firstSlotDay = slots[0].startTime.toDateString();
         const allSameDay = slots.every(
-          (slot) => slot.startTime.toDateString() === firstSlotDay
+          (slot) => slot.startTime.toDateString() === firstSlotDay,
         );
         if (!allSameDay) {
           result.isValid = false;
           result.errors.push(
-            "Consultation is a one-day event - all slots must be on the same day"
+            "Consultation is a one-day event - all slots must be on the same day",
           );
         }
       }
@@ -662,7 +662,7 @@ function validateEventSlots(
         if (!result.consecutiveSlotsValid) {
           result.isValid = false;
           result.errors.push(
-            "Consultation slots must be consecutive within the same day"
+            "Consultation slots must be consecutive within the same day",
           );
         }
       }
@@ -677,11 +677,11 @@ function validateEventSlots(
   ) {
     result.weeklyDistributionValid = validateWeeklyDistribution(
       slots,
-      options.callsPerWeek
+      options.callsPerWeek,
     );
     if (!result.weeklyDistributionValid) {
       result.warnings.push(
-        `Consider distributing calls more evenly across weeks`
+        `Consider distributing calls more evenly across weeks`,
       );
     }
   }
@@ -691,12 +691,12 @@ function validateEventSlots(
     const ok = validateWeeklySessionsDistribution(
       slots,
       options.callsPerWeek,
-      slotsPerSession
+      slotsPerSession,
     );
     if (!ok) {
       result.weeklyDistributionValid = false;
       result.warnings.push(
-        `Consider distributing classes more evenly across weeks`
+        `Consider distributing classes more evenly across weeks`,
       );
     }
   }
@@ -728,7 +728,7 @@ function groupSlotsByDay(slots: TimeSlot[]): Map<string, TimeSlot[]> {
  */
 function countCompleteCallsInMap(
   slotsByDay: Map<string, TimeSlot[]>,
-  slotsPerCall: number
+  slotsPerCall: number,
 ): number {
   let completeCalls = 0;
   slotsByDay.forEach((daySlots) => {
@@ -746,7 +746,7 @@ function validateConsecutiveSlots(slots: TimeSlot[]): boolean {
   if (slots.length <= 1) return true;
 
   const sortedSlots = [...slots].sort(
-    (a, b) => a.startTime.getTime() - b.startTime.getTime()
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
   );
 
   for (let i = 1; i < sortedSlots.length; i++) {
@@ -767,12 +767,12 @@ function validateConsecutiveSlots(slots: TimeSlot[]): boolean {
  */
 function countSessionsForDay(
   daySlots: TimeSlot[],
-  slotsPerSession: number
+  slotsPerSession: number,
 ): { sessions: number; leftoverSlots: number } {
   if (daySlots.length === 0) return { sessions: 0, leftoverSlots: 0 };
 
   const sorted = [...daySlots].sort(
-    (a, b) => a.startTime.getTime() - b.startTime.getTime()
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
   );
 
   let runCount = 0;
@@ -801,7 +801,7 @@ function countSessionsForDay(
 function validateClassSessionDistributionByCount(
   slots: TimeSlot[],
   maxSessions: number,
-  slotsPerSession: number
+  slotsPerSession: number,
 ): boolean {
   if (slots.length === 0) return true;
   const slotsByDate = new Map<string, TimeSlot[]>();
@@ -823,7 +823,7 @@ function validateClassSessionDistributionByCount(
 function validateWeeklySessionsDistribution(
   slots: TimeSlot[],
   callsPerWeek: number,
-  slotsPerSession: number
+  slotsPerSession: number,
 ): boolean {
   if (slots.length === 0) return true;
   const weeks = new Map<string, Map<string, TimeSlot[]>>();
@@ -870,7 +870,7 @@ function validateDailyHours(slots: TimeSlot[], maxHours: number): boolean {
  */
 function validateSessionDistribution(
   slots: TimeSlot[],
-  maxSessions: number
+  maxSessions: number,
 ): boolean {
   if (slots.length === 0) return true;
 
@@ -891,7 +891,7 @@ function validateSessionDistribution(
     const sortedSlots = [...dailySlots];
     sortedSlots.sort(
       (a: TimeSlot, b: TimeSlot) =>
-        a.startTime.getTime() - b.startTime.getTime()
+        a.startTime.getTime() - b.startTime.getTime(),
     );
 
     let sessionCount = 0;
@@ -944,7 +944,7 @@ function validateTotalCalls(slots: TimeSlot[], maxCalls?: number): boolean {
  */
 function validateWeeklyDistribution(
   slots: TimeSlot[],
-  callsPerWeek: number
+  callsPerWeek: number,
 ): boolean {
   // Group slots by week
   const weeklySlots = new Map<string, number>();
@@ -958,7 +958,7 @@ function validateWeeklyDistribution(
 
   // Check if any week exceeds the limit
   return Array.from(weeklySlots.values()).every(
-    (count) => count <= callsPerWeek
+    (count) => count <= callsPerWeek,
   );
 }
 
@@ -994,7 +994,7 @@ function isCompleteCall(daySlots: TimeSlot[], slotsPerCall: number): boolean {
 function validateSubscriptionSlots(
   slots: TimeSlot[],
   options: UseEventSlotAllocationOptions,
-  limits: SlotLimits
+  limits: SlotLimits,
 ): {
   dailyCallsValid: boolean;
   totalCallsValid: boolean;
@@ -1101,7 +1101,7 @@ function validateSubscriptionSlots(
   // FIXED: Validate total calls using only complete calls
   const totalConfirmedCalls = Array.from(weekCalls.values()).reduce(
     (sum, week) => sum + (week.confirmed ? 1 : 0),
-    0
+    0,
   );
 
   if (maxTotalCalls && totalConfirmedCalls > maxTotalCalls) {
@@ -1134,7 +1134,7 @@ function validateSubscriptionSlots(
  * @returns Hook interface with state, functions, and computed values
  */
 export function useEventSlotAllocation(
-  options: UseEventSlotAllocationOptions
+  options: UseEventSlotAllocationOptions,
 ): UseEventSlotAllocationReturn {
   const {
     eventType,
@@ -1168,13 +1168,13 @@ export function useEventSlotAllocation(
   // Event-specific constraints
   const eventConstraints = useMemo(
     () => getEventConstraints(eventType, options),
-    [eventType, options]
+    [eventType, options],
   );
 
   // Slot allocation limits
   const slotLimits = useMemo(
     () => getSlotLimits(eventType, options),
-    [eventType, options]
+    [eventType, options],
   );
 
   // Required slots calculation
@@ -1191,7 +1191,7 @@ export function useEventSlotAllocation(
       options.callsPerWeek,
       duration,
       options.startDate,
-      options.endDate
+      options.endDate,
     );
   }, [
     eventType,
@@ -1209,9 +1209,9 @@ export function useEventSlotAllocation(
         eventType,
         eventConstraints,
         slotLimits,
-        options
+        options,
       ),
-    [selectedSlots, eventType, eventConstraints, slotLimits, options]
+    [selectedSlots, eventType, eventConstraints, slotLimits, options],
   );
 
   // Whether current selection is valid
@@ -1275,13 +1275,13 @@ export function useEventSlotAllocation(
         const currentSlots = current || [];
 
         const isSelected = currentSlots.some(
-          (s) => s.startTime.getTime() === slot.startTime.getTime()
+          (s) => s.startTime.getTime() === slot.startTime.getTime(),
         );
 
         if (isSelected) {
           // Remove slot
           return currentSlots.filter(
-            (s) => s.startTime.getTime() !== slot.startTime.getTime()
+            (s) => s.startTime.getTime() !== slot.startTime.getTime(),
           );
         } else {
           // Add slot with event-specific limits
@@ -1298,7 +1298,7 @@ export function useEventSlotAllocation(
 
             // Build state BEFORE adding this slot
             const currentWeekSlots = currentSlots.filter(
-              (s) => getWeekString(s.startTime) === targetWeekKey
+              (s) => getWeekString(s.startTime) === targetWeekKey,
             );
 
             // Group by day for the current week (pre-add)
@@ -1323,7 +1323,7 @@ export function useEventSlotAllocation(
                   variant: "destructive",
                   title: "Weekly Call Limit Reached",
                   description: `Maximum ${callsPerWeek} calls per week allowed. Week of ${new Date(
-                    targetWeekKey
+                    targetWeekKey,
                   ).toLocaleDateString()} already has ${completeCallsThisWeek} complete call(s).`,
                 });
               }, 0);
@@ -1341,7 +1341,7 @@ export function useEventSlotAllocation(
                   variant: "destructive",
                   title: "Weekly Call Limit Reached",
                   description: `Completing this call would exceed the ${callsPerWeek}/week limit for week of ${new Date(
-                    targetWeekKey
+                    targetWeekKey,
                   ).toLocaleDateString()}.`,
                 });
               }, 0);
@@ -1351,7 +1351,7 @@ export function useEventSlotAllocation(
             // Count total complete calls across ALL weeks for newSelection (post-add)
             const totalCompleteCalls = countCompleteCallsInMap(
               groupSlotsByDay(newSelection),
-              slotsPerCall
+              slotsPerCall,
             );
 
             const maxTotalCalls = slotLimits.maxSlots;
@@ -1411,7 +1411,7 @@ export function useEventSlotAllocation(
             if (incompleteDays.includes(targetDayKey)) {
               const daySlots = preByDay.get(targetDayKey) || [];
               const sorted = [...daySlots].sort(
-                (a, b) => a.startTime.getTime() - b.startTime.getTime()
+                (a, b) => a.startTime.getTime() - b.startTime.getTime(),
               );
               if (sorted.length > 0) {
                 const firstSlot = sorted[0];
@@ -1468,7 +1468,7 @@ export function useEventSlotAllocation(
             eventType,
             eventConstraints,
             slotLimits,
-            options
+            options,
           );
 
           // Only show error for serious validation issues, not warnings
@@ -1477,7 +1477,7 @@ export function useEventSlotAllocation(
               (error) =>
                 error.includes("slots required") ||
                 error.includes("Need") ||
-                error.includes("more slots")
+                error.includes("more slots"),
             );
 
             if (!isMinSlotIssue) {
@@ -1587,11 +1587,11 @@ export function useEventSlotAllocation(
               // Calculate weeks passed since subscription started
               const weeksPassed = Math.floor(
                 (currentDate.getTime() - subscriptionStartDate.getTime()) /
-                  (7 * 24 * 60 * 60 * 1000)
+                  (7 * 24 * 60 * 60 * 1000),
               );
               pastCallsCompleted = Math.min(
                 weeksPassed * callsPerWeek,
-                maxTotalCalls
+                maxTotalCalls,
               );
             }
 
@@ -1603,7 +1603,7 @@ export function useEventSlotAllocation(
             const effectiveCallsSlotDay = slot.startTime.toDateString();
             const existingDaySlots = currentSlots.filter(
               (selectedSlot) =>
-                selectedSlot.startTime.toDateString() === effectiveCallsSlotDay
+                selectedSlot.startTime.toDateString() === effectiveCallsSlotDay,
             );
 
             let effectiveConfirmedCalls = totalConfirmedCalls;
@@ -1640,7 +1640,7 @@ export function useEventSlotAllocation(
             // effectiveCallsSlotDay already declared above
             const currentDaySlots = currentSlots.filter(
               (selectedSlot) =>
-                selectedSlot.startTime.toDateString() === effectiveCallsSlotDay
+                selectedSlot.startTime.toDateString() === effectiveCallsSlotDay,
             );
 
             // Check if adding this slot would exceed the per-call limit
@@ -1660,7 +1660,7 @@ export function useEventSlotAllocation(
               // Sort existing slots for this day
               const sortedDaySlots = [...currentDaySlots];
               sortedDaySlots.sort(
-                (a, b) => a.startTime.getTime() - b.startTime.getTime()
+                (a, b) => a.startTime.getTime() - b.startTime.getTime(),
               );
 
               // Check if the new slot would be consecutive with existing slots
@@ -1688,7 +1688,7 @@ export function useEventSlotAllocation(
 
             // Show progress feedback
             const completedCalls = Math.floor(
-              newSelection.length / slotsPerCall
+              newSelection.length / slotsPerCall,
             );
             const currentCallProgress = newSelection.length % slotsPerCall;
 
@@ -1721,7 +1721,7 @@ export function useEventSlotAllocation(
 
           const sortedSelection = [...newSelection];
           sortedSelection.sort(
-            (a, b) => a.startTime.getTime() - b.startTime.getTime()
+            (a, b) => a.startTime.getTime() - b.startTime.getTime(),
           );
           return sortedSelection;
         }
@@ -1735,7 +1735,7 @@ export function useEventSlotAllocation(
       requiredSlots,
       toast,
       setPendingToast,
-    ]
+    ],
   );
 
   /**
@@ -1752,10 +1752,10 @@ export function useEventSlotAllocation(
   const isSlotSelected = useCallback(
     (slot: TimeSlot) => {
       return selectedSlots.some(
-        (s) => s.startTime.getTime() === slot.startTime.getTime()
+        (s) => s.startTime.getTime() === slot.startTime.getTime(),
       );
     },
-    [selectedSlots]
+    [selectedSlots],
   );
 
   /**
@@ -1769,13 +1769,13 @@ export function useEventSlotAllocation(
         eventType,
         eventConstraints,
         slotLimits,
-        options
+        options,
       );
 
       if (validation.isValid) {
         const sortedNewSelection = [...newSelection];
         sortedNewSelection.sort(
-          (a, b) => a.startTime.getTime() - b.startTime.getTime()
+          (a, b) => a.startTime.getTime() - b.startTime.getTime(),
         );
         setSelectedSlots(sortedNewSelection);
       } else {
@@ -1786,7 +1786,7 @@ export function useEventSlotAllocation(
         });
       }
     },
-    [selectedSlots, eventType, eventConstraints, slotLimits, options]
+    [selectedSlots, eventType, eventConstraints, slotLimits, options],
   );
 
   /**
@@ -1794,11 +1794,11 @@ export function useEventSlotAllocation(
    */
   const removeSlots = useCallback((slotsToRemove: TimeSlot[]) => {
     const removeTimestamps = new Set(
-      slotsToRemove.map((slot) => slot.startTime.getTime())
+      slotsToRemove.map((slot) => slot.startTime.getTime()),
     );
 
     setSelectedSlots((current) =>
-      current.filter((slot) => !removeTimestamps.has(slot.startTime.getTime()))
+      current.filter((slot) => !removeTimestamps.has(slot.startTime.getTime())),
     );
   }, []);
 
@@ -1836,7 +1836,7 @@ export function useEventSlotAllocation(
 
       const result = await AllocationAlgorithms.manualAllocate(
         selectedSlots,
-        allocationOptions
+        allocationOptions,
       );
 
       if (result.success) {
@@ -1894,7 +1894,7 @@ export function useEventSlotAllocation(
 
         const result = await AllocationAlgorithms.autoAllocate(
           availableSlots,
-          allocationOptions
+          allocationOptions,
         );
 
         if (result.success) {
@@ -1918,7 +1918,7 @@ export function useEventSlotAllocation(
         setIsAllocating(false);
       }
     },
-    [eventType, eventId, options, onSuccess, onError, toast]
+    [eventType, eventId, options, onSuccess, onError, toast],
   );
 
   /**
@@ -1968,7 +1968,7 @@ export function useEventSlotAllocation(
         setIsAllocating(false);
       }
     },
-    [eventType, eventId, options, onSuccess, onError, toast]
+    [eventType, eventId, options, onSuccess, onError, toast],
   );
 
   // ==========================================
@@ -1984,7 +1984,7 @@ export function useEventSlotAllocation(
       eventType,
       eventConstraints,
       slotLimits,
-      options
+      options,
     );
 
     // For final validation, enforce minimum slot count
@@ -1992,7 +1992,7 @@ export function useEventSlotAllocation(
       result.isValid = false;
       if (!result.errors.some((e) => e.includes("Minimum"))) {
         result.errors.unshift(
-          `Minimum ${slotLimits.minSlots} slots required, ${selectedSlots.length} selected`
+          `Minimum ${slotLimits.minSlots} slots required, ${selectedSlots.length} selected`,
         );
       }
     }
@@ -2010,10 +2010,10 @@ export function useEventSlotAllocation(
         eventType,
         eventConstraints,
         slotLimits,
-        options
+        options,
       );
     },
-    [eventType, eventConstraints, slotLimits, options]
+    [eventType, eventConstraints, slotLimits, options],
   );
 
   // ==========================================
@@ -2045,11 +2045,11 @@ export function useEventSlotAllocation(
         eventType,
         eventConstraints,
         slotLimits,
-        options
+        options,
       );
       return validation.isValid;
     },
-    [selectedSlots, eventType, eventConstraints, slotLimits, options]
+    [selectedSlots, eventType, eventConstraints, slotLimits, options],
   );
 
   /**
@@ -2066,7 +2066,7 @@ export function useEventSlotAllocation(
 
       return suggestions;
     },
-    [eventType, eventConstraints]
+    [eventType, eventConstraints],
   );
 
   // ==========================================

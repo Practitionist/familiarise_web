@@ -67,7 +67,7 @@ export function ConsultationPricing({
 }: Readonly<ConsultationPricingProps>) {
   const formatPricingOptions = (
     plans: (ConsultationPlan | SubscriptionPlan)[],
-    type: "consultation" | "subscription"
+    type: "consultation" | "subscription",
   ): PricingOption[] => {
     return plans.map((plan) => {
       if (type === "consultation" && "durationInHours" in plan) {
@@ -107,7 +107,7 @@ export function ConsultationPricing({
         };
       } else if (type === "subscription" && "durationInMonths" in plan) {
         const durationLabel = getSubscriptionDurationLabel(
-          plan.durationInMonths
+          plan.durationInMonths,
         );
         return {
           title: durationLabel,
@@ -132,15 +132,15 @@ export function ConsultationPricing({
 
   const consultationOptions = formatPricingOptions(
     consultantDetails.consultationPlans.sort(
-      (a, b) => a.durationInHours - b.durationInHours
+      (a, b) => a.durationInHours - b.durationInHours,
     ),
-    "consultation"
+    "consultation",
   );
   const subscriptionOptions = formatPricingOptions(
     consultantDetails.subscriptionPlans.sort(
-      (a, b) => a.durationInMonths - b.durationInMonths
+      (a, b) => a.durationInMonths - b.durationInMonths,
     ),
-    "subscription"
+    "subscription",
   );
 
   return (

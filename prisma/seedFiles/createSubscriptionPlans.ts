@@ -5,7 +5,7 @@ import { UserWithProfiles } from "./createUsers";
 
 export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
   console.log(
-    `Creating subscription plans for ${consultants.length} consultants...`
+    `Creating subscription plans for ${consultants.length} consultants...`,
   );
   for (let i = 0; i < consultants.length; i++) {
     const consultant = consultants[i];
@@ -107,7 +107,7 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
     } catch (error) {
       console.error(
         `Failed to create subscription plans for consultant ${consultant.id}:`,
-        error
+        error,
       );
     }
     if ((i + 1) % 10 === 0 || i === consultants.length - 1) {

@@ -98,7 +98,7 @@ export function mapWeeklySlots(
   consultantData: ConsultantData,
   currentDate: Date,
   view: "week" | "month" = "week",
-  intervalMinutes: number = 30 // Configurable interval duration
+  intervalMinutes: number = 30, // Configurable interval duration
 ): TimeSlot[] {
   if (
     consultantData.scheduleType !== ScheduleType.WEEKLY ||
@@ -127,7 +127,7 @@ export function mapWeeklySlots(
   while (iterDate <= endDate) {
     const dayOfWeek = iterDate.getDay();
     const matchingSlots = consultantData.slotsOfAvailabilityWeekly.filter(
-      (slot) => DAY_INDEX[slot.dayOfWeekforStartTimeInUTC] === dayOfWeek
+      (slot) => DAY_INDEX[slot.dayOfWeekforStartTimeInUTC] === dayOfWeek,
     );
 
     matchingSlots.forEach((slot) => {
@@ -140,7 +140,7 @@ export function mapWeeklySlots(
         startTime.getHours(),
         startTime.getMinutes(),
         0,
-        0
+        0,
       );
 
       const slotEndTime = new Date(iterDate);
@@ -184,7 +184,7 @@ export function mapWeeklySlots(
  */
 export function mapCustomSlots(
   consultantData: ConsultantData,
-  intervalMinutes: number = 30 // Configurable interval duration
+  intervalMinutes: number = 30, // Configurable interval duration
 ): TimeSlot[] {
   if (
     consultantData.scheduleType !== ScheduleType.CUSTOM ||
@@ -242,7 +242,7 @@ export function getSlotStatus(
   date: Date,
   availableSlots: TimeSlot[],
   existingAppointments: Appointment[],
-  intervalMinutes: number = 30 // Configurable interval duration
+  intervalMinutes: number = 30, // Configurable interval duration
 ): SlotStatus {
   const slotStart = new Date(date);
   slotStart.setHours(interval.hour, interval.minute, 0, 0);
@@ -358,7 +358,7 @@ export function calculateRequiredSlots(
   callsPerWeek?: number,
   sessionDurationInHours?: number,
   startDate?: Date,
-  endDate?: Date
+  endDate?: Date,
 ): number {
   if (!eventType) {
     throw new Error("Event type is required");
@@ -384,7 +384,7 @@ export function calculateRequiredSlots(
       if (startDate && endDate) {
         if (sessionDurationInHours && sessionDurationInHours <= 0) {
           throw new Error(
-            "Session duration must be a positive number for subscriptions"
+            "Session duration must be a positive number for subscriptions",
           );
         }
         // totalWeeks = number of distinct Sunday-start weeks overlapping [startDate, endDate]
@@ -410,7 +410,7 @@ export function calculateRequiredSlots(
       }
       if (!sessionDurationInHours || sessionDurationInHours <= 0) {
         throw new Error(
-          "Session duration must be a positive number for classes"
+          "Session duration must be a positive number for classes",
         );
       }
 
@@ -442,7 +442,7 @@ export function calculateRequiredSlots(
  */
 export function countSundayWeeksInclusive(
   startDate: Date,
-  endDate: Date
+  endDate: Date,
 ): number {
   const start = new Date(startDate);
   const end = new Date(endDate);
@@ -484,7 +484,7 @@ export function validateSelectedSlots(
   selectedSlots: TimeSlot[],
   eventType: "consultation" | "subscription" | "webinar" | "class",
   requiredSlots?: number,
-  sessionDurationInHours?: number
+  sessionDurationInHours?: number,
 ): { isValid: boolean; errorMessage?: string } {
   if (selectedSlots.length === 0) {
     return { isValid: false, errorMessage: "Please select at least one slot" };
@@ -499,7 +499,7 @@ export function validateSelectedSlots(
           eventType,
           undefined,
           undefined,
-          sessionDurationInHours
+          sessionDurationInHours,
         );
 
       if (selectedSlots.length !== consultationRequiredSlots) {
@@ -513,7 +513,7 @@ export function validateSelectedSlots(
       if (selectedSlots.length > 1) {
         const firstSlotDay = selectedSlots[0].startTime.toDateString();
         const allSameDay = selectedSlots.every(
-          (slot) => slot.startTime.toDateString() === firstSlotDay
+          (slot) => slot.startTime.toDateString() === firstSlotDay,
         );
         if (!allSameDay) {
           return {
@@ -546,7 +546,7 @@ export function validateSelectedSlots(
           eventType,
           undefined,
           undefined,
-          sessionDurationInHours
+          sessionDurationInHours,
         );
       if (selectedSlots.length !== webinarRequiredSlots) {
         const durationText = sessionDurationInHours
@@ -561,7 +561,7 @@ export function validateSelectedSlots(
       // Validate that slots are consecutive for multi-slot webinars
       if (webinarRequiredSlots > 1) {
         const sortedSlots = [...selectedSlots].sort(
-          (a, b) => a.startTime.getTime() - b.startTime.getTime()
+          (a, b) => a.startTime.getTime() - b.startTime.getTime(),
         );
         for (let i = 1; i < sortedSlots.length; i++) {
           const prevSlot = sortedSlots[i - 1];
@@ -625,7 +625,7 @@ export function groupSlotsByWeek(slots: TimeSlot[]): Map<string, TimeSlot[]> {
  */
 export function validateSlotDistribution(
   slots: TimeSlot[],
-  callsPerWeek: number
+  callsPerWeek: number,
 ): { isValid: boolean; errorMessage?: string } {
   const slotsByWeek = groupSlotsByWeek(slots);
 
@@ -686,13 +686,13 @@ export function validateDayBasedConsecutiveSlots(slots: TimeSlot[]): boolean {
   if (slots.length <= 1) return true;
 
   const sortedSlots = [...slots].sort(
-    (a, b) => a.startTime.getTime() - b.startTime.getTime()
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
   );
 
   // Check that all slots are on the same day
   const firstSlotDay = sortedSlots[0].startTime.toDateString();
   const allSameDay = sortedSlots.every(
-    (slot) => slot.startTime.toDateString() === firstSlotDay
+    (slot) => slot.startTime.toDateString() === firstSlotDay,
   );
   if (!allSameDay) {
     return false;
@@ -705,7 +705,7 @@ export function validateDayBasedConsecutiveSlots(slots: TimeSlot[]): boolean {
     const currentSlot = sortedSlots[i];
 
     const timeDiff = Math.abs(
-      currentSlot.startTime.getTime() - prevSlot.endTime.getTime()
+      currentSlot.startTime.getTime() - prevSlot.endTime.getTime(),
     );
 
     if (timeDiff > toleranceMs) {
@@ -723,7 +723,7 @@ export function validateDayBasedConsecutiveSlots(slots: TimeSlot[]): boolean {
 export function calculateCallProgress(
   slots: TimeSlot[],
   sessionDurationInHours?: number,
-  maxTotalCalls?: number
+  maxTotalCalls?: number,
 ): string {
   if (slots.length === 0) {
     return "No slots selected";
@@ -744,7 +744,7 @@ export function calculateCallProgress(
   });
 
   const daysWithSlots = Array.from(slotsByDay.entries()).filter(
-    ([_, daySlots]) => daySlots.length > 0
+    ([_, daySlots]) => daySlots.length > 0,
   );
 
   let progressText = `${completedCalls} call${completedCalls !== 1 ? "s" : ""} completed`;
@@ -759,7 +759,7 @@ export function calculateCallProgress(
 
   if (daysWithSlots.length > 0) {
     const incompleteDays = daysWithSlots.filter(
-      ([_, daySlots]) => daySlots.length > 0 && daySlots.length < slotsPerCall
+      ([_, daySlots]) => daySlots.length > 0 && daySlots.length < slotsPerCall,
     );
 
     if (incompleteDays.length > 0) {

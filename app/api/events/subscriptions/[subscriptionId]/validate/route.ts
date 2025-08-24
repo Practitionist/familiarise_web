@@ -63,7 +63,7 @@ const subscriptionInclude = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ subscriptionId: string }> }
+  { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
   try {
     const { subscriptionId } = await params;
@@ -78,7 +78,7 @@ export async function POST(
     if (!subscription) {
       return NextResponse.json(
         { error: "Subscription not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -88,7 +88,7 @@ export async function POST(
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -146,8 +146,9 @@ export async function POST(
     for (const appointment of existingAppointments) {
       const conflictingSlots = appointment.slotsOfAppointment.filter((slot) =>
         slotDates.some(
-          (date) => date.toISOString() === slot.slotStartTimeInUTC.toISOString()
-        )
+          (date) =>
+            date.toISOString() === slot.slotStartTimeInUTC.toISOString(),
+        ),
       );
 
       for (const slot of conflictingSlots) {
@@ -186,7 +187,7 @@ export async function POST(
         isAvailable = availableSlots.some(
           (slot) =>
             new Date(slot.slotStartTimeInUTC).toISOString() ===
-            slotDate.toISOString()
+            slotDate.toISOString(),
         );
       }
 
@@ -213,7 +214,7 @@ export async function POST(
     const subscriptionValidation =
       await validationService.validateSubscriptionSlots(
         subscriptionId,
-        body.slots
+        body.slots,
       );
 
     result.subscriptionValidation = subscriptionValidation;
@@ -232,7 +233,7 @@ export async function POST(
     console.error("Validation error:", error);
     return NextResponse.json(
       { error: "Failed to validate slots" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

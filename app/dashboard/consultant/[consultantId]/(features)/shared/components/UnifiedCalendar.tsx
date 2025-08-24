@@ -54,7 +54,7 @@ function getSlotsPerCall(sessionDurationInHours?: number): number {
 function isOutsideAllowedRange(
   dateUtc: Date,
   allowedStart?: Date,
-  allowedEnd?: Date
+  allowedEnd?: Date,
 ): boolean {
   if (allowedStart && dateUtc < allowedStart) return true;
   if (allowedEnd && dateUtc > allowedEnd) return true;
@@ -77,7 +77,7 @@ function countCompletedCallsForWeek(
   subscriptionId: string,
   slotsPerCall: number,
   weekStart: Date,
-  weekEnd: Date
+  weekEnd: Date,
 ): number {
   if (!Array.isArray(existingAppointments)) return 0;
 
@@ -101,7 +101,7 @@ function countCompletedSelectedCallsForWeek(
   selectedSlots: TimeSlot[],
   slotsPerCall: number,
   weekStart: Date,
-  weekEnd: Date
+  weekEnd: Date,
 ): number {
   if (!selectedSlots?.length) return 0;
 
@@ -128,7 +128,7 @@ function countInProgressSelectedCallsForWeek(
   selectedSlots: TimeSlot[],
   slotsPerCall: number,
   weekStart: Date,
-  weekEnd: Date
+  weekEnd: Date,
 ): number {
   if (!selectedSlots?.length) return 0;
   const byDay = new Map<string, TimeSlot[]>();
@@ -162,7 +162,7 @@ function computeSubscriptionFooter(
     allowedEnd?: Date;
     callsPerWeek?: number;
     sessionDurationInHours?: number;
-  }>
+  }>,
 ): string | null {
   const {
     selectedSlots,
@@ -191,7 +191,7 @@ function computeSubscriptionFooter(
 
   const totalCompleted = Math.min(
     maxTotalCalls,
-    pastCompleted + selectedCompleted
+    pastCompleted + selectedCompleted,
   );
   return `Calls completed: ${totalCompleted}/${maxTotalCalls} (${pastCompleted} past + ${selectedCompleted} selected)`;
 }
@@ -199,7 +199,7 @@ function computeSubscriptionFooter(
 /** Counts total completed class sessions across all selected slots. */
 function countCompletedSelectedClasses(
   selectedSlots: TimeSlot[],
-  slotsPerSession: number
+  slotsPerSession: number,
 ): number {
   if (!selectedSlots?.length) return 0;
   // Group by day and count full consecutive runs
@@ -212,7 +212,7 @@ function countCompletedSelectedClasses(
   let sessions = 0;
   byDay.forEach((daySlots) => {
     const sorted = [...daySlots].sort(
-      (a, b) => a.startTime.getTime() - b.startTime.getTime()
+      (a, b) => a.startTime.getTime() - b.startTime.getTime(),
     );
     let run = 0;
     let lastEnd: number | null = null;
@@ -239,7 +239,7 @@ function computeClassFooter(params: {
   const slotsPerSession = Math.ceil((sessionDurationInHours || 1) / 0.5);
   const completed = countCompletedSelectedClasses(
     selectedSlots,
-    slotsPerSession
+    slotsPerSession,
   );
   if (typeof totalSessions === "number" && totalSessions > 0) {
     return `Classes completed: ${completed}/${totalSessions}`;
@@ -398,7 +398,7 @@ export function UnifiedCalendar({
       ) {
         const intervalStart = new Date(status.intervalStartUTCString);
         const isStartingNewDay = !selectedSlots.some(
-          (s) => s.startTime.toDateString() === intervalStart.toDateString()
+          (s) => s.startTime.toDateString() === intervalStart.toDateString(),
         );
 
         if (isStartingNewDay) {
@@ -410,7 +410,7 @@ export function UnifiedCalendar({
             eventId,
             slotsPerCall,
             weekStart,
-            weekEnd
+            weekEnd,
           );
 
           // Also include already selected complete calls in this same week
@@ -418,7 +418,7 @@ export function UnifiedCalendar({
             selectedSlots,
             slotsPerCall,
             weekStart,
-            weekEnd
+            weekEnd,
           );
           const totalCompletedThisWeek = completedCalls + selectedCompleted;
 
@@ -462,7 +462,7 @@ export function UnifiedCalendar({
       selectedSlots,
       existingAppointments,
       toast,
-    ]
+    ],
   );
 
   // Render time cell
@@ -569,7 +569,7 @@ export function UnifiedCalendar({
                           </p>
                         )}
                       </div>
-                    )
+                    ),
                   )}
                 </div>
               </TooltipContent>
@@ -589,7 +589,7 @@ export function UnifiedCalendar({
       loading,
       error,
       mode,
-    ]
+    ],
   );
 
   // Render month view
@@ -662,7 +662,7 @@ export function UnifiedCalendar({
                 </div>
               </div>
             );
-          }
+          },
         )}
       </div>
     );
@@ -730,7 +730,7 @@ export function UnifiedCalendar({
               setCurrentDate(
                 view === "week"
                   ? subWeeks(currentDate, 1)
-                  : subMonths(currentDate, 1)
+                  : subMonths(currentDate, 1),
               )
             }
           >
@@ -748,7 +748,7 @@ export function UnifiedCalendar({
               setCurrentDate(
                 view === "week"
                   ? addWeeks(currentDate, 1)
-                  : addMonths(currentDate, 1)
+                  : addMonths(currentDate, 1),
               )
             }
           >
@@ -835,7 +835,7 @@ export function UnifiedCalendar({
                       0,
                       1,
                       interval.hour,
-                      interval.minute
+                      interval.minute,
                     ).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
@@ -875,7 +875,7 @@ export function UnifiedCalendar({
                   return calculateCallProgress(
                     selectedSlots,
                     sessionDurationInHours,
-                    slotLimits.maxSlots
+                    slotLimits.maxSlots,
                   );
                 } else if (eventType === "class") {
                   return computeClassFooter({
@@ -894,7 +894,7 @@ export function UnifiedCalendar({
                   eventType,
                   durationInMonths,
                   callsPerWeek,
-                  duration
+                  duration,
                 );
 
                 return `${selectedSlots.length} selected out of ${requiredSlotsForThisEvent} required slots`;

@@ -48,7 +48,7 @@ interface SubscriptionValidationResult {
  */
 export class SubscriptionValidationService {
   constructor(
-    private readonly prisma: PrismaClient | Prisma.TransactionClient
+    private readonly prisma: PrismaClient | Prisma.TransactionClient,
   ) {}
 
   /**
@@ -57,7 +57,7 @@ export class SubscriptionValidationService {
   async validateSubscriptionSlots(
     subscriptionId: string,
     proposedSlots: string[],
-    excludeAppointmentIds: string[] = []
+    excludeAppointmentIds: string[] = [],
   ): Promise<SubscriptionValidationResult> {
     // Get subscription details
     const subscription = await this.prisma.subscription.findUnique({
@@ -82,7 +82,7 @@ export class SubscriptionValidationService {
     // FIXED: Use the correct Sunday-to-Saturday week counting logic
     const exactWeeks = countSundayWeeksInclusive(
       subscription.startDate,
-      subscription.endDate
+      subscription.endDate,
     );
 
     // Initialize result
@@ -103,7 +103,7 @@ export class SubscriptionValidationService {
     const subscriptionPeriodValid = this.validateSubscriptionPeriod(
       proposedSlotDates,
       subscription.startDate,
-      subscription.endDate
+      subscription.endDate,
     );
 
     if (!subscriptionPeriodValid.isValid) {
@@ -114,7 +114,7 @@ export class SubscriptionValidationService {
     // Get existing appointments for this subscription
     const existingAppointments = await this.getExistingSubscriptionAppointments(
       subscriptionId,
-      excludeAppointmentIds
+      excludeAppointmentIds,
     );
 
     // Group existing appointments by week
@@ -124,7 +124,7 @@ export class SubscriptionValidationService {
     // Group proposed slots by week
     const proposedCallsByWeek = this.groupSlotsByWeek(
       proposedSlotDates,
-      subscriptionPlan.sessionDurationInHours
+      subscriptionPlan.sessionDurationInHours,
     );
 
     // Generate weekly info for the entire subscription period
@@ -133,14 +133,14 @@ export class SubscriptionValidationService {
       subscription.endDate,
       subscriptionPlan.callsPerWeek,
       existingCallsByWeek,
-      proposedCallsByWeek
+      proposedCallsByWeek,
     );
 
     result.weeklyInfo = weeklyInfo;
     // Total calls are determined by counting completed weeks (auto-completed) plus any scheduled/proposed calls within the current and future weeks
     result.totalCallsScheduled = weeklyInfo.reduce(
       (sum, w) => sum + w.existingCalls,
-      0
+      0,
     );
 
     // Validate weekly limits
@@ -155,7 +155,7 @@ export class SubscriptionValidationService {
     if (result.totalCallsScheduled > result.maxTotalCalls) {
       result.isValid = false;
       result.errors.push(
-        `Total calls (${result.totalCallsScheduled}) exceed subscription limit (${result.maxTotalCalls})`
+        `Total calls (${result.totalCallsScheduled}) exceed subscription limit (${result.maxTotalCalls})`,
       );
     }
 
@@ -168,7 +168,7 @@ export class SubscriptionValidationService {
   private validateSubscriptionPeriod(
     slotDates: Date[],
     subscriptionStart: Date,
-    subscriptionEnd: Date
+    subscriptionEnd: Date,
   ): { isValid: boolean; errors: string[] } {
     const errors: string[] = [];
 
@@ -180,7 +180,7 @@ export class SubscriptionValidationService {
         })
       ) {
         errors.push(
-          `Slot ${slotDate.toLocaleDateString()} is outside subscription period (${subscriptionStart.toLocaleDateString()} - ${subscriptionEnd.toLocaleDateString()})`
+          `Slot ${slotDate.toLocaleDateString()} is outside subscription period (${subscriptionStart.toLocaleDateString()} - ${subscriptionEnd.toLocaleDateString()})`,
         );
       }
     }
@@ -196,7 +196,7 @@ export class SubscriptionValidationService {
    */
   private async getExistingSubscriptionAppointments(
     subscriptionId: string,
-    excludeAppointmentIds: string[] = []
+    excludeAppointmentIds: string[] = [],
   ): Promise<AppointmentWithSlots[]> {
     return await this.prisma.appointment.findMany({
       where: {
@@ -220,7 +220,7 @@ export class SubscriptionValidationService {
    * Groups appointments by week
    */
   private groupAppointmentsByWeek(
-    appointments: AppointmentWithSlots[]
+    appointments: AppointmentWithSlots[],
   ): Map<string, number> {
     const weeklyCallCount = new Map<string, number>();
 
@@ -241,7 +241,7 @@ export class SubscriptionValidationService {
    */
   private groupSlotsByWeek(
     slotDates: Date[],
-    sessionDurationInHours: number
+    sessionDurationInHours: number,
   ): Map<string, number> {
     const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5); // 30-minute intervals
 
@@ -266,7 +266,7 @@ export class SubscriptionValidationService {
       if (daySlots.length !== slotsPerCall) return false;
 
       const sortedSlots = [...daySlots].sort(
-        (a, b) => a.getTime() - b.getTime()
+        (a, b) => a.getTime() - b.getTime(),
       );
 
       for (let i = 1; i < sortedSlots.length; i++) {
@@ -306,7 +306,7 @@ export class SubscriptionValidationService {
     subscriptionEnd: Date,
     callsPerWeek: number,
     existingCalls: Map<string, number>,
-    proposedCalls: Map<string, number>
+    proposedCalls: Map<string, number>,
   ): WeeklyCallInfo[] {
     const weeklyInfo: WeeklyCallInfo[] = [];
     let currentWeek = startOfWeek(subscriptionStart);
@@ -358,14 +358,14 @@ export class SubscriptionValidationService {
       if (totalCallsForWeek > week.maxCalls) {
         errors.push(
           `Week of ${week.weekStart.toLocaleDateString()} exceeds call limit. ` +
-            `Maximum ${week.maxCalls} calls per week, but ${totalCallsForWeek} calls are scheduled.`
+            `Maximum ${week.maxCalls} calls per week, but ${totalCallsForWeek} calls are scheduled.`,
         );
       }
 
       if (week.existingCalls === week.maxCalls) {
         warnings.push(
           `Week of ${week.weekStart.toLocaleDateString()} is fully booked. ` +
-            `${week.existingCalls}/${week.maxCalls} calls scheduled.`
+            `${week.existingCalls}/${week.maxCalls} calls scheduled.`,
         );
       }
     }
@@ -383,7 +383,7 @@ export class SubscriptionValidationService {
   private calculateTotalCalls(
     existingAppointments: AppointmentWithSlots[],
     proposedSlots: Date[],
-    sessionDurationInHours: number
+    sessionDurationInHours: number,
   ): number {
     const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5);
 
@@ -399,11 +399,11 @@ export class SubscriptionValidationService {
     // Count proposed confirmed calls using the same logic as groupSlotsByWeek
     const proposedCallsMap = this.groupSlotsByWeek(
       proposedSlots,
-      sessionDurationInHours
+      sessionDurationInHours,
     );
     const proposedCalls = Array.from(proposedCallsMap.values()).reduce(
       (sum, calls) => sum + calls,
-      0
+      0,
     );
 
     return existingCalls + proposedCalls;
@@ -413,11 +413,11 @@ export class SubscriptionValidationService {
    * Gets available weeks for scheduling new calls
    */
   async getAvailableWeeksForSubscription(
-    subscriptionId: string
+    subscriptionId: string,
   ): Promise<WeeklyCallInfo[]> {
     const validationResult = await this.validateSubscriptionSlots(
       subscriptionId,
-      []
+      [],
     );
     return validationResult.weeklyInfo.filter((week) => week.canScheduleMore);
   }
@@ -428,16 +428,16 @@ export class SubscriptionValidationService {
   async canScheduleInWeek(
     subscriptionId: string,
     weekDate: Date,
-    additionalCalls: number = 1
+    additionalCalls: number = 1,
   ): Promise<boolean> {
     const weekStart = startOfWeek(weekDate);
     const validationResult = await this.validateSubscriptionSlots(
       subscriptionId,
-      []
+      [],
     );
 
     const weekInfo = validationResult.weeklyInfo.find(
-      (week) => week.weekStart.getTime() === weekStart.getTime()
+      (week) => week.weekStart.getTime() === weekStart.getTime(),
     );
 
     return weekInfo ? weekInfo.availableSlots >= additionalCalls : false;
@@ -449,14 +449,14 @@ export class SubscriptionValidationService {
  */
 export function getSubscriptionWeek(
   targetDate: Date,
-  subscriptionStartDate: Date
+  subscriptionStartDate: Date,
 ): number {
   const weekStart = startOfWeek(subscriptionStartDate);
   const targetWeekStart = startOfWeek(targetDate);
 
   const diffInWeeks = Math.floor(
     (targetWeekStart.getTime() - weekStart.getTime()) /
-      (7 * 24 * 60 * 60 * 1000)
+      (7 * 24 * 60 * 60 * 1000),
   );
 
   return diffInWeeks + 1; // 1-based week numbering
@@ -467,7 +467,7 @@ export function getSubscriptionWeek(
  */
 export function getSubscriptionType(
   callsPerWeek: number,
-  durationInMonths: number
+  durationInMonths: number,
 ): string {
   if (callsPerWeek === 1 && durationInMonths === 1) {
     return "Basic";

@@ -159,7 +159,7 @@ export function EventTimingsCalendar({
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ slots: [] }),
-          }
+          },
         );
         const data = await res.json();
         const sv = data?.data?.subscriptionValidation;

@@ -92,7 +92,7 @@ export function EventPlannerForClass({
           learningOutcomes: initialData.classPlan.learningOutcomes,
           topics:
             initialData.classPlan.topics?.map((topic) =>
-              typeof topic === "string" ? topic : topic.name
+              typeof topic === "string" ? topic : topic.name,
             ) || [],
           certificateProvided: initialData.classPlan.certificateProvided,
           callsPerWeek: initialData.classPlan.callsPerWeek,
@@ -143,7 +143,7 @@ export function EventPlannerForClass({
         learningOutcomes: initialData.classPlan.learningOutcomes,
         topics:
           initialData.classPlan.topics?.map((topic) =>
-            typeof topic === "string" ? topic : topic.name
+            typeof topic === "string" ? topic : topic.name,
           ) || [],
         certificateProvided: initialData.classPlan.certificateProvided,
         callsPerWeek: initialData.classPlan.callsPerWeek,
@@ -203,7 +203,7 @@ export function EventPlannerForClass({
       try {
         console.log(
           "Class form submission data:",
-          JSON.stringify(formData, null, 2)
+          JSON.stringify(formData, null, 2),
         );
         console.log("Form validation errors:", form.formState.errors);
 
@@ -216,7 +216,7 @@ export function EventPlannerForClass({
             title,
             consultantId,
             "class",
-            planId
+            planId,
           );
 
           if (isDuplicate) {
@@ -276,7 +276,7 @@ export function EventPlannerForClass({
 
         console.log(
           "Calling onSave with class data:",
-          JSON.stringify(classData, null, 2)
+          JSON.stringify(classData, null, 2),
         );
 
         try {
@@ -324,7 +324,7 @@ export function EventPlannerForClass({
         description: "Please check the form for errors",
         variant: "destructive",
       });
-    }
+    },
   );
 
   const addLearningOutcome = () => {
@@ -334,7 +334,7 @@ export function EventPlannerForClass({
     // Check for duplicates (case-insensitive)
     const isDuplicate = currentOutcomes.some(
       (outcome) =>
-        outcome.trim().toLowerCase() === newOutcome.trim().toLowerCase()
+        outcome.trim().toLowerCase() === newOutcome.trim().toLowerCase(),
     );
 
     if (isDuplicate) {
@@ -357,7 +357,7 @@ export function EventPlannerForClass({
     form.setValue(
       "learningOutcomes",
       currentOutcomes.filter((_, i) => i !== index),
-      { shouldValidate: true }
+      { shouldValidate: true },
     );
   };
 
@@ -460,7 +460,7 @@ export function EventPlannerForClass({
                               onChange={(e) => {
                                 const value = e.target.value;
                                 priceField.onChange(
-                                  value === "" ? 0 : Number.parseFloat(value)
+                                  value === "" ? 0 : Number.parseFloat(value),
                                 );
                               }}
                             />
@@ -492,7 +492,7 @@ export function EventPlannerForClass({
                         onChange={(e) => {
                           const value = e.target.value;
                           field.onChange(
-                            value === "" ? 0 : Number.parseFloat(value)
+                            value === "" ? 0 : Number.parseFloat(value),
                           );
                         }}
                       />
@@ -516,7 +516,7 @@ export function EventPlannerForClass({
                       onChange={(e) => {
                         const value = e.target.value;
                         field.onChange(
-                          value === "" ? 0 : Number.parseInt(value, 10)
+                          value === "" ? 0 : Number.parseInt(value, 10),
                         );
                       }}
                     />
@@ -706,7 +706,7 @@ export function EventPlannerForClass({
                         onChange={(e) => {
                           const value = e.target.value;
                           field.onChange(
-                            value === "" ? 0 : Number.parseInt(value, 10)
+                            value === "" ? 0 : Number.parseInt(value, 10),
                           );
                         }}
                       />
@@ -729,7 +729,7 @@ export function EventPlannerForClass({
                         onChange={(e) => {
                           const value = e.target.value;
                           field.onChange(
-                            value === "" ? 0 : Number.parseInt(value, 10)
+                            value === "" ? 0 : Number.parseInt(value, 10),
                           );
                         }}
                       />
@@ -895,7 +895,7 @@ export function EventPlannerForClass({
                                     const parsedValue = parseInt(value, 10);
                                     // Pass the parsed number if valid, otherwise 0 (Zod will catch min(1))
                                     contentField.onChange(
-                                      isNaN(parsedValue) ? 0 : parsedValue
+                                      isNaN(parsedValue) ? 0 : parsedValue,
                                     );
                                   }}
                                 />
@@ -924,7 +924,7 @@ export function EventPlannerForClass({
                                     const parsedValue = parseFloat(value);
                                     // Pass the parsed number if valid, otherwise 0 (Zod will catch min(0.5))
                                     contentField.onChange(
-                                      isNaN(parsedValue) ? 0 : parsedValue
+                                      isNaN(parsedValue) ? 0 : parsedValue,
                                     );
                                   }}
                                 />

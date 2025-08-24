@@ -10,7 +10,7 @@ import { TimeSlot } from "./calendarUtils";
  */
 export async function fetchSessionDurationFromPlan(
   eventType: "consultation" | "subscription" | "webinar" | "class",
-  eventId: string
+  eventId: string,
 ): Promise<number> {
   try {
     const endpoint = getEventEndpoint(eventType, eventId);
@@ -23,7 +23,7 @@ export async function fetchSessionDurationFromPlan(
       const errorText = await response.text();
       // console.error(`[DEBUG] Response error:`, errorText);
       throw new Error(
-        `Failed to fetch ${eventType} plan: ${response.status} ${errorText}`
+        `Failed to fetch ${eventType} plan: ${response.status} ${errorText}`,
       );
     }
 
@@ -33,7 +33,7 @@ export async function fetchSessionDurationFromPlan(
   } catch (error) {
     console.error(`Failed to fetch session duration for ${eventType}:`, error);
     throw new Error(
-      `Unable to fetch required session duration for ${eventType}. Plan data is missing or invalid.`
+      `Unable to fetch required session duration for ${eventType}. Plan data is missing or invalid.`,
     );
   }
 }
@@ -63,7 +63,7 @@ function extractSessionDuration(eventType: string, response: any): number {
       const consultationDuration = data.consultationPlan?.durationInHours;
       if (!consultationDuration || consultationDuration <= 0) {
         throw new Error(
-          `Consultation plan is missing required durationInHours. Received: ${JSON.stringify(data.consultationPlan)}`
+          `Consultation plan is missing required durationInHours. Received: ${JSON.stringify(data.consultationPlan)}`,
         );
       }
       return consultationDuration;
@@ -73,7 +73,7 @@ function extractSessionDuration(eventType: string, response: any): number {
         data.subscriptionPlan?.sessionDurationInHours;
       if (!subscriptionDuration || subscriptionDuration <= 0) {
         throw new Error(
-          `Subscription plan is missing required sessionDurationInHours. Received: ${JSON.stringify(data.subscriptionPlan)}`
+          `Subscription plan is missing required sessionDurationInHours. Received: ${JSON.stringify(data.subscriptionPlan)}`,
         );
       }
       return subscriptionDuration;
@@ -82,7 +82,7 @@ function extractSessionDuration(eventType: string, response: any): number {
       const webinarDuration = data.webinarPlan?.durationInHours;
       if (!webinarDuration || webinarDuration <= 0) {
         throw new Error(
-          `Webinar plan is missing required durationInHours. Received: ${JSON.stringify(data.webinarPlan)}`
+          `Webinar plan is missing required durationInHours. Received: ${JSON.stringify(data.webinarPlan)}`,
         );
       }
       return webinarDuration;
@@ -92,7 +92,7 @@ function extractSessionDuration(eventType: string, response: any): number {
       const classContents = data.classPlan?.classContents || [];
       if (classContents.length === 0) {
         throw new Error(
-          "Class plan is missing required classContents with hoursAllotted"
+          "Class plan is missing required classContents with hoursAllotted",
         );
       }
 
@@ -114,7 +114,7 @@ function extractSessionDuration(eventType: string, response: any): number {
  * Calculates number of 30-minute slots needed for session duration
  */
 export function calculateRequiredSlots30Min(
-  sessionDurationInHours: number
+  sessionDurationInHours: number,
 ): number {
   return Math.ceil(sessionDurationInHours * 2); // 2 slots per hour (30-min each)
 }
@@ -127,7 +127,7 @@ export function groupConsecutiveSlots(slots: TimeSlot[]): TimeSlot[][] {
 
   // Sort slots by start time
   const sortedSlots = [...slots].sort(
-    (a, b) => a.startTime.getTime() - b.startTime.getTime()
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
   );
 
   const groups: TimeSlot[][] = [];
@@ -162,7 +162,7 @@ export function createElongatedSlot(consecutiveSlots: TimeSlot[]): TimeSlot {
   }
 
   const sortedSlots = [...consecutiveSlots].sort(
-    (a, b) => a.startTime.getTime() - b.startTime.getTime()
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
   );
 
   return {
@@ -174,7 +174,7 @@ export function createElongatedSlot(consecutiveSlots: TimeSlot[]): TimeSlot {
     isConflicting: sortedSlots.some((slot) => slot.isConflicting),
     originalSlot: sortedSlots[0].originalSlot, // Keep reference to first slot
     appointmentDetails: sortedSlots.flatMap(
-      (slot) => slot.appointmentDetails || []
+      (slot) => slot.appointmentDetails || [],
     ),
   };
 }
@@ -185,11 +185,11 @@ export function createElongatedSlot(consecutiveSlots: TimeSlot[]): TimeSlot {
 export function validateElongatedSlotSelection(
   selectedSlots: TimeSlot[],
   requiredSessionDurationInHours: number,
-  allowPartialSessions: boolean = false
+  allowPartialSessions: boolean = false,
 ): { isValid: boolean; errorMessage?: string; validGroups: TimeSlot[][] } {
   const groups = groupConsecutiveSlots(selectedSlots);
   const requiredSlots30Min = calculateRequiredSlots30Min(
-    requiredSessionDurationInHours
+    requiredSessionDurationInHours,
   );
 
   const validGroups = groups.filter((group) => {
@@ -235,7 +235,7 @@ export function areConsecutiveSlots(slot1: TimeSlot, slot2: TimeSlot): boolean {
  */
 export function getElongatedSlotStyling(
   slotIndex: number,
-  groupSize: number
+  groupSize: number,
 ): { borderRadius: string; borderWidth: string } {
   if (groupSize === 1) {
     return { borderRadius: "4px", borderWidth: "2px" };
@@ -275,7 +275,7 @@ export function formatElongatedSlotDuration(durationInHours: number): string {
  * Converts elongated slots back to 30-minute slots for API submission
  */
 export function convertElongatedSlotsTo30MinSlots(
-  elongatedSlots: TimeSlot[]
+  elongatedSlots: TimeSlot[],
 ): string[] {
   const slots30Min: string[] = [];
 
