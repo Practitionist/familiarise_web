@@ -394,7 +394,7 @@ const MultiStepForm: React.FC = () => {
             className={`glassmorphism rounded-2xl p-8 w-full max-w-5xl ${colors.glassBorder} shadow-2xl`}
           >
             <Progress
-              value={((step + 1) / 4) * 100}
+              value={progressValue}
               className={`w-full mb-8 h-2 ${colors.glassBg}`}
             />
             <WelcomeMessage />

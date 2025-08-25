@@ -156,11 +156,11 @@ const ConsulteeProfileForm: React.FC<Props> = ({
           type="button"
           onClick={onBack}
           variant="outline"
-          className={`${classes.secondaryButton} flex-1`}
+          className={`${classes.navBack} flex-1`}
         >
           Back
         </Button>
-        <Button type="submit" className={`${classes.primaryButton} flex-1`}>
+        <Button type="submit" className={`${classes.navNext} flex-1`}>
           Next
         </Button>
       </div>
