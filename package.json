@@ -45,6 +45,7 @@
     "studio": "prisma studio",
     "test": "jest",
     "test:watch": "jest --watch",
+    "update-env-secret": "npx tsx scripts/update-env-secret.ts",
     "update-slot-types": "ts-node scripts/update-slot-types.ts"
   },
   "dependencies": {
@@ -111,6 +112,7 @@
     "react-redux": "^9.2.0",
     "redlock": "^5.0.0-beta.2",
     "resend": "^4.6.0",
+    "sharp": "^0.34.3",
     "stream-chat": "^8.57.6",
     "stream-chat-react": "^12.13.1",
     "stripe": "^18.2.1",
@@ -131,6 +133,7 @@
     "autoprefixer": "^10.4.20",
     "chalk": "^5.4.1",
     "cypress": "^14.5.0",
+    "dotenv-cli": "^10.0.0",
     "eslint": "^9.34.0",
     "eslint-plugin-cypress": "^5.1.1",
     "eslint-plugin-jest": "^28.10.0",
