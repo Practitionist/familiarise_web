@@ -730,7 +730,9 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 
   return (
     <form onSubmit={handleSubmit(onSubmitForm)} className="w-full space-y-6">
-      <div className={`glassmorphism2 rounded-2xl p-6 border ${colors.glassBorder} shadow-2xl`}>
+      <div
+        className={`glassmorphism2 rounded-2xl p-6 border ${colors.glassBorder} shadow-2xl`}
+      >
         <div className="mb-6">
           <h3 className="text-2xl font-bold text-white mb-2">
             Preferred Schedule
@@ -752,7 +754,11 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
               >
                 {/* Prominent segmented selector for Weekly/Custom */}
                 <div className="flex justify-center mb-6">
-                  <div className={classes.segmented} role="tablist" aria-label="Schedule type">
+                  <div
+                    className={classes.segmented}
+                    role="tablist"
+                    aria-label="Schedule type"
+                  >
                     <button
                       type="button"
                       role="tab"
@@ -776,7 +782,9 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 
                 <div className="flex flex-col lg:flex-row lg:space-x-8 space-y-6 lg:space-y-0">
                   <div className="flex-1">
-                    <div className={`flex items-center justify-between mb-3 p-3 rounded-lg ${colors.glassBg} ${colors.glassBorder}`}>
+                    <div
+                      className={`flex items-center justify-between mb-3 p-3 rounded-lg ${colors.glassBg} ${colors.glassBorder}`}
+                    >
                       <Label
                         htmlFor="WEEKLY"
                         className="font-medium text-white text-lg"
@@ -798,7 +806,9 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                     </div>
                   </div>
                   <div className="flex-1">
-                    <div className={`flex items-center justify-between mb-3 p-3 rounded-lg ${colors.glassBg} ${colors.glassBorder}`}>
+                    <div
+                      className={`flex items-center justify-between mb-3 p-3 rounded-lg ${colors.glassBg} ${colors.glassBorder}`}
+                    >
                       <Label
                         htmlFor="CUSTOM"
                         className="font-medium text-white text-lg"
@@ -814,7 +824,9 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                     <div
                       className={`grid gap-4 ${scheduleType !== "CUSTOM" ? "opacity-30 pointer-events-none" : ""}`}
                     >
-                      <div className={`calendar-container ${colors.glassBg} ${colors.glassBorder} border p-4 rounded-lg backdrop-blur-sm`}>
+                      <div
+                        className={`calendar-container ${colors.glassBg} ${colors.glassBorder} border p-4 rounded-lg backdrop-blur-sm`}
+                      >
                         <div className="flex justify-between items-center mb-4">
                           <button
                             type="button"
@@ -823,7 +835,9 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                           >
                             ←
                           </button>
-                          <span className={`${colors.textPrimary} font-semibold`}>
+                          <span
+                            className={`${colors.textPrimary} font-semibold`}
+                          >
                             {currentDate.toLocaleString("default", {
                               month: "long",
                               year: "numeric",

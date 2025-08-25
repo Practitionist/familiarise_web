@@ -232,7 +232,9 @@ const ConsultantProfileForm: React.FC<Props> = ({
                 field.onChange(domain || { id: "", name: "" });
               }}
             >
-              <SelectTrigger className={`${classes.dropdown} ${colors.inputFocus} h-12 rounded-lg`}>
+              <SelectTrigger
+                className={`${classes.dropdown} ${colors.inputFocus} h-12 rounded-lg`}
+              >
                 <SelectValue placeholder="Select a domain" />
               </SelectTrigger>
               <SelectContent className={classes.dropdown}>
@@ -259,7 +261,9 @@ const ConsultantProfileForm: React.FC<Props> = ({
           <Label className={`${colors.textPrimary} font-medium`}>
             Sub-domains
           </Label>
-          <div className={`grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2 rounded-md ${colors.glassBg} ${colors.glassBorder}`}>
+          <div
+            className={`grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2 rounded-md ${colors.glassBg} ${colors.glassBorder}`}
+          >
             <Controller
               name="subDomains"
               control={control}
@@ -312,7 +316,9 @@ const ConsultantProfileForm: React.FC<Props> = ({
       {selectedDomain?.id && (
         <div className="space-y-3">
           <Label className={`${colors.textPrimary} font-medium`}>Tags</Label>
-          <div className={`grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-y-auto p-2 rounded-md ${colors.glassBg} ${colors.glassBorder}`}>
+          <div
+            className={`grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-y-auto p-2 rounded-md ${colors.glassBg} ${colors.glassBorder}`}
+          >
             <Controller
               name="tags"
               control={control}

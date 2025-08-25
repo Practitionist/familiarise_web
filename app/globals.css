@@ -132,7 +132,11 @@
 
 .glassmorphism {
   position: relative;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.06));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.08),
+    rgba(255, 255, 255, 0.06)
+  );
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -149,13 +153,26 @@
   pointer-events: none;
   border-radius: inherit;
   background:
-    radial-gradient(120% 80% at 10% 0%, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.06) 40%, rgba(255, 255, 255, 0) 60%),
-    radial-gradient(120% 80% at 100% 100%, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 60%);
+    radial-gradient(
+      120% 80% at 10% 0%,
+      rgba(255, 255, 255, 0.35) 0%,
+      rgba(255, 255, 255, 0.06) 40%,
+      rgba(255, 255, 255, 0) 60%
+    ),
+    radial-gradient(
+      120% 80% at 100% 100%,
+      rgba(255, 255, 255, 0.1) 0%,
+      rgba(255, 255, 255, 0) 60%
+    );
   opacity: 0.7;
 }
 .glassmorphism2 {
   position: relative;
-  background: linear-gradient(180deg, rgba(18, 17, 17, 0.45), rgba(18, 17, 17, 0.35));
+  background: linear-gradient(
+    180deg,
+    rgba(18, 17, 17, 0.45),
+    rgba(18, 17, 17, 0.35)
+  );
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -172,8 +189,17 @@
   pointer-events: none;
   border-radius: inherit;
   background:
-    radial-gradient(120% 80% at 10% 0%, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.03) 45%, rgba(255, 255, 255, 0) 60%),
-    radial-gradient(120% 80% at 100% 100%, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 60%);
+    radial-gradient(
+      120% 80% at 10% 0%,
+      rgba(255, 255, 255, 0.18) 0%,
+      rgba(255, 255, 255, 0.03) 45%,
+      rgba(255, 255, 255, 0) 60%
+    ),
+    radial-gradient(
+      120% 80% at 100% 100%,
+      rgba(255, 255, 255, 0.06) 0%,
+      rgba(255, 255, 255, 0) 60%
+    );
   opacity: 0.8;
 }
 

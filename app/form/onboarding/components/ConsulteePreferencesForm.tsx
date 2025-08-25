@@ -211,10 +211,7 @@ const ConsulteePreferencesForm: React.FC<Props> = ({
         >
           ← Back
         </Button>
-        <Button
-          type="submit"
-          className={`flex-1 h-12 ${classes.navNext}`}
-        >
+        <Button type="submit" className={`flex-1 h-12 ${classes.navNext}`}>
           Next Step →
         </Button>
       </div>
