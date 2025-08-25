@@ -40,7 +40,11 @@ export const BaseConsultantProfileCreateInputSchema = z.object({
   description: z.string().optional(),
   qualifications: z.string().optional(),
   specialization: z.string().optional(),
-  experience: z.number().min(0, "Experience must be at least 0 years").max(50, "Experience cannot exceed 50 years").optional(),
+  experience: z
+    .number()
+    .min(0, "Experience must be at least 0 years")
+    .max(50, "Experience cannot exceed 50 years")
+    .optional(),
   scheduleType: z.nativeEnum(ScheduleType).default(ScheduleType.WEEKLY),
   domain: z.object({ connect: z.object({ id: z.string() }) }),
   subDomains: ConsultantProfileRelatedSubDomainsInputSchema.optional(),
@@ -127,22 +131,34 @@ export const FrontendConsultantProfileSchema = z.object({
   description: z.string().optional(),
   qualifications: z.string().optional(),
   specialization: z.string().optional(),
-  experience: z.number().min(0, "Experience must be at least 0 years").max(50, "Experience cannot exceed 50 years").optional(),
+  experience: z
+    .number()
+    .min(0, "Experience must be at least 0 years")
+    .max(50, "Experience cannot exceed 50 years")
+    .optional(),
   scheduleType: z.nativeEnum(ScheduleType).default(ScheduleType.WEEKLY),
   domain: z.object({
     id: z.string(),
     name: z.string(),
   }),
-  subDomains: z.array(z.object({
-    id: z.string(),
-    name: z.string(),
-    domainId: z.string(),
-  })).optional(),
-  tags: z.array(z.object({
-    id: z.string(),
-    name: z.string(),
-    domainId: z.string(),
-  })).optional(),
+  subDomains: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        domainId: z.string(),
+      }),
+    )
+    .optional(),
+  tags: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        domainId: z.string(),
+      }),
+    )
+    .optional(),
   weeklySlots: z.array(SlotWeeklyCreateInputSchema).optional(),
   customSlots: z.array(SlotCustomCreateInputSchema).optional(),
 });
@@ -183,14 +199,26 @@ export const FrontendOnboardingBaseSchema = z.object({
 // #region TypeScript Types
 
 export type OnboardingData = z.infer<typeof OnboardingDataSchema>;
-export type ConsultantProfileCreateData = z.infer<typeof BaseConsultantProfileCreateInputSchema>;
-export type ConsulteeProfileCreateData = z.infer<typeof BaseConsulteeProfileCreateInputSchema>;
-export type StaffProfileCreateData = z.infer<typeof BaseStaffProfileCreateInputSchema>;
+export type ConsultantProfileCreateData = z.infer<
+  typeof BaseConsultantProfileCreateInputSchema
+>;
+export type ConsulteeProfileCreateData = z.infer<
+  typeof BaseConsulteeProfileCreateInputSchema
+>;
+export type StaffProfileCreateData = z.infer<
+  typeof BaseStaffProfileCreateInputSchema
+>;
 
-export type FrontendConsultantProfile = z.infer<typeof FrontendConsultantProfileSchema>;
-export type FrontendConsulteeProfile = z.infer<typeof FrontendConsulteeProfileSchema>;
+export type FrontendConsultantProfile = z.infer<
+  typeof FrontendConsultantProfileSchema
+>;
+export type FrontendConsulteeProfile = z.infer<
+  typeof FrontendConsulteeProfileSchema
+>;
 export type FrontendStaffProfile = z.infer<typeof FrontendStaffProfileSchema>;
-export type FrontendOnboardingBase = z.infer<typeof FrontendOnboardingBaseSchema>;
+export type FrontendOnboardingBase = z.infer<
+  typeof FrontendOnboardingBaseSchema
+>;
 
 export type FrontendOnboardingData = FrontendOnboardingBase & {
   consultantProfile?: FrontendConsultantProfile;
@@ -216,22 +244,33 @@ export const ConsultantProfileFormSchema = z.object({
   description: z.string().min(1, "Description is required"),
   qualifications: z.string().min(1, "Qualifications are required"),
   specialization: z.string().min(1, "Specialization is required"),
-  experience: z.number().min(0, "Experience must be at least 0 years").max(50, "Experience cannot exceed 50 years"),
+  experience: z
+    .number()
+    .min(0, "Experience must be at least 0 years")
+    .max(50, "Experience cannot exceed 50 years"),
   scheduleType: z.nativeEnum(ScheduleType).optional(),
   domain: z.object({
     id: z.string(),
     name: z.string(),
   }),
-  subDomains: z.array(z.object({
-    id: z.string(),
-    name: z.string(),
-    domainId: z.string(),
-  })).optional(),
-  tags: z.array(z.object({
-    id: z.string(),
-    name: z.string(),
-    domainId: z.string(),
-  })).optional(),
+  subDomains: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        domainId: z.string(),
+      }),
+    )
+    .optional(),
+  tags: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        domainId: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 export const ConsulteeProfileFormSchema = z.object({
@@ -254,16 +293,24 @@ export const StaffProfileFormSchema = z.object({
 
 export const PreferredScheduleFormSchema = z.object({
   scheduleType: z.nativeEnum(ScheduleType),
-  weeklySlots: z.array(z.object({
-    dayOfWeekforStartTimeInUTC: z.nativeEnum(DayOfWeek),
-    slotStartTimeInUTC: z.string(),
-    dayOfWeekforEndTimeInUTC: z.nativeEnum(DayOfWeek),
-    slotEndTimeInUTC: z.string(),
-  })).optional(),
-  customSlots: z.array(z.object({
-    slotStartTimeInUTC: z.string(),
-    slotEndTimeInUTC: z.string(),
-  })).optional(),
+  weeklySlots: z
+    .array(
+      z.object({
+        dayOfWeekforStartTimeInUTC: z.nativeEnum(DayOfWeek),
+        slotStartTimeInUTC: z.string(),
+        dayOfWeekforEndTimeInUTC: z.nativeEnum(DayOfWeek),
+        slotEndTimeInUTC: z.string(),
+      }),
+    )
+    .optional(),
+  customSlots: z
+    .array(
+      z.object({
+        slotStartTimeInUTC: z.string(),
+        slotEndTimeInUTC: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 // #endregion
@@ -271,7 +318,7 @@ export const PreferredScheduleFormSchema = z.object({
 // #region Data Transformation Utilities
 
 export function transformFrontendToServerData(
-  frontendData: FrontendOnboardingData
+  frontendData: FrontendOnboardingData,
 ): OnboardingData {
   const baseData = {
     name: frontendData.name,
@@ -298,7 +345,7 @@ export function transformFrontendToServerData(
         consulteeProfile: undefined,
         staffProfile: undefined,
       };
-    
+
     case UserRole.CONSULTEE:
       if (!frontendData.consulteeProfile) {
         throw new Error("Consultee profile is required");
@@ -312,7 +359,7 @@ export function transformFrontendToServerData(
         },
         staffProfile: undefined,
       };
-    
+
     case UserRole.STAFF:
       if (!frontendData.staffProfile) {
         throw new Error("Staff profile is required");
@@ -326,7 +373,7 @@ export function transformFrontendToServerData(
           create: transformStaffProfile(frontendData.staffProfile),
         },
       };
-    
+
     case UserRole.ADMIN:
       return {
         ...baseData,
@@ -335,14 +382,14 @@ export function transformFrontendToServerData(
         consulteeProfile: undefined,
         staffProfile: undefined,
       };
-    
+
     default:
       throw new Error(`Invalid role: ${frontendData.role}`);
   }
 }
 
 function transformConsultantProfile(
-  profile: FrontendConsultantProfile
+  profile: FrontendConsultantProfile,
 ): ConsultantProfileCreateData {
   return {
     description: profile.description,
@@ -353,23 +400,31 @@ function transformConsultantProfile(
     domain: {
       connect: { id: profile.domain.id },
     },
-    subDomains: profile.subDomains?.length ? {
-      connect: profile.subDomains.map(sub => ({ id: sub.id })),
-    } : undefined,
-    tags: profile.tags?.length ? {
-      connect: profile.tags.map(tag => ({ id: tag.id })),
-    } : undefined,
-    slotsOfAvailabilityWeekly: profile.weeklySlots?.length ? {
-      create: profile.weeklySlots,
-    } : undefined,
-    slotsOfAvailabilityCustom: profile.customSlots?.length ? {
-      create: profile.customSlots,
-    } : undefined,
+    subDomains: profile.subDomains?.length
+      ? {
+          connect: profile.subDomains.map((sub) => ({ id: sub.id })),
+        }
+      : undefined,
+    tags: profile.tags?.length
+      ? {
+          connect: profile.tags.map((tag) => ({ id: tag.id })),
+        }
+      : undefined,
+    slotsOfAvailabilityWeekly: profile.weeklySlots?.length
+      ? {
+          create: profile.weeklySlots,
+        }
+      : undefined,
+    slotsOfAvailabilityCustom: profile.customSlots?.length
+      ? {
+          create: profile.customSlots,
+        }
+      : undefined,
   };
 }
 
 function transformConsulteeProfile(
-  profile: FrontendConsulteeProfile
+  profile: FrontendConsulteeProfile,
 ): ConsulteeProfileCreateData {
   return {
     education: profile.education,
@@ -384,7 +439,7 @@ function transformConsulteeProfile(
 }
 
 function transformStaffProfile(
-  profile: FrontendStaffProfile
+  profile: FrontendStaffProfile,
 ): StaffProfileCreateData {
   return {
     department: profile.department,
@@ -404,14 +459,14 @@ export function validateOnboardingData(data: any): {
   error?: string;
 } {
   const validationResult = OnboardingDataSchema.safeParse(data);
-  
+
   if (!validationResult.success) {
     const errorMessage = validationResult.error.errors
       .map((e) => `Field '${e.path.join(".")}': ${e.message}`)
       .join("; ");
     return { success: false, error: `Invalid input: ${errorMessage}` };
   }
-  
+
   return { success: true, data: validationResult.data };
 }
 
@@ -423,7 +478,10 @@ export function validateFrontendOnboardingData(data: any): {
   try {
     // Basic validation of required fields
     if (!data.name || !data.email || !data.role) {
-      return { success: false, error: "Missing required fields: name, email, or role" };
+      return {
+        success: false,
+        error: "Missing required fields: name, email, or role",
+      };
     }
 
     // Role-specific validation
@@ -433,7 +491,10 @@ export function validateFrontendOnboardingData(data: any): {
           return { success: false, error: "Consultant profile is required" };
         }
         if (!data.consultantProfile.domain?.id) {
-          return { success: false, error: "Domain is required for consultant profile" };
+          return {
+            success: false,
+            error: "Domain is required for consultant profile",
+          };
         }
         break;
       case UserRole.CONSULTEE:
@@ -450,9 +511,9 @@ export function validateFrontendOnboardingData(data: any): {
 
     return { success: true, data: data as FrontendOnboardingData };
   } catch (error) {
-    return { 
-      success: false, 
-      error: error instanceof Error ? error.message : "Validation failed" 
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Validation failed",
     };
   }
 }
@@ -511,7 +572,7 @@ export async function updateConsultantProfileAndRelations(
     await tx.slotOfAvailabilityWeekly.deleteMany({
       where: { consultantProfileId: consultantProfile.id },
     });
-    
+
     const weeklySlotsToCreate = profileData.slotsOfAvailabilityWeekly?.create;
     if (weeklySlotsToCreate && weeklySlotsToCreate.length > 0) {
       const validWeeklySlots = weeklySlotsToCreate.filter((slot) =>
@@ -520,7 +581,7 @@ export async function updateConsultantProfileAndRelations(
           slot.slotEndTimeInUTC.split("T")[1]?.slice(0, 5) || "",
         ),
       );
-      
+
       if (validWeeklySlots.length > 0) {
         await tx.slotOfAvailabilityWeekly.createMany({
           data: validWeeklySlots.map((slot) => ({
@@ -540,7 +601,7 @@ export async function updateConsultantProfileAndRelations(
     await tx.slotOfAvailabilityCustom.deleteMany({
       where: { consultantProfileId: consultantProfile.id },
     });
-    
+
     const customSlotsToCreate = profileData.slotsOfAvailabilityCustom?.create;
     if (customSlotsToCreate && customSlotsToCreate.length > 0) {
       const validCustomSlots = customSlotsToCreate.filter((slot) =>
@@ -549,7 +610,7 @@ export async function updateConsultantProfileAndRelations(
           new Date(slot.slotEndTimeInUTC).toTimeString().slice(0, 5),
         ),
       );
-      
+
       if (validCustomSlots.length > 0) {
         await tx.slotOfAvailabilityCustom.createMany({
           data: validCustomSlots.map((slot) => ({
@@ -561,7 +622,7 @@ export async function updateConsultantProfileAndRelations(
       }
     }
   }
-  
+
   return { consultantProfileId: consultantProfile.id };
 }
 
@@ -601,7 +662,7 @@ export async function updateConsulteeProfileAndRelations(
       goals: goals,
     },
   });
-  
+
   return { consulteeProfileId: consulteeProfile.id };
 }
 
@@ -626,7 +687,7 @@ export async function updateStaffProfileAndRelations(
       responsibilities: profileData.responsibilities ?? {},
     },
   });
-  
+
   return { staffProfileId: staffProfile.id };
 }
 

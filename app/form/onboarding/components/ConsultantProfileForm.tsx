@@ -6,7 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ConsultantProfile, PersonalInfoAndRole } from "@/schemas/user";
 import { Domain, SubDomain, Tag } from "@/schemas/plans";
 import { ConsultantProfileFormSchema } from "@/utils/onboarding";
@@ -22,7 +28,12 @@ interface Props {
 
 type FormData = z.infer<typeof ConsultantProfileFormSchema>;
 
-const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, personalInfo }) => {
+const ConsultantProfileForm: React.FC<Props> = ({
+  onNext,
+  onBack,
+  initialData,
+  personalInfo,
+}) => {
   const { classes, colors } = useThemeClasses();
   const [domains, setDomains] = useState<Domain[]>([]);
   const [subDomains, setSubDomains] = useState<SubDomain[]>([]);
@@ -120,7 +131,10 @@ const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, p
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="w-full space-y-6">
       <div className="space-y-3">
-        <Label htmlFor="description" className={`${colors.textPrimary} font-medium`}>
+        <Label
+          htmlFor="description"
+          className={`${colors.textPrimary} font-medium`}
+        >
           Description
         </Label>
         <Textarea
@@ -131,12 +145,17 @@ const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, p
           rows={4}
         />
         {errors.description && (
-          <p className={`${colors.error} text-sm`}>{errors.description.message}</p>
+          <p className={`${colors.error} text-sm`}>
+            {errors.description.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="qualifications" className={`${colors.textPrimary} font-medium`}>
+        <Label
+          htmlFor="qualifications"
+          className={`${colors.textPrimary} font-medium`}
+        >
           Qualifications
         </Label>
         <Textarea
@@ -147,12 +166,17 @@ const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, p
           rows={3}
         />
         {errors.qualifications && (
-          <p className={`${colors.error} text-sm`}>{errors.qualifications.message}</p>
+          <p className={`${colors.error} text-sm`}>
+            {errors.qualifications.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="specialization" className={`${colors.textPrimary} font-medium`}>
+        <Label
+          htmlFor="specialization"
+          className={`${colors.textPrimary} font-medium`}
+        >
           Specialization
         </Label>
         <Input
@@ -162,12 +186,17 @@ const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, p
           placeholder="Your area of specialization"
         />
         {errors.specialization && (
-          <p className={`${colors.error} text-sm`}>{errors.specialization.message}</p>
+          <p className={`${colors.error} text-sm`}>
+            {errors.specialization.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-3">
-        <Label htmlFor="experience" className={`${colors.textPrimary} font-medium`}>
+        <Label
+          htmlFor="experience"
+          className={`${colors.textPrimary} font-medium`}
+        >
           Years of Experience
         </Label>
         <Input
@@ -181,7 +210,9 @@ const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, p
           placeholder="0"
         />
         {errors.experience && (
-          <p className={`${colors.error} text-sm`}>{errors.experience.message}</p>
+          <p className={`${colors.error} text-sm`}>
+            {errors.experience.message}
+          </p>
         )}
       </div>
 
@@ -203,7 +234,11 @@ const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, p
               </SelectTrigger>
               <SelectContent>
                 {domains.map((domain) => (
-                  <SelectItem key={domain.id} value={domain.id || ""} className={classes.dropdownItem}>
+                  <SelectItem
+                    key={domain.id}
+                    value={domain.id || ""}
+                    className={classes.dropdownItem}
+                  >
                     {domain.name}
                   </SelectItem>
                 ))}
@@ -218,7 +253,9 @@ const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, p
 
       {selectedDomain?.id && (
         <div className="space-y-3">
-          <Label className={`${colors.textPrimary} font-medium`}>Sub-domains</Label>
+          <Label className={`${colors.textPrimary} font-medium`}>
+            Sub-domains
+          </Label>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2 border rounded-md">
             <Controller
               name="subDomains"
@@ -226,16 +263,24 @@ const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, p
               render={({ field }) => (
                 <>
                   {filteredSubDomains.map((subDomain) => (
-                    <div key={subDomain.id} className="flex items-center space-x-2">
+                    <div
+                      key={subDomain.id}
+                      className="flex items-center space-x-2"
+                    >
                       <Checkbox
                         id={`subdomain-${subDomain.id}`}
-                        checked={field.value?.some((s) => s.id === subDomain.id) || false}
+                        checked={
+                          field.value?.some((s) => s.id === subDomain.id) ||
+                          false
+                        }
                         onCheckedChange={(checked) => {
                           if (checked) {
                             field.onChange([...(field.value || []), subDomain]);
                           } else {
                             field.onChange(
-                              field.value?.filter((s) => s.id !== subDomain.id) || []
+                              field.value?.filter(
+                                (s) => s.id !== subDomain.id,
+                              ) || [],
                             );
                           }
                         }}
@@ -254,7 +299,9 @@ const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, p
             />
           </div>
           {errors.subDomains && (
-            <p className={`${colors.error} text-sm`}>{errors.subDomains.message}</p>
+            <p className={`${colors.error} text-sm`}>
+              {errors.subDomains.message}
+            </p>
           )}
         </div>
       )}
@@ -272,13 +319,15 @@ const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, p
                     <div key={tag.id} className="flex items-center space-x-2">
                       <Checkbox
                         id={`tag-${tag.id}`}
-                        checked={field.value?.some((t) => t.id === tag.id) || false}
+                        checked={
+                          field.value?.some((t) => t.id === tag.id) || false
+                        }
                         onCheckedChange={(checked) => {
                           if (checked) {
                             field.onChange([...(field.value || []), tag]);
                           } else {
                             field.onChange(
-                              field.value?.filter((t) => t.id !== tag.id) || []
+                              field.value?.filter((t) => t.id !== tag.id) || [],
                             );
                           }
                         }}
@@ -303,7 +352,9 @@ const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, p
       )}
 
       <div className="space-y-3">
-        <Label className={`${colors.textPrimary} font-medium`}>Schedule Type</Label>
+        <Label className={`${colors.textPrimary} font-medium`}>
+          Schedule Type
+        </Label>
         <Controller
           name="scheduleType"
           control={control}
@@ -329,7 +380,9 @@ const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, p
           )}
         />
         {errors.scheduleType && (
-          <p className={`${colors.error} text-sm`}>{errors.scheduleType.message}</p>
+          <p className={`${colors.error} text-sm`}>
+            {errors.scheduleType.message}
+          </p>
         )}
       </div>
 
@@ -342,10 +395,7 @@ const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, p
         >
           Back
         </Button>
-        <Button
-          type="submit"
-          className={`${classes.primaryButton} flex-1`}
-        >
+        <Button type="submit" className={`${classes.primaryButton} flex-1`}>
           Next
         </Button>
       </div>

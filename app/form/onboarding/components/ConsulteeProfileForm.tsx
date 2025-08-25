@@ -16,7 +16,11 @@ interface Props {
   initialData: Partial<ConsulteeProfile>;
 }
 
-const ConsulteeProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
+const ConsulteeProfileForm: React.FC<Props> = ({
+  onNext,
+  onBack,
+  initialData,
+}) => {
   const { classes, colors } = useThemeClasses();
   const {
     register,
@@ -99,9 +103,7 @@ const ConsulteeProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) 
           rows={4}
         />
         {errors.aboutMe && (
-          <p className={`${colors.error} text-sm`}>
-            {errors.aboutMe.message}
-          </p>
+          <p className={`${colors.error} text-sm`}>{errors.aboutMe.message}</p>
         )}
       </div>
 
@@ -155,10 +157,7 @@ const ConsulteeProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) 
         >
           Back
         </Button>
-        <Button
-          type="submit"
-          className={`${classes.primaryButton} flex-1`}
-        >
+        <Button type="submit" className={`${classes.primaryButton} flex-1`}>
           Next
         </Button>
       </div>

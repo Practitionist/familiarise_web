@@ -6,21 +6,16 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    console.log(
-      "API Route: Received request to update onboarding information",
-    );
+    console.log("API Route: Received request to update onboarding information");
     const { id } = await params;
     const body = await req.json();
     console.log("Request Body:", JSON.stringify(body, null, 2));
 
     // Use the server action for consistency
     const result = await updateOnboardingInformationAction(id, body);
-    
+
     if (!result.success) {
-      return NextResponse.json(
-        { error: result.error },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: result.error }, { status: 400 });
     }
 
     return NextResponse.json({

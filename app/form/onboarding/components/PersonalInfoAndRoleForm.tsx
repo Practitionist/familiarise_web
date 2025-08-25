@@ -138,10 +138,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
         )}
       </div>
 
-      <Button
-        type="submit"
-        className={`${classes.primaryButton} w-full`}
-      >
+      <Button type="submit" className={`${classes.primaryButton} w-full`}>
         Next
       </Button>
     </form>

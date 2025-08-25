@@ -1,7 +1,6 @@
 "use client";
 import { updateOnboardingInformationAction } from "@/actions/forms/onboarding.action";
 import { Progress } from "@/components/ui/progress";
-import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Domain, SubDomain, Tag } from "@/schemas/plans";
 import {
@@ -461,7 +460,10 @@ const MultiStepForm: React.FC = () => {
 
   // There are 5 total steps for CONSULTANT/CONSULTEE/STAFF flows when including review in step 4
   const totalSteps = 5;
-  const progressValue = Math.min(100, Math.max(0, ((step + 1) / totalSteps) * 100));
+  const progressValue = Math.min(
+    100,
+    Math.max(0, ((step + 1) / totalSteps) * 100),
+  );
 
   return (
     <FormProvider {...methods}>

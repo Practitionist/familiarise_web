@@ -139,16 +139,22 @@ type StaffProfileCreateData = z.infer<typeof BaseStaffProfileCreateInputSchema>;
 
 // #region Validation Function
 
-function validateOnboardingData(data: any): { success: boolean; data?: OnboardingData; error?: string } {
+function validateOnboardingData(data: any): {
+  success: boolean;
+  data?: OnboardingData;
+  error?: string;
+} {
   try {
     const validatedData = OnboardingDataSchema.parse(data);
     return { success: true, data: validatedData };
   } catch (error) {
     if (error instanceof z.ZodError) {
-      const errorMessage = error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      const errorMessage = error.errors
+        .map((e) => `${e.path.join(".")}: ${e.message}`)
+        .join(", ");
       return { success: false, error: errorMessage };
     }
-    return { success: false, error: 'Unknown validation error' };
+    return { success: false, error: "Unknown validation error" };
   }
 }
 
