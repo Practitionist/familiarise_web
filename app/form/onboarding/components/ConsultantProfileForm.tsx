@@ -15,14 +15,14 @@ import {
 } from "@/components/ui/select";
 import { ConsultantProfile, PersonalInfoAndRole } from "@/schemas/user";
 import { Domain, SubDomain, Tag } from "@/schemas/plans";
-import { ConsultantProfileFormSchema } from "@/utils/onboarding";
+import { ConsultantProfileFormSchema, OnboardingFormData } from "@/utils/onboarding";
 import { z } from "zod";
 import { useThemeClasses } from "../useTheme";
 
 interface Props {
-  onNext: (data: FormData) => void;
+  onNext: (data: Partial<OnboardingFormData>) => void;
   onBack: () => void;
-  initialData: Partial<ConsultantProfile>;
+  initialData: Partial<OnboardingFormData>;
   personalInfo: PersonalInfoAndRole;
 }
 
@@ -48,7 +48,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
     watch,
     formState: { errors },
   } = useForm<FormData>({
-    resolver: zodResolver(ConsultantProfileFormSchema),
+    resolver: zodResolver(ConsultantProfileFormSchema) as any,
     mode: "onChange",
     defaultValues: {
       description: "",

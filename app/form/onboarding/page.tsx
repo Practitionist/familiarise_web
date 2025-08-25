@@ -1,15 +1,13 @@
 "use client";
 import { updateOnboardingInformationAction } from "@/actions/forms/onboarding.action";
+import { 
+  OnboardingFormData, 
+  OnboardingFormDataSchema, 
+  transformOnboardingFormToServerData 
+} from "@/utils/onboarding";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
-import { Domain, SubDomain, Tag } from "@/schemas/plans";
-import {
-  ConsultantProfile,
-  ConsulteeProfile,
-  PersonalInfoAndRole,
-  PreferredSchedule,
-  StaffProfile,
-} from "@/schemas/user";
+// Types are now imported from utils/onboarding
 import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
@@ -31,44 +29,7 @@ import { ThemeName } from "./themes";
 import { getOccasionTheme } from "./themeUtils";
 import { useThemeClasses } from "./useTheme";
 
-type OnboardingFormData = PersonalInfoAndRole &
-  Partial<ConsultantProfile> &
-  Partial<ConsulteeProfile> &
-  Partial<StaffProfile> &
-  Partial<PreferredSchedule> & {
-    termsAccepted?: boolean;
-    privacyAccepted?: boolean;
-    domain?: Domain;
-    subDomains?: SubDomain[];
-    tags?: Tag[];
-    weeklySlots?: {
-      dayOfWeekforStartTimeInUTC:
-        | "MONDAY"
-        | "TUESDAY"
-        | "WEDNESDAY"
-        | "THURSDAY"
-        | "FRIDAY"
-        | "SATURDAY"
-        | "SUNDAY";
-      slotStartTimeInUTC: string;
-      dayOfWeekforEndTimeInUTC:
-        | "MONDAY"
-        | "TUESDAY"
-        | "WEDNESDAY"
-        | "THURSDAY"
-        | "FRIDAY"
-        | "SATURDAY"
-        | "SUNDAY";
-      slotEndTimeInUTC: string;
-    }[];
-    customSlots?: {
-      slotStartTimeInUTC: string;
-      slotEndTimeInUTC: string;
-    }[];
-    preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
-    interests?: string[];
-    goals?: string[];
-  };
+// OnboardingFormData is now imported from utils/onboarding
 
 const MultiStepForm: React.FC = () => {
   const { data: session, update: updateSession } = useSession();
@@ -127,113 +88,45 @@ const MultiStepForm: React.FC = () => {
 
   const handleSubmit = async (data: OnboardingFormData) => {
     const finalData = { ...formData, ...data };
-    // console.log("Finally Submitted Data:", finalData);
-
+    
     try {
       const id = session?.user?.id;
       if (!id) {
         throw new Error("User ID not found in session");
       }
 
-      const formattedCustomSlots = finalData.customSlots?.map(
-        (slot: { slotStartTimeInUTC: string; slotEndTimeInUTC: string }) => ({
-          slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC).toISOString(),
-          slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC).toISOString(),
-        }),
-      );
+      // Validate the form data
+      const validationResult = OnboardingFormDataSchema.safeParse(finalData);
+      if (!validationResult.success) {
+        const errors = validationResult.error.errors;
+        const errorsByField = errors.reduce((acc, error) => {
+          const field = error.path.join(".");
+          acc[field] = error.message;
+          return acc;
+        }, {} as Record<string, string>);
 
-      const requestBody: Parameters<
-        typeof updateOnboardingInformationAction
-      >[1] = {
-        name: finalData.name,
-        email: finalData.email,
-        phone: finalData.phone,
-        address: finalData.address,
-        currentTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        role: finalData.role,
-        consultantProfile:
-          finalData.role === "CONSULTANT"
-            ? {
-                create: {
-                  description: finalData.description ?? "",
-                  qualifications: finalData.qualifications ?? "",
-                  specialization: finalData.specialization ?? "",
-                  experience: finalData.experience ?? null,
-                  domain: { connect: { id: finalData.domain!.id } },
-                  subDomains: finalData.subDomains?.filter(
-                    (sd) => sd.id !== undefined && sd.id !== null,
-                  ).length
-                    ? {
-                        connect: finalData.subDomains
-                          .filter((sd) => sd.id !== undefined && sd.id !== null)
-                          .map((sd: SubDomain) => ({
-                            id: sd.id!,
-                          })),
-                      }
-                    : undefined,
-                  tags: finalData.tags?.filter(
-                    (t) => t.id !== undefined && t.id !== null,
-                  ).length
-                    ? {
-                        connect: finalData.tags
-                          .filter((t) => t.id !== undefined && t.id !== null)
-                          .map((t: Tag) => ({ id: t.id! })),
-                      }
-                    : undefined,
-                  scheduleType: finalData.scheduleType ?? "WEEKLY",
-                  slotsOfAvailabilityWeekly: finalData.weeklySlots?.length
-                    ? {
-                        create: finalData.weeklySlots.map((slot) => ({
-                          dayOfWeekforStartTimeInUTC:
-                            slot.dayOfWeekforStartTimeInUTC,
-                          slotStartTimeInUTC: slot.slotStartTimeInUTC,
-                          dayOfWeekforEndTimeInUTC:
-                            slot.dayOfWeekforEndTimeInUTC,
-                          slotEndTimeInUTC: slot.slotEndTimeInUTC,
-                        })),
-                      }
-                    : undefined,
-                  slotsOfAvailabilityCustom: formattedCustomSlots?.length
-                    ? {
-                        create: formattedCustomSlots,
-                      }
-                    : undefined,
-                },
-              }
-            : undefined,
-        consulteeProfile:
-          finalData.role === "CONSULTEE"
-            ? {
-                create: {
-                  education: finalData.education ?? "",
-                  occupation: finalData.occupation ?? "",
-                  aboutMe: finalData.aboutMe ?? "",
-                  preferredCommunicationMethod:
-                    finalData.preferredCommunicationMethod ?? "VIDEO",
-                  preferredLanguage: finalData.preferredLanguage ?? "",
-                  specialRequirements: finalData.specialRequirements ?? "",
-                  interests: finalData.interests ?? [],
-                  goals: finalData.goals ?? [],
-                },
-              }
-            : undefined,
-        staffProfile:
-          finalData.role === "STAFF"
-            ? {
-                create: {
-                  department: finalData.department ?? "",
-                  position: finalData.position ?? "",
-                  permissions: finalData.permissions ?? {},
-                  responsibilities: finalData.responsibilities ?? {},
-                },
-              }
-            : undefined,
-      };
+        // Create user-friendly error message
+        const criticalErrors = errors.filter(e => 
+          ['name', 'email', 'role', 'description', 'qualifications', 'specialization'].includes(e.path[0] as string)
+        );
+        
+        const errorMessage = criticalErrors.length > 0
+          ? `Please complete required fields: ${criticalErrors.map(e => e.path.join(" > ")).join(", ")}`
+          : `Form validation errors: ${errors.map(e => `${e.path.join(".")}: ${e.message}`).join(", ")}`;
 
-      // console.log(
-      //   "Request Body for Action:",
-      //   JSON.stringify(requestBody, null, 2)
-      // );
+        toast({
+          title: "Please Complete Required Fields",
+          description: errorMessage,
+          variant: "destructive",
+        });
+        
+        console.warn("Form validation errors:", errorsByField);
+        return;
+      }
+
+      // Transform the data for server submission
+      const requestBody = transformOnboardingFormToServerData(validationResult.data);
+      
       toast({
         title: "Updating Onboarding Information",
         description: "Please wait...",

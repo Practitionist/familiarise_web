@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { PreferredSchedule, PreferredScheduleSchema } from "@/schemas/user";
+import { PreferredScheduleFormSchema, OnboardingFormData } from "@/utils/onboarding";
 import {
   DAYS_OF_WEEK,
   type DayOfWeek,
@@ -42,9 +42,9 @@ interface SlotType {
 type SlotsType = Record<string, SlotType[]>;
 
 interface Props {
-  onNext: (data: Partial<PreferredSchedule>) => void;
+  onNext: (data: Partial<OnboardingFormData>) => void;
   onBack: () => void;
-  initialData: Partial<PreferredSchedule>;
+  initialData: Partial<OnboardingFormData>;
 }
 
 interface WeeklySlot {
@@ -70,9 +70,8 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 }) => {
   const { classes, colors } = useThemeClasses();
   const { timezone, isLoading: timezoneLoading } = useTimezone();
-  const { handleSubmit, watch, setValue, control } = useForm<PreferredSchedule>(
-    {
-      resolver: zodResolver(PreferredScheduleSchema),
+  const { handleSubmit, watch, setValue, control } = useForm({
+      resolver: zodResolver(PreferredScheduleFormSchema),
       defaultValues: {
         ...initialData,
         scheduleType: initialData.scheduleType || "WEEKLY",
@@ -545,7 +544,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   }, [weeklySlots, customSlots, scheduleType]);
 
   const onSubmitForm = useCallback(
-    (data: PreferredSchedule) => {
+    (data: any) => {
       const feedback = getValidationFeedback();
 
       if (!feedback.hasSlots) {

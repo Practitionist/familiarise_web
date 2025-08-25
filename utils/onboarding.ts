@@ -7,6 +7,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { isValidTimeRange } from "@/utils/timeSlotValidation";
+import { experienceValidation } from "@/schemas/shared";
 
 // #region Shared Zod Schema Definitions
 
@@ -40,11 +41,7 @@ export const BaseConsultantProfileCreateInputSchema = z.object({
   description: z.string().optional(),
   qualifications: z.string().optional(),
   specialization: z.string().optional(),
-  experience: z
-    .number()
-    .min(0, "Experience must be at least 0 years")
-    .max(50, "Experience cannot exceed 50 years")
-    .optional(),
+  experience: experienceValidation,
   scheduleType: z.nativeEnum(ScheduleType).default(ScheduleType.WEEKLY),
   domain: z.object({ connect: z.object({ id: z.string() }) }),
   subDomains: ConsultantProfileRelatedSubDomainsInputSchema.optional(),
@@ -244,11 +241,8 @@ export const ConsultantProfileFormSchema = z.object({
   description: z.string().min(1, "Description is required"),
   qualifications: z.string().min(1, "Qualifications are required"),
   specialization: z.string().min(1, "Specialization is required"),
-  experience: z
-    .number()
-    .min(0, "Experience must be at least 0 years")
-    .max(50, "Experience cannot exceed 50 years"),
-  scheduleType: z.nativeEnum(ScheduleType).optional(),
+  experience: experienceValidation,
+  scheduleType: z.nativeEnum(ScheduleType).default(ScheduleType.WEEKLY),
   domain: z.object({
     id: z.string(),
     name: z.string(),
@@ -271,6 +265,8 @@ export const ConsultantProfileFormSchema = z.object({
       }),
     )
     .optional(),
+  weeklySlots: z.array(SlotWeeklyCreateInputSchema).optional(),
+  customSlots: z.array(SlotCustomCreateInputSchema).optional(),
 });
 
 export const ConsulteeProfileFormSchema = z.object({
@@ -293,29 +289,178 @@ export const StaffProfileFormSchema = z.object({
 
 export const PreferredScheduleFormSchema = z.object({
   scheduleType: z.nativeEnum(ScheduleType),
-  weeklySlots: z
-    .array(
-      z.object({
-        dayOfWeekforStartTimeInUTC: z.nativeEnum(DayOfWeek),
-        slotStartTimeInUTC: z.string(),
-        dayOfWeekforEndTimeInUTC: z.nativeEnum(DayOfWeek),
-        slotEndTimeInUTC: z.string(),
-      }),
-    )
-    .optional(),
-  customSlots: z
-    .array(
-      z.object({
-        slotStartTimeInUTC: z.string(),
-        slotEndTimeInUTC: z.string(),
-      }),
-    )
-    .optional(),
+  weeklySlots: z.array(SlotWeeklyCreateInputSchema).optional(),
+  customSlots: z.array(SlotCustomCreateInputSchema).optional(),
 });
+
+// Combined form data type for frontend use
+export const OnboardingFormDataSchema = PersonalInfoAndRoleFormSchema.extend({
+  // Add missing fields from PersonalInfoAndRole
+  currentTimezone: z.string().optional(),
+  onlineStatus: z.boolean().default(false),
+  onboardingCompleted: z.boolean().default(false),
+  emailVerified: z.date().optional(),
+  image: z.string().optional(),
+  preferredCommunicationMethod: z.nativeEnum(ConsultationMode).default(ConsultationMode.VIDEO),
+  // Consultant fields
+  description: z.string().optional(),
+  qualifications: z.string().optional(),
+  specialization: z.string().optional(),
+  experience: experienceValidation.optional(),
+  domain: z.object({
+    id: z.string(),
+    name: z.string(),
+  }).optional(),
+  subDomains: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    domainId: z.string(),
+  })).optional(),
+  tags: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    domainId: z.string(),
+  })).optional(),
+  scheduleType: z.nativeEnum(ScheduleType).optional(),
+  weeklySlots: z.array(SlotWeeklyCreateInputSchema).optional(),
+  customSlots: z.array(SlotCustomCreateInputSchema).optional(),
+  
+  // Consultee fields
+  education: z.string().optional(),
+  occupation: z.string().optional(),
+  aboutMe: z.string().optional(),
+  preferredLanguage: z.string().optional(),
+  specialRequirements: z.string().optional(),
+  interests: z.array(z.string()).optional(),
+  goals: z.array(z.string()).optional(),
+  
+  // Staff fields
+  department: z.string().optional(),
+  position: z.string().optional(),
+  permissions: z.record(z.boolean()).optional(),
+  responsibilities: z.record(z.boolean()).optional(),
+  
+  // Agreement fields
+  termsAccepted: z.boolean().optional(),
+  privacyAccepted: z.boolean().optional(),
+});
+
+export type OnboardingFormData = z.infer<typeof OnboardingFormDataSchema>;
 
 // #endregion
 
 // #region Data Transformation Utilities
+
+export function transformOnboardingFormToServerData(
+  formData: OnboardingFormData
+): OnboardingData {
+  const baseData = {
+    name: formData.name,
+    email: formData.email,
+    phone: formData.phone,
+    address: formData.address,
+    currentTimezone: formData.currentTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+    onlineStatus: formData.onlineStatus || false,
+    onboardingCompleted: true, // Set to true when completing onboarding
+    role: formData.role,
+  };
+
+  switch (formData.role) {
+    case UserRole.CONSULTANT:
+      if (!formData.domain?.id) {
+        throw new Error("Domain is required for consultant profile");
+      }
+      return {
+        ...baseData,
+        role: UserRole.CONSULTANT,
+        consultantProfile: {
+          create: {
+            description: formData.description,
+            qualifications: formData.qualifications,
+            specialization: formData.specialization,
+            experience: formData.experience,
+            scheduleType: formData.scheduleType || ScheduleType.WEEKLY,
+            domain: { connect: { id: formData.domain.id } },
+            subDomains: formData.subDomains?.length
+              ? {
+                  connect: formData.subDomains
+                    .filter((sd) => sd.id !== undefined && sd.id !== null)
+                    .map((sd) => ({ id: sd.id })),
+                }
+              : undefined,
+            tags: formData.tags?.length
+              ? {
+                  connect: formData.tags
+                    .filter((t) => t.id !== undefined && t.id !== null)
+                    .map((t) => ({ id: t.id })),
+                }
+              : undefined,
+            slotsOfAvailabilityWeekly: formData.weeklySlots?.length
+              ? { create: formData.weeklySlots }
+              : undefined,
+            slotsOfAvailabilityCustom: formData.customSlots?.length
+              ? {
+                  create: formData.customSlots.map((slot) => ({
+                    slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC).toISOString(),
+                    slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC).toISOString(),
+                  })),
+                }
+              : undefined,
+          },
+        },
+        consulteeProfile: undefined,
+        staffProfile: undefined,
+      };
+
+    case UserRole.CONSULTEE:
+      return {
+        ...baseData,
+        role: UserRole.CONSULTEE,
+        consultantProfile: undefined,
+        consulteeProfile: {
+          create: {
+            education: formData.education,
+            occupation: formData.occupation,
+            aboutMe: formData.aboutMe,
+            preferredCommunicationMethod: formData.preferredCommunicationMethod || ConsultationMode.VIDEO,
+            preferredLanguage: formData.preferredLanguage,
+            specialRequirements: formData.specialRequirements,
+            interests: formData.interests,
+            goals: formData.goals,
+          },
+        },
+        staffProfile: undefined,
+      };
+
+    case UserRole.STAFF:
+      return {
+        ...baseData,
+        role: UserRole.STAFF,
+        consultantProfile: undefined,
+        consulteeProfile: undefined,
+        staffProfile: {
+          create: {
+            department: formData.department,
+            position: formData.position,
+            permissions: formData.permissions,
+            responsibilities: formData.responsibilities,
+          },
+        },
+      };
+
+    case UserRole.ADMIN:
+      return {
+        ...baseData,
+        role: UserRole.ADMIN,
+        consultantProfile: undefined,
+        consulteeProfile: undefined,
+        staffProfile: undefined,
+      };
+
+    default:
+      throw new Error(`Invalid role: ${formData.role}`);
+  }
+}
 
 export function transformFrontendToServerData(
   frontendData: FrontendOnboardingData,
@@ -522,7 +667,17 @@ export function validateFrontendOnboardingData(data: any): {
 
 // #region Database Operation Helpers
 
-export async function updateConsultantProfileAndRelations(
+async function getExistingUserForValidation(id: string) {
+  const { default: prisma } = await import("@/lib/prisma");
+  const existingUser = await prisma.user.findUnique({
+    where: { id },
+  });
+  if (!existingUser) {
+    throw new Error("User not found");
+  }
+}
+
+async function updateConsultantProfileAndRelations(
   userId: string,
   profileData: ConsultantProfileCreateData,
   tx: Prisma.TransactionClient,
@@ -537,7 +692,7 @@ export async function updateConsultantProfileAndRelations(
       description: profileData.description ?? "",
       qualifications: profileData.qualifications ?? "",
       specialization: profileData.specialization ?? "",
-      experience: profileData.experience ?? 0,
+      experience: profileData.experience ?? null,
       scheduleType: scheduleTypeEnum,
       rating: 0,
       domainId: domainId,
@@ -552,7 +707,7 @@ export async function updateConsultantProfileAndRelations(
       description: profileData.description ?? "",
       qualifications: profileData.qualifications ?? "",
       specialization: profileData.specialization ?? "",
-      experience: profileData.experience ?? 0,
+      experience: profileData.experience ?? null,
       scheduleType: scheduleTypeEnum,
       domain: { connect: { id: domainId } },
       subDomains: profileData.subDomains?.connect
@@ -564,7 +719,6 @@ export async function updateConsultantProfileAndRelations(
     },
   });
 
-  // Handle schedule slots
   if (scheduleTypeEnum === ScheduleType.WEEKLY) {
     await tx.slotOfAvailabilityCustom.deleteMany({
       where: { consultantProfileId: consultantProfile.id },
@@ -572,7 +726,6 @@ export async function updateConsultantProfileAndRelations(
     await tx.slotOfAvailabilityWeekly.deleteMany({
       where: { consultantProfileId: consultantProfile.id },
     });
-
     const weeklySlotsToCreate = profileData.slotsOfAvailabilityWeekly?.create;
     if (weeklySlotsToCreate && weeklySlotsToCreate.length > 0) {
       const validWeeklySlots = weeklySlotsToCreate.filter((slot) =>
@@ -581,7 +734,6 @@ export async function updateConsultantProfileAndRelations(
           slot.slotEndTimeInUTC.split("T")[1]?.slice(0, 5) || "",
         ),
       );
-
       if (validWeeklySlots.length > 0) {
         await tx.slotOfAvailabilityWeekly.createMany({
           data: validWeeklySlots.map((slot) => ({
@@ -601,7 +753,6 @@ export async function updateConsultantProfileAndRelations(
     await tx.slotOfAvailabilityCustom.deleteMany({
       where: { consultantProfileId: consultantProfile.id },
     });
-
     const customSlotsToCreate = profileData.slotsOfAvailabilityCustom?.create;
     if (customSlotsToCreate && customSlotsToCreate.length > 0) {
       const validCustomSlots = customSlotsToCreate.filter((slot) =>
@@ -610,7 +761,6 @@ export async function updateConsultantProfileAndRelations(
           new Date(slot.slotEndTimeInUTC).toTimeString().slice(0, 5),
         ),
       );
-
       if (validCustomSlots.length > 0) {
         await tx.slotOfAvailabilityCustom.createMany({
           data: validCustomSlots.map((slot) => ({
@@ -622,11 +772,10 @@ export async function updateConsultantProfileAndRelations(
       }
     }
   }
-
   return { consultantProfileId: consultantProfile.id };
 }
 
-export async function updateConsulteeProfileAndRelations(
+async function updateConsulteeProfileAndRelations(
   userId: string,
   profileData: ConsulteeProfileCreateData,
   tx: Prisma.TransactionClient,
@@ -662,11 +811,10 @@ export async function updateConsulteeProfileAndRelations(
       goals: goals,
     },
   });
-
   return { consulteeProfileId: consulteeProfile.id };
 }
 
-export async function updateStaffProfileAndRelations(
+async function updateStaffProfileAndRelations(
   userId: string,
   profileData: StaffProfileCreateData,
   tx: Prisma.TransactionClient,
@@ -687,11 +835,10 @@ export async function updateStaffProfileAndRelations(
       responsibilities: profileData.responsibilities ?? {},
     },
   });
-
   return { staffProfileId: staffProfile.id };
 }
 
-export async function updateUserProfileAndGetFkData(
+async function updateUserProfileAndGetFkData(
   userId: string,
   validatedBody: OnboardingData,
   tx: Prisma.TransactionClient,
@@ -725,6 +872,97 @@ export async function updateUserProfileAndGetFkData(
       throw new Error(
         `Invalid role encountered after validation: ${(validatedBody as any).role}`,
       );
+  }
+}
+
+// Central onboarding processing function
+export async function processOnboardingData(
+  userId: string,
+  body: any,
+): Promise<{ success: boolean; user?: any; error?: string }> {
+  try {
+    console.log("Central Utils: processOnboardingData - Received", {
+      userId,
+      bodyPreview:
+        typeof body === "object" && body !== null
+          ? { ...body, consultantProfile: "..." }
+          : body,
+    });
+
+    const validationResult = validateOnboardingData(body);
+
+    if (!validationResult.success) {
+      console.error("Validation Error:", validationResult.error);
+      return { success: false, error: validationResult.error };
+    }
+
+    const validatedBody = validationResult.data as OnboardingData;
+
+    await getExistingUserForValidation(userId);
+
+    const { default: prisma } = await import("@/lib/prisma");
+    
+    const updatedUser = await prisma.$transaction(async (tx) => {
+      const baseUserData: Prisma.UserUpdateInput = {
+        name: validatedBody.name,
+        email: validatedBody.email,
+        phone: validatedBody.phone,
+        address: validatedBody.address,
+        role: validatedBody.role,
+        onboardingCompleted: true,
+        currentTimezone: validatedBody.currentTimezone,
+        consultantProfileId: null,
+        consulteeProfileId: null,
+        staffProfileId: null,
+      };
+
+      const profileFkData = await updateUserProfileAndGetFkData(
+        userId,
+        validatedBody,
+        tx,
+      );
+
+      const finalUserData: Prisma.UserUpdateInput = {
+        ...baseUserData,
+        ...profileFkData,
+      };
+
+      return tx.user.update({
+        where: { id: userId },
+        data: finalUserData,
+        include: {
+          consultantProfile: {
+            include: {
+              slotsOfAvailabilityWeekly: true,
+              slotsOfAvailabilityCustom: true,
+              domain: true,
+              subDomains: true,
+              tags: true,
+            },
+          },
+          consulteeProfile: true,
+          staffProfile: true,
+        },
+      });
+    });
+
+    return { success: true, user: updatedUser };
+  } catch (error: unknown) {
+    console.error("Error in processOnboardingData:", error);
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : "An unknown error occurred while updating onboarding information.";
+
+    if (error instanceof Error) {
+      console.error("Error details:", {
+        message: error.message,
+        stack: error.stack,
+      });
+    } else {
+      console.error("Unknown error object:", error);
+    }
+    return { success: false, error: errorMessage };
   }
 }
 

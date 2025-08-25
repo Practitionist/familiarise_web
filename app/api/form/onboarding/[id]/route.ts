@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateOnboardingInformationAction } from "@/actions/forms/onboarding.action";
+import { processOnboardingData } from "@/utils/onboarding";
 
 export async function PATCH(
   req: NextRequest,
@@ -11,8 +11,8 @@ export async function PATCH(
     const body = await req.json();
     console.log("Request Body:", JSON.stringify(body, null, 2));
 
-    // Use the server action for consistency
-    const result = await updateOnboardingInformationAction(id, body);
+    // Use central utility function directly
+    const result = await processOnboardingData(id, body);
 
     if (!result.success) {
       return NextResponse.json({ error: result.error }, { status: 400 });

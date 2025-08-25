@@ -6,14 +6,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ConsulteeProfile } from "@/schemas/user";
 import { Textarea } from "@/components/ui/textarea";
-import { ConsulteeProfileFormSchema } from "@/utils/onboarding";
+import { ConsulteeProfileFormSchema, OnboardingFormData } from "@/utils/onboarding";
 import { z } from "zod";
 import { useThemeClasses } from "../useTheme";
 
 interface Props {
-  onNext: (data: Partial<ConsulteeProfile>) => void;
+  onNext: (data: Partial<OnboardingFormData>) => void;
   onBack: () => void;
-  initialData: Partial<ConsulteeProfile>;
+  initialData: Partial<OnboardingFormData>;
 }
 
 const ConsulteeProfileForm: React.FC<Props> = ({
@@ -43,7 +43,7 @@ const ConsulteeProfileForm: React.FC<Props> = ({
   });
 
   const onSubmit = (data: z.infer<typeof ConsulteeProfileFormSchema>) => {
-    onNext(data as Partial<ConsulteeProfile>);
+    onNext(data);
   };
 
   return (
