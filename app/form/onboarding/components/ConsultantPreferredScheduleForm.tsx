@@ -1,26 +1,29 @@
+import { useTimezone } from "@/app/explore/experts/[consultantId]/hooks/useTimezone";
 import { TrashIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { PreferredSchedule, PreferredScheduleSchema } from "@/schemas/user";
+import { PreferredSchedule } from "@/schemas/user";
 import {
   DAYS_OF_WEEK,
   type DayOfWeek,
-  convertToLocalTime,
-  convertToUTC,
+  convertTimezoneToUtc,
+  // New timezone-aware utilities
+  convertUtcToTimezone,
+  extractTimeFromUtcSlot,
   formatDayDisplay,
   getDaysInMonth,
   getFirstDayOfMonth,
   getLocalDateString,
   getNextDay,
   isOvernight,
-  // New timezone-aware utilities
-  convertUtcToTimezone,
-  extractTimeFromUtcSlot,
-  convertTimezoneToUtc,
   sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
+import {
+  OnboardingFormData,
+  PreferredScheduleFormSchema,
+} from "@/utils/onboarding";
 import {
   getSlotStatistics,
   validateAllSlots,
@@ -30,7 +33,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { useThemeClasses } from "../useTheme";
-import { useTimezone } from "@/app/explore/experts/[consultantId]/hooks/useTimezone";
 
 interface SlotType {
   startTime: string;
@@ -42,9 +44,9 @@ interface SlotType {
 type SlotsType = Record<string, SlotType[]>;
 
 interface Props {
-  onNext: (data: Partial<PreferredSchedule>) => void;
+  onNext: (data: Partial<OnboardingFormData>) => void;
   onBack: () => void;
-  initialData: Partial<PreferredSchedule>;
+  initialData: Partial<OnboardingFormData>;
 }
 
 interface WeeklySlot {
@@ -70,15 +72,13 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 }) => {
   const { classes, colors } = useThemeClasses();
   const { timezone, isLoading: timezoneLoading } = useTimezone();
-  const { handleSubmit, watch, setValue, control } = useForm<PreferredSchedule>(
-    {
-      resolver: zodResolver(PreferredScheduleSchema),
-      defaultValues: {
-        ...initialData,
-        scheduleType: initialData.scheduleType || "WEEKLY",
-      },
+  const { handleSubmit, watch, setValue, control } = useForm({
+    resolver: zodResolver(PreferredScheduleFormSchema),
+    defaultValues: {
+      ...initialData,
+      scheduleType: initialData.scheduleType || "WEEKLY",
     },
-  );
+  });
   const scheduleType = watch("scheduleType");
 
   const [weeklySlots, setWeeklySlots] = useState<SlotsType>({});
@@ -453,9 +453,9 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
       return (
         <div
           key={`slot-${day}`}
-          className="grid gap-3 p-4 rounded-lg bg-white/5 border border-white/10"
+          className={`grid gap-3 p-4 rounded-lg ${colors.glassBg} ${colors.glassBorder}`}
         >
-          <Label className="text-white font-medium text-sm">
+          <Label className={`${colors.textPrimary} font-medium text-sm`}>
             {formatDayDisplay(day)}
           </Label>
           {slots[dayKey]?.map((slot: SlotType, index: number) => (
@@ -474,7 +474,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                       setSlots,
                     )
                   }
-                  className={`col-span-2 bg-white/10 border-white/20 text-white h-10 rounded-lg focus:border-purple-400 focus:ring-purple-400/20 ${
+                  className={`col-span-2 ${classes.input} h-10 ${
                     !slot.isValid ? "border-red-400" : ""
                   }`}
                   required
@@ -493,7 +493,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                       setSlots,
                     )
                   }
-                  className={`col-span-2 bg-white/10 border-white/20 text-white h-10 rounded-lg focus:border-purple-400 focus:ring-purple-400/20 ${
+                  className={`col-span-2 ${classes.input} h-10 ${
                     !slot.isValid ? "border-red-400" : ""
                   }`}
                   required
@@ -514,7 +514,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           <Button
             type="button"
             onClick={() => handleAddSlot(dayKey, slots, setSlots)}
-            className="bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg h-10 font-medium transition-all duration-200"
+            className={`${classes.secondaryButton} h-10 font-medium`}
           >
             + Add Slot
           </Button>
@@ -632,9 +632,9 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
     return (
       <div
         key={`date-${dateString}`}
-        className="mt-4 p-4 rounded-lg bg-white/5 border border-white/10"
+        className={`mt-4 p-4 rounded-lg ${colors.glassBg} ${colors.glassBorder}`}
       >
-        <h4 className="font-semibold text-white mb-3">
+        <h4 className={`font-semibold ${colors.textPrimary} mb-3`}>
           {date.toLocaleDateString("en-US", {
             weekday: "long",
             year: "numeric",
@@ -660,7 +660,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                   setCustomSlots,
                 )
               }
-              className={`col-span-2 bg-white/10 border-white/20 text-white h-10 rounded-lg focus:border-purple-400 focus:ring-purple-400/20 ${
+              className={`col-span-2 ${classes.input} h-10 ${
                 !slot.isValid ? "border-red-400" : ""
               }`}
               required
@@ -679,7 +679,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                   setCustomSlots,
                 )
               }
-              className={`col-span-2 bg-white/10 border-white/20 text-white h-10 rounded-lg focus:border-purple-400 focus:ring-purple-400/20 ${
+              className={`col-span-2 ${classes.input} h-10 ${
                 !slot.isValid ? "border-red-400" : ""
               }`}
               required
@@ -708,7 +708,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         <Button
           type="button"
           onClick={() => handleAddSlot(dateString, customSlots, setCustomSlots)}
-          className="mt-3 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg h-10 font-medium transition-all duration-200"
+          className={`mt-3 ${classes.secondaryButton} h-10 font-medium`}
         >
           + Add Slot
         </Button>
@@ -722,7 +722,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
       <div className="w-full flex items-center justify-center min-h-[400px]">
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-t-purple-400 border-r-purple-400 border-b-white/20 border-l-white/20 rounded-full animate-spin mb-4"></div>
-          <p className="text-white/70">Detecting timezone...</p>
+          <p className={colors.textSecondary}>Detecting timezone...</p>
         </div>
       </div>
     );
@@ -730,7 +730,9 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 
   return (
     <form onSubmit={handleSubmit(onSubmitForm)} className="w-full space-y-6">
-      <div className="glassmorphism2 rounded-2xl p-6 border border-white/20 shadow-2xl">
+      <div
+        className={`glassmorphism2 rounded-2xl p-6 border ${colors.glassBorder} shadow-2xl`}
+      >
         <div className="mb-6">
           <h3 className="text-2xl font-bold text-white mb-2">
             Preferred Schedule
@@ -750,9 +752,39 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                 value={field.value}
                 className="space-y-4"
               >
+                {/* Prominent segmented selector for Weekly/Custom */}
+                <div className="flex justify-center mb-6">
+                  <div
+                    className={classes.segmented}
+                    role="tablist"
+                    aria-label="Schedule type"
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={field.value === "WEEKLY"}
+                      onClick={() => field.onChange("WEEKLY")}
+                      className={`${classes.segment} ${field.value === "WEEKLY" ? `${classes.segmentActive} ${colors.primaryRing}` : classes.segmentInactive}`}
+                    >
+                      Weekly
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={field.value === "CUSTOM"}
+                      onClick={() => field.onChange("CUSTOM")}
+                      className={`${classes.segment} ${field.value === "CUSTOM" ? `${classes.segmentActive} ${colors.primaryRing}` : classes.segmentInactive}`}
+                    >
+                      Custom
+                    </button>
+                  </div>
+                </div>
+
                 <div className="flex flex-col lg:flex-row lg:space-x-8 space-y-6 lg:space-y-0">
                   <div className="flex-1">
-                    <div className="flex items-center justify-between mb-4 p-4 rounded-lg bg-white/5 border border-white/10">
+                    <div
+                      className={`flex items-center justify-between mb-3 p-3 rounded-lg ${colors.glassBg} ${colors.glassBorder}`}
+                    >
                       <Label
                         htmlFor="WEEKLY"
                         className="font-medium text-white text-lg"
@@ -762,7 +794,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                       <RadioGroupItem
                         id="WEEKLY"
                         value="WEEKLY"
-                        className="border-white/30 text-purple-400"
+                        className={`${colors.textPrimary} ${colors.glassBorder}`}
                       />
                     </div>
                     <div
@@ -774,7 +806,9 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                     </div>
                   </div>
                   <div className="flex-1">
-                    <div className="flex items-center justify-between mb-4 p-4 rounded-lg bg-white/5 border border-white/10">
+                    <div
+                      className={`flex items-center justify-between mb-3 p-3 rounded-lg ${colors.glassBg} ${colors.glassBorder}`}
+                    >
                       <Label
                         htmlFor="CUSTOM"
                         className="font-medium text-white text-lg"
@@ -784,13 +818,15 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                       <RadioGroupItem
                         id="CUSTOM"
                         value="CUSTOM"
-                        className="border-white/30 text-purple-400"
+                        className={`${colors.textPrimary} ${colors.glassBorder}`}
                       />
                     </div>
                     <div
                       className={`grid gap-4 ${scheduleType !== "CUSTOM" ? "opacity-30 pointer-events-none" : ""}`}
                     >
-                      <div className="calendar-container bg-white/10 border-white/20 border p-4 rounded-lg backdrop-blur-sm">
+                      <div
+                        className={`calendar-container ${colors.glassBg} ${colors.glassBorder} border p-4 rounded-lg backdrop-blur-sm`}
+                      >
                         <div className="flex justify-between items-center mb-4">
                           <button
                             type="button"
@@ -799,7 +835,9 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                           >
                             ←
                           </button>
-                          <span className="text-white font-semibold">
+                          <span
+                            className={`${colors.textPrimary} font-semibold`}
+                          >
                             {currentDate.toLocaleString("default", {
                               month: "long",
                               year: "numeric",
@@ -818,7 +856,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                             (day) => (
                               <div
                                 key={`header-${day}`}
-                                className="text-sm font-medium text-white/70 p-2"
+                                className={`text-sm font-medium ${colors.textSecondary} p-2`}
                               >
                                 {day}
                               </div>
@@ -891,14 +929,14 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           <Button
             type="button"
             onClick={onBack}
-            className={`flex-1 h-12 ${classes.secondaryButton}`}
+            className={`flex-1 h-12 ${classes.navBack}`}
           >
             ← Back
           </Button>
           <Button
             type="submit"
             disabled={!allSlotsValid()}
-            className={`flex-1 h-12 ${classes.primaryButton} disabled:opacity-50 disabled:cursor-not-allowed`}
+            className={`flex-1 h-12 ${classes.navNext} disabled:opacity-50 disabled:cursor-not-allowed`}
           >
             Next Step →
           </Button>
