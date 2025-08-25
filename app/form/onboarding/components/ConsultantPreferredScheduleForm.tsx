@@ -1,29 +1,29 @@
+import { useTimezone } from "@/app/explore/experts/[consultantId]/hooks/useTimezone";
 import { TrashIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import {
-  PreferredScheduleFormSchema,
-  OnboardingFormData,
-} from "@/utils/onboarding";
+import { PreferredSchedule } from "@/schemas/user";
 import {
   DAYS_OF_WEEK,
   type DayOfWeek,
-  convertToLocalTime,
-  convertToUTC,
+  convertTimezoneToUtc,
+  // New timezone-aware utilities
+  convertUtcToTimezone,
+  extractTimeFromUtcSlot,
   formatDayDisplay,
   getDaysInMonth,
   getFirstDayOfMonth,
   getLocalDateString,
   getNextDay,
   isOvernight,
-  // New timezone-aware utilities
-  convertUtcToTimezone,
-  extractTimeFromUtcSlot,
-  convertTimezoneToUtc,
   sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
+import {
+  OnboardingFormData,
+  PreferredScheduleFormSchema,
+} from "@/utils/onboarding";
 import {
   getSlotStatistics,
   validateAllSlots,
@@ -33,7 +33,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { useThemeClasses } from "../useTheme";
-import { useTimezone } from "@/app/explore/experts/[consultantId]/hooks/useTimezone";
 
 interface SlotType {
   startTime: string;
@@ -546,7 +545,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   }, [weeklySlots, customSlots, scheduleType]);
 
   const onSubmitForm = useCallback(
-    (data: any) => {
+    (data: PreferredSchedule) => {
       const feedback = getValidationFeedback();
 
       if (!feedback.hasSlots) {
