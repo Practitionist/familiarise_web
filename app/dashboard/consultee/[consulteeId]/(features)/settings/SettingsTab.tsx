@@ -7,6 +7,8 @@ import { Label } from "components/ui/label";
 import { Textarea } from "components/ui/textarea";
 import { useToast } from "hooks/use-toast";
 import React, { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
 import { ConsultationMode, ConsulteeProfile } from "@prisma/client";
 
 interface SettingsTabProps {
@@ -32,7 +34,16 @@ type ProfileFormData = Omit<
 
 export default function SettingsTab({ consulteeId }: SettingsTabProps) {
   const { toast } = useToast();
-  const [isLoading, setIsLoading] = React.useState(false);
+  const [isSaving, setIsSaving] = React.useState(false);
+
+  // Use the centralized query configuration
+  const settingsQuery = createConsulteeQueries(consulteeId).settings;
+  const {
+    data: consulteeData,
+    isLoading,
+    error,
+    refetch,
+  } = useQuery(settingsQuery);
 
   const [profileSettings, setProfileSettings] = React.useState<ProfileFormData>(
     {
@@ -62,42 +73,37 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
     }));
   };
 
+  // Update local state when data is loaded
   useEffect(() => {
-    const loadProfile = async () => {
-      try {
-        setIsLoading(true);
-        const response = await fetch(`/api/user/consultees/${consulteeId}`);
-        if (!response.ok) throw new Error("Failed to fetch profile");
-        const response_data = await response.json();
-        const consultee: ConsulteeProfile = response_data.data;
-        setProfileSettings({
-          education: consultee.education,
-          occupation: consultee.occupation,
-          aboutMe: consultee.aboutMe,
-          preferredCommunicationMethod:
-            consultee.preferredCommunicationMethod ?? ConsultationMode.VIDEO,
-          preferredLanguage: consultee.preferredLanguage,
-          specialRequirements: consultee.specialRequirements,
-          interests: consultee.interests,
-          goals: consultee.goals,
-        });
-      } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to load profile settings.",
-          variant: "destructive",
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    };
+    if (consulteeData) {
+      setProfileSettings({
+        education: consulteeData.education,
+        occupation: consulteeData.occupation,
+        aboutMe: consulteeData.aboutMe,
+        preferredCommunicationMethod:
+          consulteeData.preferredCommunicationMethod ?? ConsultationMode.VIDEO,
+        preferredLanguage: consulteeData.preferredLanguage,
+        specialRequirements: consulteeData.specialRequirements,
+        interests: consulteeData.interests,
+        goals: consulteeData.goals,
+      });
+    }
+  }, [consulteeData]);
 
-    loadProfile();
-  }, [consulteeId, toast]);
+  // Handle errors
+  useEffect(() => {
+    if (error) {
+      toast({
+        title: "Error",
+        description: "Failed to load profile settings.",
+        variant: "destructive",
+      });
+    }
+  }, [error, toast]);
 
   const handleSave = async () => {
     try {
-      setIsLoading(true);
+      setIsSaving(true);
       const response = await fetch(`/api/user/consultees/${consulteeId}`, {
         method: "PATCH",
         headers: {
@@ -112,6 +118,9 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
         title: "Settings saved",
         description: "Your settings have been updated successfully.",
       });
+
+      // Refetch to update the cached data
+      refetch();
     } catch (error) {
       toast({
         title: "Error",
@@ -119,9 +128,41 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      setIsSaving(false);
     }
   };
+
+  // Show loading skeleton while initial data is loading
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100 mb-6">
+          <h2 className="text-3xl font-bold text-gray-900">Settings</h2>
+          <p className="mt-2 text-gray-600">
+            Manage your account settings and preferences
+          </p>
+        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Profile Settings</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="animate-pulse space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="h-16 bg-gray-200 rounded"></div>
+                <div className="h-16 bg-gray-200 rounded"></div>
+              </div>
+              <div className="h-32 bg-gray-200 rounded"></div>
+              <div className="h-16 bg-gray-200 rounded"></div>
+              <div className="h-32 bg-gray-200 rounded"></div>
+              <div className="h-32 bg-gray-200 rounded"></div>
+              <div className="h-32 bg-gray-200 rounded"></div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -232,9 +273,9 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
         <Button
           onClick={handleSave}
           className="bg-blue-600 hover:bg-blue-700"
-          disabled={isLoading}
+          disabled={isSaving}
         >
-          {isLoading ? "Saving..." : "Save Changes"}
+          {isSaving ? "Saving..." : "Save Changes"}
         </Button>
       </div>
     </div>

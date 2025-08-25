@@ -3,6 +3,19 @@ import { addDays, endOfDay, isBefore, startOfDay } from "date-fns";
 import { format, toZonedTime, fromZonedTime } from "date-fns-tz";
 import { TSlotTiming } from "@/types/slots";
 
+// Booking status constants and types
+export const BOOKING_STATUS = {
+  AVAILABLE: "available",
+  PARTIALLY_BOOKED: "partially-booked",
+  FULLY_BOOKED: "fully-booked",
+} as const;
+
+export type BookingStatus =
+  (typeof BOOKING_STATUS)[keyof typeof BOOKING_STATUS];
+
+// Booking threshold constant
+export const FULLY_BOOKED_THRESHOLD = 0.99;
+
 // Helper mappings
 export const dayMap: Record<number, DayOfWeek> = {
   0: DayOfWeek.SUNDAY,
@@ -47,7 +60,7 @@ export interface ProcessedSlot {
   start: Date;
   end: Date;
   availabilityId: string;
-  type: "WEEKLY" | "CUSTOM";
+  type: "WEEKLY" | "CUSTOM"; // Keep as is to match TSlotTiming
 }
 
 /**
@@ -84,45 +97,33 @@ export function processWeeklySlots(
 
     weeklySlots.forEach((slot) => {
       if (slot.dayOfWeekforStartTimeInUTC === dayOfWeekEnum) {
-        const startTime = slot.slotStartTimeInUTC;
-        const endTime = slot.slotEndTimeInUTC;
+        // Extract LOCAL time patterns from the stored weekly slot
+        // Convert the stored UTC times to the target timezone to get the local time pattern
+        const startTimeLocal = toZonedTime(slot.slotStartTimeInUTC, timezone);
+        const endTimeLocal = toZonedTime(slot.slotEndTimeInUTC, timezone);
 
+        const startHour = startTimeLocal.getHours();
+        const startMinute = startTimeLocal.getMinutes();
+        const endHour = endTimeLocal.getHours();
+        const endMinute = endTimeLocal.getMinutes();
+
+        // Create start time for this specific occurrence in the target timezone
         const startDateTime = new Date(currentDateTz);
-        startDateTime.setHours(
-          startTime.getUTCHours(),
-          startTime.getUTCMinutes(),
-          startTime.getUTCSeconds(),
-          startTime.getUTCMilliseconds(),
-        );
+        startDateTime.setHours(startHour, startMinute, 0, 0);
 
-        // Calculate end day offset for handling overnight slots
-        let endDayOffset =
-          (dayToNumber[slot.dayOfWeekforEndTimeInUTC] -
-            dayToNumber[slot.dayOfWeekforStartTimeInUTC] +
-            7) %
-          7;
+        // Create end time for this specific occurrence
+        const endDateTime = new Date(currentDateTz);
+        endDateTime.setHours(endHour, endMinute, 0, 0);
 
-        if (endTime <= startTime) {
-          endDayOffset = (endDayOffset + 1) % 7;
-          if (endDayOffset === 0) endDayOffset = 1;
-        }
-
-        const endDateTime = new Date(startDateTime);
-        if (endDayOffset > 0) {
-          endDateTime.setDate(startDateTime.getDate() + endDayOffset);
-        }
-        endDateTime.setHours(
-          endTime.getUTCHours(),
-          endTime.getUTCMinutes(),
-          endTime.getUTCSeconds(),
-          endTime.getUTCMilliseconds(),
-        );
-
-        // If end time is still before start time, push end date by one day
-        if (endDateTime <= startDateTime) {
+        // Handle overnight slots: if end hour < start hour, the slot crosses midnight
+        if (
+          endHour < startHour ||
+          (endHour === startHour && endMinute < startMinute)
+        ) {
           endDateTime.setDate(endDateTime.getDate() + 1);
         }
 
+        // Convert the timezone-aware datetimes to UTC for storage/API response
         const startUTC = fromZonedTime(startDateTime, timezone);
         const endUTC = fromZonedTime(endDateTime, timezone);
 
@@ -163,7 +164,7 @@ export function processCustomSlots(
       start: slot.slotStartTimeInUTC,
       end: slot.slotEndTimeInUTC,
       availabilityId: slot.id,
-      type: "CUSTOM" as const,
+      type: "CUSTOM",
     }));
 }
 
@@ -184,16 +185,29 @@ export function splitSlotsByDay(
       const dayStart = startOfDay(zonedCurrent);
       const dayEnd = endOfDay(zonedCurrent);
 
-      const slotPartEnd = isBefore(slot.end, fromZonedTime(dayEnd, timezone))
+      const slotPartEndCandidate = isBefore(
+        slot.end,
+        fromZonedTime(dayEnd, timezone),
+      )
         ? slot.end
         : fromZonedTime(dayEnd, timezone);
 
-      splitSlots.push({
-        start: current,
-        end: slotPartEnd,
-        availabilityId: slot.availabilityId,
-        type: slot.type,
-      });
+      // Skip zero-length segments
+      if (slotPartEndCandidate.getTime() === current.getTime()) {
+        break;
+      }
+
+      const slotPartEnd = slotPartEndCandidate;
+
+      // Push valid segment
+      if (isBefore(current, slotPartEnd)) {
+        splitSlots.push({
+          start: current,
+          end: slotPartEnd,
+          availabilityId: slot.availabilityId,
+          type: slot.type,
+        });
+      }
 
       const nextDayStart = fromZonedTime(addDays(dayStart, 1), timezone);
       if (
@@ -234,7 +248,7 @@ export function getSlotBookingStatus(
   slotStart: Date,
   slotEnd: Date,
   appointmentSlots: AppointmentSlot[],
-): "available" | "partially-booked" | "fully-booked" {
+): BookingStatus {
   const slotDuration = slotEnd.getTime() - slotStart.getTime();
 
   // Find all appointments that overlap with this slot
@@ -248,7 +262,7 @@ export function getSlotBookingStatus(
   );
 
   if (overlappingAppointments.length === 0) {
-    return "available";
+    return BOOKING_STATUS.AVAILABLE;
   }
 
   // Calculate total covered duration by merging overlapping appointments
@@ -280,13 +294,13 @@ export function getSlotBookingStatus(
   // Determine booking status based on coverage percentage
   const coveragePercentage = totalCovered / slotDuration;
 
-  if (coveragePercentage >= 0.99) {
+  if (coveragePercentage >= FULLY_BOOKED_THRESHOLD) {
     // Allow for small rounding errors
-    return "fully-booked";
+    return BOOKING_STATUS.FULLY_BOOKED;
   } else if (coveragePercentage > 0) {
-    return "partially-booked";
+    return BOOKING_STATUS.PARTIALLY_BOOKED;
   } else {
-    return "available";
+    return BOOKING_STATUS.AVAILABLE;
   }
 }
 
@@ -299,7 +313,7 @@ export function convertToSlotTimings(
   timezone: string,
 ): (TSlotTiming & {
   isAllocated: boolean;
-  bookingStatus: "available" | "partially-booked" | "fully-booked";
+  bookingStatus: BookingStatus;
 })[] {
   const slotTimings = processedSlots.map((slot) => {
     const isAllocated = isSlotAllocated(slot.start, slot.end, appointmentSlots);
@@ -320,12 +334,12 @@ export function convertToSlotTimings(
       slotOfAppointmentId: "",
       localStartTime: format(slot.start, "p", { timeZone: timezone }),
       localEndTime: format(slot.end, "p", { timeZone: timezone }),
-      type: slot.type,
+      type: slot.type, // Explicitly set the type field
       isAllocated,
       bookingStatus,
     } as TSlotTiming & {
       isAllocated: boolean;
-      bookingStatus: "available" | "partially-booked" | "fully-booked";
+      bookingStatus: BookingStatus;
     };
   });
 
@@ -345,18 +359,18 @@ export function convertToSlotTimings(
 export function breakDownSlotsByDuration(
   slots: (TSlotTiming & {
     isAllocated: boolean;
-    bookingStatus?: "available" | "partially-booked" | "fully-booked";
+    bookingStatus?: BookingStatus;
   })[],
   durationInHours: number,
   appointmentSlots: AppointmentSlot[],
   timezone: string,
 ): (TSlotTiming & {
   isAllocated: boolean;
-  bookingStatus: "available" | "partially-booked" | "fully-booked";
+  bookingStatus: BookingStatus;
 })[] {
   const brokenDownSlots: (TSlotTiming & {
     isAllocated: boolean;
-    bookingStatus: "available" | "partially-booked" | "fully-booked";
+    bookingStatus: BookingStatus;
   })[] = [];
 
   if (!slots || slots.length === 0) return brokenDownSlots;
@@ -420,14 +434,14 @@ export function breakDownSlotsByDuration(
 export function groupSlotsByDate(
   slotTimings: (TSlotTiming & {
     isAllocated: boolean;
-    bookingStatus: "available" | "partially-booked" | "fully-booked";
+    bookingStatus: BookingStatus;
   })[],
   timezone: string,
 ): Record<
   string,
   (TSlotTiming & {
     isAllocated: boolean;
-    bookingStatus: "available" | "partially-booked" | "fully-booked";
+    bookingStatus: BookingStatus;
   })[]
 > {
   const slotsByDate = slotTimings.reduce(
@@ -446,7 +460,7 @@ export function groupSlotsByDate(
       string,
       (TSlotTiming & {
         isAllocated: boolean;
-        bookingStatus: "available" | "partially-booked" | "fully-booked";
+        bookingStatus: BookingStatus;
       })[]
     >,
   );
@@ -477,7 +491,7 @@ export function processAvailabilitySlots(
   string,
   (TSlotTiming & {
     isAllocated: boolean;
-    bookingStatus: "available" | "partially-booked" | "fully-booked";
+    bookingStatus: BookingStatus;
   })[]
 > {
   // Process weekly and custom slots

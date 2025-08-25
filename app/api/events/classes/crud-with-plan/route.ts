@@ -3,6 +3,7 @@ import { ClassPlanSchema } from "@/schemas/plans";
 import { ClassStatus } from "@prisma/client"; // Import Enum
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { addMonthsSafely } from "@/utils/dateUtils";
 
 // Schema for POST request body based on ClassPlanSchema
 // Topics field name matches PlanSchema ('topics' instead of 'topicIds')
@@ -90,11 +91,11 @@ export async function POST(request: NextRequest) {
     let start: Date | undefined = startDate ? new Date(startDate) : undefined;
     let end: Date | undefined = undefined;
     if (start && !isNaN(start.getTime())) {
-      // Check if date is valid
+      // FIXED: Check if date is valid and handle month-end overflow
       end = new Date(start);
       // Ensure durationInMonths is valid before using
       if (typeof durationInMonths === "number" && durationInMonths > 0) {
-        end.setMonth(end.getMonth() + durationInMonths);
+        end = addMonthsSafely(start, durationInMonths);
       } else {
         // Handle invalid durationInMonths if necessary, maybe throw error or default
         console.warn("Invalid durationInMonths provided:", durationInMonths);

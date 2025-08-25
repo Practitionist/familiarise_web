@@ -105,12 +105,10 @@ Use Razorpay test API keys. All test transactions will be simulated.
 ### Common Issues:
 
 1. **"Payment system unavailable"**
-
    - Check if API keys are set correctly
    - Verify API key format (starts with `sk_` for Stripe, `rzp_` for Razorpay)
 
 2. **"Authentication failed"**
-
    - Ensure you're using the correct environment (test vs live)
    - Check if API keys have required permissions
 

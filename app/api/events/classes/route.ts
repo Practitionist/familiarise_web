@@ -6,8 +6,21 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const consulteeProfileId = searchParams.get("consulteeProfileId");
     const consultantProfileId = searchParams.get("consultantProfileId");
+    const startDateStr = searchParams.get("startDate");
+    const endDateStr = searchParams.get("endDate");
 
     let classes;
+
+    const dateFilter =
+      startDateStr && endDateStr
+        ? {
+            // Filter classes where the class's own start date falls within the range
+            startDate: {
+              gte: new Date(startDateStr),
+              lte: new Date(endDateStr),
+            },
+          }
+        : {};
 
     if (consulteeProfileId) {
       classes = await prisma.class.findMany({
@@ -44,6 +57,7 @@ export async function GET(request: Request) {
               },
             },
           ],
+          ...dateFilter,
         },
         include: {
           classPlan: {
@@ -110,6 +124,7 @@ export async function GET(request: Request) {
           classPlan: {
             consultantProfileId,
           },
+          ...dateFilter,
         },
         include: {
           classPlan: {
@@ -128,6 +143,7 @@ export async function GET(request: Request) {
       });
     } else {
       classes = await prisma.class.findMany({
+        where: { ...dateFilter },
         include: {
           classPlan: true,
           appointments: true,

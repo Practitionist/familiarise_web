@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,7 +8,9 @@ import { useToast } from "@/hooks/use-toast";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { useRouter } from "next/navigation";
-import { AppointmentsTabProps, IAppointment } from "../../types";
+import { Clock, Users } from "lucide-react";
+import { AppointmentsTabProps } from "../../types";
+import { TAppointment } from "@/types/appointment";
 import {
   formatAppointmentTime,
   getAppointmentStatus,
@@ -19,6 +22,16 @@ import {
   getStartTime,
   groupRecurringAppointments,
 } from "../../utils/appointmentHelpers";
+import { EventTimingsCalendar } from "./components/EventTimingsCalendar";
+import {
+  canManageAppointmentTimings,
+  canManageGroupTimings,
+} from "./utils/appointmentTimingHelpers";
+import { convertTAppointmentToIAppointment } from "./utils/appointmentTypeAdapter";
+import {
+  getParticipantManagementUrl,
+  supportsParticipantManagement,
+} from "./utils/participantHelpers";
 
 export function AppointmentsTab({
   appointments,
@@ -27,12 +40,36 @@ export function AppointmentsTab({
   const router = useRouter();
   const client = useStreamVideoClient();
   const { toast } = useToast();
+  const [selectedAppointment, setSelectedAppointment] =
+    useState<TAppointment | null>(null);
+
+  // Helper to get consultant ID from appointment
+  const getConsultantIdFromAppointment = (
+    appointment: TAppointment,
+  ): string => {
+    switch (appointment.appointmentType) {
+      case "CONSULTATION":
+        return (
+          appointment.consultation?.consultationPlan?.consultantProfileId || ""
+        );
+      case "SUBSCRIPTION":
+        return (
+          appointment.subscription?.subscriptionPlan?.consultantProfileId || ""
+        );
+      case "WEBINAR":
+        return appointment.webinar?.webinarPlan?.consultantProfileId || "";
+      case "CLASS":
+        return appointment.class?.classPlan?.consultantProfileId || "";
+      default:
+        return "";
+    }
+  };
 
   const getStyleFromBadgeData = (status: string): string => {
     return badgeStyles[status] || badgeStyles.default;
   };
 
-  const handleJoinMeeting = async (appointment: IAppointment) => {
+  const handleJoinMeeting = async (appointment: TAppointment) => {
     if (!client) {
       console.warn("Stream client not ready");
       toast({
@@ -56,7 +93,7 @@ export function AppointmentsTab({
     try {
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
-        appointment,
+        convertTAppointmentToIAppointment(appointment),
         relevantSlot,
       );
       router.push(`/meetings/${meetingId}`);
@@ -78,9 +115,11 @@ export function AppointmentsTab({
   const groupedAppointments = groupRecurringAppointments(appointments || []);
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow">
-      <h2 className="text-xl font-semibold mb-4">All Appointments</h2>
-      <div className="space-y-6">
+    <div className="bg-white p-4 sm:p-6 rounded-lg shadow">
+      <h2 className="text-xl font-semibold mb-4 text-gray-800">
+        All Appointments
+      </h2>
+      <div className="space-y-4 sm:space-y-6">
         {Object.entries(groupedAppointments).map(
           ([groupKey, groupAppointments]) => {
             const isRecurring =
@@ -91,12 +130,15 @@ export function AppointmentsTab({
             const firstAppointment = groupAppointments[0];
 
             return (
-              <div key={groupKey} className="border rounded-lg overflow-hidden">
+              <div
+                key={groupKey}
+                className="border rounded-lg overflow-hidden shadow-sm"
+              >
                 {/* Group Header */}
                 {isRecurring && (
-                  <div className="bg-gray-50 p-4 border-b">
+                  <div className="bg-gray-50 p-3 sm:p-4 border-b">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-4">
+                      <div className="flex items-center space-x-3 sm:space-x-4 min-w-0">
                         <Avatar>
                           <AvatarImage
                             alt={getConsumeeName(firstAppointment)}
@@ -110,18 +152,58 @@ export function AppointmentsTab({
                           </AvatarFallback>
                         </Avatar>
                         <div>
-                          <h3 className="font-semibold">
+                          <h3 className="font-semibold text-gray-800">
                             {getConsumeeName(firstAppointment)}
                           </h3>
                           <p className="text-sm text-gray-600">{groupTitle}</p>
                         </div>
+
+                        {/* Management buttons right after user info */}
+                        <div className="flex items-center gap-2 ml-4">
+                          {canManageGroupTimings(groupAppointments) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 text-xs px-3"
+                              onClick={() =>
+                                setSelectedAppointment(firstAppointment)
+                              }
+                            >
+                              <Clock className="w-3 h-3 mr-1" />
+                              Timings
+                            </Button>
+                          )}
+                          {supportsParticipantManagement(firstAppointment) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 text-xs px-3"
+                              onClick={() =>
+                                router.push(
+                                  getParticipantManagementUrl(
+                                    firstAppointment,
+                                    getConsultantIdFromAppointment(
+                                      firstAppointment,
+                                    ),
+                                  ),
+                                )
+                              }
+                            >
+                              <Users className="w-3 h-3 mr-1" />
+                              Participants
+                            </Button>
+                          )}
+                        </div>
                       </div>
-                      <Badge
-                        variant="secondary"
-                        className={getStyleFromBadgeData(groupStatus)}
-                      >
-                        {groupStatus}
-                      </Badge>
+
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <Badge
+                          variant="secondary"
+                          className={getStyleFromBadgeData(groupStatus)}
+                        >
+                          {groupStatus}
+                        </Badge>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -135,70 +217,127 @@ export function AppointmentsTab({
                       ? "bg-black text-white hover:bg-gray-800"
                       : "bg-gray-400 text-white cursor-not-allowed";
 
+                    // Check if this is a one-off event (consultation or webinar)
+                    const isOneOffEvent =
+                      !isRecurring &&
+                      (appointment.appointmentType === "CONSULTATION" ||
+                        appointment.appointmentType === "WEBINAR");
+
+                    const containerClasses = isOneOffEvent
+                      ? "flex items-center justify-between p-4 bg-gray-100 hover:bg-gray-150 border border-gray-200"
+                      : "flex items-center justify-between p-4 hover:bg-gray-50";
+
                     return (
-                      <li
-                        key={appointment.id}
-                        className="flex items-center justify-between p-4 hover:bg-gray-50"
-                      >
-                        <div className="flex items-center space-x-4">
-                          {!isRecurring && (
-                            <Avatar>
-                              <AvatarImage
-                                alt={getConsumeeName(appointment)}
-                                src={getConsumeeImage(appointment)}
-                              />
-                              <AvatarFallback>
-                                {getConsumeeName(appointment)
-                                  .split(" ")
-                                  .map((n: string) => n[0])
-                                  .join("")}
-                              </AvatarFallback>
-                            </Avatar>
-                          )}
-                          <div>
+                      <li key={appointment.id} className={containerClasses}>
+                        <div className="flex items-center justify-between w-full">
+                          {/* Left: Avatar and User info */}
+                          <div className="flex items-center space-x-3 min-w-0">
                             {!isRecurring && (
-                              <>
-                                <h3 className="font-semibold">
-                                  {getConsumeeName(appointment)}
-                                </h3>
-                                <p className="text-sm text-gray-600">
-                                  {getAppointmentTypeAndPlan(appointment)}
-                                </p>
-                              </>
+                              <Avatar className="flex-shrink-0">
+                                <AvatarImage
+                                  alt={getConsumeeName(appointment)}
+                                  src={getConsumeeImage(appointment)}
+                                />
+                                <AvatarFallback>
+                                  {getConsumeeName(appointment)
+                                    .split(" ")
+                                    .map((n: string) => n[0])
+                                    .join("")}
+                                </AvatarFallback>
+                              </Avatar>
                             )}
-                            <div className="text-sm text-gray-500">
-                              Starts:{" "}
-                              {formatAppointmentTime(
-                                getStartTime(appointment)!.toISOString(),
+                            <div className="min-w-0">
+                              {!isRecurring && (
+                                <>
+                                  <h3 className="font-semibold text-gray-800">
+                                    {getConsumeeName(appointment)}
+                                  </h3>
+                                  <p className="text-sm text-gray-600">
+                                    {getAppointmentTypeAndPlan(appointment)}
+                                  </p>
+                                </>
                               )}
+                              <div className="text-sm text-gray-500">
+                                Starts:{" "}
+                                {(() => {
+                                  const startTime = getStartTime(appointment);
+                                  return startTime
+                                    ? formatAppointmentTime(
+                                        startTime.toISOString(),
+                                      )
+                                    : "Time not set";
+                                })()}
+                              </div>
+                            </div>
+
+                            {/* Management buttons right after user info */}
+                            <div className="flex items-center gap-2 ml-4">
+                              {!isRecurring &&
+                                canManageAppointmentTimings(appointment) && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 text-xs px-3"
+                                    onClick={() =>
+                                      setSelectedAppointment(appointment)
+                                    }
+                                  >
+                                    <Clock className="w-3 h-3 mr-1" />
+                                    Timings
+                                  </Button>
+                                )}
+                              {!isRecurring &&
+                                supportsParticipantManagement(appointment) && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 text-xs px-3"
+                                    onClick={() =>
+                                      router.push(
+                                        getParticipantManagementUrl(
+                                          appointment,
+                                          getConsultantIdFromAppointment(
+                                            appointment,
+                                          ),
+                                        ),
+                                      )
+                                    }
+                                  >
+                                    <Users className="w-3 h-3 mr-1" />
+                                    Participants
+                                  </Button>
+                                )}
                             </div>
                           </div>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <Badge
-                            variant="secondary"
-                            className={getStyleFromBadgeData(status)}
-                          >
-                            {status}
-                          </Badge>
-                          {status !== "Completed" && (
-                            <Button
-                              variant="default"
-                              className={joinButtonStyle}
-                              disabled={
-                                process.env.NODE_ENV === "production"
-                                  ? !isJoinable
-                                  : false
-                              }
-                              onClick={() => handleJoinMeeting(appointment)}
+
+                          {/* Right side: Status and Join button */}
+                          <div className="flex items-center gap-3 flex-shrink-0">
+                            <Badge
+                              variant="secondary"
+                              className={getStyleFromBadgeData(status)}
                             >
-                              {process.env.NODE_ENV === "production"
-                                ? isJoinable
-                                  ? "Join meet"
-                                  : "Not available"
-                                : "Join (Dev)"}
-                            </Button>
-                          )}
+                              {status}
+                            </Badge>
+                            {status !== "Completed" && (
+                              <Button
+                                variant="default"
+                                size="sm"
+                                className={`${joinButtonStyle} h-8 px-4 text-xs`}
+                                disabled={
+                                  process.env.NODE_ENV === "production"
+                                    ? !isJoinable
+                                    : false
+                                }
+                                onClick={() => handleJoinMeeting(appointment)}
+                              >
+                                {process.env.NODE_ENV === "production"
+                                  ? isJoinable
+                                    ? "Join meet"
+                                    : "Not available"
+                                  : "Join (Dev)"}
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </li>
                     );
@@ -234,6 +373,14 @@ export function AppointmentsTab({
           </div>
         )}
       </div>
+
+      {selectedAppointment && (
+        <EventTimingsCalendar
+          isOpen={!!selectedAppointment}
+          onClose={() => setSelectedAppointment(null)}
+          appointment={selectedAppointment}
+        />
+      )}
     </div>
   );
 }

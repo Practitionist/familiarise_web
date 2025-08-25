@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
-import { Prisma, RequestStatus, ScheduleType } from "@prisma/client";
+import { RequestStatus, ScheduleType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { SubscriptionValidationService } from "@/utils/subscriptionValidation";
 
 interface ValidationRequest {
   slots: string[];
@@ -19,6 +20,25 @@ interface ValidationResult {
     slot: string;
   }[];
   validSlots: string[];
+  subscriptionValidation?: {
+    isValid: boolean;
+    errors: string[];
+    warnings: string[];
+    weeklyInfo: Array<{
+      weekStart: Date;
+      weekEnd: Date;
+      existingCalls: number;
+      maxCalls: number;
+      canScheduleMore: boolean;
+      availableSlots: number;
+    }>;
+    totalCallsScheduled: number;
+    maxTotalCalls: number;
+    subscriptionPeriod: {
+      start: Date;
+      end: Date;
+    };
+  };
 }
 
 const subscriptionInclude = {
@@ -62,8 +82,15 @@ export async function POST(
       );
     }
 
-    const { subscriptionPlan, requestedBy } = subscription;
+    const { subscriptionPlan } = subscription;
     const { consultantProfile } = subscriptionPlan;
+
+    if (!consultantProfile) {
+      return NextResponse.json(
+        { error: "Consultant profile not found" },
+        { status: 400 },
+      );
+    }
 
     // Initialize validation result
     const result: ValidationResult = {
@@ -181,6 +208,25 @@ export async function POST(
         );
       })
       .map((date) => date.toISOString());
+
+    // Add subscription-specific validation
+    const validationService = new SubscriptionValidationService(prisma);
+    const subscriptionValidation =
+      await validationService.validateSubscriptionSlots(
+        subscriptionId,
+        body.slots,
+      );
+
+    result.subscriptionValidation = subscriptionValidation;
+
+    // Mark slots as invalid if they violate subscription rules
+    if (!subscriptionValidation.isValid) {
+      result.validSlots = result.validSlots.filter((slot) => {
+        // Additional filtering based on subscription validation errors
+        // For now, if subscription validation fails, no slots are valid
+        return false;
+      });
+    }
 
     return NextResponse.json({ data: result });
   } catch (error) {

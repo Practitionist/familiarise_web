@@ -1,4 +1,5 @@
 import { TConsultantProfile } from "@/types/consultant";
+import { TAppointment } from "@/types/appointment";
 import type { User } from "@prisma/client";
 
 export interface IUser
@@ -43,22 +44,58 @@ export interface IBasePlan {
 
 export interface IConsultationPlan extends IBasePlan {
   durationInHours: number;
+  price: number;
+  language: string;
+  level: string;
+  prerequisites: string | null;
+  materialProvided: string | null;
+  learningOutcomes: string[];
   consultantProfile: TConsultantProfile;
 }
 
 export interface ISubscriptionPlan extends IBasePlan {
   durationInMonths: number;
+  price: number;
   callsPerWeek: number;
+  sessionDurationInHours: number;
+  videoMeetings: number;
+  emailSupport: "GENERAL" | "PRIORITY" | "DEDICATED";
+  language: string;
+  level: string;
+  prerequisites: string | null;
+  materialProvided: string | null;
+  learningOutcomes: string[];
   consultantProfile: TConsultantProfile;
 }
 
 export interface IWebinarPlan extends IBasePlan {
+  price: number;
+  priceCurrency: string;
+  certificateProvided: boolean;
   durationInHours: number;
+  maxParticipants: number;
+  language: string | null;
+  level: string | null;
+  prerequisites: string | null;
+  materialProvided: string | null;
+  learningOutcomes: string[];
   consultantProfile?: TConsultantProfile | null;
 }
 
 export interface IClassPlan extends IBasePlan {
+  price: number;
+  priceCurrency: string;
+  certificateProvided: boolean;
   durationInMonths: number;
+  callsPerWeek: number;
+  videoMeetings: number;
+  emailSupport: "GENERAL" | "PRIORITY" | "DEDICATED";
+  maxParticipants: number;
+  language: string | null;
+  level: string | null;
+  prerequisites: string | null;
+  materialProvided: string | null;
+  learningOutcomes: string[];
   consultantProfile?: TConsultantProfile | null;
 }
 
@@ -135,7 +172,7 @@ export interface WithBadgeStyle {
 
 // Props for each tab component
 export interface HomeTabProps {
-  appointments: IAppointment[];
+  appointments: TAppointment[];
   activities: IActivity[];
   approvals: IApproval[];
   badgeStyles: BadgeStyleMap;
@@ -143,7 +180,7 @@ export interface HomeTabProps {
 }
 
 export interface AppointmentsTabProps {
-  appointments: IAppointment[];
+  appointments: TAppointment[];
   badgeStyles: BadgeStyleMap;
   onUpdate?: () => void;
 }
@@ -159,7 +196,7 @@ export interface DocumentsTabProps {
 
 // Props for reusable components
 export interface AppointmentCardProps {
-  appointment: IAppointment;
+  appointment: TAppointment;
   badgeStyles: BadgeStyleMap;
 }
 

@@ -1,6 +1,13 @@
 import { toast } from "@/hooks/use-toast";
 import { ClassStatus, WebinarStatus } from "@prisma/client";
-import { ClassEvent, Event, FormData, WebinarEvent } from "../types/event";
+import {
+  ClassEvent,
+  Event,
+  FormData,
+  WebinarEvent,
+  ConsultationPlanEvent,
+  SubscriptionPlanEvent,
+} from "../types/event";
 
 /**
  * Service to manage events (webinars and classes)
@@ -96,11 +103,23 @@ export class PlannerService {
   /**
    * Fetch webinars for a consultant
    */
-  static async fetchWebinars(consultantId: string): Promise<WebinarEvent[]> {
+  static async fetchWebinars(
+    consultantId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<WebinarEvent[]> {
     try {
-      const response = await fetch(
-        `/api/events/webinars?consultantProfileId=${consultantId}`,
-      );
+      const params = new URLSearchParams({
+        consultantProfileId: consultantId,
+      });
+
+      // Only add date filters if provided
+      if (startDate && endDate) {
+        params.append("startDate", startDate.toISOString());
+        params.append("endDate", endDate.toISOString());
+      }
+
+      const response = await fetch(`/api/events/webinars?${params}`);
 
       if (!response.ok) {
         throw new Error("Failed to fetch webinars");
@@ -137,11 +156,22 @@ export class PlannerService {
   /**
    * Fetch classes for a consultant
    */
-  static async fetchClasses(consultantId: string): Promise<ClassEvent[]> {
+  static async fetchClasses(
+    consultantId: string,
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<ClassEvent[]> {
     try {
-      const response = await fetch(
-        `/api/events/classes?consultantProfileId=${consultantId}`,
-      );
+      const params = new URLSearchParams({
+        consultantProfileId: consultantId,
+      });
+
+      // Only add date filters if provided
+      if (startDate && endDate) {
+        params.append("startDate", startDate.toISOString());
+        params.append("endDate", endDate.toISOString());
+      }
+      const response = await fetch(`/api/events/classes?${params}`);
 
       if (!response.ok) {
         throw new Error("Failed to fetch classes");
@@ -1040,6 +1070,27 @@ export class PlannerService {
         ),
         // Class specific plan fields
         certificateProvided: classDataForm.certificateProvided ?? false,
+        sessionDurationInHours: (() => {
+          const contents = classDataForm.classContents ?? [];
+          if (Array.isArray(contents) && contents.length > 0) {
+            const valid = contents.filter(
+              (c: any) =>
+                typeof c.hoursAllotted === "number" && c.hoursAllotted > 0,
+            );
+            if (valid.length > 0) {
+              const total = valid.reduce(
+                (sum: number, c: any) => sum + c.hoursAllotted,
+                0,
+              );
+              return total / valid.length;
+            }
+          }
+          if (initialData && this.isClassEvent(initialData)) {
+            // Fallback to existing plan value if present
+            return (initialData.classPlan as any).sessionDurationInHours ?? 1;
+          }
+          return 1;
+        })(),
         durationInMonths:
           typeof classDataForm.durationInMonths === "number"
             ? classDataForm.durationInMonths
@@ -1075,18 +1126,6 @@ export class PlannerService {
     return savedClass;
 
     // Note: All rollbacks are handled in saveClass if an error occurs
-  }
-
-  /**
-   * Format topics for API submission
-   */
-  private static formatTopics(topicIds: string[], now: Date) {
-    return topicIds.map((id) => ({
-      id,
-      name: "",
-      createdAt: now,
-      updatedAt: now,
-    }));
   }
 
   /**
@@ -1208,5 +1247,189 @@ export class PlannerService {
     await this.rollbackNewlyCreatedEvent();
     // Then rollback topics (if created)
     await this.rollbackNewlyCreatedTopics();
+  }
+
+  /**
+   * Fetch consultation plans for a consultant
+   */
+  static async fetchConsultationPlans(
+    consultantId: string,
+  ): Promise<ConsultationPlanEvent[]> {
+    try {
+      const response = await fetch(
+        `/api/plans/consultations?consultantId=${consultantId}`,
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch consultation plans");
+      }
+
+      const consultationPlansData = await response.json();
+
+      return consultationPlansData.data.map((plan: any) => ({
+        id: plan.id,
+        type: "consultation" as const,
+        consultationPlan: plan,
+      }));
+    } catch (error) {
+      console.error("Error fetching consultation plans:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch subscription plans for a consultant
+   */
+  static async fetchSubscriptionPlans(
+    consultantId: string,
+  ): Promise<SubscriptionPlanEvent[]> {
+    try {
+      const response = await fetch(
+        `/api/plans/subscriptions?consultantId=${consultantId}`,
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch subscription plans");
+      }
+
+      const subscriptionPlansData = await response.json();
+
+      return subscriptionPlansData.data.map((plan: any) => ({
+        id: plan.id,
+        type: "subscription" as const,
+        subscriptionPlan: plan,
+      }));
+    } catch (error) {
+      console.error("Error fetching subscription plans:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Save consultation plan data
+   */
+  static async saveConsultationPlan(
+    planData: Partial<ConsultationPlanEvent>,
+    consultantId: string,
+  ): Promise<ConsultationPlanEvent> {
+    try {
+      if (!planData.consultationPlan) {
+        throw new Error("Consultation plan data is required");
+      }
+
+      const isUpdate = !!planData.consultationPlan.id;
+      const endpoint = isUpdate
+        ? `/api/plans/consultations/${planData.consultationPlan.id}`
+        : "/api/plans/consultations";
+      const method = isUpdate ? "PUT" : "POST";
+
+      const requestBody: Record<string, any> = {
+        ...planData.consultationPlan,
+        consultantProfileId: consultantId,
+      };
+
+      // Remove undefined fields
+      Object.keys(requestBody).forEach(
+        (key) => requestBody[key] === undefined && delete requestBody[key],
+      );
+
+      const response = await fetch(endpoint, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error ||
+            `Failed to ${isUpdate ? "update" : "create"} consultation plan`,
+        );
+      }
+
+      const { data: consultationPlan } = await response.json();
+
+      return {
+        id: consultationPlan.id,
+        type: "consultation" as const,
+        consultationPlan,
+      };
+    } catch (error) {
+      console.error("Error saving consultation plan:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Save subscription plan data
+   */
+  static async saveSubscriptionPlan(
+    planData: Partial<SubscriptionPlanEvent>,
+    consultantId: string,
+  ): Promise<SubscriptionPlanEvent> {
+    try {
+      if (!planData.subscriptionPlan) {
+        throw new Error("Subscription plan data is required");
+      }
+
+      const isUpdate = !!planData.subscriptionPlan.id;
+      const endpoint = isUpdate
+        ? `/api/plans/subscriptions/${planData.subscriptionPlan.id}`
+        : "/api/plans/subscriptions";
+      const method = isUpdate ? "PUT" : "POST";
+
+      const requestBody: Record<string, any> = {
+        ...planData.subscriptionPlan,
+        consultantProfileId: consultantId,
+      };
+
+      // Remove undefined fields
+      Object.keys(requestBody).forEach(
+        (key) => requestBody[key] === undefined && delete requestBody[key],
+      );
+
+      const response = await fetch(endpoint, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error ||
+            `Failed to ${isUpdate ? "update" : "create"} subscription plan`,
+        );
+      }
+
+      const { data: subscriptionPlan } = await response.json();
+
+      return {
+        id: subscriptionPlan.id,
+        type: "subscription" as const,
+        subscriptionPlan,
+      };
+    } catch (error) {
+      console.error("Error saving subscription plan:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Type guard to check if an event is a ConsultationPlanEvent
+   */
+  static isConsultationPlanEvent(event: Event): event is ConsultationPlanEvent {
+    return event.type === "consultation";
+  }
+
+  /**
+   * Type guard to check if an event is a SubscriptionPlanEvent
+   */
+  static isSubscriptionPlanEvent(event: Event): event is SubscriptionPlanEvent {
+    return event.type === "subscription";
   }
 }

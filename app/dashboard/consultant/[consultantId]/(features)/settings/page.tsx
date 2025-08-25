@@ -1,56 +1,74 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { use } from "react";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { DashboardHomeSkeleton } from "@/components/ui/dashboard-skeleton";
+import { useQuery } from "@tanstack/react-query";
 import { fetchConsultantData } from "../../utils/fetchHelpers";
-import { TConsultantProfile } from "types/consultant";
 import { SettingsTab } from "./SettingsTab";
 
 export default function SettingsPage({
   params,
-}: Readonly<{
+}: {
   params: Promise<{ consultantId: string }>;
-}>) {
-  const resolvedParams = use(params);
-  const consultantId = resolvedParams.consultantId;
+}) {
+  const { consultantId } = use(params);
 
-  const [consultant, setConsultant] = useState<TConsultantProfile | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const {
+    data: consultant,
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: ["consultant-settings", consultantId],
+    queryFn: () => fetchConsultantData(consultantId),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
+    refetchOnWindowFocus: false,
+    retry: 2,
+  });
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        setIsLoading(true);
-        setError(null);
-
-        const consultantData = await fetchConsultantData(consultantId);
-        setConsultant(consultantData);
-      } catch (err) {
-        console.error("Error fetching consultant data:", err);
-        setError(err instanceof Error ? err.message : "An error occurred");
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    fetchData();
-  }, [consultantId]);
+  if (isLoading) {
+    return <DashboardHomeSkeleton />;
+  }
 
   if (error) {
     return (
-      <div className="bg-white p-4 rounded-lg shadow-md">
-        <p className="text-red-600">{error}</p>
-      </div>
+      <DashboardErrorBoundary>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
+            <h3 className="font-semibold mb-2">Error Loading Settings</h3>
+            <p className="text-sm">
+              {error.message ||
+                "Failed to load consultant settings. Please try again."}
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </DashboardErrorBoundary>
     );
   }
 
-  if (isLoading || !consultant) {
+  if (!consultant) {
     return (
-      <div className="bg-white p-4 rounded-lg shadow-md">
-        <p>Loading...</p>
-      </div>
+      <DashboardErrorBoundary>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="p-4 bg-orange-50 text-orange-600 rounded-lg max-w-md text-center">
+            <h3 className="font-semibold mb-2">No Data Available</h3>
+            <p className="text-sm">Consultant data not found.</p>
+          </div>
+        </div>
+      </DashboardErrorBoundary>
     );
   }
 
-  return <SettingsTab consultant={consultant} />;
+  return (
+    <DashboardErrorBoundary>
+      <SettingsTab consultant={consultant} />
+    </DashboardErrorBoundary>
+  );
 }

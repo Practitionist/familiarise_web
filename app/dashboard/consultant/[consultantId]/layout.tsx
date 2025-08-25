@@ -3,11 +3,13 @@
 import { getEffectiveUserId } from "@/utils/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Skeleton } from "components/ui/skeleton";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { usePrefetchDashboard } from "@/hooks/useCosultantPrefetchDashboard";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect } from "react";
-import useSWR, { preload } from "swr";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchConsultantData } from "./utils/fetchHelpers";
 
 // Navigation configuration
@@ -60,33 +62,73 @@ export default function ConsultantLayout({
   const pathname = usePathname();
   const currentPath = pathname.split("/").pop();
   const { data: session } = useSession();
+  const router = useRouter();
+  const queryClient = useQueryClient();
 
   const userId = getEffectiveUserId(session);
+  const { prefetchOnTabHover, prefetchAllConsultantData } =
+    usePrefetchDashboard({ consultantId });
 
-  // Use SWR to fetch and cache consultant data
-  const { data: consultantData, error } = useSWR(
-    userId ? [`consultant-${consultantId}`, consultantId] : null,
-    ([_, id]) => fetchConsultantData(id),
-    {
-      revalidateOnFocus: false,
-      revalidateIfStale: false,
-      dedupingInterval: 300000, // 5 minutes
-    },
-  );
+  // Replace SWR with React Query
+  const {
+    data: consultantData,
+    error,
+    isLoading,
+  } = useQuery({
+    queryKey: [`consultant-${consultantId}`, consultantId],
+    queryFn: () => fetchConsultantData(consultantId),
+    enabled: !!userId,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes (formerly cacheTime)
+    retry: 2,
+  });
 
-  // Prefetch data for likely navigation paths
+  // Enhanced prefetching strategy
   useEffect(() => {
-    // If we have userId and consultantId, prefetch data for common routes
-    if (userId && consultantId) {
-      // Prefetch consultant data
-      preload([`consultant-${consultantId}`, consultantId], ([_, id]) =>
-        fetchConsultantData(id),
-      );
-    }
-  }, [userId, consultantId]);
+    if (!userId || !consultantId) return;
 
-  // Early render of the skeleton UI for better perceived performance
-  const isLoading = !consultantData && !error;
+    // Immediate prefetch of critical data
+    const prefetchCriticalData = async () => {
+      // Prefetch all dashboard data in background
+      prefetchAllConsultantData();
+
+      // Prefetch routes that are likely to be visited
+      const criticalRoutes = [
+        `/dashboard/consultant/${consultantId}/home`,
+        `/dashboard/consultant/${consultantId}/appointments`,
+        `/dashboard/consultant/${consultantId}/chats`,
+      ];
+
+      // Use Next.js router.prefetch for route-level prefetching
+      criticalRoutes.forEach((route) => {
+        router.prefetch(route);
+      });
+    };
+
+    // Use requestIdleCallback for non-blocking prefetch
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      window.requestIdleCallback(prefetchCriticalData);
+    } else {
+      setTimeout(prefetchCriticalData, 100);
+    }
+  }, [userId, consultantId, prefetchAllConsultantData, router]);
+
+  // Smart hover prefetching with route prefetching
+  const handleNavHover = (path: string) => {
+    // Prefetch the route
+    router.prefetch(`/dashboard/consultant/${consultantId}/${path}`);
+
+    // Prefetch data for specific tabs
+    if (path === "home") {
+      prefetchOnTabHover("home");
+    } else if (path === "appointments") {
+      prefetchOnTabHover("appointments");
+    } else if (path === "planner") {
+      prefetchOnTabHover("planner");
+    } else if (path === "requests") {
+      prefetchOnTabHover("requests");
+    }
+  };
 
   // Authentication check
   if (
@@ -149,6 +191,7 @@ export default function ConsultantLayout({
                       : "text-gray-600 hover:bg-gray-100"
                   }`}
                   prefetch={true}
+                  onMouseEnter={() => handleNavHover(item.path)}
                 >
                   <span>{item.icon}</span>
                   <span>{item.name}</span>
@@ -175,6 +218,9 @@ export default function ConsultantLayout({
                 : "text-gray-600 hover:bg-gray-100"
             }`}
             prefetch={true}
+            onMouseEnter={() =>
+              router.prefetch(`/dashboard/consultant/${consultantId}/settings`)
+            }
           >
             <span>⚙️</span>
             <span>Settings</span>
@@ -216,8 +262,8 @@ export default function ConsultantLayout({
             </div>
           </div>
         ) : (
-          // Render children when data is loaded and no error
-          children
+          // Render children when data is loaded and no error with error boundary
+          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
         )}
       </main>
     </div>

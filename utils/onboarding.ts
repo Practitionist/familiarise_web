@@ -225,10 +225,12 @@ export const ConsultantProfileFormSchema = z.object({
   subDomains: z.array(z.object({
     id: z.string(),
     name: z.string(),
+    domainId: z.string(),
   })).optional(),
   tags: z.array(z.object({
     id: z.string(),
     name: z.string(),
+    domainId: z.string(),
   })).optional(),
 });
 

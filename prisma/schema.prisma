@@ -12,20 +12,20 @@ datasource db {
 ////////////////////////////////////////// DO NOT EDIT //////////////////////////////////////////
 
 model User {
-  id                  String    @id @default(cuid())
-  name                String?
-  email               String?   @unique
-  emailVerified       DateTime?
-  image               String?
-  phone               String?   @unique
-  address             String?
-  password            String?
-  passwordResetToken  String?   @unique
+  id                   String    @id @default(cuid())
+  name                 String?
+  email                String?   @unique
+  emailVerified        DateTime?
+  image                String?
+  phone                String?   @unique
+  address              String?
+  password             String?
+  passwordResetToken   String?   @unique
   passwordResetExpires DateTime?
-  onlineStatus        Boolean   @default(false)
-  currentTimezone     String?
-  onboardingCompleted Boolean?  @default(false)
-  role                UserRole? @default(CONSULTEE)
+  onlineStatus         Boolean   @default(false)
+  currentTimezone      String?
+  onboardingCompleted  Boolean?  @default(false)
+  role                 UserRole? @default(CONSULTEE)
 
   cookiePreferences       CookiePreference?
   notificationPreferences NotificationPreference?
@@ -335,9 +335,9 @@ model StaffProfile {
 model SlotOfAvailabilityWeekly {
   id                         String    @id @default(uuid())
   dayOfWeekforStartTimeInUTC DayOfWeek
-  slotStartTimeInUTC         DateTime  @db.Timetz()
+  slotStartTimeInUTC         DateTime  @db.Timestamptz()
   dayOfWeekforEndTimeInUTC   DayOfWeek
-  slotEndTimeInUTC           DateTime  @db.Timetz()
+  slotEndTimeInUTC           DateTime  @db.Timestamptz()
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -429,19 +429,20 @@ model Consultation {
 }
 
 model SubscriptionPlan {
-  id               String           @id @default(cuid())
-  title            String
-  description      String?          @db.Text
-  durationInMonths Int              @default(1)
-  price            Int
-  callsPerWeek     Int              @default(1)
-  videoMeetings    Int              @default(1)
-  emailSupport     PlanEmailSupport @default(GENERAL)
-  language         String           @default("English")
-  level            String           @default("Beginner")
-  prerequisites    String?          @default("None")
-  materialProvided String?          @default("None")
-  learningOutcomes String[]         @default([])
+  id                     String           @id @default(cuid())
+  title                  String
+  description            String?          @db.Text
+  durationInMonths       Int              @default(1)
+  price                  Int
+  callsPerWeek           Int              @default(1)
+  sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
+  videoMeetings          Int              @default(1)
+  emailSupport           PlanEmailSupport @default(GENERAL)
+  language               String           @default("English")
+  level                  String           @default("Beginner")
+  prerequisites          String?          @default("None")
+  materialProvided       String?          @default("None")
+  learningOutcomes       String[]         @default([])
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -535,24 +536,25 @@ enum WebinarStatus {
 
 // Many-Many Class
 model ClassPlan {
-  id                  String           @id @default(cuid())
-  title               String
-  description         String           @db.Text
-  topics              Topic[]
-  classContents       ClassContent[]
-  price               Int
-  priceCurrency       String           @default("INR")
-  certificateProvided Boolean          @default(false)
-  durationInMonths    Int              @default(1) // Duration in months
-  callsPerWeek        Int              @default(1)
-  videoMeetings       Int              @default(1)
-  emailSupport        PlanEmailSupport @default(GENERAL)
-  maxParticipants     Int              @default(1)
-  language            String?          @default("English")
-  level               String?          @default("Beginner")
-  prerequisites       String?          @default("None")
-  materialProvided    String?          @default("None")
-  learningOutcomes    String[]         @default([])
+  id                     String           @id @default(cuid())
+  title                  String
+  description            String           @db.Text
+  topics                 Topic[]
+  classContents          ClassContent[]
+  price                  Int
+  priceCurrency          String           @default("INR")
+  certificateProvided    Boolean          @default(false)
+  durationInMonths       Int              @default(1) // Duration in months
+  callsPerWeek           Int              @default(1)
+  sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
+  videoMeetings          Int              @default(1)
+  emailSupport           PlanEmailSupport @default(GENERAL)
+  maxParticipants        Int              @default(1)
+  language               String?          @default("English")
+  level                  String?          @default("Beginner")
+  prerequisites          String?          @default("None")
+  materialProvided       String?          @default("None")
+  learningOutcomes       String[]         @default([])
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
@@ -727,7 +729,7 @@ model Payment {
   paymentIntent  String         @unique
   paymentGateway PaymentGateway
   paymentStatus  PaymentStatus
-  expiresAt      DateTime?      // For tracking payment intent expiration
+  expiresAt      DateTime? // For tracking payment intent expiration
 
   user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   userId         String
@@ -762,7 +764,7 @@ model DiscountCode {
   description   String
   discountType  DiscountType
   discountValue Float
- 
+
   Payment Payment[]
 
   createdAt DateTime @default(now())
@@ -811,3 +813,4 @@ enum ScheduleType {
   WEEKLY
   CUSTOM
 }
+

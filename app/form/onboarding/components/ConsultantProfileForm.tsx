@@ -1,48 +1,32 @@
-import React, { useEffect, useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ConsultantProfile, PersonalInfoAndRole } from "@/schemas/user";
 import { Domain, SubDomain, Tag } from "@/schemas/plans";
 import { ConsultantProfileFormSchema } from "@/utils/onboarding";
 import { z } from "zod";
+import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (data: FormData) => void;
   onBack: () => void;
-  initialData: FormData;
+  initialData: Partial<ConsultantProfile>;
+  personalInfo: PersonalInfoAndRole;
 }
 
-type FormData = PersonalInfoAndRole &
-  Partial<ConsultantProfile> & {
-    domain?: Domain;
-    subDomains?: SubDomain[];
-    tags?: Tag[];
-  };
+type FormData = z.infer<typeof ConsultantProfileFormSchema>;
 
-const ConsultantProfileForm: React.FC<Props> = ({
-  onNext,
-  onBack,
-  initialData,
-}) => {
+const ConsultantProfileForm: React.FC<Props> = ({ onNext, onBack, initialData, personalInfo }) => {
+  const { classes, colors } = useThemeClasses();
   const [domains, setDomains] = useState<Domain[]>([]);
   const [subDomains, setSubDomains] = useState<SubDomain[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
-  const [filteredSubDomains, setFilteredSubDomains] = useState<SubDomain[]>([]);
-  const [filteredTags, setFilteredTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,26 +35,35 @@ const ConsultantProfileForm: React.FC<Props> = ({
     handleSubmit,
     control,
     watch,
-    setValue,
     formState: { errors },
-  } = useForm<z.infer<typeof ConsultantProfileFormSchema>>({
+  } = useForm<FormData>({
     resolver: zodResolver(ConsultantProfileFormSchema),
     mode: "onChange",
     defaultValues: {
-      description: initialData.description || "",
-      qualifications: initialData.qualifications || "",
-      specialization: initialData.specialization || "",
-      experience: initialData.experience || 0,
-      scheduleType: initialData.scheduleType || "WEEKLY",
-      domain: initialData.domain,
-      subDomains: initialData.subDomains || [],
-      tags: initialData.tags || [],
+      description: "",
+      qualifications: "",
+      specialization: "",
+      experience: 0,
+      scheduleType: "WEEKLY",
+      domain: { id: "", name: "" },
+      subDomains: [],
+      tags: [],
+      weeklySlots: [],
+      customSlots: [],
+      ...initialData,
     },
   });
 
   const selectedDomain = watch("domain");
-  const currentSubDomains = watch("subDomains") || [];
-  const currentTags = watch("tags") || [];
+
+  // Filter subdomains and tags based on selected domain
+  const filteredSubDomains = useMemo(() => {
+    return subDomains.filter((sub) => sub.domainId === selectedDomain?.id);
+  }, [subDomains, selectedDomain]);
+
+  const filteredTags = useMemo(() => {
+    return tags.filter((tag) => tag.domainId === selectedDomain?.id);
+  }, [tags, selectedDomain]);
 
   useEffect(() => {
     const fetchMetadata = async () => {
@@ -85,8 +78,6 @@ const ConsultantProfileForm: React.FC<Props> = ({
         setDomains(data.domains);
         setSubDomains(data.subdomains);
         setTags(data.tags);
-        setFilteredSubDomains(data.subdomains);
-        setFilteredTags(data.tags);
       } catch (error) {
         console.error("Error fetching metadata:", error);
         setError("Failed to load form data. Please try again.");
@@ -97,268 +88,268 @@ const ConsultantProfileForm: React.FC<Props> = ({
     fetchMetadata();
   }, []);
 
-  // Update filtered lists when domain changes
-  useEffect(() => {
-    if (!selectedDomain) {
-      setFilteredSubDomains(subDomains);
-      setFilteredTags(tags);
-      return;
-    }
-
-    const newFilteredSubs = subDomains.filter(
-      (sub) => sub.domainId === selectedDomain.id,
-    );
-    const newFilteredTags = tags.filter(
-      (tag) => tag.domainId === selectedDomain.id,
-    );
-
-    setFilteredSubDomains(newFilteredSubs);
-    setFilteredTags(newFilteredTags);
-
-    // Update selected values only if they're invalid for the new domain
-    const validSubDomains = currentSubDomains.filter((sd) =>
-      newFilteredSubs.some((fs) => fs.id === sd.id),
-    );
-    const validTags = currentTags.filter((t) =>
-      newFilteredTags.some((ft) => ft.id === t.id),
-    );
-
-    if (validSubDomains.length !== currentSubDomains.length) {
-      setValue("subDomains", validSubDomains, { shouldDirty: true });
-    }
-    if (validTags.length !== currentTags.length) {
-      setValue("tags", validTags, { shouldDirty: true });
-    }
-  }, [selectedDomain?.id]); // Only depend on the domain ID
-
-  const onSubmit = (data: z.infer<typeof ConsultantProfileFormSchema>) => {
-    onNext(data as FormData);
+  const onSubmit = (data: FormData) => {
+    onNext(data);
   };
 
   if (isLoading) {
     return (
-      <Card className="w-full max-w-2xl">
-        <CardHeader>
-          <CardTitle>Consultant profile</CardTitle>
-          <CardDescription>Tell consultees about your expertise and availability.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Skeleton className="h-10 w-full" />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </div>
-          <Skeleton className="h-32 w-full" />
-        </CardContent>
-        <CardFooter>
-          <Skeleton className="h-10 w-32" />
-        </CardFooter>
-      </Card>
+      <div className="flex items-center justify-center p-8">
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+          <p className={colors.textSecondary}>Loading form data...</p>
+        </div>
+      </div>
     );
   }
 
   if (error) {
     return (
-      <Card className="w-full max-w-2xl">
-        <CardHeader>
-          <CardTitle>Something went wrong</CardTitle>
-          <CardDescription className="text-destructive">{error}</CardDescription>
-        </CardHeader>
-      </Card>
+      <div className="text-center space-y-4 p-8">
+        <p className={`${colors.error} text-lg`}>{error}</p>
+        <Button
+          onClick={() => window.location.reload()}
+          className={classes.primaryButton}
+        >
+          Retry
+        </Button>
+      </div>
     );
   }
 
   return (
-    <Card className="w-full max-w-2xl">
-      <CardHeader>
-        <CardTitle>Consultant profile</CardTitle>
-        <CardDescription>Share your background so consultees can quickly understand your strengths.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-          <div className="space-y-2">
-            <Label htmlFor="description">Description</Label>
-            <Textarea id="description" placeholder="Brief summary about your expertise, approach, and outcomes." {...register("description")} />
-            {errors.description && (
-              <p className="text-sm text-destructive">{errors.description?.message}</p>
-            )}
-          </div>
+    <form onSubmit={handleSubmit(onSubmit)} className="w-full space-y-6">
+      <div className="space-y-3">
+        <Label htmlFor="description" className={`${colors.textPrimary} font-medium`}>
+          Description
+        </Label>
+        <Textarea
+          id="description"
+          {...register("description")}
+          className={classes.textarea}
+          placeholder="Tell us about your expertise and what you can offer"
+          rows={4}
+        />
+        {errors.description && (
+          <p className={`${colors.error} text-sm`}>{errors.description.message}</p>
+        )}
+      </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="qualifications">Qualifications</Label>
-              <Input id="qualifications" placeholder="Degrees, certifications, notable credentials" {...register("qualifications")} />
-              {errors.qualifications && (
-                <p className="text-sm text-destructive">{errors.qualifications?.message}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="specialization">Specialization</Label>
-              <Input id="specialization" placeholder="Primary focus areas (e.g., AI, Product, Marketing)" {...register("specialization")} />
-              {errors.specialization && (
-                <p className="text-sm text-destructive">{errors.specialization?.message}</p>
-              )}
-            </div>
-          </div>
+      <div className="space-y-3">
+        <Label htmlFor="qualifications" className={`${colors.textPrimary} font-medium`}>
+          Qualifications
+        </Label>
+        <Textarea
+          id="qualifications"
+          {...register("qualifications")}
+          className={classes.textarea}
+          placeholder="Your education, certifications, and relevant qualifications"
+          rows={3}
+        />
+        {errors.qualifications && (
+          <p className={`${colors.error} text-sm`}>{errors.qualifications.message}</p>
+        )}
+      </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="experience">Years of Experience</Label>
-              <Input 
-                id="experience" 
-                type="number" 
-                min="0" 
-                max="50" 
-                step="0.5"
-                placeholder="e.g., 7"
-                {...register("experience", { valueAsNumber: true })} 
-              />
-              {errors.experience && (
-                <p className="text-sm text-destructive">{errors.experience?.message}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="domain">Domain</Label>
-              <Controller
-                name="domain"
-                control={control}
-                render={({ field }) => (
-                  <Select
-                    onValueChange={(value) => {
-                      const selectedDomain = domains.find((d) => d.id === value);
-                      field.onChange(selectedDomain);
-                    }}
-                    value={field.value?.id ?? ""}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a domain" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {domains.map((domain) => (
-                        <SelectItem key={domain.id} value={domain.id!}>
-                          {domain.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              />
-              {errors.domain && (
-                <p className="text-sm text-destructive">{errors.domain?.message}</p>
-              )}
-            </div>
-          </div>
+      <div className="space-y-3">
+        <Label htmlFor="specialization" className={`${colors.textPrimary} font-medium`}>
+          Specialization
+        </Label>
+        <Input
+          id="specialization"
+          {...register("specialization")}
+          className={classes.input}
+          placeholder="Your area of specialization"
+        />
+        {errors.specialization && (
+          <p className={`${colors.error} text-sm`}>{errors.specialization.message}</p>
+        )}
+      </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Sub-domains</Label>
-              <Controller
-                name="subDomains"
-                control={control}
-                render={({ field }) => (
-                  <div className="rounded-md border bg-card text-card-foreground p-3 max-h-40 overflow-auto space-y-2">
-                    {filteredSubDomains.map((subDomain) => (
-                      <div key={subDomain.id} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`subDomain-${subDomain.id}`}
-                          checked={
-                            field.value?.some((sd) => sd.id === subDomain.id) || false
-                          }
-                          onCheckedChange={(checked) => {
-                            const updatedSubDomains = checked
-                              ? [...(field.value || []), subDomain]
-                              : (field.value || []).filter(
-                                  (sd) => sd.id !== subDomain.id,
-                                );
-                            field.onChange(updatedSubDomains);
-                          }}
-                        />
-                        <Label htmlFor={`subDomain-${subDomain.id}`} className="font-normal">
-                          {subDomain.name}
-                        </Label>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              />
-              {errors.subDomains && (
-                <p className="text-sm text-destructive">{errors.subDomains?.message}</p>
-              )}
-            </div>
+      <div className="space-y-3">
+        <Label htmlFor="experience" className={`${colors.textPrimary} font-medium`}>
+          Years of Experience
+        </Label>
+        <Input
+          id="experience"
+          type="number"
+          min="0"
+          max="100"
+          step="0.5"
+          {...register("experience", { valueAsNumber: true })}
+          className={classes.input}
+          placeholder="0"
+        />
+        {errors.experience && (
+          <p className={`${colors.error} text-sm`}>{errors.experience.message}</p>
+        )}
+      </div>
 
-            <div className="space-y-2">
-              <Label>Tags</Label>
-              <Controller
-                name="tags"
-                control={control}
-                render={({ field }) => (
-                  <div className="rounded-md border bg-card text-card-foreground p-3 max-h-40 overflow-auto space-y-2">
-                    {filteredTags.map((tag) => (
-                      <div key={tag.id} className="flex items-center gap-2">
-                        <Checkbox
-                          id={`tag-${tag.id}`}
-                          checked={field.value?.some((t) => t.id === tag.id) || false}
-                          onCheckedChange={(checked) => {
-                            const updatedTags = checked
-                              ? [...(field.value || []), tag]
-                              : (field.value || []).filter((t) => t.id !== tag.id);
-                            field.onChange(updatedTags);
-                          }}
-                        />
-                        <Label htmlFor={`tag-${tag.id}`} className="font-normal">{tag.name}</Label>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              />
-              {errors.tags && (
-                <p className="text-sm text-destructive">{errors.tags?.message}</p>
-              )}
-            </div>
-          </div>
+      <div className="space-y-3">
+        <Label className={`${colors.textPrimary} font-medium`}>Domain</Label>
+        <Controller
+          name="domain"
+          control={control}
+          render={({ field }) => (
+            <Select
+              value={field.value?.id || ""}
+              onValueChange={(value) => {
+                const domain = domains.find((d) => d.id === value);
+                field.onChange(domain || { id: "", name: "" });
+              }}
+            >
+              <SelectTrigger className={classes.dropdown}>
+                <SelectValue placeholder="Select a domain" />
+              </SelectTrigger>
+              <SelectContent>
+                {domains.map((domain) => (
+                  <SelectItem key={domain.id} value={domain.id || ""} className={classes.dropdownItem}>
+                    {domain.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        />
+        {errors.domain && (
+          <p className={`${colors.error} text-sm`}>{errors.domain.message}</p>
+        )}
+      </div>
 
-          <div className="space-y-2">
-            <Label>Schedule type</Label>
+      {selectedDomain?.id && (
+        <div className="space-y-3">
+          <Label className={`${colors.textPrimary} font-medium`}>Sub-domains</Label>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2 border rounded-md">
             <Controller
-              name="scheduleType"
+              name="subDomains"
               control={control}
               render={({ field }) => (
-                <div className="bg-muted p-1 rounded-lg grid grid-cols-2 gap-1">
-                  {["WEEKLY", "CUSTOM"].map((type) => (
-                    <Button
-                      key={type}
-                      type="button"
-                      size="sm"
-                      variant={field.value === type ? "night" : "outline"}
-                      onClick={() => field.onChange(type)}
-                      className="w-full"
-                    >
-                      {type.charAt(0) + type.slice(1).toLowerCase()}
-                    </Button>
+                <>
+                  {filteredSubDomains.map((subDomain) => (
+                    <div key={subDomain.id} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`subdomain-${subDomain.id}`}
+                        checked={field.value?.some((s) => s.id === subDomain.id) || false}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            field.onChange([...(field.value || []), subDomain]);
+                          } else {
+                            field.onChange(
+                              field.value?.filter((s) => s.id !== subDomain.id) || []
+                            );
+                          }
+                        }}
+                        className={classes.checkbox}
+                      />
+                      <Label
+                        htmlFor={`subdomain-${subDomain.id}`}
+                        className={`${colors.textSecondary} text-sm cursor-pointer`}
+                      >
+                        {subDomain.name}
+                      </Label>
+                    </div>
                   ))}
-                </div>
+                </>
               )}
             />
-            {errors.scheduleType && (
-              <p className="text-sm text-destructive">{errors.scheduleType?.message}</p>
-            )}
           </div>
+          {errors.subDomains && (
+            <p className={`${colors.error} text-sm`}>{errors.subDomains.message}</p>
+          )}
+        </div>
+      )}
 
-          <div className="flex items-center justify-between pt-2">
-            <Button type="button" onClick={onBack} variant="outline">
-              Back
-            </Button>
-            <Button type="submit" variant="night">
-              Next
-            </Button>
+      {selectedDomain?.id && (
+        <div className="space-y-3">
+          <Label className={`${colors.textPrimary} font-medium`}>Tags</Label>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-y-auto p-2 border rounded-md">
+            <Controller
+              name="tags"
+              control={control}
+              render={({ field }) => (
+                <>
+                  {filteredTags.map((tag) => (
+                    <div key={tag.id} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`tag-${tag.id}`}
+                        checked={field.value?.some((t) => t.id === tag.id) || false}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            field.onChange([...(field.value || []), tag]);
+                          } else {
+                            field.onChange(
+                              field.value?.filter((t) => t.id !== tag.id) || []
+                            );
+                          }
+                        }}
+                        className={classes.checkbox}
+                      />
+                      <Label
+                        htmlFor={`tag-${tag.id}`}
+                        className={`${colors.textSecondary} text-sm cursor-pointer`}
+                      >
+                        {tag.name}
+                      </Label>
+                    </div>
+                  ))}
+                </>
+              )}
+            />
           </div>
-        </form>
-      </CardContent>
-    </Card>
+          {errors.tags && (
+            <p className={`${colors.error} text-sm`}>{errors.tags.message}</p>
+          )}
+        </div>
+      )}
+
+      <div className="space-y-3">
+        <Label className={`${colors.textPrimary} font-medium`}>Schedule Type</Label>
+        <Controller
+          name="scheduleType"
+          control={control}
+          render={({ field }) => (
+            <div className="flex gap-4">
+              <Button
+                type="button"
+                onClick={() => field.onChange("WEEKLY")}
+                variant={field.value === "WEEKLY" ? "default" : "outline"}
+                className={`${classes.secondaryButton} flex-1`}
+              >
+                Weekly
+              </Button>
+              <Button
+                type="button"
+                onClick={() => field.onChange("CUSTOM")}
+                variant={field.value === "CUSTOM" ? "default" : "outline"}
+                className={`${classes.secondaryButton} flex-1`}
+              >
+                Custom
+              </Button>
+            </div>
+          )}
+        />
+        {errors.scheduleType && (
+          <p className={`${colors.error} text-sm`}>{errors.scheduleType.message}</p>
+        )}
+      </div>
+
+      <div className="flex gap-4">
+        <Button
+          type="button"
+          onClick={onBack}
+          variant="outline"
+          className={`${classes.secondaryButton} flex-1`}
+        >
+          Back
+        </Button>
+        <Button
+          type="submit"
+          className={`${classes.primaryButton} flex-1`}
+        >
+          Next
+        </Button>
+      </div>
+    </form>
   );
 };
 

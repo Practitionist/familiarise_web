@@ -1,21 +1,9 @@
 import { TrashIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { PreferredSchedule, PreferredScheduleSchema } from "@/schemas/user";
-import { validateTimeSlot } from "@/utils/timeSlotValidation";
-import { zodResolver } from "@hookform/resolvers/zod";
-import React, { useCallback, useEffect, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
 import {
   DAYS_OF_WEEK,
   type DayOfWeek,
@@ -27,7 +15,22 @@ import {
   getLocalDateString,
   getNextDay,
   isOvernight,
-} from "../timeUtils";
+  // New timezone-aware utilities
+  convertUtcToTimezone,
+  extractTimeFromUtcSlot,
+  convertTimezoneToUtc,
+  sortSlotsByTime,
+} from "@/utils/dateTimeUtils";
+import {
+  getSlotStatistics,
+  validateAllSlots,
+  validateTimeSlot,
+} from "@/utils/timeSlotValidation";
+import { zodResolver } from "@hookform/resolvers/zod";
+import React, { useCallback, useEffect, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { useThemeClasses } from "../useTheme";
+import { useTimezone } from "@/app/explore/experts/[consultantId]/hooks/useTimezone";
 
 interface SlotType {
   startTime: string;
@@ -65,6 +68,8 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   onBack,
   initialData,
 }) => {
+  const { classes, colors } = useThemeClasses();
+  const { timezone, isLoading: timezoneLoading } = useTimezone();
   const { handleSubmit, watch, setValue, control } = useForm<PreferredSchedule>(
     {
       resolver: zodResolver(PreferredScheduleSchema),
@@ -79,8 +84,10 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   const [weeklySlots, setWeeklySlots] = useState<SlotsType>({});
   const [customSlots, setCustomSlots] = useState<SlotsType>({});
 
-  // Initialize slots from initialData
+  // Initialize slots from initialData with timezone awareness
   useEffect(() => {
+    if (!timezone || timezoneLoading) return;
+
     if (initialData.weeklySlots?.length) {
       const formattedWeeklySlots: SlotsType = {};
       initialData.weeklySlots.forEach((slot) => {
@@ -89,11 +96,23 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           formattedWeeklySlots[day] = [];
         }
         formattedWeeklySlots[day].push({
-          startTime: convertToLocalTime(slot.slotStartTimeInUTC),
-          endTime: convertToLocalTime(slot.slotEndTimeInUTC),
+          startTime: extractTimeFromUtcSlot(
+            slot.slotStartTimeInUTC.toString(),
+            timezone,
+          ),
+          endTime: extractTimeFromUtcSlot(
+            slot.slotEndTimeInUTC.toString(),
+            timezone,
+          ),
           isValid: true,
         });
       });
+
+      // Sort slots chronologically within each day
+      Object.keys(formattedWeeklySlots).forEach((day) => {
+        formattedWeeklySlots[day] = sortSlotsByTime(formattedWeeklySlots[day]);
+      });
+
       setWeeklySlots(formattedWeeklySlots);
     }
 
@@ -102,42 +121,131 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
       initialData.customSlots.forEach((slot) => {
         try {
           const startDate = new Date(slot.slotStartTimeInUTC);
-          const dateString = getLocalDateString(startDate);
+          // Get date in target timezone
+          const dateString = startDate.toLocaleDateString("en-CA", {
+            timeZone: timezone,
+          });
           if (!formattedCustomSlots[dateString]) {
             formattedCustomSlots[dateString] = [];
           }
           formattedCustomSlots[dateString].push({
-            startTime: convertToLocalTime(slot.slotStartTimeInUTC),
-            endTime: convertToLocalTime(slot.slotEndTimeInUTC),
+            startTime: convertUtcToTimezone(
+              slot.slotStartTimeInUTC.toString(),
+              timezone,
+            ),
+            endTime: convertUtcToTimezone(
+              slot.slotEndTimeInUTC.toString(),
+              timezone,
+            ),
             isValid: true,
           });
         } catch (error) {
           console.error("Error processing custom slot:", error);
         }
       });
+
+      // Sort slots chronologically within each date
+      Object.keys(formattedCustomSlots).forEach((dateString) => {
+        formattedCustomSlots[dateString] = sortSlotsByTime(
+          formattedCustomSlots[dateString],
+        );
+      });
+
       setCustomSlots(formattedCustomSlots);
     }
-  }, [initialData]);
+  }, [initialData, timezone, timezoneLoading]);
 
+  // Legacy weekly slots formatting - replaced with timezone-aware version
   useEffect(() => {
-    const formattedWeeklySlots = Object.entries(weeklySlots).flatMap(
+    if (!timezone) return;
+
+    // Sort slots before processing for API
+    const sortedWeeklySlots: SlotsType = {};
+    Object.entries(weeklySlots).forEach(([day, slots]) => {
+      sortedWeeklySlots[day] = sortSlotsByTime(slots);
+    });
+
+    const formattedWeeklySlots = Object.entries(sortedWeeklySlots).flatMap(
       ([day, slots]) => {
+        // Debug logging for Friday slots
+        // if (day === "friday") {
+        //   console.log(
+        //     "📅 Processing Friday slots:",
+        //     slots.map((s) => ({
+        //       startTime: s.startTime,
+        //       endTime: s.endTime,
+        //       isValid: s.isValid,
+        //       errorMessage: s.errorMessage,
+        //     })),
+        //   );
+        // }
+
         return slots.filter(isValidSlot).flatMap((slot): WeeklySlot[] => {
-          const baseDate = "2024-01-01";
-          const nextDate = "2024-01-02";
+          const baseDate = "1970-01-01"; // Use epoch date for consistency
+          const nextDate = "1970-01-02";
           const overnight = isOvernight(slot.startTime, slot.endTime);
 
-          const startUTC = convertToUTC(slot.startTime, baseDate);
-          const endUTC = convertToUTC(
+          // Debug logging for midnight slots
+          // if (slot.startTime === "22:00" && slot.endTime === "00:00") {
+          //   console.log("🌙 Processing midnight slot:", {
+          //     day,
+          //     slot,
+          //     overnight,
+          //     timezone,
+          //   });
+          // }
+
+          // Convert timezone-aware time back to UTC
+          const startUTC = convertTimezoneToUtc(
+            slot.startTime,
+            baseDate,
+            timezone,
+          );
+          const endUTC = convertTimezoneToUtc(
             slot.endTime,
             overnight ? nextDate : baseDate,
+            timezone,
           );
 
-          if (!startUTC || !endUTC) return [];
+          if (!startUTC || !endUTC) {
+            // console.log("❌ Failed to convert times to UTC:", {
+            //   startUTC,
+            //   endUTC,
+            // });
+            return [];
+          }
 
           if (overnight) {
-            const midnightUTC = convertToUTC("00:00", nextDate);
+            // Check if the slot ends exactly at midnight (00:00)
+            if (slot.endTime === "00:00") {
+              // console.log("✅ Creating midnight slot (no split):", {
+              //   startUTC,
+              //   endUTC,
+              //   day: day.toUpperCase(),
+              // });
+              // This slot ends at midnight, don't split it
+              return [
+                {
+                  dayOfWeekforStartTimeInUTC: day.toUpperCase() as DayOfWeek,
+                  dayOfWeekforEndTimeInUTC: day.toUpperCase() as DayOfWeek,
+                  slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
+                  slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
+                },
+              ];
+            }
+
+            // This is a true overnight slot that crosses midnight (e.g., 10 PM - 2 AM)
+            const midnightUTC = convertTimezoneToUtc(
+              "00:00",
+              nextDate,
+              timezone,
+            );
             if (!midnightUTC) return [];
+
+            // Adjust first segment to end one second before midnight to keep it on the same day
+            const justBeforeMidnightUTC = new Date(
+              new Date(midnightUTC).getTime() - 1000,
+            );
 
             const startDay = day.toUpperCase() as DayOfWeek;
             const endDay = getNextDay(startDay);
@@ -146,14 +254,14 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
               {
                 dayOfWeekforStartTimeInUTC: startDay,
                 dayOfWeekforEndTimeInUTC: startDay,
-                slotStartTimeInUTC: startUTC,
-                slotEndTimeInUTC: midnightUTC,
+                slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
+                slotEndTimeInUTC: justBeforeMidnightUTC.toISOString(),
               },
               {
                 dayOfWeekforStartTimeInUTC: endDay,
                 dayOfWeekforEndTimeInUTC: endDay,
-                slotStartTimeInUTC: midnightUTC,
-                slotEndTimeInUTC: endUTC,
+                slotStartTimeInUTC: midnightUTC, // Already a string from convertTimezoneToUtc
+                slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
               },
             ];
           }
@@ -162,18 +270,27 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             {
               dayOfWeekforStartTimeInUTC: day.toUpperCase() as DayOfWeek,
               dayOfWeekforEndTimeInUTC: day.toUpperCase() as DayOfWeek,
-              slotStartTimeInUTC: startUTC,
-              slotEndTimeInUTC: endUTC,
+              slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
+              slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
             },
           ];
         });
       },
     );
     setValue("weeklySlots", formattedWeeklySlots);
-  }, [weeklySlots, setValue]);
+  }, [weeklySlots, setValue, timezone]);
 
+  // Legacy custom slots formatting - replaced with timezone-aware version
   useEffect(() => {
-    const formattedCustomSlots = Object.entries(customSlots).flatMap(
+    if (!timezone) return;
+
+    // Sort slots before processing for API
+    const sortedCustomSlots: SlotsType = {};
+    Object.entries(customSlots).forEach(([dateString, slots]) => {
+      sortedCustomSlots[dateString] = sortSlotsByTime(slots);
+    });
+
+    const formattedCustomSlots = Object.entries(sortedCustomSlots).flatMap(
       ([dateString, slots]) => {
         return slots.filter(isValidSlot).flatMap((slot): CustomSlot[] => {
           const nextDate = new Date(dateString);
@@ -181,55 +298,88 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           const nextDateStr = getLocalDateString(nextDate);
           const overnight = isOvernight(slot.startTime, slot.endTime);
 
-          const startUTC = convertToUTC(slot.startTime, dateString);
-          const endUTC = convertToUTC(
+          // Convert timezone-aware time to UTC
+          const startUTC = convertTimezoneToUtc(
+            slot.startTime,
+            dateString,
+            timezone,
+          );
+          const endUTC = convertTimezoneToUtc(
             slot.endTime,
             overnight ? nextDateStr : dateString,
+            timezone,
           );
 
           if (!startUTC || !endUTC) return [];
 
           if (overnight) {
-            const midnightUTC = convertToUTC("00:00", nextDateStr);
+            // Check if the slot ends exactly at midnight (00:00)
+            if (slot.endTime === "00:00") {
+              // This slot ends at midnight, don't split it
+              return [
+                {
+                  slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
+                  slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
+                },
+              ];
+            }
+
+            // This is a true overnight slot that crosses midnight (e.g., 10 PM - 2 AM)
+            const midnightUTC = convertTimezoneToUtc(
+              "00:00",
+              nextDateStr,
+              timezone,
+            );
             if (!midnightUTC) return [];
+
+            const justBeforeMidnightUTC = new Date(
+              new Date(midnightUTC).getTime() - 1000,
+            );
 
             return [
               {
-                slotStartTimeInUTC: startUTC,
-                slotEndTimeInUTC: midnightUTC,
+                slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
+                slotEndTimeInUTC: justBeforeMidnightUTC.toISOString(),
               },
               {
-                slotStartTimeInUTC: midnightUTC,
-                slotEndTimeInUTC: endUTC,
+                slotStartTimeInUTC: midnightUTC, // Already a string from convertTimezoneToUtc
+                slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
               },
             ];
           }
 
           return [
             {
-              slotStartTimeInUTC: startUTC,
-              slotEndTimeInUTC: endUTC,
+              slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
+              slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
             },
           ];
         });
       },
     );
     setValue("customSlots", formattedCustomSlots);
-  }, [customSlots, setValue]);
+  }, [customSlots, setValue, timezone]);
 
   const handleAddSlot = useCallback(
     (
       day: string,
-      slots: SlotsType,
+      _slots: SlotsType,
       setSlots: React.Dispatch<React.SetStateAction<SlotsType>>,
     ) => {
-      setSlots((prev) => ({
-        ...prev,
-        [day]: [
-          ...(prev[day] || []),
-          { startTime: "", endTime: "", isValid: false },
-        ],
-      }));
+      setSlots((prev) => {
+        const newSlots = {
+          ...prev,
+          [day]: [
+            ...(prev[day] || []),
+            { startTime: "", endTime: "", isValid: false },
+          ],
+        };
+        // Sort after adding new slot
+        if (newSlots[day]) {
+          newSlots[day] = sortSlotsByTime(newSlots[day]);
+        }
+        return newSlots;
+      });
     },
     [],
   );
@@ -240,7 +390,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
       index: number,
       field: "startTime" | "endTime",
       value: string,
-      slots: SlotsType,
+      _slots: SlotsType,
       setSlots: React.Dispatch<React.SetStateAction<SlotsType>>,
     ) => {
       setSlots((prev) => {
@@ -250,13 +400,19 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             i === index ? { ...slot, [field]: value } : slot,
           ),
         };
-        updatedSlots[day][index] = validateTimeSlot(
+        const validationResult = validateTimeSlot(
           updatedSlots[day][index],
           updatedSlots[day].filter((_, i) => i !== index),
           day,
-          setSlots,
           scheduleType === "WEEKLY",
         );
+        updatedSlots[day][index] = validationResult.slot;
+
+        // Sort slots after update
+        if (updatedSlots[day]) {
+          updatedSlots[day] = sortSlotsByTime(updatedSlots[day]);
+        }
+
         return updatedSlots;
       });
     },
@@ -267,7 +423,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
     (
       day: string,
       index: number,
-      slots: SlotsType,
+      _slots: SlotsType,
       setSlots: React.Dispatch<React.SetStateAction<SlotsType>>,
     ) => {
       setSlots((prev) => {
@@ -277,6 +433,9 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         };
         if (updatedSlots[day].length === 0) {
           delete updatedSlots[day];
+        } else {
+          // Sort remaining slots
+          updatedSlots[day] = sortSlotsByTime(updatedSlots[day]);
         }
         return updatedSlots;
       });
@@ -292,11 +451,16 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
     ) => {
       const dayKey = day.toLowerCase();
       return (
-        <div key={`slot-${day}`} className="grid gap-2">
-          <Label>{formatDayDisplay(day)}</Label>
+        <div
+          key={`slot-${day}`}
+          className="grid gap-3 p-4 rounded-lg bg-white/5 border border-white/10"
+        >
+          <Label className="text-white font-medium text-sm">
+            {formatDayDisplay(day)}
+          </Label>
           {slots[dayKey]?.map((slot: SlotType, index: number) => (
-            <div key={`slot-${day}-${index}`} className="grid gap-2">
-              <div className="grid grid-cols-5 gap-2 items-center">
+            <div key={`slot-${day}-${index}`} className="grid gap-3">
+              <div className="grid grid-cols-5 gap-3 items-center">
                 <Input
                   type="time"
                   value={slot.startTime}
@@ -310,7 +474,9 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                       setSlots,
                     )
                   }
-                  className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
+                  className={`col-span-2 bg-white/10 border-white/20 text-white h-10 rounded-lg focus:border-purple-400 focus:ring-purple-400/20 ${
+                    !slot.isValid ? "border-red-400" : ""
+                  }`}
                   required
                   step="900"
                 />
@@ -327,28 +493,30 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                       setSlots,
                     )
                   }
-                  className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
+                  className={`col-span-2 bg-white/10 border-white/20 text-white h-10 rounded-lg focus:border-purple-400 focus:ring-purple-400/20 ${
+                    !slot.isValid ? "border-red-400" : ""
+                  }`}
                   required
                   step="900"
                 />
                 <TrashIcon
-                  className="w-5 h-5 cursor-pointer"
+                  className="w-5 h-5 cursor-pointer text-red-400 hover:text-red-300 transition-colors"
                   onClick={() =>
                     handleDeleteSlot(dayKey, index, slots, setSlots)
                   }
                 />
               </div>
               {!slot.isValid && slot.errorMessage && (
-                <p className="text-red-500 text-sm">{slot.errorMessage}</p>
+                <p className="text-red-400 text-sm">{slot.errorMessage}</p>
               )}
             </div>
           ))}
           <Button
             type="button"
-            variant="outline"
             onClick={() => handleAddSlot(dayKey, slots, setSlots)}
+            className="bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg h-10 font-medium transition-all duration-200"
           >
-            Add Slot
+            + Add Slot
           </Button>
         </div>
       );
@@ -357,33 +525,46 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   );
 
   const allSlotsValid = useCallback(() => {
-    const areAllSlotsValid = (slots: SlotsType) =>
-      Object.values(slots).every((daySlots) =>
-        daySlots.every((slot) => slot.isValid),
-      );
+    const currentSlots = scheduleType === "WEEKLY" ? weeklySlots : customSlots;
+    const { isValid } = validateAllSlots(currentSlots);
+    const hasSlots = Object.keys(currentSlots).length > 0;
+    return isValid && hasSlots;
+  }, [weeklySlots, customSlots, scheduleType]);
 
-    if (scheduleType === "WEEKLY") {
-      return (
-        areAllSlotsValid(weeklySlots) && Object.keys(weeklySlots).length > 0
-      );
-    } else {
-      return (
-        areAllSlotsValid(customSlots) && Object.keys(customSlots).length > 0
-      );
-    }
+  // Get validation details for better user feedback
+  const getValidationFeedback = useCallback(() => {
+    const currentSlots = scheduleType === "WEEKLY" ? weeklySlots : customSlots;
+    const validation = validateAllSlots(currentSlots);
+    const stats = getSlotStatistics(currentSlots);
+
+    return {
+      ...validation,
+      ...stats,
+      hasSlots: Object.keys(currentSlots).length > 0,
+    };
   }, [weeklySlots, customSlots, scheduleType]);
 
   const onSubmitForm = useCallback(
     (data: PreferredSchedule) => {
-      if (!allSlotsValid()) {
-        alert(
-          "Please add and validate at least one time slot before proceeding.",
-        );
+      const feedback = getValidationFeedback();
+
+      if (!feedback.hasSlots) {
+        alert("Please add at least one time slot before proceeding.");
         return;
       }
+
+      if (!feedback.isValid) {
+        const errorMessage =
+          feedback.errors.length > 0
+            ? `Please fix the following issues:\n${feedback.errors.join("\n")}`
+            : "Please fix all validation errors before proceeding.";
+        alert(errorMessage);
+        return;
+      }
+
       onNext(data);
     },
-    [allSlotsValid, onNext],
+    [getValidationFeedback, onNext],
   );
 
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -421,8 +602,11 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         <button
           key={`day-${i}`}
           type="button"
-          className={`p-2 rounded-full hover:bg-gray-200
-            ${isSelected ? "bg-black text-white" : ""}`}
+          className={`p-2 rounded-lg transition-all duration-200 text-sm font-medium ${
+            isSelected
+              ? "bg-gradient-to-r from-purple-500 to-blue-500 text-white shadow-lg"
+              : "text-white/70 hover:bg-white/10 hover:text-white"
+          }`}
           onClick={() => {
             const newCustomSlots = { ...customSlots };
             if (isSelected) {
@@ -446,8 +630,11 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   const renderSlotsForDate = (dateString: string) => {
     const date = new Date(dateString);
     return (
-      <div key={`date-${dateString}`} className="mt-4">
-        <h4 className="font-semibold">
+      <div
+        key={`date-${dateString}`}
+        className="mt-4 p-4 rounded-lg bg-white/5 border border-white/10"
+      >
+        <h4 className="font-semibold text-white mb-3">
           {date.toLocaleDateString("en-US", {
             weekday: "long",
             year: "numeric",
@@ -458,7 +645,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         {customSlots[dateString]?.map((slot: SlotType, index: number) => (
           <div
             key={`custom-slot-${dateString}-${index}`}
-            className="grid grid-cols-5 gap-2 items-center mt-2"
+            className="grid grid-cols-5 gap-3 items-center mt-3"
           >
             <Input
               type="time"
@@ -473,7 +660,9 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                   setCustomSlots,
                 )
               }
-              className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
+              className={`col-span-2 bg-white/10 border-white/20 text-white h-10 rounded-lg focus:border-purple-400 focus:ring-purple-400/20 ${
+                !slot.isValid ? "border-red-400" : ""
+              }`}
               required
               step="900"
             />
@@ -490,12 +679,14 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                   setCustomSlots,
                 )
               }
-              className={`col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
+              className={`col-span-2 bg-white/10 border-white/20 text-white h-10 rounded-lg focus:border-purple-400 focus:ring-purple-400/20 ${
+                !slot.isValid ? "border-red-400" : ""
+              }`}
               required
               step="900"
             />
             <TrashIcon
-              className="w-5 h-5 cursor-pointer"
+              className="w-5 h-5 cursor-pointer text-red-400 hover:text-red-300 transition-colors"
               onClick={() =>
                 handleDeleteSlot(dateString, index, customSlots, setCustomSlots)
               }
@@ -508,7 +699,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             slot.errorMessage && (
               <p
                 key={`custom-error-${dateString}-${index}`}
-                className="text-red-500 text-sm mt-1"
+                className="text-red-400 text-sm mt-1"
               >
                 {slot.errorMessage}
               </p>
@@ -516,29 +707,39 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
         )}
         <Button
           type="button"
-          variant="outline"
           onClick={() => handleAddSlot(dateString, customSlots, setCustomSlots)}
-          className="mt-2"
+          className="mt-3 bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-white/30 rounded-lg h-10 font-medium transition-all duration-200"
         >
-          Add Slot
+          + Add Slot
         </Button>
       </div>
     );
   };
 
+  // Show loading state while timezone is being detected
+  if (timezoneLoading) {
+    return (
+      <div className="w-full flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-t-purple-400 border-r-purple-400 border-b-white/20 border-l-white/20 rounded-full animate-spin mb-4"></div>
+          <p className="text-white/70">Detecting timezone...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <form
-      onSubmit={handleSubmit(onSubmitForm)}
-      className="w-full max-w-6xl mx-auto"
-    >
-      <Card className="w-full">
-        <CardHeader>
-          <CardTitle>Preferred Schedule</CardTitle>
-          <CardDescription>
+    <form onSubmit={handleSubmit(onSubmitForm)} className="w-full space-y-6">
+      <div className="glassmorphism2 rounded-2xl p-6 border border-white/20 shadow-2xl">
+        <div className="mb-6">
+          <h3 className="text-2xl font-bold text-white mb-2">
+            Preferred Schedule
+          </h3>
+          <p className="text-white/70">
             Choose how you'd like to schedule your appointments.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+          </p>
+        </div>
+        <div>
           <Controller
             name="scheduleType"
             control={control}
@@ -549,16 +750,23 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                 value={field.value}
                 className="space-y-4"
               >
-                <div className="flex flex-col md:flex-row md:space-x-8 space-y-4 md:space-y-0">
+                <div className="flex flex-col lg:flex-row lg:space-x-8 space-y-6 lg:space-y-0">
                   <div className="flex-1">
-                    <div className="flex items-center justify-between mb-4">
-                      <Label htmlFor="WEEKLY" className="font-medium">
-                        Weekly Recurring
+                    <div className="flex items-center justify-between mb-4 p-4 rounded-lg bg-white/5 border border-white/10">
+                      <Label
+                        htmlFor="WEEKLY"
+                        className="font-medium text-white text-lg"
+                      >
+                        📅 Weekly Recurring
                       </Label>
-                      <RadioGroupItem id="WEEKLY" value="WEEKLY" />
+                      <RadioGroupItem
+                        id="WEEKLY"
+                        value="WEEKLY"
+                        className="border-white/30 text-purple-400"
+                      />
                     </div>
                     <div
-                      className={`grid gap-4 ${scheduleType !== "WEEKLY" ? "opacity-50 pointer-events-none" : ""}`}
+                      className={`grid gap-4 ${scheduleType !== "WEEKLY" ? "opacity-30 pointer-events-none" : ""}`}
                     >
                       {DAYS_OF_WEEK.map((day) =>
                         renderSlots(day, weeklySlots, setWeeklySlots),
@@ -566,25 +774,32 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                     </div>
                   </div>
                   <div className="flex-1">
-                    <div className="flex items-center justify-between mb-4">
-                      <Label htmlFor="CUSTOM" className="font-medium">
-                        Custom Schedule
+                    <div className="flex items-center justify-between mb-4 p-4 rounded-lg bg-white/5 border border-white/10">
+                      <Label
+                        htmlFor="CUSTOM"
+                        className="font-medium text-white text-lg"
+                      >
+                        🗓️ Custom Schedule
                       </Label>
-                      <RadioGroupItem id="CUSTOM" value="CUSTOM" />
+                      <RadioGroupItem
+                        id="CUSTOM"
+                        value="CUSTOM"
+                        className="border-white/30 text-purple-400"
+                      />
                     </div>
                     <div
-                      className={`grid gap-4 ${scheduleType !== "CUSTOM" ? "opacity-50 pointer-events-none" : ""}`}
+                      className={`grid gap-4 ${scheduleType !== "CUSTOM" ? "opacity-30 pointer-events-none" : ""}`}
                     >
-                      <div className="calendar-container bg-white border p-4 rounded-lg">
+                      <div className="calendar-container bg-white/10 border-white/20 border p-4 rounded-lg backdrop-blur-sm">
                         <div className="flex justify-between items-center mb-4">
                           <button
                             type="button"
-                            className="text-black"
+                            className="text-white hover:text-purple-400 transition-colors p-2 rounded-lg hover:bg-white/10"
                             onClick={handlePrevMonth}
                           >
-                            &larr;
+                            ←
                           </button>
-                          <span>
+                          <span className="text-white font-semibold">
                             {currentDate.toLocaleString("default", {
                               month: "long",
                               year: "numeric",
@@ -592,10 +807,10 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                           </span>
                           <button
                             type="button"
-                            className="text-black"
+                            className="text-white hover:text-purple-400 transition-colors p-2 rounded-lg hover:bg-white/10"
                             onClick={handleNextMonth}
                           >
-                            &rarr;
+                            →
                           </button>
                         </div>
                         <div className="grid grid-cols-7 gap-1 text-center">
@@ -603,7 +818,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                             (day) => (
                               <div
                                 key={`header-${day}`}
-                                className="text-sm font-medium"
+                                className="text-sm font-medium text-white/70 p-2"
                               >
                                 {day}
                               </div>
@@ -613,7 +828,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                         </div>
                       </div>
                       {Object.keys(customSlots)
-                        .sort()
+                        .sort((a, b) => a.localeCompare(b))
                         .map((dateString) => renderSlotsForDate(dateString))}
                     </div>
                   </div>
@@ -621,16 +836,74 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
               </RadioGroup>
             )}
           />
-        </CardContent>
-        <CardFooter className="flex justify-between">
-          <Button type="button" onClick={onBack} variant="outline">
-            Back
+        </div>
+
+        {/* Validation Feedback */}
+        {(() => {
+          const feedback = getValidationFeedback();
+          if (!feedback.hasSlots) return null;
+
+          return (
+            <div
+              className={`mt-4 p-3 rounded-lg ${colors.glassBg} ${colors.glassBorder}`}
+            >
+              <div className="flex items-center justify-between">
+                <div className={`text-sm ${colors.textSecondary}`}>
+                  {feedback.validSlots} valid slot
+                  {feedback.validSlots !== 1 ? "s" : ""}
+                  {feedback.totalDurationHours > 0 &&
+                    ` (${feedback.totalDurationHours}h total)`}
+                  {feedback.overnightSlots > 0 &&
+                    `, ${feedback.overnightSlots} overnight`}
+                </div>
+                {feedback.isValid ? (
+                  <span className={`text-sm ${colors.success}`}>
+                    ✓ Ready to proceed
+                  </span>
+                ) : (
+                  <span className={`text-sm ${colors.error}`}>
+                    ⚠ {feedback.errors.length} error
+                    {feedback.errors.length !== 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+              {!feedback.isValid && feedback.errors.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {feedback.errors.slice(0, 3).map((error, index) => (
+                    <div key={index} className={`text-xs ${colors.error}`}>
+                      • {error}
+                    </div>
+                  ))}
+                  {feedback.errors.length > 3 && (
+                    <div className={`text-xs ${colors.textMuted}`}>
+                      ...and {feedback.errors.length - 3} more
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        <div
+          className={`flex justify-between gap-4 pt-6 mt-6 border-t ${colors.glassBorder}`}
+        >
+          <Button
+            type="button"
+            onClick={onBack}
+            className={`flex-1 h-12 ${classes.secondaryButton}`}
+          >
+            ← Back
           </Button>
-          <Button type="submit" variant="night" disabled={!allSlotsValid()}>
-            Next
+          <Button
+            type="submit"
+            disabled={!allSlotsValid()}
+            className={`flex-1 h-12 ${classes.primaryButton} disabled:opacity-50 disabled:cursor-not-allowed`}
+          >
+            Next Step →
           </Button>
-        </CardFooter>
-      </Card>
+        </div>
+      </div>
     </form>
   );
 };

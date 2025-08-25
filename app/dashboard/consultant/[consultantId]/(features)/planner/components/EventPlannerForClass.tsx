@@ -263,6 +263,8 @@ export function EventPlannerForClass({
             consultantProfileId: consultantId,
             consultantProfile: null,
             certificateProvided: formData.certificateProvided,
+            sessionDurationInHours:
+              initialData?.classPlan?.sessionDurationInHours ?? 1,
             callsPerWeek: formData.callsPerWeek,
             videoMeetings: formData.videoMeetings,
             emailSupport: formData.emailSupport,

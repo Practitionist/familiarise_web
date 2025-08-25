@@ -1,8 +1,9 @@
 "use client";
 
 import React from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useEvents } from "@/hooks/useEvents";
+import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
 import { Overview } from "./Overview";
 import { Calendar } from "./Calendar";
 import { motion } from "framer-motion";
@@ -12,8 +13,16 @@ export default function AppointmentsTab({
 }: Readonly<{
   consulteeId: string;
 }>) {
-  const { consultations, subscriptions, webinars, classes, isLoading, error } =
-    useEvents(consulteeId);
+  // Use the centralized query configuration
+  const eventsQuery = createConsulteeQueries(consulteeId).events;
+  const { data: eventsData, isLoading, error } = useQuery(eventsQuery);
+
+  const {
+    consultations = [],
+    subscriptions = [],
+    webinars = [],
+    classes = [],
+  } = eventsData || {};
 
   if (isLoading) {
     return (

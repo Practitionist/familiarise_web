@@ -24,14 +24,16 @@ import {
   sortAppointmentsByStartTime,
 } from "../../utils/appointmentHelpers";
 
-import { IActivity, IAppointment, IApproval, BADGE_STYLES } from "../../types";
+import { IActivity, IApproval, BADGE_STYLES } from "../../types";
+import { TAppointment } from "@/types/appointment";
 import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationTabMini";
+import { convertTAppointmentToIAppointment } from "../appointments/utils/appointmentTypeAdapter";
 
 // Define the type for the badge styles object if not already defined/imported
 type BadgeStyleMap = typeof BADGE_STYLES; // Use typeof if BADGE_STYLES is an object constant
 
 interface HomeTabProps {
-  appointments: IAppointment[];
+  appointments: TAppointment[];
   activities: IActivity[];
   approvals: IApproval[];
   badgeStyles: BadgeStyleMap; // Accept the data object
@@ -46,7 +48,7 @@ export function HomeTab({
   const client = useStreamVideoClient();
   const { toast } = useToast();
 
-  const handleJoinMeeting = async (appointment: IAppointment) => {
+  const handleJoinMeeting = async (appointment: TAppointment) => {
     if (!client) {
       console.error("Stream client not ready");
       toast({ title: "Error", description: "Meeting client not ready." });
@@ -64,7 +66,7 @@ export function HomeTab({
     try {
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
-        appointment,
+        convertTAppointmentToIAppointment(appointment),
         relevantSlot,
       );
       router.push(`/meetings/${meetingId}`);
@@ -159,11 +161,12 @@ export function HomeTab({
                     </div>
                     <div className="mt-3">
                       <div className="text-xs text-gray-500 mt-1">
-                        {getStartTime(appointment)
-                          ? formatAppointmentTime(
-                              getStartTime(appointment)!.toISOString(),
-                            )
-                          : "Time not set"}
+                        {(() => {
+                          const startTime = getStartTime(appointment);
+                          return startTime
+                            ? formatAppointmentTime(startTime.toISOString())
+                            : "Time not set";
+                        })()}
                       </div>
                       <div className="mt-2 flex items-center justify-between">
                         <Badge
@@ -288,13 +291,14 @@ export function HomeTab({
                                   </>
                                 )}
                                 <div className="text-xs text-gray-500">
-                                  {getStartTime(appointment)
-                                    ? formatAppointmentTime(
-                                        getStartTime(
-                                          appointment,
-                                        )!.toISOString(),
-                                      )
-                                    : "Time not set"}
+                                  {(() => {
+                                    const startTime = getStartTime(appointment);
+                                    return startTime
+                                      ? formatAppointmentTime(
+                                          startTime.toISOString(),
+                                        )
+                                      : "Time not set";
+                                  })()}
                                 </div>
                               </div>
                               <div className="flex items-center space-x-2">

@@ -9,6 +9,7 @@ interface UpdateSlotsRequest {
       data: Array<{
         slotStartTimeInUTC: string;
         slotEndTimeInUTC: string;
+        type?: "WEEKLY" | "CUSTOM";
       }>;
     };
   };
@@ -325,6 +326,7 @@ export async function PATCH(
         create: body.slotsOfAppointment.createMany.data.map((slot) => ({
           slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
           slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+          type: slot.type || "WEEKLY", // Default to WEEKLY if not specified
         })),
       },
     };

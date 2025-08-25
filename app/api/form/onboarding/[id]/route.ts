@@ -1,10 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  validateOnboardingData,
-  updateUserProfileAndGetFkData,
-  type OnboardingData,
-} from "@/utils/onboarding";
-import prisma from "@/lib/prisma";
+import { updateOnboardingInformationAction } from "@/actions/forms/onboarding.action";
 
 export async function PATCH(
   req: NextRequest,
@@ -18,41 +13,19 @@ export async function PATCH(
     const body = await req.json();
     console.log("Request Body:", JSON.stringify(body, null, 2));
 
-    // Validate using shared utilities
-    const validationResult = validateOnboardingData(body);
-    if (!validationResult.success) {
-      console.error("Validation Error:", validationResult.error);
+    // Use the server action for consistency
+    const result = await updateOnboardingInformationAction(id, body);
+    
+    if (!result.success) {
       return NextResponse.json(
-        { error: validationResult.error },
+        { error: result.error },
         { status: 400 }
       );
     }
 
-    const validatedBody = validationResult.data as OnboardingData;
-    
-    // Check if user exists first
-    const existingUser = await prisma.user.findUnique({
-      where: { id },
-    });
-    
-    if (!existingUser) {
-      return NextResponse.json(
-        { error: "User not found" },
-        { status: 404 }
-      );
-    }
-
-    const updatedUser = await prisma.$transaction(async (tx) => {
-      return await updateUserProfileAndGetFkData(
-        id,
-        validatedBody,
-        tx,
-      );
-    });
-
     return NextResponse.json({
       message: "Onboarding information updated successfully",
-      user: updatedUser,
+      user: result.user,
     });
   } catch (error: unknown) {
     console.error("Error updating onboarding information:", error);
@@ -71,4 +44,3 @@ export async function PATCH(
     );
   }
 }
-

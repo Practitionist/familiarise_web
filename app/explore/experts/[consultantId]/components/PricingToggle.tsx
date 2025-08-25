@@ -338,6 +338,35 @@ export default function PricingToggle({
                         <div className="text-5xl font-bold text-white">
                           ${option.price}
                         </div>
+                        {option.features && option.features.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-white">Includes:</p>
+                            <ul className="space-y-1 pl-4">
+                              {option.features.map((feature, index) => (
+                                <li
+                                  key={`feature-${index}`}
+                                  className="text-gray-300 flex items-center"
+                                >
+                                  <svg
+                                    className="w-4 h-4 mr-2 text-white"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeWidth={2}
+                                      d="M5 13l4 4L19 7"
+                                    />
+                                  </svg>
+                                  {feature}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                         <Dialog>
                           <DialogTrigger asChild>
                             <Button
@@ -423,6 +452,28 @@ export default function PricingToggle({
                                   <ClockIcon className="mr-2 h-5 w-5" />{" "}
                                   Available {selectedDuration} hour Slots
                                 </h3>
+                                {/* Show consultant's preferred slot type */}
+                                {consultantDetails?.scheduleType && (
+                                  <div className="mb-3 p-2 bg-gray-800/30 rounded-lg border border-gray-700/30">
+                                    <p className="text-sm text-gray-300">
+                                      This consultant prefers{" "}
+                                      <span
+                                        className={`px-2 py-1 rounded text-xs font-medium ${
+                                          consultantDetails.scheduleType ===
+                                          "WEEKLY"
+                                            ? "bg-blue-500/20 text-blue-300"
+                                            : "bg-green-500/20 text-green-300"
+                                        }`}
+                                      >
+                                        {consultantDetails.scheduleType ===
+                                        "WEEKLY"
+                                          ? "📅 Weekly"
+                                          : "🎯 Custom"}
+                                      </span>{" "}
+                                      scheduling
+                                    </p>
+                                  </div>
+                                )}
                                 <div className="grid grid-cols-1 gap-2.5 max-h-[280px] overflow-y-auto pr-2">
                                   {availableSlots.length > 0 ? (
                                     availableSlots.map((slot, index) => {
@@ -451,10 +502,27 @@ export default function PricingToggle({
                                         >
                                           <div className="flex items-center">
                                             <ClockIcon className="mr-3 h-4 w-4 opacity-80" />
-                                            <span>
-                                              {slot.localStartTime} -{" "}
-                                              {slot.localEndTime}
-                                            </span>
+                                            <div className="flex-1">
+                                              <div className="flex items-center gap-2">
+                                                <span>
+                                                  {slot.localStartTime} -{" "}
+                                                  {slot.localEndTime}
+                                                </span>
+                                                {slot.type && (
+                                                  <span
+                                                    className={`px-2 py-1 rounded text-xs font-medium ${
+                                                      slot.type === "WEEKLY"
+                                                        ? "bg-blue-500/20 text-blue-300"
+                                                        : "bg-green-500/20 text-green-300"
+                                                    }`}
+                                                  >
+                                                    {slot.type === "WEEKLY"
+                                                      ? "📅"
+                                                      : "🎯"}
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </div>
                                             {isAllocated && (
                                               <span className="ml-auto text-xs font-semibold">
                                                 Request for approval

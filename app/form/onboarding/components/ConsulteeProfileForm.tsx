@@ -4,11 +4,11 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConsulteeProfile } from "@/schemas/user";
 import { Textarea } from "@/components/ui/textarea";
 import { ConsulteeProfileFormSchema } from "@/utils/onboarding";
 import { z } from "zod";
+import { useThemeClasses } from "../useTheme";
 
 interface Props {
   onNext: (data: Partial<ConsulteeProfile>) => void;
@@ -16,27 +16,25 @@ interface Props {
   initialData: Partial<ConsulteeProfile>;
 }
 
-const ConsulteeProfileForm: React.FC<Props> = ({
-  onNext,
-  onBack,
-  initialData,
-}) => {
+const ConsulteeProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
+  const { classes, colors } = useThemeClasses();
   const {
     register,
     handleSubmit,
-    formState: { errors, isSubmitting },
+    formState: { errors },
   } = useForm<z.infer<typeof ConsulteeProfileFormSchema>>({
     resolver: zodResolver(ConsulteeProfileFormSchema),
     mode: "onChange",
     defaultValues: {
-      education: initialData.education || "",
-      occupation: initialData.occupation || "",
-      aboutMe: initialData.aboutMe || "",
-      preferredCommunicationMethod: initialData.preferredCommunicationMethod || "VIDEO",
-      preferredLanguage: initialData.preferredLanguage || "",
-      specialRequirements: initialData.specialRequirements || "",
-      interests: initialData.interests || [],
-      goals: initialData.goals || [],
+      education: "",
+      occupation: "",
+      aboutMe: "",
+      preferredCommunicationMethod: "VIDEO",
+      preferredLanguage: "English",
+      specialRequirements: "",
+      interests: [],
+      goals: [],
+      ...initialData,
     },
   });
 
@@ -45,49 +43,126 @@ const ConsulteeProfileForm: React.FC<Props> = ({
   };
 
   return (
-    <Card className="w-full max-w-2xl">
-      <CardHeader>
-        <CardTitle>Consultee profile</CardTitle>
-        <CardDescription>Help us tailor recommendations and match you with the right expert.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="education">Education</Label>
-              <Input id="education" placeholder="e.g., B.Tech in CS" {...register("education")} />
-              {errors.education && (
-                <p className="text-sm text-destructive">{errors.education.message}</p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="occupation">Occupation</Label>
-              <Input id="occupation" placeholder="e.g., Founder at Acme" {...register("occupation")} />
-              {errors.occupation && (
-                <p className="text-sm text-destructive">{errors.occupation.message}</p>
-              )}
-            </div>
-          </div>
+    <form onSubmit={handleSubmit(onSubmit)} className="w-full space-y-6">
+      <div className="space-y-3">
+        <Label
+          htmlFor="education"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Education
+        </Label>
+        <Input
+          id="education"
+          {...register("education")}
+          className={classes.input}
+          placeholder="Your educational background"
+        />
+        {errors.education && (
+          <p className={`${colors.error} text-sm`}>
+            {errors.education.message}
+          </p>
+        )}
+      </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="aboutMe">About me</Label>
-            <Textarea id="aboutMe" placeholder="What are you building or learning? What kind of help would be most useful right now?" {...register("aboutMe")} />
-            {errors.aboutMe && (
-              <p className="text-sm text-destructive">{errors.aboutMe.message}</p>
-            )}
-          </div>
+      <div className="space-y-3">
+        <Label
+          htmlFor="occupation"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Occupation
+        </Label>
+        <Input
+          id="occupation"
+          {...register("occupation")}
+          className={classes.input}
+          placeholder="Your current occupation"
+        />
+        {errors.occupation && (
+          <p className={`${colors.error} text-sm`}>
+            {errors.occupation.message}
+          </p>
+        )}
+      </div>
 
-          <div className="flex items-center justify-between pt-2">
-            <Button type="button" onClick={onBack} variant="outline">
-              Back
-            </Button>
-            <Button type="submit" variant="night" disabled={isSubmitting}>
-              {isSubmitting ? "Submitting..." : "Next"}
-            </Button>
-          </div>
-        </form>
-      </CardContent>
-    </Card>
+      <div className="space-y-3">
+        <Label
+          htmlFor="aboutMe"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          About Me
+        </Label>
+        <Textarea
+          id="aboutMe"
+          {...register("aboutMe")}
+          className={classes.textarea}
+          placeholder="Tell us about yourself"
+          rows={4}
+        />
+        {errors.aboutMe && (
+          <p className={`${colors.error} text-sm`}>
+            {errors.aboutMe.message}
+          </p>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        <Label
+          htmlFor="preferredLanguage"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Preferred Language
+        </Label>
+        <Input
+          id="preferredLanguage"
+          {...register("preferredLanguage")}
+          className={classes.input}
+          placeholder="Your preferred language"
+        />
+        {errors.preferredLanguage && (
+          <p className={`${colors.error} text-sm`}>
+            {errors.preferredLanguage.message}
+          </p>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        <Label
+          htmlFor="specialRequirements"
+          className={`${colors.textPrimary} font-medium`}
+        >
+          Special Requirements
+        </Label>
+        <Textarea
+          id="specialRequirements"
+          {...register("specialRequirements")}
+          className={classes.textarea}
+          placeholder="Any special requirements or accommodations"
+          rows={3}
+        />
+        {errors.specialRequirements && (
+          <p className={`${colors.error} text-sm`}>
+            {errors.specialRequirements.message}
+          </p>
+        )}
+      </div>
+
+      <div className="flex gap-4">
+        <Button
+          type="button"
+          onClick={onBack}
+          variant="outline"
+          className={`${classes.secondaryButton} flex-1`}
+        >
+          Back
+        </Button>
+        <Button
+          type="submit"
+          className={`${classes.primaryButton} flex-1`}
+        >
+          Next
+        </Button>
+      </div>
+    </form>
   );
 };
 
