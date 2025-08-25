@@ -4,8 +4,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { PersonalInfoAndRole, PersonalInfoAndRoleSchema } from "@/schemas/user";
+import { PersonalInfoAndRole } from "@/schemas/user";
+import { PersonalInfoAndRoleFormSchema } from "@/utils/onboarding";
 import { useSession } from "next-auth/react";
+import { z } from "zod";
 import { useThemeClasses } from "../useTheme";
 
 interface Props {
@@ -21,21 +23,26 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
     handleSubmit,
     control,
     formState: { errors },
-  } = useForm<PersonalInfoAndRole>({
-    resolver: zodResolver(PersonalInfoAndRoleSchema),
+  } = useForm<z.infer<typeof PersonalInfoAndRoleFormSchema>>({
+    resolver: zodResolver(PersonalInfoAndRoleFormSchema),
+    mode: "onChange",
     defaultValues: {
-      ...initialData,
+      name: "",
       email: session?.user?.email || "",
+      onlineStatus: false,
+      onboardingCompleted: false,
+      role: "CONSULTEE",
+      ...initialData,
     },
   });
 
-  const onSubmit = (data: PersonalInfoAndRole) => {
+  const onSubmit = (data: z.infer<typeof PersonalInfoAndRoleFormSchema>) => {
     // Ensure email from session is used
     const submissionData = {
       ...data,
       email: session?.user?.email || "",
     };
-    onNext(submissionData);
+    onNext(submissionData as PersonalInfoAndRole);
   };
 
   return (
@@ -107,20 +114,20 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
           name="role"
           control={control}
           render={({ field }) => (
-            <div className="grid grid-cols-3 gap-2">
-              {["CONSULTEE", "CONSULTANT", "STAFF"].map((role) => (
+            <div className="flex flex-col space-y-2">
+              {["CONSULTANT", "CONSULTEE", "STAFF"].map((role) => (
                 <Button
                   key={role}
                   type="button"
-                  variant={field.value === role ? "default" : "outline"}
                   onClick={() => field.onChange(role)}
-                  className={`h-12 rounded-lg font-medium transition-all duration-200 ${
+                  variant={field.value === role ? "default" : "outline"}
+                  className={
                     field.value === role
                       ? classes.primaryButton
                       : classes.secondaryButton
-                  }`}
+                  }
                 >
-                  {role.charAt(0) + role.slice(1).toLowerCase()}
+                  {role.charAt(0).toUpperCase() + role.slice(1).toLowerCase()}
                 </Button>
               ))}
             </div>
@@ -131,11 +138,8 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
         )}
       </div>
 
-      <Button
-        type="submit"
-        className={`w-full h-12 ${classes.primaryButton} mt-8`}
-      >
-        Next Step →
+      <Button type="submit" className={`${classes.primaryButton} w-full`}>
+        Next
       </Button>
     </form>
   );
