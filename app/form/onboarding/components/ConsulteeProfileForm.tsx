@@ -6,7 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ConsulteeProfile } from "@/schemas/user";
 import { Textarea } from "@/components/ui/textarea";
-import { ConsulteeProfileFormSchema, OnboardingFormData } from "@/utils/onboarding";
+import {
+  ConsulteeProfileFormSchema,
+  OnboardingFormData,
+} from "@/utils/onboarding";
 import { z } from "zod";
 import { useThemeClasses } from "../useTheme";
 

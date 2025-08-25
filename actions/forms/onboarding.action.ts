@@ -7,8 +7,10 @@ export async function updateOnboardingInformationAction(
   userId: string,
   body: any,
 ): Promise<{ success: boolean; user?: any; error?: string }> {
-  console.log("Server Action: updateOnboardingInformationAction - Delegating to central utils");
-  
+  console.log(
+    "Server Action: updateOnboardingInformationAction - Delegating to central utils",
+  );
+
   // Use the central processing function
   return await processOnboardingData(userId, body);
 }

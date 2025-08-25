@@ -301,30 +301,42 @@ export const OnboardingFormDataSchema = PersonalInfoAndRoleFormSchema.extend({
   onboardingCompleted: z.boolean().default(false),
   emailVerified: z.date().optional(),
   image: z.string().optional(),
-  preferredCommunicationMethod: z.nativeEnum(ConsultationMode).default(ConsultationMode.VIDEO),
+  preferredCommunicationMethod: z
+    .nativeEnum(ConsultationMode)
+    .default(ConsultationMode.VIDEO),
   // Consultant fields
   description: z.string().optional(),
   qualifications: z.string().optional(),
   specialization: z.string().optional(),
   experience: experienceValidation.optional(),
-  domain: z.object({
-    id: z.string(),
-    name: z.string(),
-  }).optional(),
-  subDomains: z.array(z.object({
-    id: z.string(),
-    name: z.string(),
-    domainId: z.string(),
-  })).optional(),
-  tags: z.array(z.object({
-    id: z.string(),
-    name: z.string(),
-    domainId: z.string(),
-  })).optional(),
+  domain: z
+    .object({
+      id: z.string(),
+      name: z.string(),
+    })
+    .optional(),
+  subDomains: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        domainId: z.string(),
+      }),
+    )
+    .optional(),
+  tags: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        domainId: z.string(),
+      }),
+    )
+    .optional(),
   scheduleType: z.nativeEnum(ScheduleType).optional(),
   weeklySlots: z.array(SlotWeeklyCreateInputSchema).optional(),
   customSlots: z.array(SlotCustomCreateInputSchema).optional(),
-  
+
   // Consultee fields
   education: z.string().optional(),
   occupation: z.string().optional(),
@@ -333,13 +345,13 @@ export const OnboardingFormDataSchema = PersonalInfoAndRoleFormSchema.extend({
   specialRequirements: z.string().optional(),
   interests: z.array(z.string()).optional(),
   goals: z.array(z.string()).optional(),
-  
+
   // Staff fields
   department: z.string().optional(),
   position: z.string().optional(),
   permissions: z.record(z.boolean()).optional(),
   responsibilities: z.record(z.boolean()).optional(),
-  
+
   // Agreement fields
   termsAccepted: z.boolean().optional(),
   privacyAccepted: z.boolean().optional(),
@@ -352,14 +364,16 @@ export type OnboardingFormData = z.infer<typeof OnboardingFormDataSchema>;
 // #region Data Transformation Utilities
 
 export function transformOnboardingFormToServerData(
-  formData: OnboardingFormData
+  formData: OnboardingFormData,
 ): OnboardingData {
   const baseData = {
     name: formData.name,
     email: formData.email,
     phone: formData.phone,
     address: formData.address,
-    currentTimezone: formData.currentTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+    currentTimezone:
+      formData.currentTimezone ||
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
     onlineStatus: formData.onlineStatus || false,
     onboardingCompleted: true, // Set to true when completing onboarding
     role: formData.role,
@@ -401,8 +415,12 @@ export function transformOnboardingFormToServerData(
             slotsOfAvailabilityCustom: formData.customSlots?.length
               ? {
                   create: formData.customSlots.map((slot) => ({
-                    slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC).toISOString(),
-                    slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC).toISOString(),
+                    slotStartTimeInUTC: new Date(
+                      slot.slotStartTimeInUTC,
+                    ).toISOString(),
+                    slotEndTimeInUTC: new Date(
+                      slot.slotEndTimeInUTC,
+                    ).toISOString(),
                   })),
                 }
               : undefined,
@@ -422,7 +440,8 @@ export function transformOnboardingFormToServerData(
             education: formData.education,
             occupation: formData.occupation,
             aboutMe: formData.aboutMe,
-            preferredCommunicationMethod: formData.preferredCommunicationMethod || ConsultationMode.VIDEO,
+            preferredCommunicationMethod:
+              formData.preferredCommunicationMethod || ConsultationMode.VIDEO,
             preferredLanguage: formData.preferredLanguage,
             specialRequirements: formData.specialRequirements,
             interests: formData.interests,
@@ -901,7 +920,7 @@ export async function processOnboardingData(
     await getExistingUserForValidation(userId);
 
     const { default: prisma } = await import("@/lib/prisma");
-    
+
     const updatedUser = await prisma.$transaction(async (tx) => {
       const baseUserData: Prisma.UserUpdateInput = {
         name: validatedBody.name,

@@ -15,7 +15,10 @@ import {
 } from "@/components/ui/select";
 import { ConsultantProfile, PersonalInfoAndRole } from "@/schemas/user";
 import { Domain, SubDomain, Tag } from "@/schemas/plans";
-import { ConsultantProfileFormSchema, OnboardingFormData } from "@/utils/onboarding";
+import {
+  ConsultantProfileFormSchema,
+  OnboardingFormData,
+} from "@/utils/onboarding";
 import { z } from "zod";
 import { useThemeClasses } from "../useTheme";
 

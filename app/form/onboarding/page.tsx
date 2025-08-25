@@ -1,9 +1,9 @@
 "use client";
 import { updateOnboardingInformationAction } from "@/actions/forms/onboarding.action";
-import { 
-  OnboardingFormData, 
-  OnboardingFormDataSchema, 
-  transformOnboardingFormToServerData 
+import {
+  OnboardingFormData,
+  OnboardingFormDataSchema,
+  transformOnboardingFormToServerData,
 } from "@/utils/onboarding";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
@@ -88,7 +88,7 @@ const MultiStepForm: React.FC = () => {
 
   const handleSubmit = async (data: OnboardingFormData) => {
     const finalData = { ...formData, ...data };
-    
+
     try {
       const id = session?.user?.id;
       if (!id) {
@@ -99,34 +99,47 @@ const MultiStepForm: React.FC = () => {
       const validationResult = OnboardingFormDataSchema.safeParse(finalData);
       if (!validationResult.success) {
         const errors = validationResult.error.errors;
-        const errorsByField = errors.reduce((acc, error) => {
-          const field = error.path.join(".");
-          acc[field] = error.message;
-          return acc;
-        }, {} as Record<string, string>);
+        const errorsByField = errors.reduce(
+          (acc, error) => {
+            const field = error.path.join(".");
+            acc[field] = error.message;
+            return acc;
+          },
+          {} as Record<string, string>,
+        );
 
         // Create user-friendly error message
-        const criticalErrors = errors.filter(e => 
-          ['name', 'email', 'role', 'description', 'qualifications', 'specialization'].includes(e.path[0] as string)
+        const criticalErrors = errors.filter((e) =>
+          [
+            "name",
+            "email",
+            "role",
+            "description",
+            "qualifications",
+            "specialization",
+          ].includes(e.path[0] as string),
         );
-        
-        const errorMessage = criticalErrors.length > 0
-          ? `Please complete required fields: ${criticalErrors.map(e => e.path.join(" > ")).join(", ")}`
-          : `Form validation errors: ${errors.map(e => `${e.path.join(".")}: ${e.message}`).join(", ")}`;
+
+        const errorMessage =
+          criticalErrors.length > 0
+            ? `Please complete required fields: ${criticalErrors.map((e) => e.path.join(" > ")).join(", ")}`
+            : `Form validation errors: ${errors.map((e) => `${e.path.join(".")}: ${e.message}`).join(", ")}`;
 
         toast({
           title: "Please Complete Required Fields",
           description: errorMessage,
           variant: "destructive",
         });
-        
+
         console.warn("Form validation errors:", errorsByField);
         return;
       }
 
       // Transform the data for server submission
-      const requestBody = transformOnboardingFormToServerData(validationResult.data);
-      
+      const requestBody = transformOnboardingFormToServerData(
+        validationResult.data,
+      );
+
       toast({
         title: "Updating Onboarding Information",
         description: "Please wait...",

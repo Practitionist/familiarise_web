@@ -3,7 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { PreferredScheduleFormSchema, OnboardingFormData } from "@/utils/onboarding";
+import {
+  PreferredScheduleFormSchema,
+  OnboardingFormData,
+} from "@/utils/onboarding";
 import {
   DAYS_OF_WEEK,
   type DayOfWeek,
@@ -71,13 +74,12 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   const { classes, colors } = useThemeClasses();
   const { timezone, isLoading: timezoneLoading } = useTimezone();
   const { handleSubmit, watch, setValue, control } = useForm({
-      resolver: zodResolver(PreferredScheduleFormSchema),
-      defaultValues: {
-        ...initialData,
-        scheduleType: initialData.scheduleType || "WEEKLY",
-      },
+    resolver: zodResolver(PreferredScheduleFormSchema),
+    defaultValues: {
+      ...initialData,
+      scheduleType: initialData.scheduleType || "WEEKLY",
     },
-  );
+  });
   const scheduleType = watch("scheduleType");
 
   const [weeklySlots, setWeeklySlots] = useState<SlotsType>({});
