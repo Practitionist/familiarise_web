@@ -47,14 +47,14 @@ const ConsultantAgreementForm: React.FC<Props> = ({
         <Button
           type="button"
           onClick={onBack}
-          className={`flex-1 h-12 ${classes.secondaryButton}`}
+          className={`flex-1 h-12 ${classes.navBack}`}
         >
           ← Back
         </Button>
         <Button
           type="submit"
           disabled={!termsChecked || !privacyChecked}
-          className={`flex-1 h-12 ${classes.primaryButton} disabled:opacity-50 disabled:cursor-not-allowed`}
+          className={`flex-1 h-12 ${classes.navNext} disabled:opacity-50 disabled:cursor-not-allowed`}
         >
           Next Step →
         </Button>

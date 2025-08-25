@@ -851,4 +851,3 @@ enum ScheduleType {
   WEEKLY
   CUSTOM
 }
-
