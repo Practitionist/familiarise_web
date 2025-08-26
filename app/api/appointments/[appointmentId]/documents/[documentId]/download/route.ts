@@ -1,0 +1,175 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import options from "@/app/api/auth/[...nextauth]/options";
+import prisma from "@/lib/prisma";
+import supabase from "@/lib/supabase";
+import { Prisma } from "@prisma/client";
+
+export async function GET(
+  request: NextRequest,
+  {
+    params,
+  }: { params: Promise<{ appointmentId: string; documentId: string }> },
+) {
+  try {
+    const { appointmentId, documentId } = await params;
+
+    // Get user session
+    const session = await getServerSession(options);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        {
+          error: "Authentication required",
+          message: "Please sign in to download documents",
+        },
+        { status: 401 },
+      );
+    }
+
+    const userId = session.user.id;
+
+    // Build access control for the appointment first
+    const isDevelopment = process.env.NODE_ENV === "development";
+
+    // Build appointment access control - same as in the documents API
+    const appointmentWhereClause: Prisma.AppointmentWhereInput = {
+      id: appointmentId,
+    };
+
+    if (!isDevelopment) {
+      appointmentWhereClause.OR = [
+        // User is the consultee
+        {
+          consultation: {
+            requestedBy: {
+              user: {
+                id: userId,
+              },
+            },
+          },
+        },
+        // User is the consultant
+        {
+          consultation: {
+            consultationPlan: {
+              consultantProfile: {
+                user: {
+                  id: userId,
+                },
+              },
+            },
+          },
+        },
+        // User is part of subscription
+        {
+          subscription: {
+            OR: [
+              {
+                requestedBy: {
+                  user: {
+                    id: userId,
+                  },
+                },
+              },
+              {
+                subscriptionPlan: {
+                  consultantProfile: {
+                    user: {
+                      id: userId,
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ];
+    }
+
+    // First verify user has access to the appointment
+    const appointment = await prisma.appointment.findFirst({
+      where: appointmentWhereClause,
+    });
+
+    if (!appointment) {
+      return NextResponse.json(
+        {
+          error: "Appointment not found",
+          message: isDevelopment
+            ? `[DEV MODE] This appointment doesn't exist or you don't have access to it.`
+            : "This appointment doesn't exist or you don't have permission to access it.",
+          code: "NOT_FOUND",
+        },
+        { status: 404 },
+      );
+    }
+
+    // Now find the document
+    const document = await prisma.appointmentDocument.findFirst({
+      where: {
+        id: documentId,
+        appointmentId,
+      },
+    });
+
+    if (!document) {
+      return NextResponse.json(
+        {
+          error: "Document not found",
+          message: isDevelopment
+            ? `[DEV MODE] Document ${documentId} not found in appointment ${appointmentId}`
+            : "The requested document was not found or you don't have permission to access it",
+          code: "NOT_FOUND",
+        },
+        { status: 404 },
+      );
+    }
+
+    // Download file from Supabase
+    const { data: fileData, error: downloadError } = await supabase.storage
+      .from("documents")
+      .download(document.storagePath);
+
+    if (downloadError || !fileData) {
+      console.error("Supabase download error:", downloadError);
+      return NextResponse.json(
+        {
+          error: "Download failed",
+          message:
+            "Unable to retrieve the file from storage. Please try again later.",
+          code: "STORAGE_ERROR",
+        },
+        { status: 500 },
+      );
+    }
+
+    // Convert blob to buffer
+    const buffer = Buffer.from(await fileData.arrayBuffer());
+
+    // Create response with proper headers for download
+    const response = new NextResponse(buffer, {
+      status: 200,
+      headers: {
+        "Content-Type": document.mimeType || "application/octet-stream",
+        "Content-Disposition": `attachment; filename="${encodeURIComponent(document.originalName)}"`,
+        "Content-Length": buffer.length.toString(),
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
+    });
+
+    return response;
+  } catch (error) {
+    console.error("Document download error:", error);
+    return NextResponse.json(
+      {
+        error: "Server error",
+        message:
+          "An unexpected error occurred while downloading the document. Please try again.",
+        code: "SERVER_ERROR",
+      },
+      { status: 500 },
+    );
+  }
+}
