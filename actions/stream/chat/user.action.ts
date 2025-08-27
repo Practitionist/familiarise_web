@@ -2,10 +2,115 @@
 
 import { StreamChat } from "stream-chat";
 import prisma from "@/lib/prisma";
-import { mapRoleToStream } from "@/lib/user";
+import { mapRoleToStream, getProfileDisplayName } from "@/lib/user";
 
 const apiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 const apiSecret = process.env.STREAM_API_SECRET;
+
+/**
+ * Updates existing Stream Chat users with correct profile names
+ * This should be run once to fix existing users who were created with account names
+ * @returns Summary of updated users
+ */
+export const updateStreamUserNames = async () => {
+  try {
+    if (!apiKey || !apiSecret) {
+      throw new Error("Stream API keys not configured");
+    }
+
+    const client = StreamChat.getInstance(apiKey, apiSecret);
+
+    // Get all users with profiles from database
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        role: true,
+        consulteeProfile: {
+          select: {
+            user: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        consultantProfile: {
+          select: {
+            user: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+      where: {
+        OR: [
+          { consulteeProfile: { isNot: null } },
+          { consultantProfile: { isNot: null } },
+        ],
+      },
+    });
+
+    console.log(`Found ${users.length} users with profiles to update`);
+
+    let updatedCount = 0;
+    const results = [];
+
+    for (const user of users) {
+      try {
+        const displayName = getProfileDisplayName(user);
+        const streamRole = mapRoleToStream(user.role);
+
+        // Only update if the display name is different from account name
+        if (displayName !== user.name) {
+          console.log(`Updating Stream user ${user.id}: "${user.name}" → "${displayName}"`);
+          
+          await client.upsertUser({
+            id: user.id,
+            name: displayName,
+            email: user.email,
+            image: user.image ?? undefined,
+            role: streamRole,
+          });
+
+          updatedCount++;
+          results.push({
+            userId: user.id,
+            oldName: user.name,
+            newName: displayName,
+            status: 'updated',
+          });
+        } else {
+          results.push({
+            userId: user.id,
+            oldName: user.name,
+            newName: displayName,
+            status: 'no_change_needed',
+          });
+        }
+      } catch (error) {
+        console.error(`Error updating user ${user.id}:`, error);
+        results.push({
+          userId: user.id,
+          oldName: user.name,
+          newName: 'error',
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+
+    console.log(`Successfully updated ${updatedCount} Stream Chat users`);
+    return { updatedCount, totalProcessed: users.length, results };
+  } catch (error) {
+    console.error("Error updating Stream Chat user names:", error);
+    throw error;
+  }
+};
 
 /**
  * Upserts a user to Stream Chat
@@ -18,7 +123,7 @@ export const upsertUserToStream = async (userId: string) => {
       throw new Error("Stream API keys not configured");
     }
 
-    // Get user details from the database
+    // Get user details from the database including profile information
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -27,6 +132,24 @@ export const upsertUserToStream = async (userId: string) => {
         email: true,
         image: true,
         role: true,
+        consulteeProfile: {
+          select: {
+            user: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        consultantProfile: {
+          select: {
+            user: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -37,15 +160,16 @@ export const upsertUserToStream = async (userId: string) => {
     // Initialize the Stream Chat client
     const client = StreamChat.getInstance(apiKey, apiSecret);
 
-    // Use the shared utility function
+    // Use the shared utility functions
     const streamRole = mapRoleToStream(user.role);
+    const displayName = getProfileDisplayName(user);
 
-    console.log(`Upserting user ${user.id} with role ${streamRole}`);
+    console.log(`Upserting user ${user.id} with role ${streamRole} and display name "${displayName}"`);
 
-    // Upsert the user to Stream Chat
+    // Upsert the user to Stream Chat with profile-based display name
     const streamUser = await client.upsertUser({
       id: user.id,
-      name: user.name ?? user.id,
+      name: displayName,
       email: user.email,
       image: user.image ?? undefined,
       role: streamRole,

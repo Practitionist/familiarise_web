@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
 import {
   createWebinarChannel,
   createClassChannel,
@@ -9,6 +11,15 @@ import {
 
 export async function POST(req: NextRequest) {
   try {
+    // Authentication check
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { success: false, error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+
     const body = await req.json();
     const {
       channelType,
@@ -24,6 +35,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { success: false, error: "channelType and createdById are required" },
         { status: 400 },
+      );
+    }
+
+    // Authorization check: ensure requester matches createdById
+    if (session.user.id !== createdById) {
+      return NextResponse.json(
+        { success: false, error: "Not authorized to create channel for this user" },
+        { status: 403 },
       );
     }
 

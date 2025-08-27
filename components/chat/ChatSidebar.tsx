@@ -452,24 +452,35 @@ export const ChatSidebar = () => {
           if (event.channel.type === "team") {
             setTeamChannels((prev) =>
               prev.map((ch) =>
-                ch.cid === event.channel?.id ? updatedChannel : ch,
+                ch.cid === event.channel?.cid ? updatedChannel : ch,
               ),
             );
           } else if (event.channel.type === "messaging") {
             setDirectMessages((prev) =>
               prev.map((ch) =>
-                ch.cid === event.channel?.id ? updatedChannel : ch,
+                ch.cid === event.channel?.cid ? updatedChannel : ch,
               ),
             );
           }
         }
       };
 
-      client.on("*.**", handleEvent); // Listen to all events
+      // Listen to specific events only for better performance
+      const events = [
+        "notification.added_to_channel",
+        "notification.removed_from_channel", 
+        "channel.deleted",
+        "message.new",
+        "notification.message_new", 
+        "message.read",
+        "channel.updated"
+      ];
+      
+      events.forEach(eventType => client.on(eventType, handleEvent));
 
       return () => {
-        console.log("Removing Stream event listener");
-        client.off("*.**", handleEvent);
+        console.log("Removing Stream event listeners");
+        events.forEach(eventType => client.off(eventType, handleEvent));
       };
     } else {
       setIsLoading(true);

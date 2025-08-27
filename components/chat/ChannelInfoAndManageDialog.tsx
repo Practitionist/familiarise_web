@@ -124,6 +124,63 @@ export const ChannelInfoAndManageDialog = ({
     }
   };
 
+  const handleClearChat = async () => {
+    if (!client?.userID) return;
+
+    setIsLoading(true);
+    try {
+      // Use Stream Chat's truncate method to clear all messages
+      await channel.truncate();
+
+      toast({
+        title: "Success",
+        description: "Chat history has been cleared",
+      });
+      
+      // Close the dialog
+      setOpen(false);
+    } catch (error) {
+      console.error("Error clearing chat:", error);
+      toast({
+        title: "Error",
+        description: "Failed to clear chat history",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteChannel = async () => {
+    if (!client?.userID || !isEventOwner) return;
+
+    setIsLoading(true);
+    try {
+      // Delete the entire channel
+      await channel.delete();
+
+      // Set active channel to undefined to show empty state
+      setActiveChannel(undefined);
+
+      toast({
+        title: "Success",
+        description: "Channel has been deleted",
+      });
+      
+      // Close the dialog
+      setOpen(false);
+    } catch (error) {
+      console.error("Error deleting channel:", error);
+      toast({
+        title: "Error",
+        description: "Failed to delete channel",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleLeaveChannel = async () => {
     if (!client?.userID) return;
 
@@ -245,13 +302,7 @@ export const ChannelInfoAndManageDialog = ({
                           variant="outline"
                           size="sm"
                           className="w-full flex items-center justify-center gap-2"
-                          onClick={() =>
-                            toast({
-                              title: "Info",
-                              description:
-                                "Clear chat functionality would be implemented here",
-                            })
-                          }
+                          onClick={handleClearChat}
                           disabled={isLoading}
                         >
                           <Trash2Icon className="h-4 w-4" />
@@ -276,13 +327,7 @@ export const ChannelInfoAndManageDialog = ({
                           variant="outline"
                           size="sm"
                           className="w-full flex items-center justify-center gap-2"
-                          onClick={() =>
-                            toast({
-                              title: "Info",
-                              description:
-                                "Clear chat functionality would be implemented here",
-                            })
-                          }
+                          onClick={handleClearChat}
                           disabled={isLoading}
                         >
                           <Trash2Icon className="h-4 w-4" />
@@ -293,13 +338,7 @@ export const ChannelInfoAndManageDialog = ({
                           variant="outline"
                           size="sm"
                           className="w-full flex items-center justify-center gap-2"
-                          onClick={() =>
-                            toast({
-                              title: "Info",
-                              description:
-                                "Delete chat functionality would be implemented here",
-                            })
-                          }
+                          onClick={handleDeleteChannel}
                           disabled={isLoading}
                         >
                           <XIcon className="h-4 w-4" />

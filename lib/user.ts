@@ -83,33 +83,73 @@ export const fetchReviews = async (
 /**
  * Maps application user roles to Stream Chat roles
  *
- * Standard Stream Chat roles:
- * - admin: Full permissions (create, read, update, delete channels)
- * - user: Basic user permissions (but may not have team channel access by default)
- * - guest: Limited permissions
+ * Stream Chat roles and their typical permissions:
+ * - admin: Full permissions (create, read, update, delete channels, manage users)
+ * - moderator: Can moderate channels, ban users, delete messages
+ * - user: Standard user permissions (join channels, send messages, read)
+ * - guest: Limited permissions (often read-only or restricted sending)
  * - anonymous: Very limited permissions
  *
- * For now, using admin for consultants and consultees to ensure team channel access.
- * This can be refined later with custom roles configured in Stream Chat dashboard.
+ * Note: For team channel access, users typically need 'user' role or higher.
+ * Custom roles can be configured in Stream Chat dashboard for more granular control.
  *
  * @param role The application user role
  * @returns The corresponding Stream Chat role
  */
 export function mapRoleToStream(role: string | null | undefined): string {
-  if (!role) return "admin"; // Default to admin for team channel access
+  if (!role) return "user"; // Default to user role for basic access
 
   switch (role.toUpperCase()) {
     case "ADMIN":
+    case "STAFF":
+      // System admins and staff get full admin permissions
       return "admin";
     case "CONSULTANT":
       // Consultants need to create and manage their event channels
-      return "admin";
+      // but don't need full admin permissions for security
+      return "moderator";
     case "CONSULTEE":
-      // Consultees need to read and participate in team channels they join
-      return "admin";
     case "USER":
-      return "admin";
+      // Consultees and regular users get standard user permissions
+      // This should allow team channel participation while limiting admin actions
+      return "user";
     default:
-      return "admin";
+      // Unknown roles get basic user permissions
+      return "user";
   }
+}
+
+/**
+ * Determines the appropriate display name for a user in chat contexts
+ * Priority: consultee profile name → consultant profile name → account name → user ID
+ * 
+ * @param user The user object with potential profile information
+ * @returns The most appropriate display name for chat interfaces
+ */
+export function getProfileDisplayName(user: {
+  id: string;
+  name?: string | null;
+  consulteeProfile?: {
+    user?: {
+      name?: string | null;
+    };
+  } | null;
+  consultantProfile?: {
+    user?: {
+      name?: string | null;
+    };
+  } | null;
+}): string {
+  // Priority order for name resolution:
+  // 1. Consultee profile user name (for consultees in chat)
+  // 2. Consultant profile user name (for consultants in chat) 
+  // 3. Direct user account name
+  // 4. User ID as final fallback
+  
+  const consulteeName = user.consulteeProfile?.user?.name;
+  const consultantName = user.consultantProfile?.user?.name;
+  const accountName = user.name;
+  const userId = user.id;
+
+  return consulteeName || consultantName || accountName || userId;
 }

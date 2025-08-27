@@ -1,6 +1,5 @@
 import { performStreamUserSync, SyncSummary } from "@/jobs/stream-sync"; // Removed FailedDeletionEntry from import if not directly used, or ensure no local conflict
 import { NextResponse } from "next/server";
-import { StreamChat } from "stream-chat";
 
 const streamApiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
 const streamApiSecret = process.env.STREAM_API_SECRET;
@@ -23,20 +22,6 @@ if (!streamApiKey || !streamApiSecret) {
   // The actual enforcement for a request will happen inside POST.
 }
 
-const serverStreamClient = StreamChat.getInstance(
-  streamApiKey!,
-  streamApiSecret!,
-  {
-    timeout: 30000, // Increased timeout for potentially longer operations (30 seconds)
-  },
-);
-
-interface FailedDeletionFromSDK {
-  user_id: string;
-  message: string;
-}
-
-const EXCLUDED_USER_IDS = new Set(["system", "teetangh"]); // Add any specific user IDs to always exclude
 
 export async function POST(request: Request) {
   // 1. Security Check

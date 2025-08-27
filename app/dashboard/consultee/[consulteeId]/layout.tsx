@@ -300,6 +300,10 @@ export default function ConsulteeLayout({
     );
   }
 
+  // Determine the appropriate display name - prefer consultee profile name if available
+  const displayName = profileDetails?.user?.name || userDetails.name;
+  const displayImage = profileDetails?.user?.image || userDetails.image;
+
   // Main layout
   return (
     <UserProvider userDetails={userDetails}>
@@ -307,12 +311,12 @@ export default function ConsulteeLayout({
         <ConsulteeNav
           consulteeId={consulteeId}
           currentPath={currentPath}
-          userImage={userDetails.image}
-          userName={userDetails.name}
+          userImage={displayImage}
+          userName={displayName}
           onNavHover={handleNavHover}
           isLoadingProfile={isLoadingProfile}
         />
-        <main className="flex-grow overflow-y-auto p-8">
+        <main className={`flex-grow overflow-y-auto ${currentPath === 'messages' ? '' : 'p-8'}`}>
           <StreamProvider
             userId={userDetails.id}
             enableChat={true}
