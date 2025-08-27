@@ -11,6 +11,7 @@ import {
   AllocationOptions,
   AllocationResult,
 } from "../utils/allocationAlgorithms";
+import { AllocationService } from "../utils/allocationService";
 
 /**
  * ENHANCED EVENT SLOT ALLOCATION HOOK
@@ -1218,7 +1219,54 @@ export function useEventSlotAllocation(
   const isValid = validationResult.isValid;
 
   // Whether allocation can proceed
-  const canAllocate = isValid && selectedSlots.length === requiredSlots;
+  const canAllocate = useMemo(() => {
+    if (!isValid) return false;
+
+    // For subscriptions, we need to account for past calls
+    if (eventType === "subscription" && options.sessionDurationInHours) {
+      const slotsPerCall = slotLimits.slotsPerSession;
+      const completedCalls = Math.floor(selectedSlots.length / slotsPerCall);
+
+      // Calculate past calls using the same logic as footer
+      const allowedStart = options.startDate;
+      const allowedEnd = options.endDate;
+      const callsPerWeek = options.callsPerWeek || 1;
+
+      let pastCallsCompleted = 0;
+      if (allowedStart && allowedEnd) {
+        const currentDate = new Date();
+        currentDate.setHours(0, 0, 0, 0);
+        const prevSaturday = new Date(startOfWeek(currentDate));
+        prevSaturday.setDate(prevSaturday.getDate() - 1);
+        const pastEnd = prevSaturday < allowedEnd ? prevSaturday : allowedEnd;
+        const pastWeeks =
+          pastEnd >= allowedStart
+            ? countSundayWeeksInclusive(allowedStart, pastEnd)
+            : 0;
+        pastCallsCompleted = pastWeeks * callsPerWeek;
+      }
+
+      const totalCallsIncludingPast = pastCallsCompleted + completedCalls;
+      const maxTotalCalls = slotLimits.maxSlots;
+
+      // For subscriptions, we just need to ensure the selection is valid
+      // Users don't need to allocate all calls, just validate their selection
+      return totalCallsIncludingPast <= maxTotalCalls;
+    }
+
+    // For other event types, require exact slot count
+    return selectedSlots.length === requiredSlots;
+  }, [
+    isValid,
+    selectedSlots.length,
+    requiredSlots,
+    eventType,
+    options.sessionDurationInHours,
+    options.startDate,
+    options.endDate,
+    options.callsPerWeek,
+    slotLimits,
+  ]);
 
   // Validation errors and warnings
   const validationErrors = validationResult.errors;
@@ -1498,8 +1546,69 @@ export function useEventSlotAllocation(
             const callsPerWeek = options.callsPerWeek || 1;
             const maxTotalCalls = slotLimits.maxSlots;
 
-            // Simple week tracking - no need for pre-generated array
+            // PRIORITY 1: Check for incomplete calls first - this is the highest priority
+            const currentSlotsByDay = groupSlotsByDay(currentSlots);
+            const incompleteCallDays: string[] = [];
 
+            // Find any days with incomplete calls
+            currentSlotsByDay.forEach((daySlots, dayKey) => {
+              if (daySlots.length > 0 && daySlots.length < slotsPerCall) {
+                incompleteCallDays.push(dayKey);
+              }
+            });
+
+            // If there are incomplete calls, only allow selection on those days
+            if (incompleteCallDays.length > 0) {
+              const newSlotDay = slot.startTime.toDateString();
+
+              // If trying to select a slot on a different day than the incomplete call
+              if (!incompleteCallDays.includes(newSlotDay)) {
+                const incompleteDay = incompleteCallDays[0];
+                const incompleteSlots =
+                  currentSlotsByDay.get(incompleteDay) || [];
+                const remainingSlots = slotsPerCall - incompleteSlots.length;
+
+                setTimeout(() => {
+                  setPendingToast({
+                    variant: "destructive",
+                    title: "Complete Ongoing Call First",
+                    description: `You have an incomplete call on ${new Date(incompleteDay).toLocaleDateString()}. Complete it first by selecting ${remainingSlots} more consecutive slot${remainingSlots > 1 ? "s" : ""} on the same day.`,
+                  });
+                }, 0);
+                return currentSlots;
+              }
+
+              // If selecting on the same day as incomplete call, check if it's consecutive
+              const daySlots = currentSlotsByDay.get(newSlotDay) || [];
+              if (daySlots.length > 0) {
+                const sortedDaySlots = [...daySlots].sort(
+                  (a, b) => a.startTime.getTime() - b.startTime.getTime()
+                );
+
+                const lastSlot = sortedDaySlots[sortedDaySlots.length - 1];
+                const firstSlot = sortedDaySlots[0];
+
+                const isConsecutiveBefore =
+                  slot.endTime.getTime() === firstSlot.startTime.getTime();
+                const isConsecutiveAfter =
+                  slot.startTime.getTime() === lastSlot.endTime.getTime();
+
+                if (!isConsecutiveBefore && !isConsecutiveAfter) {
+                  setTimeout(() => {
+                    setPendingToast({
+                      variant: "destructive",
+                      title: "Non-consecutive Selection",
+                      description:
+                        "Subscription call slots must be consecutive within the same day. Select an adjacent slot to complete the call.",
+                    });
+                  }, 0);
+                  return currentSlots;
+                }
+              }
+            }
+
+            // PRIORITY 2: Only proceed with other validations if no incomplete calls exist
+            // Simple week tracking - no need for pre-generated array
             // Simple confirmed call tracking per week
             const weeklyConfirmedCalls = new Map<string, boolean>();
 
@@ -1655,36 +1764,8 @@ export function useEventSlotAllocation(
               return currentSlots;
             }
 
-            // If we have existing slots for this day, check if the new slot would be consecutive
-            if (currentDaySlots.length > 0) {
-              // Sort existing slots for this day
-              const sortedDaySlots = [...currentDaySlots];
-              sortedDaySlots.sort(
-                (a, b) => a.startTime.getTime() - b.startTime.getTime()
-              );
-
-              // Check if the new slot would be consecutive with existing slots
-              const lastSlot = sortedDaySlots[sortedDaySlots.length - 1];
-              const firstSlot = sortedDaySlots[0];
-
-              // New slot should be either immediately before the first slot or after the last slot
-              const isConsecutiveBefore =
-                slot.endTime.getTime() === firstSlot.startTime.getTime();
-              const isConsecutiveAfter =
-                slot.startTime.getTime() === lastSlot.endTime.getTime();
-
-              if (!isConsecutiveBefore && !isConsecutiveAfter) {
-                setTimeout(() => {
-                  setPendingToast({
-                    variant: "destructive",
-                    title: "Non-consecutive Selection",
-                    description:
-                      "Subscription call slots must be consecutive within the same day",
-                  });
-                }, 0);
-                return currentSlots;
-              }
-            }
+            // Note: Consecutive slot validation is already handled in Priority 1 section above
+            // This ensures that incomplete calls must be completed before any other validations
 
             // Show progress feedback
             const completedCalls = Math.floor(
@@ -1810,51 +1891,229 @@ export function useEventSlotAllocation(
    * Allocate using manually selected slots
    */
   const manualAllocate = useCallback(async () => {
-    if (!isValid) {
+    // STRICT BLOCK: Do not allow allocation if any call/session is in progress (subscription/class)
+    if (
+      (eventType === "subscription" && options.sessionDurationInHours) ||
+      (eventType === "class" && options.sessionDurationInHours)
+    ) {
+      const slotsPerCall = slotLimits.slotsPerSession; // per-call or per-session
+      const slotsByDay = groupSlotsByDay(selectedSlots);
+      let hasIncomplete = false;
+      slotsByDay.forEach((daySlots) => {
+        if (daySlots.length > 0 && !isCompleteCall(daySlots, slotsPerCall)) {
+          hasIncomplete = true;
+        }
+      });
+      if (hasIncomplete) {
+        const message =
+          eventType === "class"
+            ? "A class session is in progress. Complete the ongoing session or clear selection."
+            : "A call is in progress. Complete the ongoing call or clear selection.";
+        setAllocationError(message);
+        toast({
+          variant: "destructive",
+          title:
+            eventType === "class" ? "Incomplete Session" : "Incomplete Call",
+          description: message,
+        });
+        onError?.(message);
+        return;
+      }
+    }
+
+    // Comprehensive validation check with detailed toast
+    const validationDetails = {
+      isValid,
+      errors: validationErrors,
+      warnings: validationWarnings,
+      selectedSlots: selectedSlots.length,
+      requiredSlots,
+      canAllocate,
+      eventType,
+      slotLimits,
+    };
+
+    // Create detailed validation message
+    let validationMessage = "";
+    let toastVariant: "default" | "destructive" = "default";
+    let toastTitle = "";
+
+    if (isValid && canAllocate) {
+      toastTitle = "✅ Validation Passed - Ready to Allocate";
+      validationMessage = `All validations passed! Ready to allocate ${selectedSlots.length} slots for ${eventType}.`;
+
+      // Add event-specific details
+      if (eventType === "subscription") {
+        const slotsPerCall = slotLimits.slotsPerSession;
+        const completedCalls = Math.floor(selectedSlots.length / slotsPerCall);
+
+        // Calculate past calls using the same logic as footer
+        const allowedStart = options.startDate;
+        const allowedEnd = options.endDate;
+        const callsPerWeek = options.callsPerWeek || 1;
+
+        let pastCallsCompleted = 0;
+        if (allowedStart && allowedEnd) {
+          const currentDate = new Date();
+          currentDate.setHours(0, 0, 0, 0);
+          const prevSaturday = new Date(startOfWeek(currentDate));
+          prevSaturday.setDate(prevSaturday.getDate() - 1);
+          const pastEnd = prevSaturday < allowedEnd ? prevSaturday : allowedEnd;
+          const pastWeeks =
+            pastEnd >= allowedStart
+              ? countSundayWeeksInclusive(allowedStart, pastEnd)
+              : 0;
+          pastCallsCompleted = pastWeeks * callsPerWeek;
+        }
+
+        const totalCallsIncludingPast = pastCallsCompleted + completedCalls;
+        const maxTotalCalls = slotLimits.maxSlots;
+
+        validationMessage += `\n• ${completedCalls} new calls selected`;
+        validationMessage += `\n• ${pastCallsCompleted} past calls (auto-completed)`;
+        validationMessage += `\n• Total calls: ${totalCallsIncludingPast}/${maxTotalCalls}`;
+        validationMessage += `\n• ${slotsPerCall} slots per call`;
+      } else if (eventType === "class") {
+        const slotsPerSession = slotLimits.slotsPerSession;
+        const completedSessions = Math.floor(
+          selectedSlots.length / slotsPerSession
+        );
+        validationMessage += `\n• ${completedSessions} complete sessions selected`;
+        validationMessage += `\n• ${slotsPerSession} slots per session`;
+        validationMessage += `\n• Max sessions: ${slotLimits.totalSessions}`;
+      } else {
+        validationMessage += `\n• ${selectedSlots.length} consecutive slots selected`;
+        validationMessage += `\n• Required: ${requiredSlots} slots`;
+      }
+
+      // Add general validation info
+      validationMessage += `\n• All slots are consecutive`;
+      validationMessage += `\n• No conflicts with existing appointments`;
+    } else {
+      toastVariant = "destructive";
+      toastTitle = "❌ Validation Failed";
+
+      if (!isValid) {
+        validationMessage = "Validation errors found:\n";
+        validationErrors.forEach((error, index) => {
+          validationMessage += `• ${index + 1}. ${error}\n`;
+        });
+      } else if (eventType === "subscription") {
+        // For subscriptions, show past calls info instead of slot count mismatch
+        const slotsPerCall = slotLimits.slotsPerSession;
+        const completedCalls = Math.floor(selectedSlots.length / slotsPerCall);
+
+        // Calculate past calls
+        const allowedStart = options.startDate;
+        const allowedEnd = options.endDate;
+        const callsPerWeek = options.callsPerWeek || 1;
+
+        let pastCallsCompleted = 0;
+        if (allowedStart && allowedEnd) {
+          const currentDate = new Date();
+          currentDate.setHours(0, 0, 0, 0);
+          const prevSaturday = new Date(startOfWeek(currentDate));
+          prevSaturday.setDate(prevSaturday.getDate() - 1);
+          const pastEnd = prevSaturday < allowedEnd ? prevSaturday : allowedEnd;
+          const pastWeeks =
+            pastEnd >= allowedStart
+              ? countSundayWeeksInclusive(allowedStart, pastEnd)
+              : 0;
+          pastCallsCompleted = pastWeeks * callsPerWeek;
+        }
+
+        const totalCallsIncludingPast = pastCallsCompleted + completedCalls;
+        const maxTotalCalls = slotLimits.maxSlots;
+
+        validationMessage = `Subscription validation:\n• ${completedCalls} new calls selected\n• ${pastCallsCompleted} past calls (auto-completed)\n• Total: ${totalCallsIncludingPast}/${maxTotalCalls} calls`;
+      } else if (selectedSlots.length !== requiredSlots) {
+        validationMessage = `Slot count mismatch:\n• Selected: ${selectedSlots.length} slots\n• Required: ${requiredSlots} slots`;
+      } else {
+        validationMessage = "Unknown validation issue";
+      }
+
+      // Add warnings if any
+      if (validationWarnings.length > 0) {
+        validationMessage += "\n\nWarnings:\n";
+        validationWarnings.forEach((warning, index) => {
+          validationMessage += `• ${index + 1}. ${warning}\n`;
+        });
+      }
+    }
+
+    // Show comprehensive validation toast
+    toast({
+      variant: toastVariant,
+      title: toastTitle,
+      description: validationMessage,
+    });
+
+    // Stop if invalid
+    if (!isValid || !canAllocate) {
       const errorMessage = validationErrors[0] || "Invalid slot selection";
       setAllocationError(errorMessage);
       onError?.(errorMessage);
       return;
     }
 
+    // Only wire backend for consultations right now
+    if (eventType !== "consultation") {
+      console.log(
+        "[useSlotAllocation] Skipping backend allocation for eventType:",
+        eventType
+      );
+      onSuccess?.({ success: true, selectedSlots });
+      return;
+    }
+
     setIsAllocating(true);
     setAllocationError(null);
-
     try {
-      const sessionDuration =
-        eventType === "consultation" || eventType === "webinar"
-          ? options.durationInHours
-          : options.sessionDurationInHours;
-
-      const allocationOptions: AllocationOptions = {
-        eventType,
-        eventId,
-        durationInMonths: options.durationInMonths,
-        callsPerWeek: options.callsPerWeek,
-        sessionDurationInHours: sessionDuration,
+      const payload = {
+        isAuto: false,
+        slots: selectedSlots.map((s) => s.startTime.toISOString()),
       };
+      console.log("[useSlotAllocation] Sending allocation request", {
+        consultationId: eventId,
+        ...payload,
+      });
 
-      const result = await AllocationAlgorithms.manualAllocate(
+      const result = await AllocationService.allocateSlots(
+        "consultation",
+        eventId,
         selectedSlots,
-        allocationOptions
+        { isAuto: false, reallocate: true }
       );
 
-      if (result.success) {
-        toast({
-          title: "Success",
-          description: "Slots allocated successfully",
-        });
-        onSuccess?.(result);
-      } else {
+      if (!result.success) {
         const errorMessage = result.error || "Manual allocation failed";
         setAllocationError(errorMessage);
         onError?.(errorMessage);
+        toast({
+          variant: "destructive",
+          title: "Allocation Failed",
+          description: errorMessage,
+        });
+        return;
       }
+
+      console.log("[useSlotAllocation] Allocation success", result);
+      toast({
+        title: "Success",
+        description: "Slots allocated successfully",
+      });
+      onSuccess?.(result as any);
+      setSelectedSlots([]);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Allocation failed";
       setAllocationError(errorMessage);
       onError?.(errorMessage);
+      toast({
+        variant: "destructive",
+        title: "Allocation Failed",
+        description: errorMessage,
+      });
     } finally {
       setIsAllocating(false);
     }
@@ -1862,9 +2121,11 @@ export function useEventSlotAllocation(
     selectedSlots,
     isValid,
     validationErrors,
+    validationWarnings,
+    requiredSlots,
+    canAllocate,
     eventType,
-    eventId,
-    options,
+    slotLimits,
     onSuccess,
     onError,
     toast,
@@ -1879,6 +2140,18 @@ export function useEventSlotAllocation(
       setAllocationError(null);
 
       try {
+        // Enforce allowed period on client before auto-selection
+        const allowedStart = options.startDate;
+        const allowedEnd = options.endDate;
+        const isSlotWithinAllowedPeriod = (slot: TimeSlot): boolean => {
+          if (allowedStart && slot.startTime < allowedStart) return false;
+          if (allowedEnd && slot.startTime > allowedEnd) return false;
+          return true;
+        };
+        const filteredAvailableSlots = availableSlots.filter(
+          isSlotWithinAllowedPeriod
+        );
+
         const sessionDuration =
           eventType === "consultation" || eventType === "webinar"
             ? options.durationInHours
@@ -1893,21 +2166,70 @@ export function useEventSlotAllocation(
         };
 
         const result = await AllocationAlgorithms.autoAllocate(
-          availableSlots,
+          filteredAvailableSlots,
           allocationOptions
         );
 
         if (result.success) {
-          setSelectedSlots(result.selectedSlots);
-          toast({
-            title: "Success",
-            description: "Slots auto-allocated successfully",
-          });
-          onSuccess?.(result);
+          // Validate result is still within allowed window
+          const outOfRange = result.selectedSlots.find(
+            (s) => !isSlotWithinAllowedPeriod(s)
+          );
+
+          if (outOfRange) {
+            const label =
+              eventType === "subscription"
+                ? "subscription"
+                : eventType === "class"
+                  ? "class"
+                  : "event";
+            const rangeText = `${allowedStart?.toLocaleString() || "-"} – ${
+              allowedEnd?.toLocaleString() || "-"
+            }`;
+            const message = `Auto-selected slots include a ${label} time outside the allowed period (${rangeText}).`;
+            setAllocationError(message);
+            setSelectedSlots([]);
+            toast({
+              variant: "destructive",
+              title: "Outside Allowed Period",
+              description: message,
+            });
+          } else {
+            setSelectedSlots(result.selectedSlots);
+            toast({
+              title: "✅ Slots Auto-Selected",
+              description: `${result.selectedSlots.length} consecutive slots selected. Review and confirm allocation.`,
+            });
+            // Clear any previous errors
+            setAllocationError(null);
+          }
         } else {
           const errorMessage = result.error || "Auto allocation failed";
+
           setAllocationError(errorMessage);
           onError?.(errorMessage);
+          // Clear selected slots on error
+          setSelectedSlots([]);
+          // Combine error message with period info if available
+          let finalErrorMessage = errorMessage;
+          if (allowedStart || allowedEnd) {
+            const startText = allowedStart?.toLocaleDateString() || "-";
+            const endText = allowedEnd?.toLocaleDateString() || "-";
+            const eventLabel =
+              eventType === "subscription"
+                ? "subscription"
+                : eventType === "class"
+                  ? "class"
+                  : "event";
+
+            finalErrorMessage += `\n\nThe ${eventLabel} period is ${startText} to ${endText}. Please add availability during this period.`;
+          }
+
+          toast({
+            variant: "destructive",
+            title: "Auto Allocation Failed",
+            description: finalErrorMessage,
+          });
         }
       } catch (error) {
         const errorMessage =

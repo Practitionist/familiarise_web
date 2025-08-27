@@ -45,7 +45,7 @@ type WebinarWithRelations = Prisma.WebinarGetPayload<{
 
 async function allocateSlotAuto(
   webinar: WebinarWithRelations,
-  tx: PrismaTransaction,
+  tx: PrismaTransaction
 ): Promise<Date> {
   const { webinarPlan } = webinar;
   const { consultantProfile } = webinarPlan;
@@ -53,6 +53,9 @@ async function allocateSlotAuto(
   if (!consultantProfile) {
     throw new Error("Consultant profile not found");
   }
+
+  // Calculate required slots for the webinar duration
+  const requiredSlots = Math.ceil(webinarPlan.durationInHours / 0.5); // 30-minute intervals
 
   // Get available slots based on schedule type
   const availableSlots =
@@ -121,49 +124,95 @@ async function allocateSlotAuto(
   const bookedSlots = new Set(
     existingAppointments.flatMap((app) =>
       app.slotsOfAppointment.map((slot: { slotStartTimeInUTC: Date }) =>
-        slot.slotStartTimeInUTC.toISOString(),
-      ),
-    ),
+        slot.slotStartTimeInUTC.toISOString()
+      )
+    )
   );
 
-  // Find first available slot
+  // Generate candidate slots from availability
+  const candidateSlots: Date[] = [];
   const now = new Date();
-  for (const slot of sortedSlots) {
-    let slotTime: Date;
 
-    if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
-      // For weekly slots, find the next occurrence of this weekday
-      const slotDate = new Date();
-      const currentDay = slotDate.getDay();
-      const targetDay = new Date(slot.slotStartTimeInUTC).getDay();
-      const daysToAdd = (targetDay - currentDay + 7) % 7;
-      slotDate.setDate(slotDate.getDate() + daysToAdd);
-      slotDate.setHours(
-        new Date(slot.slotStartTimeInUTC).getHours(),
-        new Date(slot.slotStartTimeInUTC).getMinutes(),
-        0,
-        0,
-      );
-      slotTime = slotDate;
-    } else {
-      // For custom slots, use the exact date
-      slotTime = new Date(slot.slotStartTimeInUTC);
+  if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
+    // For weekly schedule, project weekly patterns from today onward
+    for (let dayOffset = 0; dayOffset < 30; dayOffset++) {
+      // Look ahead 30 days
+      const targetDate = new Date();
+      targetDate.setDate(targetDate.getDate() + dayOffset);
+
+      for (const weeklySlot of sortedSlots) {
+        const slotDay = new Date(weeklySlot.slotStartTimeInUTC).getDay();
+        if (targetDate.getDay() === slotDay) {
+          const candidateSlot = new Date(targetDate);
+          candidateSlot.setHours(
+            new Date(weeklySlot.slotStartTimeInUTC).getHours(),
+            new Date(weeklySlot.slotStartTimeInUTC).getMinutes(),
+            0,
+            0
+          );
+
+          if (candidateSlot >=now ) {
+            candidateSlots.push(candidateSlot);
+          }
+        }
+      }
     }
+  } else {
+    // For custom schedule, use exact custom slots on/after today
+    for (const customSlot of sortedSlots) {
+      const slotDate = new Date(customSlot.slotStartTimeInUTC);
+      if (slotDate >= now) {
+        candidateSlots.push(slotDate);
+      }
+    }
+  }
 
-    // Skip if slot is already booked or in the past
-    if (bookedSlots.has(slotTime.toISOString()) || slotTime < now) {
+  // Sort candidate slots chronologically
+  candidateSlots.sort((a, b) => a.getTime() - b.getTime());
+
+  // Find the earliest consecutive block that fits the webinar duration
+  for (const firstSlot of candidateSlots) {
+    // Skip if first slot is already booked
+    if (bookedSlots.has(firstSlot.toISOString())) {
       continue;
     }
 
-    return slotTime;
+    // Check if we have enough consecutive slots starting from this time
+    const consecutiveSlots: Date[] = [];
+    let currentSlotTime = new Date(firstSlot);
+
+    for (let i = 0; i < requiredSlots; i++) {
+      const slotTime = new Date(currentSlotTime);
+
+      // Skip if this slot is already booked or in the past
+      if (bookedSlots.has(slotTime.toISOString()) || slotTime < now) {
+        break;
+      }
+
+      // Validate this slot is on the same day as the first slot
+      if (slotTime.toDateString() !== firstSlot.toDateString()) {
+        break;
+      }
+
+      consecutiveSlots.push(slotTime);
+
+      // Calculate next slot time
+      const nextSlotTime = new Date(slotTime.getTime() + 30 * 60 * 1000);
+      currentSlotTime = nextSlotTime;
+    }
+
+    // If we found enough consecutive slots on the same day, return the first slot
+    if (consecutiveSlots.length === requiredSlots) {
+      return firstSlot;
+    }
   }
 
-  throw new Error("No available slots found");
+  throw new Error("No available consecutive slots found for webinar duration");
 }
 
 async function allocateSlotRequested(
   webinar: WebinarWithRelations,
-  tx: PrismaTransaction,
+  tx: PrismaTransaction
 ): Promise<Date> {
   // Get the requested slot from the appointment
   const requestedSlot =
@@ -204,7 +253,7 @@ async function allocateSlotRequested(
 async function allocateSlotManual(
   webinar: WebinarWithRelations,
   slots: string[],
-  tx: PrismaTransaction,
+  tx: PrismaTransaction
 ): Promise<Date> {
   const { webinarPlan } = webinar;
   const { consultantProfile } = webinarPlan;
@@ -243,7 +292,7 @@ async function allocateSlotManual(
 
     if (!availableWeeklySlots) {
       throw new Error(
-        `Slot ${slotDate.toLocaleString()} does not match consultant's weekly schedule`,
+        `Slot ${slotDate.toLocaleString()} does not match consultant's weekly schedule`
       );
     }
   } else {
@@ -252,12 +301,12 @@ async function allocateSlotManual(
       consultantProfile.slotsOfAvailabilityCustom.some(
         (slot) =>
           new Date(slot.slotStartTimeInUTC).toISOString() ===
-          slotDate.toISOString(),
+          slotDate.toISOString()
       );
 
     if (!availableCustomSlots) {
       throw new Error(
-        `Slot ${slotDate.toLocaleString()} is not in consultant's custom schedule`,
+        `Slot ${slotDate.toLocaleString()} is not in consultant's custom schedule`
       );
     }
   }
@@ -310,7 +359,7 @@ async function allocateSlotManual(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> },
+  { params }: { params: Promise<{ webinarId: string }> }
 ) {
   try {
     const { webinarId } = await params;
@@ -320,7 +369,7 @@ export async function PATCH(
     if (typeof body.isAuto !== "boolean") {
       return NextResponse.json(
         { error: "isAuto flag is required" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -330,7 +379,7 @@ export async function PATCH(
     } else if (!body.isAuto && !Array.isArray(body.slots)) {
       return NextResponse.json(
         { error: "slots array is required for manual allocation" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -348,7 +397,7 @@ export async function PATCH(
     if (!webinar.webinarPlan?.consultantProfile?.user?.id) {
       return NextResponse.json(
         { error: "Missing consultant information" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -356,7 +405,7 @@ export async function PATCH(
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -438,7 +487,7 @@ export async function PATCH(
                 slotStartTimeInUTC: selectedSlot,
                 slotEndTimeInUTC: addHours(
                   selectedSlot,
-                  webinar.webinarPlan.durationInHours,
+                  webinar.webinarPlan.durationInHours
                 ),
                 isTentative: false,
                 user: {
@@ -447,7 +496,7 @@ export async function PATCH(
                       id: (() => {
                         if (!webinar.webinarPlan.consultantProfile?.user?.id) {
                           throw new Error(
-                            "Missing consultant user information",
+                            "Missing consultant user information"
                           );
                         }
                         return webinar.webinarPlan.consultantProfile.user.id;
@@ -492,7 +541,7 @@ export async function PATCH(
           error:
             error instanceof Error ? error.message : "Failed to allocate slot",
         },
-        { status: 500 },
+        { status: 500 }
       );
     }
   } catch (error) {
@@ -501,7 +550,7 @@ export async function PATCH(
     }
     return NextResponse.json(
       { error: "An error occurred during slot allocation" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
