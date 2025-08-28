@@ -47,8 +47,8 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Extended Subscription",
             description:
-              "Comprehensive learning program with 2 calls per week for 6 months. Ideal for intermediate learners seeking deeper expertise.",
-            durationInMonths: 6,
+              "Comprehensive learning program with 2 calls per week for 2 months. Ideal for intermediate learners seeking deeper expertise.",
+            durationInMonths: 2,
             price: faker.number.int({ min: 39900, max: 79900 }), // $399 to $799
             callsPerWeek: 2,
             sessionDurationInHours: 1.0,
@@ -76,8 +76,8 @@ export async function createSubscriptionPlans(consultants: UserWithProfiles[]) {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Comprehensive Subscription",
             description:
-              "Intensive program with 3 calls per week for 6 months. Designed for advanced learners and professionals seeking mastery.",
-            durationInMonths: 6,
+              "Intensive program with 3 calls per week for 4 months. Designed for advanced learners and professionals seeking mastery.",
+            durationInMonths: 4,
             price: faker.number.int({ min: 59900, max: 99900 }), // $599 to $999
             callsPerWeek: 3,
             sessionDurationInHours: 1.0,

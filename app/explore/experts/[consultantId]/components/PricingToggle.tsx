@@ -289,9 +289,9 @@ export default function PricingToggle({
               className="space-y-8"
             >
               <TabsList className="inline-flex p-1 bg-gray-800/30 backdrop-blur-sm rounded-xl border border-gray-700/30 shadow-md">
-                {consultationOptions.map((option) => (
+                {consultationOptions.map((option, index) => (
                   <TabsTrigger
-                    key={option.title}
+                    key={`consultation-${index}-${option.title}`}
                     value={option.title.toLowerCase().replace(" ", "-")}
                     className={`${
                       activeConsultationOption ===
@@ -305,9 +305,9 @@ export default function PricingToggle({
                 ))}
               </TabsList>
               <div className="grid grid-cols-1 gap-6">
-                {consultationOptions.map((option) => (
+                {consultationOptions.map((option, index) => (
                   <motion.div
-                    key={option.title}
+                    key={`consultation-card-${index}-${option.title}`}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{
                       opacity:
@@ -576,9 +576,9 @@ export default function PricingToggle({
               className="space-y-8"
             >
               <TabsList className="inline-flex p-1 bg-gray-800/30 backdrop-blur-sm rounded-xl border border-gray-700/30 shadow-md">
-                {subscriptionOptions.map((option) => (
+                {subscriptionOptions.map((option, index) => (
                   <TabsTrigger
-                    key={option.title}
+                    key={`subscription-${index}-${option.title}`}
                     value={option.title.toLowerCase().replace(" ", "-")}
                     className={`${
                       activeSubscriptionOption ===
@@ -592,9 +592,9 @@ export default function PricingToggle({
                 ))}
               </TabsList>
               <div className="grid grid-cols-1 gap-6">
-                {subscriptionOptions.map((option) => (
+                {subscriptionOptions.map((option, index) => (
                   <motion.div
-                    key={option.title}
+                    key={`subscription-card-${index}-${option.title}`}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{
                       opacity:

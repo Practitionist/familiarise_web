@@ -6,34 +6,6 @@ import PricingToggle from "./PricingToggle";
 
 import { PricingOption } from "../defaults";
 
-// Utility function to map duration hours to labels
-const getDurationLabel = (durationInHours: number): string => {
-  switch (durationInHours) {
-    case 1:
-      return "Basic";
-    case 2:
-      return "Extended";
-    case 4:
-      return "Comprehensive";
-    default:
-      return `${durationInHours} Hour${durationInHours > 1 ? "s" : ""}`;
-  }
-};
-
-// Utility function to map subscription duration months to labels
-const getSubscriptionDurationLabel = (durationInMonths: number): string => {
-  switch (durationInMonths) {
-    case 1:
-      return "Basic";
-    case 3:
-      return "Extended";
-    case 6:
-      return "Comprehensive";
-    default:
-      return `${durationInMonths} Month${durationInMonths > 1 ? "s" : ""}`;
-  }
-};
-
 interface ConsultationPricingProps {
   userDetails: User;
   consultantDetails: TConsultantProfile;
@@ -71,7 +43,15 @@ export function ConsultationPricing({
   ): PricingOption[] => {
     return plans.map((plan) => {
       if (type === "consultation" && "durationInHours" in plan) {
-        const durationLabel = getDurationLabel(plan.durationInHours);
+        // Map duration to tier name
+        let planTierName = "";
+        if (plan.durationInHours === 1) {
+          planTierName = "Basic";
+        } else if (plan.durationInHours === 2) {
+          planTierName = "Extended";
+        } else if (plan.durationInHours === 4) {
+          planTierName = "Comprehensive";
+        }
 
         // Define features based on consultation duration
         let features: string[] = [];
@@ -98,20 +78,35 @@ export function ConsultationPricing({
             features = [`${plan.durationInHours} hour consultation`];
         }
 
+        const durationText = `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`;
+        const title = durationText;
+        const description = planTierName || durationText;
+
         return {
-          title: durationLabel,
-          description: `${plan.durationInHours} hour consultation`,
+          title: title,
+          description: description,
           price: plan.price,
-          duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`,
+          duration: durationText,
           features: features,
         };
       } else if (type === "subscription" && "durationInMonths" in plan) {
-        const durationLabel = getSubscriptionDurationLabel(
-          plan.durationInMonths
-        );
+        // Map months to tier name
+        let planTierName = "";
+        if (plan.durationInMonths === 1) {
+          planTierName = "Basic";
+        } else if (plan.durationInMonths === 2) {
+          planTierName = "Extended";
+        } else if (plan.durationInMonths === 4) {
+          planTierName = "Comprehensive";
+        }
+
+        const durationText = `${plan.durationInMonths} month${plan.durationInMonths > 1 ? "s" : ""}`;
+        const title = durationText;
+        const description = planTierName || durationText;
+
         return {
-          title: durationLabel,
-          description: `${plan.durationInMonths} month subscription`,
+          title: title,
+          description: description,
           price: plan.price,
           duration: `${plan.durationInMonths}`,
           features: [
@@ -130,16 +125,18 @@ export function ConsultationPricing({
     });
   };
 
+  const sortedConsultationPlans = [...consultantDetails.consultationPlans].sort(
+    (a, b) => a.durationInHours - b.durationInHours
+  );
   const consultationOptions = formatPricingOptions(
-    consultantDetails.consultationPlans.sort(
-      (a, b) => a.durationInHours - b.durationInHours
-    ),
+    sortedConsultationPlans,
     "consultation"
   );
+  const sortedSubscriptionPlans = [...consultantDetails.subscriptionPlans].sort(
+    (a, b) => a.durationInMonths - b.durationInMonths
+  );
   const subscriptionOptions = formatPricingOptions(
-    consultantDetails.subscriptionPlans.sort(
-      (a, b) => a.durationInMonths - b.durationInMonths
-    ),
+    sortedSubscriptionPlans,
     "subscription"
   );
 

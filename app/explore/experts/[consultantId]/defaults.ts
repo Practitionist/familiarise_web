@@ -8,29 +8,29 @@ export interface PricingOption {
 
 export const defaultConsultationOptions: PricingOption[] = [
   {
-    title: "One Hour",
-    description: "Get a quick consultation",
+    title: "1 hour",
+    description: "Basic",
     price: 99,
     duration: "1 hour",
   },
   {
-    title: "Two Hour",
-    description: "Dive deeper into your needs",
+    title: "2 hours",
+    description: "Extended",
     price: 199,
     duration: "2 hours",
   },
   {
-    title: "Three Hour",
-    description: "Comprehensive consultation",
+    title: "4 hours",
+    description: "Comprehensive",
     price: 299,
-    duration: "3 hours",
+    duration: "4 hours",
   },
 ];
 
 export const defaultSubscriptionOptions: PricingOption[] = [
   {
-    title: "One Month Subscription",
-    description: "Get access to our full suite of services for one month.",
+    title: "1 month",
+    description: "Basic",
     price: 49,
     duration: "1 month",
     features: [
@@ -40,10 +40,10 @@ export const defaultSubscriptionOptions: PricingOption[] = [
     ],
   },
   {
-    title: "Three Month Subscription",
-    description: "Get access to our full suite of services for three months.",
+    title: "2 months",
+    description: "Extended",
     price: 129,
-    duration: "3 months",
+    duration: "2 months",
     features: [
       "Unlimited consultations",
       "Priority support",
@@ -52,10 +52,10 @@ export const defaultSubscriptionOptions: PricingOption[] = [
     ],
   },
   {
-    title: "Six Month Subscription",
-    description: "Get access to our full suite of services for six months.",
+    title: "4 months",
+    description: "Comprehensive",
     price: 249,
-    duration: "6 months",
+    duration: "4 months",
     features: [
       "Unlimited consultations",
       "Priority support",
