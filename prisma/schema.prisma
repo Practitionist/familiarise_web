@@ -428,6 +428,43 @@ model Consultation {
   updatedAt DateTime @updatedAt
 }
 
+// Document Review Models
+model AppointmentDocument {
+  id           String  @id @default(uuid())
+  fileName     String
+  originalName String
+  fileSize     Int
+  mimeType     String
+  fileUrl      String
+  storagePath  String
+  description  String? // User description of what this document is (resume, ITR, legal document, etc.)
+  
+  // Review fields
+  reviewStatus   DocumentReviewStatus @default(PENDING)
+  reviewNotes    String?
+  reviewedAt     DateTime?
+  reviewedBy     String? // Consultant user ID
+  
+  // Relations
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentId String
+  
+  // Metadata
+  uploadedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([appointmentId])
+  @@index([reviewStatus])
+}
+
+enum DocumentReviewStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  NEEDS_REVISION
+}
+
 model SubscriptionPlan {
   id                     String           @id @default(cuid())
   title                  String
@@ -536,24 +573,25 @@ enum WebinarStatus {
 
 // Many-Many Class
 model ClassPlan {
-  id                  String           @id @default(cuid())
-  title               String
-  description         String           @db.Text
-  topics              Topic[]
-  classContents       ClassContent[]
-  price               Int
-  priceCurrency       String           @default("INR")
-  certificateProvided Boolean          @default(false)
-  durationInMonths    Int              @default(1) // Duration in months
-  callsPerWeek        Int              @default(1)
-  videoMeetings       Int              @default(1)
-  emailSupport        PlanEmailSupport @default(GENERAL)
-  maxParticipants     Int              @default(1)
-  language            String?          @default("English")
-  level               String?          @default("Beginner")
-  prerequisites       String?          @default("None")
-  materialProvided    String?          @default("None")
-  learningOutcomes    String[]         @default([])
+  id                     String           @id @default(cuid())
+  title                  String
+  description            String           @db.Text
+  topics                 Topic[]
+  classContents          ClassContent[]
+  price                  Int
+  priceCurrency          String           @default("INR")
+  certificateProvided    Boolean          @default(false)
+  durationInMonths       Int              @default(1) // Duration in months
+  callsPerWeek           Int              @default(1)
+  sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
+  videoMeetings          Int              @default(1)
+  emailSupport           PlanEmailSupport @default(GENERAL)
+  maxParticipants        Int              @default(1)
+  language               String?          @default("English")
+  level                  String?          @default("Beginner")
+  prerequisites          String?          @default("None")
+  materialProvided       String?          @default("None")
+  learningOutcomes       String[]         @default([])
 
   consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
   consultantProfileId String?
@@ -624,7 +662,8 @@ model Appointment {
   class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classId String?
 
-  payment Payment[]
+  payment   Payment[]
+  documents AppointmentDocument[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -812,4 +851,3 @@ enum ScheduleType {
   WEEKLY
   CUSTOM
 }
-

@@ -1,0 +1,30 @@
+name: Cleanup Empty Folders
+
+on:
+  schedule:
+    # Runs daily at 9:00 AM IST (3:30 AM UTC)
+    - cron: "30 3 * * *"
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create .env file from secret
+        run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
+
+      - name: Run cleanup script
+        run: npm run scripts:cleanup-empty-folders

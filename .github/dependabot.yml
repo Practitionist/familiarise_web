@@ -32,8 +32,6 @@ updates:
       prefix: "chore(deps)"
       prefix-development: "chore(dev-deps)"
       include: "scope"
-    reviewers:
-      - "kaustavghosh"
     assignees:
       - "kaustavghosh"
     milestone: 1
@@ -255,8 +253,6 @@ updates:
     commit-message:
       prefix: "ci(deps)"
       include: "scope"
-    reviewers:
-      - "kaustavghosh"
 # DEPENDABOT ORGANIZATION STRATEGY:
 #
 # 📊 PR PRIORITIZATION:

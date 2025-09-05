@@ -6,6 +6,34 @@ import PricingToggle from "./PricingToggle";
 
 import { PricingOption } from "../defaults";
 
+// Utility function to map duration hours to labels
+const getDurationLabel = (durationInHours: number): string => {
+  switch (durationInHours) {
+    case 1:
+      return "Basic";
+    case 2:
+      return "Extended";
+    case 4:
+      return "Comprehensive";
+    default:
+      return `${durationInHours} Hour${durationInHours > 1 ? "s" : ""}`;
+  }
+};
+
+// Utility function to map subscription duration months to labels
+const getSubscriptionDurationLabel = (durationInMonths: number): string => {
+  switch (durationInMonths) {
+    case 1:
+      return "Basic";
+    case 3:
+      return "Extended";
+    case 6:
+      return "Comprehensive";
+    default:
+      return `${durationInMonths} Month${durationInMonths > 1 ? "s" : ""}`;
+  }
+};
+
 interface ConsultationPricingProps {
   userDetails: User;
   consultantDetails: TConsultantProfile;
@@ -43,15 +71,46 @@ export function ConsultationPricing({
   ): PricingOption[] => {
     return plans.map((plan) => {
       if (type === "consultation" && "durationInHours" in plan) {
+        const durationLabel = getDurationLabel(plan.durationInHours);
+
+        // Define features based on consultation duration
+        let features: string[] = [];
+        switch (plan.durationInHours) {
+          case 1: // Basic
+            features = ["Document verification", "1 on 1 call"];
+            break;
+          case 2: // Extended
+            features = [
+              "Document verification",
+              "1 on 1 call",
+              "Extended chat facility",
+            ];
+            break;
+          case 4: // Comprehensive
+            features = [
+              "Document verification",
+              "1 on 1 call",
+              "Extended chat facility",
+              "Priority support",
+            ];
+            break;
+          default:
+            features = [`${plan.durationInHours} hour consultation`];
+        }
+
         return {
-          title: `${plan.durationInHours} Hour${plan.durationInHours > 1 ? "s" : ""}`,
+          title: durationLabel,
           description: `${plan.durationInHours} hour consultation`,
           price: plan.price,
           duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`,
+          features: features,
         };
       } else if (type === "subscription" && "durationInMonths" in plan) {
+        const durationLabel = getSubscriptionDurationLabel(
+          plan.durationInMonths,
+        );
         return {
-          title: `${plan.durationInMonths} Month${plan.durationInMonths > 1 ? "s" : ""}`,
+          title: durationLabel,
           description: `${plan.durationInMonths} month subscription`,
           price: plan.price,
           duration: `${plan.durationInMonths}`,

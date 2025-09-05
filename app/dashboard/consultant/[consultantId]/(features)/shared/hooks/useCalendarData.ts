@@ -266,7 +266,10 @@ export function useCalendarData(
 
       if (data && data.length > 0 && data[0].slotsOfAppointment?.length > 0) {
         const slots: TimeSlot[] = data[0].slotsOfAppointment.flatMap(
-          (slot: any): TimeSlot[] => {
+          (slot: {
+            slotStartTimeInUTC: string;
+            slotEndTimeInUTC: string;
+          }): TimeSlot[] => {
             const start = new Date(slot.slotStartTimeInUTC);
             const end = new Date(slot.slotEndTimeInUTC);
             const durationMinutes =
@@ -348,12 +351,12 @@ export function useCalendarData(
       const overlappingAppointments = existingAppointments.flatMap(
         (appointment) =>
           appointment.slotsOfAppointment
-            ?.filter((slot) => {
-              const slotStart = new Date(slot.slotStartTimeInUTC);
-              const slotEnd = new Date(slot.slotEndTimeInUTC);
+            ?.filter((slt) => {
+              const slotStart = new Date(slt.slotStartTimeInUTC);
+              const slotEnd = new Date(slt.slotEndTimeInUTC);
               return intervalStartUTC < slotEnd && slotStart < intervalEndUTC;
             })
-            .map((slot) => ({
+            .map((_slot) => ({
               id: appointment.id,
               type: appointment.appointmentType,
               title: appointment.appointmentType,
@@ -375,6 +378,13 @@ export function useCalendarData(
         isAvailable = bookingStatus === "available";
         isBookedForDisplay = bookingStatus === "fully-booked";
         isPartiallyBooked = bookingStatus === "partially-booked";
+      }
+
+      // CRITICAL FIX: Ensure existing appointments are visible even if no availability slot exists
+      // If any appointment overlaps this interval, mark it as booked for display
+      if (!isBookedForDisplay && overlappingAppointments.length > 0) {
+        isBookedForDisplay = true;
+        isAvailable = false;
       }
 
       // STEP 6: Check if interval is in the past - FIXED: Proper timezone handling
