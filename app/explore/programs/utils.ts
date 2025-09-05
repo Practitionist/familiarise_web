@@ -59,7 +59,7 @@ export function filterAndSortPrograms(
       .toLowerCase()
       .includes(searchTerm.toLowerCase());
     const matchesCategory =
-      selectedCategory === "all" || program.type === selectedCategory;
+      selectedCategory === "all" || program.level === selectedCategory;
     return matchesSearch && matchesCategory;
   });
 
@@ -67,6 +67,14 @@ export function filterAndSortPrograms(
     filteredPrograms = filteredPrograms.sort((a, b) => a.price - b.price);
   } else if (sortBy === "price-desc") {
     filteredPrograms = filteredPrograms.sort((a, b) => b.price - a.price);
+  } else if (sortBy === "title-asc") {
+    filteredPrograms = filteredPrograms.sort((a, b) =>
+      a.title.localeCompare(b.title),
+    );
+  } else if (sortBy === "title-desc") {
+    filteredPrograms = filteredPrograms.sort((a, b) =>
+      b.title.localeCompare(a.title),
+    );
   }
 
   return filteredPrograms;
@@ -97,7 +105,7 @@ export function usePrograms(programType: ProgramType) {
 
       if (programType === "all" || programType === "class") {
         requests.push(
-          `/api/plans/classes?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}`,
+          `/api/plans/classes?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}&include=classes`,
         );
       }
       if (programType === "all" || programType === "webinar") {
@@ -118,8 +126,9 @@ export function usePrograms(programType: ProgramType) {
         classMeta = classResponse.meta;
         if (classResponse.data) {
           const formattedClasses = classResponse.data.map(
-            (plan: PrismaClassPlan): ClassPlanProgram => ({
-              ...(plan as ClassPlanProgram),
+            (plan: any): ClassPlanProgram => ({
+              ...plan,
+              classes: plan.classes || [], // Ensure classes array is populated
               type: "class",
               imageUrl: generateProgramImageUrl(plan.id, 600, 400),
             }),

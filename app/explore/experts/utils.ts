@@ -156,13 +156,6 @@ export function useConsultants({
   const hasMore = hasNextPage;
   const isLoadingMore = isFetchingNextPage;
 
-  // Prefetch the next page if we have data and there might be more
-  const prefetchNextPage = useCallback(() => {
-    if (hasMore && !isLoadingMore && data) {
-      fetchNextPage();
-    }
-  }, [hasMore, isLoadingMore, data, fetchNextPage]);
-
   return {
     consultants,
     error,
@@ -171,7 +164,6 @@ export function useConsultants({
     hasMore,
     loadMore: () => fetchNextPage(),
     refresh: refetch,
-    prefetchNextPage,
     firstPageKey: getKey(0),
   };
 }
