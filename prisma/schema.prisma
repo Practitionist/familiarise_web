@@ -39,7 +39,7 @@ model User {
   staffProfile        StaffProfile?
   staffProfileId      String?            @unique
 
-  slotsOfAppointment SlotOfAppointment[]
+  slotsOfAppointment SlotOfAppointment[] @relation("SlotOfAppointmentToUser")
   Waitlist           Waitlist[]
 
   // Feedback and Support
@@ -206,8 +206,8 @@ model ConsultantProfile {
 
   domain     Domain      @relation(fields: [domainId], references: [id])
   domainId   String
-  subDomains SubDomain[]
-  tags       Tag[]
+  subDomains SubDomain[] @relation("ConsultantProfileToSubDomain")
+  tags       Tag[]       @relation("ConsultantProfileToTag")
 
   reviews      ConsultantReview[]
   scheduleType ScheduleType
@@ -248,7 +248,7 @@ model SubDomain {
   name               String
   domain             Domain              @relation(fields: [domainId], references: [id])
   domainId           String
-  consultantProfiles ConsultantProfile[]
+  consultantProfiles ConsultantProfile[] @relation("ConsultantProfileToSubDomain")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -262,7 +262,7 @@ model Tag {
   name               String
   domain             Domain              @relation(fields: [domainId], references: [id])
   domainId           String
-  consultantProfiles ConsultantProfile[]
+  consultantProfiles ConsultantProfile[] @relation("ConsultantProfileToTag")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -365,7 +365,7 @@ model SlotOfAvailabilityCustom {
 model SlotOfAppointment {
   id String @id @default(uuid())
 
-  user User[]
+  user User[] @relation("SlotOfAppointmentToUser")
 
   slotStartTimeInUTC DateTime @db.Timestamptz()
   slotEndTimeInUTC   DateTime @db.Timestamptz()
@@ -489,7 +489,7 @@ enum RequestStatus {
 model WebinarPlan {
   id                  String   @id @default(cuid())
   title               String
-  topics              Topic[]
+  topics              Topic[]            @relation("TopicToWebinarPlan")
   description         String?  @db.Text
   price               Int
   priceCurrency       String   @default("INR")
@@ -539,7 +539,7 @@ model ClassPlan {
   id                     String           @id @default(cuid())
   title                  String
   description            String           @db.Text
-  topics                 Topic[]
+  topics                 Topic[]            @relation("ClassPlanToTopic")
   classContents          ClassContent[]
   price                  Int
   priceCurrency          String           @default("INR")
@@ -625,7 +625,7 @@ model Appointment {
   class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classId String?
 
-  payment Payment[]
+  payment Payment?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -642,8 +642,8 @@ model Topic {
   id   String @id @default(cuid())
   name String @unique
 
-  webinarPlans WebinarPlan[]
-  classPlans   ClassPlan[]
+  webinarPlans WebinarPlan[] @relation("TopicToWebinarPlan")
+  classPlans   ClassPlan[]   @relation("ClassPlanToTopic")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -813,4 +813,3 @@ enum ScheduleType {
   WEEKLY
   CUSTOM
 }
-
