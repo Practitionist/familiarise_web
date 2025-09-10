@@ -73,6 +73,7 @@ export function EventTimingsCalendar({
           mode="allocate"
           onAllocationComplete={handleAllocationComplete}
           showAllocationButtons={true}
+          highlightCurrentSlotsInView={true}
           className="min-h-[500px]"
         />
 
