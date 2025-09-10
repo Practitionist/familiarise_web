@@ -1,6 +1,102 @@
 import { format } from "date-fns";
 import { TAppointment } from "@/types/appointment";
 
+// Helper: count number of Sunday-start weeks overlapping [start, end] inclusive
+function countSundayWeeksInclusiveLocal(
+  startDate: Date,
+  endDate: Date
+): number {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  if (end < start) return 0;
+  start.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+  // get Sunday of week for a given date
+  const toSunday = (d: Date) => {
+    const date = new Date(d);
+    const day = date.getDay(); // 0 = Sunday
+    const sunday = new Date(date);
+    sunday.setDate(date.getDate() - day);
+    sunday.setHours(0, 0, 0, 0);
+    return sunday;
+  };
+  const startSunday = toSunday(start);
+  const endSunday = toSunday(end);
+  let weeks = 1;
+  const cursor = new Date(startSunday);
+  while (cursor < endSunday) {
+    cursor.setDate(cursor.getDate() + 7);
+    weeks += 1;
+  }
+  return weeks;
+}
+
+// Calculate completed sessions using week-based logic
+function calculateWeekBasedCompletedSessions(
+  subscriptionStart: Date,
+  subscriptionEnd: Date,
+  currentDate: Date,
+  callsPerWeek: number,
+  appointments: TAppointment[]
+): number {
+  // Helper function to get start of week (Sunday)
+  const getWeekStart = (date: Date): Date => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    const day = d.getDay(); // 0 = Sunday
+    d.setDate(d.getDate() - day);
+    return d;
+  };
+
+  // Get week boundaries
+  const subscriptionWeekStart = getWeekStart(subscriptionStart);
+
+  // Count completed calls week by week
+  let completedCalls = 0;
+  let weekStart = new Date(subscriptionWeekStart);
+
+  while (weekStart < subscriptionEnd) {
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    weekEnd.setHours(23, 59, 59, 999);
+
+    // Check if this week is completely in the past
+    if (weekEnd < currentDate) {
+      // Assume all calls for this past week were completed
+      completedCalls += callsPerWeek;
+    } else if (weekStart <= currentDate && currentDate <= weekEnd) {
+      // Current week - count actual completed appointments
+      const currentWeekCompleted = appointments.filter((app) => {
+        const slots = getSlotTimes(app);
+        if (slots.length === 0) return false;
+
+        const appointmentDate = new Date(slots[0]);
+        const isInThisWeek =
+          appointmentDate >= weekStart && appointmentDate <= weekEnd;
+        const isCompleted =
+          new Date(Math.max(...slots.map((time) => new Date(time).getTime()))) <
+          currentDate;
+
+        return isInThisWeek && isCompleted;
+      }).length;
+
+      completedCalls += currentWeekCompleted;
+    }
+    // Future weeks: don't count anything
+
+    // Move to next week
+    weekStart.setDate(weekStart.getDate() + 7);
+  }
+
+  // Cap at total possible sessions
+  const totalSubscriptionWeeks = countSundayWeeksInclusiveLocal(
+    subscriptionStart,
+    subscriptionEnd
+  );
+  const maxPossibleSessions = totalSubscriptionWeeks * callsPerWeek;
+  return Math.min(completedCalls, maxPossibleSessions);
+}
+
 // Get the consultee name based on appointment type
 export const getConsumeeName = (appointment: TAppointment): string => {
   if (!appointment) return "Unknown User";
@@ -50,7 +146,7 @@ export const getConsumeeImage = (appointment: TAppointment): string => {
 
 // Get appointment type and plan
 export const getAppointmentTypeAndPlan = (
-  appointment: TAppointment,
+  appointment: TAppointment
 ): string => {
   if (!appointment?.appointmentType) return "Unknown Type";
 
@@ -124,7 +220,7 @@ export const hasTodaySlots = (appointment: TAppointment): boolean => {
     23,
     59,
     59,
-    999,
+    999
   );
 
   return getSlotTimes(appointment).some((time) => {
@@ -181,7 +277,7 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
 
 // Sort appointments by start time
 export const sortAppointmentsByStartTime = (
-  appointments: TAppointment[],
+  appointments: TAppointment[]
 ): TAppointment[] => {
   return [...appointments].sort((a, b) => {
     const aTime = getStartTime(a);
@@ -195,7 +291,7 @@ export const sortAppointmentsByStartTime = (
 
 // Filter today's appointments
 export const getTodayAppointments = (
-  appointments: TAppointment[],
+  appointments: TAppointment[]
 ): TAppointment[] => {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -206,19 +302,25 @@ export const getTodayAppointments = (
     23,
     59,
     59,
-    999,
+    999
   );
 
-  // First expand appointments with multiple slots
+  // Expand appointments ONLY for recurring events (subscription/class)
   const expandedAppointments = appointments.flatMap((appointment) => {
+    const hasSlots =
+      Array.isArray(appointment.slotsOfAppointment) &&
+      appointment.slotsOfAppointment.length > 0;
+
+    // For consultations/webinars, do NOT split by slot
     if (
-      !appointment.slotsOfAppointment ||
-      appointment.slotsOfAppointment.length === 0
+      !hasSlots ||
+      appointment.appointmentType === "CONSULTATION" ||
+      appointment.appointmentType === "WEBINAR"
     ) {
       return [appointment];
     }
 
-    // Create separate appointments for each slot
+    // For subscriptions/classes, create separate entries for each slot
     return appointment.slotsOfAppointment.map((slot) => ({
       ...appointment,
       id: `${appointment.id}-${slot.id}`,
@@ -249,7 +351,7 @@ export const getTodayAppointments = (
 
 // Filter upcoming appointments
 export const getUpcomingAppointments = (
-  appointments: TAppointment[],
+  appointments: TAppointment[]
 ): TAppointment[] => {
   const now = new Date();
 
@@ -263,7 +365,7 @@ export const getUpcomingAppointments = (
     ) {
       // Check if all slots are in the past
       const allSlotsCompleted = getSlotTimes(appointment).every(
-        (time) => new Date(time) < now,
+        (time) => new Date(time) < now
       );
       // Only include if not all slots are completed
       return !allSlotsCompleted;
@@ -288,7 +390,7 @@ export const getUpcomingAppointments = (
 
 // Group recurring appointments
 export const groupRecurringAppointments = (
-  appointments: TAppointment[],
+  appointments: TAppointment[]
 ): { [key: string]: TAppointment[] } => {
   const groups: { [key: string]: TAppointment[] } = {};
 
@@ -311,24 +413,19 @@ export const groupRecurringAppointments = (
       groups[groupKey] = [];
     }
 
-    // For appointments with slots, create separate entries for each slot
-    if (
-      appointment.slotsOfAppointment &&
-      appointment.slotsOfAppointment.length > 0
-    ) {
-      appointment.slotsOfAppointment.forEach((slot) => {
-        groups[groupKey].push({
-          ...appointment,
-          id: `${appointment.id}-${slot.id}`,
-          slotsOfAppointment: [slot],
-        });
-      });
-    } else {
-      // For appointments without slots, add them as is
+    const hasSlots =
+      Array.isArray(appointment.slotsOfAppointment) &&
+      appointment.slotsOfAppointment.length > 0;
+
+    // Do NOT split appointments by 30-minute slots in any case.
+    // Keep each appointment (session) intact so the UI shows only the session start time once.
+    if (!hasSlots) {
       groups[groupKey].push({
         ...appointment,
         id: `${appointment.id}-default`,
       });
+    } else {
+      groups[groupKey].push(appointment);
     }
   });
 
@@ -350,28 +447,62 @@ export const getGroupTitle = (appointments: TAppointment[]): string => {
   if (type === "SUBSCRIPTION" && firstAppointment.subscription) {
     const plan =
       firstAppointment.subscription.subscriptionPlan?.title || "Unknown Plan";
+    // Expected total sessions = weeks in window × callsPerWeek
+    const sub = firstAppointment.subscription as unknown as {
+      startDate?: string | Date;
+      endDate?: string | Date;
+      subscriptionPlan?: { callsPerWeek?: number } | null;
+    };
+    const startDate = sub?.startDate ? new Date(sub.startDate) : undefined;
+    const endDate = sub?.endDate ? new Date(sub.endDate) : undefined;
+    const callsPerWeek = sub?.subscriptionPlan?.callsPerWeek || 1;
+    const totalSessions =
+      startDate && endDate
+        ? countSundayWeeksInclusiveLocal(startDate, endDate) * callsPerWeek
+        : appointments.length;
 
-    // Count total appointments as sessions
-    const totalSessions = appointments.length;
-
-    // Count completed sessions based on slot times
+    // Week-based completion logic:
+    // 1. Past complete weeks = assumed completed (weeks × callsPerWeek)
+    // 2. Current week = only count actual completed calls
     const now = new Date();
-    const completedSessions = appointments.filter((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
-    ).length;
+    const completedSessions = calculateWeekBasedCompletedSessions(
+      startDate!,
+      endDate!,
+      now,
+      callsPerWeek,
+      appointments
+    );
 
     return `${plan} (${completedSessions}/${totalSessions} sessions)`;
   }
 
   if (type === "CLASS" && firstAppointment.class) {
     const plan = firstAppointment.class.classPlan?.title || "Unknown Class";
-    const totalSessions = appointments.length;
+    // Expected total sessions = weeks in window × callsPerWeek (classes per week)
+    const cls = firstAppointment.class as unknown as {
+      startDate?: string | Date;
+      endDate?: string | Date;
+      classPlan?: { callsPerWeek?: number } | null;
+    };
+    const startDate = cls?.startDate ? new Date(cls.startDate) : undefined;
+    const endDate = cls?.endDate ? new Date(cls.endDate) : undefined;
+    const callsPerWeek = cls?.classPlan?.callsPerWeek || 1;
+    const totalSessions =
+      startDate && endDate
+        ? countSundayWeeksInclusiveLocal(startDate, endDate) * callsPerWeek
+        : appointments.length;
 
-    // Count completed sessions based on slot times, same as subscription
+    // Week-based completion logic for classes:
+    // 1. Past complete weeks = assumed completed (weeks × callsPerWeek)
+    // 2. Current week = only count actual completed classes
     const now = new Date();
-    const completedSessions = appointments.filter((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
-    ).length;
+    const completedSessions = calculateWeekBasedCompletedSessions(
+      startDate!,
+      endDate!,
+      now,
+      callsPerWeek,
+      appointments
+    );
 
     return `${plan} (${completedSessions}/${totalSessions} sessions)`;
   }
@@ -393,7 +524,7 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
 
     // Check if any sessions are completed
     const hasCompletedSessions = appointments.some((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
+      getSlotTimes(app).every((time) => new Date(time) < now)
     );
 
     if (now > endDate) return "Completed";
@@ -406,12 +537,12 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
 
     // Check if any sessions are completed, same as subscription
     const hasCompletedSessions = appointments.some((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
+      getSlotTimes(app).every((time) => new Date(time) < now)
     );
 
     // Check if all sessions are completed
     const allSessionsCompleted = appointments.every((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now),
+      getSlotTimes(app).every((time) => new Date(time) < now)
     );
 
     if (allSessionsCompleted) return "Completed";
