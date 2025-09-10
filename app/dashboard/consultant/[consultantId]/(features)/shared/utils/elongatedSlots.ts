@@ -88,22 +88,15 @@ function extractSessionDuration(eventType: string, response: any): number {
       return webinarDuration;
 
     case "class":
-      // For classes, calculate average from class contents
-      const classContents = data.classPlan?.classContents || [];
-      if (classContents.length === 0) {
+      // For classes, use sessionDurationInHours from class plan
+      const sessionDurationInHours = data.classPlan?.sessionDurationInHours;
+      if (!sessionDurationInHours || sessionDurationInHours <= 0) {
         throw new Error(
-          "Class plan is missing required classContents with hoursAllotted"
+          "Class plan is missing required sessionDurationInHours"
         );
       }
 
-      const totalHours = classContents.reduce((sum: number, content: any) => {
-        if (!content.hoursAllotted || content.hoursAllotted <= 0) {
-          throw new Error("Class content is missing required hoursAllotted");
-        }
-        return sum + content.hoursAllotted;
-      }, 0);
-
-      return totalHours / classContents.length;
+      return sessionDurationInHours;
 
     default:
       throw new Error(`Invalid event type: ${eventType}`);

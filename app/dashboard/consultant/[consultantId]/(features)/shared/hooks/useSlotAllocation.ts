@@ -741,6 +741,21 @@ function countCompleteCallsInMap(
 }
 
 /**
+ * Counts the number of complete sessions from a map of day-grouped slots (for classes).
+ */
+function countCompleteSessionsInMap(
+  slotsByDay: Map<string, TimeSlot[]>,
+  slotsPerSession: number
+): number {
+  let completeSessions = 0;
+  slotsByDay.forEach((daySlots) => {
+    const { sessions } = countSessionsForDay(daySlots, slotsPerSession);
+    completeSessions += sessions;
+  });
+  return completeSessions;
+}
+
+/**
  * Validate that slots are consecutive (for webinars)
  */
 function validateConsecutiveSlots(slots: TimeSlot[]): boolean {
@@ -811,10 +826,12 @@ function validateClassSessionDistributionByCount(
     if (!slotsByDate.has(key)) slotsByDate.set(key, []);
     slotsByDate.get(key)!.push(slot);
   }
-  slotsByDate.forEach((daySlots) => {
+  for (const daySlots of slotsByDate.values()) {
     const { sessions } = countSessionsForDay(daySlots, slotsPerSession);
-    if (sessions > maxSessions) return false;
-  });
+    if (sessions > maxSessions) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -839,13 +856,15 @@ function validateWeeklySessionsDistribution(
     if (!byDay.has(dayKey)) byDay.set(dayKey, []);
     byDay.get(dayKey)!.push(slot);
   }
-  weeks.forEach((byDay) => {
+  for (const byDay of weeks.values()) {
     let weekSessions = 0;
-    byDay.forEach((daySlots) => {
+    for (const daySlots of byDay.values()) {
       weekSessions += countSessionsForDay(daySlots, slotsPerSession).sessions;
-    });
-    if (weekSessions > callsPerWeek) return false;
-  });
+    }
+    if (weekSessions > callsPerWeek) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -1126,6 +1145,49 @@ function validateSubscriptionSlots(
 // ============================================================================
 
 /**
+ * Return type interface for the useEventSlotAllocation hook
+ */
+export interface UseEventSlotAllocationReturn {
+  // State
+  selectedSlots: TimeSlot[];
+  isAllocating: boolean;
+  allocationError: string | null;
+  validationErrors: string[];
+  validationWarnings: string[];
+  isValid: boolean;
+  canAllocate: boolean;
+  requiredSlots: number;
+  slotLimits: SlotLimits;
+
+  // Slot management functions
+  toggleSlot: (slot: TimeSlot) => void;
+  addSlots: (slots: TimeSlot[]) => void;
+  removeSlots: (slots: TimeSlot[]) => void;
+  setSelectedSlots: (slots: TimeSlot[]) => void;
+  clearSlots: () => void;
+  isSlotSelected: (slot: TimeSlot) => boolean;
+
+  // Allocation methods
+  manualAllocate: () => Promise<void>;
+  manualAllocateWithReschedule: (
+    appointmentId: string,
+    callTimestamp?: string
+  ) => Promise<void>;
+  autoAllocate: (availableSlots: TimeSlot[]) => Promise<void>;
+  preAllocate: (availableSlots: TimeSlot[]) => Promise<void>;
+
+  // Validation functions
+  validateSlots: (slots: TimeSlot[]) => ValidationResult;
+  validateSlotsPreview: (slots: TimeSlot[]) => ValidationResult;
+
+  // Event-specific helpers
+  getEventConstraints: () => EventConstraints;
+  getSlotLimits: () => SlotLimits;
+  canAddSlot: (slot: TimeSlot) => boolean;
+  getSlotSuggestions: (availableSlots: TimeSlot[]) => TimeSlot[];
+}
+
+/**
  * Enhanced Event Slot Allocation Hook
  *
  * Provides a unified interface for managing slot allocation across all event types
@@ -1252,6 +1314,29 @@ export function useEventSlotAllocation(
       // For subscriptions, we just need to ensure the selection is valid
       // Users don't need to allocate all calls, just validate their selection
       return totalCallsIncludingPast <= maxTotalCalls;
+    }
+
+    // For classes, allow allocation when there is at least one complete session
+    if (eventType === "class" && options.sessionDurationInHours) {
+      const slotsPerSession = slotLimits.slotsPerSession;
+      const byDay = groupSlotsByDay(selectedSlots);
+      // Block if any day has leftover (incomplete) session
+      let hasLeftover = false;
+      byDay.forEach((daySlots) => {
+        const { leftoverSlots } = countSessionsForDay(
+          daySlots,
+          slotsPerSession
+        );
+        if (leftoverSlots > 0) hasLeftover = true;
+      });
+      if (hasLeftover) return false;
+
+      // Allow if at least one full session exists
+      const completeSessions = countCompleteSessionsInMap(
+        byDay,
+        slotsPerSession
+      );
+      return completeSessions > 0;
     }
 
     // For other event types, require exact slot count
@@ -1497,6 +1582,36 @@ export function useEventSlotAllocation(
                 });
               }, 0);
               return currentSlots;
+            }
+
+            // FIXED: Add total sessions limit validation for classes
+            // Count total complete sessions in the current selection (before adding new slot)
+            const currentCompleteSessions = countCompleteSessionsInMap(
+              preByDay,
+              slotsPerSession
+            );
+
+            // Check if adding this slot would complete a new session
+            const newDaySlots = [...daySlots, slot];
+            const wouldCompleteSession =
+              newDaySlots.length % slotsPerSession === 0 &&
+              newDaySlots.length > 0;
+
+            // If this would complete a session, check against total session limit
+            if (wouldCompleteSession) {
+              const totalSessionsAfterAdd = currentCompleteSessions + 1;
+              const maxTotalSessions = slotLimits.totalSessions;
+
+              if (totalSessionsAfterAdd > maxTotalSessions) {
+                setTimeout(() => {
+                  setPendingToast({
+                    variant: "destructive",
+                    title: "Total Sessions Limit Reached",
+                    description: `Maximum ${maxTotalSessions} total sessions allowed for this class. This would create ${totalSessionsAfterAdd} complete sessions.`,
+                  });
+                }, 0);
+                return currentSlots;
+              }
             }
           } else if (newSelection.length > slotLimits.maxSlots) {
             // Validate against slot limits for other event types
@@ -1900,8 +2015,18 @@ export function useEventSlotAllocation(
       const slotsByDay = groupSlotsByDay(selectedSlots);
       let hasIncomplete = false;
       slotsByDay.forEach((daySlots) => {
-        if (daySlots.length > 0 && !isCompleteCall(daySlots, slotsPerCall)) {
-          hasIncomplete = true;
+        if (daySlots.length === 0) return;
+        if (eventType === "class") {
+          // For classes, allow multiple sessions per day; flag only if leftover exists
+          const { leftoverSlots } = countSessionsForDay(daySlots, slotsPerCall);
+          if (leftoverSlots > 0) {
+            hasIncomplete = true;
+          }
+        } else {
+          // For subscriptions, the day must exactly match one complete call
+          if (!isCompleteCall(daySlots, slotsPerCall)) {
+            hasIncomplete = true;
+          }
         }
       });
       if (hasIncomplete) {
@@ -2056,30 +2181,16 @@ export function useEventSlotAllocation(
       return;
     }
 
-    // Only wire backend for consultations right now
-    if (eventType !== "consultation") {
-      console.log(
-        "[useSlotAllocation] Skipping backend allocation for eventType:",
-        eventType
-      );
-      onSuccess?.({ success: true, selectedSlots });
-      return;
-    }
-
     setIsAllocating(true);
     setAllocationError(null);
     try {
-      const payload = {
-        isAuto: false,
-        slots: selectedSlots.map((s) => s.startTime.toISOString()),
-      };
-      console.log("[useSlotAllocation] Sending allocation request", {
-        consultationId: eventId,
-        ...payload,
-      });
+      // Optimistic: Temporarily mark selected session blocks as reserved to prevent flicker
+      const reserved = new Set(
+        selectedSlots.map((s) => s.startTime.toISOString())
+      );
 
       const result = await AllocationService.allocateSlots(
-        "consultation",
+        eventType,
         eventId,
         selectedSlots,
         { isAuto: false, reallocate: true }
@@ -2097,7 +2208,6 @@ export function useEventSlotAllocation(
         return;
       }
 
-      console.log("[useSlotAllocation] Allocation success", result);
       toast({
         title: "Success",
         description: "Slots allocated successfully",
@@ -2130,6 +2240,87 @@ export function useEventSlotAllocation(
     onError,
     toast,
   ]);
+
+  /**
+   * Manual allocation with rescheduling support for subscriptions
+   */
+  const manualAllocateWithReschedule = useCallback(
+    async (appointmentId: string, callTimestamp?: string) => {
+      console.log(
+        `[Frontend] Starting reschedule for appointmentId: ${appointmentId}, callTimestamp: ${callTimestamp}, eventId: ${eventId}`
+      );
+      console.log(
+        `[Frontend] Selected slots:`,
+        selectedSlots.map((s) => s.startTime.toISOString())
+      );
+
+      // Similar validation as manualAllocate but for rescheduling
+      if (!isValid || !canAllocate) {
+        const errorMessage = validationErrors[0] || "Invalid slot selection";
+        setAllocationError(errorMessage);
+        onError?.(errorMessage);
+        return;
+      }
+
+      setIsAllocating(true);
+      setAllocationError(null);
+      try {
+        const result = await AllocationService.allocateSlots(
+          eventType,
+          eventId,
+          selectedSlots,
+          {
+            isAuto: false,
+            reallocate: true,
+            appointmentId, // This triggers the reschedule endpoint
+            callTimestamp, // Pass the specific call timestamp
+          }
+        );
+
+        if (!result.success) {
+          const errorMessage = result.error || "Reschedule failed";
+          setAllocationError(errorMessage);
+          onError?.(errorMessage);
+          toast({
+            variant: "destructive",
+            title: "Reschedule Failed",
+            description: errorMessage,
+          });
+          return;
+        }
+
+        toast({
+          title: "Success",
+          description: "Appointment rescheduled successfully",
+        });
+        onSuccess?.(result as any);
+        setSelectedSlots([]);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Reschedule failed";
+        setAllocationError(errorMessage);
+        onError?.(errorMessage);
+        toast({
+          variant: "destructive",
+          title: "Reschedule Failed",
+          description: errorMessage,
+        });
+      } finally {
+        setIsAllocating(false);
+      }
+    },
+    [
+      selectedSlots,
+      isValid,
+      validationErrors,
+      canAllocate,
+      eventType,
+      eventId,
+      onSuccess,
+      onError,
+      toast,
+    ]
+  );
 
   /**
    * Auto-allocate using available slots
@@ -2309,8 +2500,12 @@ export function useEventSlotAllocation(
       options
     );
 
-    // For final validation, enforce minimum slot count
-    if (selectedSlots.length < slotLimits.minSlots) {
+    // For final validation, enforce minimum slot count (except for subscription/class)
+    if (
+      eventType !== "subscription" &&
+      eventType !== "class" &&
+      selectedSlots.length < slotLimits.minSlots
+    ) {
       result.isValid = false;
       if (!result.errors.some((e) => e.includes("Minimum"))) {
         result.errors.unshift(
@@ -2421,6 +2616,7 @@ export function useEventSlotAllocation(
 
     // Allocation methods
     manualAllocate,
+    manualAllocateWithReschedule,
     autoAllocate,
     preAllocate,
 

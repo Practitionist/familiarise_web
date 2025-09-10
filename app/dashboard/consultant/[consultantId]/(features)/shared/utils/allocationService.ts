@@ -1,4 +1,4 @@
-import { TimeSlot } from "./calendarUtils";
+import { TimeSlot, Appointment } from "./calendarUtils";
 
 export interface AllocationRequest {
   isAuto: boolean;
@@ -58,7 +58,16 @@ export class AllocationService {
         }
       );
 
-      const data = await response.json();
+      let data: any = null;
+      try {
+        data = await response.json();
+      } catch (e) {
+        // Non-JSON response (network hiccup, SSR error, etc.)
+        console.error(
+          "[AllocationService] Non-JSON response during consultation allocation",
+          e
+        );
+      }
 
       if (!response.ok) {
         console.error("[AllocationService] Consultation allocation failed", {
@@ -69,7 +78,10 @@ export class AllocationService {
         });
         return {
           success: false,
-          error: data.error || "Failed to allocate consultation slots",
+          error:
+            data?.error ||
+            (typeof data === "string" ? data : undefined) ||
+            `Failed to allocate consultation slots (HTTP ${response.status})`,
         };
       }
 
@@ -172,6 +184,134 @@ export class AllocationService {
   }
 
   /**
+   * Fetches all appointments for a specific subscription (used for rescheduling)
+   */
+  static async fetchSubscriptionAppointments(
+    subscriptionId: string
+  ): Promise<Appointment[]> {
+    try {
+      const response = await fetch(
+        `/api/events/subscriptions/${subscriptionId}/appointments`
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch subscription appointments");
+      }
+
+      const data = await response.json();
+      return data.data || [];
+    } catch (error) {
+      console.error("Error fetching subscription appointments:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Reschedules a specific appointment within a subscription
+   */
+  static async rescheduleSubscriptionAppointment(
+    subscriptionId: string,
+    appointmentId: string,
+    newSlots: string[],
+    callTimestamp?: string
+  ): Promise<AllocationResponse> {
+    try {
+      console.log(
+        `[AllocationService] Rescheduling subscription appointment:`,
+        {
+          subscriptionId,
+          appointmentId,
+          callTimestamp,
+          newSlots,
+          newSlotsCount: newSlots.length,
+        }
+      );
+
+      const response = await fetch(
+        `/api/events/subscriptions/${subscriptionId}/reschedule`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            appointmentId,
+            newSlots,
+            callTimestamp,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || "Failed to reschedule subscription appointment",
+        };
+      }
+
+      return {
+        success: true,
+        data: data.data,
+      };
+    } catch (error) {
+      console.error("Error rescheduling subscription appointment:", error);
+      return {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
+      };
+    }
+  }
+
+  /**
+   * Reschedules a specific appointment within a class
+   */
+  static async rescheduleClassAppointment(
+    classId: string,
+    appointmentId: string,
+    newSlots: string[]
+  ): Promise<AllocationResponse> {
+    try {
+      const response = await fetch(
+        `/api/events/classes/${classId}/reschedule`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            appointmentId,
+            newSlots,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || "Failed to reschedule class appointment",
+        };
+      }
+
+      return {
+        success: true,
+        data: data.data,
+      };
+    } catch (error) {
+      console.error("Error rescheduling class appointment:", error);
+      return {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
+      };
+    }
+  }
+
+  /**
    * Validates slots for subscriptions
    */
   static async validateSubscriptionSlots(
@@ -218,7 +358,7 @@ export class AllocationService {
    */
   static async allocateWebinarSlots(
     webinarId: string,
-    slots: string[]
+    request: AllocationRequest
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
@@ -228,7 +368,7 @@ export class AllocationService {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ slots }),
+          body: JSON.stringify(request),
         }
       );
 
@@ -256,11 +396,11 @@ export class AllocationService {
   }
 
   /**
-   * Allocates slots for classes
+   * Allocates slots for classes (V1 - legacy)
    */
   static async allocateClassSlots(
     classId: string,
-    slots: string[]
+    request: AllocationRequest
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(`/api/events/classes/${classId}/allocate`, {
@@ -268,7 +408,7 @@ export class AllocationService {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ slots }),
+        body: JSON.stringify(request),
       });
 
       const data = await response.json();
@@ -295,6 +435,90 @@ export class AllocationService {
   }
 
   /**
+   * Allocates slots for classes (V2 - cleaner implementation)
+   */
+  static async allocateClassSlotsV2(
+    classId: string,
+    request: AllocationRequest
+  ): Promise<AllocationResponse> {
+    try {
+      const response = await fetch(
+        `/api/events/classes/${classId}/allocate-v2`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(request),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || "Failed to allocate class slots",
+        };
+      }
+
+      return {
+        success: true,
+        data: data.data,
+      };
+    } catch (error) {
+      console.error("Error allocating class slots (V2):", error);
+      return {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
+      };
+    }
+  }
+
+  /**
+   * Validates slots for classes (V2 - cleaner implementation)
+   */
+  static async validateClassSlotsV2(
+    classId: string,
+    slots: string[]
+  ): Promise<ValidationResponse> {
+    try {
+      const response = await fetch(
+        `/api/events/classes/${classId}/validate-v2`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ slots }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || "Failed to validate class slots",
+        };
+      }
+
+      return {
+        success: true,
+        data: data.data,
+      };
+    } catch (error) {
+      console.error("Error validating class slots (V2):", error);
+      return {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
+      };
+    }
+  }
+
+  /**
    * Generic allocation method that routes to the appropriate service
    */
   static async allocateSlots(
@@ -305,6 +529,8 @@ export class AllocationService {
       isAuto?: boolean;
       useRequestedSlots?: boolean;
       reallocate?: boolean;
+      appointmentId?: string; // For subscription rescheduling
+      callTimestamp?: string; // For specific call rescheduling
     }
   ): Promise<AllocationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
@@ -319,6 +545,16 @@ export class AllocationService {
         });
 
       case "subscription":
+        // If rescheduling a specific appointment, use the reschedule endpoint
+        if (allocationOptions?.appointmentId) {
+          return this.rescheduleSubscriptionAppointment(
+            eventId,
+            allocationOptions.appointmentId,
+            slotStrings,
+            allocationOptions.callTimestamp
+          );
+        }
+        // Otherwise, use the regular allocation endpoint
         return this.allocateSubscriptionSlots(eventId, {
           isAuto: allocationOptions?.isAuto || false,
           slots: slotStrings,
@@ -326,10 +562,33 @@ export class AllocationService {
         });
 
       case "webinar":
-        return this.allocateWebinarSlots(eventId, slotStrings);
+        return this.allocateWebinarSlots(eventId, {
+          isAuto: allocationOptions?.isAuto || false,
+          slots: slotStrings,
+          useRequestedSlots: allocationOptions?.useRequestedSlots,
+        });
 
       case "class":
-        return this.allocateClassSlots(eventId, slotStrings);
+        // If rescheduling a specific appointment, use the reschedule endpoint
+        if (allocationOptions?.appointmentId) {
+          console.log(
+            `🔄 [FRONTEND] Class reschedule detected - calling reschedule endpoint for classId: ${eventId}, appointmentId: ${allocationOptions.appointmentId}`
+          );
+          return this.rescheduleClassAppointment(
+            eventId,
+            allocationOptions.appointmentId,
+            slotStrings
+          );
+        }
+        // Otherwise, use the regular allocation endpoint
+        console.log(
+          `⚠️ [FRONTEND] Class allocation called (should NOT happen during reschedule) for classId: ${eventId}`
+        );
+        return this.allocateClassSlots(eventId, {
+          isAuto: allocationOptions?.isAuto || false,
+          slots: slotStrings,
+          useRequestedSlots: allocationOptions?.useRequestedSlots,
+        });
 
       default:
         return {

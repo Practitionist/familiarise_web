@@ -274,7 +274,7 @@ export function useCalendarData(
             const end = new Date(slot.slotEndTimeInUTC);
             const durationMinutes =
               (end.getTime() - start.getTime()) / (1000 * 60);
-            const numIntervals = Math.round(durationMinutes / 30);
+            const numIntervals = Math.max(1, Math.round(durationMinutes / 30));
 
             const intervalSlots: TimeSlot[] = [];
             for (let i = 0; i < numIntervals; i++) {

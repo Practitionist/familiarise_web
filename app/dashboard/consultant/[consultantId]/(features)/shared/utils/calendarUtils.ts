@@ -125,26 +125,32 @@ export function mapWeeklySlots(
   const iterDate = new Date(startDate);
 
   while (iterDate <= endDate) {
-    const dayOfWeek = iterDate.getDay();
+    // Use UTC day-of-week to align with backend availability storage
+    const dayOfWeekUtc = iterDate.getUTCDay();
     const matchingSlots = consultantData.slotsOfAvailabilityWeekly.filter(
-      (slot) => DAY_INDEX[slot.dayOfWeekforStartTimeInUTC] === dayOfWeek
+      (slot) => DAY_INDEX[slot.dayOfWeekforStartTimeInUTC] === dayOfWeekUtc
     );
 
     matchingSlots.forEach((slot) => {
-      const startTime = new Date(slot.slotStartTimeInUTC);
-      const endTime = new Date(slot.slotEndTimeInUTC);
+      const startTimeUtc = new Date(slot.slotStartTimeInUTC);
+      const endTimeUtc = new Date(slot.slotEndTimeInUTC);
 
-      // FIXED: Create new date objects to avoid mutations
+      // FIXED: Create new date objects using UTC hours/minutes to avoid TZ drift
       const slotStartTime = new Date(iterDate);
-      slotStartTime.setHours(
-        startTime.getHours(),
-        startTime.getMinutes(),
+      slotStartTime.setUTCHours(
+        startTimeUtc.getUTCHours(),
+        startTimeUtc.getUTCMinutes(),
         0,
         0
       );
 
       const slotEndTime = new Date(iterDate);
-      slotEndTime.setHours(endTime.getHours(), endTime.getMinutes(), 0, 0);
+      slotEndTime.setUTCHours(
+        endTimeUtc.getUTCHours(),
+        endTimeUtc.getUTCMinutes(),
+        0,
+        0
+      );
 
       // Handle slots that cross midnight
       if (slotEndTime <= slotStartTime) {

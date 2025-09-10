@@ -13,6 +13,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 // import { Slider } from "@/components/ui/slider"; // Not available, using custom implementation
 import { Separator } from "@/components/ui/separator";
 import {
@@ -186,7 +192,7 @@ export function AutoAllocationDemo({
         [key]: value,
       }));
     },
-    [],
+    []
   );
 
   /**
@@ -235,7 +241,7 @@ export function AutoAllocationDemo({
       const result = await AllocationAlgorithms.autoAllocate(
         availableSlots,
         options,
-        preferences,
+        preferences
       );
 
       setAllocationResult(result);
@@ -544,7 +550,7 @@ export function AutoAllocationDemo({
                     onChange={(e) =>
                       updatePreference(
                         "minTimeBetweenSessions",
-                        parseFloat(e.target.value),
+                        parseFloat(e.target.value)
                       )
                     }
                     max={8}
@@ -611,23 +617,38 @@ export function AutoAllocationDemo({
       <Card>
         <CardContent className="pt-6">
           <div className="flex gap-4">
-            <Button
-              onClick={handleAutoAllocate}
-              disabled={isAllocating || filteredSlots.length < requiredSlots}
-              className="flex-1"
-            >
-              {isAllocating ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary-foreground border-t-transparent mr-2" />
-                  Allocating...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="h-4 w-4 mr-2" />
-                  Auto Allocate
-                </>
-              )}
-            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={handleAutoAllocate}
+                    disabled={
+                      isAllocating ||
+                      filteredSlots.length < requiredSlots ||
+                      eventType === "class"
+                    }
+                    className="flex-1"
+                  >
+                    {isAllocating ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary-foreground border-t-transparent mr-2" />
+                        Allocating...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4 mr-2" />
+                        Auto Allocate
+                      </>
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                {eventType === "class" && (
+                  <TooltipContent>
+                    <p>Coming Soon!</p>
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
 
             <Button variant="outline" onClick={handleReset}>
               Reset
@@ -672,7 +693,7 @@ export function AutoAllocationDemo({
                         <span className="text-sm">
                           {format(
                             slot.startTime,
-                            "EEE, MMM d, yyyy 'at' h:mm a",
+                            "EEE, MMM d, yyyy 'at' h:mm a"
                           )}
                         </span>
                         <Badge variant="outline" className="text-xs">
