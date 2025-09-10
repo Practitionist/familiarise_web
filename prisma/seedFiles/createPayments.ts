@@ -40,9 +40,7 @@ export async function createPayments(users: UserWithProfiles[]) {
   const discountCodes = await prisma.discountCode.findMany();
   const appointments = await prisma.appointment.findMany({
     where: {
-      payment: {
-        none: {},
-      },
+      payment: null,
       OR: [
         { consultation: { requestStatus: "APPROVED" } },
         { subscription: { requestStatus: "APPROVED" } },
@@ -109,7 +107,7 @@ export async function createPayments(users: UserWithProfiles[]) {
         switch (discountCode.discountType) {
           case DiscountType.PERCENTAGE:
             finalAmount = Math.round(
-              amount * (1 - discountCode.discountValue / 100),
+              amount * (1 - discountCode.discountValue / 100)
             );
             break;
           case DiscountType.FIXED_AMOUNT:
@@ -133,10 +131,10 @@ export async function createPayments(users: UserWithProfiles[]) {
         ]),
         paymentIntent: faker.string.uuid(),
         paymentGateway: faker.helpers.arrayElement<PaymentGateway>(
-          Object.values(PaymentGateway),
+          Object.values(PaymentGateway)
         ),
         paymentStatus: faker.helpers.arrayElement<PaymentStatus>(
-          Object.values(PaymentStatus),
+          Object.values(PaymentStatus)
         ),
         appointment: { connect: { id: appointment.id } },
         ...(discountCode
@@ -150,7 +148,7 @@ export async function createPayments(users: UserWithProfiles[]) {
     } catch (error) {
       console.error(
         `Failed to create payment for user ${user.id}:`,
-        error instanceof Error ? error.message : String(error),
+        error instanceof Error ? error.message : String(error)
       );
     }
 
