@@ -303,7 +303,7 @@ export interface UseEventSlotAllocationReturn {
   // ==========================================
 
   /** Validate current slot selection */
-  validateSlots: () => ValidationResult;
+  validateSlots: (slots?: TimeSlot[]) => ValidationResult;
 
   /** Validate specific slots without selecting them */
   validateSlotsPreview: (slots: TimeSlot[]) => ValidationResult;
@@ -1177,7 +1177,7 @@ export interface UseEventSlotAllocationReturn {
   preAllocate: (availableSlots: TimeSlot[]) => Promise<void>;
 
   // Validation functions
-  validateSlots: (slots: TimeSlot[]) => ValidationResult;
+  validateSlots: (slots?: TimeSlot[]) => ValidationResult;
   validateSlotsPreview: (slots: TimeSlot[]) => ValidationResult;
 
   // Event-specific helpers

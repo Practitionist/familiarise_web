@@ -26,14 +26,14 @@ export async function POST(req: NextRequest) {
       // DEVELOPMENT FLOW: Create appointment first, then skip payment
       const result = await handleDevelopmentCheckout(
         validatedData,
-        session.user.id,
+        session.user.id
       );
       return NextResponse.json(result);
     } else {
       // PRODUCTION FLOW: Create payment first, then appointment ONLY after payment succeeds
       const result = await handleProductionCheckout(
         validatedData,
-        session.user.id,
+        session.user.id
       );
       return NextResponse.json(result);
     }
@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
         errorType,
         timestamp: new Date().toISOString(),
       },
-      { status: 400 },
+      { status: 400 }
     );
   }
 }
