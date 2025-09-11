@@ -5,8 +5,12 @@ import {
   RequestStatus,
   ScheduleType,
 } from "@prisma/client";
-import { addHours } from "date-fns";
+import { addMinutes } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  getSlotBookingStatus,
+  hasTimeOverlap,
+} from "@/utils/timeSlotsProcessing";
 
 type PrismaTransaction = Omit<
   Prisma.TransactionClient,
@@ -15,8 +19,8 @@ type PrismaTransaction = Omit<
 
 interface AllocationRequest {
   isAuto: boolean;
-  slots?: string[]; // Required for manual allocation
-  useRequestedSlots?: boolean; // For using pre-allocated slots
+  slots?: string[]; // For manual allocation: full chain of 30-min slot starts
+  useRequestedSlots?: boolean; // For using pre-allocated/requested slot
 }
 
 const webinarInclude = {
@@ -113,6 +117,14 @@ async function allocateSlotAuto(
             },
           },
         },
+        // CRITICAL FIX: Exclude the current webinar being allocated from conflict check
+        {
+          NOT: {
+            webinar: {
+              id: webinar.id,
+            },
+          },
+        },
       ],
     },
     include: {
@@ -151,7 +163,7 @@ async function allocateSlotAuto(
             0
           );
 
-          if (candidateSlot >=now ) {
+          if (candidateSlot >= now) {
             candidateSlots.push(candidateSlot);
           }
         }
@@ -223,6 +235,11 @@ async function allocateSlotRequested(
   const selectedSlot = new Date(requestedSlot);
 
   // Validate the slot is still available
+  const hostUserId = webinar.webinarPlan?.consultantProfile?.user?.id;
+  if (!hostUserId) {
+    throw new Error("Missing consultant user information");
+  }
+
   const existingAppointment = await tx.appointment.findFirst({
     where: {
       AND: [
@@ -237,6 +254,24 @@ async function allocateSlotRequested(
         {
           slotsOfAppointment: {
             some: { slotStartTimeInUTC: selectedSlot },
+          },
+        },
+        // Scope conflicts to appointments involving the same consultant (host)
+        {
+          slotsOfAppointment: {
+            some: {
+              user: {
+                some: { id: hostUserId },
+              },
+            },
+          },
+        },
+        // CRITICAL FIX: Exclude the current webinar being allocated from conflict check
+        {
+          NOT: {
+            webinar: {
+              id: webinar.id,
+            },
           },
         },
       ],
@@ -254,7 +289,7 @@ async function allocateSlotManual(
   webinar: WebinarWithRelations,
   slots: string[],
   tx: PrismaTransaction
-): Promise<Date> {
+): Promise<Date[]> {
   const { webinarPlan } = webinar;
   const { consultantProfile } = webinarPlan;
 
@@ -262,99 +297,258 @@ async function allocateSlotManual(
     throw new Error("Consultant profile not found");
   }
 
-  // Validate number of slots
-  if (slots.length !== 1) {
-    throw new Error("Webinar requires exactly one slot");
-  }
+  // Convert and sort unique slot starts
+  const selected = Array.from(
+    new Set(slots.map((s) => new Date(s).toISOString()))
+  )
+    .map((s) => new Date(s))
+    .sort((a, b) => a.getTime() - b.getTime());
 
-  const slotDate = new Date(slots[0]);
+  const requiredSlots = Math.ceil(webinarPlan.durationInHours / 0.5);
+
+  if (selected.length !== requiredSlots) {
+    throw new Error(
+      `Webinar requires exactly ${requiredSlots} slots for ${webinarPlan.durationInHours} hour(s)`
+    );
+  }
 
   // Validate slot is in the future
-  if (slotDate <= new Date()) {
-    throw new Error("Cannot allocate slots in the past");
+  const now = new Date();
+  for (const d of selected) {
+    if (d <= now) throw new Error("Cannot allocate slots in the past");
   }
 
-  // Validate slot matches consultant's schedule type
+  // Validate slots are same-day and consecutive 30-min increments
+  const firstDay = selected[0].toDateString();
+  const allSameDay = selected.every((d) => d.toDateString() === firstDay);
+  if (!allSameDay) {
+    throw new Error("Webinar slots must be on the same day");
+  }
+  for (let i = 1; i < selected.length; i++) {
+    const prev = selected[i - 1];
+    const cur = selected[i];
+    if (cur.getTime() !== prev.getTime() + 30 * 60 * 1000) {
+      throw new Error("Webinar slots must be consecutive 30-min intervals");
+    }
+  }
+
+  // Validate first slot matches consultant's schedule type
+  const slotDate = selected[0];
   if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
-    // For weekly schedule, validate slot follows the weekly pattern
-    const availableWeeklySlots =
-      consultantProfile.slotsOfAvailabilityWeekly.some((slot) => {
-        const slotDay = new Date(slot.slotStartTimeInUTC).getDay();
-        const slotHours = new Date(slot.slotStartTimeInUTC).getHours();
-        const slotMinutes = new Date(slot.slotStartTimeInUTC).getMinutes();
+    // For weekly schedule, validate entire webinar block (all selected slots) fits within
+    // merged availability windows for that weekday. This supports durations > 1 hour and
+    // contiguous windows.
+    const requestedDayOfWeek = slotDate.getUTCDay();
+    const weekly = consultantProfile.slotsOfAvailabilityWeekly.filter(
+      (ws: any) => {
+        const dayMap: Record<string, number> = {
+          SUNDAY: 0,
+          MONDAY: 1,
+          TUESDAY: 2,
+          WEDNESDAY: 3,
+          THURSDAY: 4,
+          FRIDAY: 5,
+          SATURDAY: 6,
+        };
+        return dayMap[ws.dayOfWeekforStartTimeInUTC] === requestedDayOfWeek;
+      }
+    );
 
-        return (
-          slotDate.getDay() === slotDay &&
-          slotDate.getHours() === slotHours &&
-          slotDate.getMinutes() === slotMinutes
-        );
-      });
-
-    if (!availableWeeklySlots) {
+    if (weekly.length === 0) {
+      const dayNames = [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+      ];
       throw new Error(
-        `Slot ${slotDate.toLocaleString()} does not match consultant's weekly schedule`
+        `Selected time is on ${dayNames[requestedDayOfWeek]}, but consultant has no availability on ${dayNames[requestedDayOfWeek]}s.`
+      );
+    }
+
+    const blockStartMin =
+      selected[0].getUTCHours() * 60 + selected[0].getUTCMinutes();
+    const blockEndMin =
+      selected[selected.length - 1].getUTCHours() * 60 +
+      selected[selected.length - 1].getUTCMinutes() +
+      30; // include last 30-min slot
+
+    // Build and merge ranges for that weekday
+    const ranges = weekly
+      .map((ws: any) => {
+        const s = new Date(ws.slotStartTimeInUTC);
+        const e = new Date(ws.slotEndTimeInUTC);
+        return {
+          start: s.getUTCHours() * 60 + s.getUTCMinutes(),
+          end: e.getUTCHours() * 60 + e.getUTCMinutes(),
+        };
+      })
+      .sort((a: any, b: any) => a.start - b.start);
+
+    const merged: Array<{ start: number; end: number }> = [];
+    for (const r of ranges) {
+      const last = merged[merged.length - 1];
+      if (!last) merged.push({ ...r });
+      else if (r.start <= last.end) last.end = Math.max(last.end, r.end);
+      else merged.push({ ...r });
+    }
+
+    const fits = merged.some(
+      (r) => blockStartMin >= r.start && blockEndMin <= r.end
+    );
+    if (!fits) {
+      const dayNames = [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+      ];
+      const availableWindows = merged
+        .map((r) => {
+          const h1 = String(Math.floor(r.start / 60)).padStart(2, "0");
+          const m1 = String(r.start % 60).padStart(2, "0");
+          const h2 = String(Math.floor(r.end / 60)).padStart(2, "0");
+          const m2 = String(r.end % 60).padStart(2, "0");
+          return `${h1}:${m1}-${h2}:${m2}`;
+        })
+        .join(", ");
+      throw new Error(
+        `Selected time ${slotDate.toISOString()} is outside consultant's available windows on ${dayNames[requestedDayOfWeek]}s. Available windows: ${availableWindows} UTC.`
       );
     }
   } else {
     // For custom schedule, validate slot exists in custom slots
-    const availableCustomSlots =
-      consultantProfile.slotsOfAvailabilityCustom.some(
-        (slot) =>
-          new Date(slot.slotStartTimeInUTC).toISOString() ===
-          slotDate.toISOString()
-      );
-
-    if (!availableCustomSlots) {
+    const availableFirst = consultantProfile.slotsOfAvailabilityCustom.some(
+      (slot) =>
+        new Date(slot.slotStartTimeInUTC).toISOString() ===
+        slotDate.toISOString()
+    );
+    if (!availableFirst) {
       throw new Error(
         `Slot ${slotDate.toLocaleString()} is not in consultant's custom schedule`
       );
     }
   }
 
-  // Check for conflicts
-  const existingAppointment = await tx.appointment.findFirst({
+  // Check for conflicts using the same logic as availability API
+  // Get all existing appointments that could overlap with selected slots
+  const existingAppointments = await tx.appointment.findMany({
     where: {
       AND: [
         {
           OR: [
-            {
-              subscription: {
-                requestStatus: RequestStatus.APPROVED,
-              },
-            },
-            {
-              consultation: {
-                requestStatus: RequestStatus.APPROVED,
-              },
-            },
-            {
-              webinar: {
-                status: "SCHEDULED",
-              },
-            },
-            {
-              class: {
-                status: "SCHEDULED",
-              },
-            },
+            { subscription: { requestStatus: RequestStatus.APPROVED } },
+            { consultation: { requestStatus: RequestStatus.APPROVED } },
+            { webinar: { status: "SCHEDULED" } },
+            { class: { status: "SCHEDULED" } },
           ],
         },
         {
           slotsOfAppointment: {
             some: {
-              slotStartTimeInUTC: slotDate,
+              // Find appointments that overlap with any of our selected time ranges
+              OR: selected.flatMap((slotStart) => {
+                const slotEnd = addMinutes(slotStart, 30); // 30-minute slots
+                return [
+                  // Overlap conditions: start1 < end2 && start2 < end1
+                  {
+                    AND: [
+                      { slotStartTimeInUTC: { lte: slotStart } },
+                      { slotEndTimeInUTC: { gt: slotStart } },
+                    ],
+                  },
+                  {
+                    AND: [
+                      { slotStartTimeInUTC: { lt: slotEnd } },
+                      { slotEndTimeInUTC: { gte: slotEnd } },
+                    ],
+                  },
+                  {
+                    AND: [
+                      { slotStartTimeInUTC: { gte: slotStart } },
+                      { slotEndTimeInUTC: { lte: slotEnd } },
+                    ],
+                  },
+                ];
+              }),
+            },
+          },
+        },
+        // Scope conflicts to appointments involving the same consultant (host)
+        {
+          slotsOfAppointment: {
+            some: {
+              user: {
+                some: {
+                  id: consultantProfile.user.id,
+                },
+              },
+            },
+          },
+        },
+        // CRITICAL FIX: Exclude the current webinar being allocated from conflict check
+        {
+          NOT: {
+            webinar: {
+              id: webinar.id,
             },
           },
         },
       ],
     },
+    include: {
+      slotsOfAppointment: true,
+    },
   });
 
-  if (existingAppointment) {
-    throw new Error("Selected slot is already booked");
+  // Check each selected slot for conflicts using the same logic as availability API
+  for (const selectedSlot of selected) {
+    const slotStart = selectedSlot;
+    const slotEnd = addMinutes(selectedSlot, 30);
+
+    // Get all appointment slots that overlap with this specific slot
+    const overlappingSlots: Array<{
+      slotStartTimeInUTC: Date;
+      slotEndTimeInUTC: Date;
+    }> = [];
+    existingAppointments.forEach((appointment) => {
+      appointment.slotsOfAppointment.forEach((slot) => {
+        if (
+          hasTimeOverlap(
+            slotStart,
+            slotEnd,
+            slot.slotStartTimeInUTC,
+            slot.slotEndTimeInUTC
+          )
+        ) {
+          overlappingSlots.push(slot);
+        }
+      });
+    });
+
+    // Use the same booking status logic as availability API
+    const bookingStatus = getSlotBookingStatus(
+      slotStart,
+      slotEnd,
+      overlappingSlots.map((slot) => ({
+        slotStartTimeInUTC: slot.slotStartTimeInUTC,
+        slotEndTimeInUTC: slot.slotEndTimeInUTC,
+      }))
+    );
+
+    // Only reject if slot is fully booked (same threshold as availability API)
+    if (bookingStatus === "fully-booked") {
+      throw new Error("One or more selected slots are already fully booked");
+    }
   }
 
-  return slotDate;
+  return selected;
 }
 
 export async function PATCH(
@@ -414,8 +608,16 @@ export async function PATCH(
       const result = await prisma.$transaction(async (tx) => {
         // If using requested slots and appointment exists, just update status
         if (body.useRequestedSlots && webinar.appointment) {
-          // Validate the slot is still available
-          const existingAppointment = await tx.appointment.findFirst({
+          // Validate the slot is still available using overlap logic
+          const requestedSlot = webinar.appointment.slotsOfAppointment[0];
+          const slotStart = requestedSlot.slotStartTimeInUTC;
+          const slotEnd = requestedSlot.slotEndTimeInUTC;
+          const hostUserId = webinar.webinarPlan?.consultantProfile?.user?.id;
+          if (!hostUserId) {
+            throw new Error("Missing consultant user information");
+          }
+
+          const conflictingAppointments = await tx.appointment.findMany({
             where: {
               AND: [
                 {
@@ -429,17 +631,85 @@ export async function PATCH(
                 {
                   slotsOfAppointment: {
                     some: {
-                      slotStartTimeInUTC:
-                        webinar.appointment.slotsOfAppointment[0]
-                          .slotStartTimeInUTC,
+                      // Check for overlaps using the same logic as availability API
+                      OR: [
+                        {
+                          AND: [
+                            { slotStartTimeInUTC: { lte: slotStart } },
+                            { slotEndTimeInUTC: { gt: slotStart } },
+                          ],
+                        },
+                        {
+                          AND: [
+                            { slotStartTimeInUTC: { lt: slotEnd } },
+                            { slotEndTimeInUTC: { gte: slotEnd } },
+                          ],
+                        },
+                        {
+                          AND: [
+                            { slotStartTimeInUTC: { gte: slotStart } },
+                            { slotEndTimeInUTC: { lte: slotEnd } },
+                          ],
+                        },
+                      ],
                     },
+                  },
+                },
+                // Scope conflicts to appointments involving the same consultant (host)
+                {
+                  slotsOfAppointment: {
+                    some: {
+                      user: {
+                        some: {
+                          id: hostUserId,
+                        },
+                      },
+                    },
+                  },
+                },
+                // CRITICAL FIX: Exclude the current webinar being allocated from conflict check
+                {
+                  NOT: {
+                    id: webinar.appointment?.id,
                   },
                 },
               ],
             },
+            include: {
+              slotsOfAppointment: true,
+            },
           });
 
-          if (existingAppointment) {
+          // Check if any conflicting appointments make this slot fully booked
+          const overlappingSlots: Array<{
+            slotStartTimeInUTC: Date;
+            slotEndTimeInUTC: Date;
+          }> = [];
+          conflictingAppointments.forEach((appointment) => {
+            appointment.slotsOfAppointment.forEach((slot) => {
+              if (
+                hasTimeOverlap(
+                  slotStart,
+                  slotEnd,
+                  slot.slotStartTimeInUTC,
+                  slot.slotEndTimeInUTC
+                )
+              ) {
+                overlappingSlots.push(slot);
+              }
+            });
+          });
+
+          const bookingStatus = getSlotBookingStatus(
+            slotStart,
+            slotEnd,
+            overlappingSlots.map((slot) => ({
+              slotStartTimeInUTC: slot.slotStartTimeInUTC,
+              slotEndTimeInUTC: slot.slotEndTimeInUTC,
+            }))
+          );
+
+          if (bookingStatus === "fully-booked") {
             throw new Error("Requested slot is no longer available");
           }
 
@@ -465,54 +735,47 @@ export async function PATCH(
           });
         }
 
-        // Get slot based on allocation method
-        let selectedSlot;
+        // Get slot(s) based on allocation method
+        let selectedSlot: Date | undefined;
+        let selectedSlots: Date[] | undefined;
         if (body.useRequestedSlots) {
           selectedSlot = await allocateSlotRequested(webinar, tx);
         } else if (body.isAuto) {
           selectedSlot = await allocateSlotAuto(webinar, tx);
         } else {
-          selectedSlot = await allocateSlotManual(webinar, body.slots!, tx);
+          selectedSlots = await allocateSlotManual(webinar, body.slots!, tx);
         }
 
-        // Create appointment for selected slot
+        const requiredSlots = Math.ceil(
+          webinar.webinarPlan.durationInHours / 0.5
+        );
+        const hostUserId = (() => {
+          if (!webinar.webinarPlan.consultantProfile?.user?.id) {
+            throw new Error("Missing consultant user information");
+          }
+          return webinar.webinarPlan.consultantProfile.user.id;
+        })();
+
         const appointment = await tx.appointment.create({
           data: {
             appointmentType: AppointmentsType.WEBINAR,
-            webinar: {
-              connect: { id: webinarId },
-            },
+            webinar: { connect: { id: webinarId } },
             slotsOfAppointment: {
-              create: {
-                slotStartTimeInUTC: selectedSlot,
-                slotEndTimeInUTC: addHours(
-                  selectedSlot,
-                  webinar.webinarPlan.durationInHours
-                ),
+              create: (selectedSlots && selectedSlots.length === requiredSlots
+                ? selectedSlots
+                : Array.from({ length: requiredSlots }).map((_, i) =>
+                    addMinutes(selectedSlot as Date, i * 30)
+                  )
+              ).map((start) => ({
+                slotStartTimeInUTC: start,
+                slotEndTimeInUTC: addMinutes(start, 30),
                 isTentative: false,
-                user: {
-                  connect: [
-                    {
-                      id: (() => {
-                        if (!webinar.webinarPlan.consultantProfile?.user?.id) {
-                          throw new Error(
-                            "Missing consultant user information"
-                          );
-                        }
-                        return webinar.webinarPlan.consultantProfile.user.id;
-                      })(),
-                    },
-                  ],
-                },
-              },
+                user: { connect: [{ id: hostUserId }] },
+              })),
             },
           },
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: true,
-              },
-            },
+            slotsOfAppointment: { include: { user: true } },
           },
         });
 

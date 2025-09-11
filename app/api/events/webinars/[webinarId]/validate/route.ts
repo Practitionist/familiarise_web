@@ -1,6 +1,10 @@
 import prisma from "@/lib/prisma";
 import { RequestStatus, ScheduleType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  getSlotBookingStatus,
+  hasTimeOverlap,
+} from "@/utils/timeSlotsProcessing";
 
 interface ValidationRequest {
   slots: string[];
@@ -38,7 +42,7 @@ const webinarInclude = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> },
+  { params }: { params: Promise<{ webinarId: string }> }
 ) {
   try {
     const { webinarId } = await params;
@@ -48,7 +52,7 @@ export async function POST(
     if (!Array.isArray(body.slots) || body.slots.length === 0) {
       return NextResponse.json(
         { error: "Slots array is required and must not be empty" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -75,14 +79,14 @@ export async function POST(
         {
           error: `This webinar requires only ${requiredSlots} slots`,
         },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -102,14 +106,14 @@ export async function POST(
     if (pastSlots.length > 0) {
       return NextResponse.json(
         { error: "Cannot validate slots in the past" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
     // For multi-slot webinars, validate that slots are consecutive
     if (requiredSlots > 1) {
       const sortedSlots = [...slotDates].sort(
-        (a, b) => a.getTime() - b.getTime(),
+        (a, b) => a.getTime() - b.getTime()
       );
       for (let i = 1; i < sortedSlots.length; i++) {
         const prevSlot = sortedSlots[i - 1];
@@ -118,13 +122,13 @@ export async function POST(
         if (currentSlot.getTime() !== expectedStartTime.getTime()) {
           return NextResponse.json(
             { error: "Webinar slots must be consecutive" },
-            { status: 400 },
+            { status: 400 }
           );
         }
       }
     }
 
-    // Check for conflicts with existing approved appointments
+    // Check for conflicts with existing approved appointments using overlap logic
     const existingAppointments = await prisma.appointment.findMany({
       where: {
         AND: [
@@ -160,9 +164,40 @@ export async function POST(
                     id: consultantProfile.user.id,
                   },
                 },
-                slotStartTimeInUTC: {
-                  in: slotDates,
-                },
+                // Check for overlaps using the same logic as availability API
+                OR: slotDates.flatMap((slotStart) => {
+                  const slotEnd = new Date(
+                    slotStart.getTime() + 30 * 60 * 1000
+                  ); // 30-minute slots
+                  return [
+                    {
+                      AND: [
+                        { slotStartTimeInUTC: { lte: slotStart } },
+                        { slotEndTimeInUTC: { gt: slotStart } },
+                      ],
+                    },
+                    {
+                      AND: [
+                        { slotStartTimeInUTC: { lt: slotEnd } },
+                        { slotEndTimeInUTC: { gte: slotEnd } },
+                      ],
+                    },
+                    {
+                      AND: [
+                        { slotStartTimeInUTC: { gte: slotStart } },
+                        { slotEndTimeInUTC: { lte: slotEnd } },
+                      ],
+                    },
+                  ];
+                }),
+              },
+            },
+          },
+          // CRITICAL FIX: Exclude the current webinar being validated from conflict check
+          {
+            NOT: {
+              webinar: {
+                id: webinarId,
               },
             },
           },
@@ -205,78 +240,161 @@ export async function POST(
       },
     });
 
-    // Process conflicts
-    for (const appointment of existingAppointments) {
-      const conflictingSlots = appointment.slotsOfAppointment.filter((slot) =>
-        slotDates.some(
-          (date) =>
-            date.toISOString() === slot.slotStartTimeInUTC.toISOString(),
-        ),
+    // Process conflicts using booking status logic (same as availability API)
+    for (const slotDate of slotDates) {
+      const slotStart = slotDate;
+      const slotEnd = new Date(slotStart.getTime() + 30 * 60 * 1000); // 30-minute slots
+
+      // Get all appointment slots that overlap with this specific slot
+      const overlappingSlots: Array<{
+        slotStartTimeInUTC: Date;
+        slotEndTimeInUTC: Date;
+      }> = [];
+      existingAppointments.forEach((appointment) => {
+        appointment.slotsOfAppointment.forEach((slot) => {
+          if (
+            hasTimeOverlap(
+              slotStart,
+              slotEnd,
+              slot.slotStartTimeInUTC,
+              slot.slotEndTimeInUTC
+            )
+          ) {
+            overlappingSlots.push(slot);
+          }
+        });
+      });
+
+      // Use the same booking status logic as availability API
+      const bookingStatus = getSlotBookingStatus(
+        slotStart,
+        slotEnd,
+        overlappingSlots.map((slot) => ({
+          slotStartTimeInUTC: slot.slotStartTimeInUTC,
+          slotEndTimeInUTC: slot.slotEndTimeInUTC,
+        }))
       );
 
-      for (const slot of conflictingSlots) {
-        let appointmentType = "Unknown";
-        let withUser = "Unknown";
+      // Only report as conflict if slot is fully booked (same threshold as availability API)
+      if (bookingStatus === "fully-booked") {
+        // Find the appointment that makes this slot fully booked
+        const conflictingAppointment = existingAppointments.find(
+          (appointment) =>
+            appointment.slotsOfAppointment.some((slot) =>
+              hasTimeOverlap(
+                slotStart,
+                slotEnd,
+                slot.slotStartTimeInUTC,
+                slot.slotEndTimeInUTC
+              )
+            )
+        );
 
-        if (appointment.subscription) {
-          appointmentType = "Subscription";
-          withUser =
-            appointment.subscription.requestedBy?.user?.name || "Unknown";
-        } else if (appointment.consultation) {
-          appointmentType = "Consultation";
-          withUser =
-            appointment.consultation.requestedBy?.user?.name || "Unknown";
-        } else if (appointment.webinar) {
-          appointmentType = "Webinar";
-          withUser = appointment.webinar.webinarPlan?.title || "Unknown";
-        } else if (appointment.class) {
-          appointmentType = "Class";
-          withUser = appointment.class.classPlan?.title || "Unknown";
+        if (conflictingAppointment) {
+          let appointmentType = "Unknown";
+          let withUser = "Unknown";
+
+          if (conflictingAppointment.subscription) {
+            appointmentType = "Subscription";
+            withUser =
+              conflictingAppointment.subscription.requestedBy?.user?.name ||
+              "Unknown";
+          } else if (conflictingAppointment.consultation) {
+            appointmentType = "Consultation";
+            withUser =
+              conflictingAppointment.consultation.requestedBy?.user?.name ||
+              "Unknown";
+          } else if (conflictingAppointment.webinar) {
+            appointmentType = "Webinar";
+            withUser =
+              conflictingAppointment.webinar.webinarPlan?.title || "Unknown";
+          } else if (conflictingAppointment.class) {
+            appointmentType = "Class";
+            withUser =
+              conflictingAppointment.class.classPlan?.title || "Unknown";
+          }
+
+          result.conflicts.push({
+            slot: slotDate.toISOString(),
+            existingAppointment: {
+              type: appointmentType,
+              with: withUser,
+              time: slotDate.toLocaleString(),
+            },
+          });
         }
-
-        result.conflicts.push({
-          slot: slot.slotStartTimeInUTC.toISOString(),
-          existingAppointment: {
-            type: appointmentType,
-            with: withUser,
-            time: new Date(slot.slotStartTimeInUTC).toLocaleString(),
-          },
-        });
       }
     }
 
     // Check if slots are within consultant's availability
-    const availableSlots =
-      consultantProfile.scheduleType === ScheduleType.WEEKLY
-        ? consultantProfile.slotsOfAvailabilityWeekly
-        : consultantProfile.slotsOfAvailabilityCustom;
+    if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
+      // Build merged ranges (minutes-of-day) for the UTC weekday of each slot
+      const dayToNum: Record<string, number> = {
+        SUNDAY: 0,
+        MONDAY: 1,
+        TUESDAY: 2,
+        WEDNESDAY: 3,
+        THURSDAY: 4,
+        FRIDAY: 5,
+        SATURDAY: 6,
+      };
 
-    for (const slotDate of slotDates) {
-      let isAvailable = false;
+      // Group weekly windows by day as [startMin,endMin] and merge contiguous/overlapping
+      const windowsByDay: Map<
+        number,
+        Array<{ start: number; end: number }>
+      > = new Map();
+      for (const ws of consultantProfile.slotsOfAvailabilityWeekly) {
+        const dow =
+          dayToNum[ws.dayOfWeekforStartTimeInUTC as keyof typeof dayToNum];
+        const start = new Date(ws.slotStartTimeInUTC);
+        const end = new Date(ws.slotEndTimeInUTC);
+        const startMin = start.getUTCHours() * 60 + start.getUTCMinutes();
+        const endMin = end.getUTCHours() * 60 + end.getUTCMinutes();
+        if (!windowsByDay.has(dow)) windowsByDay.set(dow, []);
+        windowsByDay.get(dow)!.push({ start: startMin, end: endMin });
+      }
+      // Merge per day
+      windowsByDay.forEach((ranges, dow) => {
+        ranges.sort((a, b) => a.start - b.start);
+        const merged: Array<{ start: number; end: number }> = [];
+        for (const r of ranges) {
+          const last = merged[merged.length - 1];
+          if (!last) {
+            merged.push({ ...r });
+          } else if (r.start <= last.end) {
+            // overlap or contiguous
+            last.end = Math.max(last.end, r.end);
+          } else {
+            merged.push({ ...r });
+          }
+        }
+        windowsByDay.set(dow, merged);
+      });
 
-      if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
-        // For weekly schedule, check if the slot matches any weekly pattern
-        isAvailable = availableSlots.some((slot) => {
-          const slotTime = new Date(slot.slotStartTimeInUTC);
-          return (
-            slotDate.getDay() === slotTime.getDay() &&
-            slotDate.getHours() === slotTime.getHours() &&
-            slotDate.getMinutes() === slotTime.getMinutes()
-          );
-        });
-      } else {
-        // For custom schedule, check if the slot exists exactly
-        isAvailable = availableSlots.some(
+      for (const slotDate of slotDates) {
+        const dow = slotDate.getUTCDay();
+        const ranges = windowsByDay.get(dow) || [];
+        const startMin = slotDate.getUTCHours() * 60 + slotDate.getUTCMinutes();
+        const endMin = startMin + 30; // 30-min slot
+        const within = ranges.some(
+          (r) => startMin >= r.start && endMin <= r.end
+        );
+        if (!within) {
+          result.outsideAvailability.push({ slot: slotDate.toISOString() });
+        }
+      }
+    } else {
+      const availableSlots = consultantProfile.slotsOfAvailabilityCustom;
+      for (const slotDate of slotDates) {
+        const isAvailable = availableSlots.some(
           (slot) =>
             new Date(slot.slotStartTimeInUTC).toISOString() ===
-            slotDate.toISOString(),
+            slotDate.toISOString()
         );
-      }
-
-      if (!isAvailable) {
-        result.outsideAvailability.push({
-          slot: slotDate.toISOString(),
-        });
+        if (!isAvailable) {
+          result.outsideAvailability.push({ slot: slotDate.toISOString() });
+        }
       }
     }
 
@@ -296,7 +414,7 @@ export async function POST(
     console.error("Webinar validation error:", error);
     return NextResponse.json(
       { error: "Failed to validate webinar slot" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
