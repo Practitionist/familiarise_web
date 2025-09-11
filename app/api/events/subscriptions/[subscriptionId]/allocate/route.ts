@@ -8,8 +8,8 @@ import {
   SlotOfAvailabilityCustom,
   SlotOfAvailabilityWeekly,
 } from "@prisma/client";
-import { addHours, addWeeks, addMonths } from "date-fns";
-// Note: countSundayWeeksInclusive not needed directly here; validation service handles week counting
+import { addHours, addMonths } from "date-fns";
+import { countSundayWeeksInclusive } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/calendarUtils";
 import { NextRequest, NextResponse } from "next/server";
 
 type PrismaTransaction = Omit<
@@ -24,6 +24,8 @@ interface AllocationRequest {
 }
 
 const subscriptionInclude = {
+  startDate: true,
+  endDate: true,
   subscriptionPlan: {
     include: {
       consultantProfile: {
@@ -56,12 +58,16 @@ async function allocateSlotsAuto(
   subscription: SubscriptionWithRelations,
   tx: PrismaTransaction
 ): Promise<Date[]> {
-  const { subscriptionPlan } = subscription;
+  const { subscriptionPlan, requestedBy } = subscription;
   const { consultantProfile } = subscriptionPlan;
 
   if (!consultantProfile) {
     throw new Error("Consultant profile not found");
   }
+
+  // Calculate required slots per call
+  const slotsPerCall = Math.ceil(subscriptionPlan.sessionDurationInHours / 0.5);
+  const callsPerWeek = subscriptionPlan.callsPerWeek;
 
   // Get available slots based on schedule type
   const availableSlots =
@@ -70,15 +76,10 @@ async function allocateSlotsAuto(
       : consultantProfile.slotsOfAvailabilityCustom;
 
   if (!availableSlots.length) {
-    throw new Error("No available slots found for consultant");
+    throw new Error(
+      "No available slots found for consultant. Please set up your availability schedule first."
+    );
   }
-
-  // Sort slots by time of day to prioritize earlier slots
-  const sortedSlots = [...availableSlots].sort((a, b) => {
-    const timeA = new Date(a.slotStartTimeInUTC).getHours();
-    const timeB = new Date(b.slotStartTimeInUTC).getHours();
-    return timeA - timeB;
-  });
 
   // Get all existing appointments to check for conflicts
   const existingAppointments = await tx.appointment.findMany({
@@ -86,16 +87,8 @@ async function allocateSlotsAuto(
       AND: [
         {
           OR: [
-            {
-              subscription: {
-                requestStatus: RequestStatus.APPROVED,
-              },
-            },
-            {
-              consultation: {
-                requestStatus: RequestStatus.APPROVED,
-              },
-            },
+            { subscription: { requestStatus: RequestStatus.APPROVED } },
+            { consultation: { requestStatus: RequestStatus.APPROVED } },
           ],
         },
         {
@@ -103,12 +96,7 @@ async function allocateSlotsAuto(
             some: {
               user: {
                 some: {
-                  id: {
-                    in: [
-                      consultantProfile.user.id,
-                      subscription.requestedBy.user.id,
-                    ],
-                  },
+                  id: { in: [consultantProfile.user.id, requestedBy.user.id] },
                 },
               },
             },
@@ -117,140 +105,283 @@ async function allocateSlotsAuto(
       ],
     },
     include: {
-      slotsOfAppointment: {
-        include: {
-          user: true,
-        },
-      },
+      slotsOfAppointment: { include: { user: true } },
     },
   });
 
   // Get booked time slots
   const bookedSlots = new Set(
     existingAppointments.flatMap((app) =>
-      app.slotsOfAppointment.map((slot: { slotStartTimeInUTC: Date }) =>
+      (app.slotsOfAppointment || []).map((slot: { slotStartTimeInUTC: Date }) =>
         slot.slotStartTimeInUTC.toISOString()
       )
     )
   );
 
-  // Calculate required number of calls (not 30-min slots) for the plan
-  // Using durationInMonths × callsPerWeek
-  const totalRequiredCalls =
-    subscriptionPlan.durationInMonths * subscriptionPlan.callsPerWeek;
+  // Sort slots by time of day to prioritize earlier slots (FCFS within a day)
+  const sortedSlots = [...availableSlots].sort((a, b) => {
+    const timeA =
+      new Date(a.slotStartTimeInUTC).getHours() * 60 +
+      new Date(a.slotStartTimeInUTC).getMinutes();
+    const timeB =
+      new Date(b.slotStartTimeInUTC).getHours() * 60 +
+      new Date(b.slotStartTimeInUTC).getMinutes();
+    return timeA - timeB;
+  });
 
-  // Determine allocation window strictly from subscription
-  const allocationStart = new Date(subscription.startDate);
-  const allocationEnd = new Date(subscription.endDate);
+  const now = new Date();
 
-  // Calculate a safe upper bound of weeks to iterate
-  const totalWeeks = Math.max(
-    1,
-    Math.ceil(
-      (allocationEnd.getTime() - allocationStart.getTime()) /
-        (7 * 24 * 60 * 60 * 1000)
-    )
-  );
+  // Map JS Date.getUTCDay() to Prisma DayOfWeek enum (use UTC to align with DB fields)
+  const getUtcDayOfWeek = (date: Date): DayOfWeek => {
+    const days = [
+      DayOfWeek.SUNDAY,
+      DayOfWeek.MONDAY,
+      DayOfWeek.TUESDAY,
+      DayOfWeek.WEDNESDAY,
+      DayOfWeek.THURSDAY,
+      DayOfWeek.FRIDAY,
+      DayOfWeek.SATURDAY,
+    ];
+    return days[date.getUTCDay()];
+  };
 
-  // Find best available slots
-  const selectedSlots: Date[] = [];
-  const startDate = allocationStart;
-  let currentWeek = 0;
+  const getUtcDayKey = (date: Date): string => {
+    const y = date.getUTCFullYear();
+    const m = date.getUTCMonth();
+    const dnum = date.getUTCDate();
+    const dt = new Date(Date.UTC(y, m, dnum, 0, 0, 0, 0));
+    return dt.toISOString().split("T")[0];
+  };
+
+  // Helper: start of week (Sunday) and end of week (Saturday) for the current week
+  const startOfWeekSundayUtc = (d: Date): Date => {
+    const y = d.getUTCFullYear();
+    const m = d.getUTCMonth();
+    const dayOfMonth = d.getUTCDate();
+    const dow = d.getUTCDay();
+    const sunday = new Date(Date.UTC(y, m, dayOfMonth - dow, 0, 0, 0, 0));
+    return sunday;
+  };
+
+  const endOfWeekSaturdayUtc = (d: Date): Date => {
+    const start = startOfWeekSundayUtc(d);
+    const end = new Date(start.getTime() + 6 * 24 * 60 * 60 * 1000);
+    end.setUTCHours(23, 59, 59, 999);
+    return end;
+  };
+
+  // Use subscription date range instead of current week
+  const subscriptionStartDate = new Date(subscription.startDate);
+  const subscriptionEndDate = new Date(subscription.endDate);
+
+  // Start from the later of: now or subscription start date
+  const effectiveStartDate =
+    now > subscriptionStartDate ? now : subscriptionStartDate;
+
+  // Build fast lookup structures of availability per schedule type
+  // WEEKLY: list of time ranges (minutes-of-day) per DayOfWeek
+  const weeklyRangesByDow: Map<
+    DayOfWeek,
+    Array<{ start: number; end: number }>
+  > = new Map();
+  if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
+    for (const ws of consultantProfile.slotsOfAvailabilityWeekly) {
+      const dow: DayOfWeek = ws.dayOfWeekforStartTimeInUTC;
+      const startMinutes =
+        new Date(ws.slotStartTimeInUTC).getUTCHours() * 60 +
+        new Date(ws.slotStartTimeInUTC).getUTCMinutes();
+      const endMinutes =
+        new Date(ws.slotEndTimeInUTC).getUTCHours() * 60 +
+        new Date(ws.slotEndTimeInUTC).getUTCMinutes();
+      if (!weeklyRangesByDow.has(dow)) weeklyRangesByDow.set(dow, []);
+      weeklyRangesByDow
+        .get(dow)!
+        .push({ start: startMinutes, end: endMinutes });
+    }
+    // Normalize and sort ranges
+    for (const dow of Array.from(weeklyRangesByDow.keys())) {
+      const ranges = weeklyRangesByDow.get(dow)!;
+      ranges.sort((a, b) => a.start - b.start);
+    }
+  }
+
+  // CUSTOM: list of ranges per date (UTC day)
+  const customRangesByDay: Map<
+    string,
+    Array<{ start: Date; end: Date }>
+  > = new Map();
+  if (consultantProfile.scheduleType === ScheduleType.CUSTOM) {
+    for (const cs of consultantProfile.slotsOfAvailabilityCustom) {
+      const start = new Date(cs.slotStartTimeInUTC);
+      const end = new Date(cs.slotEndTimeInUTC);
+      const key = getUtcDayKey(start);
+      if (!customRangesByDay.has(key)) customRangesByDay.set(key, []);
+      customRangesByDay.get(key)!.push({ start, end });
+    }
+    for (const key of Array.from(customRangesByDay.keys())) {
+      const ranges = customRangesByDay.get(key)!;
+      ranges.sort((a, b) => a.start.getTime() - b.start.getTime());
+    }
+  }
+
+  const selectedCallStartTimes: Date[] = [];
+  let totalCallsAllocated = 0;
+  const maxTotalCalls =
+    countSundayWeeksInclusive(subscriptionStartDate, subscriptionEndDate) *
+    callsPerWeek;
+
+  // Iterate through all weeks in the subscription period
+  let currentWeekStart = startOfWeekSundayUtc(effectiveStartDate);
 
   while (
-    selectedSlots.length < totalRequiredCalls &&
-    currentWeek < totalWeeks
+    totalCallsAllocated < maxTotalCalls &&
+    currentWeekStart <= subscriptionEndDate
   ) {
-    const weekStart = addWeeks(startDate, currentWeek);
-    let slotsThisWeek = 0;
+    const weekEnd = endOfWeekSaturdayUtc(currentWeekStart);
+    let callsThisWeek = 0;
 
-    // Process each day of the week
+    // Iterate days in this week
     for (
-      let dayOffset = 0;
-      dayOffset < 7 && slotsThisWeek < subscriptionPlan.callsPerWeek;
-      dayOffset++
+      let day = new Date(currentWeekStart);
+      day <= weekEnd &&
+      callsThisWeek < callsPerWeek &&
+      totalCallsAllocated < maxTotalCalls;
+      day = new Date(day.getTime() + 24 * 60 * 60 * 1000)
     ) {
-      const currentDay = new Date(weekStart);
-      currentDay.setDate(currentDay.getDate() + dayOffset);
+      // Skip if this day is outside subscription period
+      if (day < subscriptionStartDate || day > subscriptionEndDate) {
+        continue;
+      }
 
-      // Try to find the first available slot for this day
+      // Skip if this day is in the past (but allow today)
+      if (day < now && getUtcDayKey(day) !== getUtcDayKey(now)) {
+        continue;
+      }
+
       for (const slot of sortedSlots) {
-        const slotTime = new Date(currentDay);
+        let firstSlotTime: Date;
 
         if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
+          // Only consider this slot if its configured weekday matches the current day (UTC-aware)
           const weeklySlot = slot as SlotOfAvailabilityWeekly;
-          // Skip if not the right day of week
-          if (
-            weeklySlot.dayOfWeekforStartTimeInUTC !== getDayOfWeek(currentDay)
-          ) {
+          if (weeklySlot.dayOfWeekforStartTimeInUTC !== getUtcDayOfWeek(day))
             continue;
-          }
-          slotTime.setHours(
-            weeklySlot.slotStartTimeInUTC.getHours(),
-            weeklySlot.slotStartTimeInUTC.getMinutes(),
-            0,
-            0
+
+          // Construct candidate using UTC date + UTC hours/minutes from weekly availability
+          const slotStartUtc = new Date(weeklySlot.slotStartTimeInUTC);
+          firstSlotTime = new Date(
+            Date.UTC(
+              day.getUTCFullYear(),
+              day.getUTCMonth(),
+              day.getUTCDate(),
+              slotStartUtc.getUTCHours(),
+              slotStartUtc.getUTCMinutes(),
+              0,
+              0
+            )
           );
         } else {
+          // CUSTOM: use exact slot date but only within the current week window (UTC day match)
           const customSlot = slot as SlotOfAvailabilityCustom;
-          // For custom slots, check if the slot is for this specific day
-          if (!isSameDay(customSlot.slotStartTimeInUTC, currentDay)) {
-            continue;
-          }
-          slotTime.setTime(customSlot.slotStartTimeInUTC.getTime());
+          const candidate = new Date(customSlot.slotStartTimeInUTC);
+          if (getUtcDayKey(candidate) !== getUtcDayKey(day)) continue;
+          firstSlotTime = candidate;
         }
 
-        // Skip if slot is outside subscription window, already booked, or in the past
+        // Enforce subscription date range and no past slots
+        if (firstSlotTime <= now) continue;
         if (
-          slotTime < allocationStart ||
-          slotTime > allocationEnd ||
-          bookedSlots.has(slotTime.toISOString()) ||
-          slotTime < new Date()
-        ) {
+          firstSlotTime < subscriptionStartDate ||
+          firstSlotTime > subscriptionEndDate
+        )
           continue;
+        if (bookedSlots.has(firstSlotTime.toISOString())) continue;
+
+        // Try to allocate a complete call (consecutive slots) for this day
+        const consecutiveSlots: Date[] = [];
+        let currentSlotTime = new Date(firstSlotTime);
+        let canAllocateCall = true;
+
+        for (let i = 0; i < slotsPerCall; i++) {
+          const slotTime = new Date(currentSlotTime);
+
+          // must stay within the same day
+          if (getUtcDayKey(slotTime) !== getUtcDayKey(firstSlotTime)) {
+            canAllocateCall = false;
+            break;
+          }
+
+          // must not be booked
+          if (bookedSlots.has(slotTime.toISOString())) {
+            canAllocateCall = false;
+            break;
+          }
+
+          // must be part of consultant's declared availability
+          if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
+            const dow = getUtcDayOfWeek(firstSlotTime);
+            const minutes =
+              slotTime.getUTCHours() * 60 + slotTime.getUTCMinutes();
+            const ranges = weeklyRangesByDow.get(dow) || [];
+            // Check that this slot and its 30-min window stay within at least one range
+            const withinRange = ranges.some(
+              (r) => minutes >= r.start && minutes + 30 <= r.end
+            );
+            if (!withinRange) {
+              canAllocateCall = false;
+              break;
+            }
+          } else {
+            const dayKey = getUtcDayKey(slotTime);
+            const ranges = customRangesByDay.get(dayKey) || [];
+            const slotEnd = new Date(slotTime.getTime() + 30 * 60 * 1000);
+            const withinRange = ranges.some(
+              (r) =>
+                slotTime.getTime() >= r.start.getTime() &&
+                slotEnd.getTime() <= r.end.getTime()
+            );
+            if (!withinRange) {
+              canAllocateCall = false;
+              break;
+            }
+          }
+
+          consecutiveSlots.push(slotTime);
+          currentSlotTime = new Date(slotTime.getTime() + 30 * 60 * 1000);
         }
 
-        // Found a valid slot for this day
-        selectedSlots.push(slotTime);
-        bookedSlots.add(slotTime.toISOString());
-        slotsThisWeek++;
-        break; // Move to next day after finding first available slot
+        if (canAllocateCall && consecutiveSlots.length === slotsPerCall) {
+          // Found a valid call slot for this day
+          selectedCallStartTimes.push(firstSlotTime);
+
+          // Mark all slots for this call as booked for future iterations
+          consecutiveSlots.forEach((slot) =>
+            bookedSlots.add(slot.toISOString())
+          );
+
+          callsThisWeek++;
+          totalCallsAllocated++;
+          break; // Move to next day after finding first available slot
+        }
       }
     }
 
-    if (slotsThisWeek < subscriptionPlan.callsPerWeek) {
-      throw new Error(
-        `Could not find enough available slots for week ${currentWeek + 1}`
-      );
-    }
-
-    currentWeek++;
-  }
-
-  if (selectedSlots.length < totalRequiredCalls) {
-    throw new Error(
-      `Required ${totalRequiredCalls} calls but could only find ${selectedSlots.length}`
+    // Move to next week
+    currentWeekStart = new Date(
+      currentWeekStart.getTime() + 7 * 24 * 60 * 60 * 1000
     );
   }
 
-  // Before returning, validate against subscription rules and window
-  const sorted = selectedSlots.sort((a, b) => a.getTime() - b.getTime());
-
-  const { SubscriptionValidationService } = await import(
-    "@/utils/subscriptionValidation"
-  );
-  const validationService = new SubscriptionValidationService(
-    tx as unknown as Prisma.TransactionClient
-  );
-  const validationResult = await validationService.validateSubscriptionSlots(
-    subscription.id,
-    sorted.map((d) => d.toISOString())
-  );
-
-  if (!validationResult.isValid) {
-    const errorMessage = validationResult.errors.join("; ");
-    throw new Error(`Subscription validation failed: ${errorMessage}`);
+  if (selectedCallStartTimes.length === 0) {
+    throw new Error(
+      `Unable to allocate any calls within the subscription period (${subscriptionStartDate.toLocaleDateString()} to ${subscriptionEndDate.toLocaleDateString()}). This subscription allows scheduling only between ${subscriptionStartDate.toLocaleString()} and ${subscriptionEndDate.toLocaleString()}. Please check for conflicts or add more availability.`
+    );
   }
+
+  // Sort selected call start times
+  const sorted = [...selectedCallStartTimes].sort(
+    (a, b) => a.getTime() - b.getTime()
+  );
 
   return sorted;
 }
@@ -301,7 +432,7 @@ async function allocateSlotsRequested(
   return requestedSlots;
 }
 
-// Helper functions
+// Helper functions (kept for manual allocation)
 function getDayOfWeek(date: Date): DayOfWeek {
   const days = [
     DayOfWeek.SUNDAY,
@@ -336,8 +467,6 @@ async function allocateSlotsManual(
   }
 
   const _consultantTimezone = consultantProfile.user.currentTimezone || "UTC";
-
-  // Do not enforce raw slot count here; server-side validation will check calls per week/period
 
   // Convert string dates to Date objects for validation
   const slotDates = slots.map((slot) => new Date(slot));
@@ -602,6 +731,20 @@ export async function PATCH(
               throw new Error("Some requested slots are no longer available");
             }
 
+            // Validate requested slots fall within allowed subscription period if defined
+            if (subscription.startDate && subscription.endDate) {
+              const allowedStart = new Date(subscription.startDate);
+              const allowedEnd = new Date(subscription.endDate);
+              for (const d of requestedSlots) {
+                const dt = new Date(d);
+                if (dt < allowedStart || dt > allowedEnd) {
+                  throw new Error(
+                    `Selected slot ${dt.toLocaleString()} is outside subscription period (${allowedStart.toLocaleString()} - ${allowedEnd.toLocaleString()})`
+                  );
+                }
+              }
+            }
+
             // Just approve the subscription
             const updatedSubscription = await tx.subscription.update({
               where: { id: subscriptionId },
@@ -648,6 +791,19 @@ export async function PATCH(
               body.slots!,
               tx
             );
+          }
+
+          // Boundary guard: ensure all auto/requested selections lie within the subscription window
+          if (subscription.startDate && subscription.endDate) {
+            const allowedStart = new Date(subscription.startDate);
+            const allowedEnd = new Date(subscription.endDate);
+            for (const d of selectedSlots as Date[]) {
+              if (d < allowedStart || d > allowedEnd) {
+                throw new Error(
+                  `Selected slot ${d.toLocaleString()} is outside subscription period (${allowedStart.toLocaleString()} - ${allowedEnd.toLocaleString()})`
+                );
+              }
+            }
           }
 
           // Create appointments for selected slots
