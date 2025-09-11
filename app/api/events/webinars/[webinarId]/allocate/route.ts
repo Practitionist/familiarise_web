@@ -197,8 +197,8 @@ async function allocateSlotAuto(
       const slotTime = new Date(currentSlotTime);
 
       // Skip if this slot is already booked or in the past
-      if (bookedSlots.has(slotTime.toISOString()) || slotTime < now) {
-        break;
+      const slotISO = slotTime.toISOString();
+      if (!candidateSlotISOs.has(slotISO) || bookedSlots.has(slotISO) || slotTime < now) {
       }
 
       // Validate this slot is on the same day as the first slot
