@@ -9,6 +9,11 @@ export async function GET(request: NextRequest) {
   const consultantProfileId = searchParams.get("consultantProfileId");
   const consulteeProfileId = searchParams.get("consulteeProfileId");
   const userId = searchParams.get("userId");
+  // Optional direct event filters (ensure we only fetch slots for one event)
+  const consultationIdParam = searchParams.get("consultationId") || undefined;
+  const subscriptionIdParam = searchParams.get("subscriptionId") || undefined;
+  const webinarIdParam = searchParams.get("webinarId") || undefined;
+  const classIdParam = searchParams.get("classId") || undefined;
 
   // Get status for each appointment type
   const consultationStatus = searchParams
@@ -27,7 +32,7 @@ export async function GET(request: NextRequest) {
   ) {
     return NextResponse.json(
       { error: "Invalid appointment type" },
-      { status: 400 },
+      { status: 400 }
     );
   }
 
@@ -36,25 +41,25 @@ export async function GET(request: NextRequest) {
   if (consultationStatus && !validStatuses.includes(consultationStatus)) {
     return NextResponse.json(
       { error: "Invalid consultation status" },
-      { status: 400 },
+      { status: 400 }
     );
   }
   if (subscriptionStatus && !validStatuses.includes(subscriptionStatus)) {
     return NextResponse.json(
       { error: "Invalid subscription status" },
-      { status: 400 },
+      { status: 400 }
     );
   }
   if (webinarStatus && !validStatuses.includes(webinarStatus)) {
     return NextResponse.json(
       { error: "Invalid webinar status" },
-      { status: 400 },
+      { status: 400 }
     );
   }
   if (classStatus && !validStatuses.includes(classStatus)) {
     return NextResponse.json(
       { error: "Invalid class status" },
-      { status: 400 },
+      { status: 400 }
     );
   }
 
@@ -95,6 +100,10 @@ export async function GET(request: NextRequest) {
       },
       startDate,
       endDate,
+      consultationIdParam,
+      subscriptionIdParam,
+      webinarIdParam,
+      classIdParam
     );
 
     return NextResponse.json({ data: appointments });
@@ -102,10 +111,12 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching appointments:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching appointments" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
+
+type AllowedStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
 
 async function getAppointments(
   type?: AppointmentsType,
@@ -113,13 +124,17 @@ async function getAppointments(
   consulteeProfileId?: string | null,
   userId?: string | null,
   statuses?: {
-    consultation?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
-    subscription?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
-    webinar?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
-    class?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+    consultation?: AllowedStatus;
+    subscription?: AllowedStatus;
+    webinar?: AllowedStatus;
+    class?: AllowedStatus;
   },
   startDate?: string | null,
   endDate?: string | null,
+  consultationIdParam?: string,
+  subscriptionIdParam?: string,
+  webinarIdParam?: string,
+  classIdParam?: string
 ) {
   const whereClause: Prisma.AppointmentWhereInput = {};
 
@@ -204,6 +219,20 @@ async function getAppointments(
 
   if (userFilterClauses.length > 0) {
     whereClause.AND = userFilterClauses;
+  }
+
+  // Narrow by specific event ids if provided
+  if (consultationIdParam) {
+    (whereClause as any).consultationId = consultationIdParam;
+  }
+  if (subscriptionIdParam) {
+    (whereClause as any).subscriptionId = subscriptionIdParam;
+  }
+  if (webinarIdParam) {
+    (whereClause as any).webinarId = webinarIdParam;
+  }
+  if (classIdParam) {
+    (whereClause as any).classId = classIdParam;
   }
 
   if (type) {
@@ -306,7 +335,65 @@ export async function POST(request: NextRequest) {
     if (!appointmentType || !slotsOfAppointment?.createMany?.data?.length) {
       return NextResponse.json(
         { error: "Missing required fields" },
-        { status: 400 },
+        { status: 400 }
+      );
+    }
+
+    // Check for existing appointment to prevent duplicates
+    const existingAppointmentWhere: Prisma.AppointmentWhereInput = {};
+
+    if (appointmentData.consultationId) {
+      existingAppointmentWhere.consultationId = appointmentData.consultationId;
+    } else if (appointmentData.webinarId) {
+      existingAppointmentWhere.webinarId = appointmentData.webinarId;
+    } else if (appointmentData.subscriptionId) {
+      // For subscriptions, check if appointment already exists for the same slot timing
+      const slotTimes = slotsOfAppointment.createMany.data.map(
+        (slot: any) => new Date(slot.slotStartTimeInUTC)
+      );
+
+      existingAppointmentWhere.AND = [
+        { subscriptionId: appointmentData.subscriptionId },
+        {
+          slotsOfAppointment: {
+            some: {
+              slotStartTimeInUTC: { in: slotTimes },
+            },
+          },
+        },
+      ];
+    } else if (appointmentData.classId) {
+      // For classes, check if appointment already exists for the same slot timing
+      const slotTimes = slotsOfAppointment.createMany.data.map(
+        (slot: any) => new Date(slot.slotStartTimeInUTC)
+      );
+
+      existingAppointmentWhere.AND = [
+        { classId: appointmentData.classId },
+        {
+          slotsOfAppointment: {
+            some: {
+              slotStartTimeInUTC: { in: slotTimes },
+            },
+          },
+        },
+      ];
+    }
+
+    const existingAppointment = await prisma.appointment.findFirst({
+      where: existingAppointmentWhere,
+      include: {
+        slotsOfAppointment: true,
+      },
+    });
+
+    if (existingAppointment) {
+      return NextResponse.json(
+        {
+          error: "Appointment already exists for this request",
+          existingAppointment: existingAppointment.id,
+        },
+        { status: 409 }
       );
     }
 
@@ -323,7 +410,7 @@ export async function POST(request: NextRequest) {
             slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
             slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
             type: slot.type || "WEEKLY", // Default to WEEKLY if not specified
-          }),
+          })
         ),
       },
     };
@@ -410,7 +497,7 @@ export async function POST(request: NextRequest) {
     console.error("Error creating appointment:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the appointment" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
