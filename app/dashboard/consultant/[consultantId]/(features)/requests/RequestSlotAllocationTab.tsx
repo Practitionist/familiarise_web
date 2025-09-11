@@ -14,7 +14,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Table,
@@ -65,6 +64,8 @@ interface Request {
   allocatedSlots?: string[];
   durationInMonths?: number;
   callsPerWeek?: number;
+  durationInHours?: number;
+  sessionDurationInHours?: number;
 }
 
 // interface SlotInterval { ... } // Removed - Now imported
@@ -78,7 +79,7 @@ interface RequestSlotAllocationTabProps {
 
 // Helper function to fetch and process data
 async function fetchDataFromApi<T>(
-  url: string,
+  url: string
 ): Promise<{ ok: boolean; data: T | null; error?: string }> {
   try {
     const response = await fetch(url);
@@ -164,22 +165,22 @@ export function RequestSlotAllocationTab({
         consultantResult,
       ] = await Promise.all([
         fetchDataFromApi<ConsultationApiResponse[]>(
-          `/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
+          `/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`
         ),
         fetchDataFromApi<SubscriptionApiResponse[]>(
-          `/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
+          `/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`
         ),
         fetchDataFromApi<AvailabilityApiResponse[]>(
-          `/api/slots/availability/weekly?consultantProfileId=${consultantId}`,
+          `/api/slots/availability/weekly?consultantProfileId=${consultantId}`
         ),
         fetchDataFromApi<AvailabilityApiResponse[]>(
-          `/api/slots/availability/custom?consultantProfileId=${consultantId}`,
+          `/api/slots/availability/custom?consultantProfileId=${consultantId}`
         ),
         fetchDataFromApi<TAppointment[]>(
-          `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
+          `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`
         ),
         fetchDataFromApi<ConsultantApiResponse>(
-          `/api/user/consultants/${consultantId}`,
+          `/api/user/consultants/${consultantId}`
         ),
       ]);
 
@@ -222,11 +223,17 @@ export function RequestSlotAllocationTab({
             requestedAt: consultation.requestedAt,
             requestedTimes:
               consultation.appointment?.slotsOfAppointment?.map(
-                (slot) => slot.slotStartTimeInUTC,
+                (slot) => slot.slotStartTimeInUTC
               ) || [],
             status: consultation.requestStatus,
-            requiredSlots: 1, // Consultations always require 1 slot
-          })),
+            requiredSlots: Math.max(
+              1,
+              Math.ceil(
+                (consultation.consultationPlan?.durationInHours || 1) / 0.5
+              )
+            ),
+            durationInHours: consultation.consultationPlan?.durationInHours,
+          }))
         );
       }
 
@@ -247,8 +254,8 @@ export function RequestSlotAllocationTab({
               subscription.appointments?.flatMap(
                 (appt) =>
                   appt.slotsOfAppointment?.map(
-                    (slot) => slot.slotStartTimeInUTC,
-                  ) || [],
+                    (slot) => slot.slotStartTimeInUTC
+                  ) || []
               ) || [],
             status: subscription.requestStatus,
             requiredSlots:
@@ -257,7 +264,9 @@ export function RequestSlotAllocationTab({
                 (subscription.subscriptionPlan?.durationInMonths ?? 0) || 0,
             durationInMonths: subscription.subscriptionPlan?.durationInMonths,
             callsPerWeek: subscription.subscriptionPlan?.callsPerWeek,
-          })),
+            sessionDurationInHours:
+              subscription.subscriptionPlan?.sessionDurationInHours,
+          }))
         );
       }
 
@@ -269,7 +278,7 @@ export function RequestSlotAllocationTab({
             startTime: slot.slotStartTimeInUTC,
             endTime: slot.slotEndTimeInUTC,
             // Add other properties if TimeSlotMeta requires them
-          })),
+          }))
         );
       }
       if (customAvailabilityResult.ok && customAvailabilityResult.data) {
@@ -277,7 +286,7 @@ export function RequestSlotAllocationTab({
           ...customAvailabilityResult.data.map((slot) => ({
             startTime: slot.slotStartTimeInUTC,
             endTime: slot.slotEndTimeInUTC,
-          })),
+          }))
         );
       }
 
@@ -330,9 +339,9 @@ export function RequestSlotAllocationTab({
                     title: title,
                   },
                 };
-              },
-            ),
-          ),
+              }
+            )
+          )
         );
       }
 
@@ -359,7 +368,7 @@ export function RequestSlotAllocationTab({
       setError(
         err instanceof Error
           ? err.message
-          : "An unexpected error occurred while processing data.",
+          : "An unexpected error occurred while processing data."
       );
     } finally {
       // setLoading(false) is handled earlier in case of fetch errors
@@ -374,7 +383,7 @@ export function RequestSlotAllocationTab({
     fetchData();
     // Set up polling for real-time updates
     const REQUEST_POLL_INTERVAL = parseInt(
-      process.env.NEXT_PUBLIC_REQUEST_POLL_INTERVAL ?? "300000",
+      process.env.NEXT_PUBLIC_REQUEST_POLL_INTERVAL ?? "300000"
     ); // 5 minutes
     const interval = setInterval(fetchData, REQUEST_POLL_INTERVAL);
 
@@ -549,7 +558,7 @@ export function RequestSlotAllocationTab({
 
       // Remove request from list
       setRequests((prev) =>
-        prev.filter((r) => r.id !== selectedRequestForDialog.id),
+        prev.filter((r) => r.id !== selectedRequestForDialog.id)
       );
 
       // Notify parent
@@ -593,7 +602,7 @@ export function RequestSlotAllocationTab({
               : new Date(existingSlot.endTime);
           // Check for overlap: (StartA < EndB) and (StartB < EndA)
           return availStart < existingEnd && existingStart < availEnd;
-        }),
+        })
     );
     // Check if the count of non-overlapping available slots is sufficient
     return trulyAvailableSlots.length >= selectedRequest.requiredSlots;
@@ -733,7 +742,7 @@ export function RequestSlotAllocationTab({
         {/* Single Allocation Dialog - moved outside map loop to prevent multiple dialogs */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent
-            className="max-w-3xl"
+            className="max-w-7xl"
             onInteractOutside={(e) => {
               // Prevent closing dialog while allocating
               if (isAllocating) {
@@ -772,6 +781,16 @@ export function RequestSlotAllocationTab({
                 callsPerWeek={
                   selectedRequest.type === "SUBSCRIPTION"
                     ? selectedRequest.callsPerWeek
+                    : undefined
+                }
+                durationInHours={
+                  selectedRequest.type === "CONSULTATION"
+                    ? selectedRequest.durationInHours
+                    : undefined
+                }
+                sessionDurationInHours={
+                  selectedRequest.type === "SUBSCRIPTION"
+                    ? selectedRequest.sessionDurationInHours
                     : undefined
                 }
               />
@@ -821,7 +840,7 @@ export function RequestSlotAllocationTab({
 
 // Helper function for badge variant
 function getRequestStatusBadgeVariant(
-  status: RequestStatus,
+  status: RequestStatus
 ): "outline" | "default" | "destructive" {
   switch (status) {
     case RequestStatus.PENDING:

@@ -1,4 +1,4 @@
-import { AppointmentsType, RequestStatus, ScheduleType } from "@prisma/client";
+import { RequestStatus, ScheduleType } from "@prisma/client";
 
 // --- API Response Type Definitions ---
 export interface UserInfo {
@@ -14,6 +14,7 @@ export interface RequestedBy {
 
 export interface ConsultationPlanInfo {
   title?: string;
+  durationInHours?: number;
 }
 
 export interface SubscriptionPlanInfo {

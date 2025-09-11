@@ -45,7 +45,7 @@ export function AppointmentsTab({
 
   // Helper to get consultant ID from appointment
   const getConsultantIdFromAppointment = (
-    appointment: TAppointment,
+    appointment: TAppointment
   ): string => {
     switch (appointment.appointmentType) {
       case "CONSULTATION":
@@ -67,6 +67,25 @@ export function AppointmentsTab({
 
   const getStyleFromBadgeData = (status: string): string => {
     return badgeStyles[status] || badgeStyles.default;
+  };
+
+  // Combine multiple appointments into one for easier display
+  // Example: If you have 3 separate appointments for a subscription, this merges them into 1 appointment with all slots
+  // Before: [Appointment1{slots:[9am]}, Appointment2{slots:[10am]}, Appointment3{slots:[11am]}]
+  // After:  [Appointment1{slots:[9am, 10am, 11am]}]
+  const mergeGroupAppointmentSlots = (apps: TAppointment[]): TAppointment => {
+    if (!apps || apps.length === 0) {
+      // Fallback: keep previous behavior if nothing to merge
+      return null as unknown as TAppointment;
+    }
+    const base = apps[0];
+    const mergedSlots = apps.flatMap((a) => a.slotsOfAppointment || []);
+    return {
+      ...base,
+      // Use a stable synthetic id to avoid clashes with per-slot ids
+      id: `${base.id}-merged`,
+      slotsOfAppointment: mergedSlots,
+    } as TAppointment;
   };
 
   const handleJoinMeeting = async (appointment: TAppointment) => {
@@ -94,7 +113,7 @@ export function AppointmentsTab({
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
         convertTAppointmentToIAppointment(appointment),
-        relevantSlot,
+        relevantSlot
       );
       router.push(`/meetings/${meetingId}`);
       toast({
@@ -166,7 +185,9 @@ export function AppointmentsTab({
                               size="sm"
                               className="h-8 text-xs px-3"
                               onClick={() =>
-                                setSelectedAppointment(firstAppointment)
+                                setSelectedAppointment(
+                                  mergeGroupAppointmentSlots(groupAppointments)
+                                )
                               }
                             >
                               <Clock className="w-3 h-3 mr-1" />
@@ -183,9 +204,9 @@ export function AppointmentsTab({
                                   getParticipantManagementUrl(
                                     firstAppointment,
                                     getConsultantIdFromAppointment(
-                                      firstAppointment,
-                                    ),
-                                  ),
+                                      firstAppointment
+                                    )
+                                  )
                                 )
                               }
                             >
@@ -263,7 +284,7 @@ export function AppointmentsTab({
                                   const startTime = getStartTime(appointment);
                                   return startTime
                                     ? formatAppointmentTime(
-                                        startTime.toISOString(),
+                                        startTime.toISOString()
                                       )
                                     : "Time not set";
                                 })()}
@@ -297,9 +318,9 @@ export function AppointmentsTab({
                                         getParticipantManagementUrl(
                                           appointment,
                                           getConsultantIdFromAppointment(
-                                            appointment,
-                                          ),
-                                        ),
+                                            appointment
+                                          )
+                                        )
                                       )
                                     }
                                   >
@@ -345,7 +366,7 @@ export function AppointmentsTab({
                 </ul>
               </div>
             );
-          },
+          }
         )}
         {!Object.keys(groupedAppointments).length && (
           <div className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-gray-50 rounded-lg">

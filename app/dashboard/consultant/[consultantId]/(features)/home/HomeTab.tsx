@@ -67,7 +67,7 @@ export function HomeTab({
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
         convertTAppointmentToIAppointment(appointment),
-        relevantSlot,
+        relevantSlot
       );
       router.push(`/meetings/${meetingId}`);
     } catch (error) {
@@ -85,18 +85,47 @@ export function HomeTab({
     return badgeStyles[status] || badgeStyles.default;
   };
 
-  // Expand appointments into individual slots
+  // Expand appointments into full sessions (group contiguous 30-min slots on the same day)
   const expandedAppointments = (appointments || []).flatMap((appointment) => {
-    if (
-      !appointment.slotsOfAppointment ||
-      appointment.slotsOfAppointment.length === 0
-    ) {
-      return [appointment];
+    const slots = appointment.slotsOfAppointment || [];
+    if (slots.length === 0) return [appointment];
+
+    // Sort by start time
+    const sorted = [...slots].sort(
+      (a, b) =>
+        new Date(a.slotStartTimeInUTC).getTime() -
+        new Date(b.slotStartTimeInUTC).getTime()
+    );
+
+    // Group contiguous slots (by exact 30-min adjacency) per day
+    const sessions: Array<typeof slots> = [];
+    let run: typeof slots = [];
+    let lastEnd: number | null = null;
+    let lastDay: string | null = null;
+
+    for (const s of sorted) {
+      const start = new Date(s.slotStartTimeInUTC);
+      const end = new Date(s.slotEndTimeInUTC || s.slotStartTimeInUTC);
+      const dayKey = start.toDateString();
+
+      const isContiguous =
+        lastEnd !== null && dayKey === lastDay && start.getTime() === lastEnd;
+
+      if (!isContiguous && run.length > 0) {
+        sessions.push(run);
+        run = [];
+      }
+      run.push(s);
+      lastEnd = end.getTime();
+      lastDay = dayKey;
     }
-    return appointment.slotsOfAppointment.map((slot) => ({
+    if (run.length > 0) sessions.push(run);
+
+    // Map each session to one appointment item
+    return sessions.map((sessionSlots, idx) => ({
       ...appointment,
-      id: `${appointment.id}-${slot.id}`,
-      slotsOfAppointment: [slot],
+      id: `${appointment.id}-session-${idx}`,
+      slotsOfAppointment: sessionSlots,
     }));
   });
 
@@ -105,12 +134,12 @@ export function HomeTab({
     (appointment) => {
       const status = getAppointmentStatus(appointment);
       return status !== "Completed";
-    },
+    }
   );
 
   // Get all upcoming appointments
   const upcomingAppointments = sortAppointmentsByStartTime(
-    getUpcomingAppointments(expandedAppointments),
+    getUpcomingAppointments(expandedAppointments)
   );
 
   // Group upcoming appointments
@@ -295,7 +324,7 @@ export function HomeTab({
                                     const startTime = getStartTime(appointment);
                                     return startTime
                                       ? formatAppointmentTime(
-                                          startTime.toISOString(),
+                                          startTime.toISOString()
                                         )
                                       : "Time not set";
                                   })()}
@@ -326,7 +355,7 @@ export function HomeTab({
                       </ul>
                     </div>
                   );
-                },
+                }
               )}
               {Object.keys(groupedUpcomingAppointments).length === 0 && (
                 <p className="text-gray-500">No upcoming appointments</p>
