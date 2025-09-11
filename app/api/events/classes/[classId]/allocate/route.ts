@@ -8,7 +8,7 @@ import {
   SlotOfAvailabilityCustom,
   SlotOfAvailabilityWeekly,
 } from "@prisma/client";
-import { addHours, addWeeks } from "date-fns";
+import { addHours, addWeeks, addMonths } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
 
 type PrismaTransaction = Omit<
@@ -47,60 +47,39 @@ type ClassWithRelations = Prisma.ClassGetPayload<{
   include: typeof classInclude;
 }>;
 
-async function allocateSlotsAuto(
-  classPlan: ClassWithRelations,
-  tx: PrismaTransaction
-): Promise<Date[]> {
-  const { classPlan: classDetails } = classPlan;
-  const { consultantProfile } = classDetails;
+// Helper functions
+// (deduplicated: definitions exist earlier in the file)
 
-  if (!consultantProfile) {
-    throw new Error("Consultant profile not found");
-  }
+function startOfWeekSunday(d: Date): Date {
+  const date = new Date(d);
+  const day = date.getDay();
+  const diff = date.getDate() - day; // Adjust to Sunday
+  date.setDate(diff);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
 
-  // Get available slots based on schedule type
-  const availableSlots =
-    consultantProfile.scheduleType === ScheduleType.WEEKLY
-      ? consultantProfile.slotsOfAvailabilityWeekly
-      : consultantProfile.slotsOfAvailabilityCustom;
+// ---- Refactor helpers to reduce cognitive complexity of auto-allocation ----
+function getSessionDurationInHours(
+  classDetails: ClassWithRelations["classPlan"]
+): number {
+  // Use the sessionDurationInHours field directly from the class plan
+  return classDetails.sessionDurationInHours || 1;
+}
 
-  if (!availableSlots.length) {
-    throw new Error("No available slots found for consultant");
-  }
-
-  // Sort slots by time of day to prioritize earlier slots
-  const sortedSlots = [...availableSlots].sort((a, b) => {
-    const timeA = new Date(a.slotStartTimeInUTC).getHours();
-    const timeB = new Date(b.slotStartTimeInUTC).getHours();
-    return timeA - timeB;
-  });
-
-  // Get all existing appointments to check for conflicts
-  const existingAppointments = await tx.appointment.findMany({
+async function fetchBookedSlots(
+  tx: PrismaTransaction,
+  consultantUserId: string
+): Promise<Set<string>> {
+  const apps = await tx.appointment.findMany({
     where: {
       AND: [
         {
           OR: [
-            {
-              subscription: {
-                requestStatus: RequestStatus.APPROVED,
-              },
-            },
-            {
-              consultation: {
-                requestStatus: RequestStatus.APPROVED,
-              },
-            },
-            {
-              webinar: {
-                status: "SCHEDULED",
-              },
-            },
-            {
-              class: {
-                status: "SCHEDULED",
-              },
-            },
+            { subscription: { requestStatus: RequestStatus.APPROVED } },
+            { consultation: { requestStatus: RequestStatus.APPROVED } },
+            { webinar: { status: "SCHEDULED" } },
+            { class: { status: "SCHEDULED" } },
           ],
         },
         {
@@ -108,7 +87,7 @@ async function allocateSlotsAuto(
             some: {
               user: {
                 some: {
-                  id: consultantProfile.user.id,
+                  id: consultantUserId,
                 },
               },
             },
@@ -116,132 +95,153 @@ async function allocateSlotsAuto(
         },
       ],
     },
-    include: {
-      slotsOfAppointment: true,
-    },
+    include: { slotsOfAppointment: true },
   });
 
-  // Get booked time slots
-  const bookedSlots = new Set(
-    existingAppointments.flatMap((app) =>
-      app.slotsOfAppointment.map((slot: { slotStartTimeInUTC: Date }) =>
-        slot.slotStartTimeInUTC.toISOString()
+  return new Set(
+    apps.flatMap((a) =>
+      a.slotsOfAppointment.map((s: { slotStartTimeInUTC: Date }) =>
+        s.slotStartTimeInUTC.toISOString()
       )
     )
   );
+}
 
-  // Calculate required number of slots - FIXED: Use actual duration and frequency
-  const totalCalls = classDetails.durationInMonths * classDetails.callsPerWeek;
-
-  // Get session duration from class contents or use default
-  const classContents = classDetails.classContents || [];
-  let sessionDurationInHours = 1; // Default
-  if (classContents.length > 0) {
-    const totalHours = classContents.reduce(
-      (sum, content) => sum + content.hoursAllotted,
+function buildSessionStartTime(
+  scheduleType: ScheduleType,
+  day: Date,
+  slot: SlotOfAvailabilityWeekly | SlotOfAvailabilityCustom
+): Date | null {
+  const dt = new Date(day);
+  if (scheduleType === ScheduleType.WEEKLY) {
+    const weekly = slot as SlotOfAvailabilityWeekly;
+    if (getDayOfWeek(day) !== weekly.dayOfWeekforStartTimeInUTC) return null;
+    dt.setHours(
+      weekly.slotStartTimeInUTC.getHours(),
+      weekly.slotStartTimeInUTC.getMinutes(),
+      0,
       0
     );
-    sessionDurationInHours = totalHours / classContents.length;
+    return dt;
   }
+  const custom = slot as SlotOfAvailabilityCustom;
+  if (!isSameDay(custom.slotStartTimeInUTC, day)) return null;
+  dt.setTime(custom.slotStartTimeInUTC.getTime());
+  return dt;
+}
 
-  const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5); // 30-min slots
-  const totalRequiredSlots = totalCalls * slotsPerSession;
+function canPlaceSessionChain(
+  start: Date,
+  slotsPerSession: number,
+  booked: Set<string>
+): { ok: boolean; chain?: Date[] } {
+  const chain: Date[] = [];
+  for (let i = 0; i < slotsPerSession; i++) {
+    const t = new Date(start.getTime() + i * 30 * 60 * 1000);
+    if (t.toDateString() !== start.toDateString()) return { ok: false };
+    if (booked.has(t.toISOString())) return { ok: false };
+    chain.push(t);
+  }
+  return { ok: true, chain };
+}
 
-  // Find best available slots
-  const selectedSlots: Date[] = [];
-  const startDate = new Date();
-  let currentWeek = 0;
-
-  while (
-    selectedSlots.length < totalRequiredSlots &&
-    currentWeek < totalCalls
+function selectWeekSlots(
+  weekStart: Date,
+  slotsPerSession: number,
+  maxCallsThisWeek: number,
+  scheduleType: ScheduleType,
+  sortedSlots: Array<SlotOfAvailabilityWeekly | SlotOfAvailabilityCustom>,
+  classStart: Date,
+  classEnd: Date,
+  now: Date,
+  booked: Set<string>
+): Date[] {
+  const picked: Date[] = [];
+  for (
+    let dayOffset = 0;
+    dayOffset < 7 && picked.length < maxCallsThisWeek;
+    dayOffset++
   ) {
-    const weekStart = addWeeks(startDate, currentWeek);
-    let slotsThisWeek = 0;
+    const day = new Date(weekStart);
+    day.setDate(day.getDate() + dayOffset);
+    if (day > classEnd) break;
 
-    // Process each day of the week
-    for (
-      let dayOffset = 0;
-      dayOffset < 7 && slotsThisWeek < classDetails.callsPerWeek;
-      dayOffset++
-    ) {
-      const currentDay = new Date(weekStart);
-      currentDay.setDate(currentDay.getDate() + dayOffset);
+    for (const slot of sortedSlots) {
+      const start = buildSessionStartTime(scheduleType, day, slot);
+      if (!start) continue;
+      if (start < classStart || start > classEnd || start < now) continue;
 
-      // Try to find consecutive slots for a session on this day
-      for (const slot of sortedSlots) {
-        const sessionStartTime = new Date(currentDay);
+      const chainCheck = canPlaceSessionChain(start, slotsPerSession, booked);
+      if (!chainCheck.ok) continue;
 
-        if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
-          const weeklySlot = slot as SlotOfAvailabilityWeekly;
-          // Skip if not the right day of week
-          if (
-            weeklySlot.dayOfWeekforStartTimeInUTC !== getDayOfWeek(currentDay)
-          ) {
-            continue;
-          }
-          sessionStartTime.setHours(
-            weeklySlot.slotStartTimeInUTC.getHours(),
-            weeklySlot.slotStartTimeInUTC.getMinutes(),
-            0,
-            0
-          );
-        } else {
-          const customSlot = slot as SlotOfAvailabilityCustom;
-          // For custom slots, check if the slot is for this specific day
-          if (!isSameDay(customSlot.slotStartTimeInUTC, currentDay)) {
-            continue;
-          }
-          sessionStartTime.setTime(customSlot.slotStartTimeInUTC.getTime());
-        }
-
-        // Check if we can fit the entire session starting from this time
-        let canFitSession = true;
-        const sessionSlots: Date[] = [];
-
-        for (let slotIndex = 0; slotIndex < slotsPerSession; slotIndex++) {
-          const slotTime = new Date(
-            sessionStartTime.getTime() + slotIndex * 30 * 60 * 1000
-          ); // 30 min intervals
-
-          if (
-            bookedSlots.has(slotTime.toISOString()) ||
-            slotTime < new Date()
-          ) {
-            canFitSession = false;
-            break;
-          }
-          sessionSlots.push(slotTime);
-        }
-
-        if (canFitSession) {
-          // Add all slots for this session
-          sessionSlots.forEach((slotTime) => {
-            selectedSlots.push(slotTime);
-            bookedSlots.add(slotTime.toISOString());
-          });
-          slotsThisWeek++;
-          break; // Move to next day after finding a session
-        }
-      }
+      picked.push(start);
+      chainCheck.chain!.forEach((t) => booked.add(t.toISOString()));
+      break; // move to next day once one session is placed
     }
+  }
+  return picked;
+}
 
-    if (slotsThisWeek < classDetails.callsPerWeek) {
-      throw new Error(
-        `Could not find enough available slots for week ${currentWeek + 1}`
-      );
-    }
+async function allocateSlotsAuto(
+  classPlan: ClassWithRelations,
+  tx: PrismaTransaction
+): Promise<Date[]> {
+  const { classPlan: details } = classPlan;
+  const { consultantProfile } = details;
+  if (!consultantProfile) throw new Error("Consultant profile not found");
 
-    currentWeek++;
+  const baseSlots =
+    consultantProfile.scheduleType === ScheduleType.WEEKLY
+      ? consultantProfile.slotsOfAvailabilityWeekly
+      : consultantProfile.slotsOfAvailabilityCustom;
+  if (!baseSlots.length)
+    throw new Error("No available slots found for consultant");
+
+  const sortedSlots = [...baseSlots].sort(
+    (a: any, b: any) =>
+      new Date(a.slotStartTimeInUTC).getHours() -
+      new Date(b.slotStartTimeInUTC).getHours()
+  );
+
+  const booked = await fetchBookedSlots(tx, consultantProfile.user.id);
+  const sessionHours = getSessionDurationInHours(details);
+  const slotsPerSession = Math.ceil(sessionHours / 0.5); // 30-min slots
+
+  const classStart = new Date();
+  const classEnd = addMonths(classStart, details.durationInMonths);
+  const { countSundayWeeksInclusive } = await import(
+    "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/calendarUtils"
+  );
+  const totalWeeks = countSundayWeeksInclusive(classStart, classEnd);
+  const totalRequiredCalls = totalWeeks * details.callsPerWeek;
+
+  const selected: Date[] = [];
+  const now = new Date();
+  let weekStart = startOfWeekSunday(classStart);
+
+  for (let w = 0; w < totalWeeks && selected.length < totalRequiredCalls; w++) {
+    const picked = selectWeekSlots(
+      weekStart,
+      slotsPerSession,
+      details.callsPerWeek,
+      consultantProfile.scheduleType,
+      sortedSlots as any,
+      classStart,
+      classEnd,
+      now,
+      booked
+    );
+    selected.push(...picked);
+    weekStart.setDate(weekStart.getDate() + 7);
   }
 
-  if (selectedSlots.length < totalRequiredSlots) {
+  if (selected.length < totalRequiredCalls) {
     throw new Error(
-      `Required ${totalRequiredSlots} slots but could only find ${selectedSlots.length}`
+      `Required ${totalRequiredCalls} classes but could only find ${selected.length} available slots within the class period`
     );
   }
 
-  return selectedSlots.sort((a, b) => a.getTime() - b.getTime());
+  return selected.sort((a, b) => a.getTime() - b.getTime());
 }
 
 async function allocateSlotsRequested(
@@ -326,32 +326,63 @@ async function allocateSlotsManual(
     throw new Error("Consultant profile not found");
   }
 
-  // Calculate expected slots accounting for session duration
-  // FIXED: Use actual duration and frequency instead of hardcoded weeks calculation
+  // Calculate session size based on class contents
+  // FIXED: Use actual duration instead of hardcoded weeks calculation
   const totalCalls = classDetails.durationInMonths * classDetails.callsPerWeek;
 
-  // Get session duration from class contents
-  const classContents = classDetails.classContents || [];
-  let sessionDurationInHours = 1; // Default
-  if (classContents.length > 0) {
-    const totalHours = classContents.reduce(
-      (sum, content) => sum + content.hoursAllotted,
-      0
-    );
-    sessionDurationInHours = totalHours / classContents.length;
-  }
+  // Get session duration from class plan (not from class contents)
+  const sessionDurationInHours = classDetails.sessionDurationInHours || 1;
 
   const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5); // 30-min slots
-  const totalRequiredSlots = totalCalls * slotsPerSession;
-
-  if (slots.length !== totalRequiredSlots) {
-    throw new Error(
-      `Expected ${totalRequiredSlots} slots (${totalCalls} calls × ${slotsPerSession} slots/session) but received ${slots.length}`
-    );
-  }
+  // PARTIAL ALLOCATION: Allow allocating any number of complete sessions
 
   // Convert string dates to Date objects for validation
   const slotDates = slots.map((slot) => new Date(slot));
+
+  // Validate selection consists of complete sessions only
+  if (slotDates.length % slotsPerSession !== 0) {
+    throw new Error(
+      `Selection must be in complete sessions of ${slotsPerSession} slot(s) each`
+    );
+  }
+
+  // Validate per-day consecutiveness and session grouping (allow adjacent sessions)
+  const slotsByDay = new Map<string, Date[]>();
+  for (const d of slotDates) {
+    const key = d.toDateString();
+    if (!slotsByDay.has(key)) slotsByDay.set(key, []);
+    slotsByDay.get(key)!.push(d);
+  }
+
+  for (const [dayKey, daySlots] of Array.from(slotsByDay.entries())) {
+    const sorted = [...daySlots].sort((a, b) => a.getTime() - b.getTime());
+
+    // Ensure all slots in a day are consecutive
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      if (curr.getTime() !== prev.getTime() + 30 * 60 * 1000) {
+        throw new Error(
+          `Slots on ${new Date(dayKey).toLocaleDateString()} must be consecutive`
+        );
+      }
+    }
+
+    // Ensure day slots form whole number of sessions
+    if (sorted.length % slotsPerSession !== 0) {
+      throw new Error(
+        `Incomplete session on ${new Date(dayKey).toLocaleDateString()}. Need ${slotsPerSession - (sorted.length % slotsPerSession)} more slot(s).`
+      );
+    }
+
+    // Enforce max sessions per day (2)
+    const sessionsToday = Math.floor(sorted.length / slotsPerSession);
+    if (sessionsToday > 2) {
+      throw new Error(
+        `Maximum 2 sessions per day allowed (found ${sessionsToday} on ${new Date(dayKey).toLocaleDateString()})`
+      );
+    }
+  }
 
   // Validate all slots are in the future
   const now = new Date();
@@ -363,19 +394,42 @@ async function allocateSlotsManual(
 
   // Validate slots match consultant's schedule type
   if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
-    // For weekly schedule, validate slots follow the weekly pattern
-    const availableWeeklySlots = new Set(
-      consultantProfile.slotsOfAvailabilityWeekly.map((slot) => {
-        const dayNum = getDayOfWeek(new Date(slot.slotStartTimeInUTC));
-        const hours = new Date(slot.slotStartTimeInUTC).getHours();
-        const minutes = new Date(slot.slotStartTimeInUTC).getMinutes();
-        return `${dayNum}-${hours}-${minutes}`;
-      })
-    );
+    // UTC-aware range-based check: allow any 30-min interval within weekly availability windows
+    const dayEnumByUtcIndex: DayOfWeek[] = [
+      DayOfWeek.SUNDAY,
+      DayOfWeek.MONDAY,
+      DayOfWeek.TUESDAY,
+      DayOfWeek.WEDNESDAY,
+      DayOfWeek.THURSDAY,
+      DayOfWeek.FRIDAY,
+      DayOfWeek.SATURDAY,
+    ];
+
+    const rangesByDow = new Map<
+      DayOfWeek,
+      Array<{ start: number; end: number }>
+    >();
+    consultantProfile.slotsOfAvailabilityWeekly.forEach((ws: any) => {
+      const start = new Date(ws.slotStartTimeInUTC);
+      const end = new Date(ws.slotEndTimeInUTC);
+      const startMinutes = start.getUTCHours() * 60 + start.getUTCMinutes();
+      const endMinutes = end.getUTCHours() * 60 + end.getUTCMinutes();
+      const dow: DayOfWeek = ws.dayOfWeekforStartTimeInUTC;
+      const arr = rangesByDow.get(dow) || [];
+      arr.push({ start: startMinutes, end: endMinutes });
+      rangesByDow.set(dow, arr);
+    });
 
     for (const slotDate of slotDates) {
-      const slotPattern = `${getDayOfWeek(slotDate)}-${slotDate.getHours()}-${slotDate.getMinutes()}`;
-      if (!availableWeeklySlots.has(slotPattern)) {
+      const dow = dayEnumByUtcIndex[slotDate.getUTCDay()];
+      const startMinutes =
+        slotDate.getUTCHours() * 60 + slotDate.getUTCMinutes();
+      const endMinutes = startMinutes + 30; // 30-min slot window
+      const ranges = rangesByDow.get(dow) || [];
+      const withinAnyRange = ranges.some(
+        (r) => startMinutes >= r.start && endMinutes <= r.end
+      );
+      if (!withinAnyRange) {
         throw new Error(
           `Slot ${slotDate.toLocaleString()} does not match consultant's weekly schedule`
         );
@@ -399,6 +453,10 @@ async function allocateSlotsManual(
   }
 
   // Check for conflicts with existing appointments
+  const excludeThisClassAppointmentIds = (classPlan.appointments || []).map(
+    (a) => a.id
+  );
+
   const existingAppointments = await tx.appointment.findMany({
     where: {
       AND: [
@@ -432,9 +490,22 @@ async function allocateSlotsManual(
               slotStartTimeInUTC: {
                 in: slotDates,
               },
+              user: {
+                some: {
+                  id: consultantProfile.user.id,
+                },
+              },
             },
           },
         },
+        // IMPORTANT: while reallocating this class, ignore its own existing appointments
+        excludeThisClassAppointmentIds.length > 0
+          ? {
+              NOT: {
+                id: { in: excludeThisClassAppointmentIds },
+              },
+            }
+          : {},
       ],
     },
   });
@@ -470,6 +541,9 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ classId: string }> }
 ) {
+  console.log(
+    `⚠️ [CLASS ALLOCATION] Called - this should NOT happen during reschedule!`
+  );
   try {
     const { classId } = await params;
     const body: AllocationRequest = await request.json();
@@ -565,17 +639,44 @@ export async function PATCH(
               throw new Error("Some requested slots are no longer available");
             }
 
-            // Update class status
+            // Validate requested slots fall within allowed class period if defined
+            if (classPlan.startDate && classPlan.endDate) {
+              const allowedStart = new Date(classPlan.startDate);
+              const allowedEnd = new Date(classPlan.endDate);
+              for (const d of requestedSlots) {
+                const dt = new Date(d);
+                if (dt < allowedStart || dt > allowedEnd) {
+                  throw new Error(
+                    `Selected slot ${dt.toLocaleString()} is outside class period (${allowedStart.toLocaleString()} - ${allowedEnd.toLocaleString()})`
+                  );
+                }
+              }
+            }
+
+            // Update class status - preserve existing startDate/endDate if they exist
+            const classUpdateData: any = {
+              status: "SCHEDULED",
+            };
+
+            // Only update dates if they don't already exist
+            if (!classPlan.startDate || !classPlan.endDate) {
+              classUpdateData.startDate = requestedSlots[0];
+              classUpdateData.endDate = addWeeks(
+                requestedSlots[0],
+                classPlan.classPlan.durationInMonths * 4
+              );
+              console.log(
+                `📅 [CLASS ALLOCATION] Setting new class window: ${requestedSlots[0]} - ${classUpdateData.endDate}`
+              );
+            } else {
+              console.log(
+                `📅 [CLASS ALLOCATION] Preserving existing class window: ${classPlan.startDate} - ${classPlan.endDate}`
+              );
+            }
+
             const updatedClass = await tx.class.update({
               where: { id: classId },
-              data: {
-                status: "SCHEDULED",
-                startDate: requestedSlots[0],
-                endDate: addWeeks(
-                  requestedSlots[0],
-                  classPlan.classPlan.durationInMonths * 4
-                ),
-              },
+              data: classUpdateData,
               include: classInclude,
             });
 
@@ -610,9 +711,45 @@ export async function PATCH(
             );
           }
 
-          // Create appointments for selected slots
+          // Boundary guard: ensure all auto/requested selections lie within the class window if defined
+          if (classPlan.startDate && classPlan.endDate) {
+            const allowedStart = new Date(classPlan.startDate);
+            const allowedEnd = new Date(classPlan.endDate);
+            for (const d of selectedSlots as Date[]) {
+              if (d < allowedStart || d > allowedEnd) {
+                throw new Error(
+                  `Selected slot ${d.toLocaleString()} is outside class period (${allowedStart.toLocaleString()} - ${allowedEnd.toLocaleString()})`
+                );
+              }
+            }
+          }
+
+          // Use consistent session duration from class plan for appointment length
+          const sessionDurationInHours = getSessionDurationInHours(
+            classPlan.classPlan
+          );
+          const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5);
+
+          // Group selected 30‑min slots into session starts (one per session)
+          const startsByDay = new Map<string, Date[]>();
+          for (const dt of selectedSlots as Date[]) {
+            const key = dt.toDateString();
+            if (!startsByDay.has(key)) startsByDay.set(key, []);
+            startsByDay.get(key)!.push(dt);
+          }
+          const sessionStartTimes: Date[] = [];
+          for (const day of Array.from(startsByDay.keys())) {
+            const arr = (startsByDay.get(day) || []).sort(
+              (a, b) => a.getTime() - b.getTime()
+            );
+            for (let i = 0; i < arr.length; i += slotsPerSession) {
+              sessionStartTimes.push(arr[i]);
+            }
+          }
+
+          // Create appointments for each session start
           const appointments = await Promise.all(
-            selectedSlots.map((slotTime: Date) =>
+            sessionStartTimes.map((slotTime: Date) =>
               tx.appointment.create({
                 data: {
                   appointmentType: AppointmentsType.CLASS,
@@ -624,15 +761,7 @@ export async function PATCH(
                       slotStartTimeInUTC: slotTime,
                       slotEndTimeInUTC: addHours(
                         slotTime,
-                        (() => {
-                          // Find the corresponding class content for this session
-                          const classContents =
-                            classPlan.classPlan.classContents || [];
-                          const sessionIndex = selectedSlots.indexOf(slotTime);
-                          const content =
-                            classContents[sessionIndex % classContents.length];
-                          return content?.hoursAllotted || 1; // Use content-specific duration or default 1 hour
-                        })()
+                        sessionDurationInHours || 1
                       ),
                       isTentative: false,
                       user: {
@@ -666,17 +795,30 @@ export async function PATCH(
             )
           );
 
-          // Update class status
+          // Update class status - preserve existing startDate/endDate if they exist
+          const classUpdateData: any = {
+            status: "SCHEDULED",
+          };
+
+          // Only update dates if they don't already exist
+          if (!classPlan.startDate || !classPlan.endDate) {
+            classUpdateData.startDate = sessionStartTimes[0];
+            classUpdateData.endDate = addWeeks(
+              sessionStartTimes[0],
+              classPlan.classPlan.durationInMonths * 4
+            );
+            console.log(
+              `📅 [CLASS ALLOCATION] Setting new class window: ${sessionStartTimes[0]} - ${classUpdateData.endDate}`
+            );
+          } else {
+            console.log(
+              `📅 [CLASS ALLOCATION] Preserving existing class window: ${classPlan.startDate} - ${classPlan.endDate}`
+            );
+          }
+
           const updatedClass = await tx.class.update({
             where: { id: classId },
-            data: {
-              status: "SCHEDULED",
-              startDate: selectedSlots[0],
-              endDate: addWeeks(
-                selectedSlots[0],
-                classPlan.classPlan.durationInMonths * 4
-              ),
-            },
+            data: classUpdateData,
             include: classInclude,
           });
 

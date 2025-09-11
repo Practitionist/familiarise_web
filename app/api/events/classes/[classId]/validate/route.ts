@@ -29,6 +29,7 @@ interface ValidationResult {
 const classInclude = {
   classPlan: {
     include: {
+      classContents: true,
       consultantProfile: {
         select: {
           user: true,
@@ -43,7 +44,7 @@ const classInclude = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> },
+  { params }: { params: Promise<{ classId: string }> }
 ) {
   try {
     const { classId } = await params;
@@ -53,7 +54,7 @@ export async function POST(
     if (!Array.isArray(body.slots) || body.slots.length === 0) {
       return NextResponse.json(
         { error: "Slots array is required and must not be empty" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -73,7 +74,7 @@ export async function POST(
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -94,7 +95,7 @@ export async function POST(
     if (pastSlots.length > 0) {
       return NextResponse.json(
         { error: "Cannot validate slots in the past" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -183,9 +184,8 @@ export async function POST(
     for (const appointment of existingAppointments) {
       const conflictingSlots = appointment.slotsOfAppointment.filter((slot) =>
         slotDates.some(
-          (date) =>
-            date.toISOString() === slot.slotStartTimeInUTC.toISOString(),
-        ),
+          (date) => date.toISOString() === slot.slotStartTimeInUTC.toISOString()
+        )
       );
 
       for (const slot of conflictingSlots) {
@@ -220,42 +220,77 @@ export async function POST(
     }
 
     // Check for slots outside availability
-    const availableSlots =
-      consultantProfile.scheduleType === ScheduleType.WEEKLY
-        ? consultantProfile.slotsOfAvailabilityWeekly
-        : consultantProfile.slotsOfAvailabilityCustom;
+    if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
+      // UTC-aware range-based weekly availability check
+      const dayEnumByUtcIndex: any[] = [
+        "SUNDAY",
+        "MONDAY",
+        "TUESDAY",
+        "WEDNESDAY",
+        "THURSDAY",
+        "FRIDAY",
+        "SATURDAY",
+      ];
 
-    for (const slotDate of slotDates) {
-      let isAvailable = false;
+      const rangesByDow = new Map<
+        string,
+        Array<{ start: number; end: number }>
+      >();
+      consultantProfile.slotsOfAvailabilityWeekly.forEach((ws: any) => {
+        const start = new Date(ws.slotStartTimeInUTC);
+        const end = new Date(ws.slotEndTimeInUTC);
+        const startMinutes = start.getUTCHours() * 60 + start.getUTCMinutes();
+        const endMinutes = end.getUTCHours() * 60 + end.getUTCMinutes();
+        const dow: string = ws.dayOfWeekforStartTimeInUTC;
+        const arr = rangesByDow.get(dow) || [];
+        arr.push({ start: startMinutes, end: endMinutes });
+        rangesByDow.set(dow, arr);
+      });
 
-      if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
-        // For weekly schedule, check if the slot matches any weekly pattern
-        isAvailable = availableSlots.some((slot) => {
-          const slotTime = new Date(slot.slotStartTimeInUTC);
-          return (
-            slotDate.getDay() === slotTime.getDay() &&
-            slotDate.getHours() === slotTime.getHours() &&
-            slotDate.getMinutes() === slotTime.getMinutes()
-          );
-        });
-      } else {
-        // For custom schedule, check if the slot exists exactly
-        isAvailable = availableSlots.some(
-          (slot) =>
-            new Date(slot.slotStartTimeInUTC).toISOString() ===
-            slotDate.toISOString(),
+      for (const slotDate of slotDates) {
+        const dow = dayEnumByUtcIndex[slotDate.getUTCDay()];
+        const startMinutes =
+          slotDate.getUTCHours() * 60 + slotDate.getUTCMinutes();
+        const endMinutes = startMinutes + 30;
+        const ranges = rangesByDow.get(dow) || [];
+        const withinAnyRange = ranges.some(
+          (r) => startMinutes >= r.start && endMinutes <= r.end
         );
+        if (!withinAnyRange) {
+          result.outsideAvailability.push({ slot: slotDate.toISOString() });
+        }
       }
-
-      if (!isAvailable) {
-        result.outsideAvailability.push({
-          slot: slotDate.toISOString(),
-        });
+    } else {
+      // For custom schedule, check if the slot exists exactly
+      const availableSlots = consultantProfile.slotsOfAvailabilityCustom;
+      for (const slotDate of slotDates) {
+        const isAvailable = availableSlots.some(
+          (slot: any) =>
+            new Date(slot.slotStartTimeInUTC).toISOString() ===
+            slotDate.toISOString()
+        );
+        if (!isAvailable) {
+          result.outsideAvailability.push({ slot: slotDate.toISOString() });
+        }
       }
     }
 
     // Validate weekly distribution for classes (if applicable)
     if (plan.callsPerWeek) {
+      // Calculate session duration from class contents (same logic as allocation route)
+      const classContents = plan.classContents || [];
+      let sessionDurationInHours = 1; // Default
+      if (classContents.length > 0) {
+        const totalHours = classContents.reduce(
+          (sum, content) => sum + content.hoursAllotted,
+          0
+        );
+        sessionDurationInHours = totalHours / classContents.length;
+      }
+
+      const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5); // 30-min slots
+      const maxSlotsPerWeek = plan.callsPerWeek * slotsPerSession;
+
       const slotsByWeek = new Map<string, number>();
 
       for (const slotDate of slotDates) {
@@ -267,11 +302,11 @@ export async function POST(
       }
 
       for (const [weekKey, count] of Array.from(slotsByWeek.entries())) {
-        if (count > plan.callsPerWeek) {
+        if (count > maxSlotsPerWeek) {
           result.weeklyDistributionErrors.push({
             week: new Date(weekKey).toLocaleDateString(),
             slotsCount: count,
-            maxAllowed: plan.callsPerWeek,
+            maxAllowed: maxSlotsPerWeek,
           });
         }
       }
@@ -298,7 +333,7 @@ export async function POST(
     console.error("Class validation error:", error);
     return NextResponse.json(
       { error: "Failed to validate class slots" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
