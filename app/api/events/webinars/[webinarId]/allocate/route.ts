@@ -182,6 +182,11 @@ async function allocateSlotAuto(
   // Sort candidate slots chronologically
   candidateSlots.sort((a, b) => a.getTime() - b.getTime());
 
+  // Create a Set for fast lookup of candidate slot times
+  const candidateSlotSet = new Set(
+    candidateSlots.map((slot) => slot.toISOString())
+  );
+
   // Find the earliest consecutive block that fits the webinar duration
   for (const firstSlot of candidateSlots) {
     // Skip if first slot is already booked
@@ -198,7 +203,12 @@ async function allocateSlotAuto(
 
       // Skip if this slot is already booked or in the past
       const slotISO = slotTime.toISOString();
-      if (!candidateSlotISOs.has(slotISO) || bookedSlots.has(slotISO) || slotTime < now) {
+      if (
+        !candidateSlotSet.has(slotISO) ||
+        bookedSlots.has(slotISO) ||
+        slotTime < now
+      ) {
+        break;
       }
 
       // Validate this slot is on the same day as the first slot

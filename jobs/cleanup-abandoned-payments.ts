@@ -25,7 +25,7 @@ interface CleanupResult {
  */
 async function cancelPaymentIntent(
   paymentIntent: string,
-  gateway: PaymentGateway,
+  gateway: PaymentGateway
 ): Promise<void> {
   try {
     switch (gateway) {
@@ -63,7 +63,7 @@ async function cancelPaymentIntent(
                 Authorization: `Bearer ${process.env.LEMON_SQUEEZY_API_KEY}`,
                 "Content-Type": "application/json",
               },
-            },
+            }
           );
           if (response.ok) {
             console.log(`✅ Cancelled Lemon Squeezy payment: ${paymentIntent}`);
@@ -92,7 +92,7 @@ async function cancelPaymentIntent(
       error instanceof Error ? error.message : "Unknown error";
     console.error(
       `❌ Failed to cancel ${gateway} payment intent ${paymentIntent}:`,
-      errorMessage,
+      errorMessage
     );
     throw error;
   }
@@ -158,7 +158,7 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
 
     result.totalProcessed = abandonedAppointments.length;
     console.log(
-      `📊 Found ${abandonedAppointments.length} abandoned appointments to clean up`,
+      `📊 Found ${abandonedAppointments.length} abandoned appointments to clean up`
     );
 
     // Process each abandoned appointment
@@ -170,7 +170,7 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
             try {
               await cancelPaymentIntent(
                 payment.paymentIntent,
-                payment.paymentGateway,
+                payment.paymentGateway
               );
 
               // Update payment status to FAILED (cancelled payments are considered failed)
@@ -185,17 +185,17 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
                   : "Unknown error";
               console.warn(
                 `⚠️ Failed to cancel payment intent ${payment.paymentIntent}:`,
-                errorMessage,
+                errorMessage
               );
               result.errors.push(
-                `Payment cancellation failed for ${payment.paymentIntent}: ${errorMessage}`,
+                `Payment cancellation failed for ${payment.paymentIntent}: ${errorMessage}`
               );
               // Continue cleanup even if payment cancellation fails
             }
           }
 
           // Remove tentative slots for webinar/class (many-to-many relationships)
-          if (appointment.webinar || appointment.class) {
+          if (appointment.webinarId || appointment.classId) {
             await tx.slotOfAppointment.deleteMany({
               where: {
                 appointmentId: appointment.id,
@@ -203,12 +203,12 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
               },
             });
             console.log(
-              `🗑️ Cleaned up tentative slots for ${appointment.webinar ? "webinar" : "class"} appointment: ${appointment.id}`,
+              `🗑️ Cleaned up tentative slots for ${appointment.webinarId ? "webinar" : "class"} appointment: ${appointment.id}`
             );
           }
 
           // For consultation/subscription, check if any non-tentative slots exist
-          else if (appointment.consultation || appointment.subscription) {
+          else if (appointment.consultationId || appointment.subscriptionId) {
             const confirmedSlots = await tx.slotOfAppointment.count({
               where: {
                 appointmentId: appointment.id,
@@ -222,13 +222,13 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
                 where: { appointmentId: appointment.id },
               });
 
-              if (appointment.consultation) {
+              if (appointment.consultationId) {
                 await tx.consultation.delete({
-                  where: { id: appointment.consultation.id },
+                  where: { id: appointment.consultationId },
                 });
-              } else if (appointment.subscription) {
+              } else if (appointment.subscriptionId) {
                 await tx.subscription.delete({
-                  where: { id: appointment.subscription.id },
+                  where: { id: appointment.subscriptionId },
                 });
               }
 
@@ -236,7 +236,7 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
                 where: { id: appointment.id },
               });
               console.log(
-                `🗑️ Deleted entire abandoned ${appointment.consultation ? "consultation" : "subscription"} appointment: ${appointment.id}`,
+                `🗑️ Deleted entire abandoned ${appointment.consultationId ? "consultation" : "subscription"} appointment: ${appointment.id}`
               );
             } else {
               // Only remove tentative slots
@@ -247,7 +247,7 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
                 },
               });
               console.log(
-                `🗑️ Cleaned up tentative slots for ${appointment.consultation ? "consultation" : "subscription"} appointment: ${appointment.id}`,
+                `🗑️ Cleaned up tentative slots for ${appointment.consultationId ? "consultation" : "subscription"} appointment: ${appointment.id}`
               );
             }
           }
@@ -255,7 +255,7 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
 
         result.cleanedCount++;
         console.log(
-          `✅ Successfully cleaned up appointment: ${appointment.id}`,
+          `✅ Successfully cleaned up appointment: ${appointment.id}`
         );
       } catch (error) {
         result.errorCount++;
@@ -263,10 +263,10 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
           error instanceof Error ? error.message : "Unknown error";
         console.error(
           `❌ Failed to clean up appointment ${appointment.id}:`,
-          errorMessage,
+          errorMessage
         );
         result.errors.push(
-          `Appointment cleanup failed for ${appointment.id}: ${errorMessage}`,
+          `Appointment cleanup failed for ${appointment.id}: ${errorMessage}`
         );
       }
     }
@@ -277,12 +277,12 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
     // Summary for GitHub Actions logs
     console.log(`\n📈 Cleanup Job Summary:`);
     console.log(
-      `   ✅ Successfully cleaned: ${result.cleanedCount} appointments`,
+      `   ✅ Successfully cleaned: ${result.cleanedCount} appointments`
     );
     console.log(`   ❌ Failed to clean: ${result.errorCount} appointments`);
     console.log(`   📊 Total processed: ${result.totalProcessed} appointments`);
     console.log(
-      `   🎯 Success rate: ${((result.cleanedCount / result.totalProcessed) * 100).toFixed(1)}%`,
+      `   🎯 Success rate: ${((result.cleanedCount / result.totalProcessed) * 100).toFixed(1)}%`
     );
 
     if (result.errorCount > 0) {
@@ -298,7 +298,7 @@ async function cleanupAbandonedPayments(): Promise<CleanupResult> {
       console.log(`::set-output name=cleaned_count::${result.cleanedCount}`);
       console.log(`::set-output name=error_count::${result.errorCount}`);
       console.log(
-        `::set-output name=total_processed::${result.totalProcessed}`,
+        `::set-output name=total_processed::${result.totalProcessed}`
       );
       console.log(`::set-output name=success::${result.success}`);
     }

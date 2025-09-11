@@ -625,7 +625,7 @@ model Appointment {
   class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classId String?
 
-  payment Payment?
+  payment Payment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

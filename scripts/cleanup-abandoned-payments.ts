@@ -20,7 +20,7 @@ const prisma = new PrismaClient();
  */
 async function cancelPaymentIntent(
   paymentIntent: string,
-  gateway: PaymentGateway,
+  gateway: PaymentGateway
 ): Promise<void> {
   try {
     switch (gateway) {
@@ -61,7 +61,7 @@ async function cancelPaymentIntent(
                 Authorization: `Bearer ${process.env.LEMON_SQUEEZY_API_KEY}`,
                 "Content-Type": "application/json",
               },
-            },
+            }
           );
           if (response.ok) {
             console.log(`✅ Cancelled Lemon Squeezy payment: ${paymentIntent}`);
@@ -91,7 +91,7 @@ async function cancelPaymentIntent(
       error instanceof Error ? error.message : "Unknown error";
     console.error(
       `❌ Failed to cancel ${gateway} payment intent ${paymentIntent}:`,
-      errorMessage,
+      errorMessage
     );
     throw error;
   }
@@ -148,7 +148,7 @@ async function cleanupAbandonedPayments() {
     });
 
     console.log(
-      `📊 Found ${abandonedAppointments.length} abandoned appointments to clean up`,
+      `📊 Found ${abandonedAppointments.length} abandoned appointments to clean up`
     );
 
     let cleanedCount = 0;
@@ -163,7 +163,7 @@ async function cleanupAbandonedPayments() {
             try {
               await cancelPaymentIntent(
                 payment.paymentIntent,
-                payment.paymentGateway,
+                payment.paymentGateway
               );
 
               // Update payment status
@@ -178,14 +178,14 @@ async function cleanupAbandonedPayments() {
                   : "Unknown error";
               console.warn(
                 `⚠️ Failed to cancel payment intent ${payment.paymentIntent}:`,
-                errorMessage,
+                errorMessage
               );
               // Continue cleanup even if payment cancellation fails
             }
           }
 
           // Remove tentative slots for webinar/class (many-to-many relationships)
-          if (appointment.webinar || appointment.class) {
+          if (appointment.webinarId || appointment.classId) {
             await tx.slotOfAppointment.deleteMany({
               where: {
                 appointmentId: appointment.id,
@@ -193,12 +193,12 @@ async function cleanupAbandonedPayments() {
               },
             });
             console.log(
-              `🗑️ Cleaned up tentative slots for ${appointment.webinar ? "webinar" : "class"} appointment: ${appointment.id}`,
+              `🗑️ Cleaned up tentative slots for ${appointment.webinarId ? "webinar" : "class"} appointment: ${appointment.id}`
             );
           }
 
           // For consultation/subscription, check if any non-tentative slots exist
-          else if (appointment.consultation || appointment.subscription) {
+          else if (appointment.consultationId || appointment.subscriptionId) {
             const confirmedSlots = await tx.slotOfAppointment.count({
               where: {
                 appointmentId: appointment.id,
@@ -212,13 +212,13 @@ async function cleanupAbandonedPayments() {
                 where: { appointmentId: appointment.id },
               });
 
-              if (appointment.consultation) {
+              if (appointment.consultationId) {
                 await tx.consultation.delete({
-                  where: { id: appointment.consultation.id },
+                  where: { id: appointment.consultationId },
                 });
-              } else if (appointment.subscription) {
+              } else if (appointment.subscriptionId) {
                 await tx.subscription.delete({
-                  where: { id: appointment.subscription.id },
+                  where: { id: appointment.subscriptionId },
                 });
               }
 
@@ -226,7 +226,7 @@ async function cleanupAbandonedPayments() {
                 where: { id: appointment.id },
               });
               console.log(
-                `🗑️ Deleted entire abandoned ${appointment.consultation ? "consultation" : "subscription"} appointment: ${appointment.id}`,
+                `🗑️ Deleted entire abandoned ${appointment.consultationId ? "consultation" : "subscription"} appointment: ${appointment.id}`
               );
             } else {
               // Only remove tentative slots
@@ -237,7 +237,7 @@ async function cleanupAbandonedPayments() {
                 },
               });
               console.log(
-                `🗑️ Cleaned up tentative slots for ${appointment.consultation ? "consultation" : "subscription"} appointment: ${appointment.id}`,
+                `🗑️ Cleaned up tentative slots for ${appointment.consultationId ? "consultation" : "subscription"} appointment: ${appointment.id}`
               );
             }
           }
@@ -245,7 +245,7 @@ async function cleanupAbandonedPayments() {
 
         cleanedCount++;
         console.log(
-          `✅ Successfully cleaned up appointment: ${appointment.id}`,
+          `✅ Successfully cleaned up appointment: ${appointment.id}`
         );
       } catch (error) {
         errorCount++;
@@ -253,7 +253,7 @@ async function cleanupAbandonedPayments() {
           error instanceof Error ? error.message : "Unknown error";
         console.error(
           `❌ Failed to clean up appointment ${appointment.id}:`,
-          errorMessage,
+          errorMessage
         );
       }
     }
@@ -263,12 +263,12 @@ async function cleanupAbandonedPayments() {
     console.log(`   ✅ Successfully cleaned: ${cleanedCount} appointments`);
     console.log(`   ❌ Failed to clean: ${errorCount} appointments`);
     console.log(
-      `   📊 Total processed: ${abandonedAppointments.length} appointments`,
+      `   📊 Total processed: ${abandonedAppointments.length} appointments`
     );
 
     if (errorCount > 0) {
       console.warn(
-        `⚠️ ${errorCount} appointments failed to clean up - manual intervention may be required`,
+        `⚠️ ${errorCount} appointments failed to clean up - manual intervention may be required`
       );
     }
   } catch (error) {
