@@ -69,7 +69,7 @@ export class AllocationAlgorithms {
    */
   static async manualAllocate(
     selectedSlots: TimeSlot[],
-    options: AllocationOptions
+    options: AllocationOptions,
   ): Promise<AllocationResult> {
     try {
       // VALIDATION: Check required slots count
@@ -77,7 +77,7 @@ export class AllocationAlgorithms {
         options.eventType,
         options.durationInMonths,
         options.callsPerWeek,
-        options.sessionDurationInHours
+        options.sessionDurationInHours,
       );
 
       if (selectedSlots.length !== requiredSlots) {
@@ -102,7 +102,7 @@ export class AllocationAlgorithms {
       // BUSINESS RULE: Webinar slots must be consecutive
       if (options.eventType === "webinar" && selectedSlots.length > 1) {
         const sortedSlots = [...selectedSlots].sort(
-          (a, b) => a.startTime.getTime() - b.startTime.getTime()
+          (a, b) => a.startTime.getTime() - b.startTime.getTime(),
         );
 
         for (let i = 1; i < sortedSlots.length; i++) {
@@ -134,7 +134,7 @@ export class AllocationAlgorithms {
 
         const distributionValidation = this.validateSlotDistribution(
           selectedSlots,
-          options.callsPerWeek
+          options.callsPerWeek,
         );
 
         if (!distributionValidation.isValid) {
@@ -150,7 +150,7 @@ export class AllocationAlgorithms {
       const allocationResult = await AllocationService.allocateSlots(
         options.eventType,
         options.eventId,
-        selectedSlots
+        selectedSlots,
       );
 
       if (!allocationResult.success) {
@@ -190,7 +190,7 @@ export class AllocationAlgorithms {
   static async autoAllocate(
     availableSlots: TimeSlot[],
     options: AllocationOptions,
-    preferences: AutoAllocationPreferences = {}
+    preferences: AutoAllocationPreferences = {},
   ): Promise<AllocationResult> {
     try {
       // Compute generic required slots, but override per-event where needed (subscription/week-only mode)
@@ -198,18 +198,18 @@ export class AllocationAlgorithms {
         options.eventType,
         options.durationInMonths,
         options.callsPerWeek,
-        options.sessionDurationInHours
+        options.sessionDurationInHours,
       );
       const getSlotsPerSession = (hours?: number) =>
         Math.ceil((hours || 1) / 0.5);
       const consultationSlots = getSlotsPerSession(
-        options.sessionDurationInHours || options.durationInHours || 1
+        options.sessionDurationInHours || options.durationInHours || 1,
       );
       const webinarSlots = getSlotsPerSession(
-        options.sessionDurationInHours || options.durationInHours || 1
+        options.sessionDurationInHours || options.durationInHours || 1,
       );
       const subscriptionSlotsPerCall = getSlotsPerSession(
-        options.sessionDurationInHours || 1
+        options.sessionDurationInHours || 1,
       );
       const effectiveRequiredSlots =
         options.eventType === "consultation"
@@ -256,7 +256,7 @@ export class AllocationAlgorithms {
           // STRATEGY: Basic FCFS within the current week, from now, same-day consecutive
           selectedSlots = this.allocateConsultationSlotsFcfsWeek(
             filteredSlots,
-            options.sessionDurationInHours || options.durationInHours || 1
+            options.sessionDurationInHours || options.durationInHours || 1,
           );
           strategy = "earliest-available";
           break;
@@ -266,7 +266,7 @@ export class AllocationAlgorithms {
           // STRATEGY: FCFS within current week, from now, consecutive same-day
           selectedSlots = this.allocateWebinarSlotsFcfsWeek(
             filteredSlots,
-            options.sessionDurationInHours || options.durationInHours || 1
+            options.sessionDurationInHours || options.durationInHours || 1,
           );
           strategy = "consecutive-slots";
           break;
@@ -277,7 +277,7 @@ export class AllocationAlgorithms {
           selectedSlots = this.allocateSubscriptionSlotsFcfsWeek(
             filteredSlots,
             options.callsPerWeek || 1,
-            subscriptionSlotsPerCall
+            subscriptionSlotsPerCall,
           );
           strategy = "optimal-distribution";
           break;
@@ -289,7 +289,7 @@ export class AllocationAlgorithms {
             genericRequiredSlots,
             options.callsPerWeek || 1,
             options.durationInMonths || 1,
-            preferences
+            preferences,
           );
           strategy = "optimal-distribution";
           break;
@@ -370,7 +370,7 @@ export class AllocationAlgorithms {
       const allocationResult = await AllocationService.allocateSlots(
         options.eventType,
         options.eventId,
-        selectedSlots
+        selectedSlots,
       );
 
       if (!allocationResult.success) {
@@ -401,7 +401,7 @@ export class AllocationAlgorithms {
    * Pre-allocate using requested slots from the consultee
    */
   static async preAllocate(
-    options: AllocationOptions
+    options: AllocationOptions,
   ): Promise<AllocationResult> {
     try {
       if (!options.requestedSlots || options.requestedSlots.length === 0) {
@@ -416,7 +416,7 @@ export class AllocationAlgorithms {
         options.eventType,
         options.durationInMonths,
         options.callsPerWeek,
-        options.sessionDurationInHours
+        options.sessionDurationInHours,
       );
 
       if (options.requestedSlots.length !== requiredSlots) {
@@ -432,7 +432,7 @@ export class AllocationAlgorithms {
         options.eventType,
         options.eventId,
         options.requestedSlots,
-        { useRequestedSlots: true }
+        { useRequestedSlots: true },
       );
 
       if (!allocationResult.success) {
@@ -463,7 +463,7 @@ export class AllocationAlgorithms {
    */
   private static filterSlotsByPreferences(
     slots: TimeSlot[],
-    preferences: AutoAllocationPreferences
+    preferences: AutoAllocationPreferences,
   ): TimeSlot[] {
     const now = new Date();
 
@@ -501,7 +501,7 @@ export class AllocationAlgorithms {
    */
   private static allocateConsultationSlots(
     availableSlots: TimeSlot[],
-    durationHours: number = 1 // Default to 1 hour if not specified
+    durationHours: number = 1, // Default to 1 hour if not specified
   ): TimeSlot[] {
     const requiredSlots = Math.ceil(durationHours / 0.5); // 30-minute intervals
 
@@ -520,7 +520,7 @@ export class AllocationAlgorithms {
           s.startTime > now &&
           s.startTime <= endOfWeek &&
           s.isAvailable &&
-          !s.isBooked
+          !s.isBooked,
       )
       .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
@@ -572,7 +572,7 @@ export class AllocationAlgorithms {
    */
   private static allocateConsultationSlotsFcfsWeek(
     availableSlots: TimeSlot[],
-    durationHours: number
+    durationHours: number,
   ): TimeSlot[] {
     const required = Math.ceil((durationHours || 1) / 0.5);
     const now = new Date();
@@ -592,7 +592,7 @@ export class AllocationAlgorithms {
 
     // Iterate days in chronological order
     const orderedDays = Array.from(byDay.keys()).sort(
-      (a, b) => new Date(a).getTime() - new Date(b).getTime()
+      (a, b) => new Date(a).getTime() - new Date(b).getTime(),
     );
 
     for (const dayKey of orderedDays) {
@@ -628,7 +628,7 @@ export class AllocationAlgorithms {
    */
   private static allocateWebinarSlots(
     availableSlots: TimeSlot[],
-    durationHours: number
+    durationHours: number,
   ): TimeSlot[] {
     const requiredSlots = Math.ceil(durationHours * 2); // 30-minute intervals
 
@@ -638,7 +638,7 @@ export class AllocationAlgorithms {
 
     // Find consecutive slots
     const sortedSlots = availableSlots.sort(
-      (a, b) => a.startTime.getTime() - b.startTime.getTime()
+      (a, b) => a.startTime.getTime() - b.startTime.getTime(),
     );
 
     for (let i = 0; i <= sortedSlots.length - requiredSlots; i++) {
@@ -677,7 +677,7 @@ export class AllocationAlgorithms {
    */
   private static allocateWebinarSlotsFcfsWeek(
     availableSlots: TimeSlot[],
-    durationHours: number
+    durationHours: number,
   ): TimeSlot[] {
     const required = Math.ceil((durationHours || 1) / 0.5);
     const now = new Date();
@@ -696,7 +696,7 @@ export class AllocationAlgorithms {
     }
 
     const orderedDays = Array.from(byDay.keys()).sort(
-      (a, b) => new Date(a).getTime() - new Date(b).getTime()
+      (a, b) => new Date(a).getTime() - new Date(b).getTime(),
     );
     for (const dayKey of orderedDays) {
       const daySlots = byDay.get(dayKey)!;
@@ -725,7 +725,7 @@ export class AllocationAlgorithms {
   private static allocateSubscriptionSlotsFcfsWeek(
     availableSlots: TimeSlot[],
     callsPerWeek: number,
-    slotsPerCall: number
+    slotsPerCall: number,
   ): TimeSlot[] {
     const now = new Date();
 
@@ -742,7 +742,7 @@ export class AllocationAlgorithms {
     }
 
     const orderedDays = Array.from(byDay.keys()).sort(
-      (a, b) => new Date(a).getTime() - new Date(b).getTime()
+      (a, b) => new Date(a).getTime() - new Date(b).getTime(),
     );
     const selected: TimeSlot[] = [];
     let callsPicked = 0;
@@ -781,10 +781,10 @@ export class AllocationAlgorithms {
     totalSlots: number,
     callsPerWeek: number,
     durationInMonths: number,
-    preferences: AutoAllocationPreferences
+    preferences: AutoAllocationPreferences,
   ): TimeSlot[] {
     const futureSlots = availableSlots.sort(
-      (a, b) => a.startTime.getTime() - b.startTime.getTime()
+      (a, b) => a.startTime.getTime() - b.startTime.getTime(),
     );
 
     const selectedSlots: TimeSlot[] = [];
@@ -816,7 +816,7 @@ export class AllocationAlgorithms {
       const weekSlots = slotsByWeek.get(weekKey)!;
       const slotsNeededThisWeek = Math.min(
         callsPerWeek,
-        totalSlots - selectedSlots.length
+        totalSlots - selectedSlots.length,
       );
 
       // Sort slots by preference and ensure minimum time between sessions
@@ -824,7 +824,7 @@ export class AllocationAlgorithms {
       const selectedThisWeek = this.selectSlotsWithSpacing(
         preferredSlots,
         slotsNeededThisWeek,
-        preferences.minTimeBetweenSessions || 2 // Default 2 hours minimum
+        preferences.minTimeBetweenSessions || 2, // Default 2 hours minimum
       );
 
       selectedSlots.push(...selectedThisWeek);
@@ -840,7 +840,7 @@ export class AllocationAlgorithms {
   private static selectSlotsWithSpacing(
     slots: TimeSlot[],
     count: number,
-    minHoursBetween: number
+    minHoursBetween: number,
   ): TimeSlot[] {
     const selected: TimeSlot[] = [];
     const minMsBetween = minHoursBetween * 60 * 60 * 1000;
@@ -851,7 +851,7 @@ export class AllocationAlgorithms {
       // Check if this slot conflicts with already selected slots
       const hasConflict = selected.some((selectedSlot) => {
         const timeDiff = Math.abs(
-          slot.startTime.getTime() - selectedSlot.startTime.getTime()
+          slot.startTime.getTime() - selectedSlot.startTime.getTime(),
         );
         return timeDiff < minMsBetween;
       });
@@ -976,7 +976,7 @@ export class AllocationAlgorithms {
    */
   private static validateSlotDistribution(
     slots: TimeSlot[],
-    callsPerWeek: number
+    callsPerWeek: number,
   ): { isValid: boolean; errorMessage?: string } {
     const slotsByWeek = new Map<string, TimeSlot[]>();
 

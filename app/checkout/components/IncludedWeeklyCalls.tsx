@@ -69,12 +69,12 @@ export default function IncludedWeeklyCalls({
     const warnings: string[] = [];
     if (calls < minWeeks) {
       warnings.push(
-        `Selected range is too short. At least ${minWeeks} week(s) expected.`
+        `Selected range is too short. At least ${minWeeks} week(s) expected.`,
       );
     }
     if (calls > maxWeeks) {
       warnings.push(
-        `Selected range is quite long. Typically ${maxWeeks} week(s) max for a monthly plan.`
+        `Selected range is quite long. Typically ${maxWeeks} week(s) max for a monthly plan.`,
       );
     }
 

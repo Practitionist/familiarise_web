@@ -56,7 +56,7 @@ type SubscriptionWithRelations = Prisma.SubscriptionGetPayload<{
 
 async function allocateSlotsAuto(
   subscription: SubscriptionWithRelations,
-  tx: PrismaTransaction
+  tx: PrismaTransaction,
 ): Promise<Date[]> {
   const { subscriptionPlan, requestedBy } = subscription;
   const { consultantProfile } = subscriptionPlan;
@@ -77,7 +77,7 @@ async function allocateSlotsAuto(
 
   if (!availableSlots.length) {
     throw new Error(
-      "No available slots found for consultant. Please set up your availability schedule first."
+      "No available slots found for consultant. Please set up your availability schedule first.",
     );
   }
 
@@ -113,9 +113,9 @@ async function allocateSlotsAuto(
   const bookedSlots = new Set(
     existingAppointments.flatMap((app) =>
       (app.slotsOfAppointment || []).map((slot: { slotStartTimeInUTC: Date }) =>
-        slot.slotStartTimeInUTC.toISOString()
-      )
-    )
+        slot.slotStartTimeInUTC.toISOString(),
+      ),
+    ),
   );
 
   // Sort slots by time of day to prioritize earlier slots (FCFS within a day)
@@ -277,8 +277,8 @@ async function allocateSlotsAuto(
               slotStartUtc.getUTCHours(),
               slotStartUtc.getUTCMinutes(),
               0,
-              0
-            )
+              0,
+            ),
           );
         } else {
           // CUSTOM: use exact slot date but only within the current week window (UTC day match)
@@ -325,7 +325,7 @@ async function allocateSlotsAuto(
             const ranges = weeklyRangesByDow.get(dow) || [];
             // Check that this slot and its 30-min window stay within at least one range
             const withinRange = ranges.some(
-              (r) => minutes >= r.start && minutes + 30 <= r.end
+              (r) => minutes >= r.start && minutes + 30 <= r.end,
             );
             if (!withinRange) {
               canAllocateCall = false;
@@ -338,7 +338,7 @@ async function allocateSlotsAuto(
             const withinRange = ranges.some(
               (r) =>
                 slotTime.getTime() >= r.start.getTime() &&
-                slotEnd.getTime() <= r.end.getTime()
+                slotEnd.getTime() <= r.end.getTime(),
             );
             if (!withinRange) {
               canAllocateCall = false;
@@ -356,7 +356,7 @@ async function allocateSlotsAuto(
 
           // Mark all slots for this call as booked for future iterations
           consecutiveSlots.forEach((slot) =>
-            bookedSlots.add(slot.toISOString())
+            bookedSlots.add(slot.toISOString()),
           );
 
           callsThisWeek++;
@@ -368,19 +368,19 @@ async function allocateSlotsAuto(
 
     // Move to next week
     currentWeekStart = new Date(
-      currentWeekStart.getTime() + 7 * 24 * 60 * 60 * 1000
+      currentWeekStart.getTime() + 7 * 24 * 60 * 60 * 1000,
     );
   }
 
   if (selectedCallStartTimes.length === 0) {
     throw new Error(
-      `Unable to allocate any calls within the subscription period (${subscriptionStartDate.toLocaleDateString()} to ${subscriptionEndDate.toLocaleDateString()}). This subscription allows scheduling only between ${subscriptionStartDate.toLocaleString()} and ${subscriptionEndDate.toLocaleString()}. Please check for conflicts or add more availability.`
+      `Unable to allocate any calls within the subscription period (${subscriptionStartDate.toLocaleDateString()} to ${subscriptionEndDate.toLocaleDateString()}). This subscription allows scheduling only between ${subscriptionStartDate.toLocaleString()} and ${subscriptionEndDate.toLocaleString()}. Please check for conflicts or add more availability.`,
     );
   }
 
   // Sort selected call start times
   const sorted = [...selectedCallStartTimes].sort(
-    (a, b) => a.getTime() - b.getTime()
+    (a, b) => a.getTime() - b.getTime(),
   );
 
   return sorted;
@@ -388,14 +388,14 @@ async function allocateSlotsAuto(
 
 async function allocateSlotsRequested(
   subscription: SubscriptionWithRelations,
-  tx: PrismaTransaction
+  tx: PrismaTransaction,
 ): Promise<Date[]> {
   // Get the requested slots from appointments
   const requestedSlots = subscription.appointments?.flatMap(
     (appt) =>
       appt.slotsOfAppointment?.map(
-        (slot) => new Date(slot.slotStartTimeInUTC)
-      ) || []
+        (slot) => new Date(slot.slotStartTimeInUTC),
+      ) || [],
   );
 
   if (!requestedSlots?.length) {
@@ -457,7 +457,7 @@ function isSameDay(date1: Date, date2: Date): boolean {
 async function allocateSlotsManual(
   subscription: SubscriptionWithRelations,
   slots: string[],
-  tx: PrismaTransaction
+  tx: PrismaTransaction,
 ): Promise<Date[]> {
   const { subscriptionPlan } = subscription;
   const { consultantProfile } = subscriptionPlan;
@@ -488,14 +488,14 @@ async function allocateSlotsManual(
         const hours = new Date(slot.slotStartTimeInUTC).getHours();
         const minutes = new Date(slot.slotStartTimeInUTC).getMinutes();
         return `${dayNum}-${hours}-${minutes}`;
-      })
+      }),
     );
 
     for (const slotDate of slotDates) {
       const slotPattern = `${getDayOfWeek(slotDate)}-${slotDate.getHours()}-${slotDate.getMinutes()}`;
       if (!availableWeeklySlots.has(slotPattern)) {
         throw new Error(
-          `Slot ${slotDate.toLocaleString()} does not match consultant's weekly schedule`
+          `Slot ${slotDate.toLocaleString()} does not match consultant's weekly schedule`,
         );
       }
     }
@@ -503,14 +503,14 @@ async function allocateSlotsManual(
     // For custom schedule, validate slots exist in custom slots
     const availableCustomSlots = new Set(
       consultantProfile.slotsOfAvailabilityCustom.map((slot) =>
-        new Date(slot.slotStartTimeInUTC).toISOString()
-      )
+        new Date(slot.slotStartTimeInUTC).toISOString(),
+      ),
     );
 
     for (const slotDate of slotDates) {
       if (!availableCustomSlots.has(slotDate.toISOString())) {
         throw new Error(
-          `Slot ${slotDate.toLocaleString()} is not in consultant's custom schedule`
+          `Slot ${slotDate.toLocaleString()} is not in consultant's custom schedule`,
         );
       }
     }
@@ -560,12 +560,12 @@ async function allocateSlotsManual(
 
   // Boundary guard: all selected slots must be within existing subscription window
   const sortedSlotDates = [...slotDates].sort(
-    (a, b) => a.getTime() - b.getTime()
+    (a, b) => a.getTime() - b.getTime(),
   );
   for (const d of sortedSlotDates) {
     if (d < subscription.startDate || d > subscription.endDate) {
       throw new Error(
-        `Slot ${d.toISOString()} is outside subscription period (${subscription.startDate.toISOString()} - ${subscription.endDate.toISOString()})`
+        `Slot ${d.toISOString()} is outside subscription period (${subscription.startDate.toISOString()} - ${subscription.endDate.toISOString()})`,
       );
     }
   }
@@ -575,12 +575,12 @@ async function allocateSlotsManual(
     "@/utils/subscriptionValidation"
   );
   const validationService = new SubscriptionValidationService(
-    tx as unknown as Prisma.TransactionClient
+    tx as unknown as Prisma.TransactionClient,
   );
 
   const validationResult = await validationService.validateSubscriptionSlots(
     subscription.id,
-    slots
+    slots,
   );
 
   if (!validationResult.isValid) {
@@ -608,7 +608,7 @@ async function allocateSlotsManual(
     const sorted = [...daySlots].sort((a, b) => a.getTime() - b.getTime());
     if (sorted.length < slotsPerCall) {
       throw new Error(
-        "Incomplete call selected: not enough consecutive slots in a day"
+        "Incomplete call selected: not enough consecutive slots in a day",
       );
     }
     for (let i = 1; i < slotsPerCall; i++) {
@@ -626,7 +626,7 @@ async function allocateSlotsManual(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ subscriptionId: string }> }
+  { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
   try {
     const { subscriptionId } = await params;
@@ -636,7 +636,7 @@ export async function PATCH(
     if (typeof body.isAuto !== "boolean") {
       return NextResponse.json(
         { error: "isAuto flag is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -646,7 +646,7 @@ export async function PATCH(
     } else if (!body.isAuto && !Array.isArray(body.slots)) {
       return NextResponse.json(
         { error: "slots array is required for manual allocation" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -659,7 +659,7 @@ export async function PATCH(
     if (!subscription) {
       return NextResponse.json(
         { error: "Subscription not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -670,7 +670,7 @@ export async function PATCH(
     ) {
       return NextResponse.json(
         { error: "Missing user information" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -678,7 +678,7 @@ export async function PATCH(
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -686,7 +686,7 @@ export async function PATCH(
     if (subscription.requestStatus === RequestStatus.APPROVED) {
       return NextResponse.json(
         { error: "Subscription is already approved" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -698,7 +698,7 @@ export async function PATCH(
           if (body.useRequestedSlots && subscription.appointments?.length > 0) {
             // Validate all slots are still available
             const requestedSlots = subscription.appointments.flatMap((appt) =>
-              appt.slotsOfAppointment.map((slot) => slot.slotStartTimeInUTC)
+              appt.slotsOfAppointment.map((slot) => slot.slotStartTimeInUTC),
             );
 
             const existingAppointments = await tx.appointment.findMany({
@@ -739,7 +739,7 @@ export async function PATCH(
                 const dt = new Date(d);
                 if (dt < allowedStart || dt > allowedEnd) {
                   throw new Error(
-                    `Selected slot ${dt.toLocaleString()} is outside subscription period (${allowedStart.toLocaleString()} - ${allowedEnd.toLocaleString()})`
+                    `Selected slot ${dt.toLocaleString()} is outside subscription period (${allowedStart.toLocaleString()} - ${allowedEnd.toLocaleString()})`,
                   );
                 }
               }
@@ -753,7 +753,7 @@ export async function PATCH(
                 startDate: requestedSlots[0],
                 endDate: addMonths(
                   requestedSlots[0],
-                  subscription.subscriptionPlan.durationInMonths
+                  subscription.subscriptionPlan.durationInMonths,
                 ),
               },
               include: subscriptionInclude,
@@ -774,8 +774,8 @@ export async function PATCH(
               subscription.appointments.map((appointment) =>
                 tx.appointment.delete({
                   where: { id: appointment.id },
-                })
-              )
+                }),
+              ),
             );
           }
 
@@ -789,7 +789,7 @@ export async function PATCH(
             selectedSlots = await allocateSlotsManual(
               subscription,
               body.slots!,
-              tx
+              tx,
             );
           }
 
@@ -800,7 +800,7 @@ export async function PATCH(
             for (const d of selectedSlots as Date[]) {
               if (d < allowedStart || d > allowedEnd) {
                 throw new Error(
-                  `Selected slot ${d.toLocaleString()} is outside subscription period (${allowedStart.toLocaleString()} - ${allowedEnd.toLocaleString()})`
+                  `Selected slot ${d.toLocaleString()} is outside subscription period (${allowedStart.toLocaleString()} - ${allowedEnd.toLocaleString()})`,
                 );
               }
             }
@@ -820,7 +820,7 @@ export async function PATCH(
                       slotStartTimeInUTC: slotTime,
                       slotEndTimeInUTC: addHours(
                         slotTime,
-                        subscription.subscriptionPlan.sessionDurationInHours
+                        subscription.subscriptionPlan.sessionDurationInHours,
                       ),
                       isTentative: false,
                       user: {
@@ -842,8 +842,8 @@ export async function PATCH(
                     },
                   },
                 },
-              })
-            )
+              }),
+            ),
           );
 
           // Update subscription status
@@ -854,7 +854,7 @@ export async function PATCH(
               startDate: selectedSlots[0],
               endDate: addMonths(
                 selectedSlots[0],
-                subscription.subscriptionPlan.durationInMonths
+                subscription.subscriptionPlan.durationInMonths,
               ),
             },
             include: subscriptionInclude,
@@ -867,7 +867,7 @@ export async function PATCH(
         },
         {
           timeout: 30000, // Increase timeout to 30 seconds for subscription allocations
-        }
+        },
       );
 
       return NextResponse.json({ data: result });
@@ -880,7 +880,7 @@ export async function PATCH(
           error:
             error instanceof Error ? error.message : "Failed to allocate slots",
         },
-        { status: 500 }
+        { status: 500 },
       );
     }
   } catch (error) {
@@ -889,7 +889,7 @@ export async function PATCH(
     }
     return NextResponse.json(
       { error: "An error occurred during slot allocation" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

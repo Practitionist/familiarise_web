@@ -39,14 +39,14 @@ export class PaymentIntentManager {
       return paymentResponse;
     } catch (error) {
       throw new Error(
-        "Failed to create payment intent. Please try again later."
+        "Failed to create payment intent. Please try again later.",
       );
     }
   }
 
   static async cancelIntent(
     intentId: string,
-    reason: string = "Database operation failed"
+    reason: string = "Database operation failed",
   ) {
     try {
       // TODO: Implement gateway-specific cancellation
@@ -74,7 +74,7 @@ export class PaymentIntentManager {
 // Shared amount calculation and validation
 export async function calculateAmountAndValidate(
   validatedData: CheckoutInput,
-  userId: string
+  userId: string,
 ) {
   return await prisma.$transaction(async (tx) => {
     let amount = 0;
@@ -113,7 +113,7 @@ export async function calculateAmountAndValidate(
         await validateSlotAvailability(
           tx,
           validatedData,
-          user.consulteeProfile.id
+          user.consulteeProfile.id,
         );
         amount = plan.price;
         break;
@@ -137,7 +137,7 @@ export async function calculateAmountAndValidate(
         await validateSlotAvailability(
           tx,
           validatedData,
-          user.consulteeProfile.id
+          user.consulteeProfile.id,
         );
         amount = plan.price;
         break;
@@ -196,7 +196,7 @@ export async function calculateAmountAndValidate(
         plan = classInstance.classPlan;
         const currentClassParticipants = classInstance.appointments.reduce(
           (total: number, apt: any) => total + apt.slotsOfAppointment.length,
-          0
+          0,
         );
 
         if (currentClassParticipants >= plan.maxParticipants) {
@@ -237,7 +237,7 @@ export async function calculateAmountAndValidate(
 export async function validateSlotAvailability(
   tx: any,
   data: CheckoutInput,
-  userId?: string
+  userId?: string,
 ) {
   if (!data.slotStartTimeInUTC || !data.slotEndTimeInUTC) return;
 
@@ -335,7 +335,7 @@ export async function validateSlotAvailability(
 
     if (recentAttempt) {
       throw new Error(
-        "You already have a pending booking for this time slot. Please complete your current payment or wait a few minutes to try again."
+        "You already have a pending booking for this time slot. Please complete your current payment or wait a few minutes to try again.",
       );
     }
   }
@@ -394,7 +394,7 @@ export async function validateSlotAvailability(
   // Allow max 3 pending attempts for the same slot (prevents spam)
   if (tentativeCount >= 3) {
     throw new Error(
-      "This time slot is temporarily unavailable due to high demand. Please try again later."
+      "This time slot is temporarily unavailable due to high demand. Please try again later.",
     );
   }
 }
@@ -404,7 +404,7 @@ export async function handleConsultationCheckout(
   tx: Prisma.TransactionClient,
   data: CheckoutInput,
   consulteeProfileId: string,
-  skipPayment: boolean
+  skipPayment: boolean,
 ) {
   const plan = await tx.consultationPlan.findUnique({
     where: { id: data.planId },
@@ -459,7 +459,7 @@ export async function handleSubscriptionCheckout(
   tx: any,
   data: CheckoutInput,
   consulteeProfileId: string,
-  skipPayment: boolean
+  skipPayment: boolean,
 ) {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },
@@ -483,7 +483,7 @@ export async function handleSubscriptionCheckout(
   const startDate = new Date();
   const endDate = calculateSubscriptionEndDate(
     startDate,
-    plan.durationInMonths
+    plan.durationInMonths,
   );
 
   // Create subscription
@@ -522,7 +522,7 @@ export async function handleWebinarCheckout(
   tx: any,
   data: CheckoutInput,
   userId: string,
-  skipPayment: boolean
+  skipPayment: boolean,
 ) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
@@ -597,7 +597,7 @@ export async function handleClassCheckout(
   tx: any,
   data: CheckoutInput,
   userId: string,
-  skipPayment: boolean
+  skipPayment: boolean,
 ) {
   const classInstance = await tx.class.findUnique({
     where: { id: data.eventId },
@@ -619,7 +619,7 @@ export async function handleClassCheckout(
   const plan = classInstance.classPlan;
   const currentParticipants = classInstance.appointments.reduce(
     (total: number, apt: any) => total + apt.slotsOfAppointment.length,
-    0
+    0,
   );
 
   // Check if max participants reached
@@ -664,7 +664,7 @@ export async function handleClassCheckout(
 export async function confirmAppointment(
   tx: any,
   appointmentId: string,
-  appointmentType: string
+  appointmentType: string,
 ) {
   // Make slot non-tentative
   await tx.slotOfAppointment.updateMany({
@@ -715,12 +715,12 @@ export async function confirmAppointment(
 // Production checkout flow with proper cleanup
 export async function handleProductionCheckout(
   validatedData: CheckoutInput,
-  userId: string
+  userId: string,
 ) {
   // Step 1: Calculate amount and validate data (without creating appointment)
   const { amount, currency, discountCodeId } = await calculateAmountAndValidate(
     validatedData,
-    userId
+    userId,
   );
 
   // Step 2: Create payment intent first (external API call)
@@ -785,7 +785,7 @@ export async function handleProductionCheckout(
     // CRITICAL: Cancel the payment intent since DB operation failed
     await PaymentIntentManager.cleanup(
       paymentResponse.id,
-      "Database operation failed - preventing orphaned payment intent"
+      "Database operation failed - preventing orphaned payment intent",
     );
 
     throw new Error("Failed to record payment information. Please try again.");
@@ -795,7 +795,7 @@ export async function handleProductionCheckout(
 // Development checkout flow
 export async function handleDevelopmentCheckout(
   validatedData: CheckoutInput,
-  userId: string
+  userId: string,
 ) {
   const result = await prisma.$transaction(async (tx) => {
     let appointment;
@@ -821,7 +821,7 @@ export async function handleDevelopmentCheckout(
           tx,
           validatedData,
           user.consulteeProfile.id,
-          true // skipPayment = true for dev
+          true, // skipPayment = true for dev
         ));
         break;
 
@@ -830,7 +830,7 @@ export async function handleDevelopmentCheckout(
           tx,
           validatedData,
           user.consulteeProfile.id,
-          true // skipPayment = true for dev
+          true, // skipPayment = true for dev
         ));
         break;
 
@@ -839,7 +839,7 @@ export async function handleDevelopmentCheckout(
           tx,
           validatedData,
           userId,
-          true // skipPayment = true for dev
+          true, // skipPayment = true for dev
         ));
         break;
 
@@ -848,7 +848,7 @@ export async function handleDevelopmentCheckout(
           tx,
           validatedData,
           userId,
-          true // skipPayment = true for dev
+          true, // skipPayment = true for dev
         ));
         break;
 

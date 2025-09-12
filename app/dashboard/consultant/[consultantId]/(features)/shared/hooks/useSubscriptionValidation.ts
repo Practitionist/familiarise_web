@@ -40,7 +40,7 @@ interface UseSubscriptionValidationReturn {
   getAvailableWeeks: () => Promise<WeeklyCallInfo[]>;
   canScheduleInWeek: (
     weekDate: Date,
-    additionalCalls?: number
+    additionalCalls?: number,
   ) => Promise<boolean>;
   isValidating: boolean;
   lastValidationResult: SubscriptionValidationResult | null;
@@ -51,7 +51,7 @@ interface UseSubscriptionValidationReturn {
  * Hook for subscription-specific slot validation with enhanced week-based logic
  */
 export function useSubscriptionValidation(
-  options: UseSubscriptionValidationOptions
+  options: UseSubscriptionValidationOptions,
 ): UseSubscriptionValidationReturn {
   const { toast } = useToast();
   const [isValidating, setIsValidating] = useState(false);
@@ -76,7 +76,7 @@ export function useSubscriptionValidation(
               "Content-Type": "application/json",
             },
             body: JSON.stringify({ slots }),
-          }
+          },
         );
 
         if (!response.ok) {
@@ -139,7 +139,7 @@ export function useSubscriptionValidation(
         setIsValidating(false);
       }
     },
-    [subscriptionId, callsPerWeek, durationInMonths, toast]
+    [subscriptionId, callsPerWeek, durationInMonths, toast],
   );
 
   /**
@@ -166,7 +166,7 @@ export function useSubscriptionValidation(
         weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Get start of week (Sunday)
 
         const weekInfo = validationResult.weeklyInfo.find(
-          (week) => week.weekStart.getTime() === weekStart.getTime()
+          (week) => week.weekStart.getTime() === weekStart.getTime(),
         );
 
         return weekInfo ? weekInfo.availableSlots >= additionalCalls : false;
@@ -175,7 +175,7 @@ export function useSubscriptionValidation(
         return false;
       }
     },
-    [validateSlots]
+    [validateSlots],
   );
 
   /**

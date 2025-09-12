@@ -62,7 +62,7 @@ export default function ConsultationCheckoutPage({
   const [reviews, setReviews] = useState<ConsultantReview[]>([]);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
-    null
+    null,
   );
 
   // Fetch slot details
@@ -74,7 +74,7 @@ export default function ConsultationCheckoutPage({
 
         if (slotOfAvailabilityWeeklyId) {
           const response = await fetch(
-            `/api/slots/availability/weekly/${slotOfAvailabilityWeeklyId}`
+            `/api/slots/availability/weekly/${slotOfAvailabilityWeeklyId}`,
           );
           if (response.ok) {
             const data = await response.json();
@@ -82,7 +82,7 @@ export default function ConsultationCheckoutPage({
           }
         } else if (slotOfAvailabilityCustomId) {
           const response = await fetch(
-            `/api/slots/availability/custom/${slotOfAvailabilityCustomId}`
+            `/api/slots/availability/custom/${slotOfAvailabilityCustomId}`,
           );
           if (response.ok) {
             const data = await response.json();
@@ -150,7 +150,7 @@ export default function ConsultationCheckoutPage({
   // Common API request logic
   const makeCheckoutRequest = async (
     checkoutData: CheckoutInput,
-    gateway: string
+    gateway: string,
   ) => {
     return fetch("/api/checkout", {
       method: "POST",
@@ -243,7 +243,7 @@ export default function ConsultationCheckoutPage({
             switch (gateway) {
               case "STRIPE":
                 const stripe = await loadStripe(
-                  process.env.NEXT_PUBLIC_STRIPE_KEY!
+                  process.env.NEXT_PUBLIC_STRIPE_KEY!,
                 );
                 await stripe?.confirmPayment({
                   clientSecret: data.paymentIntent.client_secret,
@@ -283,7 +283,7 @@ export default function ConsultationCheckoutPage({
         setProcessingGateway(null);
       }
     },
-    [resolvedParams, resolvedSearchParams, toast, isCheckoutProcessing]
+    [resolvedParams, resolvedSearchParams, toast, isCheckoutProcessing],
   );
 
   useEffect(() => {
@@ -407,7 +407,7 @@ export default function ConsultationCheckoutPage({
               <div className="text-muted-foreground">Date</div>
               <div>
                 {new Date(
-                  resolvedSearchParams.slotStartTimeInUTC as string
+                  resolvedSearchParams.slotStartTimeInUTC as string,
                 ).toLocaleDateString(undefined, {
                   weekday: "long",
                   year: "numeric",
@@ -420,11 +420,11 @@ export default function ConsultationCheckoutPage({
               <div className="text-muted-foreground">Time</div>
               <div>
                 {new Date(
-                  resolvedSearchParams.slotStartTimeInUTC as string
+                  resolvedSearchParams.slotStartTimeInUTC as string,
                 ).toLocaleTimeString()}{" "}
                 -{" "}
                 {new Date(
-                  resolvedSearchParams.slotEndTimeInUTC as string
+                  resolvedSearchParams.slotEndTimeInUTC as string,
                 ).toLocaleTimeString()}{" "}
                 ({Intl.DateTimeFormat().resolvedOptions().timeZone})
               </div>
@@ -582,27 +582,27 @@ export default function ConsultationCheckoutPage({
                         planId: resolvedParams.planId,
                         paymentGateway: "RAZORPAY",
                         slotStartTimeInUTC: Array.isArray(
-                          resolvedSearchParams.slotStartTimeInUTC
+                          resolvedSearchParams.slotStartTimeInUTC,
                         )
                           ? resolvedSearchParams.slotStartTimeInUTC[0]
                           : resolvedSearchParams.slotStartTimeInUTC,
                         slotEndTimeInUTC: Array.isArray(
-                          resolvedSearchParams.slotEndTimeInUTC
+                          resolvedSearchParams.slotEndTimeInUTC,
                         )
                           ? resolvedSearchParams.slotEndTimeInUTC[0]
                           : resolvedSearchParams.slotEndTimeInUTC,
                         slotOfAvailabilityWeeklyId: Array.isArray(
-                          resolvedSearchParams.slotOfAvailabilityWeeklyId
+                          resolvedSearchParams.slotOfAvailabilityWeeklyId,
                         )
                           ? resolvedSearchParams.slotOfAvailabilityWeeklyId[0]
                           : resolvedSearchParams.slotOfAvailabilityWeeklyId,
                         slotOfAvailabilityCustomId: Array.isArray(
-                          resolvedSearchParams.slotOfAvailabilityCustomId
+                          resolvedSearchParams.slotOfAvailabilityCustomId,
                         )
                           ? resolvedSearchParams.slotOfAvailabilityCustomId[0]
                           : resolvedSearchParams.slotOfAvailabilityCustomId,
                         discountCode: Array.isArray(
-                          resolvedSearchParams.discountCode
+                          resolvedSearchParams.discountCode,
                         )
                           ? resolvedSearchParams.discountCode[0]
                           : resolvedSearchParams.discountCode,
@@ -635,27 +635,27 @@ export default function ConsultationCheckoutPage({
                         planId: resolvedParams.planId,
                         paymentGateway: "STRIPE",
                         slotStartTimeInUTC: Array.isArray(
-                          resolvedSearchParams.slotStartTimeInUTC
+                          resolvedSearchParams.slotStartTimeInUTC,
                         )
                           ? resolvedSearchParams.slotStartTimeInUTC[0]
                           : resolvedSearchParams.slotStartTimeInUTC,
                         slotEndTimeInUTC: Array.isArray(
-                          resolvedSearchParams.slotEndTimeInUTC
+                          resolvedSearchParams.slotEndTimeInUTC,
                         )
                           ? resolvedSearchParams.slotEndTimeInUTC[0]
                           : resolvedSearchParams.slotEndTimeInUTC,
                         slotOfAvailabilityWeeklyId: Array.isArray(
-                          resolvedSearchParams.slotOfAvailabilityWeeklyId
+                          resolvedSearchParams.slotOfAvailabilityWeeklyId,
                         )
                           ? resolvedSearchParams.slotOfAvailabilityWeeklyId[0]
                           : resolvedSearchParams.slotOfAvailabilityWeeklyId,
                         slotOfAvailabilityCustomId: Array.isArray(
-                          resolvedSearchParams.slotOfAvailabilityCustomId
+                          resolvedSearchParams.slotOfAvailabilityCustomId,
                         )
                           ? resolvedSearchParams.slotOfAvailabilityCustomId[0]
                           : resolvedSearchParams.slotOfAvailabilityCustomId,
                         discountCode: Array.isArray(
-                          resolvedSearchParams.discountCode
+                          resolvedSearchParams.discountCode,
                         )
                           ? resolvedSearchParams.discountCode[0]
                           : resolvedSearchParams.discountCode,

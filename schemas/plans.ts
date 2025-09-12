@@ -103,7 +103,7 @@ const BaseEventPlanSchema = z.object({
     .min(1, "Title is required")
     .refine(
       meaningfulContentRefinement,
-      "Title contains nonsensical text or gibberish"
+      "Title contains nonsensical text or gibberish",
     )
     .refine(profanityFreeRefinement, "Title contains inappropriate language"),
   description: z
@@ -111,11 +111,11 @@ const BaseEventPlanSchema = z.object({
     .min(1, "Description is required")
     .refine(
       meaningfulContentRefinement,
-      "Description contains nonsensical text or gibberish"
+      "Description contains nonsensical text or gibberish",
     )
     .refine(
       profanityFreeRefinement,
-      "Description contains inappropriate language"
+      "Description contains inappropriate language",
     ),
   price: z.number().min(0, "Price must be non-negative"),
   priceCurrency: z.string().min(1, "Currency is required").default("INR"),
@@ -125,18 +125,18 @@ const BaseEventPlanSchema = z.object({
     .default("English")
     .refine(
       meaningfulContentRefinement,
-      "Language contains nonsensical text or gibberish"
+      "Language contains nonsensical text or gibberish",
     )
     .refine(
       profanityFreeRefinement,
-      "Language contains inappropriate language"
+      "Language contains inappropriate language",
     ),
   level: z
     .string()
     .default("Beginner")
     .refine(
       meaningfulContentRefinement,
-      "Level contains nonsensical text or gibberish"
+      "Level contains nonsensical text or gibberish",
     )
     .refine(profanityFreeRefinement, "Level contains inappropriate language"),
   prerequisites: z
@@ -145,11 +145,11 @@ const BaseEventPlanSchema = z.object({
     .nullable()
     .refine(
       (val) => !val || meaningfulContentRefinement(val),
-      "Prerequisites contain nonsensical text or gibberish"
+      "Prerequisites contain nonsensical text or gibberish",
     )
     .refine(
       (val) => !val || profanityFreeRefinement(val),
-      "Prerequisites contain inappropriate language"
+      "Prerequisites contain inappropriate language",
     ),
   materialProvided: z
     .string()
@@ -157,26 +157,26 @@ const BaseEventPlanSchema = z.object({
     .nullable()
     .refine(
       (val) => !val || meaningfulContentRefinement(val),
-      "Materials contain nonsensical text or gibberish"
+      "Materials contain nonsensical text or gibberish",
     )
     .refine(
       (val) => !val || profanityFreeRefinement(val),
-      "Materials contain inappropriate language"
+      "Materials contain inappropriate language",
     ),
   learningOutcomes: z
     .array(z.string().min(1, "Learning outcome cannot be empty"))
     .min(1, "At least one learning outcome is required")
     .refine(
       noDuplicatesRefinement,
-      "Duplicate learning outcomes are not allowed"
+      "Duplicate learning outcomes are not allowed",
     )
     .refine(
       meaningfulArrayContentRefinement,
-      "Learning outcomes contain nonsensical text or gibberish"
+      "Learning outcomes contain nonsensical text or gibberish",
     )
     .refine(
       profanityFreeArrayRefinement,
-      "Learning outcomes contain inappropriate language"
+      "Learning outcomes contain inappropriate language",
     ),
   topics: z
     .array(z.string().min(1, "Topic cannot be empty"))
@@ -184,11 +184,11 @@ const BaseEventPlanSchema = z.object({
     .refine(noDuplicatesRefinement, "Duplicate topics are not allowed")
     .refine(
       meaningfulArrayContentRefinement,
-      "Topics contain nonsensical text or gibberish"
+      "Topics contain nonsensical text or gibberish",
     )
     .refine(
       profanityFreeArrayRefinement,
-      "Topics contain inappropriate language"
+      "Topics contain inappropriate language",
     ),
 
   // Make consultant fields optional and nullable
@@ -199,7 +199,7 @@ const BaseEventPlanSchema = z.object({
 // Create a factory function for unique title validator
 export const createUniqueTitleValidator = (
   checkFunction: (title: string) => Promise<boolean>,
-  eventType: string
+  eventType: string,
 ) => {
   return z
     .object({
@@ -212,7 +212,7 @@ export const createUniqueTitleValidator = (
         },
         {
           message: `A ${eventType} with this title already exists`,
-        }
+        },
       ),
     })
     .partial();
@@ -226,7 +226,7 @@ export const WebinarPlanSchema = BaseEventPlanSchema.extend({
     .min(0.5, "Duration must be at least 30 minutes")
     .refine(
       (val) => (val * 60) % 30 === 0,
-      "Duration must be in 30-minute increments"
+      "Duration must be in 30-minute increments",
     ),
   scheduledAt: z
     .string()
@@ -251,7 +251,7 @@ export const ClassContentSchema = z.object({
     .min(1, "Title is required")
     .refine(
       meaningfulContentRefinement,
-      "Title contains nonsensical text or gibberish"
+      "Title contains nonsensical text or gibberish",
     )
     .refine(profanityFreeRefinement, "Title contains inappropriate language"),
   description: z
@@ -259,11 +259,11 @@ export const ClassContentSchema = z.object({
     .min(1, "Description is required")
     .refine(
       meaningfulContentRefinement,
-      "Description contains nonsensical text or gibberish"
+      "Description contains nonsensical text or gibberish",
     )
     .refine(
       profanityFreeRefinement,
-      "Description contains inappropriate language"
+      "Description contains inappropriate language",
     ),
   contentType: z
     .string()
@@ -271,11 +271,11 @@ export const ClassContentSchema = z.object({
     .nullable()
     .refine(
       (val) => !val || meaningfulContentRefinement(val),
-      "Content type contains nonsensical text or gibberish"
+      "Content type contains nonsensical text or gibberish",
     )
     .refine(
       (val) => !val || profanityFreeRefinement(val),
-      "Content type contains inappropriate language"
+      "Content type contains inappropriate language",
     ),
   contentUrl: z
     .string()
@@ -283,11 +283,11 @@ export const ClassContentSchema = z.object({
     .nullable()
     .refine(
       (val) => !val || meaningfulContentRefinement(val),
-      "URL contains nonsensical text or gibberish"
+      "URL contains nonsensical text or gibberish",
     )
     .refine(
       (val) => !val || profanityFreeRefinement(val),
-      "URL contains inappropriate language"
+      "URL contains inappropriate language",
     ),
   order: z.number().min(1, "Order must be a positive number"),
   hoursAllotted: z
@@ -308,7 +308,7 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
     .default([])
     .refine((contents: z.infer<typeof ClassContentSchema>[]) => {
       const titles = contents.map((c: z.infer<typeof ClassContentSchema>) =>
-        c.title.trim().toLowerCase()
+        c.title.trim().toLowerCase(),
       );
       return new Set(titles).size === titles.length;
     }, "Class contents must have unique titles"),

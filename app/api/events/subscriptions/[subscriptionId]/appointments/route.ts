@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ subscriptionId: string }> }
+  { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
   try {
     const { subscriptionId } = await params;
@@ -73,20 +73,7 @@ export async function GET(
     console.error("Error fetching subscription appointments:", error);
     return NextResponse.json(
       { error: "Failed to fetch subscription appointments" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

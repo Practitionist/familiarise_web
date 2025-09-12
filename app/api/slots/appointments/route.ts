@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
   ) {
     return NextResponse.json(
       { error: "Invalid appointment type" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -41,25 +41,25 @@ export async function GET(request: NextRequest) {
   if (consultationStatus && !validStatuses.includes(consultationStatus)) {
     return NextResponse.json(
       { error: "Invalid consultation status" },
-      { status: 400 }
+      { status: 400 },
     );
   }
   if (subscriptionStatus && !validStatuses.includes(subscriptionStatus)) {
     return NextResponse.json(
       { error: "Invalid subscription status" },
-      { status: 400 }
+      { status: 400 },
     );
   }
   if (webinarStatus && !validStatuses.includes(webinarStatus)) {
     return NextResponse.json(
       { error: "Invalid webinar status" },
-      { status: 400 }
+      { status: 400 },
     );
   }
   if (classStatus && !validStatuses.includes(classStatus)) {
     return NextResponse.json(
       { error: "Invalid class status" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -103,7 +103,7 @@ export async function GET(request: NextRequest) {
       consultationIdParam,
       subscriptionIdParam,
       webinarIdParam,
-      classIdParam
+      classIdParam,
     );
 
     return NextResponse.json({ data: appointments });
@@ -111,7 +111,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching appointments:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching appointments" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -134,7 +134,7 @@ async function getAppointments(
   consultationIdParam?: string,
   subscriptionIdParam?: string,
   webinarIdParam?: string,
-  classIdParam?: string
+  classIdParam?: string,
 ) {
   const whereClause: Prisma.AppointmentWhereInput = {};
 
@@ -335,7 +335,7 @@ export async function POST(request: NextRequest) {
     if (!appointmentType || !slotsOfAppointment?.createMany?.data?.length) {
       return NextResponse.json(
         { error: "Missing required fields" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -349,7 +349,7 @@ export async function POST(request: NextRequest) {
     } else if (appointmentData.subscriptionId) {
       // For subscriptions, check if appointment already exists for the same slot timing
       const slotTimes = slotsOfAppointment.createMany.data.map(
-        (slot: any) => new Date(slot.slotStartTimeInUTC)
+        (slot: any) => new Date(slot.slotStartTimeInUTC),
       );
 
       existingAppointmentWhere.AND = [
@@ -365,7 +365,7 @@ export async function POST(request: NextRequest) {
     } else if (appointmentData.classId) {
       // For classes, check if appointment already exists for the same slot timing
       const slotTimes = slotsOfAppointment.createMany.data.map(
-        (slot: any) => new Date(slot.slotStartTimeInUTC)
+        (slot: any) => new Date(slot.slotStartTimeInUTC),
       );
 
       existingAppointmentWhere.AND = [
@@ -393,7 +393,7 @@ export async function POST(request: NextRequest) {
           error: "Appointment already exists for this request",
           existingAppointment: existingAppointment.id,
         },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
@@ -410,7 +410,7 @@ export async function POST(request: NextRequest) {
             slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
             slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
             type: slot.type || "WEEKLY", // Default to WEEKLY if not specified
-          })
+          }),
         ),
       },
     };
@@ -497,7 +497,7 @@ export async function POST(request: NextRequest) {
     console.error("Error creating appointment:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the appointment" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

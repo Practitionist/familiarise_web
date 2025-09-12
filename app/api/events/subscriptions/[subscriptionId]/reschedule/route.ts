@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ subscriptionId: string }> }
+  { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
   try {
     const { subscriptionId } = await params;
@@ -14,7 +14,7 @@ export async function POST(
     if (!appointmentId || !newSlots || !Array.isArray(newSlots)) {
       return NextResponse.json(
         { error: "appointmentId and newSlots array are required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -67,27 +67,27 @@ export async function POST(
 
       // 2. Find the specific appointment to reschedule
       console.log(
-        `[Reschedule] Looking for appointment ${appointmentId} in subscription ${subscriptionId}`
+        `[Reschedule] Looking for appointment ${appointmentId} in subscription ${subscriptionId}`,
       );
       console.log(
         `[Reschedule] Available appointments:`,
         subscription.appointments.map((a) => ({
           id: a.id,
           type: a.appointmentType,
-        }))
+        })),
       );
 
       const appointmentToReschedule = subscription.appointments.find(
-        (appt) => appt.id === appointmentId
+        (appt) => appt.id === appointmentId,
       );
 
       if (!appointmentToReschedule) {
         console.error(
-          `[Reschedule] Appointment ${appointmentId} not found in subscription ${subscriptionId}`
+          `[Reschedule] Appointment ${appointmentId} not found in subscription ${subscriptionId}`,
         );
         console.error(
           `[Reschedule] Available appointment IDs:`,
-          subscription.appointments.map((a) => a.id)
+          subscription.appointments.map((a) => a.id),
         );
         throw new Error("Appointment not found in subscription");
       }
@@ -100,7 +100,7 @@ export async function POST(
 
       // 3. Calculate slots per call for validation
       const slotsPerCall = Math.ceil(
-        subscriptionPlan.sessionDurationInHours / 0.5
+        subscriptionPlan.sessionDurationInHours / 0.5,
       );
 
       // 4. For reschedule operations, be more flexible with slot validation
@@ -116,7 +116,7 @@ export async function POST(
       // Only validate that we have at least 1 slot for reschedule
       if (newSlots.length < 1) {
         throw new Error(
-          `At least 1 slot required for rescheduling, but received ${newSlots.length}`
+          `At least 1 slot required for rescheduling, but received ${newSlots.length}`,
         );
       }
 
@@ -125,7 +125,7 @@ export async function POST(
       if (callTimestamp) {
         const callTime = new Date(callTimestamp);
         console.log(
-          `[Reschedule] Looking for call at timestamp: ${callTime.toISOString()}`
+          `[Reschedule] Looking for call at timestamp: ${callTime.toISOString()}`,
         );
 
         // Find slots that start at or around the call timestamp
@@ -135,23 +135,23 @@ export async function POST(
             // Allow some tolerance (within the same hour)
             const timeDiff = Math.abs(slotTime.getTime() - callTime.getTime());
             return timeDiff < 60 * 60 * 1000; // 1 hour tolerance
-          }
+          },
         );
 
         console.log(
-          `[Reschedule] Found ${oldCallSlots.length} slots for call at ${callTime.toISOString()}`
+          `[Reschedule] Found ${oldCallSlots.length} slots for call at ${callTime.toISOString()}`,
         );
 
         if (oldCallSlots.length === 0) {
           throw new Error(
-            `Could not find call at timestamp ${callTimestamp} in appointment`
+            `Could not find call at timestamp ${callTimestamp} in appointment`,
           );
         }
       } else {
         // If no specific call timestamp, reschedule all slots (original behavior)
         oldCallSlots = appointmentToReschedule.slotsOfAppointment;
         console.log(
-          `[Reschedule] No call timestamp provided, rescheduling entire appointment (${oldCallSlots.length} slots)`
+          `[Reschedule] No call timestamp provided, rescheduling entire appointment (${oldCallSlots.length} slots)`,
         );
       }
 
@@ -172,14 +172,14 @@ export async function POST(
           slotDate > subscription.endDate
         ) {
           throw new Error(
-            `Selected time ${slotDate.toISOString()} is outside subscription period (${subscription.startDate.toISOString()} - ${subscription.endDate.toISOString()})`
+            `Selected time ${slotDate.toISOString()} is outside subscription period (${subscription.startDate.toISOString()} - ${subscription.endDate.toISOString()})`,
           );
         }
       }
 
       // 8.5. Validate slots are consecutive and form complete calls
       const sortedNewSlots = [...newSlots].sort(
-        (a, b) => new Date(a).getTime() - new Date(b).getTime()
+        (a, b) => new Date(a).getTime() - new Date(b).getTime(),
       );
 
       // Group slots by day to ensure they're consecutive within each day
@@ -196,7 +196,7 @@ export async function POST(
       // Check each day has consecutive slots and forms complete calls
       for (const [dayKey, daySlots] of slotsByDay.entries()) {
         const sortedDaySlots = daySlots.sort(
-          (a, b) => a.getTime() - b.getTime()
+          (a, b) => a.getTime() - b.getTime(),
         );
 
         // Check if slots are consecutive (30-minute intervals)
@@ -207,7 +207,7 @@ export async function POST(
 
           if (currentSlot.getTime() !== expectedNext.getTime()) {
             throw new Error(
-              `Slots must be consecutive. Gap found between ${prevSlot.toISOString()} and ${currentSlot.toISOString()}`
+              `Slots must be consecutive. Gap found between ${prevSlot.toISOString()} and ${currentSlot.toISOString()}`,
             );
           }
         }
@@ -215,7 +215,7 @@ export async function POST(
         // Check if day slots form complete calls
         if (daySlots.length % slotsPerCall !== 0) {
           throw new Error(
-            `Each day must contain complete calls of ${slotsPerCall} slots. Day ${dayKey} has ${daySlots.length} slots.`
+            `Each day must contain complete calls of ${slotsPerCall} slots. Day ${dayKey} has ${daySlots.length} slots.`,
           );
         }
       }
@@ -250,12 +250,12 @@ export async function POST(
             });
 
           const withinRange = ranges.some(
-            (r) => minutesOfDay >= r.start && minutesOfDay + 30 <= r.end
+            (r) => minutesOfDay >= r.start && minutesOfDay + 30 <= r.end,
           );
 
           if (!withinRange) {
             throw new Error(
-              `Selected time ${slotDate.toISOString()} does not match consultant's weekly availability`
+              `Selected time ${slotDate.toISOString()} does not match consultant's weekly availability`,
             );
           }
         }
@@ -272,7 +272,7 @@ export async function POST(
 
           if (!matchesCustom) {
             throw new Error(
-              `Selected time ${slotDate.toISOString()} is not in consultant's custom availability`
+              `Selected time ${slotDate.toISOString()} is not in consultant's custom availability`,
             );
           }
         }
@@ -311,7 +311,7 @@ export async function POST(
 
       if (existingAppointments.length > 0) {
         throw new Error(
-          "Consultant has overlapping events within the new slot times"
+          "Consultant has overlapping events within the new slot times",
         );
       }
 
@@ -319,7 +319,7 @@ export async function POST(
       const oldSlotIds = oldCallSlots.map((slot: any) => slot.id);
       console.log(
         `[Reschedule] Deleting ${oldSlotIds.length} old call slots:`,
-        oldSlotIds
+        oldSlotIds,
       );
 
       await tx.slotOfAppointment.deleteMany({
@@ -386,7 +386,7 @@ export async function POST(
     }
     return NextResponse.json(
       { error: "Failed to reschedule subscription appointment" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

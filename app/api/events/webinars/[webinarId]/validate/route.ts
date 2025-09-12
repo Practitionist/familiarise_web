@@ -42,7 +42,7 @@ const webinarInclude = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> }
+  { params }: { params: Promise<{ webinarId: string }> },
 ) {
   try {
     const { webinarId } = await params;
@@ -52,7 +52,7 @@ export async function POST(
     if (!Array.isArray(body.slots) || body.slots.length === 0) {
       return NextResponse.json(
         { error: "Slots array is required and must not be empty" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -79,14 +79,14 @@ export async function POST(
         {
           error: `This webinar requires only ${requiredSlots} slots`,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -106,14 +106,14 @@ export async function POST(
     if (pastSlots.length > 0) {
       return NextResponse.json(
         { error: "Cannot validate slots in the past" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     // For multi-slot webinars, validate that slots are consecutive
     if (requiredSlots > 1) {
       const sortedSlots = [...slotDates].sort(
-        (a, b) => a.getTime() - b.getTime()
+        (a, b) => a.getTime() - b.getTime(),
       );
       for (let i = 1; i < sortedSlots.length; i++) {
         const prevSlot = sortedSlots[i - 1];
@@ -122,7 +122,7 @@ export async function POST(
         if (currentSlot.getTime() !== expectedStartTime.getTime()) {
           return NextResponse.json(
             { error: "Webinar slots must be consecutive" },
-            { status: 400 }
+            { status: 400 },
           );
         }
       }
@@ -167,7 +167,7 @@ export async function POST(
                 // Check for overlaps using the same logic as availability API
                 OR: slotDates.flatMap((slotStart) => {
                   const slotEnd = new Date(
-                    slotStart.getTime() + 30 * 60 * 1000
+                    slotStart.getTime() + 30 * 60 * 1000,
                   ); // 30-minute slots
                   return [
                     {
@@ -257,7 +257,7 @@ export async function POST(
               slotStart,
               slotEnd,
               slot.slotStartTimeInUTC,
-              slot.slotEndTimeInUTC
+              slot.slotEndTimeInUTC,
             )
           ) {
             overlappingSlots.push(slot);
@@ -272,7 +272,7 @@ export async function POST(
         overlappingSlots.map((slot) => ({
           slotStartTimeInUTC: slot.slotStartTimeInUTC,
           slotEndTimeInUTC: slot.slotEndTimeInUTC,
-        }))
+        })),
       );
 
       // Only report as conflict if slot is fully booked (same threshold as availability API)
@@ -285,9 +285,9 @@ export async function POST(
                 slotStart,
                 slotEnd,
                 slot.slotStartTimeInUTC,
-                slot.slotEndTimeInUTC
-              )
-            )
+                slot.slotEndTimeInUTC,
+              ),
+            ),
         );
 
         if (conflictingAppointment) {
@@ -378,7 +378,7 @@ export async function POST(
         const startMin = slotDate.getUTCHours() * 60 + slotDate.getUTCMinutes();
         const endMin = startMin + 30; // 30-min slot
         const within = ranges.some(
-          (r) => startMin >= r.start && endMin <= r.end
+          (r) => startMin >= r.start && endMin <= r.end,
         );
         if (!within) {
           result.outsideAvailability.push({ slot: slotDate.toISOString() });
@@ -390,7 +390,7 @@ export async function POST(
         const isAvailable = availableSlots.some(
           (slot) =>
             new Date(slot.slotStartTimeInUTC).toISOString() ===
-            slotDate.toISOString()
+            slotDate.toISOString(),
         );
         if (!isAvailable) {
           result.outsideAvailability.push({ slot: slotDate.toISOString() });
@@ -414,7 +414,7 @@ export async function POST(
     console.error("Webinar validation error:", error);
     return NextResponse.json(
       { error: "Failed to validate webinar slot" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

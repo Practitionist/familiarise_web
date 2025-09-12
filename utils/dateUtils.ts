@@ -37,7 +37,7 @@ export function addMonthsSafely(date: Date, months: number): Date {
  */
 export function calculateSubscriptionEndDate(
   startDate: Date,
-  durationInMonths: number
+  durationInMonths: number,
 ): Date {
   return addMonthsSafely(startDate, durationInMonths);
 }
@@ -53,7 +53,7 @@ export function calculateSubscriptionEndDate(
 export function areDatesConsecutive(
   firstDate: Date,
   secondDate: Date,
-  toleranceMs: number = 1000
+  toleranceMs: number = 1000,
 ): boolean {
   const timeDiff = Math.abs(secondDate.getTime() - firstDate.getTime());
   return timeDiff <= toleranceMs;
@@ -68,7 +68,7 @@ export function areDatesConsecutive(
  */
 export function areDatesConsecutiveArray(
   dates: Date[],
-  toleranceMs: number = 1000
+  toleranceMs: number = 1000,
 ): boolean {
   if (dates.length <= 1) return true;
 

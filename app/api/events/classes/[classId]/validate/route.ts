@@ -44,7 +44,7 @@ const classInclude = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> }
+  { params }: { params: Promise<{ classId: string }> },
 ) {
   try {
     const { classId } = await params;
@@ -54,7 +54,7 @@ export async function POST(
     if (!Array.isArray(body.slots) || body.slots.length === 0) {
       return NextResponse.json(
         { error: "Slots array is required and must not be empty" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -74,7 +74,7 @@ export async function POST(
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -95,7 +95,7 @@ export async function POST(
     if (pastSlots.length > 0) {
       return NextResponse.json(
         { error: "Cannot validate slots in the past" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -184,8 +184,9 @@ export async function POST(
     for (const appointment of existingAppointments) {
       const conflictingSlots = appointment.slotsOfAppointment.filter((slot) =>
         slotDates.some(
-          (date) => date.toISOString() === slot.slotStartTimeInUTC.toISOString()
-        )
+          (date) =>
+            date.toISOString() === slot.slotStartTimeInUTC.toISOString(),
+        ),
       );
 
       for (const slot of conflictingSlots) {
@@ -254,7 +255,7 @@ export async function POST(
         const endMinutes = startMinutes + 30;
         const ranges = rangesByDow.get(dow) || [];
         const withinAnyRange = ranges.some(
-          (r) => startMinutes >= r.start && endMinutes <= r.end
+          (r) => startMinutes >= r.start && endMinutes <= r.end,
         );
         if (!withinAnyRange) {
           result.outsideAvailability.push({ slot: slotDate.toISOString() });
@@ -267,7 +268,7 @@ export async function POST(
         const isAvailable = availableSlots.some(
           (slot: any) =>
             new Date(slot.slotStartTimeInUTC).toISOString() ===
-            slotDate.toISOString()
+            slotDate.toISOString(),
         );
         if (!isAvailable) {
           result.outsideAvailability.push({ slot: slotDate.toISOString() });
@@ -283,7 +284,7 @@ export async function POST(
       if (classContents.length > 0) {
         const totalHours = classContents.reduce(
           (sum, content) => sum + content.hoursAllotted,
-          0
+          0,
         );
         sessionDurationInHours = totalHours / classContents.length;
       }
@@ -333,7 +334,7 @@ export async function POST(
     console.error("Class validation error:", error);
     return NextResponse.json(
       { error: "Failed to validate class slots" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

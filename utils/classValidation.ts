@@ -47,7 +47,7 @@ interface ClassValidationResult {
  */
 export class ClassValidationService {
   constructor(
-    private readonly prisma: PrismaClient | Prisma.TransactionClient
+    private readonly prisma: PrismaClient | Prisma.TransactionClient,
   ) {}
 
   /**
@@ -56,7 +56,7 @@ export class ClassValidationService {
   async validateClassSlots(
     classId: string,
     proposedSlots: string[],
-    excludeAppointmentIds: string[] = []
+    excludeAppointmentIds: string[] = [],
   ): Promise<ClassValidationResult> {
     // Get class details
     const classData = await this.prisma.class.findUnique({
@@ -102,7 +102,7 @@ export class ClassValidationService {
     const classPeriodValid = this.validateClassPeriod(
       proposedSlotDates,
       classStart,
-      classEnd
+      classEnd,
     );
 
     if (!classPeriodValid.isValid) {
@@ -113,7 +113,7 @@ export class ClassValidationService {
     // Get existing appointments for this class
     const existingAppointments = await this.getExistingClassAppointments(
       classId,
-      excludeAppointmentIds
+      excludeAppointmentIds,
     );
 
     // Calculate session duration from class plan
@@ -126,7 +126,7 @@ export class ClassValidationService {
     // Group proposed slots by week
     const proposedSessionsByWeek = this.groupSlotsByWeek(
       proposedSlotDates,
-      sessionDurationInHours
+      sessionDurationInHours,
     );
 
     // Generate weekly info for the entire class period
@@ -135,13 +135,13 @@ export class ClassValidationService {
       classEnd,
       classPlan.callsPerWeek,
       existingSessionsByWeek,
-      proposedSessionsByWeek
+      proposedSessionsByWeek,
     );
 
     result.weeklyInfo = weeklyInfo;
     result.totalSessionsScheduled = weeklyInfo.reduce(
       (sum, w) => sum + w.existingSessions,
-      0
+      0,
     );
 
     // Validate weekly limits
@@ -156,7 +156,7 @@ export class ClassValidationService {
     if (result.totalSessionsScheduled > result.maxTotalSessions) {
       result.isValid = false;
       result.errors.push(
-        `Total sessions (${result.totalSessionsScheduled}) exceed class limit (${result.maxTotalSessions})`
+        `Total sessions (${result.totalSessionsScheduled}) exceed class limit (${result.maxTotalSessions})`,
       );
     }
 
@@ -177,7 +177,7 @@ export class ClassValidationService {
   private validateClassPeriod(
     slotDates: Date[],
     classStart: Date,
-    classEnd: Date
+    classEnd: Date,
   ): { isValid: boolean; errors: string[] } {
     const errors: string[] = [];
 
@@ -189,7 +189,7 @@ export class ClassValidationService {
         })
       ) {
         errors.push(
-          `Slot ${slotDate.toLocaleDateString()} is outside class period (${classStart.toLocaleDateString()} - ${classEnd.toLocaleDateString()})`
+          `Slot ${slotDate.toLocaleDateString()} is outside class period (${classStart.toLocaleDateString()} - ${classEnd.toLocaleDateString()})`,
         );
       }
     }
@@ -205,7 +205,7 @@ export class ClassValidationService {
    */
   private async getExistingClassAppointments(
     classId: string,
-    excludeAppointmentIds: string[] = []
+    excludeAppointmentIds: string[] = [],
   ): Promise<AppointmentWithSlots[]> {
     return await this.prisma.appointment.findMany({
       where: {
@@ -227,7 +227,7 @@ export class ClassValidationService {
    * Groups appointments by week
    */
   private groupAppointmentsByWeek(
-    appointments: AppointmentWithSlots[]
+    appointments: AppointmentWithSlots[],
   ): Map<string, number> {
     const weeklySessionCount = new Map<string, number>();
 
@@ -240,7 +240,7 @@ export class ClassValidationService {
 
         weeklySessionCount.set(
           weekKey,
-          (weeklySessionCount.get(weekKey) || 0) + 1
+          (weeklySessionCount.get(weekKey) || 0) + 1,
         );
       }
     }
@@ -253,7 +253,7 @@ export class ClassValidationService {
    */
   private groupSlotsByWeek(
     slotDates: Date[],
-    sessionDurationInHours: number
+    sessionDurationInHours: number,
   ): Map<string, number> {
     const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5); // 30-minute intervals
 
@@ -278,7 +278,7 @@ export class ClassValidationService {
       if (daySlots.length !== slotsPerSession) return false;
 
       const sortedSlots = [...daySlots].sort(
-        (a, b) => a.getTime() - b.getTime()
+        (a, b) => a.getTime() - b.getTime(),
       );
 
       for (let i = 1; i < sortedSlots.length; i++) {
@@ -318,7 +318,7 @@ export class ClassValidationService {
     classEnd: Date,
     sessionsPerWeek: number,
     existingSessions: Map<string, number>,
-    proposedSessions: Map<string, number>
+    proposedSessions: Map<string, number>,
   ): WeeklySessionInfo[] {
     const weeklyInfo: WeeklySessionInfo[] = [];
     let currentWeek = startOfWeek(classStart);
@@ -369,14 +369,14 @@ export class ClassValidationService {
       if (totalSessionsForWeek > week.maxSessions) {
         errors.push(
           `Week of ${week.weekStart.toLocaleDateString()} exceeds session limit. ` +
-            `Maximum ${week.maxSessions} sessions per week, but ${totalSessionsForWeek} sessions are scheduled.`
+            `Maximum ${week.maxSessions} sessions per week, but ${totalSessionsForWeek} sessions are scheduled.`,
         );
       }
 
       if (week.existingSessions === week.maxSessions) {
         warnings.push(
           `Week of ${week.weekStart.toLocaleDateString()} is fully booked. ` +
-            `${week.existingSessions}/${week.maxSessions} sessions scheduled.`
+            `${week.existingSessions}/${week.maxSessions} sessions scheduled.`,
         );
       }
     }
@@ -392,7 +392,7 @@ export class ClassValidationService {
    * Gets available weeks for scheduling new sessions
    */
   async getAvailableWeeksForClass(
-    classId: string
+    classId: string,
   ): Promise<WeeklySessionInfo[]> {
     const validationResult = await this.validateClassSlots(classId, []);
     return validationResult.weeklyInfo.filter((week) => week.canScheduleMore);
@@ -404,13 +404,13 @@ export class ClassValidationService {
   async canScheduleInWeek(
     classId: string,
     weekDate: Date,
-    additionalSessions: number = 1
+    additionalSessions: number = 1,
   ): Promise<boolean> {
     const weekStart = startOfWeek(weekDate);
     const validationResult = await this.validateClassSlots(classId, []);
 
     const weekInfo = validationResult.weeklyInfo.find(
-      (week) => week.weekStart.getTime() === weekStart.getTime()
+      (week) => week.weekStart.getTime() === weekStart.getTime(),
     );
 
     return weekInfo ? weekInfo.availableSlots >= additionalSessions : false;
@@ -426,7 +426,7 @@ export function getClassWeek(targetDate: Date, classStartDate: Date): number {
 
   const diffInWeeks = Math.floor(
     (targetWeekStart.getTime() - weekStart.getTime()) /
-      (7 * 24 * 60 * 60 * 1000)
+      (7 * 24 * 60 * 60 * 1000),
   );
 
   return diffInWeeks + 1; // 1-based week numbering
@@ -437,7 +437,7 @@ export function getClassWeek(targetDate: Date, classStartDate: Date): number {
  */
 export function getClassType(
   sessionsPerWeek: number,
-  durationInMonths: number
+  durationInMonths: number,
 ): string {
   if (sessionsPerWeek === 2 && durationInMonths === 1) {
     return "Basic";

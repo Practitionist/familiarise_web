@@ -125,7 +125,7 @@ function createSuccessResponse(data: unknown, status = 200) {
 function logError(
   context: string,
   error: unknown,
-  metadata?: Record<string, unknown>
+  metadata?: Record<string, unknown>,
 ) {
   const timestamp = new Date().toISOString();
   const logData = {
@@ -148,7 +148,7 @@ function logError(
 function logInfo(
   context: string,
   message: string,
-  metadata?: Record<string, unknown>
+  metadata?: Record<string, unknown>,
 ) {
   const timestamp = new Date().toISOString();
   const logData = {
@@ -183,7 +183,7 @@ function handlePrismaError(error: unknown, context?: string) {
 }
 
 function validateSlotTimes(
-  slots: Array<{ slotStartTimeInUTC: string; slotEndTimeInUTC: string }>
+  slots: Array<{ slotStartTimeInUTC: string; slotEndTimeInUTC: string }>,
 ) {
   for (const slot of slots) {
     const start = new Date(slot.slotStartTimeInUTC);
@@ -201,7 +201,7 @@ function validateSlotTimes(
 
 function compareSlotArrays(
   newSlots: Array<{ slotStartTimeInUTC: string; slotEndTimeInUTC: string }>,
-  existingSlots: Array<{ slotStartTimeInUTC: Date; slotEndTimeInUTC: Date }>
+  existingSlots: Array<{ slotStartTimeInUTC: Date; slotEndTimeInUTC: Date }>,
 ): boolean {
   if (newSlots.length !== existingSlots.length) {
     return false;
@@ -232,7 +232,7 @@ function compareSlotArrays(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ appointmentId: string }> }
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
     const { appointmentId } = await params;
@@ -254,20 +254,20 @@ export async function GET(
     logInfo(
       "GET /api/slots/appointments/[appointmentId]",
       "Appointment retrieved successfully",
-      { appointmentId }
+      { appointmentId },
     );
     return createSuccessResponse(appointment);
   } catch (error) {
     return handlePrismaError(
       error,
-      "GET /api/slots/appointments/[appointmentId]"
+      "GET /api/slots/appointments/[appointmentId]",
     );
   }
 }
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ appointmentId: string }> }
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
     const { appointmentId } = await params;
@@ -284,7 +284,7 @@ export async function PATCH(
     if (!validationResult.success) {
       return createErrorResponse(
         `Validation error: ${validationResult.error.issues.map((i) => i.message).join(", ")}`,
-        400
+        400,
       );
     }
 
@@ -297,7 +297,7 @@ export async function PATCH(
     } catch (error) {
       return createErrorResponse(
         error instanceof Error ? error.message : "Invalid slot times",
-        400
+        400,
       );
     }
 
@@ -319,7 +319,7 @@ export async function PATCH(
         // Check if this is a duplicate update by comparing slot times
         const slotsAreIdentical = compareSlotArrays(
           newSlots,
-          existingAppointment.slotsOfAppointment
+          existingAppointment.slotsOfAppointment,
         );
 
         if (slotsAreIdentical) {
@@ -353,7 +353,7 @@ export async function PATCH(
         maxWait: 5000, // 5 seconds max wait
         timeout: 10000, // 10 seconds timeout
         isolationLevel: "Serializable", // Ensure serializable isolation
-      }
+      },
     );
 
     logInfo(
@@ -362,20 +362,20 @@ export async function PATCH(
       {
         appointmentId,
         slotCount: newSlots.length,
-      }
+      },
     );
     return createSuccessResponse(updatedAppointment);
   } catch (error) {
     return handlePrismaError(
       error,
-      "PATCH /api/slots/appointments/[appointmentId]"
+      "PATCH /api/slots/appointments/[appointmentId]",
     );
   }
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ appointmentId: string }> }
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
     const { appointmentId } = await params;
@@ -392,7 +392,7 @@ export async function PUT(
     if (!validationResult.success) {
       return createErrorResponse(
         `Validation error: ${validationResult.error.issues.map((i) => i.message).join(", ")}`,
-        400
+        400,
       );
     }
 
@@ -431,20 +431,20 @@ export async function PUT(
       {
         appointmentId,
         updatedFields: Object.keys(validatedData),
-      }
+      },
     );
     return createSuccessResponse(updatedAppointment);
   } catch (error) {
     return handlePrismaError(
       error,
-      "PUT /api/slots/appointments/[appointmentId]"
+      "PUT /api/slots/appointments/[appointmentId]",
     );
   }
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ appointmentId: string }> }
+  { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
     const { appointmentId } = await params;
@@ -474,7 +474,7 @@ export async function DELETE(
     if (appointment.payment) {
       return createErrorResponse(
         "Cannot delete appointment with associated payment",
-        400
+        400,
       );
     }
 
@@ -486,13 +486,13 @@ export async function DELETE(
     logInfo(
       "DELETE /api/slots/appointments/[appointmentId]",
       "Appointment deleted successfully",
-      { appointmentId }
+      { appointmentId },
     );
     return createSuccessResponse(deletedAppointment);
   } catch (error) {
     return handlePrismaError(
       error,
-      "DELETE /api/slots/appointments/[appointmentId]"
+      "DELETE /api/slots/appointments/[appointmentId]",
     );
   }
 }

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> }
+  { params }: { params: Promise<{ webinarId: string }> },
 ) {
   try {
     const { webinarId } = await params;
@@ -34,8 +34,7 @@ export async function POST(
     }
     return NextResponse.json(
       { error: "Failed to cancel webinar" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
-

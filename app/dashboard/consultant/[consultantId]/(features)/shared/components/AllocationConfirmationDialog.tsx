@@ -43,7 +43,7 @@ export interface AllocationConfirmationDialogProps {
 }
 
 export function AllocationConfirmationDialog(
-  props: AllocationConfirmationDialogProps
+  props: AllocationConfirmationDialogProps,
 ) {
   const {
     open,
@@ -80,7 +80,7 @@ export function AllocationConfirmationDialog(
   const slotsPerCall = Math.ceil(
     (eventType === "consultation" || eventType === "webinar"
       ? durationInHours || 1
-      : sessionDurationInHours || 1) / 0.5
+      : sessionDurationInHours || 1) / 0.5,
   );
 
   // Group slots by day and extract completed calls/sessions
@@ -97,7 +97,7 @@ export function AllocationConfirmationDialog(
 
   Array.from(byDay.values()).forEach((daySlots) => {
     const sorted = [...daySlots].sort(
-      (a, b) => a.startTime.getTime() - b.startTime.getTime()
+      (a, b) => a.startTime.getTime() - b.startTime.getTime(),
     );
 
     if (eventType === "class") {
@@ -312,12 +312,12 @@ export function AllocationConfirmationDialog(
                           <span>
                             {format(
                               selectedSlots[0].startTime,
-                              "eee, MMM d yyyy HH:mm"
+                              "eee, MMM d yyyy HH:mm",
                             )}{" "}
                             –{" "}
                             {format(
                               selectedSlots[selectedSlots.length - 1].endTime,
-                              "HH:mm"
+                              "HH:mm",
                             )}{" "}
                             (UTC)
                           </span>
@@ -325,7 +325,7 @@ export function AllocationConfirmationDialog(
                         <div className="text-muted-foreground">
                           Local: {formatLocal(selectedSlots[0].startTime)} –{" "}
                           {formatLocal(
-                            selectedSlots[selectedSlots.length - 1].endTime
+                            selectedSlots[selectedSlots.length - 1].endTime,
                           )}
                         </div>
                       </li>

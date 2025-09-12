@@ -20,7 +20,7 @@ export function endOfWeekSaturday(d: Date): Date {
 
 export function getWeeklyCallCount(
   startDate: Date | string,
-  endDate: Date | string
+  endDate: Date | string,
 ): number {
   const start = new Date(startDate);
   const end = new Date(endDate);
@@ -35,7 +35,7 @@ export function getWeeklyCallCount(
   // Number of weeks = difference in week starts / 7 days + 1 (inclusive)
   const msPerDay = 24 * 60 * 60 * 1000;
   const diffDays = Math.floor(
-    (lastWeekStart.getTime() - firstWeekStart.getTime()) / msPerDay
+    (lastWeekStart.getTime() - firstWeekStart.getTime()) / msPerDay,
   );
   const weeks = Math.floor(diffDays / 7) + 1;
   return weeks;
@@ -43,7 +43,7 @@ export function getWeeklyCallCount(
 
 export function getWeekBoundaries(
   startDate: Date | string,
-  endDate: Date | string
+  endDate: Date | string,
 ): Array<{ weekStart: Date; weekEnd: Date }> {
   const start = new Date(startDate);
   const end = new Date(endDate);

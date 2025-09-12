@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> }
+  { params }: { params: Promise<{ classId: string }> },
 ) {
   try {
     const { classId } = await params;
@@ -12,13 +12,13 @@ export async function POST(
     const { appointmentId, newSlots } = body;
 
     console.log(
-      `🔄 [CLASS RESCHEDULE] Called for classId: ${classId}, appointmentId: ${appointmentId}, slots: ${newSlots.length}`
+      `🔄 [CLASS RESCHEDULE] Called for classId: ${classId}, appointmentId: ${appointmentId}, slots: ${newSlots.length}`,
     );
 
     if (!appointmentId || !newSlots || !Array.isArray(newSlots)) {
       return NextResponse.json(
         { error: "appointmentId and newSlots array are required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -60,7 +60,7 @@ export async function POST(
 
       // 2. Find the specific appointment to reschedule
       const appointmentToReschedule = classPlan.appointments.find(
-        (appt) => appt.id === appointmentId
+        (appt) => appt.id === appointmentId,
       );
 
       if (!appointmentToReschedule) {
@@ -73,7 +73,7 @@ export async function POST(
       if (classContents.length > 0) {
         const totalHours = classContents.reduce(
           (sum, content) => sum + content.hoursAllotted,
-          0
+          0,
         );
         sessionDurationInHours = totalHours / classContents.length;
       }
@@ -93,7 +93,7 @@ export async function POST(
       // Only validate that we have at least 1 slot for reschedule
       if (newSlots.length < 1) {
         throw new Error(
-          `At least 1 slot required for rescheduling, but received ${newSlots.length}`
+          `At least 1 slot required for rescheduling, but received ${newSlots.length}`,
         );
       }
 
@@ -136,12 +136,12 @@ export async function POST(
             });
 
           const withinRange = ranges.some(
-            (r) => minutesOfDay >= r.start && minutesOfDay + 30 <= r.end
+            (r) => minutesOfDay >= r.start && minutesOfDay + 30 <= r.end,
           );
 
           if (!withinRange) {
             throw new Error(
-              `Selected time ${slotDate.toISOString()} does not match consultant's weekly availability`
+              `Selected time ${slotDate.toISOString()} does not match consultant's weekly availability`,
             );
           }
         }
@@ -158,7 +158,7 @@ export async function POST(
 
           if (!matchesCustom) {
             throw new Error(
-              `Selected time ${slotDate.toISOString()} is not in consultant's custom availability`
+              `Selected time ${slotDate.toISOString()} is not in consultant's custom availability`,
             );
           }
         }
@@ -197,7 +197,7 @@ export async function POST(
 
       if (existingAppointments.length > 0) {
         throw new Error(
-          "Consultant has overlapping events within the new slot times"
+          "Consultant has overlapping events within the new slot times",
         );
       }
 
@@ -209,7 +209,7 @@ export async function POST(
         if (classContents.length > 0) {
           const totalHours = classContents.reduce(
             (sum, content) => sum + content.hoursAllotted,
-            0
+            0,
           );
           sessionDurationInHours = totalHours / classContents.length;
         }
@@ -234,8 +234,8 @@ export async function POST(
 
         const existingSlotDates = existingClassSlots.flatMap((app) =>
           app.slotsOfAppointment.map(
-            (slot) => new Date(slot.slotStartTimeInUTC)
-          )
+            (slot) => new Date(slot.slotStartTimeInUTC),
+          ),
         );
 
         // Combine existing slots with new proposed slots
@@ -258,7 +258,7 @@ export async function POST(
           if (count > maxSlotsPerWeek) {
             const weekDate = new Date(weekKey);
             throw new Error(
-              `Rescheduling would exceed weekly limit. Week of ${weekDate.toLocaleDateString()} would have ${count} slots but maximum allowed is ${maxSlotsPerWeek} (${classPlan.classPlan.callsPerWeek} sessions × ${slotsPerSession} slots per session)`
+              `Rescheduling would exceed weekly limit. Week of ${weekDate.toLocaleDateString()} would have ${count} slots but maximum allowed is ${maxSlotsPerWeek} (${classPlan.classPlan.callsPerWeek} sessions × ${slotsPerSession} slots per session)`,
             );
           }
         }
@@ -326,7 +326,7 @@ export async function POST(
     }
     return NextResponse.json(
       { error: "Failed to reschedule class appointment" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

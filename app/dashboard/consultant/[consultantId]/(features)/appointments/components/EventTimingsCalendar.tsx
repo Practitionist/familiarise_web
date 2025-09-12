@@ -148,7 +148,7 @@ export function EventTimingsCalendar({
   // Utility function to round time to nearest 30 minutes or hour
   const roundToNearestInterval = (
     date: Date,
-    intervalMinutes: number = 30
+    intervalMinutes: number = 30,
   ): Date => {
     const rounded = new Date(date);
     const minutes = rounded.getMinutes();
@@ -193,7 +193,7 @@ export function EventTimingsCalendar({
 
         // For classes in Appointments tab: show only the start marker
         const singleBlockEnd = new Date(
-          roundedStartTime.getTime() + 30 * 60 * 1000
+          roundedStartTime.getTime() + 30 * 60 * 1000,
         );
         return [
           {
@@ -229,7 +229,7 @@ export function EventTimingsCalendar({
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ slots: [] }),
-          }
+          },
         );
         const data = await res.json();
         const sv = data?.data?.subscriptionValidation;
@@ -323,13 +323,13 @@ export function EventTimingsCalendar({
                 Class window:{" "}
                 {(appointment.class as any)?.startDate
                   ? new Date(
-                      (appointment.class as any).startDate
+                      (appointment.class as any).startDate,
                     ).toLocaleDateString()
                   : "N/A"}{" "}
                 -{" "}
                 {(appointment.class as any)?.endDate
                   ? new Date(
-                      (appointment.class as any).endDate
+                      (appointment.class as any).endDate,
                     ).toLocaleDateString()
                   : "N/A"}
               </div>

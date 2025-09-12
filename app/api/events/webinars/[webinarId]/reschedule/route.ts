@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> }
+  { params }: { params: Promise<{ webinarId: string }> },
 ) {
   try {
     const { webinarId } = await params;
@@ -16,14 +16,14 @@ export async function POST(
     if (!newStartAt) {
       return NextResponse.json(
         { error: "newStartAt is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (newStartAt <= new Date()) {
       return NextResponse.json(
         { error: "Cannot reschedule to a past time" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -98,22 +98,22 @@ export async function POST(
 
         const matchesWeekly = ranges.some(
           (r: { start: number; end: number }) =>
-            firstMinutesOfDay >= r.start && firstSlotEndMinutes <= r.end
+            firstMinutesOfDay >= r.start && firstSlotEndMinutes <= r.end,
         );
         if (!matchesWeekly) {
           throw new Error(
-            "Selected time does not match consultant's weekly availability"
+            "Selected time does not match consultant's weekly availability",
           );
         }
       } else {
         const matchesCustom = consultant.slotsOfAvailabilityCustom.some(
           (cs: any) =>
             new Date(cs.slotStartTimeInUTC).toISOString() ===
-            newStartAt.toISOString()
+            newStartAt.toISOString(),
         );
         if (!matchesCustom) {
           throw new Error(
-            "Selected time is not in consultant's custom availability"
+            "Selected time is not in consultant's custom availability",
           );
         }
       }
@@ -122,7 +122,7 @@ export async function POST(
       // FIXED: Calculate slots for the entire webinar duration, not just one call
       const requiredSlots = Math.ceil(durationHours / 0.5);
       const newChainStarts: Date[] = Array.from({ length: requiredSlots }).map(
-        (_, i) => addMinutes(newStartAt, i * 30)
+        (_, i) => addMinutes(newStartAt, i * 30),
       );
       // FIXED: Check for overlapping time ranges instead of just exact start times
       const newStartTime = newStartAt;
@@ -176,7 +176,7 @@ export async function POST(
 
       if (existingAppointments.length > 0) {
         throw new Error(
-          "Host has an overlapping event within the new slot chain"
+          "Host has an overlapping event within the new slot chain",
         );
       }
 
@@ -184,7 +184,7 @@ export async function POST(
       // 1) Gather all participant IDs (excluding host)
       const hostUserId = consultant.user.id;
       const participantIds = new Set(
-        slots.flatMap((s) => s.user.map((u: any) => u.id))
+        slots.flatMap((s) => s.user.map((u: any) => u.id)),
       );
       participantIds.delete(hostUserId);
 
@@ -243,7 +243,7 @@ export async function POST(
     }
     return NextResponse.json(
       { error: "Failed to reschedule webinar" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

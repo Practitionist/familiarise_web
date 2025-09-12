@@ -14,11 +14,11 @@ export const useAppointments = (consulteeId: string) => {
       setError(null);
       try {
         const response = await fetch(
-          `/api/slots/appointments?consulteeId=${consulteeId}`
+          `/api/slots/appointments?consulteeId=${consulteeId}`,
         );
         if (!response.ok) {
           throw new Error(
-            `Failed to fetch appointments: ${response.statusText}`
+            `Failed to fetch appointments: ${response.statusText}`,
           );
         }
         const data = await response.json();

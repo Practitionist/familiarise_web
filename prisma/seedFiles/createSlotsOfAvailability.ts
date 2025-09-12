@@ -15,7 +15,7 @@ function validateSlot(startTime: Date, endTime: Date): boolean {
   // Check that end time is after start time
   if (endTime <= startTime) {
     console.warn(
-      `Invalid slot: end time ${endTime.toISOString()} is not after start time ${startTime.toISOString()}`
+      `Invalid slot: end time ${endTime.toISOString()} is not after start time ${startTime.toISOString()}`,
     );
     return false;
   }
@@ -25,7 +25,7 @@ function validateSlot(startTime: Date, endTime: Date): boolean {
     (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
   if (durationHours > 24) {
     console.warn(
-      `Invalid slot: duration ${durationHours} hours exceeds 24 hours`
+      `Invalid slot: duration ${durationHours} hours exceeds 24 hours`,
     );
     return false;
   }
@@ -34,7 +34,7 @@ function validateSlot(startTime: Date, endTime: Date): boolean {
 }
 
 function generateSlotTime(
-  existingSlots: Array<{ start: number; end: number }> // start/end now in 30-min intervals from midnight
+  existingSlots: Array<{ start: number; end: number }>, // start/end now in 30-min intervals from midnight
 ) {
   let attempts = 0;
   while (attempts < 50) {
@@ -80,10 +80,10 @@ function generateDaySlots() {
 }
 
 export async function createSlotsOfAvailability(
-  consultants: UserWithProfiles[]
+  consultants: UserWithProfiles[],
 ) {
   console.log(
-    `Creating slots of availability for ${consultants.length} consultants...`
+    `Creating slots of availability for ${consultants.length} consultants...`,
   );
 
   for (let i = 0; i < consultants.length; i++) {
@@ -125,7 +125,7 @@ export async function createSlotsOfAvailability(
           const slotsPerDay = faker.number.int({ min: 3, max: 5 });
           const selectedHours = faker.helpers.arrayElements(
             businessHours,
-            slotsPerDay
+            slotsPerDay,
           );
 
           for (const timeSlot of selectedHours) {
@@ -138,7 +138,7 @@ export async function createSlotsOfAvailability(
               dayOfWeekforEndTimeInUTC: dayOfWeek, // Same day since it's a 1-hour slot
               slotStartTimeInUTC: slotStartTime,
               slotEndTimeInUTC: new Date(
-                slotStartTime.getTime() + 60 * 60 * 1000
+                slotStartTime.getTime() + 60 * 60 * 1000,
               ), // 1 hour duration
             });
           }
@@ -151,7 +151,7 @@ export async function createSlotsOfAvailability(
             const slotsPerDay = faker.number.int({ min: 1, max: 3 });
             const selectedHours = faker.helpers.arrayElements(
               businessHours.slice(0, 4),
-              slotsPerDay
+              slotsPerDay,
             ); // Fewer weekend slots
 
             for (const timeSlot of selectedHours) {
@@ -164,7 +164,7 @@ export async function createSlotsOfAvailability(
                 dayOfWeekforEndTimeInUTC: dayOfWeek, // Same day since it's a 1-hour slot
                 slotStartTimeInUTC: slotStartTime,
                 slotEndTimeInUTC: new Date(
-                  slotStartTime.getTime() + 60 * 60 * 1000
+                  slotStartTime.getTime() + 60 * 60 * 1000,
                 ), // 1 hour duration
               });
             }
@@ -179,7 +179,7 @@ export async function createSlotsOfAvailability(
         const customSlots = [];
         const startDate = new Date();
         const endDate = new Date(
-          startDate.getTime() + 90 * 24 * 60 * 60 * 1000
+          startDate.getTime() + 90 * 24 * 60 * 60 * 1000,
         ); // 3 months
 
         // Business hours for custom slots
@@ -200,11 +200,11 @@ export async function createSlotsOfAvailability(
         for (let week = 0; week < totalWeeks; week++) {
           for (let slot = 0; slot < slotsPerWeek; slot++) {
             const weekStart = new Date(
-              startDate.getTime() + week * 7 * 24 * 60 * 60 * 1000
+              startDate.getTime() + week * 7 * 24 * 60 * 60 * 1000,
             );
             const dayOffset = faker.number.int({ min: 0, max: 6 }); // Random day of week
             const slotDate = new Date(
-              weekStart.getTime() + dayOffset * 24 * 60 * 60 * 1000
+              weekStart.getTime() + dayOffset * 24 * 60 * 60 * 1000,
             );
 
             const timeSlot = faker.helpers.arrayElement(businessHours);
@@ -227,7 +227,7 @@ export async function createSlotsOfAvailability(
     } catch (error) {
       console.error(
         `Failed to create slots for consultant ${consultant.id}:`,
-        error
+        error,
       );
     }
 

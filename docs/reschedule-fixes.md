@@ -124,7 +124,7 @@ const remainingCalls = totalRequiredCalls - existingCompletedCalls;
 const expectedSlots = remainingCalls * slotsPerCall;
 if (newSlots.length !== expectedSlots) {
   throw new Error(
-    `Expected ${expectedSlots} slots for ${remainingCalls} remaining calls`
+    `Expected ${expectedSlots} slots for ${remainingCalls} remaining calls`,
   );
 }
 ```
@@ -148,7 +148,7 @@ const remainingSessions = totalRequiredSessions - existingCompletedSessions;
 const expectedSlots = remainingSessions * slotsPerSession;
 if (newSlots.length !== expectedSlots) {
   throw new Error(
-    `Expected ${expectedSlots} slots for ${remainingSessions} remaining sessions`
+    `Expected ${expectedSlots} slots for ${remainingSessions} remaining sessions`,
   );
 }
 ```
@@ -211,6 +211,3 @@ The core issue was that the reschedule functionality was treating all events as 
 4. **Event-specific logic** handles the different requirements of webinars vs subscriptions vs classes
 
 This resolves the issue where users couldn't reschedule events because the system was only expecting slots for one call instead of all remaining calls.
-
-
-
