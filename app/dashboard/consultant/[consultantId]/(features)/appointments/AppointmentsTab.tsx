@@ -46,7 +46,7 @@ export function AppointmentsTab({
 
   // Helper to get consultant ID from appointment
   const getConsultantIdFromAppointment = (
-    appointment: TAppointment
+    appointment: TAppointment,
   ): string => {
     switch (appointment.appointmentType) {
       case "CONSULTATION":
@@ -114,7 +114,7 @@ export function AppointmentsTab({
       const meetingId = await getOrCreateAppointmentMeeting(
         client,
         convertTAppointmentToIAppointment(appointment),
-        relevantSlot
+        relevantSlot,
       );
       router.push(`/meetings/${meetingId}`);
       toast({
@@ -133,7 +133,7 @@ export function AppointmentsTab({
   };
   // Expand into per-day sessions so all calls appear, then group
   const expandedAppointments = expandAppointmentsIntoSessions(
-    appointments || []
+    appointments || [],
   );
   const groupedAppointments = groupRecurringAppointments(expandedAppointments);
 
@@ -190,7 +190,7 @@ export function AppointmentsTab({
                               className="h-8 text-xs px-3"
                               onClick={() =>
                                 setSelectedAppointment(
-                                  mergeGroupAppointmentSlots(groupAppointments)
+                                  mergeGroupAppointmentSlots(groupAppointments),
                                 )
                               }
                             >
@@ -208,9 +208,9 @@ export function AppointmentsTab({
                                   getParticipantManagementUrl(
                                     firstAppointment,
                                     getConsultantIdFromAppointment(
-                                      firstAppointment
-                                    )
-                                  )
+                                      firstAppointment,
+                                    ),
+                                  ),
                                 )
                               }
                             >
@@ -288,7 +288,7 @@ export function AppointmentsTab({
                                   const startTime = getStartTime(appointment);
                                   return startTime
                                     ? formatAppointmentTime(
-                                        startTime.toISOString()
+                                        startTime.toISOString(),
                                       )
                                     : "Time not set";
                                 })()}
@@ -322,9 +322,9 @@ export function AppointmentsTab({
                                         getParticipantManagementUrl(
                                           appointment,
                                           getConsultantIdFromAppointment(
-                                            appointment
-                                          )
-                                        )
+                                            appointment,
+                                          ),
+                                        ),
                                       )
                                     }
                                   >
@@ -370,7 +370,7 @@ export function AppointmentsTab({
                 </ul>
               </div>
             );
-          }
+          },
         )}
         {!Object.keys(groupedAppointments).length && (
           <div className="flex flex-col items-center justify-center min-h-[400px] p-8 bg-gray-50 rounded-lg">

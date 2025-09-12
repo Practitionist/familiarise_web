@@ -4,7 +4,7 @@ import { TAppointment } from "@/types/appointment";
 // Helper: count number of Sunday-start weeks overlapping [start, end] inclusive
 function countSundayWeeksInclusiveLocal(
   startDate: Date,
-  endDate: Date
+  endDate: Date,
 ): number {
   const start = new Date(startDate);
   const end = new Date(endDate);
@@ -37,7 +37,7 @@ function calculateWeekBasedCompletedSessions(
   subscriptionEnd: Date,
   currentDate: Date,
   callsPerWeek: number,
-  appointments: TAppointment[]
+  appointments: TAppointment[],
 ): number {
   // Helper function to get start of week (Sunday)
   const getWeekStart = (date: Date): Date => {
@@ -91,7 +91,7 @@ function calculateWeekBasedCompletedSessions(
   // Cap at total possible sessions
   const totalSubscriptionWeeks = countSundayWeeksInclusiveLocal(
     subscriptionStart,
-    subscriptionEnd
+    subscriptionEnd,
   );
   const maxPossibleSessions = totalSubscriptionWeeks * callsPerWeek;
   return Math.min(completedCalls, maxPossibleSessions);
@@ -146,7 +146,7 @@ export const getConsumeeImage = (appointment: TAppointment): string => {
 
 // Get appointment type and plan
 export const getAppointmentTypeAndPlan = (
-  appointment: TAppointment
+  appointment: TAppointment,
 ): string => {
   if (!appointment?.appointmentType) return "Unknown Type";
 
@@ -224,7 +224,7 @@ export const hasTodaySlots = (appointment: TAppointment): boolean => {
     23,
     59,
     59,
-    999
+    999,
   );
 
   return getSlotTimes(appointment).some((time) => {
@@ -281,7 +281,7 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
 
 // Sort appointments by start time
 export const sortAppointmentsByStartTime = (
-  appointments: TAppointment[]
+  appointments: TAppointment[],
 ): TAppointment[] => {
   return [...appointments].sort((a, b) => {
     const aTime = getStartTime(a);
@@ -295,7 +295,7 @@ export const sortAppointmentsByStartTime = (
 
 // Expand appointments into per-day sessions, grouping contiguous 30-min slots on the same day
 export const expandAppointmentsIntoSessions = (
-  appointments: TAppointment[]
+  appointments: TAppointment[],
 ): TAppointment[] => {
   return (appointments || []).flatMap((appointment) => {
     const slots = appointment.slotsOfAppointment || [];
@@ -317,7 +317,7 @@ export const expandAppointmentsIntoSessions = (
     for (const s of sorted) {
       const start = new Date(s.slotStartTimeInUTC as string | Date);
       const end = new Date(
-        (s.slotEndTimeInUTC as string | Date) || s.slotStartTimeInUTC
+        (s.slotEndTimeInUTC as string | Date) || s.slotStartTimeInUTC,
       );
       const dayKey = start.toDateString();
 
@@ -345,7 +345,7 @@ export const expandAppointmentsIntoSessions = (
 
 // Filter today's appointments
 export const getTodayAppointments = (
-  appointments: TAppointment[]
+  appointments: TAppointment[],
 ): TAppointment[] => {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -356,7 +356,7 @@ export const getTodayAppointments = (
     23,
     59,
     59,
-    999
+    999,
   );
 
   // Expand appointments ONLY for recurring events (subscription/class)
@@ -405,7 +405,7 @@ export const getTodayAppointments = (
 
 // Filter upcoming appointments
 export const getUpcomingAppointments = (
-  appointments: TAppointment[]
+  appointments: TAppointment[],
 ): TAppointment[] => {
   const now = new Date();
 
@@ -419,7 +419,7 @@ export const getUpcomingAppointments = (
     ) {
       // Check if all slots are in the past
       const allSlotsCompleted = getSlotTimes(appointment).every(
-        (time) => new Date(time) < now
+        (time) => new Date(time) < now,
       );
       // Only include if not all slots are completed
       return !allSlotsCompleted;
@@ -444,7 +444,7 @@ export const getUpcomingAppointments = (
 
 // Group recurring appointments
 export const groupRecurringAppointments = (
-  appointments: TAppointment[]
+  appointments: TAppointment[],
 ): { [key: string]: TAppointment[] } => {
   const groups: { [key: string]: TAppointment[] } = {};
 
@@ -524,7 +524,7 @@ export const getGroupTitle = (appointments: TAppointment[]): string => {
       endDate!,
       now,
       callsPerWeek,
-      appointments
+      appointments,
     );
 
     return `${plan} (${completedSessions}/${totalSessions} sessions)`;
@@ -555,7 +555,7 @@ export const getGroupTitle = (appointments: TAppointment[]): string => {
       endDate!,
       now,
       callsPerWeek,
-      appointments
+      appointments,
     );
 
     return `${plan} (${completedSessions}/${totalSessions} sessions)`;
@@ -578,7 +578,7 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
 
     // Check if any sessions are completed
     const hasCompletedSessions = appointments.some((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now)
+      getSlotTimes(app).every((time) => new Date(time) < now),
     );
 
     if (now > endDate) return "Completed";
@@ -591,12 +591,12 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
 
     // Check if any sessions are completed, same as subscription
     const hasCompletedSessions = appointments.some((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now)
+      getSlotTimes(app).every((time) => new Date(time) < now),
     );
 
     // Check if all sessions are completed
     const allSessionsCompleted = appointments.every((app) =>
-      getSlotTimes(app).every((time) => new Date(time) < now)
+      getSlotTimes(app).every((time) => new Date(time) < now),
     );
 
     if (allSessionsCompleted) return "Completed";
