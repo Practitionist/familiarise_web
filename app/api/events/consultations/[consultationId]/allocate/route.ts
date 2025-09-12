@@ -212,7 +212,7 @@ function validateSlotMatchesSchedule(
         (slot: any) =>
           new Date(slot.slotStartTimeInUTC).toISOString() ===
           firstSlot.toISOString(),
-          firstSlot.toISOString(),
+        firstSlot.toISOString(),
       );
 
     if (!availableCustomSlots) {

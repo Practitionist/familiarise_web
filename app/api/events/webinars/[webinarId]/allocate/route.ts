@@ -49,7 +49,7 @@ type WebinarWithRelations = Prisma.WebinarGetPayload<{
 
 async function allocateSlotAuto(
   webinar: WebinarWithRelations,
-  tx: PrismaTransaction
+  tx: PrismaTransaction,
 ): Promise<Date> {
   const { webinarPlan } = webinar;
   const { consultantProfile } = webinarPlan;
@@ -136,9 +136,9 @@ async function allocateSlotAuto(
   const bookedSlots = new Set(
     existingAppointments.flatMap((app) =>
       app.slotsOfAppointment.map((slot: { slotStartTimeInUTC: Date }) =>
-        slot.slotStartTimeInUTC.toISOString()
-      )
-    )
+        slot.slotStartTimeInUTC.toISOString(),
+      ),
+    ),
   );
 
   // Generate candidate slots from availability
@@ -160,7 +160,7 @@ async function allocateSlotAuto(
             new Date(weeklySlot.slotStartTimeInUTC).getHours(),
             new Date(weeklySlot.slotStartTimeInUTC).getMinutes(),
             0,
-            0
+            0,
           );
 
           if (candidateSlot >= now) {
@@ -184,7 +184,7 @@ async function allocateSlotAuto(
 
   // Create a Set for fast lookup of candidate slot times
   const candidateSlotSet = new Set(
-    candidateSlots.map((slot) => slot.toISOString())
+    candidateSlots.map((slot) => slot.toISOString()),
   );
 
   // Find the earliest consecutive block that fits the webinar duration
@@ -234,7 +234,7 @@ async function allocateSlotAuto(
 
 async function allocateSlotRequested(
   webinar: WebinarWithRelations,
-  tx: PrismaTransaction
+  tx: PrismaTransaction,
 ): Promise<Date> {
   // Get the requested slot from the appointment
   const requestedSlot =
@@ -298,7 +298,7 @@ async function allocateSlotRequested(
 async function allocateSlotManual(
   webinar: WebinarWithRelations,
   slots: string[],
-  tx: PrismaTransaction
+  tx: PrismaTransaction,
 ): Promise<Date[]> {
   const { webinarPlan } = webinar;
   const { consultantProfile } = webinarPlan;
@@ -309,7 +309,7 @@ async function allocateSlotManual(
 
   // Convert and sort unique slot starts
   const selected = Array.from(
-    new Set(slots.map((s) => new Date(s).toISOString()))
+    new Set(slots.map((s) => new Date(s).toISOString())),
   )
     .map((s) => new Date(s))
     .sort((a, b) => a.getTime() - b.getTime());
@@ -318,7 +318,7 @@ async function allocateSlotManual(
 
   if (selected.length !== requiredSlots) {
     throw new Error(
-      `Webinar requires exactly ${requiredSlots} slots for ${webinarPlan.durationInHours} hour(s)`
+      `Webinar requires exactly ${requiredSlots} slots for ${webinarPlan.durationInHours} hour(s)`,
     );
   }
 
@@ -361,7 +361,7 @@ async function allocateSlotManual(
           SATURDAY: 6,
         };
         return dayMap[ws.dayOfWeekforStartTimeInUTC] === requestedDayOfWeek;
-      }
+      },
     );
 
     if (weekly.length === 0) {
@@ -375,7 +375,7 @@ async function allocateSlotManual(
         "Saturday",
       ];
       throw new Error(
-        `Selected time is on ${dayNames[requestedDayOfWeek]}, but consultant has no availability on ${dayNames[requestedDayOfWeek]}s.`
+        `Selected time is on ${dayNames[requestedDayOfWeek]}, but consultant has no availability on ${dayNames[requestedDayOfWeek]}s.`,
       );
     }
 
@@ -407,7 +407,7 @@ async function allocateSlotManual(
     }
 
     const fits = merged.some(
-      (r) => blockStartMin >= r.start && blockEndMin <= r.end
+      (r) => blockStartMin >= r.start && blockEndMin <= r.end,
     );
     if (!fits) {
       const dayNames = [
@@ -429,7 +429,7 @@ async function allocateSlotManual(
         })
         .join(", ");
       throw new Error(
-        `Selected time ${slotDate.toISOString()} is outside consultant's available windows on ${dayNames[requestedDayOfWeek]}s. Available windows: ${availableWindows} UTC.`
+        `Selected time ${slotDate.toISOString()} is outside consultant's available windows on ${dayNames[requestedDayOfWeek]}s. Available windows: ${availableWindows} UTC.`,
       );
     }
   } else {
@@ -437,11 +437,11 @@ async function allocateSlotManual(
     const availableFirst = consultantProfile.slotsOfAvailabilityCustom.some(
       (slot) =>
         new Date(slot.slotStartTimeInUTC).toISOString() ===
-        slotDate.toISOString()
+        slotDate.toISOString(),
     );
     if (!availableFirst) {
       throw new Error(
-        `Slot ${slotDate.toLocaleString()} is not in consultant's custom schedule`
+        `Slot ${slotDate.toLocaleString()} is not in consultant's custom schedule`,
       );
     }
   }
@@ -534,7 +534,7 @@ async function allocateSlotManual(
             slotStart,
             slotEnd,
             slot.slotStartTimeInUTC,
-            slot.slotEndTimeInUTC
+            slot.slotEndTimeInUTC,
           )
         ) {
           overlappingSlots.push(slot);
@@ -549,7 +549,7 @@ async function allocateSlotManual(
       overlappingSlots.map((slot) => ({
         slotStartTimeInUTC: slot.slotStartTimeInUTC,
         slotEndTimeInUTC: slot.slotEndTimeInUTC,
-      }))
+      })),
     );
 
     // Only reject if slot is fully booked (same threshold as availability API)
@@ -563,7 +563,7 @@ async function allocateSlotManual(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ webinarId: string }> }
+  { params }: { params: Promise<{ webinarId: string }> },
 ) {
   try {
     const { webinarId } = await params;
@@ -573,7 +573,7 @@ export async function PATCH(
     if (typeof body.isAuto !== "boolean") {
       return NextResponse.json(
         { error: "isAuto flag is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -583,7 +583,7 @@ export async function PATCH(
     } else if (!body.isAuto && !Array.isArray(body.slots)) {
       return NextResponse.json(
         { error: "slots array is required for manual allocation" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -601,7 +601,7 @@ export async function PATCH(
     if (!webinar.webinarPlan?.consultantProfile?.user?.id) {
       return NextResponse.json(
         { error: "Missing consultant information" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -609,7 +609,7 @@ export async function PATCH(
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -702,7 +702,7 @@ export async function PATCH(
                   slotStart,
                   slotEnd,
                   slot.slotStartTimeInUTC,
-                  slot.slotEndTimeInUTC
+                  slot.slotEndTimeInUTC,
                 )
               ) {
                 overlappingSlots.push(slot);
@@ -716,7 +716,7 @@ export async function PATCH(
             overlappingSlots.map((slot) => ({
               slotStartTimeInUTC: slot.slotStartTimeInUTC,
               slotEndTimeInUTC: slot.slotEndTimeInUTC,
-            }))
+            })),
           );
 
           if (bookingStatus === "fully-booked") {
@@ -757,7 +757,7 @@ export async function PATCH(
         }
 
         const requiredSlots = Math.ceil(
-          webinar.webinarPlan.durationInHours / 0.5
+          webinar.webinarPlan.durationInHours / 0.5,
         );
         const hostUserId = (() => {
           if (!webinar.webinarPlan.consultantProfile?.user?.id) {
@@ -774,7 +774,7 @@ export async function PATCH(
               create: (selectedSlots && selectedSlots.length === requiredSlots
                 ? selectedSlots
                 : Array.from({ length: requiredSlots }).map((_, i) =>
-                    addMinutes(selectedSlot as Date, i * 30)
+                    addMinutes(selectedSlot as Date, i * 30),
                   )
               ).map((start) => ({
                 slotStartTimeInUTC: start,
@@ -814,7 +814,7 @@ export async function PATCH(
           error:
             error instanceof Error ? error.message : "Failed to allocate slot",
         },
-        { status: 500 }
+        { status: 500 },
       );
     }
   } catch (error) {
@@ -823,7 +823,7 @@ export async function PATCH(
     }
     return NextResponse.json(
       { error: "An error occurred during slot allocation" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

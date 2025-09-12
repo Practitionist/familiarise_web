@@ -44,7 +44,7 @@ export class AllocationService {
    */
   static async allocateConsultationSlots(
     consultationId: string,
-    request: AllocationRequest
+    request: AllocationRequest,
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
@@ -55,7 +55,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(request),
-        }
+        },
       );
 
       let data: any = null;
@@ -65,7 +65,7 @@ export class AllocationService {
         // Non-JSON response (network hiccup, SSR error, etc.)
         console.error(
           "[AllocationService] Non-JSON response during consultation allocation",
-          e
+          e,
         );
       }
 
@@ -104,7 +104,7 @@ export class AllocationService {
    */
   static async validateConsultationSlots(
     consultationId: string,
-    slots: string[]
+    slots: string[],
   ): Promise<ValidationResponse> {
     try {
       const response = await fetch(
@@ -115,7 +115,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ slots }),
-        }
+        },
       );
 
       const data = await response.json();
@@ -146,7 +146,7 @@ export class AllocationService {
    */
   static async allocateSubscriptionSlots(
     subscriptionId: string,
-    request: AllocationRequest
+    request: AllocationRequest,
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
@@ -157,7 +157,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(request),
-        }
+        },
       );
 
       const data = await response.json();
@@ -187,11 +187,11 @@ export class AllocationService {
    * Fetches all appointments for a specific subscription (used for rescheduling)
    */
   static async fetchSubscriptionAppointments(
-    subscriptionId: string
+    subscriptionId: string,
   ): Promise<Appointment[]> {
     try {
       const response = await fetch(
-        `/api/events/subscriptions/${subscriptionId}/appointments`
+        `/api/events/subscriptions/${subscriptionId}/appointments`,
       );
 
       if (!response.ok) {
@@ -213,7 +213,7 @@ export class AllocationService {
     subscriptionId: string,
     appointmentId: string,
     newSlots: string[],
-    callTimestamp?: string
+    callTimestamp?: string,
   ): Promise<AllocationResponse> {
     try {
       console.log(
@@ -224,7 +224,7 @@ export class AllocationService {
           callTimestamp,
           newSlots,
           newSlotsCount: newSlots.length,
-        }
+        },
       );
 
       const response = await fetch(
@@ -239,7 +239,7 @@ export class AllocationService {
             newSlots,
             callTimestamp,
           }),
-        }
+        },
       );
 
       const data = await response.json();
@@ -271,7 +271,7 @@ export class AllocationService {
   static async rescheduleClassAppointment(
     classId: string,
     appointmentId: string,
-    newSlots: string[]
+    newSlots: string[],
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
@@ -285,7 +285,7 @@ export class AllocationService {
             appointmentId,
             newSlots,
           }),
-        }
+        },
       );
 
       const data = await response.json();
@@ -316,7 +316,7 @@ export class AllocationService {
    */
   static async validateSubscriptionSlots(
     subscriptionId: string,
-    slots: string[]
+    slots: string[],
   ): Promise<ValidationResponse> {
     try {
       const response = await fetch(
@@ -327,7 +327,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ slots }),
-        }
+        },
       );
 
       const data = await response.json();
@@ -358,7 +358,7 @@ export class AllocationService {
    */
   static async allocateWebinarSlots(
     webinarId: string,
-    request: AllocationRequest
+    request: AllocationRequest,
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
@@ -369,7 +369,7 @@ export class AllocationService {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(request),
-        }
+        },
       );
 
       const data = await response.json();
@@ -400,7 +400,7 @@ export class AllocationService {
    */
   static async allocateClassSlots(
     classId: string,
-    request: AllocationRequest
+    request: AllocationRequest,
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(`/api/events/classes/${classId}/allocate`, {
@@ -447,7 +447,7 @@ export class AllocationService {
       reallocate?: boolean;
       appointmentId?: string; // For subscription rescheduling
       callTimestamp?: string; // For specific call rescheduling
-    }
+    },
   ): Promise<AllocationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
 
@@ -467,7 +467,7 @@ export class AllocationService {
             eventId,
             allocationOptions.appointmentId,
             slotStrings,
-            allocationOptions.callTimestamp
+            allocationOptions.callTimestamp,
           );
         }
         // Otherwise, use the regular allocation endpoint
@@ -488,17 +488,17 @@ export class AllocationService {
         // If rescheduling a specific appointment, use the reschedule endpoint
         if (allocationOptions?.appointmentId) {
           console.log(
-            `🔄 [FRONTEND] Class reschedule detected - calling reschedule endpoint for classId: ${eventId}, appointmentId: ${allocationOptions.appointmentId}`
+            `🔄 [FRONTEND] Class reschedule detected - calling reschedule endpoint for classId: ${eventId}, appointmentId: ${allocationOptions.appointmentId}`,
           );
           return this.rescheduleClassAppointment(
             eventId,
             allocationOptions.appointmentId,
-            slotStrings
+            slotStrings,
           );
         }
         // Otherwise, use the regular allocation endpoint
         console.log(
-          `⚠️ [FRONTEND] Class allocation called (should NOT happen during reschedule) for classId: ${eventId}`
+          `⚠️ [FRONTEND] Class allocation called (should NOT happen during reschedule) for classId: ${eventId}`,
         );
         return this.allocateClassSlots(eventId, {
           isAuto: allocationOptions?.isAuto || false,
@@ -520,7 +520,7 @@ export class AllocationService {
   static async validateSlots(
     eventType: "consultation" | "subscription",
     eventId: string,
-    slots: TimeSlot[]
+    slots: TimeSlot[],
   ): Promise<ValidationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
 
@@ -570,7 +570,7 @@ export class AllocationService {
      * locale (when running on the client) and finally to "UTC".  This keeps
      * the API response aligned with the user's calendar view.
      */
-    timezone?: string
+    timezone?: string,
   ) {
     if (!consultantId) {
       throw new Error("Consultant ID is required");
@@ -594,12 +594,12 @@ export class AllocationService {
         timezone: tz,
       });
       const response = await fetch(
-        `/api/slots/availability-with-allocation/${consultantId}?${params}`
+        `/api/slots/availability-with-allocation/${consultantId}?${params}`,
       );
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(
-          errorData.error || "Failed to fetch availability slots"
+          errorData.error || "Failed to fetch availability slots",
         );
       }
       const result = await response.json();
@@ -624,7 +624,7 @@ export class AllocationService {
   static async fetchAppointments(
     consultantId: string,
     startDate: Date,
-    endDate: Date
+    endDate: Date,
   ) {
     if (!consultantId) {
       throw new Error("Consultant ID is required");
@@ -654,7 +654,7 @@ export class AllocationService {
    */
   static async fetchEventSlots(
     eventType: "webinar" | "class",
-    eventId: string
+    eventId: string,
   ) {
     try {
       const params = new URLSearchParams({
