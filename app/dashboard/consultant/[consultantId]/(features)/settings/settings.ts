@@ -1,15 +1,11 @@
 import { TConsultantProfile } from "@/types/consultant";
-import { isValidTimeRange } from "@/utils/timeSlotValidation";
 import {
-  getLocalDateString,
-  convertToLocalTime,
+  convertTimezoneToUtcWithOvernight,
   convertUtcToTimezone,
   extractTimeFromUtcSlot,
-  convertTimezoneToUtc,
-  convertTimezoneToUtcWithOvernight,
   sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
-import { toZonedTime } from "date-fns-tz";
+import { isValidTimeRange } from "@/utils/timeSlotValidation";
 import { DayOfWeek, ScheduleType } from "@prisma/client";
 export interface SlotType {
   startTime: string;

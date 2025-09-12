@@ -335,6 +335,7 @@ export interface UseEventSlotAllocationReturn {
 function getEventConstraints(
   eventType: UseEventSlotAllocationOptions["eventType"],
   options: UseEventSlotAllocationOptions,
+ 
 ): EventConstraints {
   switch (eventType) {
     case "webinar":
@@ -1885,6 +1886,7 @@ export function useEventSlotAllocation(
             // Show progress feedback
             const completedCalls = Math.floor(
               newSelection.length / slotsPerCall,
+              
             );
             const currentCallProgress = newSelection.length % slotsPerCall;
 
@@ -1918,6 +1920,7 @@ export function useEventSlotAllocation(
           const sortedSelection = [...newSelection];
           sortedSelection.sort(
             (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+        
           );
           return sortedSelection;
         }
@@ -1949,9 +1952,11 @@ export function useEventSlotAllocation(
     (slot: TimeSlot) => {
       return selectedSlots.some(
         (s) => s.startTime.getTime() === slot.startTime.getTime(),
+        
       );
     },
     [selectedSlots],
+
   );
 
   /**
@@ -2532,6 +2537,7 @@ export function useEventSlotAllocation(
       );
     },
     [eventType, eventConstraints, slotLimits, options],
+   
   );
 
   // ==========================================

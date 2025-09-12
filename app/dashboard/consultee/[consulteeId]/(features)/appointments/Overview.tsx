@@ -25,36 +25,42 @@ interface OverviewProps {
   classes: ClassWithPlan[];
 }
 
-interface AppointmentSlot {
-  startTime: Date;
-  endTime: Date;
+interface DashboardCardProps {
+  title: string;
+  items: Array<{
+    id: string;
+    title: string;
+    consultant: string;
+    date: string;
+    image?: string | null;
+    status: string;
+    type: "Subscription" | "Class" | "Consultation" | "Webinar";
+    isTentative: boolean;
+    actualSlots?: Array<{
+      startTime: Date;
+      endTime: Date;
+    }>;
+    appointmentId?: string;
+  }>;
+}
+
+// Helper functions
+function formatDateFromSlot(slotInfo: SlotOfAppointment): string {
+  return new Date(slotInfo.slotStartTimeInUTC).toLocaleString();
 }
 
 function getNoSlotMessage(type: string): string {
   return `No upcoming slots scheduled for this ${type.toLowerCase()}. Check details or wait for confirmation.`;
 }
 
-function formatDateFromSlot(slot: SlotOfAppointment | null): string {
-  if (!slot) return "No upcoming slot";
-  const date = new Date(slot.slotStartTimeInUTC);
-  return date.toLocaleString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
-
-function getValidAppointmentSlots(event: EventWithType): AppointmentSlot[] {
+function getValidAppointmentSlots(event: EventWithType): Array<{
+  startTime: Date;
+  endTime: Date;
+}> {
   const slots = getActualSlots(event);
   return slots.map((slot) => ({
     startTime: new Date(slot.slotStartTimeInUTC),
-    endTime: slot.slotEndTimeInUTC
-      ? new Date(slot.slotEndTimeInUTC)
-      : new Date(slot.slotStartTimeInUTC),
+    endTime: new Date(slot.slotEndTimeInUTC || slot.slotStartTimeInUTC),
   }));
 }
 
@@ -65,7 +71,7 @@ export function Overview({
   webinars,
 }: Readonly<OverviewProps>) {
   return (
-    <div className="space-y-8" data-testid="overview-grid">
+    <div className="space-y-6 lg:space-y-8" data-testid="overview-grid">
       <DashboardCard
         title="Consultations"
         items={consultations.map((consultation) => {
@@ -101,7 +107,6 @@ export function Overview({
             ...subscription,
             type: "Subscription",
           });
-
           return {
             id: subscription.id,
             title: subscription.subscriptionPlan.title,
@@ -184,41 +189,37 @@ export function Overview({
   );
 }
 
-interface DashboardCardProps {
-  title: string;
-  items: {
-    id: string;
-    title: string;
-    date: string;
-    consultant: string;
-    status?: string;
-    image?: string | null;
-    type: "Subscription" | "Class" | "Consultation" | "Webinar";
-    isTentative: boolean;
-    actualSlots?: AppointmentSlot[];
-    appointmentId?: string;
-  }[];
-}
-
 function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
-  const SCROLL_AMOUNT = 384 + 16;
+  const SCROLL_AMOUNT = 320; // Adjusted for responsive cards
+
+  // Check if we're on mobile/tablet
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 1024); // lg breakpoint
+    };
+
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
 
   const updateScrollButtonStates = useCallback(() => {
-    if (scrollContainerRef.current) {
+    if (scrollContainerRef.current && !isMobile) {
       const { scrollLeft, scrollWidth, clientWidth } =
         scrollContainerRef.current;
       setCanScrollLeft(scrollLeft > 5);
       setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 5);
     }
-  }, []);
+  }, [isMobile]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
-    if (!container || items.length === 0) {
+    if (!container || items.length === 0 || isMobile) {
       setCanScrollLeft(false);
       setCanScrollRight(false);
       return;
@@ -239,17 +240,16 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
       window.removeEventListener("resize", updateScrollButtonStates);
       observer.disconnect();
     };
-  }, [items, updateScrollButtonStates]);
+  }, [items, updateScrollButtonStates, isMobile]);
 
   const handleScroll = (direction: "left" | "right") => {
-    if (scrollContainerRef.current) {
+    if (scrollContainerRef.current && !isMobile) {
       const currentScroll = scrollContainerRef.current.scrollLeft;
       const newScroll =
         direction === "left"
           ? currentScroll - SCROLL_AMOUNT
           : currentScroll + SCROLL_AMOUNT;
 
-      // Use smooth scrolling for button clicks
       scrollContainerRef.current.scrollTo({
         left: newScroll,
         behavior: "smooth",
@@ -263,10 +263,21 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
     return (
       <Card className="bg-gradient-to-br from-white via-white to-gray-50 border-gray-100 shadow-sm">
         <CardHeader>
-          <CardTitle className="text-xl text-gray-800">{title}</CardTitle>
+          <CardTitle className="text-lg lg:text-xl text-gray-800">
+            {title}
+          </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-gray-500">No appointments found.</p>
+          <div className="flex items-center justify-center py-8 lg:py-12">
+            <div className="text-center">
+              <p className="text-gray-500 mb-2">
+                No {title.toLowerCase()} found.
+              </p>
+              <p className="text-sm text-gray-400">
+                Your {title.toLowerCase()} will appear here once scheduled.
+              </p>
+            </div>
+          </div>
         </CardContent>
       </Card>
     );
@@ -274,11 +285,13 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
 
   return (
     <Card className="relative overflow-hidden rounded-xl bg-gradient-to-br from-white via-white to-gray-50 border-gray-100 shadow-sm">
-      <CardHeader className="relative z-10 flex flex-row justify-between items-center">
-        <CardTitle className="text-xl text-gray-800">{title}</CardTitle>
+      <CardHeader className="relative z-10 flex flex-row justify-between items-center px-4 lg:px-6 py-4 lg:py-6">
+        <CardTitle className="text-lg lg:text-xl text-gray-800">
+          {title}
+        </CardTitle>
 
-        {/* Scroll Buttons */}
-        {(canScrollLeft || canScrollRight) && (
+        {/* Scroll Buttons - Only show on desktop when scrollable */}
+        {!isMobile && (canScrollLeft || canScrollRight) && (
           <div className="flex space-x-2">
             {canScrollLeft && (
               <Button
@@ -309,28 +322,53 @@ function DashboardCard({ title, items }: Readonly<DashboardCardProps>) {
       {/* Glossy top reflection effect */}
       <div className="absolute top-0 left-0 right-0 h-[20%] bg-gradient-to-b from-white/30 to-transparent pointer-events-none z-0"></div>
 
-      <CardContent className="relative z-10">
-        <div
-          ref={scrollContainerRef}
-          className="flex flex-row gap-4 overflow-x-auto pb-4 snap-x snap-mandatory 
-                     [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']"
-        >
-          {items.map((item) => (
-            <div key={item.id} className="snap-start">
-              <EventCard
-                title={item.title}
-                consultant={item.consultant}
-                date={item.date}
-                status={item.status}
-                image={item.image}
-                type={item.type}
-                isTentative={item.isTentative}
-                actualSlots={item.actualSlots}
-                appointmentId={item.appointmentId}
-              />
-            </div>
-          ))}
-        </div>
+      <CardContent className="relative z-10 px-4 lg:px-6 pb-4 lg:pb-6">
+        {isMobile ? (
+          // Mobile/Tablet: Grid Layout
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {items.map((item) => (
+              <div key={item.id} className="min-h-[280px]">
+                <EventCard
+                  title={item.title}
+                  consultant={item.consultant}
+                  date={item.date}
+                  status={item.status}
+                  image={item.image}
+                  type={item.type}
+                  isTentative={item.isTentative}
+                  actualSlots={item.actualSlots}
+                  appointmentId={item.appointmentId}
+                />
+              </div>
+            ))}
+          </div>
+        ) : (
+          // Desktop: Horizontal Scroll
+          <div
+            ref={scrollContainerRef}
+            className="flex flex-row gap-4 overflow-x-auto pb-4 snap-x snap-mandatory 
+                       [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']"
+          >
+            {items.map((item) => (
+              <div
+                key={item.id}
+                className="snap-start flex-shrink-0 w-80 h-auto"
+              >
+                <EventCard
+                  title={item.title}
+                  consultant={item.consultant}
+                  date={item.date}
+                  status={item.status}
+                  image={item.image}
+                  type={item.type}
+                  isTentative={item.isTentative}
+                  actualSlots={item.actualSlots}
+                  appointmentId={item.appointmentId}
+                />
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

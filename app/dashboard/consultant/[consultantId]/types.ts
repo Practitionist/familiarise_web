@@ -144,9 +144,29 @@ export interface IAppointment {
 
 export interface IDocument {
   id: string;
+  appointmentId: string;
+  fileName: string;
+  originalName: string;
+  fileSize: number;
+  mimeType: string;
+  fileUrl: string;
+  description: string | null;
+  reviewStatus:
+    | "PENDING"
+    | "IN_REVIEW"
+    | "APPROVED"
+    | "REJECTED"
+    | "NEEDS_REVISION";
+  reviewNotes: string | null;
+  reviewedAt: Date | null;
+  uploadedAt: Date;
+  clientName: string;
+  clientId: string;
+  appointmentTitle: string;
+  appointmentType: string;
+  // Legacy fields for existing UI compatibility
   title: string;
   invoiceNo: string;
-  clientName: string;
   tag: string;
 }
 
@@ -243,6 +263,20 @@ export enum DashboardSection {
 export type ApiResponse<T> = {
   data: T;
   error?: string;
+  message?: string;
+  count?: number;
+  consultant?: string;
+  appointmentTitle?: string;
+  consultantName?: string;
+  filters?: {
+    status?: string;
+    appointmentType?: string;
+  };
+  metadata?: {
+    pendingCount?: number;
+    reviewingCount?: number;
+    completedCount?: number;
+  };
   meta?: {
     total: number;
     page: number;

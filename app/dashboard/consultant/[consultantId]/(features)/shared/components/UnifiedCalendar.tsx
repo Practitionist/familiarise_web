@@ -943,7 +943,9 @@ export function UnifiedCalendar({
             queryKey: ["planner", consultantId],
           }),
         ]);
-      } catch {}
+      } catch {
+        console.log("[UnifiedCalendar] Error invalidating queries");
+      }
       await refetch();
       onAllocationComplete?.(result);
     },
