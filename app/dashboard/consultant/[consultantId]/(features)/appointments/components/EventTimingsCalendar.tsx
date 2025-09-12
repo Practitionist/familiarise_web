@@ -6,7 +6,6 @@ import { useEffect } from "react";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -14,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useParams } from "next/navigation";
 import { SafeUnifiedCalendar } from "../../shared/components/SafeUnifiedCalendar";
 import { TAppointment } from "@/types/appointment";
+import { TimeSlot } from "../../shared/utils/calendarUtils";
 
 interface EventTimingsCalendarProps {
   isOpen: boolean;
@@ -25,7 +25,7 @@ export function EventTimingsCalendar({
   isOpen,
   onClose,
   appointment,
-}: EventTimingsCalendarProps) {
+}: Readonly<EventTimingsCalendarProps>) {
   const params = useParams();
   const { toast } = useToast();
 
@@ -145,6 +145,76 @@ export function EventTimingsCalendar({
 
   const eventDetails = getEventDetails(appointment);
 
+  // Utility function to round time to nearest 30 minutes or hour
+  const roundToNearestInterval = (
+    date: Date,
+    intervalMinutes: number = 30
+  ): Date => {
+    const rounded = new Date(date);
+    const minutes = rounded.getMinutes();
+    const roundedMinutes =
+      Math.round(minutes / intervalMinutes) * intervalMinutes;
+
+    if (roundedMinutes >= 60) {
+      rounded.setHours(rounded.getHours() + 1);
+      rounded.setMinutes(0);
+    } else {
+      rounded.setMinutes(roundedMinutes);
+    }
+
+    // Reset seconds and milliseconds
+    rounded.setSeconds(0);
+    rounded.setMilliseconds(0);
+
+    return rounded;
+  };
+
+  // Build currentSlots from appointment (for one-day events, show across weeks)
+  const currentSlots: TimeSlot[] = Array.isArray(appointment.slotsOfAppointment)
+    ? appointment.slotsOfAppointment.flatMap((s) => {
+        const startTime = new Date(s.slotStartTimeInUTC);
+        const endTime = new Date(s.slotEndTimeInUTC);
+
+        // Round start and end times to nearest 30 minutes
+        const roundedStartTime = roundToNearestInterval(startTime, 30);
+        const roundedEndTime = roundToNearestInterval(endTime, 30);
+
+        const isClassAppointment = appointment.appointmentType === "CLASS";
+        if (!isClassAppointment) {
+          return [
+            {
+              startTime: roundedStartTime,
+              endTime: roundedEndTime,
+              isAvailable: true,
+              isBooked: true,
+            },
+          ];
+        }
+
+        // For classes in Appointments tab: show only the start marker
+        const singleBlockEnd = new Date(
+          roundedStartTime.getTime() + 30 * 60 * 1000
+        );
+        return [
+          {
+            startTime: roundedStartTime,
+            endTime: singleBlockEnd,
+            isAvailable: true,
+            isBooked: true,
+          },
+        ];
+      })
+    : [];
+
+  // Debug log for appointments with current slots
+  if (currentSlots.length > 0) {
+    console.log("[EventTimingsCalendar] Appointment has current slots:", {
+      appointmentType: appointment.appointmentType,
+      currentSlotsCount: currentSlots.length,
+      firstSlot: currentSlots[0]?.startTime.toISOString(),
+    });
+  }
+
   // Log subscription start/end by calling server validation (read-only) when dialog opens
   useEffect(() => {
     if (!isOpen) return;
@@ -216,21 +286,6 @@ export function EventTimingsCalendar({
     onClose();
   };
 
-  const getDescriptionText = () => {
-    switch (appointment.appointmentType) {
-      case "CONSULTATION":
-        return "Select time slots for your consultation session.";
-      case "SUBSCRIPTION":
-        return `Schedule ${eventDetails.callsPerWeek} call${eventDetails.callsPerWeek !== 1 ? "s" : ""} per week for ${eventDetails.durationInMonths} month${eventDetails.durationInMonths !== 1 ? "s" : ""}.`;
-      case "WEBINAR":
-        return "Select consecutive time slots matching your webinar duration.";
-      case "CLASS":
-        return "Schedule class sessions by selecting appropriate time slots.";
-      default:
-        return "Select time slots for your event.";
-    }
-  };
-
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-7xl">
@@ -240,7 +295,7 @@ export function EventTimingsCalendar({
               ? "Manage Class Timings"
               : `Manage ${eventDetails.title} Timings`}
           </DialogTitle>
-          <DialogDescription>{getDescriptionText()}</DialogDescription>
+
           {appointment.appointmentType === "CLASS" && (
             <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
               <Badge variant="outline">
@@ -256,12 +311,35 @@ export function EventTimingsCalendar({
           )}
         </DialogHeader>
 
-        {/* Guidance prompt for class rules */}
+        {/* Class window and guidance */}
         {appointment.appointmentType === "CLASS" && (
-          <div className="mb-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
-            Tip: Each class is 2 consecutive 30‑min slots. Complete an
-            in‑progress class before starting another. Max 2 classes per day;
-            weekly limit applies.
+          <div className="mb-2 space-y-2">
+            {/* Class window information */}
+            <div className="flex justify-between items-center ">
+              <div className="text-sm font-medium ">
+                Schedule class sessions by selecting appropriate time slots
+              </div>
+              <div className="text-sm ">
+                Class window:{" "}
+                {(appointment.class as any)?.startDate
+                  ? new Date(
+                      (appointment.class as any).startDate
+                    ).toLocaleDateString()
+                  : "N/A"}{" "}
+                -{" "}
+                {(appointment.class as any)?.endDate
+                  ? new Date(
+                      (appointment.class as any).endDate
+                    ).toLocaleDateString()
+                  : "N/A"}
+              </div>
+            </div>
+            {/* Guidance prompt for class rules */}
+            <div className="   text-xs">
+              Tip: Each class is 2 consecutive 30‑min slots. Complete an
+              in‑progress class before starting another. Max 2 classes per day;
+              weekly limit applies.
+            </div>
           </div>
         )}
 
@@ -286,7 +364,14 @@ export function EventTimingsCalendar({
           mode="allocate"
           onAllocationComplete={handleAllocationComplete}
           showAllocationButtons={true}
-          className="min-h-[500px]"
+          className="w-full max-w-[1200px] mx-auto min-h-[500px]"
+          currentSlots={
+            eventDetails.eventType === "consultation" ||
+            eventDetails.eventType === "webinar" ||
+            eventDetails.eventType === "class"
+              ? currentSlots
+              : undefined
+          }
           // UI guard rails: restrict selection window based on validation period
           allowedStart={
             appointment.appointmentType === "SUBSCRIPTION"
@@ -310,9 +395,10 @@ export function EventTimingsCalendar({
                   : undefined
                 : undefined
           }
+          highlightCurrentSlotsInView={true}
         />
 
-        <div className="flex justify-end gap-2">
+        <div className="flex justify-end gap-2 mt-2">
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
