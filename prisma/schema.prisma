@@ -39,7 +39,7 @@ model User {
   staffProfile        StaffProfile?
   staffProfileId      String?            @unique
 
-  slotsOfAppointment SlotOfAppointment[]
+  slotsOfAppointment SlotOfAppointment[] @relation("SlotOfAppointmentToUser")
   Waitlist           Waitlist[]
 
   // Feedback and Support
@@ -194,7 +194,7 @@ model VerificationToken {
   @@map("verificationtokens")
 }
 
-//////////////////////////////////////////////////// SLOTTING MECHANISM ////////////////////////////////////////////////////
+//////////////////////////////////////////////////// USER PROFILES and SLOTTING MECHANISM ////////////////////////////////////////////////////
 
 model ConsultantProfile {
   id             String  @id @default(uuid())
@@ -206,8 +206,8 @@ model ConsultantProfile {
 
   domain     Domain      @relation(fields: [domainId], references: [id])
   domainId   String
-  subDomains SubDomain[]
-  tags       Tag[]
+  subDomains SubDomain[] @relation("ConsultantProfileToSubDomain")
+  tags       Tag[]       @relation("ConsultantProfileToTag")
 
   reviews      ConsultantReview[]
   scheduleType ScheduleType
@@ -248,7 +248,7 @@ model SubDomain {
   name               String
   domain             Domain              @relation(fields: [domainId], references: [id])
   domainId           String
-  consultantProfiles ConsultantProfile[]
+  consultantProfiles ConsultantProfile[] @relation("ConsultantProfileToSubDomain")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -262,7 +262,7 @@ model Tag {
   name               String
   domain             Domain              @relation(fields: [domainId], references: [id])
   domainId           String
-  consultantProfiles ConsultantProfile[]
+  consultantProfiles ConsultantProfile[] @relation("ConsultantProfileToTag")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -362,27 +362,6 @@ model SlotOfAvailabilityCustom {
   @@index([consultantProfileId])
 }
 
-model SlotOfAppointment {
-  id String @id @default(uuid())
-
-  user User[]
-
-  slotStartTimeInUTC DateTime @db.Timestamptz()
-  slotEndTimeInUTC   DateTime @db.Timestamptz()
-  isTentative        Boolean  @default(false)
-
-  appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  appointmentId String
-
-  meetingSession MeetingSession?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([appointmentId])
-  @@index([isTentative, appointmentId])
-}
-
 //////////////////////////////////////////////////// PRICING PLANS ////////////////////////////////////////////////////
 
 // 1-1 Consultation
@@ -426,43 +405,6 @@ model Consultation {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-}
-
-// Document Review Models
-model AppointmentDocument {
-  id           String  @id @default(uuid())
-  fileName     String
-  originalName String
-  fileSize     Int
-  mimeType     String
-  fileUrl      String
-  storagePath  String
-  description  String? // User description of what this document is (resume, ITR, legal document, etc.)
-  
-  // Review fields
-  reviewStatus   DocumentReviewStatus @default(PENDING)
-  reviewNotes    String?
-  reviewedAt     DateTime?
-  reviewedBy     String? // Consultant user ID
-  
-  // Relations
-  appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  appointmentId String
-  
-  // Metadata
-  uploadedAt DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@index([appointmentId])
-  @@index([reviewStatus])
-}
-
-enum DocumentReviewStatus {
-  PENDING
-  IN_REVIEW
-  APPROVED
-  REJECTED
-  NEEDS_REVISION
 }
 
 model SubscriptionPlan {
@@ -526,7 +468,7 @@ enum RequestStatus {
 model WebinarPlan {
   id                  String   @id @default(cuid())
   title               String
-  topics              Topic[]
+  topics              Topic[]  @relation("TopicToWebinarPlan")
   description         String?  @db.Text
   price               Int
   priceCurrency       String   @default("INR")
@@ -576,7 +518,7 @@ model ClassPlan {
   id                     String           @id @default(cuid())
   title                  String
   description            String           @db.Text
-  topics                 Topic[]
+  topics                 Topic[]          @relation("ClassPlanToTopic")
   classContents          ClassContent[]
   price                  Int
   priceCurrency          String           @default("INR")
@@ -644,6 +586,44 @@ enum ClassStatus {
   CANCELLED
 }
 
+model Topic {
+  id   String @id @default(cuid())
+  name String @unique
+
+  webinarPlans WebinarPlan[] @relation("TopicToWebinarPlan")
+  classPlans   ClassPlan[]   @relation("ClassPlanToTopic")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Newsletter {
+  id    String @id @default(uuid())
+  email String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Waitlist {
+  id       String   @id @default(uuid())
+  joinedAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
+
+  webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarId String?
+
+  class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classId String?
+
+  @@unique([userId, webinarId])
+  @@unique([userId, classId])
+}
+
+////////////////////////////////////////////// APPOINTMENT ////////////////////////////////////////////////////
+
 // Generic Appointment Model
 model Appointment {
   id                 String              @id @default(uuid())
@@ -676,43 +656,65 @@ enum AppointmentsType {
   CLASS
 }
 
-model Topic {
-  id   String @id @default(cuid())
-  name String @unique
+// Document Review Models
+model AppointmentDocument {
+  id           String  @id @default(uuid())
+  fileName     String
+  originalName String
+  fileSize     Int
+  mimeType     String
+  fileUrl      String
+  storagePath  String
+  description  String? // User description of what this document is (resume, ITR, legal document, etc.)
 
-  webinarPlans WebinarPlan[]
-  classPlans   ClassPlan[]
+  // Review fields
+  reviewStatus DocumentReviewStatus @default(PENDING)
+  reviewNotes  String?
+  reviewedAt   DateTime?
+  reviewedBy   String? // Consultant user ID
+
+  // Relations
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentId String
+
+  // Metadata
+  uploadedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([appointmentId])
+  @@index([reviewStatus])
+}
+
+enum DocumentReviewStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  NEEDS_REVISION
+}
+
+model SlotOfAppointment {
+  id String @id @default(uuid())
+
+  user User[] @relation("SlotOfAppointmentToUser")
+
+  slotStartTimeInUTC DateTime @db.Timestamptz()
+  slotEndTimeInUTC   DateTime @db.Timestamptz()
+  isTentative        Boolean  @default(false)
+
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentId String
+
+  meetingSession MeetingSession?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([appointmentId])
+  @@index([isTentative, appointmentId])
 }
 
-model Newsletter {
-  id    String @id @default(uuid())
-  email String @unique
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model Waitlist {
-  id       String   @id @default(uuid())
-  joinedAt DateTime @default(now())
-
-  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  userId String
-
-  webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  webinarId String?
-
-  class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classId String?
-
-  @@unique([userId, webinarId])
-  @@unique([userId, classId])
-}
-
-////////////////////////////////////////////// MEETINGS ////////////////////////////////////////////////////
+////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////
 
 model MeetingSession {
   id           String   @id @default(cuid())
