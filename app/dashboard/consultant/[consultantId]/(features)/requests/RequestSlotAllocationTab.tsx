@@ -26,6 +26,7 @@ import {
 import { toast } from "@/components/ui/use-toast";
 import { TAppointment } from "@/types/appointment";
 import { DetailedTimeSlotMeta, TimeSlotMeta } from "@/utils/timeSlotsMeta";
+import { calculateRequiredSlots } from "../shared/utils/calendarUtils";
 import { AppointmentsType, RequestStatus, ScheduleType } from "@prisma/client";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -226,11 +227,11 @@ export function RequestSlotAllocationTab({
                 (slot) => slot.slotStartTimeInUTC,
               ) || [],
             status: consultation.requestStatus,
-            requiredSlots: Math.max(
-              1,
-              Math.ceil(
-                (consultation.consultationPlan?.durationInHours || 1) / 0.5,
-              ),
+            requiredSlots: calculateRequiredSlots(
+              "consultation",
+              undefined, // durationInMonths not needed for consultations
+              undefined, // callsPerWeek not needed for consultations
+              consultation.consultationPlan?.durationInHours || 1,
             ),
             durationInHours: consultation.consultationPlan?.durationInHours,
           })),
@@ -258,10 +259,12 @@ export function RequestSlotAllocationTab({
                   ) || [],
               ) || [],
             status: subscription.requestStatus,
-            requiredSlots:
-              (subscription.subscriptionPlan?.callsPerWeek ?? 0) *
-                4 *
-                (subscription.subscriptionPlan?.durationInMonths ?? 0) || 0,
+            requiredSlots: calculateRequiredSlots(
+              "subscription",
+              subscription.subscriptionPlan?.durationInMonths || 1,
+              subscription.subscriptionPlan?.callsPerWeek || 1,
+              subscription.subscriptionPlan?.sessionDurationInHours || 1,
+            ),
             durationInMonths: subscription.subscriptionPlan?.durationInMonths,
             callsPerWeek: subscription.subscriptionPlan?.callsPerWeek,
             sessionDurationInHours:

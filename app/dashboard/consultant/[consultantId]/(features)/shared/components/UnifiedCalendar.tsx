@@ -44,6 +44,7 @@ import { useEventSlotAllocation } from "../hooks/useSlotAllocation";
 import { AllocationConfirmationDialog } from "./AllocationConfirmationDialog";
 // Note: remove unused imports to keep the component lean
 import { useToast } from "@/hooks/use-toast";
+import { SlotCalculationService } from "../utils/slotCalculationService";
 
 /**
  * Small pure helpers for clarity and reuse. These do not cause side effects.
@@ -51,18 +52,10 @@ import { useToast } from "@/hooks/use-toast";
 
 /**
  * Converts session duration in hours to number of 30-minute slots required.
- *
- * @param sessionDurationInHours - Duration in hours (e.g., 1.5, 2, 0.5)
- * @returns Number of 30-minute slots needed
- *
- * @example
- * getSlotsPerCall(1)    // Returns 2 (1 hour = 2 slots)
- * getSlotsPerCall(1.5)  // Returns 3 (1.5 hours = 3 slots)
- * getSlotsPerCall(2)    // Returns 4 (2 hours = 4 slots)
- * getSlotsPerCall(0.5)  // Returns 1 (30 minutes = 1 slot)
+ * @deprecated Use SlotCalculationService.hoursToSlots instead
  */
 function getSlotsPerCall(sessionDurationInHours?: number): number {
-  return Math.ceil((sessionDurationInHours || 1) / 0.5); // 30-min increments
+  return SlotCalculationService.hoursToSlots(sessionDurationInHours || 1);
 }
 
 /**
@@ -632,7 +625,7 @@ function computeClassFooter(params: {
     currentIntervals,
     allowedEnd,
   } = params;
-  const slotsPerSession = Math.ceil((sessionDurationInHours || 1) / 0.5);
+  const slotsPerSession = SlotCalculationService.hoursToSlots(sessionDurationInHours || 1);
 
   // Count completed classes from intervals if available (preferred), else from existing appointments
   let pastCompleted = 0;
@@ -1207,7 +1200,7 @@ export function UnifiedCalendar({
       // For classes, ensure we expand from session starts to the full duration,
       // in case upstream provided only the first block.
       if (eventType === "class") {
-        const slotsPerSession = Math.ceil((sessionDurationInHours || 1) / 0.5);
+        const slotsPerSession = SlotCalculationService.hoursToSlots(sessionDurationInHours || 1);
         const byIso = new Set<string>();
 
         // Derive session starts: sort and pick timestamps that are not 30 min after a previous one
@@ -2288,9 +2281,9 @@ export function UnifiedCalendar({
           </div>
           <div className="text-xs text-muted-foreground">
             {eventType === "consultation"
-              ? `Required: ${durationInHours || 1}h consultation (${Math.ceil((durationInHours || 1) / 0.5)} consecutive slots)`
+              ? `Required: ${durationInHours || 1}h consultation (${SlotCalculationService.hoursToSlots(durationInHours || 1)} consecutive slots)`
               : eventType === "subscription"
-                ? `Required: ${sessionDurationInHours || 1}h per call (${Math.ceil((sessionDurationInHours || 1) / 0.5)} consecutive slots per call)`
+                ? `Required: ${sessionDurationInHours || 1}h per call (${SlotCalculationService.hoursToSlots(sessionDurationInHours || 1)} consecutive slots per call)`
                 : `Required: ${sessionDurationInHours || 1}h per session (2 consecutive slots)`}
           </div>
           {allocationError && (

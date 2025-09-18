@@ -1,4 +1,5 @@
 import { TimeSlot, Appointment } from "./calendarUtils";
+import { ApiErrorHandler, StandardApiResponse } from "./apiErrorHandler";
 
 export interface AllocationRequest {
   isAuto: boolean;
@@ -23,16 +24,12 @@ export interface ValidationResult {
   validSlots: string[];
 }
 
-export interface AllocationResponse {
-  success: boolean;
-  data?: any;
-  error?: string;
+export interface AllocationResponse extends StandardApiResponse {
+  // Extends the standard response format
 }
 
-export interface ValidationResponse {
-  success: boolean;
-  data?: ValidationResult;
-  error?: string;
+export interface ValidationResponse extends StandardApiResponse<ValidationResult> {
+  // Extends the standard response format for validation
 }
 
 /**
@@ -46,57 +43,21 @@ export class AllocationService {
     consultationId: string,
     request: AllocationRequest,
   ): Promise<AllocationResponse> {
-    try {
-      const response = await fetch(
+    // Validate required parameters
+    ApiErrorHandler.validateRequired({ consultationId });
+
+    return ApiErrorHandler.executeApiCall(
+      () => fetch(`/api/events/consultations/${consultationId}/allocate`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      }),
+      ApiErrorHandler.createContext(
+        "Consultation allocation",
         `/api/events/consultations/${consultationId}/allocate`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(request),
-        },
-      );
-
-      let data: any = null;
-      try {
-        data = await response.json();
-      } catch (e) {
-        // Non-JSON response (network hiccup, SSR error, etc.)
-        console.error(
-          "[AllocationService] Non-JSON response during consultation allocation",
-          e,
-        );
-      }
-
-      if (!response.ok) {
-        console.error("[AllocationService] Consultation allocation failed", {
-          consultationId,
-          request,
-          status: response.status,
-          data,
-        });
-        return {
-          success: false,
-          error:
-            data?.error ||
-            (typeof data === "string" ? data : undefined) ||
-            `Failed to allocate consultation slots (HTTP ${response.status})`,
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error allocating consultation slots:", error);
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
+        { consultationId, request },
+      ),
+    );
   }
 
   /**
@@ -106,39 +67,28 @@ export class AllocationService {
     consultationId: string,
     slots: string[],
   ): Promise<ValidationResponse> {
-    try {
-      const response = await fetch(
-        `/api/events/consultations/${consultationId}/validate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ slots }),
-        },
-      );
+    // Validate required parameters
+    ApiErrorHandler.validateRequired({ consultationId });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to validate consultation slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error validating consultation slots:", error);
+    if (!slots || slots.length === 0) {
       return {
         success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
+        error: "No slots provided for validation",
       };
     }
+
+    return ApiErrorHandler.executeApiCall(
+      () => fetch(`/api/events/consultations/${consultationId}/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slots }),
+      }),
+      ApiErrorHandler.createContext(
+        "Consultation slot validation",
+        `/api/events/consultations/${consultationId}/validate`,
+        { consultationId, slots: slots.length },
+      ),
+    );
   }
 
   /**
