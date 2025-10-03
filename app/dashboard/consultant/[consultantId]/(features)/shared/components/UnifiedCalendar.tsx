@@ -150,10 +150,8 @@ function countInProgressSelectedCallsForWeek(
 }
 
 /**
- * Computes the dynamic footer text for subscriptions:
- * - Max calls derived from (weeks between start/end) × callsPerWeek
- * - Past fully elapsed weeks are counted as completed calls
- * - Currently selected consecutive slots add to completed calls
+ * Subscription footer: Clear, action-oriented progress text
+ * Removes confusing "past completed" concept and technical jargon
  */
 function computeSubscriptionFooter(
   params: Readonly<{
@@ -176,24 +174,20 @@ function computeSubscriptionFooter(
   const weeks = countSundayWeeksInclusive(allowedStart, allowedEnd);
   const maxTotalCalls = weeks * callsPerWeek;
   const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
-  const selectedCompleted = Math.floor(selectedSlots.length / slotsPerCall);
+  const scheduled = Math.floor(selectedSlots.length / slotsPerCall);
+  const remaining = maxTotalCalls - scheduled;
 
-  // Fully elapsed weeks (up to prev Saturday) are assumed completed
-  const now = new Date();
-  const prevSaturday = new Date(startOfWeek(now));
-  prevSaturday.setDate(prevSaturday.getDate() - 1);
-  const pastEnd = prevSaturday < allowedEnd ? prevSaturday : allowedEnd;
-  const pastWeeks =
-    pastEnd >= allowedStart
-      ? countSundayWeeksInclusive(allowedStart, pastEnd)
-      : 0;
-  const pastCompleted = pastWeeks * callsPerWeek;
+  const duration = sessionDurationInHours || 1;
+  const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
 
-  const totalCompleted = Math.min(
-    maxTotalCalls,
-    pastCompleted + selectedCompleted,
-  );
-  return `Calls completed: ${totalCompleted}/${maxTotalCalls} (${pastCompleted} past + ${selectedCompleted} selected)`;
+  // Clear, action-oriented text based on progress
+  if (scheduled === 0) {
+    return `📅 Select slots for ${maxTotalCalls} calls (${durationText} each) | Limit: ${callsPerWeek}/week`;
+  } else if (remaining > 0) {
+    return `✅ ${scheduled}/${maxTotalCalls} calls scheduled | ⏳ ${remaining} remaining (${durationText} each) | Limit: ${callsPerWeek}/week`;
+  } else {
+    return `✅ All ${maxTotalCalls} calls scheduled`;
+  }
 }
 
 /** Counts total completed class sessions across all selected slots. */
@@ -229,7 +223,10 @@ function countCompletedSelectedClasses(
   return sessions;
 }
 
-/** Footer text for classes: show classes completed vs required. */
+/**
+ * Class footer: Clear progress without technical jargon
+ * Shows user-facing duration (hours) not implementation details (slots)
+ */
 function computeClassFooter(params: {
   selectedSlots: TimeSlot[];
   sessionDurationInHours?: number;
@@ -237,14 +234,28 @@ function computeClassFooter(params: {
 }): string {
   const { selectedSlots, sessionDurationInHours, totalSessions } = params;
   const slotsPerSession = Math.ceil((sessionDurationInHours || 1) / 0.5);
-  const completed = countCompletedSelectedClasses(
+  const scheduled = countCompletedSelectedClasses(
     selectedSlots,
     slotsPerSession,
   );
+
+  const duration = sessionDurationInHours || 1;
+  const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
+
   if (typeof totalSessions === "number" && totalSessions > 0) {
-    return `Classes completed: ${completed}/${totalSessions}`;
+    const remaining = totalSessions - scheduled;
+
+    if (scheduled === 0) {
+      return `📅 Schedule ${totalSessions} sessions (${durationText} each)`;
+    } else if (remaining > 0) {
+      return `✅ ${scheduled} scheduled | ⏳ ${remaining} remaining (${durationText} each)`;
+    } else {
+      return `✅ All ${totalSessions} sessions scheduled`;
+    }
   }
-  return `Classes completed: ${completed}`;
+
+  // Fallback when total not known
+  return `Sessions scheduled: ${scheduled}`;
 }
 
 export interface UnifiedCalendarProps {
