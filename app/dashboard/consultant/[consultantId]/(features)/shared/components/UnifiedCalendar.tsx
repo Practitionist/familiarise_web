@@ -923,7 +923,9 @@ export function UnifiedCalendar({
               ? `Required: ${durationInHours || 1}h consultation (${Math.ceil((durationInHours || 1) / 0.5)} consecutive slots)`
               : eventType === "subscription"
                 ? `Required: ${sessionDurationInHours || 1}h per call (${Math.ceil((sessionDurationInHours || 1) / 0.5)} consecutive slots per call)`
-                : `Required: ${sessionDurationInHours || 1}h per session (2 consecutive slots)`}
+                : eventType === "webinar"
+                  ? `Required: ${durationInHours || 1}h webinar (${Math.ceil((durationInHours || 1) / 0.5)} consecutive slots)`
+                  : `Required: ${sessionDurationInHours || 1}h per class (${Math.ceil((sessionDurationInHours || 1) / 0.5)} consecutive slots)`}
           </div>
           {allocationError && (
             <div className="text-sm text-red-600">{allocationError}</div>

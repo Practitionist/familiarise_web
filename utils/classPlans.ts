@@ -17,6 +17,17 @@ export interface ClassPlanDefaults {
 }
 
 /**
+ * Interface for class plan input data
+ */
+export interface ClassPlan {
+  title?: string;
+  classesPerWeek?: number;
+  callsPerWeek?: number;
+  durationInMonths?: number;
+  sessionDurationInHours?: number;
+}
+
+/**
  * Class plan defaults based on plan type
  */
 const CLASS_PLAN_DEFAULTS: Record<
@@ -45,7 +56,7 @@ const CLASS_PLAN_DEFAULTS: Record<
  * @param plan Class plan object with title field
  * @returns Detected class plan type
  */
-export function detectClassPlanType(plan: any): ClassPlanType {
+export function detectClassPlanType(plan: ClassPlan): ClassPlanType {
   const title: string = (plan?.title || "").toString().toLowerCase();
 
   if (title.includes("comprehens")) return "Comprehensive";
@@ -64,7 +75,7 @@ export function detectClassPlanType(plan: any): ClassPlanType {
  * @param plan Class plan object
  * @returns Complete class plan configuration with defaults applied
  */
-export function getClassPlanDefaults(plan: any): ClassPlanDefaults {
+export function getClassPlanDefaults(plan: ClassPlan): ClassPlanDefaults {
   const type = detectClassPlanType(plan);
 
   // Extract values from plan

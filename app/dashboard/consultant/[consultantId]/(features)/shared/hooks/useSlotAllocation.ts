@@ -533,9 +533,13 @@ function validateEventSlots(
   switch (eventType) {
     case "webinar":
       result.consecutiveSlotsValid = validateConsecutiveSlots(slots);
-      if (!result.consecutiveSlotsValid) {
+
+      // Only enforce error if user has selected all required slots
+      if (slots.length >= limits.minSlots && !result.consecutiveSlotsValid) {
         result.isValid = false;
         result.errors.push("Webinar slots must be consecutive");
+      } else if (!result.consecutiveSlotsValid && slots.length > 1) {
+        result.warnings.push("Select consecutive slots to complete the webinar");
       }
       break;
 

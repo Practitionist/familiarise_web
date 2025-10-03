@@ -1,0 +1,855 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+////////////////////////////////////////// DO NOT EDIT //////////////////////////////////////////
+
+model User {
+  id                   String    @id @default(cuid())
+  name                 String?
+  email                String?   @unique
+  emailVerified        DateTime?
+  image                String?
+  phone                String?   @unique
+  address              String?
+  password             String?
+  passwordResetToken   String?   @unique
+  passwordResetExpires DateTime?
+  onlineStatus         Boolean   @default(false)
+  currentTimezone      String?
+  onboardingCompleted  Boolean?  @default(false)
+  role                 UserRole? @default(CONSULTEE)
+
+  cookiePreferences       CookiePreference?
+  notificationPreferences NotificationPreference?
+  Payment                 Payment[]
+
+  // Relations
+  consultantProfile   ConsultantProfile?
+  consultantProfileId String?            @unique
+  consulteeProfile    ConsulteeProfile?
+  consulteeProfileId  String?            @unique
+  staffProfile        StaffProfile?
+  staffProfileId      String?            @unique
+
+  slotsOfAppointment SlotOfAppointment[] @relation("SlotOfAppointmentToUser")
+  Waitlist           Waitlist[]
+
+  // Feedback and Support
+  feedbacks        Feedback[]
+  supportTickets   SupportTicket[]
+  supportResponses SupportResponse[]
+
+  accounts Account[] // NextAuth Accounts
+  sessions Session[] // NextAuth Sessions
+
+  @@index([consultantProfileId])
+  @@index([consulteeProfileId])
+  @@map("users")
+}
+
+model Feedback {
+  id          String         @id @default(uuid())
+  title       String
+  description String         @db.Text
+  rating      Int?           @db.SmallInt
+  category    String?
+  status      FeedbackStatus @default(PENDING)
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model SupportTicket {
+  id          String              @id @default(uuid())
+  title       String
+  description String              @db.Text
+  priority    SupportPriority     @default(MEDIUM)
+  status      SupportTicketStatus @default(OPEN)
+  category    String?
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
+
+  responses SupportResponse[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model SupportResponse {
+  id      String @id @default(uuid())
+  message String @db.Text
+
+  supportTicket   SupportTicket @relation(fields: [supportTicketId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  supportTicketId String
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([supportTicketId])
+}
+
+enum FeedbackStatus {
+  PENDING
+  ACKNOWLEDGED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  ON_HOLD
+  RESOLVED
+  CLOSED
+}
+
+enum SupportPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model CookiePreference {
+  id        String  @id @default(cuid())
+  user      User    @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId    String  @unique
+  essential Boolean @default(true)
+  analytics Boolean @default(false)
+  marketing Boolean @default(false)
+
+  @@map("cookie_preferences")
+}
+
+model NotificationPreference {
+  id               String  @id @default(cuid())
+  user             User    @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId           String  @unique
+  allNotifications Boolean @default(true)
+  mentions         Boolean @default(false)
+  directMessages   Boolean @default(false)
+  updates          Boolean @default(false)
+
+  @@map("notification_preferences")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verificationtokens")
+}
+
+//////////////////////////////////////////////////// USER PROFILES and SLOTTING MECHANISM ////////////////////////////////////////////////////
+
+model ConsultantProfile {
+  id             String  @id @default(uuid())
+  description    String? @db.Text
+  qualifications String?
+  specialization String?
+  experience     Float?
+  rating         Float   @default(0)
+
+  domain     Domain      @relation(fields: [domainId], references: [id])
+  domainId   String
+  subDomains SubDomain[] @relation("ConsultantProfileToSubDomain")
+  tags       Tag[]       @relation("ConsultantProfileToTag")
+
+  reviews      ConsultantReview[]
+  scheduleType ScheduleType
+
+  slotsOfAvailabilityWeekly SlotOfAvailabilityWeekly[]
+  slotsOfAvailabilityCustom SlotOfAvailabilityCustom[]
+
+  consultationPlans ConsultationPlan[]
+  subscriptionPlans SubscriptionPlan[]
+  webinarPlans      WebinarPlan[]
+  classPlans        ClassPlan[]
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([domainId])
+}
+
+model Domain {
+  id                 String              @id @default(uuid())
+  name               String              @unique
+  subDomains         SubDomain[]
+  tags               Tag[]
+  consultantProfiles ConsultantProfile[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+}
+
+model SubDomain {
+  id                 String              @id @default(uuid())
+  name               String
+  domain             Domain              @relation(fields: [domainId], references: [id])
+  domainId           String
+  consultantProfiles ConsultantProfile[] @relation("ConsultantProfileToSubDomain")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, domainId])
+  @@index([domainId])
+}
+
+model Tag {
+  id                 String              @id @default(uuid())
+  name               String
+  domain             Domain              @relation(fields: [domainId], references: [id])
+  domainId           String
+  consultantProfiles ConsultantProfile[] @relation("ConsultantProfileToTag")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, domainId])
+  @@index([domainId])
+}
+
+model ConsultantReview {
+  id                String  @id @default(uuid())
+  rating            Int     @default(0) @db.SmallInt
+  reviewDescription String? @db.Text
+
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
+
+  consulteeProfile   ConsulteeProfile @relation(fields: [consulteeProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consulteeProfileId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ConsulteeProfile {
+  id                           String            @id @default(uuid())
+  education                    String?
+  occupation                   String?
+  aboutMe                      String?
+  preferredCommunicationMethod ConsultationMode? @default(VIDEO)
+  preferredLanguage            String?
+  specialRequirements          String?
+  interests                    String?
+  goals                        String?
+
+  consultationRequests Consultation[]
+  subscriptionRequests Subscription[]
+  consultantReviews    ConsultantReview[]
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+enum ConsultationMode {
+  VIDEO
+  AUDIO
+  IN_PERSON
+}
+
+model StaffProfile {
+  id               String  @id @default(uuid())
+  department       String?
+  position         String?
+  permissions      Json?
+  responsibilities Json?
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model SlotOfAvailabilityWeekly {
+  id                         String    @id @default(uuid())
+  dayOfWeekforStartTimeInUTC DayOfWeek
+  slotStartTimeInUTC         DateTime  @db.Timestamptz()
+  dayOfWeekforEndTimeInUTC   DayOfWeek
+  slotEndTimeInUTC           DateTime  @db.Timestamptz()
+
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
+}
+
+model SlotOfAvailabilityCustom {
+  id                 String   @id @default(uuid())
+  slotStartTimeInUTC DateTime @db.Timestamptz()
+  slotEndTimeInUTC   DateTime @db.Timestamptz()
+
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
+}
+
+//////////////////////////////////////////////////// PRICING PLANS ////////////////////////////////////////////////////
+
+// 1-1 Consultation
+model ConsultationPlan {
+  id               String   @id @default(cuid())
+  title            String
+  description      String?  @db.Text
+  durationInHours  Float    @default(1)
+  price            Int
+  language         String   @default("English")
+  level            String   @default("Beginner")
+  prerequisites    String?  @default("None")
+  materialProvided String?  @default("None")
+  learningOutcomes String[] @default([])
+
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
+
+  consultations Consultation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Consultation {
+  id                 String           @id @default(uuid())
+  consultationPlan   ConsultationPlan @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultationPlanId String
+
+  requestStatus          RequestStatus    @default(PENDING)
+  requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  requestedById          String
+  requestedAt            DateTime         @default(now())
+  requestNotes           String?
+  directlyBooked         Boolean          @default(false)
+  feedbackFromConsultee  String?
+  feedbackFromConsultant String?
+  rating                 Float?
+
+  appointment Appointment?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SubscriptionPlan {
+  id                     String           @id @default(cuid())
+  title                  String
+  description            String?          @db.Text
+  durationInMonths       Int              @default(1)
+  price                  Int
+  callsPerWeek           Int              @default(1)
+  sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
+  videoMeetings          Int              @default(1)
+  emailSupport           PlanEmailSupport @default(GENERAL)
+  language               String           @default("English")
+  level                  String           @default("Beginner")
+  prerequisites          String?          @default("None")
+  materialProvided       String?          @default("None")
+  learningOutcomes       String[]         @default([])
+
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
+
+  subscriptions Subscription[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Subscription {
+  id        String   @id @default(cuid())
+  startDate DateTime @default(now())
+  endDate   DateTime
+
+  requestStatus          RequestStatus    @default(PENDING)
+  requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  requestedById          String
+  requestedAt            DateTime         @default(now())
+  requestNotes           String?
+  feedbackFromConsultee  String?
+  feedbackFromConsultant String?
+  rating                 Float?
+
+  subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  subscriptionPlanId String
+
+  appointments Appointment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  SCHEDULED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+// Many-Many Webinar
+model WebinarPlan {
+  id                  String   @id @default(cuid())
+  title               String
+  topics              Topic[]  @relation("TopicToWebinarPlan")
+  description         String?  @db.Text
+  price               Int
+  priceCurrency       String   @default("INR")
+  certificateProvided Boolean  @default(false)
+  durationInHours     Float    @default(1) // Duration in hours
+  maxParticipants     Int      @default(100)
+  language            String?  @default("English")
+  level               String?  @default("Beginner")
+  prerequisites       String?  @default("None")
+  materialProvided    String?  @default("None")
+  learningOutcomes    String[] @default([])
+
+  consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
+  consultantProfileId String?
+  webinars            Webinar[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Webinar {
+  id              String        @id @default(cuid())
+  status          WebinarStatus @default(SCHEDULED)
+  feedbackSummary String?
+  waitlist        Waitlist[]
+
+  webinarPlan   WebinarPlan @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarPlanId String
+
+  appointment Appointment?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([webinarPlanId])
+}
+
+enum WebinarStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+// Many-Many Class
+model ClassPlan {
+  id                     String           @id @default(cuid())
+  title                  String
+  description            String           @db.Text
+  topics                 Topic[]          @relation("ClassPlanToTopic")
+  classContents          ClassContent[]
+  price                  Int
+  priceCurrency          String           @default("INR")
+  certificateProvided    Boolean          @default(false)
+  durationInMonths       Int              @default(1) // Duration in months
+  callsPerWeek           Int              @default(1)
+  sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
+  videoMeetings          Int              @default(1)
+  emailSupport           PlanEmailSupport @default(GENERAL)
+  maxParticipants        Int              @default(1)
+  language               String?          @default("English")
+  level                  String?          @default("Beginner")
+  prerequisites          String?          @default("None")
+  materialProvided       String?          @default("None")
+  learningOutcomes       String[]         @default([])
+
+  consultantProfile   ConsultantProfile? @relation(fields: [consultantProfileId], references: [id])
+  consultantProfileId String?
+  classes             Class[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Class {
+  id              String      @id @default(cuid())
+  startDate       DateTime?
+  endDate         DateTime?
+  status          ClassStatus @default(SCHEDULED)
+  waitlist        Waitlist[]
+  recordingUrls   String[]
+  feedbackSummary String?     @db.Text
+
+  classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classPlanId String
+
+  appointments Appointment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([classPlanId])
+}
+
+model ClassContent {
+  id            String  @id @default(cuid())
+  title         String
+  description   String  @db.Text
+  contentType   String?
+  contentUrl    String?
+  order         Int
+  hoursAllotted Float
+
+  classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classPlanId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum ClassStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Topic {
+  id   String @id @default(cuid())
+  name String @unique
+
+  webinarPlans WebinarPlan[] @relation("TopicToWebinarPlan")
+  classPlans   ClassPlan[]   @relation("ClassPlanToTopic")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Newsletter {
+  id    String @id @default(uuid())
+  email String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Waitlist {
+  id       String   @id @default(uuid())
+  joinedAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId String
+
+  webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarId String?
+
+  class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classId String?
+
+  @@unique([userId, webinarId])
+  @@unique([userId, classId])
+}
+
+////////////////////////////////////////////// APPOINTMENT ////////////////////////////////////////////////////
+
+// Generic Appointment Model
+model Appointment {
+  id                 String              @id @default(uuid())
+  appointmentType    AppointmentsType
+  slotsOfAppointment SlotOfAppointment[]
+
+  consultation   Consultation? @relation(fields: [consultationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultationId String?       @unique
+
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  subscriptionId String?
+
+  webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  webinarId String?  @unique
+
+  class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  classId String?
+
+  payment   Payment[]
+  documents AppointmentDocument[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum AppointmentsType {
+  CONSULTATION
+  SUBSCRIPTION
+  WEBINAR
+  CLASS
+}
+
+// Document Review Models
+model AppointmentDocument {
+  id           String  @id @default(uuid())
+  fileName     String
+  originalName String
+  fileSize     Int
+  mimeType     String
+  fileUrl      String
+  storagePath  String
+  description  String? // User description of what this document is (resume, ITR, legal document, etc.)
+
+  // Review fields
+  reviewStatus DocumentReviewStatus @default(PENDING)
+  reviewNotes  String?
+  reviewedAt   DateTime?
+  reviewedBy   String? // Consultant user ID
+
+  // Relations
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentId String
+
+  // Metadata
+  uploadedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([appointmentId])
+  @@index([reviewStatus])
+}
+
+enum DocumentReviewStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  NEEDS_REVISION
+}
+
+model SlotOfAppointment {
+  id String @id @default(uuid())
+
+  user User[] @relation("SlotOfAppointmentToUser")
+
+  slotStartTimeInUTC DateTime @db.Timestamptz()
+  slotEndTimeInUTC   DateTime @db.Timestamptz()
+  isTentative        Boolean  @default(false)
+
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentId String
+
+  meetingSession MeetingSession?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([appointmentId])
+  @@index([isTentative, appointmentId])
+}
+
+////////////////////////////////////////////// MEETINGS FOR STREAM ////////////////////////////////////////////////////
+
+model MeetingSession {
+  id           String   @id @default(cuid())
+  streamCallId String   @unique
+  platform     Platform @default(STREAM)
+  passcode     String?
+  hostKeys     String[]
+
+  recordings Recording[]
+
+  slotOfAppointment   SlotOfAppointment @relation(fields: [slotOfAppointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  slotOfAppointmentId String            @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// New model for storing recording details
+model Recording {
+  id                String   @id @default(cuid())
+  title             String
+  recordingUrl      String
+  durationInMinutes Int
+  recordedAt        DateTime
+
+  meetingSession   MeetingSession @relation(fields: [meetingSessionId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  meetingSessionId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([meetingSessionId])
+}
+
+enum Platform {
+  ZOOM
+  GOOGLE_MEET
+  MICROSOFT_TEAMS
+  STREAM
+  CUSTOM
+}
+
+////////////////////////////////////////////// PAYMENT STUFF ////////////////////////////////////////////////////
+
+model Payment {
+  id             String         @id @default(uuid())
+  amount         Int
+  currency       String
+  description    String?
+  receiptUrl     String?
+  paymentMethod  String
+  paymentIntent  String         @unique
+  paymentGateway PaymentGateway
+  paymentStatus  PaymentStatus
+  expiresAt      DateTime? // For tracking payment intent expiration
+
+  user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  userId         String
+  appointment    Appointment?  @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointmentId  String?       @unique
+  discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  discountCodeId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([expiresAt, paymentStatus])
+}
+
+enum PaymentGateway {
+  STRIPE
+  RAZORPAY
+  LEMON_SQUEEZY
+  XFLOW
+  CARD
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+model DiscountCode {
+  id            String       @id @default(uuid())
+  code          String       @unique
+  description   String
+  discountType  DiscountType
+  discountValue Float
+
+  Payment Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  FREE_SHIPPING
+}
+
+//////////////////////////////////////////////////// ENUMS ////////////////////////////////////////////////////
+
+enum PlanDuration {
+  ONE_MONTH
+  THREE_MONTHS
+  SIX_MONTHS
+  TWELVE_MONTHS
+}
+
+enum PlanEmailSupport {
+  GENERAL
+  PRIORITY
+  DEDICATED
+}
+
+enum UserRole {
+  CONSULTANT
+  CONSULTEE
+  ADMIN
+  STAFF
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum ScheduleType {
+  WEEKLY
+  CUSTOM
+}
