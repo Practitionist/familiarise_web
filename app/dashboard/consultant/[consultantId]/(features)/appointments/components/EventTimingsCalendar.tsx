@@ -2,7 +2,6 @@
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -14,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useParams } from "next/navigation";
 import { SafeUnifiedCalendar } from "../../shared/components/SafeUnifiedCalendar";
 import { TAppointment } from "@/types/appointment";
+import { getClassPlanDefaults } from "@/utils/classPlans";
 
 interface EventTimingsCalendarProps {
   isOpen: boolean;
@@ -30,56 +30,6 @@ export function EventTimingsCalendar({
   const { toast } = useToast();
 
   const consultantId = params.consultantId?.toString() || "";
-
-  // Extract event details from appointment
-  const detectClassPlan = (plan: any) => {
-    const title: string = (plan?.title || "").toString().toLowerCase();
-    if (title.includes("comprehens")) return "Comprehensive" as const;
-    if (title.includes("extended")) return "Extended" as const;
-    if (title.includes("basic")) return "Basic" as const;
-    return "Custom" as const;
-  };
-
-  const deriveClassNumbers = (plan: any) => {
-    const type = detectClassPlan(plan);
-    const classesPerWeekFromPlan = plan?.classesPerWeek ?? plan?.callsPerWeek;
-    const durationInMonthsFromPlan = plan?.durationInMonths;
-    const sessionDurationInHours = plan?.sessionDurationInHours ?? 1;
-
-    let classesPerWeek = classesPerWeekFromPlan;
-    let durationInMonths = durationInMonthsFromPlan;
-
-    if (
-      classesPerWeek === undefined ||
-      classesPerWeek === null ||
-      Number.isNaN(Number(classesPerWeek))
-    ) {
-      classesPerWeek =
-        type === "Basic"
-          ? 2
-          : type === "Extended"
-            ? 3
-            : type === "Comprehensive"
-              ? 4
-              : 2;
-    }
-    if (
-      durationInMonths === undefined ||
-      durationInMonths === null ||
-      Number.isNaN(Number(durationInMonths))
-    ) {
-      durationInMonths =
-        type === "Basic"
-          ? 1
-          : type === "Extended"
-            ? 2
-            : type === "Comprehensive"
-              ? 4
-              : 1;
-    }
-
-    return { type, classesPerWeek, durationInMonths, sessionDurationInHours };
-  };
   const getEventDetails = (appointment: TAppointment) => {
     switch (appointment.appointmentType) {
       case "CONSULTATION":
@@ -119,16 +69,16 @@ export function EventTimingsCalendar({
         };
       case "CLASS": {
         const plan = (appointment.class as any)?.classPlan || {};
-        const derived = deriveClassNumbers(plan);
+        const defaults = getClassPlanDefaults(plan);
         return {
           eventType: "class" as const,
           eventId: appointment.class?.id || "",
-          callsPerWeek: derived.classesPerWeek,
-          durationInMonths: derived.durationInMonths,
-          durationInHours: derived.sessionDurationInHours,
+          callsPerWeek: defaults.classesPerWeek,
+          durationInMonths: defaults.durationInMonths,
+          durationInHours: defaults.sessionDurationInHours,
           title: plan?.title || "Class",
           // extra for UI only
-          planType: derived.type,
+          planType: defaults.type,
         } as any;
       }
       default:
@@ -145,68 +95,9 @@ export function EventTimingsCalendar({
 
   const eventDetails = getEventDetails(appointment);
 
-  // Log subscription start/end by calling server validation (read-only) when dialog opens
-  useEffect(() => {
-    if (!isOpen) return;
-    if (appointment.appointmentType !== "SUBSCRIPTION") return;
-    if (!eventDetails.eventId) return;
+  // Removed debug validation logging - production code uses validation directly in calendar
 
-    (async () => {
-      try {
-        const res = await fetch(
-          `/api/events/subscriptions/${eventDetails.eventId}/validate`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ slots: [] }),
-          },
-        );
-        const data = await res.json();
-        const sv = data?.data?.subscriptionValidation;
-        // Console log to verify subscription period used by server validation
-        console.log("[Subscription Validation Period]", {
-          subscriptionId: eventDetails.eventId,
-          startDate: sv?.subscriptionPeriod?.start,
-          endDate: sv?.subscriptionPeriod?.end,
-          maxTotalCalls: sv?.maxTotalCalls,
-        });
-      } catch (error) {
-        // silently ignore
-      }
-    })();
-  }, [isOpen, appointment, eventDetails.eventId]);
-
-  // Log class start/end window for debugging when dialog opens
-  useEffect(() => {
-    if (!isOpen) return;
-    if (appointment.appointmentType !== "CLASS") return;
-
-    const start = (appointment.class as any)?.startDate
-      ? new Date((appointment.class as any).startDate)
-      : undefined;
-    const end = (appointment.class as any)?.endDate
-      ? new Date((appointment.class as any).endDate)
-      : undefined;
-
-    // Safe console output for verification
-    // eslint-disable-next-line no-console
-    console.log("[Class Scheduling Window]", {
-      classId: eventDetails.eventId,
-      planType: (eventDetails as any)?.planType || "Unknown",
-      callsPerWeek: eventDetails.callsPerWeek,
-      durationInMonths: eventDetails.durationInMonths,
-      sessionDurationInHours: eventDetails.durationInHours,
-      startDate: start?.toISOString() ?? null,
-      endDate: end?.toISOString() ?? null,
-    });
-  }, [
-    isOpen,
-    appointment,
-    eventDetails.eventId,
-    eventDetails.callsPerWeek,
-    eventDetails.durationInMonths,
-    eventDetails.durationInHours,
-  ]);
+  // Removed debug logging - production code validates dates server-side
 
   const handleAllocationComplete = () => {
     toast({

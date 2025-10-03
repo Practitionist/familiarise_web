@@ -35,7 +35,35 @@ export interface ValidationResponse {
 }
 
 /**
- * Service class for handling slot allocation and validation API calls
+ * AllocationService - Pure API Client for Event Slot Management
+ *
+ * Handles all HTTP communication for slot allocation, validation,
+ * and related operations. This is a pure API client with no business logic.
+ *
+ * Features:
+ * - Slot allocation for consultations, subscriptions, webinars, classes
+ * - Slot validation with conflict and availability checking
+ * - Consultant data and availability fetching
+ * - Appointment querying
+ * - Consistent error handling and response format
+ *
+ * @example
+ * ```ts
+ * // Allocate slots
+ * const result = await AllocationService.allocateSlots(
+ *   "consultation",
+ *   consultationId,
+ *   slots,
+ *   { isAuto: false }
+ * );
+ *
+ * // Validate slots
+ * const validation = await AllocationService.validateSlots(
+ *   "subscription",
+ *   subscriptionId,
+ *   slots
+ * );
+ * ```
  */
 export class AllocationService {
   /**
@@ -331,10 +359,91 @@ export class AllocationService {
   }
 
   /**
+   * Validates slots for classes
+   */
+  static async validateClassSlots(
+    classId: string,
+    slots: string[],
+  ): Promise<ValidationResponse> {
+    try {
+      const response = await fetch(`/api/events/classes/${classId}/validate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ slots }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || "Failed to validate class slots",
+        };
+      }
+
+      return {
+        success: true,
+        data: data.data,
+      };
+    } catch (error) {
+      console.error("Error validating class slots:", error);
+      return {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
+      };
+    }
+  }
+
+  /**
+   * Validates slots for webinars
+   */
+  static async validateWebinarSlots(
+    webinarId: string,
+    slots: string[],
+  ): Promise<ValidationResponse> {
+    try {
+      const response = await fetch(
+        `/api/events/webinars/${webinarId}/validate`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ slots }),
+        },
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || "Failed to validate webinar slots",
+        };
+      }
+
+      return {
+        success: true,
+        data: data.data,
+      };
+    } catch (error) {
+      console.error("Error validating webinar slots:", error);
+      return {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
+      };
+    }
+  }
+
+  /**
    * Generic validation method that routes to the appropriate service
    */
   static async validateSlots(
-    eventType: "consultation" | "subscription",
+    eventType: "consultation" | "subscription" | "webinar" | "class",
     eventId: string,
     slots: TimeSlot[],
   ): Promise<ValidationResponse> {
@@ -346,6 +455,12 @@ export class AllocationService {
 
       case "subscription":
         return this.validateSubscriptionSlots(eventId, slotStrings);
+
+      case "class":
+        return this.validateClassSlots(eventId, slotStrings);
+
+      case "webinar":
+        return this.validateWebinarSlots(eventId, slotStrings);
 
       default:
         return {
