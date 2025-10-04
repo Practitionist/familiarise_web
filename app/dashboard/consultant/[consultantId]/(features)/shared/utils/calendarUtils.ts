@@ -380,26 +380,38 @@ export function calculateRequiredSlots(
       return Math.ceil(sessionDurationInHours / 0.5); // 30-minute intervals
 
     case "subscription": {
-      // Prefer exact Sunday-boundary week counting when dates are provided
-      if (startDate && endDate) {
-        if (sessionDurationInHours && sessionDurationInHours <= 0) {
-          throw new Error(
-            "Session duration must be a positive number for subscriptions",
+      if (sessionDurationInHours && sessionDurationInHours <= 0) {
+        throw new Error(
+          "Session duration must be a positive number for subscriptions",
+        );
+      }
+
+      const slotsPerCall = Math.ceil((sessionDurationInHours || 1) / 0.5);
+
+      // Validate dates against durationInMonths before using them
+      if (startDate && endDate && durationInMonths) {
+        const weeksFromDates = countSundayWeeksInclusive(startDate, endDate);
+        const expectedWeeks = Math.ceil((durationInMonths || 0) * 4.33);
+
+        // Check if date range roughly matches durationInMonths (±2 weeks tolerance)
+        const weeksDifference = Math.abs(weeksFromDates - expectedWeeks);
+
+        if (weeksDifference <= 2) {
+          // Dates match duration - use actual dates for precision
+          const totalCalls = weeksFromDates * (callsPerWeek || 1);
+          return totalCalls * slotsPerCall;
+        } else {
+          // Dates don't match duration - log warning and use durationInMonths
+          console.warn(
+            `⚠️ Subscription date mismatch detected: ${weeksFromDates} weeks from dates vs ${expectedWeeks} weeks from ${durationInMonths} months. Using durationInMonths for calculation.`
           );
         }
-        // totalWeeks = number of distinct Sunday-start weeks overlapping [startDate, endDate]
-        const totalWeeks = countSundayWeeksInclusive(startDate, endDate);
-        const totalCalls = totalWeeks * (callsPerWeek || 1);
-        // slotsPerCall = number of 30-minute slots per call
-        const slotsPerCall = Math.ceil((sessionDurationInHours || 1) / 0.5);
-        // Return total slots for the entire subscription
-        return totalCalls * slotsPerCall;
       }
-      // Fallback to average weeks per month when dates are not provided
+
+      // Use durationInMonths calculation (either no dates provided or dates don't match)
       const weeksPerMonth = 4.33;
       const totalWeeks = Math.ceil((durationInMonths || 0) * weeksPerMonth);
       const totalCalls = totalWeeks * (callsPerWeek || 1);
-      const slotsPerCall = Math.ceil((sessionDurationInHours || 1) / 0.5);
       return totalCalls * slotsPerCall;
     }
 
@@ -416,14 +428,27 @@ export function calculateRequiredSlots(
 
       const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5);
 
-      // Prefer exact Sunday-boundary week counting when dates are provided
-      if (startDate && endDate) {
-        const totalWeeks = countSundayWeeksInclusive(startDate, endDate);
-        const totalSessions = totalWeeks * (callsPerWeek || 1);
-        return totalSessions * slotsPerSession;
+      // Validate dates against durationInMonths before using them
+      if (startDate && endDate && durationInMonths) {
+        const weeksFromDates = countSundayWeeksInclusive(startDate, endDate);
+        const expectedWeeks = Math.ceil((durationInMonths || 0) * 4.33);
+
+        // Check if date range roughly matches durationInMonths (±2 weeks tolerance)
+        const weeksDifference = Math.abs(weeksFromDates - expectedWeeks);
+
+        if (weeksDifference <= 2) {
+          // Dates match duration - use actual dates for precision
+          const totalSessions = weeksFromDates * (callsPerWeek || 1);
+          return totalSessions * slotsPerSession;
+        } else {
+          // Dates don't match duration - log warning and use durationInMonths
+          console.warn(
+            `⚠️ Class date mismatch detected: ${weeksFromDates} weeks from dates vs ${expectedWeeks} weeks from ${durationInMonths} months. Using durationInMonths for calculation.`
+          );
+        }
       }
 
-      // Fallback to average weeks per month when dates are not provided
+      // Use durationInMonths calculation (either no dates provided or dates don't match)
       const weeksPerMonth = 4.33;
       const totalWeeks = Math.ceil((durationInMonths || 0) * weeksPerMonth);
       const totalSessions = totalWeeks * (callsPerWeek || 1);
