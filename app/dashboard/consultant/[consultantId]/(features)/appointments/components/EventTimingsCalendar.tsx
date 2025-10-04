@@ -1,6 +1,5 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -178,6 +177,7 @@ export function EventTimingsCalendar({
           }
           mode="allocate"
           onAllocationComplete={handleAllocationComplete}
+          onClose={onClose}
           showAllocationButtons={true}
           className="min-h-[500px]"
           // UI guard rails: restrict selection window based on validation period
@@ -204,12 +204,6 @@ export function EventTimingsCalendar({
                 : undefined
           }
         />
-
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-        </div>
       </DialogContent>
     </Dialog>
   );

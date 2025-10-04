@@ -92,7 +92,10 @@ export class SlotCalculationService {
       case "consultation": {
         const duration = config.durationInHours || config.sessionDurationInHours;
         if (!duration || duration <= 0) {
-          throw new Error("Consultation duration must be a positive number");
+          console.warn(
+            "⚠️ Consultation duration missing or invalid. Using default: 1 hour",
+          );
+          return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
         }
         return Math.ceil(duration / 0.5); // 30-minute intervals
       }
@@ -108,11 +111,12 @@ export class SlotCalculationService {
       case "subscription": {
         // Use exact Sunday-boundary week counting when dates are provided
         if (config.startDate && config.endDate) {
-          const sessionDuration = config.sessionDurationInHours;
-          if (sessionDuration && sessionDuration <= 0) {
-            throw new Error(
-              "Session duration must be a positive number for subscriptions",
+          let sessionDuration = config.sessionDurationInHours;
+          if (!sessionDuration || sessionDuration <= 0) {
+            console.warn(
+              "⚠️ Subscription session duration missing or invalid. Using default: 1 hour",
             );
+            sessionDuration = 1; // Default 1 hour
           }
           const totalWeeks = this.countWeeks(config.startDate, config.endDate);
           const totalCalls = totalWeeks * (config.callsPerWeek || 1);

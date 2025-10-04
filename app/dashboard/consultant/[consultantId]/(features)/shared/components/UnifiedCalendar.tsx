@@ -269,6 +269,7 @@ export interface UnifiedCalendarProps {
   mode: "view" | "select" | "allocate";
   onSlotsSelected?: (slots: TimeSlot[]) => void;
   onAllocationComplete?: (result: any) => void;
+  onClose?: () => void;
   showAllocationButtons?: boolean;
   preSelectedSlots?: TimeSlot[];
   requestedSlots?: TimeSlot[];
@@ -289,6 +290,7 @@ export function UnifiedCalendar({
   mode = "view",
   onSlotsSelected,
   onAllocationComplete,
+  onClose,
   showAllocationButtons = false,
   preSelectedSlots = [],
   requestedSlots = [],
@@ -301,6 +303,7 @@ export function UnifiedCalendar({
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [view, setView] = useState<"week" | "month">("week");
   const [browserTimezone, setBrowserTimezone] = useState("UTC");
+  const [configWarning, setConfigWarning] = useState<string | null>(null);
 
   // Initialize timezone
   useEffect(() => {
@@ -357,18 +360,41 @@ export function UnifiedCalendar({
   });
 
   // Initialize pre-selected slots
+  // Note: setSelectedSlots is stable (from useState), intentionally not in deps
   useEffect(() => {
     if (preSelectedSlots.length > 0) {
       setSelectedSlots(preSelectedSlots);
     }
-  }, [preSelectedSlots, setSelectedSlots]);
+  }, [preSelectedSlots]);
 
   // Call onSlotsSelected when selection changes
+  // Note: onSlotsSelected intentionally not in deps to avoid infinite loops from parent re-renders
   useEffect(() => {
     if (mode === "select" && onSlotsSelected) {
       onSlotsSelected(selectedSlots);
     }
-  }, [selectedSlots, mode, onSlotsSelected]);
+  }, [selectedSlots, mode]);
+
+  // Set warning banner if duration configuration is missing
+  useEffect(() => {
+    if (eventType === "consultation" || eventType === "webinar") {
+      if (!durationInHours || durationInHours <= 0) {
+        setConfigWarning(
+          `${eventType === "consultation" ? "Consultation" : "Webinar"} duration not configured. Using 1-hour default.`,
+        );
+      } else {
+        setConfigWarning(null);
+      }
+    } else if (eventType === "subscription" || eventType === "class") {
+      if (!sessionDurationInHours || sessionDurationInHours <= 0) {
+        setConfigWarning(
+          `${eventType === "subscription" ? "Session" : "Class"} duration not configured. Using 1-hour default.`,
+        );
+      } else {
+        setConfigWarning(null);
+      }
+    }
+  }, [eventType, durationInHours, sessionDurationInHours]);
 
   // Week view dates
   const weekDates = useMemo(() => {
@@ -714,6 +740,21 @@ export function UnifiedCalendar({
 
   return (
     <div className={`flex flex-col gap-4 ${className}`}>
+      {/* Warning Banner */}
+      {configWarning && (
+        <div className="rounded-md bg-yellow-50 border border-yellow-200 px-4 py-3">
+          <div className="flex items-start">
+            <span className="text-yellow-600 mr-2">⚠️</span>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-yellow-800">
+                Using Default Value
+              </p>
+              <p className="text-sm text-yellow-700">{configWarning}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex justify-between items-center gap-4">
         <div className="flex gap-2">
@@ -767,34 +808,7 @@ export function UnifiedCalendar({
           </Button>
         </div>
 
-        <div className="w-20"></div>
-      </div>
-
-      {/* Allocation buttons */}
-      {showAllocationButtons && mode === "allocate" && (
-        <div className="flex gap-2 flex-wrap">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => autoAllocate(availableSlots)}
-            disabled={isAllocating}
-          >
-            <Zap className="h-4 w-4 mr-2" />
-            Auto Allocate
-          </Button>
-
-          {requestedSlots.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => preAllocate(requestedSlots)}
-              disabled={isAllocating}
-            >
-              <Clock className="h-4 w-4 mr-2" />
-              Use Requested Times
-            </Button>
-          )}
-
+        {showAllocationButtons && mode === "allocate" ? (
           <Button
             variant="outline"
             size="sm"
@@ -804,8 +818,10 @@ export function UnifiedCalendar({
             <RotateCcw className="h-4 w-4 mr-2" />
             Clear Selection
           </Button>
-        </div>
-      )}
+        ) : (
+          <div className="w-20"></div>
+        )}
+      </div>
 
       {/* Calendar View */}
       {view === "week" ? (
@@ -834,7 +850,7 @@ export function UnifiedCalendar({
 
           {/* Week grid */}
           <div className="flex-1 overflow-y-auto scrollbar-thin min-h-0">
-            {INTERVALS.map((interval, i) => (
+            {INTERVALS.map((interval) => (
               <div
                 key={`interval-row-${interval.hour}-${interval.minute}`}
                 className="grid grid-cols-8 gap-0.5 md:gap-1"
@@ -935,20 +951,55 @@ export function UnifiedCalendar({
         <div className="text-sm text-muted-foreground">
           Timezone: {browserTimezone}
         </div>
-
-        {mode === "allocate" && (
-          <div className="flex gap-2">
-            <Button
-              onClick={() => manualAllocate()}
-              disabled={isAllocating}
-              size="sm"
-            >
-              <Users className="h-4 w-4 mr-2" />
-              {isAllocating ? "Allocating..." : "Allocate Selected"}
-            </Button>
-          </div>
-        )}
       </div>
+
+      {/* Allocation Buttons - Bottom */}
+      {showAllocationButtons && mode === "allocate" && (
+        <div className="flex justify-end gap-2 mt-2">
+          {onClose && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onClose}
+              disabled={isAllocating}
+            >
+              Cancel
+            </Button>
+          )}
+
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => autoAllocate(availableSlots)}
+            disabled={isAllocating}
+          >
+            <Zap className="h-4 w-4 mr-2" />
+            Auto Allocate
+          </Button>
+
+          {requestedSlots.length > 0 && (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => preAllocate(requestedSlots)}
+              disabled={isAllocating}
+            >
+              <Clock className="h-4 w-4 mr-2" />
+              Use Requested Times
+            </Button>
+          )}
+
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => manualAllocate()}
+            disabled={isAllocating}
+          >
+            <Users className="h-4 w-4 mr-2" />
+            {isAllocating ? "Allocating..." : "Allocate Manual Slots"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

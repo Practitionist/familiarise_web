@@ -368,7 +368,7 @@ export function calculateRequiredSlots(
     case "consultation":
       // For consultations, calculate based on session duration
       if (!sessionDurationInHours || sessionDurationInHours <= 0) {
-        throw new Error("Consultation duration must be a positive number");
+        return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
       }
       return Math.ceil(sessionDurationInHours / 0.5); // 30-minute intervals
 
@@ -717,8 +717,8 @@ export function validateDayBasedConsecutiveSlots(slots: TimeSlot[]): boolean {
 }
 
 /**
- * NEW: Calculates call progress for subscriptions
- * Returns a string showing progress of calls completed vs total calls needed
+ * Calculates call progress for subscriptions
+ * Returns a clean, organized string showing progress with visual hierarchy
  */
 export function calculateCallProgress(
   slots: TimeSlot[],
@@ -729,11 +729,11 @@ export function calculateCallProgress(
     return "No slots selected";
   }
 
-  const slotsPerCall = Math.ceil((sessionDurationInHours || 1) / 0.5); // 30-minute intervals
+  const slotsPerCall = Math.ceil((sessionDurationInHours || 1) / 0.5);
   const completedCalls = Math.floor(slots.length / slotsPerCall);
   const incompleteCallSlots = slots.length % slotsPerCall;
 
-  // Group by day to show daily progress
+  // Group by day
   const slotsByDay = new Map<string, TimeSlot[]>();
   slots.forEach((slot) => {
     const dayKey = slot.startTime.toDateString();
@@ -743,32 +743,38 @@ export function calculateCallProgress(
     slotsByDay.get(dayKey)!.push(slot);
   });
 
-  const daysWithSlots = Array.from(slotsByDay.entries()).filter(
-    ([_, daySlots]) => daySlots.length > 0,
+  const incompleteDays = Array.from(slotsByDay.entries()).filter(
+    ([_, daySlots]) => daySlots.length > 0 && daySlots.length < slotsPerCall,
   );
 
-  let progressText = `${completedCalls} call${completedCalls !== 1 ? "s" : ""} completed`;
+  // Build clean, multi-line progress text
+  const lines: string[] = [];
 
+  // Line 1: Main progress
   if (maxTotalCalls) {
-    progressText += ` of ${maxTotalCalls} total`;
-  }
-
-  if (incompleteCallSlots > 0) {
-    progressText += `, ${incompleteCallSlots} slot${incompleteCallSlots !== 1 ? "s" : ""} remaining for next call`;
-  }
-
-  if (daysWithSlots.length > 0) {
-    const incompleteDays = daysWithSlots.filter(
-      ([_, daySlots]) => daySlots.length > 0 && daySlots.length < slotsPerCall,
+    lines.push(`✅ ${completedCalls}/${maxTotalCalls} calls scheduled`);
+  } else {
+    lines.push(
+      `✅ ${completedCalls} call${completedCalls !== 1 ? "s" : ""} scheduled`,
     );
-
-    if (incompleteDays.length > 0) {
-      const incompleteDay = incompleteDays[0][0];
-      const incompleteDaySlots = incompleteDays[0][1];
-      const needed = slotsPerCall - incompleteDaySlots.length;
-      progressText += ` | Call on ${incompleteDay} needs ${needed} more consecutive slots`;
-    }
   }
 
-  return progressText;
+  // Line 2: Incomplete call warning (if applicable)
+  if (incompleteCallSlots > 0 && incompleteDays.length > 0) {
+    const [incompleteDay, incompleteDaySlots] = incompleteDays[0];
+    const needed = slotsPerCall - incompleteDaySlots.length;
+    const date = new Date(incompleteDay).toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    const duration = sessionDurationInHours || 1;
+    const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
+
+    lines.push(
+      `⚠️ ${date}: Add ${needed} more slot${needed !== 1 ? "s" : ""} to complete ${durationText} call`,
+    );
+  }
+
+  return lines.join(" | ");
 }
