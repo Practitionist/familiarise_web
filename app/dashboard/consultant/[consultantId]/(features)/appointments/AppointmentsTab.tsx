@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { useRouter } from "next/navigation";
-import { Clock, Users } from "lucide-react";
+import { ChevronDown, ChevronUp, Clock, Users } from "lucide-react";
 import { AppointmentsTabProps } from "../../types";
 import { TAppointment } from "@/types/appointment";
 import {
@@ -42,6 +42,21 @@ export function AppointmentsTab({
   const { toast } = useToast();
   const [selectedAppointment, setSelectedAppointment] =
     useState<TAppointment | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  const COLLAPSE_THRESHOLD = 5; // Show only 5 items initially
+
+  const toggleGroup = (groupKey: string) => {
+    setExpandedGroups((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(groupKey)) {
+        newSet.delete(groupKey);
+      } else {
+        newSet.add(groupKey);
+      }
+      return newSet;
+    });
+  };
 
   // Helper to get consultant ID from appointment
   const getConsultantIdFromAppointment = (
@@ -136,7 +151,7 @@ export function AppointmentsTab({
               >
                 {/* Group Header */}
                 {isRecurring && (
-                  <div className="bg-gray-50 p-3 sm:p-4 border-b">
+                  <div className="bg-gray-200 p-3 sm:p-4 border-b border-gray-300">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-3 sm:space-x-4 min-w-0">
                         <Avatar>
@@ -210,138 +225,179 @@ export function AppointmentsTab({
 
                 {/* Appointments List */}
                 <ul className="divide-y">
-                  {groupAppointments.map((appointment) => {
-                    const status = getAppointmentStatus(appointment);
-                    const isJoinable = status === "Meeting in 5 min";
-                    const joinButtonStyle = isJoinable
-                      ? "bg-black text-white hover:bg-gray-800"
-                      : "bg-gray-400 text-white cursor-not-allowed";
-
-                    // Check if this is a one-off event (consultation or webinar)
-                    const isOneOffEvent =
-                      !isRecurring &&
-                      (appointment.appointmentType === "CONSULTATION" ||
-                        appointment.appointmentType === "WEBINAR");
-
-                    const containerClasses = isOneOffEvent
-                      ? "flex items-center justify-between p-4 bg-gray-100 hover:bg-gray-150 border border-gray-200"
-                      : "flex items-center justify-between p-4 hover:bg-gray-50";
+                  {(() => {
+                    const isExpanded = expandedGroups.has(groupKey);
+                    const shouldCollapse =
+                      groupAppointments.length > COLLAPSE_THRESHOLD;
+                    const visibleAppointments =
+                      shouldCollapse && !isExpanded
+                        ? groupAppointments.slice(0, COLLAPSE_THRESHOLD)
+                        : groupAppointments;
+                    const hiddenCount =
+                      groupAppointments.length - COLLAPSE_THRESHOLD;
 
                     return (
-                      <li key={appointment.id} className={containerClasses}>
-                        <div className="flex items-center justify-between w-full">
-                          {/* Left: Avatar and User info */}
-                          <div className="flex items-center space-x-3 min-w-0">
-                            {!isRecurring && (
-                              <Avatar className="flex-shrink-0">
-                                <AvatarImage
-                                  alt={getConsumeeName(appointment)}
-                                  src={getConsumeeImage(appointment)}
-                                />
-                                <AvatarFallback>
-                                  {getConsumeeName(appointment)
-                                    .split(" ")
-                                    .map((n: string) => n[0])
-                                    .join("")}
-                                </AvatarFallback>
-                              </Avatar>
-                            )}
-                            <div className="min-w-0">
-                              {!isRecurring && (
+                      <>
+                        {visibleAppointments.map((appointment) => {
+                          const status = getAppointmentStatus(appointment);
+                          const isJoinable = status === "Meeting in 5 min";
+                          const joinButtonStyle = isJoinable
+                            ? "bg-black text-white hover:bg-gray-800"
+                            : "bg-gray-400 text-white cursor-not-allowed";
+
+                          // Check if this is a one-off event (consultation or webinar)
+                          const isOneOffEvent =
+                            !isRecurring &&
+                            (appointment.appointmentType === "CONSULTATION" ||
+                              appointment.appointmentType === "WEBINAR");
+
+                          const containerClasses = isOneOffEvent
+                            ? "flex items-center justify-between p-4 bg-gray-200 hover:bg-gray-250 border border-gray-300"
+                            : "flex items-center justify-between p-4 hover:bg-gray-100";
+
+                          return (
+                            <li key={appointment.id} className={containerClasses}>
+                              <div className="flex items-center justify-between w-full">
+                                {/* Left: Avatar and User info */}
+                                <div className="flex items-center space-x-3 min-w-0">
+                                  {!isRecurring && (
+                                    <Avatar className="flex-shrink-0">
+                                      <AvatarImage
+                                        alt={getConsumeeName(appointment)}
+                                        src={getConsumeeImage(appointment)}
+                                      />
+                                      <AvatarFallback>
+                                        {getConsumeeName(appointment)
+                                          .split(" ")
+                                          .map((n: string) => n[0])
+                                          .join("")}
+                                      </AvatarFallback>
+                                    </Avatar>
+                                  )}
+                                  <div className="min-w-0">
+                                    {!isRecurring && (
+                                      <>
+                                        <h3 className="font-semibold text-gray-800">
+                                          {getConsumeeName(appointment)}
+                                        </h3>
+                                        <p className="text-sm text-gray-600">
+                                          {getAppointmentTypeAndPlan(appointment)}
+                                        </p>
+                                      </>
+                                    )}
+                                    <div className="text-sm text-gray-500">
+                                      Starts:{" "}
+                                      {(() => {
+                                        const startTime = getStartTime(appointment);
+                                        return startTime
+                                          ? formatAppointmentTime(
+                                              startTime.toISOString(),
+                                            )
+                                          : "Time not set";
+                                      })()}
+                                    </div>
+                                  </div>
+
+                                  {/* Management buttons right after user info */}
+                                  <div className="flex items-center gap-2 ml-4">
+                                    {!isRecurring &&
+                                      canManageAppointmentTimings(appointment) && (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-8 text-xs px-3"
+                                          onClick={() =>
+                                            setSelectedAppointment(appointment)
+                                          }
+                                        >
+                                          <Clock className="w-3 h-3 mr-1" />
+                                          Timings
+                                        </Button>
+                                      )}
+                                    {!isRecurring &&
+                                      supportsParticipantManagement(appointment) && (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-8 text-xs px-3"
+                                          onClick={() =>
+                                            router.push(
+                                              getParticipantManagementUrl(
+                                                appointment,
+                                                getConsultantIdFromAppointment(
+                                                  appointment,
+                                                ),
+                                              ),
+                                            )
+                                          }
+                                        >
+                                          <Users className="w-3 h-3 mr-1" />
+                                          Participants
+                                        </Button>
+                                      )}
+                                  </div>
+                                </div>
+
+                                {/* Right side: Status and Join button */}
+                                <div className="flex items-center gap-3 flex-shrink-0">
+                                  <Badge
+                                    variant="secondary"
+                                    className={getStyleFromBadgeData(status)}
+                                  >
+                                    {status}
+                                  </Badge>
+                                  {status !== "Completed" && (
+                                    <Button
+                                      variant="default"
+                                      size="sm"
+                                      className={`${joinButtonStyle} h-8 px-4 text-xs`}
+                                      disabled={
+                                        process.env.NODE_ENV === "production"
+                                          ? !isJoinable
+                                          : false
+                                      }
+                                      onClick={() => handleJoinMeeting(appointment)}
+                                    >
+                                      {process.env.NODE_ENV === "production"
+                                        ? isJoinable
+                                          ? "Join meet"
+                                          : "Not available"
+                                        : "Join (Dev)"}
+                                    </Button>
+                                  )}
+                                </div>
+                              </div>
+                            </li>
+                          );
+                        })}
+
+                        {/* Expand/Collapse Button */}
+                        {shouldCollapse && (
+                          <li className="p-3 bg-gray-200 border-t border-gray-300">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="w-full text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-300"
+                              onClick={() => toggleGroup(groupKey)}
+                            >
+                              {isExpanded ? (
                                 <>
-                                  <h3 className="font-semibold text-gray-800">
-                                    {getConsumeeName(appointment)}
-                                  </h3>
-                                  <p className="text-sm text-gray-600">
-                                    {getAppointmentTypeAndPlan(appointment)}
-                                  </p>
+                                  <ChevronUp className="w-4 h-4 mr-2" />
+                                  Show Less
+                                </>
+                              ) : (
+                                <>
+                                  <ChevronDown className="w-4 h-4 mr-2" />
+                                  Show {hiddenCount} More Session
+                                  {hiddenCount !== 1 ? "s" : ""}
                                 </>
                               )}
-                              <div className="text-sm text-gray-500">
-                                Starts:{" "}
-                                {(() => {
-                                  const startTime = getStartTime(appointment);
-                                  return startTime
-                                    ? formatAppointmentTime(
-                                        startTime.toISOString(),
-                                      )
-                                    : "Time not set";
-                                })()}
-                              </div>
-                            </div>
-
-                            {/* Management buttons right after user info */}
-                            <div className="flex items-center gap-2 ml-4">
-                              {!isRecurring &&
-                                canManageAppointmentTimings(appointment) && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 text-xs px-3"
-                                    onClick={() =>
-                                      setSelectedAppointment(appointment)
-                                    }
-                                  >
-                                    <Clock className="w-3 h-3 mr-1" />
-                                    Timings
-                                  </Button>
-                                )}
-                              {!isRecurring &&
-                                supportsParticipantManagement(appointment) && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 text-xs px-3"
-                                    onClick={() =>
-                                      router.push(
-                                        getParticipantManagementUrl(
-                                          appointment,
-                                          getConsultantIdFromAppointment(
-                                            appointment,
-                                          ),
-                                        ),
-                                      )
-                                    }
-                                  >
-                                    <Users className="w-3 h-3 mr-1" />
-                                    Participants
-                                  </Button>
-                                )}
-                            </div>
-                          </div>
-
-                          {/* Right side: Status and Join button */}
-                          <div className="flex items-center gap-3 flex-shrink-0">
-                            <Badge
-                              variant="secondary"
-                              className={getStyleFromBadgeData(status)}
-                            >
-                              {status}
-                            </Badge>
-                            {status !== "Completed" && (
-                              <Button
-                                variant="default"
-                                size="sm"
-                                className={`${joinButtonStyle} h-8 px-4 text-xs`}
-                                disabled={
-                                  process.env.NODE_ENV === "production"
-                                    ? !isJoinable
-                                    : false
-                                }
-                                onClick={() => handleJoinMeeting(appointment)}
-                              >
-                                {process.env.NODE_ENV === "production"
-                                  ? isJoinable
-                                    ? "Join meet"
-                                    : "Not available"
-                                  : "Join (Dev)"}
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      </li>
+                            </Button>
+                          </li>
+                        )}
+                      </>
                     );
-                  })}
+                  })()}
                 </ul>
               </div>
             );
