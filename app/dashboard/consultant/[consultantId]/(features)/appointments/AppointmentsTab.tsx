@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronUp, Clock, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Users } from "lucide-react";
 import { AppointmentsTabProps } from "../../types";
 import { TAppointment } from "@/types/appointment";
 import {
@@ -42,19 +42,30 @@ export function AppointmentsTab({
   const { toast } = useToast();
   const [selectedAppointment, setSelectedAppointment] =
     useState<TAppointment | null>(null);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [groupPagination, setGroupPagination] = useState<
+    Map<string, { currentPage: number; showAll: boolean }>
+  >(new Map());
 
-  const COLLAPSE_THRESHOLD = 5; // Show only 5 items initially
+  const PAGE_SIZE = 5; // Show 5 items per page
 
-  const toggleGroup = (groupKey: string) => {
-    setExpandedGroups((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(groupKey)) {
-        newSet.delete(groupKey);
-      } else {
-        newSet.add(groupKey);
-      }
-      return newSet;
+  const getPaginationState = (groupKey: string) => {
+    return groupPagination.get(groupKey) || { currentPage: 1, showAll: false };
+  };
+
+  const setPage = (groupKey: string, page: number) => {
+    setGroupPagination((prev) => {
+      const newMap = new Map(prev);
+      newMap.set(groupKey, { currentPage: page, showAll: false });
+      return newMap;
+    });
+  };
+
+  const toggleShowAll = (groupKey: string) => {
+    setGroupPagination((prev) => {
+      const newMap = new Map(prev);
+      const current = prev.get(groupKey) || { currentPage: 1, showAll: false };
+      newMap.set(groupKey, { ...current, showAll: !current.showAll });
+      return newMap;
     });
   };
 
@@ -226,15 +237,22 @@ export function AppointmentsTab({
                 {/* Appointments List */}
                 <ul className="divide-y">
                   {(() => {
-                    const isExpanded = expandedGroups.has(groupKey);
-                    const shouldCollapse =
-                      groupAppointments.length > COLLAPSE_THRESHOLD;
-                    const visibleAppointments =
-                      shouldCollapse && !isExpanded
-                        ? groupAppointments.slice(0, COLLAPSE_THRESHOLD)
-                        : groupAppointments;
-                    const hiddenCount =
-                      groupAppointments.length - COLLAPSE_THRESHOLD;
+                    const paginationState = getPaginationState(groupKey);
+                    const shouldPaginate = groupAppointments.length > PAGE_SIZE;
+                    const totalPages = Math.ceil(
+                      groupAppointments.length / PAGE_SIZE,
+                    );
+
+                    let visibleAppointments = groupAppointments;
+                    if (shouldPaginate && !paginationState.showAll) {
+                      const startIndex =
+                        (paginationState.currentPage - 1) * PAGE_SIZE;
+                      const endIndex = startIndex + PAGE_SIZE;
+                      visibleAppointments = groupAppointments.slice(
+                        startIndex,
+                        endIndex,
+                      );
+                    }
 
                     return (
                       <>
@@ -371,28 +389,55 @@ export function AppointmentsTab({
                           );
                         })}
 
-                        {/* Expand/Collapse Button */}
-                        {shouldCollapse && (
+                        {/* Pagination Controls */}
+                        {shouldPaginate && (
                           <li className="p-3 bg-gray-200 border-t border-gray-300">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="w-full text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-300"
-                              onClick={() => toggleGroup(groupKey)}
-                            >
-                              {isExpanded ? (
+                            <div className="flex justify-end gap-2">
+                              {!paginationState.showAll && (
                                 <>
-                                  <ChevronUp className="w-4 h-4 mr-2" />
-                                  Show Less
-                                </>
-                              ) : (
-                                <>
-                                  <ChevronDown className="w-4 h-4 mr-2" />
-                                  Show {hiddenCount} More Session
-                                  {hiddenCount !== 1 ? "s" : ""}
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-xs"
+                                    onClick={() =>
+                                      setPage(
+                                        groupKey,
+                                        paginationState.currentPage - 1,
+                                      )
+                                    }
+                                    disabled={paginationState.currentPage === 1}
+                                  >
+                                    <ChevronLeft className="w-4 h-4 mr-1" />
+                                    Previous
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-xs"
+                                    onClick={() =>
+                                      setPage(
+                                        groupKey,
+                                        paginationState.currentPage + 1,
+                                      )
+                                    }
+                                    disabled={
+                                      paginationState.currentPage === totalPages
+                                    }
+                                  >
+                                    Next
+                                    <ChevronRight className="w-4 h-4 ml-1" />
+                                  </Button>
                                 </>
                               )}
-                            </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-xs"
+                                onClick={() => toggleShowAll(groupKey)}
+                              >
+                                {paginationState.showAll ? "Show Less" : "Show All"}
+                              </Button>
+                            </div>
                           </li>
                         )}
                       </>
