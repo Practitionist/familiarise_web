@@ -470,9 +470,26 @@ export function UnifiedCalendar({
         }
       }
 
-      // Allow selection even if booked or not available; server will validate conflicts
-      // Still block past intervals for UX sanity
-      if (status.isInPast) return;
+      // Block selection of unavailable, booked, or past slots
+      if (status.isInPast) {
+        toast({
+          variant: "destructive",
+          title: "Cannot select past slot",
+          description: "This time slot is in the past and cannot be selected.",
+        });
+        return;
+      }
+
+      if (!status.isAvailable || status.isBookedForDisplay) {
+        toast({
+          variant: "destructive",
+          title: "Slot unavailable",
+          description: status.isBookedForDisplay
+            ? "This time slot is already booked."
+            : "This time slot is not available for booking.",
+        });
+        return;
+      }
 
       const slot: TimeSlot = {
         startTime: new Date(status.intervalStartUTCString),
