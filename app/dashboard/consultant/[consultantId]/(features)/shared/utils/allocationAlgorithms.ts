@@ -200,12 +200,13 @@ export class AllocationAlgorithms {
         options.sessionDurationInHours,
       );
 
-      // console.log("🤖 Auto-allocation started:", {
-      // eventType: options.eventType,
-      // requiredSlots,
-      // availableSlots: availableSlots.length,
-      // preferences,
-      // });
+      console.log("🤖 Auto-allocation started:", {
+        eventType: options.eventType,
+        requiredSlots,
+        availableSlots: availableSlots.length,
+        options,
+        preferences,
+      });
 
       let selectedSlots: TimeSlot[] = [];
       let strategy = "";
@@ -296,11 +297,11 @@ export class AllocationAlgorithms {
         };
       }
 
-      // console.log("✅ Auto-allocation successful:", {
-      //   strategy,
-      //   slotsAllocated: selectedSlots.length,
-      //   selectedTimes: selectedSlots.map((s) => s.startTime.toISOString()),
-      // });
+      console.log("✅ Auto-allocation successful:", {
+        strategy,
+        slotsAllocated: selectedSlots.length,
+        selectedTimes: selectedSlots.map((s) => s.startTime.toISOString()),
+      });
 
       return {
         success: true,

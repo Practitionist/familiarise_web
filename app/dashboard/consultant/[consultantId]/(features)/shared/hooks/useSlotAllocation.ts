@@ -1911,12 +1911,22 @@ export function useEventSlotAllocation(
         } else {
           const errorMessage = result.error || "Auto allocation failed";
           setAllocationError(errorMessage);
+          toast({
+            title: "Auto Allocation Failed",
+            description: errorMessage,
+            variant: "destructive",
+          });
           onError?.(errorMessage);
         }
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Auto allocation failed";
         setAllocationError(errorMessage);
+        toast({
+          title: "Error",
+          description: errorMessage,
+          variant: "destructive",
+        });
         onError?.(errorMessage);
       } finally {
         setIsAllocating(false);
