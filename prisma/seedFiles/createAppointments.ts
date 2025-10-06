@@ -236,9 +236,9 @@ const createSubscriptionAppointment = (
         weekStartDate.getTime() + dayOffset * 24 * 60 * 60 * 1000,
       );
 
-      // Set time to business hours (9 AM - 5 PM)
+      // Set time to business hours (9 AM - 5 PM) in UTC
       const hour = 9 + (callIndex % 8); // 9 AM to 5 PM
-      callDate.setHours(hour, 0, 0, 0);
+      callDate.setUTCHours(hour, 0, 0, 0);
 
       const slotStart = new Date(callDate);
       const slotEnd = new Date(callDate.getTime() + 60 * 60 * 1000); // 1 hour session
@@ -366,6 +366,12 @@ const createClassAppointment = async (
         const slotStart = new Date(
           startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000,
         );
+
+        // Set class sessions to business hours (9 AM - 6 PM) in UTC
+        const businessHours = [9, 10, 11, 14, 15, 16, 17];
+        const businessHour = faker.helpers.arrayElement(businessHours);
+        slotStart.setUTCHours(businessHour, 0, 0, 0);
+
         const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
 
         return {
@@ -458,6 +464,39 @@ async function createAppointmentBatch(
       const defaultStatus = getAppointmentStatus(i, isPastAppointment);
       const numSlots = getNumSlots(appointmentType);
 
+      // Extract the consultant ID from the slot to ensure data integrity
+      // This ensures appointments use the correct consultant's plans
+      const slotConsultantId = slotData.slot.consultantProfileId;
+
+      // Filter plans to only include those belonging to the slot's consultant
+      // This prevents appointments from being linked to the wrong consultant's plans
+      const consultantConsultationPlans = consultationPlans.filter(
+        (p) => p.consultantProfileId === slotConsultantId,
+      );
+      const consultantSubscriptionPlans = subscriptionPlans.filter(
+        (p) => p.consultantProfileId === slotConsultantId,
+      );
+      const consultantWebinarPlans = webinarPlans.filter(
+        (p) => p.consultantProfileId === slotConsultantId,
+      );
+      const consultantClassPlans = classPlans.filter(
+        (p) => p.consultantProfileId === slotConsultantId,
+      );
+
+      // Skip if consultant has no plans for this appointment type
+      if (appointmentType === AppointmentsType.CONSULTATION && consultantConsultationPlans.length === 0) {
+        continue;
+      }
+      if (appointmentType === AppointmentsType.SUBSCRIPTION && consultantSubscriptionPlans.length === 0) {
+        continue;
+      }
+      if (appointmentType === AppointmentsType.WEBINAR && consultantWebinarPlans.length === 0) {
+        continue;
+      }
+      if (appointmentType === AppointmentsType.CLASS && consultantClassPlans.length === 0) {
+        continue;
+      }
+
       // Extract just the time pattern (hours and minutes) from the slot
       const slotTime = slotData.slot;
       const startHours = slotTime.slotStartTimeInUTC.getUTCHours();
@@ -487,7 +526,7 @@ async function createAppointmentBatch(
         case AppointmentsType.CONSULTATION:
           appointmentData = createConsultationAppointment(
             consultee,
-            consultationPlans,
+            consultantConsultationPlans,
             defaultStatus,
             isPastAppointment,
             actualStartTime,
@@ -498,7 +537,7 @@ async function createAppointmentBatch(
         case AppointmentsType.SUBSCRIPTION:
           appointmentData = createSubscriptionAppointment(
             consultee,
-            subscriptionPlans,
+            consultantSubscriptionPlans,
             defaultStatus,
             isPastAppointment,
             startDate,
@@ -510,7 +549,7 @@ async function createAppointmentBatch(
         case AppointmentsType.WEBINAR:
           appointmentData = await createWebinarAppointment(
             consultee,
-            webinarPlans,
+            consultantWebinarPlans,
             consultees,
             isPastAppointment,
             actualStartTime,
@@ -521,7 +560,7 @@ async function createAppointmentBatch(
         case AppointmentsType.CLASS:
           appointmentData = await createClassAppointment(
             consultee,
-            classPlans,
+            consultantClassPlans,
             consultees,
             isPastAppointment,
             startDate,
