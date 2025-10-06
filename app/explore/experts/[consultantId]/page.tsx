@@ -199,7 +199,7 @@ export default function ExpertProfile(
   }, [selectedSlot, consultantDetails, params.consultantId, toast]);
 
   const handleSubscriptionBooking = useCallback(
-    async (option: { title: string; price: number; duration: string }) => {
+    async (option: { title: string; price: number; duration: string; durationInMonths?: number }) => {
       if (!consultantDetails) {
         toast({
           title: "Consultant details not found",
@@ -210,7 +210,7 @@ export default function ExpertProfile(
 
       // Get the active subscription plan
       const activePlan = consultantDetails.subscriptionPlans.find(
-        (plan) => plan.durationInMonths === parseInt(option.duration),
+        (plan) => plan.durationInMonths === option.durationInMonths,
       );
 
       if (!activePlan) {

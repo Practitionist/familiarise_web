@@ -86,7 +86,7 @@ export default function PricingToggle({
       (opt) =>
         opt.title.toLowerCase().replace(" ", "-") === activeConsultationOption,
     );
-    return option ? parseInt(option.duration.split(" ")[0], 10) : 1;
+    return option?.durationInHours ?? 1;
   }, [activeConsultationOption, consultationOptions]);
 
   // Break down slots by selected duration using the utility function
@@ -291,7 +291,7 @@ export default function PricingToggle({
               <TabsList className="inline-flex p-1 bg-gray-800/30 backdrop-blur-sm rounded-xl border border-gray-700/30 shadow-md">
                 {consultationOptions.map((option) => (
                   <TabsTrigger
-                    key={option.title}
+                    key={option.durationInHours}
                     value={option.title.toLowerCase().replace(" ", "-")}
                     className={`${
                       activeConsultationOption ===
@@ -307,7 +307,7 @@ export default function PricingToggle({
               <div className="grid grid-cols-1 gap-6">
                 {consultationOptions.map((option) => (
                   <motion.div
-                    key={option.title}
+                    key={option.durationInHours}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{
                       opacity:
@@ -578,7 +578,7 @@ export default function PricingToggle({
               <TabsList className="inline-flex p-1 bg-gray-800/30 backdrop-blur-sm rounded-xl border border-gray-700/30 shadow-md">
                 {subscriptionOptions.map((option) => (
                   <TabsTrigger
-                    key={option.title}
+                    key={option.durationInMonths}
                     value={option.title.toLowerCase().replace(" ", "-")}
                     className={`${
                       activeSubscriptionOption ===
@@ -594,7 +594,7 @@ export default function PricingToggle({
               <div className="grid grid-cols-1 gap-6">
                 {subscriptionOptions.map((option) => (
                   <motion.div
-                    key={option.title}
+                    key={option.durationInMonths}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{
                       opacity:

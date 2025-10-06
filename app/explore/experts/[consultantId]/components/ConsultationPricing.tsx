@@ -8,30 +8,12 @@ import { PricingOption } from "../defaults";
 
 // Utility function to map duration hours to labels
 const getDurationLabel = (durationInHours: number): string => {
-  switch (durationInHours) {
-    case 1:
-      return "Basic";
-    case 2:
-      return "Extended";
-    case 4:
-      return "Comprehensive";
-    default:
-      return `${durationInHours} Hour${durationInHours > 1 ? "s" : ""}`;
-  }
+  return `${durationInHours} Hour${durationInHours > 1 ? "s" : ""}`;
 };
 
 // Utility function to map subscription duration months to labels
 const getSubscriptionDurationLabel = (durationInMonths: number): string => {
-  switch (durationInMonths) {
-    case 1:
-      return "Basic";
-    case 3:
-      return "Extended";
-    case 6:
-      return "Comprehensive";
-    default:
-      return `${durationInMonths} Month${durationInMonths > 1 ? "s" : ""}`;
-  }
+  return `${durationInMonths} Month${durationInMonths > 1 ? "s" : ""}`;
 };
 
 interface ConsultationPricingProps {
@@ -103,6 +85,7 @@ export function ConsultationPricing({
           description: `${plan.durationInHours} hour consultation`,
           price: plan.price,
           duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`,
+          durationInHours: plan.durationInHours,
           features: features,
         };
       } else if (type === "subscription" && "durationInMonths" in plan) {
@@ -114,6 +97,7 @@ export function ConsultationPricing({
           description: `${plan.durationInMonths} month subscription`,
           price: plan.price,
           duration: `${plan.durationInMonths}`,
+          durationInMonths: plan.durationInMonths,
           features: [
             `${plan.callsPerWeek} call${plan.callsPerWeek > 1 ? "s" : ""} per week`,
             `${plan.videoMeetings} video meeting${plan.videoMeetings > 1 ? "s" : ""}`,

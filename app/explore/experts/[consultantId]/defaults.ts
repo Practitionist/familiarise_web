@@ -3,6 +3,8 @@ export interface PricingOption {
   description: string;
   price: number;
   duration: string;
+  durationInHours?: number; // For consultation plans
+  durationInMonths?: number; // For subscription plans
   features?: string[];
 }
 
