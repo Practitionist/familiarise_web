@@ -1,0 +1,824 @@
+Perfect! Let me create a **practical, executable testing guide** with specific Supabase MCP and Playwright MCP commands.
+
+---
+
+# **🤖 PRACTICAL BOOKING SYSTEM TESTING GUIDE**
+## **Using Supabase MCP + Playwright MCP**
+
+---
+
+## **PART 1: Setup & Data Discovery**
+
+### **Step 1: Connect to Database & Find Test Consultant**
+
+**Supabase MCP Query:**
+```sql
+-- Find a consultant with availability who has pending requests
+SELECT 
+  cp.id as consultant_profile_id,
+  u.id as user_id,
+  u.name,
+  u.email,
+  cp.scheduleType,
+  COUNT(DISTINCT sw.id) as weekly_slots_count,
+  COUNT(DISTINCT sc.id) as custom_slots_count,
+  COUNT(DISTINCT c.id) as pending_consultations,
+  COUNT(DISTINCT s.id) as pending_subscriptions
+FROM "ConsultantProfile" cp
+JOIN users u ON cp."userId" = u.id
+LEFT JOIN "SlotOfAvailabilityWeekly" sw ON sw."consultantProfileId" = cp.id
+LEFT JOIN "SlotOfAvailabilityCustom" sc ON sc."consultantProfileId" = cp.id
+LEFT JOIN "ConsultationPlan" cplan ON cplan."consultantProfileId" = cp.id
+LEFT JOIN "Consultation" c ON c."consultationPlanId" = cplan.id AND c.requestStatus = 'PENDING'
+LEFT JOIN "SubscriptionPlan" splan ON splan."consultantProfileId" = cp.id
+LEFT JOIN "Subscription" s ON s."subscriptionPlanId" = splan.id AND s.requestStatus = 'PENDING'
+GROUP BY cp.id, u.id, u.name, u.email, cp.scheduleType
+HAVING COUNT(DISTINCT sw.id) > 0 OR COUNT(DISTINCT sc.id) > 0
+LIMIT 5;
+```
+
+**Save the output:**
+```
+consultant_profile_id = "clxyz123..."
+user_id = "abc456..."
+name = "Dr. Sarah Johnson"
+```
+
+---
+
+### **Step 2: Examine Consultant's Availability**
+
+**Supabase MCP Query:**
+```sql
+-- Get weekly availability slots
+SELECT 
+  id,
+  "dayOfWeekforStartTimeInUTC" as day_of_week,
+  TO_CHAR("slotStartTimeInUTC", 'HH24:MI') as start_time,
+  TO_CHAR("slotEndTimeInUTC", 'HH24:MI') as end_time,
+  "slotStartTimeInUTC" as raw_start,
+  "slotEndTimeInUTC" as raw_end
+FROM "SlotOfAvailabilityWeekly"
+WHERE "consultantProfileId" = '[INSERT_ID_FROM_STEP_1]'
+ORDER BY 
+  CASE day_of_week
+    WHEN 'MONDAY' THEN 1
+    WHEN 'TUESDAY' THEN 2
+    WHEN 'WEDNESDAY' THEN 3
+    WHEN 'THURSDAY' THEN 4
+    WHEN 'FRIDAY' THEN 5
+    WHEN 'SATURDAY' THEN 6
+    WHEN 'SUNDAY' THEN 7
+  END,
+  "slotStartTimeInUTC";
+```
+
+**Example Output:**
+```
+| day_of_week | start_time | end_time | raw_start              | raw_end                |
+|-------------|------------|----------|------------------------|------------------------|
+| MONDAY      | 10:00      | 12:00    | 2024-01-01 10:00:00+00 | 2024-01-01 12:00:00+00 |
+| MONDAY      | 14:00      | 16:00    | 2024-01-01 14:00:00+00 | 2024-01-01 16:00:00+00 |
+| WEDNESDAY   | 09:00      | 11:00    | 2024-01-03 09:00:00+00 | 2024-01-03 11:00:00+00 |
+| FRIDAY      | 13:00      | 17:00    | 2024-01-05 13:00:00+00 | 2024-01-05 17:00:00+00 |
+```
+
+**Document this** - you'll verify these show correctly in the UI.
+
+---
+
+### **Step 3: Check Existing Appointments**
+
+**Supabase MCP Query:**
+```sql
+-- Get all booked slots for this consultant
+SELECT 
+  a.id as appointment_id,
+  a.appointmentType,
+  sa.id as slot_id,
+  sa.slotStartTimeInUTC,
+  sa.slotEndTimeInUTC,
+  sa.isTentative,
+  TO_CHAR(sa.slotStartTimeInUTC, 'YYYY-MM-DD') as booking_date,
+  TO_CHAR(sa.slotStartTimeInUTC, 'HH24:MI') as booking_time,
+  -- Get participant info
+  consee.name as consultee_name,
+  COALESCE(
+    cons.requestStatus::text,
+    subs.requestStatus::text,
+    cls.status::text,
+    web.status::text
+  ) as status
+FROM "Appointment" a
+JOIN "SlotOfAppointment" sa ON sa."appointmentId" = a.id
+JOIN "_SlotOfAppointmentToUser" su ON su."A" = sa.id
+JOIN users u ON su."B" = u.id
+LEFT JOIN "Consultation" cons ON a."consultationId" = cons.id
+LEFT JOIN "ConsulteeProfile" cp_consee ON cons."requestedById" = cp_consee.id
+LEFT JOIN users consee ON cp_consee."userId" = consee.id
+LEFT JOIN "Subscription" subs ON a."subscriptionId" = subs.id
+LEFT JOIN "Class" cls ON a."classId" = cls.id
+LEFT JOIN "Webinar" web ON a."webinarId" = web.id
+WHERE u."consultantProfileId" = '[INSERT_CONSULTANT_PROFILE_ID]'
+  AND sa.slotStartTimeInUTC > NOW()
+ORDER BY sa.slotStartTimeInUTC
+LIMIT 20;
+```
+
+**Save this data** - you'll verify these slots show as "Booked" in the calendar.
+
+---
+
+## **PART 2: Navigate to Calendar & Verify Display**
+
+### **Step 4: Login to Application**
+
+**Playwright MCP Commands:**
+```javascript
+// Navigate to login page
+await page.goto('http://localhost:3000/auth/login');
+
+// Fill login form (adjust selectors based on actual form)
+await page.fill('input[name="email"]', '[CONSULTANT_EMAIL_FROM_DB]');
+await page.fill('input[name="password"]', '[PASSWORD]'); // You'll need test credentials
+await page.click('button[type="submit"]');
+
+// Wait for dashboard to load
+await page.waitForURL('**/dashboard/**');
+await page.waitForLoadState('networkidle');
+
+// Take screenshot to confirm login
+await page.screenshot({ path: 'test-screenshots/01-logged-in.png' });
+```
+
+---
+
+### **Step 5: Navigate to Appointments Tab**
+
+**Playwright MCP Commands:**
+```javascript
+// Navigate to consultant dashboard appointments
+await page.goto(`http://localhost:3000/dashboard/consultant/${CONSULTANT_PROFILE_ID}/appointments`);
+await page.waitForLoadState('networkidle');
+
+// Wait for calendar to render
+await page.waitForSelector('[data-testid="calendar-view"]', { timeout: 10000 }).catch(() => {
+  // If no test ID, use alternative selector
+  return page.waitForSelector('.calendar, [class*="calendar"]', { timeout: 10000 });
+});
+
+// Take screenshot
+await page.screenshot({ path: 'test-screenshots/02-appointments-page.png' });
+```
+
+---
+
+### **Step 6: Verify Availability Slots Display**
+
+**Playwright MCP Commands:**
+```javascript
+// Switch to week view (if not already)
+const weekButton = page.locator('button:has-text("Week")');
+if (await weekButton.isVisible()) {
+  await weekButton.click();
+  await page.waitForTimeout(500); // Wait for view change animation
+}
+
+// For each availability slot from database (Step 2), verify it's visible
+// Example: Monday 10:00 - Find the cell
+const mondayAvailabilitySlot = page.locator('[data-day="Monday"][data-time="10:00"]');
+// Or try alternative selectors
+const availabilityIndicator = page.locator('.slot-cell:has-text("Available")');
+
+// Count available slots
+const availableCount = await availabilityIndicator.count();
+console.log(`Found ${availableCount} available slots in UI`);
+
+// Compare with database count
+// Expected: Should match the number of 30-min intervals in your availability
+
+// Take screenshot highlighting available slots
+await page.screenshot({ path: 'test-screenshots/03-available-slots.png' });
+
+// Get all visible slot elements and their text
+const slots = await page.locator('[class*="slot"]').all();
+const slotData = [];
+for (const slot of slots) {
+  const text = await slot.textContent();
+  const dataAttrs = await slot.evaluate(el => ({
+    date: el.getAttribute('data-date'),
+    time: el.getAttribute('data-time'),
+    status: el.getAttribute('data-status') || el.className
+  }));
+  slotData.push({ text, ...dataAttrs });
+}
+console.log('All slots:', JSON.stringify(slotData, null, 2));
+```
+
+---
+
+### **Step 7: Verify Booked Slots Display**
+
+**Playwright MCP Commands:**
+```javascript
+// Find booked slots
+const bookedSlots = page.locator('.slot-cell:has-text("Booked"), [data-status="booked"]');
+const bookedCount = await bookedSlots.count();
+console.log(`Found ${bookedCount} booked slots in UI`);
+
+// For each booked slot from database (Step 3), verify it's shown as booked
+// Example: If DB shows booking on 2025-10-13 at 14:00
+const specificBookedSlot = page.locator(`[data-date="2025-10-13"][data-time="14:00"]`);
+
+// Check if it has "Booked" status
+const slotStatus = await specificBookedSlot.getAttribute('data-status');
+const slotText = await specificBookedSlot.textContent();
+console.log(`Slot status: ${slotStatus}, Text: ${slotText}`);
+
+// Hover over booked slot to see tooltip
+await specificBookedSlot.hover();
+await page.waitForTimeout(500);
+
+// Capture tooltip (if visible)
+const tooltip = page.locator('[role="tooltip"], .tooltip, [class*="popover"]');
+if (await tooltip.isVisible()) {
+  const tooltipText = await tooltip.textContent();
+  console.log(`Tooltip: ${tooltipText}`);
+  
+  // Verify tooltip contains participant name from DB
+  // Expected: Should show consultee name from Step 3
+}
+
+await page.screenshot({ path: 'test-screenshots/04-booked-slots.png' });
+```
+
+---
+
+## **PART 3: Test Auto-Allocation Algorithm**
+
+### **Step 8: Find Pending Request**
+
+**Supabase MCP Query:**
+```sql
+-- Get a pending consultation request
+SELECT 
+  c.id as consultation_id,
+  cplan.id as plan_id,
+  cplan.title,
+  cplan.durationInHours,
+  c.requestStatus,
+  consee.name as requested_by,
+  c.requestedAt
+FROM "Consultation" c
+JOIN "ConsultationPlan" cplan ON c."consultationPlanId" = cplan.id
+JOIN "ConsulteeProfile" cp ON c."requestedById" = cp.id
+JOIN users consee ON cp."userId" = consee.id
+WHERE cplan."consultantProfileId" = '[CONSULTANT_PROFILE_ID]'
+  AND c.requestStatus = 'PENDING'
+  AND c.id NOT IN (SELECT "consultationId" FROM "Appointment" WHERE "consultationId" IS NOT NULL)
+ORDER BY c.requestedAt DESC
+LIMIT 1;
+```
+
+**If no pending requests exist, create one:**
+```sql
+-- Create a test consultation request
+INSERT INTO "Consultation" (id, "consultationPlanId", "requestedById", requestStatus, requestedAt)
+VALUES (
+  gen_random_uuid(),
+  '[CONSULTATION_PLAN_ID]', -- Use an existing plan ID
+  '[CONSULTEE_PROFILE_ID]',  -- Use an existing consultee
+  'PENDING',
+  NOW()
+);
+```
+
+---
+
+### **Step 9: Navigate to Requests Tab & Auto-Allocate**
+
+**Playwright MCP Commands:**
+```javascript
+// Navigate to requests/approvals tab
+await page.goto(`http://localhost:3000/dashboard/consultant/${CONSULTANT_PROFILE_ID}/requests`);
+await page.waitForLoadState('networkidle');
+
+// Find the consultation request card
+const consultationCard = page.locator(`[data-consultation-id="${CONSULTATION_ID}"]`);
+// Or find by title
+const requestCard = page.locator(`.request-card:has-text("${CONSULTATION_TITLE}")`).first();
+
+await page.screenshot({ path: 'test-screenshots/05-pending-requests.png' });
+
+// Click "Auto Allocate" button
+const autoAllocateBtn = requestCard.locator('button:has-text("Auto Allocate")');
+await autoAllocateBtn.click();
+
+// Wait for allocation to complete (loading state)
+await page.waitForTimeout(2000); // Give it time to process
+
+// Check for success toast/notification
+const successMessage = page.locator('.toast, [role="alert"]:has-text("Success")');
+if (await successMessage.isVisible()) {
+  const messageText = await successMessage.textContent();
+  console.log(`Success: ${messageText}`);
+} else {
+  // Check for error
+  const errorMessage = page.locator('.toast:has-text("Error"), [role="alert"]:has-text("Error")');
+  if (await errorMessage.isVisible()) {
+    const errorText = await errorMessage.textContent();
+    console.log(`ERROR: ${errorText}`);
+    await page.screenshot({ path: 'test-screenshots/06-auto-allocate-error.png' });
+  }
+}
+
+await page.screenshot({ path: 'test-screenshots/06-after-auto-allocate.png' });
+```
+
+---
+
+### **Step 10: Verify Auto-Allocation in Database**
+
+**Supabase MCP Query:**
+```sql
+-- Check if appointment was created
+SELECT 
+  a.id as appointment_id,
+  a.appointmentType,
+  a.createdAt,
+  c.requestStatus as consultation_status,
+  COUNT(sa.id) as slot_count,
+  MIN(sa.slotStartTimeInUTC) as first_slot_start,
+  MAX(sa.slotEndTimeInUTC) as last_slot_end,
+  -- Check if all slots are on same day
+  COUNT(DISTINCT DATE(sa.slotStartTimeInUTC)) as unique_dates,
+  -- Check if consecutive (30-min gaps)
+  array_agg(sa.slotStartTimeInUTC ORDER BY sa.slotStartTimeInUTC) as all_start_times,
+  array_agg(sa.slotEndTimeInUTC ORDER BY sa.slotEndTimeInUTC) as all_end_times
+FROM "Appointment" a
+JOIN "Consultation" c ON a."consultationId" = c.id
+JOIN "SlotOfAppointment" sa ON sa."appointmentId" = a.id
+WHERE c.id = '[CONSULTATION_ID_FROM_STEP_8]'
+GROUP BY a.id, a.appointmentType, a.createdAt, c.requestStatus;
+```
+
+**Validate the results:**
+```javascript
+// Expected for 1.5 hour consultation:
+// - slot_count = 3 (three 30-min slots)
+// - unique_dates = 1 (all on same day)
+// - consultation_status = 'SCHEDULED' (status should update)
+// - Time gaps between consecutive slots should be 30 minutes exactly
+
+// If unique_dates > 1: BUG - Slots allocated across multiple days!
+// If slot_count != CEIL(durationInHours * 2): BUG - Wrong number of slots!
+```
+
+---
+
+### **Step 11: Check for Consecutive Slot Violation**
+
+**Supabase MCP Query:**
+```sql
+-- Verify slots are consecutive (30 minutes apart)
+WITH slot_intervals AS (
+  SELECT 
+    sa.slotStartTimeInUTC,
+    sa.slotEndTimeInUTC,
+    LAG(sa.slotEndTimeInUTC) OVER (ORDER BY sa.slotStartTimeInUTC) as previous_end_time,
+    EXTRACT(EPOCH FROM (sa.slotStartTimeInUTC - LAG(sa.slotEndTimeInUTC) OVER (ORDER BY sa.slotStartTimeInUTC))) as gap_seconds
+  FROM "SlotOfAppointment" sa
+  JOIN "Appointment" a ON sa."appointmentId" = a.id
+  WHERE a."consultationId" = '[CONSULTATION_ID]'
+  ORDER BY sa.slotStartTimeInUTC
+)
+SELECT 
+  *,
+  CASE 
+    WHEN gap_seconds IS NULL THEN 'FIRST_SLOT'
+    WHEN gap_seconds <= 1 THEN 'CONSECUTIVE'
+    ELSE 'GAP_DETECTED'
+  END as slot_status
+FROM slot_intervals;
+```
+
+**Expected Output:**
+```
+| slotStartTimeInUTC       | slotEndTimeInUTC         | gap_seconds | slot_status   |
+|--------------------------|--------------------------|-------------|---------------|
+| 2025-10-13 10:00:00+00   | 2025-10-13 10:30:00+00   | NULL        | FIRST_SLOT    |
+| 2025-10-13 10:30:00+00   | 2025-10-13 11:00:00+00   | 0           | CONSECUTIVE   |
+| 2025-10-13 11:00:00+00   | 2025-10-13 11:30:00+00   | 0           | CONSECUTIVE   |
+```
+
+**If you see `GAP_DETECTED`**: ⚠️ **BUG FOUND** - Algorithm allocated non-consecutive slots!
+
+---
+
+## **PART 4: Test Subscription Weekly Limits**
+
+### **Step 12: Create Test Subscription**
+
+**Supabase MCP Query:**
+```sql
+-- Create a 2 calls/week, 1-month subscription
+INSERT INTO "Subscription" (id, "subscriptionPlanId", "requestedById", requestStatus, startDate, endDate, requestedAt)
+VALUES (
+  gen_random_uuid(),
+  '[SUBSCRIPTION_PLAN_ID]', -- Must exist with callsPerWeek=2, durationInMonths=1
+  '[CONSULTEE_PROFILE_ID]',
+  'APPROVED',
+  DATE_TRUNC('week', NOW() + INTERVAL '1 week'), -- Start next Sunday
+  DATE_TRUNC('week', NOW() + INTERVAL '1 week') + INTERVAL '1 month',
+  NOW()
+) RETURNING id, startDate, endDate;
+```
+
+**Calculate expected total calls:**
+```sql
+-- Count weeks between start and end date
+SELECT 
+  id,
+  startDate,
+  endDate,
+  -- Count Sunday-inclusive weeks
+  (DATE_PART('day', endDate - startDate) / 7)::integer + 1 as week_count,
+  -- Expected total calls = weeks × callsPerWeek
+  ((DATE_PART('day', endDate - startDate) / 7)::integer + 1) * 2 as expected_total_calls
+FROM "Subscription"
+WHERE id = '[SUBSCRIPTION_ID]';
+```
+
+---
+
+### **Step 13: Auto-Allocate Subscription**
+
+**Playwright MCP Commands:**
+```javascript
+// Navigate to requests and find subscription
+await page.goto(`http://localhost:3000/dashboard/consultant/${CONSULTANT_PROFILE_ID}/requests`);
+
+// Switch to subscriptions tab
+await page.click('button:has-text("Subscriptions")');
+await page.waitForLoadState('networkidle');
+
+// Find the subscription card
+const subscriptionCard = page.locator(`[data-subscription-id="${SUBSCRIPTION_ID}"]`);
+
+// Click auto-allocate
+await subscriptionCard.locator('button:has-text("Auto Allocate")').click();
+
+// Wait for completion (may take longer for subscriptions)
+await page.waitForTimeout(5000);
+
+// Check result
+const toast = page.locator('[role="alert"]').first();
+const toastText = await toast.textContent();
+console.log(`Allocation result: ${toastText}`);
+
+await page.screenshot({ path: 'test-screenshots/07-subscription-allocated.png' });
+```
+
+---
+
+### **Step 14: Verify Weekly Limit Enforcement**
+
+**Supabase MCP Query:**
+```sql
+-- Check slots per week
+WITH weekly_distribution AS (
+  SELECT 
+    DATE_TRUNC('week', sa.slotStartTimeInUTC) as week_start,
+    DATE(sa.slotStartTimeInUTC) as booking_date,
+    COUNT(DISTINCT DATE(sa.slotStartTimeInUTC)) as unique_days_in_week,
+    COUNT(*) as total_slots,
+    COUNT(*) / 2 as total_calls, -- 2 slots = 1 call (assuming 1-hour sessions)
+    array_agg(DISTINCT TO_CHAR(sa.slotStartTimeInUTC, 'YYYY-MM-DD HH24:MI')) as all_bookings
+  FROM "SlotOfAppointment" sa
+  JOIN "Appointment" a ON sa."appointmentId" = a.id
+  WHERE a."subscriptionId" = '[SUBSCRIPTION_ID]'
+  GROUP BY week_start
+  ORDER BY week_start
+)
+SELECT 
+  week_start,
+  total_calls,
+  unique_days_in_week,
+  all_bookings,
+  CASE 
+    WHEN total_calls > 2 THEN '⚠️ EXCEEDS LIMIT'
+    WHEN unique_days_in_week < total_calls THEN '⚠️ MULTIPLE CALLS SAME DAY'
+    ELSE '✅ VALID'
+  END as validation_status
+FROM weekly_distribution;
+```
+
+**Expected Output:**
+```
+| week_start | total_calls | unique_days | validation_status |
+|------------|-------------|-------------|-------------------|
+| 2025-10-13 | 2           | 2           | ✅ VALID          |
+| 2025-10-20 | 2           | 2           | ✅ VALID          |
+| 2025-10-27 | 2           | 2           | ✅ VALID          |
+| 2025-11-03 | 2           | 2           | ✅ VALID          |
+```
+
+**If you see:**
+- `total_calls > 2`: ⚠️ **BUG** - Weekly limit violated!
+- `unique_days < total_calls`: ⚠️ **BUG** - Multiple calls on same day!
+
+---
+
+## **PART 5: Test Calendar Display Accuracy**
+
+### **Step 15: Navigate to Appointments Calendar View**
+
+**Playwright MCP Commands:**
+```javascript
+// Go to appointments tab
+await page.goto(`http://localhost:3000/dashboard/consultant/${CONSULTANT_PROFILE_ID}/appointments`);
+
+// Click on a specific appointment to see its calendar
+const appointmentRow = page.locator('.appointment-row').first();
+await appointmentRow.click();
+
+// Should open "Manage Timings" modal
+await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
+
+await page.screenshot({ path: 'test-screenshots/08-manage-timings-modal.png' });
+
+// Extract visible calendar data
+const calendarGrid = page.locator('.calendar-grid, [data-testid="calendar"]');
+
+// Get all time slots with their status
+const timeSlots = await page.locator('[class*="slot-cell"]').all();
+const displayedSlots = [];
+
+for (const slot of timeSlots) {
+  const date = await slot.getAttribute('data-date');
+  const time = await slot.getAttribute('data-time');
+  const status = await slot.textContent();
+  const classes = await slot.getAttribute('class');
+  
+  displayedSlots.push({ date, time, status, classes });
+}
+
+console.log('Displayed slots:', JSON.stringify(displayedSlots, null, 2));
+```
+
+---
+
+### **Step 16: Cross-Reference UI with Database**
+
+**Compare the data:**
+```javascript
+// For each slot from database query (Step 3)
+// Check if it appears correctly in displayedSlots array
+
+// Example check:
+const dbSlot = {
+  date: '2025-10-13',
+  time: '14:00',
+  status: 'Booked',
+  appointmentType: 'CONSULTATION'
+};
+
+const uiSlot = displayedSlots.find(s => 
+  s.date === dbSlot.date && s.time === dbSlot.time
+);
+
+if (!uiSlot) {
+  console.log('❌ BUG: Slot exists in DB but not displayed in UI!');
+  console.log('Missing slot:', dbSlot);
+}
+
+if (uiSlot && !uiSlot.status.includes('Booked')) {
+  console.log('❌ BUG: Slot shows as Available but should be Booked!');
+  console.log('DB:', dbSlot);
+  console.log('UI:', uiSlot);
+}
+```
+
+---
+
+## **PART 6: Test Manual Allocation Validation**
+
+### **Step 17: Attempt Invalid Manual Selection (Same-Day Rule)**
+
+**Playwright MCP Commands:**
+```javascript
+// In the manage timings modal, try to manually select non-consecutive slots
+await page.click('[data-date="2025-10-14"][data-time="10:00"]'); // Monday 10:00
+await page.click('[data-date="2025-10-14"][data-time="10:30"]'); // Monday 10:30
+await page.click('[data-date="2025-10-16"][data-time="14:00"]'); // Wednesday 14:00 - DIFFERENT DAY!
+
+// Try to allocate
+await page.click('button:has-text("Allocate Manual Slots")');
+
+// Should see error
+await page.waitForTimeout(1000);
+const errorAlert = page.locator('[role="alert"]:has-text("same day"), .error-message');
+
+if (await errorAlert.isVisible()) {
+  const errorText = await errorAlert.textContent();
+  console.log('✅ Validation working: ' + errorText);
+  await page.screenshot({ path: 'test-screenshots/09-same-day-validation.png' });
+} else {
+  console.log('❌ BUG: No error shown for cross-day allocation!');
+  
+  // Check if it actually created the appointment in DB
+  // Query database to see if invalid appointment was created
+}
+```
+
+**Verify in database:**
+```sql
+-- Check if invalid appointment was created
+SELECT 
+  a.id,
+  COUNT(DISTINCT DATE(sa.slotStartTimeInUTC)) as unique_dates,
+  array_agg(TO_CHAR(sa.slotStartTimeInUTC, 'YYYY-MM-DD HH24:MI')) as slot_times
+FROM "Appointment" a
+JOIN "SlotOfAppointment" sa ON sa."appointmentId" = a.id
+WHERE a."consultationId" = '[CONSULTATION_ID]'
+  AND a.createdAt > NOW() - INTERVAL '5 minutes'
+GROUP BY a.id;
+```
+
+**If `unique_dates > 1`**: ⚠️ **CRITICAL BUG** - Same-day validation bypassed!
+
+---
+
+## **PART 7: Test Conflict Detection**
+
+### **Step 18: Attempt Double Booking**
+
+**Create a conflicting booking attempt:**
+```javascript
+// First, note an existing booked slot from Step 3
+// Example: Monday 10:00-11:00 is already booked
+
+// Try to book overlapping time
+await page.goto(`http://localhost:3000/dashboard/consultant/${CONSULTANT_PROFILE_ID}/requests`);
+
+// Find another pending request
+const anotherRequest = page.locator('.request-card').nth(1);
+await anotherRequest.locator('button:has-text("Manual Allocate")').click();
+
+// Wait for calendar modal
+await page.waitForSelector('[role="dialog"]');
+
+// Try to select the already-booked slot
+await page.click('[data-date="2025-10-14"][data-time="10:00"]');
+
+// Check if slot is disabled/unselectable
+const slotElement = page.locator('[data-date="2025-10-14"][data-time="10:00"]');
+const isDisabled = await slotElement.getAttribute('disabled');
+const classes = await slotElement.getAttribute('class');
+
+if (isDisabled || classes.includes('disabled') || classes.includes('booked')) {
+  console.log('✅ Conflict detection working - slot is disabled');
+} else {
+  console.log('❌ BUG: Booked slot is still selectable!');
+  await page.screenshot({ path: 'test-screenshots/10-conflict-bug.png' });
+}
+```
+
+---
+
+## **PART 8: Generate Test Report**
+
+### **Step 19: Compile Findings**
+
+**Create a structured report:**
+
+```javascript
+// Summary of test results
+const testReport = {
+  timestamp: new Date().toISOString(),
+  consultant: {
+    id: CONSULTANT_PROFILE_ID,
+    name: CONSULTANT_NAME
+  },
+  tests: [
+    {
+      name: "Display Accuracy",
+      status: "PASSED", // or "FAILED"
+      details: {
+        availableSlots: {
+          database: 12,
+          ui: 12,
+          match: true
+        },
+        bookedSlots: {
+          database: 5,
+          ui: 5,
+          match: true
+        }
+      }
+    },
+    {
+      name: "Auto-Allocation (Consultation)",
+      status: "PASSED",
+      details: {
+        expectedSlots: 3,
+        actualSlots: 3,
+        consecutive: true,
+        sameDay: true
+      }
+    },
+    {
+      name: "Weekly Limit (Subscription)",
+      status: "FAILED",
+      bug: {
+        description: "Week 3 has 3 calls instead of max 2",
+        query: "SELECT FROM Subscription WHERE...",
+        screenshot: "test-screenshots/11-weekly-limit-bug.png"
+      }
+    }
+  ]
+};
+
+console.log(JSON.stringify(testReport, null, 2));
+```
+
+---
+
+## **🎯 QUICK TEST CHECKLIST**
+
+Run these in order:
+
+```bash
+# Phase 1: Setup (5 min)
+✅ Step 1: Find test consultant
+✅ Step 2: Get availability data
+✅ Step 3: Get existing bookings
+✅ Step 4: Login with Playwright
+
+# Phase 2: Display Tests (10 min)
+✅ Step 5-7: Verify calendar display
+✅ Step 15-16: Cross-reference UI with DB
+
+# Phase 3: Allocation Tests (15 min)
+✅ Step 8-11: Test consultation auto-allocation
+✅ Step 12-14: Test subscription weekly limits
+
+# Phase 4: Validation Tests (10 min)
+✅ Step 17: Test same-day validation
+✅ Step 18: Test conflict detection
+
+# Phase 5: Reporting (5 min)
+✅ Step 19: Compile findings
+```
+
+---
+
+## **📋 KEY SUPABASE MCP PATTERNS**
+
+```sql
+-- Pattern 1: Find test data
+SELECT ... FROM ... WHERE ... LIMIT 5;
+
+-- Pattern 2: Verify allocation results
+SELECT ... JOIN ... JOIN ... WHERE id = '[JUST_CREATED_ID]';
+
+-- Pattern 3: Check business rule violations
+WITH analysis AS (SELECT ...) 
+SELECT * FROM analysis WHERE [VIOLATION_CONDITION];
+
+-- Pattern 4: Clean up test data (optional)
+DELETE FROM "SlotOfAppointment" WHERE appointmentId IN (
+  SELECT id FROM "Appointment" WHERE createdAt > NOW() - INTERVAL '1 hour'
+);
+```
+
+---
+
+## **🎬 KEY PLAYWRIGHT MCP PATTERNS**
+
+```javascript
+// Pattern 1: Navigate and wait
+await page.goto(url);
+await page.waitForLoadState('networkidle');
+
+// Pattern 2: Find elements (try multiple selectors)
+const element = page.locator('[data-testid="element"]')
+  .or(page.locator('.element-class'))
+  .or(page.locator('button:has-text("Text")'));
+
+// Pattern 3: Extract data
+const data = await page.locator('.item').all();
+for (const item of data) {
+  const text = await item.textContent();
+  // process...
+}
+
+// Pattern 4: Screenshot on error
+if (errorCondition) {
+  await page.screenshot({ path: `error-${Date.now()}.png` });
+}
+```
+
+---
+
+**You now have everything needed to execute a comprehensive test!** Start with Step 1 and work through systematically. 🚀

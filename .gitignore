@@ -15,6 +15,20 @@ cypress/logs
 cypress/screenshots
 cypress/videos
 
+# Playwright
+playwright-report/
+test-results/
+test-screenshots/
+test-run-output.txt
+PLAYWRIGHT_TEST_SUMMARY.md
+
+# Verification Scripts & Reports
+verify-consultants.sh
+verify-consultants-curl.sh
+consultant-verification-report.json
+consultant-verification-curl-report.json
+VERIFICATION_FINDINGS.md
+
 # Prisma
 migrations/
 
