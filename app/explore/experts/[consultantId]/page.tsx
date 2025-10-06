@@ -199,7 +199,12 @@ export default function ExpertProfile(
   }, [selectedSlot, consultantDetails, params.consultantId, toast]);
 
   const handleSubscriptionBooking = useCallback(
-    async (option: { title: string; price: number; duration: string; durationInMonths?: number }) => {
+    async (option: {
+      title: string;
+      price: number;
+      duration: string;
+      durationInMonths?: number;
+    }) => {
       if (!consultantDetails) {
         toast({
           title: "Consultant details not found",

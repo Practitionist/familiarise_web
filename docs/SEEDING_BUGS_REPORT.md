@@ -155,7 +155,7 @@ Availability API query for Oct 7, 2025 (Tuesday):
      result.setFullYear(
        userDate.getFullYear(),
        userDate.getMonth(),
-       userDate.getDate()
+       userDate.getDate(),
      );
      return result;
    }
@@ -238,7 +238,7 @@ model SlotOfAvailabilityWeekly {
 ```typescript
 for (let slot = 0; slot < slotsPerWeek; slot++) {
   const slotDate = new Date(
-    weekStart.getTime() + dayOffset * 24 * 60 * 60 * 1000
+    weekStart.getTime() + dayOffset * 24 * 60 * 60 * 1000,
   );
   const timeSlot = faker.helpers.arrayElement(businessHours);
   slotDate.setHours(timeSlot.hour, timeSlot.minute, 0, 0); // ❌ WRONG
@@ -282,7 +282,7 @@ slotDate.setUTCHours(timeSlot.hour, timeSlot.minute, 0, 0); // ✅ CORRECT
 for (let callIndex = 0; callIndex < callsThisWeek; callIndex++) {
   const dayOffset = (callIndex * 2) % 5;
   const callDate = new Date(
-    weekStartDate.getTime() + dayOffset * 24 * 60 * 60 * 1000
+    weekStartDate.getTime() + dayOffset * 24 * 60 * 60 * 1000,
   );
 
   const hour = 9 + (callIndex % 8); // 9 AM to 5 PM
@@ -330,7 +330,7 @@ const createClassAppointment = async (
   isPastAppointment: boolean,
   startDate: Date, // Has random time like 14:37:22.481
   endDate: Date,
-  numSlots: number
+  numSlots: number,
 ): Promise<Prisma.AppointmentCreateInput> => {
   const limitedSlots = Math.min(numSlots, 4);
 
@@ -339,7 +339,7 @@ const createClassAppointment = async (
     slotsOfAppointment: {
       create: Array.from({ length: limitedSlots }, (_, index) => {
         const slotStart = new Date(
-          startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000
+          startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000,
         ); // Inherits random time from startDate!
         const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
 
@@ -468,7 +468,7 @@ async function createAppointmentBatch(
   webinarPlans: any[],
   classPlans: any[],
   startIndex: number,
-  batchSize: number
+  batchSize: number,
 ): Promise<number> {
   for (
     let i = startIndex;
@@ -482,21 +482,21 @@ async function createAppointmentBatch(
 
     // Filter plans to only this consultant's plans
     const consultantConsultationPlans = consultationPlans.filter(
-      (p) => p.consultantProfileId === slotConsultantId
+      (p) => p.consultantProfileId === slotConsultantId,
     );
     const consultantSubscriptionPlans = subscriptionPlans.filter(
-      (p) => p.consultantProfileId === slotConsultantId
+      (p) => p.consultantProfileId === slotConsultantId,
     );
     const consultantWebinarPlans = webinarPlans.filter(
-      (p) => p.consultantProfileId === slotConsultantId
+      (p) => p.consultantProfileId === slotConsultantId,
     );
     const consultantClassPlans = classPlans.filter(
-      (p) => p.consultantProfileId === slotConsultantId
+      (p) => p.consultantProfileId === slotConsultantId,
     );
 
     // Now randomly select from consultant's own plans
     const selectedPlan = faker.helpers.arrayElement(
-      consultantConsultationPlans
+      consultantConsultationPlans,
     );
   }
 }

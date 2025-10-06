@@ -484,16 +484,28 @@ async function createAppointmentBatch(
       );
 
       // Skip if consultant has no plans for this appointment type
-      if (appointmentType === AppointmentsType.CONSULTATION && consultantConsultationPlans.length === 0) {
+      if (
+        appointmentType === AppointmentsType.CONSULTATION &&
+        consultantConsultationPlans.length === 0
+      ) {
         continue;
       }
-      if (appointmentType === AppointmentsType.SUBSCRIPTION && consultantSubscriptionPlans.length === 0) {
+      if (
+        appointmentType === AppointmentsType.SUBSCRIPTION &&
+        consultantSubscriptionPlans.length === 0
+      ) {
         continue;
       }
-      if (appointmentType === AppointmentsType.WEBINAR && consultantWebinarPlans.length === 0) {
+      if (
+        appointmentType === AppointmentsType.WEBINAR &&
+        consultantWebinarPlans.length === 0
+      ) {
         continue;
       }
-      if (appointmentType === AppointmentsType.CLASS && consultantClassPlans.length === 0) {
+      if (
+        appointmentType === AppointmentsType.CLASS &&
+        consultantClassPlans.length === 0
+      ) {
         continue;
       }
 
