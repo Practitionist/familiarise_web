@@ -61,6 +61,36 @@ function isOutsideAllowedRange(
   return false;
 }
 
+/** Returns true if a date (day-level) is within the allowed scheduling period. */
+function isDateInSchedulingPeriod(
+  date: Date,
+  allowedStart?: Date,
+  allowedEnd?: Date,
+): boolean {
+  if (!allowedStart && !allowedEnd) return false;
+
+  // Compare at day level (ignore time)
+  const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const startOnly = allowedStart
+    ? new Date(
+        allowedStart.getFullYear(),
+        allowedStart.getMonth(),
+        allowedStart.getDate(),
+      )
+    : null;
+  const endOnly = allowedEnd
+    ? new Date(
+        allowedEnd.getFullYear(),
+        allowedEnd.getMonth(),
+        allowedEnd.getDate(),
+      )
+    : null;
+
+  if (startOnly && dateOnly < startOnly) return false;
+  if (endOnly && dateOnly > endOnly) return false;
+  return true;
+}
+
 /** Formats the allowed [start, end] range for user-facing messages. */
 function formatAllowedRange(allowedStart?: Date, allowedEnd?: Date): string {
   const startText = allowedStart
@@ -880,8 +910,18 @@ export function UnifiedCalendar({
             <div className="w-14 md:w-20"></div>
             {weekDates.map((date, index) => {
               const isToday = isSameDay(date, new Date());
+              const isInPeriod = isDateInSchedulingPeriod(
+                date,
+                allowedStart,
+                allowedEnd,
+              );
               return (
-                <div key={DAYS[index]} className="text-center p-1 md:p-2">
+                <div
+                  key={DAYS[index]}
+                  className={`text-center p-1 md:p-2 ${
+                    isInPeriod ? "bg-blue-50 border-x-2 border-blue-200" : ""
+                  }`}
+                >
                   <div
                     className={`font-bold text-xs md:text-base ${
                       isToday ? "text-primary" : ""
