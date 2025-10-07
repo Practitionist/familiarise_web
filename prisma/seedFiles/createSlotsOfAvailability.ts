@@ -33,6 +33,35 @@ function validateSlot(startTime: Date, endTime: Date): boolean {
   return true;
 }
 
+/**
+ * Get a reference date that matches the given day of week
+ *
+ * For weekly slots, we need the date component to match the dayOfWeek field
+ * to ensure the availability API can correctly query and match slots.
+ * Uses a fixed reference week (Jan 6-12, 2025) where dates align with day names.
+ *
+ * @param dayOfWeek - The day of week enum value
+ * @returns A Date object set to that day of week in the reference week
+ */
+function getReferenceDateForDayOfWeek(dayOfWeek: DayOfWeek): Date {
+  // Reference week: Jan 6, 2025 (Monday) through Jan 12, 2025 (Sunday)
+  const referenceWeekStart = new Date(Date.UTC(2025, 0, 6, 0, 0, 0, 0)); // Monday, Jan 6, 2025 00:00:00 UTC
+
+  const daysMap: Record<DayOfWeek, number> = {
+    [DayOfWeek.MONDAY]: 0,
+    [DayOfWeek.TUESDAY]: 1,
+    [DayOfWeek.WEDNESDAY]: 2,
+    [DayOfWeek.THURSDAY]: 3,
+    [DayOfWeek.FRIDAY]: 4,
+    [DayOfWeek.SATURDAY]: 5,
+    [DayOfWeek.SUNDAY]: 6,
+  };
+
+  const date = new Date(referenceWeekStart);
+  date.setUTCDate(date.getUTCDate() + daysMap[dayOfWeek]);
+  return date;
+}
+
 function generateSlotTime(
   existingSlots: Array<{ start: number; end: number }>, // start/end now in 30-min intervals from midnight
 ) {
@@ -129,8 +158,10 @@ export async function createSlotsOfAvailability(
           );
 
           for (const timeSlot of selectedHours) {
-            const slotStartTime = new Date();
-            slotStartTime.setHours(timeSlot.hour, timeSlot.minute, 0, 0);
+            // Use reference date that matches the day of week to ensure date/dayOfWeek consistency
+            const slotStartTime = getReferenceDateForDayOfWeek(dayOfWeek);
+            // Set time in UTC to ensure consistent timezone handling
+            slotStartTime.setUTCHours(timeSlot.hour, timeSlot.minute, 0, 0);
 
             weeklySlots.push({
               consultantProfileId: consultant.consultantProfile.id,
@@ -155,8 +186,10 @@ export async function createSlotsOfAvailability(
             ); // Fewer weekend slots
 
             for (const timeSlot of selectedHours) {
-              const slotStartTime = new Date();
-              slotStartTime.setHours(timeSlot.hour, timeSlot.minute, 0, 0);
+              // Use reference date that matches the day of week to ensure date/dayOfWeek consistency
+              const slotStartTime = getReferenceDateForDayOfWeek(dayOfWeek);
+              // Set time in UTC to ensure consistent timezone handling
+              slotStartTime.setUTCHours(timeSlot.hour, timeSlot.minute, 0, 0);
 
               weeklySlots.push({
                 consultantProfileId: consultant.consultantProfile.id,
@@ -208,7 +241,8 @@ export async function createSlotsOfAvailability(
             );
 
             const timeSlot = faker.helpers.arrayElement(businessHours);
-            slotDate.setHours(timeSlot.hour, timeSlot.minute, 0, 0);
+            // Set time in UTC to ensure consistent timezone handling
+            slotDate.setUTCHours(timeSlot.hour, timeSlot.minute, 0, 0);
 
             if (slotDate > startDate && slotDate < endDate) {
               customSlots.push({
