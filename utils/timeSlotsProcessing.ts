@@ -86,6 +86,22 @@ export function processWeeklySlots(
 ): ProcessedSlot[] {
   const processedSlots: ProcessedSlot[] = [];
 
+  // Defensive: Validate input parameters
+  if (!Array.isArray(weeklySlots)) {
+    console.warn("⚠️ processWeeklySlots: weeklySlots is not an array");
+    return processedSlots;
+  }
+
+  if (!startDate || !endDate || isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+    console.warn("⚠️ processWeeklySlots: invalid startDate or endDate");
+    return processedSlots;
+  }
+
+  if (endDate <= startDate) {
+    console.warn("⚠️ processWeeklySlots: endDate must be after startDate");
+    return processedSlots;
+  }
+
   // Convert start and end dates to target timezone
   const startDateTz = toZonedTime(startDate, timezone);
   const endDateTz = toZonedTime(endDate, timezone);
@@ -96,6 +112,11 @@ export function processWeeklySlots(
     const dayOfWeekEnum = dayMap[currentDayOfWeek];
 
     weeklySlots.forEach((slot) => {
+      // Defensive: Skip slots with invalid data
+      if (!slot || !slot.id || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+        console.warn(`⚠️ processWeeklySlots: skipping slot with missing required fields`);
+        return;
+      }
       if (slot.dayOfWeekforStartTimeInUTC === dayOfWeekEnum) {
         // Extract LOCAL time patterns from the stored weekly slot
         // Convert the stored UTC times to the target timezone to get the local time pattern
@@ -150,8 +171,44 @@ export function processCustomSlots(
   startDate: Date,
   endDate: Date,
 ): ProcessedSlot[] {
+  // Defensive: Validate input parameters
+  if (!Array.isArray(customSlots)) {
+    console.warn("⚠️ processCustomSlots: customSlots is not an array");
+    return [];
+  }
+
+  if (!startDate || !endDate || isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+    console.warn("⚠️ processCustomSlots: invalid startDate or endDate");
+    return [];
+  }
+
+  if (endDate <= startDate) {
+    console.warn("⚠️ processCustomSlots: endDate must be after startDate");
+    return [];
+  }
+
   return customSlots
     .filter((slot) => {
+      // Defensive: Skip slots with invalid data
+      if (!slot || !slot.id || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+        console.warn(`⚠️ processCustomSlots: skipping slot with missing required fields`);
+        return false;
+      }
+
+      // Defensive: Validate dates are valid
+      const start = new Date(slot.slotStartTimeInUTC);
+      const end = new Date(slot.slotEndTimeInUTC);
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        console.warn(`⚠️ processCustomSlots: skipping slot ${slot.id} with invalid date format`);
+        return false;
+      }
+
+      // Defensive: Check slot is not inverted (end <= start, not overnight)
+      if (end <= start) {
+        console.warn(`⚠️ processCustomSlots: skipping slot ${slot.id} with end <= start`);
+        return false;
+      }
+
       // Only include slots that overlap with our date range
       return hasTimeOverlap(
         slot.slotStartTimeInUTC,
@@ -249,17 +306,44 @@ export function getSlotBookingStatus(
   slotEnd: Date,
   appointmentSlots: AppointmentSlot[],
 ): BookingStatus {
+  // Defensive: Validate input parameters
+  if (!slotStart || !slotEnd || isNaN(slotStart.getTime()) || isNaN(slotEnd.getTime())) {
+    console.warn("⚠️ getSlotBookingStatus: invalid slotStart or slotEnd");
+    return BOOKING_STATUS.AVAILABLE;
+  }
+
+  if (slotEnd <= slotStart) {
+    console.warn("⚠️ getSlotBookingStatus: slotEnd must be after slotStart");
+    return BOOKING_STATUS.AVAILABLE;
+  }
+
+  if (!Array.isArray(appointmentSlots)) {
+    console.warn("⚠️ getSlotBookingStatus: appointmentSlots is not an array");
+    return BOOKING_STATUS.AVAILABLE;
+  }
+
   const slotDuration = slotEnd.getTime() - slotStart.getTime();
 
-  // Find all appointments that overlap with this slot
-  const overlappingAppointments = appointmentSlots.filter((apptSlot) =>
-    hasTimeOverlap(
+  // Find all appointments that overlap with this slot (with defensive filtering)
+  const overlappingAppointments = appointmentSlots.filter((apptSlot) => {
+    // Defensive: Skip invalid appointment slots
+    if (!apptSlot || !apptSlot.slotStartTimeInUTC || !apptSlot.slotEndTimeInUTC) {
+      return false;
+    }
+
+    const start = new Date(apptSlot.slotStartTimeInUTC);
+    const end = new Date(apptSlot.slotEndTimeInUTC);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return false;
+    }
+
+    return hasTimeOverlap(
       slotStart,
       slotEnd,
       apptSlot.slotStartTimeInUTC,
       apptSlot.slotEndTimeInUTC,
-    ),
-  );
+    );
+  });
 
   if (overlappingAppointments.length === 0) {
     return BOOKING_STATUS.AVAILABLE;

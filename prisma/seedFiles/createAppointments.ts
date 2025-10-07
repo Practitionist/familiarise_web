@@ -2,6 +2,7 @@ import { faker } from "@faker-js/faker";
 import {
   AppointmentsType,
   ClassStatus,
+  DayOfWeek,
   Platform,
   Prisma,
   RequestStatus,
@@ -192,6 +193,7 @@ const createConsultationAppointment = (
 const createSubscriptionAppointment = (
   consultee: UserWithProfiles,
   subscriptionPlans: any[],
+  consultantWeeklySlots: any[], // Add consultant's weekly availability
   defaultStatus: RequestStatus,
   isPastAppointment: boolean,
   startDate: Date,
@@ -201,61 +203,126 @@ const createSubscriptionAppointment = (
   // Select a random subscription plan
   const selectedPlan = faker.helpers.arrayElement(subscriptionPlans);
 
-  // Calculate realistic number of slots based on plan
+  // Calculate realistic number of slots based on SUBSCRIPTION INSTANCE duration (not plan duration)
   const callsPerWeek = selectedPlan.callsPerWeek;
-  const durationInMonths = selectedPlan.durationInMonths;
-  const totalWeeks = Math.ceil(durationInMonths * 4.33); // Approximate weeks
-  const maxTotalCalls = callsPerWeek * totalWeeks;
+  const subscriptionDurationMs = endDate.getTime() - startDate.getTime();
+  const subscriptionWeeks = Math.ceil(
+    subscriptionDurationMs / (7 * 24 * 60 * 60 * 1000),
+  );
+  const maxTotalCalls = Math.min(
+    callsPerWeek * subscriptionWeeks,
+    numSlots,
+  );
 
-  // Limit slots to realistic number based on plan
-  const realisticSlots = Math.min(numSlots, maxTotalCalls);
+  // Get consultant's available days of week from their weekly slots
+  const availableDaysSet = new Set(
+    consultantWeeklySlots.map((s) => s.dayOfWeekforStartTimeInUTC),
+  );
+  const availableDays = Array.from(availableDaysSet);
 
-  // Create slots distributed across weeks
+  if (availableDays.length === 0) {
+    console.warn(
+      "Consultant has no weekly availability slots. Creating minimal slots.",
+    );
+  }
+
+  // Helper function to convert Date to DayOfWeek enum
+  const getDayOfWeekEnum = (date: Date): DayOfWeek => {
+    const dayMap: Record<number, DayOfWeek> = {
+      0: DayOfWeek.SUNDAY,
+      1: DayOfWeek.MONDAY,
+      2: DayOfWeek.TUESDAY,
+      3: DayOfWeek.WEDNESDAY,
+      4: DayOfWeek.THURSDAY,
+      5: DayOfWeek.FRIDAY,
+      6: DayOfWeek.SATURDAY,
+    };
+    return dayMap[date.getUTCDay()];
+  };
+
+  // Create slots distributed across weeks, respecting consultant's availability
   const slots = [];
-  const weekStart = new Date(startDate);
+  let currentDate = new Date(startDate);
+  let slotsCreated = 0;
 
-  for (
-    let weekIndex = 0;
-    weekIndex < Math.ceil(realisticSlots / callsPerWeek);
-    weekIndex++
-  ) {
-    const weekStartDate = new Date(
-      weekStart.getTime() + weekIndex * 7 * 24 * 60 * 60 * 1000,
-    );
+  // Iterate through the subscription period
+  while (currentDate < endDate && slotsCreated < maxTotalCalls) {
+    const currentDayOfWeek = getDayOfWeekEnum(currentDate);
 
-    // Create 1-3 calls per week based on plan
-    const callsThisWeek = Math.min(
-      callsPerWeek,
-      realisticSlots - weekIndex * callsPerWeek,
-    );
-
-    for (let callIndex = 0; callIndex < callsThisWeek; callIndex++) {
-      // Distribute calls across different days of the week (Mon-Fri)
-      const dayOffset = (callIndex * 2) % 5; // Spread across weekdays
-      const callDate = new Date(
-        weekStartDate.getTime() + dayOffset * 24 * 60 * 60 * 1000,
+    // Only create slots on days consultant works
+    if (availableDays.includes(currentDayOfWeek)) {
+      // Find available time slots for this day
+      const daySlotsForConsultant = consultantWeeklySlots.filter(
+        (s) => s.dayOfWeekforStartTimeInUTC === currentDayOfWeek,
       );
 
-      // Set time to business hours (9 AM - 5 PM) in UTC
-      const hour = 9 + (callIndex % 8); // 9 AM to 5 PM
-      callDate.setUTCHours(hour, 0, 0, 0);
+      if (daySlotsForConsultant.length > 0) {
+        // Pick a random time from consultant's availability
+        const randomSlot = faker.helpers.arrayElement(daySlotsForConsultant);
 
-      const slotStart = new Date(callDate);
-      const slotEnd = new Date(callDate.getTime() + 60 * 60 * 1000); // 1 hour session
+        // Create appointment slot at this time
+        const slotStart = new Date(currentDate);
+        slotStart.setUTCHours(
+          randomSlot.slotStartTimeInUTC.getUTCHours(),
+          randomSlot.slotStartTimeInUTC.getUTCMinutes(),
+          0,
+          0,
+        );
 
-      slots.push({
-        user: {
-          connect: [{ id: consultee.id }],
-        },
-        slotStartTimeInUTC: slotStart,
-        slotEndTimeInUTC: slotEnd,
-        isTentative: defaultStatus === RequestStatus.PENDING,
-        meetingSession: createMeetingSessionData(
-          isPastAppointment &&
-            weekIndex < Math.floor(realisticSlots / callsPerWeek) - 1,
-        ),
-      });
+        const slotEnd = new Date(
+          slotStart.getTime() +
+            selectedPlan.sessionDurationInHours * 60 * 60 * 1000,
+        );
+
+        // Ensure slot is within subscription period
+        if (slotStart >= startDate && slotEnd <= endDate) {
+          slots.push({
+            user: {
+              connect: [{ id: consultee.id }],
+            },
+            slotStartTimeInUTC: slotStart,
+            slotEndTimeInUTC: slotEnd,
+            isTentative: defaultStatus === RequestStatus.PENDING,
+            meetingSession: createMeetingSessionData(
+              isPastAppointment && slotStart < new Date(),
+            ),
+          });
+          slotsCreated++;
+        }
+      }
     }
+
+    // Move to next day
+    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+  }
+
+  // If no slots were created (edge case), create at least one slot
+  if (slots.length === 0 && consultantWeeklySlots.length > 0) {
+    console.warn(
+      "No slots created within subscription period. Creating one slot at start.",
+    );
+    const randomSlot = faker.helpers.arrayElement(consultantWeeklySlots);
+    const slotStart = new Date(startDate);
+    slotStart.setUTCHours(
+      randomSlot.slotStartTimeInUTC.getUTCHours(),
+      randomSlot.slotStartTimeInUTC.getUTCMinutes(),
+      0,
+      0,
+    );
+    const slotEnd = new Date(
+      slotStart.getTime() +
+        selectedPlan.sessionDurationInHours * 60 * 60 * 1000,
+    );
+
+    slots.push({
+      user: {
+        connect: [{ id: consultee.id }],
+      },
+      slotStartTimeInUTC: slotStart,
+      slotEndTimeInUTC: slotEnd,
+      isTentative: defaultStatus === RequestStatus.PENDING,
+      meetingSession: createMeetingSessionData(isPastAppointment),
+    });
   }
 
   return {
@@ -432,6 +499,7 @@ async function createAppointmentBatch(
   subscriptionPlans: any[],
   webinarPlans: any[],
   classPlans: any[],
+  weeklySlots: any[],
   startIndex: number,
   batchSize: number,
 ): Promise<number> {
@@ -481,6 +549,11 @@ async function createAppointmentBatch(
       );
       const consultantClassPlans = classPlans.filter(
         (p) => p.consultantProfileId === slotConsultantId,
+      );
+
+      // Filter weekly slots for this consultant (needed for subscription appointments)
+      const consultantWeeklySlots = weeklySlots.filter(
+        (s) => s.consultantProfileId === slotConsultantId,
       );
 
       // Skip if consultant has no plans for this appointment type
@@ -550,6 +623,7 @@ async function createAppointmentBatch(
           appointmentData = createSubscriptionAppointment(
             consultee,
             consultantSubscriptionPlans,
+            consultantWeeklySlots,
             defaultStatus,
             isPastAppointment,
             startDate,
@@ -646,6 +720,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
       subscriptionPlans,
       webinarPlans,
       classPlans,
+      weeklySlots,
       batchStart,
       BATCH_SIZE,
     );

@@ -208,7 +208,33 @@ export function useCalendarData(
         startDate,
         endDate,
       );
-      setRawAvailabilitySlots(data);
+
+      // Defensive: Validate data structure before using
+      if (!data || typeof data !== "object") {
+        console.warn("⚠️ fetchAvailabilitySlots: Invalid data structure returned");
+        setRawAvailabilitySlots({ weekly: [], custom: [] });
+        return;
+      }
+
+      // Defensive: Ensure arrays exist and are valid
+      const validatedData = {
+        weekly: Array.isArray(data.weekly) ? data.weekly.filter((slot: any) => {
+          if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+            console.warn("⚠️ fetchAvailabilitySlots: Filtering out invalid weekly slot");
+            return false;
+          }
+          return true;
+        }) : [],
+        custom: Array.isArray(data.custom) ? data.custom.filter((slot: any) => {
+          if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+            console.warn("⚠️ fetchAvailabilitySlots: Filtering out invalid custom slot");
+            return false;
+          }
+          return true;
+        }) : [],
+      };
+
+      setRawAvailabilitySlots(validatedData);
     } catch (error) {
       console.error("Error fetching availability slots:", error);
       const errorMessage =
@@ -237,7 +263,36 @@ export function useCalendarData(
         startDate,
         endDate,
       );
-      setExistingAppointments(data);
+
+      // Defensive: Validate data is an array before using
+      if (!Array.isArray(data)) {
+        console.warn("⚠️ fetchExistingAppointments: Data is not an array");
+        setExistingAppointments([]);
+        return;
+      }
+
+      // Defensive: Filter out invalid appointments
+      const validatedAppointments = data.filter((appt: any) => {
+        if (!appt || !appt.id) {
+          console.warn("⚠️ fetchExistingAppointments: Filtering out appointment without id");
+          return false;
+        }
+
+        // If appointment has slots, validate them
+        if (appt.slotsOfAppointment && Array.isArray(appt.slotsOfAppointment)) {
+          appt.slotsOfAppointment = appt.slotsOfAppointment.filter((slot: any) => {
+            if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+              console.warn(`⚠️ fetchExistingAppointments: Filtering out invalid slot in appointment ${appt.id}`);
+              return false;
+            }
+            return true;
+          });
+        }
+
+        return true;
+      });
+
+      setExistingAppointments(validatedAppointments);
     } catch (error) {
       console.error("Error fetching appointments:", error);
       const errorMessage =

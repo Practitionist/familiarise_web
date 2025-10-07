@@ -63,8 +63,10 @@ function isOutsideAllowedRange(
 
 /** Formats the allowed [start, end] range for user-facing messages. */
 function formatAllowedRange(allowedStart?: Date, allowedEnd?: Date): string {
-  const startText = allowedStart ? allowedStart.toLocaleString() : "-";
-  const endText = allowedEnd ? allowedEnd.toLocaleString() : "-";
+  const startText = allowedStart
+    ? format(allowedStart, "MMM d, yyyy 'at' h:mm a")
+    : "-";
+  const endText = allowedEnd ? format(allowedEnd, "MMM d, yyyy 'at' h:mm a") : "-";
   return `${startText} – ${endText}`;
 }
 
@@ -533,6 +535,13 @@ export function UnifiedCalendar({
 
       const isCurrentlySelected = isSlotSelected(slot);
 
+      // Check if slot is outside allowed period for subscriptions/classes
+      const intervalStart = new Date(status.intervalStartUTCString);
+      const intervalEnd = new Date(status.intervalEndUTCString);
+      const isOutsideAllowedRange =
+        (allowedStart && intervalEnd <= allowedStart) ||
+        (allowedEnd && intervalStart >= allowedEnd);
+
       // Fast-exit: avoid rendering a clickable button for cells that have no
       // availability **and** are disabled (e.g. past date).  Rendering a
       // lightweight placeholder saves performance.
@@ -554,26 +563,28 @@ export function UnifiedCalendar({
           " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
         buttonText = "Selected";
       } else if (status.isBookedForDisplay) {
-        cellClassName += " bg-slate-400 text-slate-800 cursor-not-allowed";
+        cellClassName += " bg-slate-400 text-slate-800 cursor-pointer hover:bg-slate-500";
         cellClassName += status.isInPast ? " opacity-50" : "";
         buttonText = "Booked";
       } else if (status.isPartiallyBooked) {
-        cellClassName += " bg-yellow-400 text-yellow-900 cursor-not-allowed";
+        cellClassName += " bg-yellow-400 text-yellow-900 cursor-pointer hover:bg-yellow-500";
         cellClassName += status.isInPast ? " opacity-50" : "";
         buttonText = "Partially Booked";
       } else if (status.isAvailable) {
+        // Available slot - check if past for fading
         if (status.isInPast) {
+          // Past available slot - faded, clickable (shows toast)
           cellClassName +=
-            " bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
-          buttonText = "Available";
+            " bg-green-300 text-green-950 opacity-50 cursor-pointer border-green-400";
+          buttonText = isOutsideAllowedRange ? "Outside Period" : "Available";
         } else {
-          // Add special hover effect for consultations to show the selected duration
+          // Future available slot - unfaded, clickable
           const hoverClass =
             eventType === "consultation"
               ? " hover:bg-green-400 hover:shadow-md"
               : " hover:bg-green-400";
           cellClassName += ` bg-green-300 text-green-950${hoverClass} border-green-400`;
-          buttonText = "Available";
+          buttonText = isOutsideAllowedRange ? "Outside Period" : "Available";
         }
       } else {
         if (status.isInPast) {
@@ -584,8 +595,9 @@ export function UnifiedCalendar({
         }
       }
 
+      // Only disable in view mode or if no availability at all (gray slots)
       const isButtonDisabled =
-        status.isInPast && !isCurrentlySelected && mode !== "view";
+        mode === "view" || (!status.isAvailable && !status.isBooked);
 
       const buttonElement = (
         <Button
@@ -643,6 +655,9 @@ export function UnifiedCalendar({
       loading,
       error,
       mode,
+      allowedStart,
+      allowedEnd,
+      eventType,
     ],
   );
 
@@ -767,6 +782,23 @@ export function UnifiedCalendar({
                 Using Default Value
               </p>
               <p className="text-sm text-yellow-700">{configWarning}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Scheduling Period Info Banner */}
+      {allowedStart && allowedEnd && (
+        <div className="rounded-md bg-blue-50 border border-blue-200 px-4 py-3">
+          <div className="flex items-start">
+            <Calendar className="h-5 w-5 text-blue-600 mr-2 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-blue-800">
+                Scheduling Period
+              </p>
+              <p className="text-sm text-blue-700">
+                {formatAllowedRange(allowedStart, allowedEnd)}
+              </p>
             </div>
           </div>
         </div>
