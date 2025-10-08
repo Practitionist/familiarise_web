@@ -6,10 +6,7 @@
     },
     "supabase": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@supabase/mcp-server-supabase@latest"
-      ],
+      "args": ["-y", "@supabase/mcp-server-supabase@latest"],
       "env": {
         "SUPABASE_ACCESS_TOKEN": "sbp_32d697dba183df07c80dfc838273e9ed344c1f0c"
       }

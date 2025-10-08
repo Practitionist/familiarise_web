@@ -23,16 +23,17 @@
 ## 1. System Overview
 
 ### Purpose
+
 The booking system allows consultants to schedule sessions with consultees across four event types: Consultations, Subscriptions, Webinars, and Classes. It handles slot allocation, conflict detection, weekly limits, and timezone conversions.
 
 ### Core Entities
 
-| Entity | Description | Duration Type | Allocation Pattern |
-|--------|-------------|---------------|-------------------|
-| **Consultation** | One-time session | Total duration (e.g., 1 hour) | Single-day consecutive slots |
-| **Subscription** | Recurring calls over months | Per-session duration | Distributed across weeks with weekly limits |
-| **Webinar** | One-time presentation | Total duration | Consecutive slots (can span days) |
-| **Class** | Recurring sessions with curriculum | Per-session duration | Distributed with session grouping |
+| Entity           | Description                        | Duration Type                 | Allocation Pattern                          |
+| ---------------- | ---------------------------------- | ----------------------------- | ------------------------------------------- |
+| **Consultation** | One-time session                   | Total duration (e.g., 1 hour) | Single-day consecutive slots                |
+| **Subscription** | Recurring calls over months        | Per-session duration          | Distributed across weeks with weekly limits |
+| **Webinar**      | One-time presentation              | Total duration                | Consecutive slots (can span days)           |
+| **Class**        | Recurring sessions with curriculum | Per-session duration          | Distributed with session grouping           |
 
 ### Key Features
 
@@ -90,9 +91,11 @@ app/api/events/
 ### Service Responsibilities
 
 #### SlotCalculationService
+
 **Purpose:** Single source of truth for all slot-related mathematics
 
 **Key Methods:**
+
 - `countWeeks(startDate, endDate)`: Sunday-to-Saturday week counting
 - `calculateRequiredSlots(eventType, config)`: Determine total 30-min slots needed
 - `getSlotsPerCall(sessionDurationInHours)`: Convert hours to 30-min increments
@@ -101,6 +104,7 @@ app/api/events/
 - `groupSlotsByWeek(slots)`: Group slots for weekly limit checks
 
 **Week Counting Algorithm:**
+
 ```typescript
 // Example: Jan 1 (Monday) to Feb 1 (Thursday)
 // Week 1: Sunday Dec 29
@@ -122,9 +126,11 @@ return weeks;
 ```
 
 #### SlotValidationService
+
 **Purpose:** Unified validation for all event types
 
 **Validation Flow:**
+
 1. **Universal Validators** (apply to all events):
    - `validateSlotsInFuture()`: No past slots allowed
    - `validateNoConflicts()`: Check database for overlaps
@@ -139,14 +145,17 @@ return weeks;
    - `validateClass()`: Session grouping + weekly limits
 
 **Key Features:**
+
 - **1-second tolerance** for consecutive slot validation (handles timezone/precision issues)
 - **Clear error messages** with specific dates/times
 - **Conflict details** include appointment type and participant names
 
 #### SlotAllocationService
+
 **Purpose:** Allocation algorithms for all modes
 
 **Main Entry Point:**
+
 ```typescript
 SlotAllocationService.allocate(request: AllocationRequest)
   ├── autoAllocate()   // Find first available slots
@@ -155,6 +164,7 @@ SlotAllocationService.allocate(request: AllocationRequest)
 ```
 
 **Auto-Allocation Algorithm:**
+
 ```
 For Consultations/Webinars:
 1. Get consultant's availability slots
@@ -179,6 +189,7 @@ For Subscriptions/Classes:
 ```
 
 **Database Operations:**
+
 ```typescript
 // Creates one Appointment per call/session
 // Each Appointment has multiple SlotOfAppointment (30-min each)
@@ -196,9 +207,11 @@ For 6-month subscription (3 calls/week):
 ```
 
 #### SubscriptionValidationService
+
 **Purpose:** Subscription-specific weekly limit validation
 
 **Key Features:**
+
 - Validates slots against subscription period boundaries
 - Enforces `callsPerWeek` limit per Sunday-Saturday week
 - Provides weekly breakdown showing available slots per week
@@ -239,57 +252,64 @@ RequestedSlotsDialog.tsx (Use Requested Times Dialog)
 ### State Management
 
 **UnifiedCalendar State:**
+
 ```typescript
-const [currentDate, setCurrentDate] = useState(new Date());  // Calendar view date
-const [view, setView] = useState('week');                    // Week or month
-const [selectedSlots, setSelectedSlots] = useState([]);      // User selections
-const [isAllocating, setIsAllocating] = useState(false);     // Loading state
-const [error, setError] = useState(null);                    // Error message
+const [currentDate, setCurrentDate] = useState(new Date()); // Calendar view date
+const [view, setView] = useState("week"); // Week or month
+const [selectedSlots, setSelectedSlots] = useState([]); // User selections
+const [isAllocating, setIsAllocating] = useState(false); // Loading state
+const [error, setError] = useState(null); // Error message
 ```
 
 **Data Fetching:**
+
 - `useCalendarData()`: Fetches on mount and when `currentDate` or `view` changes
 - `useEventSlotAllocation()`: Manages allocation API calls and slot limits
 - Both use React Query / SWR for caching (if implemented)
 
 ### UI Color Coding
 
-| State | Color | CSS Class |
-|-------|-------|-----------|
-| Available | Green | `bg-green-100 hover:bg-green-200` |
-| Booked | Gray | `bg-gray-300 cursor-not-allowed` |
-| Selected | Blue | `bg-primary text-primary-foreground` |
-| Conflict | Red | `bg-red-100 border-red-400` |
-| Partially Booked | Yellow | `bg-yellow-100` |
-| Past | Disabled Gray | `bg-gray-100 opacity-50` |
+| State            | Color         | CSS Class                            |
+| ---------------- | ------------- | ------------------------------------ |
+| Available        | Green         | `bg-green-100 hover:bg-green-200`    |
+| Booked           | Gray          | `bg-gray-300 cursor-not-allowed`     |
+| Selected         | Blue          | `bg-primary text-primary-foreground` |
+| Conflict         | Red           | `bg-red-100 border-red-400`          |
+| Partially Booked | Yellow        | `bg-yellow-100`                      |
+| Past             | Disabled Gray | `bg-gray-100 opacity-50`             |
 
 ---
 
 ## 4. Business Logic Rules
 
 ### Slot Duration Standard
+
 - **All slots are 30 minutes**
 - Stored in database as `slotStartTimeInUTC` (Date) and `slotEndTimeInUTC` (Date)
 - Duration: `slotEndTimeInUTC = slotStartTimeInUTC + 30 minutes`
 
 ### Week Counting (Sunday-to-Saturday)
+
 - **Week starts:** Sunday 00:00:00
 - **Week ends:** Saturday 23:59:59
 - Used for subscription/class weekly limits
 - Example: Subscription from Jan 1 (Mon) to Mar 31 (Mon) = 13 weeks
 
 ### Consultation Rules
+
 1. **Same Day Requirement:** All slots must be on the same calendar day
 2. **Consecutive Requirement:** No gaps between slots (validated with 1-second tolerance)
 3. **Slot Count:** Exactly `ceil(durationInHours / 0.5)` slots required
 4. **Single Appointment:** Creates one `Appointment` with multiple `SlotOfAppointment`
 
 **Example:**
+
 - 1.5-hour consultation = 3 slots (9:00-9:30, 9:30-10:00, 10:00-10:30)
 - Must all be on same day (e.g., Jan 15)
 - Creates 1 Appointment with 3 SlotOfAppointment records
 
 ### Subscription Rules
+
 1. **Weekly Limits:** Max `callsPerWeek` per Sunday-Saturday week
 2. **Period Boundaries:** All slots must be within `[startDate, endDate]`
 3. **Call Definition:** One call = `ceil(sessionDurationInHours / 0.5)` consecutive slots
@@ -297,6 +317,7 @@ const [error, setError] = useState(null);                    // Error message
 5. **Multiple Appointments:** Each call creates separate `Appointment`
 
 **Example:**
+
 - 6-month subscription, 3 calls/week, 1 hour/call
 - Period: Jan 1 - Jun 30 = 26 weeks
 - Total calls needed: 26 × 3 = 78 calls
@@ -304,11 +325,13 @@ const [error, setError] = useState(null);                    // Error message
 - Creates 78 Appointment records, each with 2 SlotOfAppointment
 
 **Weekly Limit Validation:**
+
 - Week 1 (Dec 29 - Jan 4): Max 3 calls
 - Week 2 (Jan 5 - Jan 11): Max 3 calls
 - If trying to schedule 4th call in Week 1 → Error: "Weekly call limit reached"
 
 ### Class Rules
+
 1. **Session Grouping:** Slots grouped by day, each group = one session
 2. **Consecutive Within Day:** Each session's slots must be consecutive
 3. **Weekly Limits:** Max `callsPerWeek` sessions per week
@@ -316,6 +339,7 @@ const [error, setError] = useState(null);                    // Error message
 5. **Plan Types:** Basic (2/week, 1 month), Extended (3/week, 2 months), Comprehensive (4/week, 4 months)
 
 **Example:**
+
 - Extended class plan: 3 sessions/week, 2 months, 1 hour/session
 - Period: Jan 1 - Feb 28 = 9 weeks
 - Total sessions: 9 × 3 = 27 sessions
@@ -323,29 +347,33 @@ const [error, setError] = useState(null);                    // Error message
 - Total slots: 27 × 2 = 54 slots
 
 ### Webinar Rules
+
 1. **Consecutive Slots:** Must be consecutive (no same-day requirement)
 2. **Can Span Days:** 3-hour webinar can be 23:00-02:00 across midnight
 3. **Single Appointment:** One `Appointment` with multiple slots
 
 ### Validation Order (Critical!)
+
 1. **Slots in future** (earliest check to fail fast)
 2. **Match consultant schedule** (day/time pattern)
 3. **No conflicts** (database query)
 4. **Event-specific rules** (same-day, consecutive, limits)
 
 ❌ **Wrong Order:**
+
 ```typescript
 // Bad: Expensive DB query before cheap checks
-await validateNoConflicts();  // Slow
-validateSlotsInFuture();      // Fast - should be first!
+await validateNoConflicts(); // Slow
+validateSlotsInFuture(); // Fast - should be first!
 ```
 
 ✅ **Correct Order:**
+
 ```typescript
-validateSlotsInFuture();      // Fast - fail early
-validateMatchesSchedule();    // Fast - in-memory check
-await validateNoConflicts();  // Slow - DB query
-validateEventSpecific();      // Varies
+validateSlotsInFuture(); // Fast - fail early
+validateMatchesSchedule(); // Fast - in-memory check
+await validateNoConflicts(); // Slow - DB query
+validateEventSpecific(); // Varies
 ```
 
 ---
@@ -519,25 +547,26 @@ model Class {
 
 ### Allocation Endpoints
 
-| Endpoint | Method | Purpose | Request Body |
-|----------|--------|---------|--------------|
-| `/api/events/consultations/[id]/allocate` | PATCH | Allocate consultation slots | `{ isAuto, slots?, useRequestedSlots? }` |
-| `/api/events/subscriptions/[id]/allocate` | PATCH | Allocate subscription slots | Same |
-| `/api/events/classes/[id]/allocate` | PATCH | Allocate class slots | Same |
-| `/api/events/webinars/[id]/allocate` | PATCH | Allocate webinar slots | Same |
+| Endpoint                                  | Method | Purpose                     | Request Body                             |
+| ----------------------------------------- | ------ | --------------------------- | ---------------------------------------- |
+| `/api/events/consultations/[id]/allocate` | PATCH  | Allocate consultation slots | `{ isAuto, slots?, useRequestedSlots? }` |
+| `/api/events/subscriptions/[id]/allocate` | PATCH  | Allocate subscription slots | Same                                     |
+| `/api/events/classes/[id]/allocate`       | PATCH  | Allocate class slots        | Same                                     |
+| `/api/events/webinars/[id]/allocate`      | PATCH  | Allocate webinar slots      | Same                                     |
 
 ### Validation Endpoints
 
-| Endpoint | Method | Purpose | Request Body |
-|----------|--------|---------|--------------|
-| `/api/events/consultations/[id]/validate` | POST | Validate slot selection | `{ slots: string[] }` |
-| `/api/events/subscriptions/[id]/validate` | POST | Validate + subscription limits | Same |
-| `/api/events/classes/[id]/validate` | POST | Validate + weekly limits | Same |
-| `/api/events/webinars/[id]/validate` | POST | Validate webinar slots | Same |
+| Endpoint                                  | Method | Purpose                        | Request Body          |
+| ----------------------------------------- | ------ | ------------------------------ | --------------------- |
+| `/api/events/consultations/[id]/validate` | POST   | Validate slot selection        | `{ slots: string[] }` |
+| `/api/events/subscriptions/[id]/validate` | POST   | Validate + subscription limits | Same                  |
+| `/api/events/classes/[id]/validate`       | POST   | Validate + weekly limits       | Same                  |
+| `/api/events/webinars/[id]/validate`      | POST   | Validate webinar slots         | Same                  |
 
 ### Response Format
 
 **Success Response:**
+
 ```json
 {
   "data": {
@@ -548,6 +577,7 @@ model Class {
 ```
 
 **Error Response:**
+
 ```json
 {
   "error": "Slot 2025-01-15T10:00:00Z is already booked (conflicts with Subscription with John Doe)"
@@ -560,13 +590,13 @@ model Class {
 
 ### Error Categories
 
-| Category | HTTP Status | Example | User-Facing Message |
-|----------|-------------|---------|---------------------|
-| Validation Error | 500 | Past slot selected | "Cannot allocate slots in the past" |
-| Conflict Error | 500 | Double-booking | "Slot 10:00 AM on Jan 15 conflicts with consultation with Jane" |
-| Business Logic Error | 500 | Weekly limit exceeded | "Week of Jan 15 full: 3/3 calls already scheduled" |
-| Not Found Error | 404 | Invalid event ID | "Consultation not found" |
-| Bad Request Error | 400 | Missing parameters | "isAuto flag is required" |
+| Category             | HTTP Status | Example               | User-Facing Message                                             |
+| -------------------- | ----------- | --------------------- | --------------------------------------------------------------- |
+| Validation Error     | 500         | Past slot selected    | "Cannot allocate slots in the past"                             |
+| Conflict Error       | 500         | Double-booking        | "Slot 10:00 AM on Jan 15 conflicts with consultation with Jane" |
+| Business Logic Error | 500         | Weekly limit exceeded | "Week of Jan 15 full: 3/3 calls already scheduled"              |
+| Not Found Error      | 404         | Invalid event ID      | "Consultation not found"                                        |
+| Bad Request Error    | 400         | Missing parameters    | "isAuto flag is required"                                       |
 
 ### Frontend Error Handling
 
@@ -610,6 +640,7 @@ try {
 ### Frontend Optimizations
 
 1. **Memoization:**
+
    ```typescript
    const weekDates = useMemo(() => calculateWeekDates(currentDate), [currentDate]);
    const slotStatus = useMemo(() => computeSlotStatus(...), [deps]);

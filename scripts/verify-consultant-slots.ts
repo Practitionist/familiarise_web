@@ -24,7 +24,12 @@ const END_DATE = new Date("2025-10-11T23:59:59Z");
 async function verifyConsultantSlots() {
   console.log("🔍 Verifying consultant slots...\n");
   console.log("Consultant ID:", CONSULTANT_ID);
-  console.log("Date Range:", START_DATE.toISOString(), "to", END_DATE.toISOString());
+  console.log(
+    "Date Range:",
+    START_DATE.toISOString(),
+    "to",
+    END_DATE.toISOString(),
+  );
   console.log("\n" + "=".repeat(80) + "\n");
 
   try {
@@ -79,13 +84,17 @@ async function verifyConsultantSlots() {
         ],
       });
 
-      console.log(`=== WEEKLY AVAILABILITY SLOTS (Total: ${weeklySlots.length}) ===`);
+      console.log(
+        `=== WEEKLY AVAILABILITY SLOTS (Total: ${weeklySlots.length}) ===`,
+      );
       weeklySlots.forEach((slot, idx) => {
         const startTime = new Date(slot.slotStartTimeInUTC);
         const endTime = new Date(slot.slotEndTimeInUTC);
         console.log(`\nSlot ${idx + 1}:`);
         console.log(`  Day: ${slot.dayOfWeekforStartTimeInUTC}`);
-        console.log(`  Time: ${startTime.toISOString().slice(11, 16)} - ${endTime.toISOString().slice(11, 16)} UTC`);
+        console.log(
+          `  Time: ${startTime.toISOString().slice(11, 16)} - ${endTime.toISOString().slice(11, 16)} UTC`,
+        );
         console.log(`  Full Start: ${startTime.toISOString()}`);
         console.log(`  Full End: ${endTime.toISOString()}`);
       });
@@ -101,7 +110,9 @@ async function verifyConsultantSlots() {
         orderBy: { slotStartTimeInUTC: "asc" },
       });
 
-      console.log(`=== CUSTOM AVAILABILITY SLOTS (${START_DATE.toDateString()} - ${END_DATE.toDateString()}) ===`);
+      console.log(
+        `=== CUSTOM AVAILABILITY SLOTS (${START_DATE.toDateString()} - ${END_DATE.toDateString()}) ===`,
+      );
       console.log(`Total slots in range: ${customSlots.length}\n`);
       customSlots.forEach((slot, idx) => {
         const startTime = new Date(slot.slotStartTimeInUTC);
@@ -153,14 +164,18 @@ async function verifyConsultantSlots() {
       console.log(`  ID: ${sub.id}`);
       console.log(`  Plan: ${sub.subscriptionPlan.title}`);
       console.log(`  Status: ${sub.requestStatus}`);
-      console.log(`  Client: ${sub.requestedBy.user.name} (${sub.requestedBy.user.email})`);
+      console.log(
+        `  Client: ${sub.requestedBy.user.name} (${sub.requestedBy.user.email})`,
+      );
       console.log(`  Start: ${sub.startDate.toISOString()}`);
       console.log(`  End: ${sub.endDate.toISOString()}`);
       console.log(`  Appointments: ${sub.appointments.length}`);
 
       // Check if date range is in the future relative to subscription end date
       if (START_DATE > sub.endDate) {
-        console.log(`  ⚠️ WARNING: Viewing dates (Oct 5-11, 2025) are AFTER subscription end date!`);
+        console.log(
+          `  ⚠️ WARNING: Viewing dates (Oct 5-11, 2025) are AFTER subscription end date!`,
+        );
         console.log(`     Subscription ends: ${sub.endDate.toISOString()}`);
         console.log(`     Current view starts: ${START_DATE.toISOString()}`);
       }
@@ -170,7 +185,9 @@ async function verifyConsultantSlots() {
         if (appt.slotsOfAppointment.length > 0) {
           console.log(`\n  Appointment ${apptIdx + 1} (${appt.id}):`);
           appt.slotsOfAppointment.forEach((slot) => {
-            console.log(`    📅 ${slot.slotStartTimeInUTC.toISOString()} - ${slot.slotEndTimeInUTC.toISOString()}`);
+            console.log(
+              `    📅 ${slot.slotStartTimeInUTC.toISOString()} - ${slot.slotEndTimeInUTC.toISOString()}`,
+            );
             console.log(`       Tentative: ${slot.isTentative}`);
           });
         }
@@ -243,7 +260,9 @@ async function verifyConsultantSlots() {
       },
     });
 
-    console.log(`=== APPOINTMENTS IN DATE RANGE (Total: ${appointments.length}) ===`);
+    console.log(
+      `=== APPOINTMENTS IN DATE RANGE (Total: ${appointments.length}) ===`,
+    );
     appointments.forEach((appt, idx) => {
       console.log(`\nAppointment ${idx + 1}:`);
       console.log(`  ID: ${appt.id}`);
@@ -257,9 +276,15 @@ async function verifyConsultantSlots() {
 
       console.log(`  Slots in range: ${appt.slotsOfAppointment.length}`);
       appt.slotsOfAppointment.forEach((slot) => {
-        const day = slot.slotStartTimeInUTC.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        const day = slot.slotStartTimeInUTC.toLocaleDateString("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        });
         const time = slot.slotStartTimeInUTC.toISOString().slice(11, 16);
-        console.log(`    🔒 ${day} ${time} UTC ${slot.isTentative ? '(TENTATIVE)' : '(CONFIRMED)'}`);
+        console.log(
+          `    🔒 ${day} ${time} UTC ${slot.isTentative ? "(TENTATIVE)" : "(CONFIRMED)"}`,
+        );
       });
     });
     console.log("\n");
@@ -271,17 +296,20 @@ async function verifyConsultantSlots() {
     console.log(`✓ Total Appointments in range: ${appointments.length}`);
 
     // Check for critical issue
-    const hasActiveSubscriptionsOutsideRange = subscriptions.some(sub =>
-      START_DATE > sub.endDate
+    const hasActiveSubscriptionsOutsideRange = subscriptions.some(
+      (sub) => START_DATE > sub.endDate,
     );
 
     if (hasActiveSubscriptionsOutsideRange) {
       console.log("\n⚠️ CRITICAL ISSUE DETECTED:");
-      console.log("   Viewing Oct 5-11, 2025 but subscription ends Aug 27, 2025");
+      console.log(
+        "   Viewing Oct 5-11, 2025 but subscription ends Aug 27, 2025",
+      );
       console.log("   All slots should be DISABLED (outside allowed period)");
-      console.log("   If slots show as 'Available', this is a BUG in the frontend validation!");
+      console.log(
+        "   If slots show as 'Available', this is a BUG in the frontend validation!",
+      );
     }
-
   } catch (error) {
     console.error("❌ Verification failed:", error);
     process.exit(1);

@@ -70,7 +70,11 @@ function isDateInSchedulingPeriod(
   if (!allowedStart && !allowedEnd) return false;
 
   // Compare at day level (ignore time)
-  const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dateOnly = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  );
   const startOnly = allowedStart
     ? new Date(
         allowedStart.getFullYear(),
@@ -96,7 +100,9 @@ function formatAllowedRange(allowedStart?: Date, allowedEnd?: Date): string {
   const startText = allowedStart
     ? format(allowedStart, "MMM d, yyyy 'at' h:mm a")
     : "-";
-  const endText = allowedEnd ? format(allowedEnd, "MMM d, yyyy 'at' h:mm a") : "-";
+  const endText = allowedEnd
+    ? format(allowedEnd, "MMM d, yyyy 'at' h:mm a")
+    : "-";
   return `${startText} – ${endText}`;
 }
 
@@ -593,11 +599,13 @@ export function UnifiedCalendar({
           " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
         buttonText = "Selected";
       } else if (status.isBookedForDisplay) {
-        cellClassName += " bg-slate-400 text-slate-800 cursor-pointer hover:bg-slate-500";
+        cellClassName +=
+          " bg-slate-400 text-slate-800 cursor-pointer hover:bg-slate-500";
         cellClassName += status.isInPast ? " opacity-50" : "";
         buttonText = "Booked";
       } else if (status.isPartiallyBooked) {
-        cellClassName += " bg-yellow-400 text-yellow-900 cursor-pointer hover:bg-yellow-500";
+        cellClassName +=
+          " bg-yellow-400 text-yellow-900 cursor-pointer hover:bg-yellow-500";
         cellClassName += status.isInPast ? " opacity-50" : "";
         buttonText = "Partially Booked";
       } else if (status.isAvailable) {

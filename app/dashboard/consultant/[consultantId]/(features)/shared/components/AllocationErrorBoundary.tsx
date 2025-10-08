@@ -100,18 +100,17 @@ export class AllocationErrorBoundary extends Component<Props, State> {
                 <li>Server-side errors</li>
               </ul>
 
-              {process.env.NODE_ENV === "development" &&
-                this.state.error && (
-                  <details className="mt-4 p-3 bg-red-50 rounded text-xs">
-                    <summary className="cursor-pointer font-medium">
-                      Error Details (Development Only)
-                    </summary>
-                    <pre className="mt-2 overflow-auto text-xs">
-                      {this.state.error.toString()}
-                      {this.state.errorInfo?.componentStack}
-                    </pre>
-                  </details>
-                )}
+              {process.env.NODE_ENV === "development" && this.state.error && (
+                <details className="mt-4 p-3 bg-red-50 rounded text-xs">
+                  <summary className="cursor-pointer font-medium">
+                    Error Details (Development Only)
+                  </summary>
+                  <pre className="mt-2 overflow-auto text-xs">
+                    {this.state.error.toString()}
+                    {this.state.errorInfo?.componentStack}
+                  </pre>
+                </details>
+              )}
 
               <div className="flex gap-2 mt-4">
                 <Button onClick={this.handleReset} variant="default" size="sm">

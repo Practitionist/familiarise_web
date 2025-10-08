@@ -122,15 +122,21 @@ export async function POST(
     };
 
     for (const error of validationResult.errors) {
-      if (error.includes("already booked") || error.includes("conflicts with")) {
+      if (
+        error.includes("already booked") ||
+        error.includes("conflicts with")
+      ) {
         const slotMatch = error.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
         if (slotMatch) {
           const slot = slotMatch[1];
           result.conflicts.push({
             slot,
             existingAppointment: {
-              type: error.includes("Subscription") ? "Subscription" :
-                    error.includes("Class") ? "Class" : "Consultation",
+              type: error.includes("Subscription")
+                ? "Subscription"
+                : error.includes("Class")
+                  ? "Class"
+                  : "Consultation",
               with: "Another user",
               time: new Date(slot).toLocaleString(),
             },

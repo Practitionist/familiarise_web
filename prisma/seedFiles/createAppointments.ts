@@ -209,10 +209,7 @@ const createSubscriptionAppointment = (
   const subscriptionWeeks = Math.ceil(
     subscriptionDurationMs / (7 * 24 * 60 * 60 * 1000),
   );
-  const maxTotalCalls = Math.min(
-    callsPerWeek * subscriptionWeeks,
-    numSlots,
-  );
+  const maxTotalCalls = Math.min(callsPerWeek * subscriptionWeeks, numSlots);
 
   // Get consultant's available days of week from their weekly slots
   const availableDaysSet = new Set(

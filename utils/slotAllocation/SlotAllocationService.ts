@@ -33,9 +33,7 @@ export class SlotAllocationService {
    * Main entry point for slot allocation
    * Routes to appropriate allocation method based on mode
    */
-  static async allocate(
-    request: AllocationRequest,
-  ): Promise<AllocationResult> {
+  static async allocate(request: AllocationRequest): Promise<AllocationResult> {
     try {
       switch (request.mode) {
         case "auto":
@@ -135,7 +133,13 @@ export class SlotAllocationService {
       );
 
       // Update event status
-      await this.updateEventStatus(tx, eventType, eventId, selectedSlots[0], config);
+      await this.updateEventStatus(
+        tx,
+        eventType,
+        eventId,
+        selectedSlots[0],
+        config,
+      );
 
       return {
         success: true,
@@ -239,7 +243,13 @@ export class SlotAllocationService {
       }
 
       // Just update event status to approved (appointments already exist)
-      await this.updateEventStatus(tx, eventType, eventId, requestedSlots[0], config);
+      await this.updateEventStatus(
+        tx,
+        eventType,
+        eventId,
+        requestedSlots[0],
+        config,
+      );
 
       return {
         success: true,
@@ -318,7 +328,10 @@ export class SlotAllocationService {
     // For consultations/webinars: find one consecutive block
     if (eventType === "consultation" || eventType === "webinar") {
       for (const slot of sortedSlots) {
-        const slotStart = this.getNextOccurrence(slot.slotStartTimeInUTC, consultant.scheduleType);
+        const slotStart = this.getNextOccurrence(
+          slot.slotStartTimeInUTC,
+          consultant.scheduleType,
+        );
 
         if (slotStart < now || bookedSlots.has(slotStart.toISOString())) {
           continue;
@@ -348,13 +361,18 @@ export class SlotAllocationService {
 
     // For subscriptions/classes: find distributed slots across weeks
     const startDate = config.startDate || new Date();
-    const endDate = config.endDate || addMonths(startDate, config.durationInMonths || 1);
+    const endDate =
+      config.endDate || addMonths(startDate, config.durationInMonths || 1);
     const callsPerWeek = config.callsPerWeek || 1;
 
     let currentWeek = SlotCalculationService.startOfWeekSunday(startDate);
     const totalWeeks = SlotCalculationService.countWeeks(startDate, endDate);
 
-    for (let week = 0; week < totalWeeks && selectedSlots.length < totalSlotsNeeded; week++) {
+    for (
+      let week = 0;
+      week < totalWeeks && selectedSlots.length < totalSlotsNeeded;
+      week++
+    ) {
       let slotsThisWeek = 0;
 
       for (let day = 0; day < 7 && slotsThisWeek < callsPerWeek; day++) {
@@ -363,9 +381,18 @@ export class SlotAllocationService {
 
         // Find first available slot on this day
         for (const slot of sortedSlots) {
-          const slotTime = this.matchSlotToDay(slot.slotStartTimeInUTC, currentDay, consultant.scheduleType);
+          const slotTime = this.matchSlotToDay(
+            slot.slotStartTimeInUTC,
+            currentDay,
+            consultant.scheduleType,
+          );
 
-          if (!slotTime || slotTime < now || slotTime < startDate || slotTime > endDate) {
+          if (
+            !slotTime ||
+            slotTime < now ||
+            slotTime < startDate ||
+            slotTime > endDate
+          ) {
             continue;
           }
 
@@ -374,7 +401,10 @@ export class SlotAllocationService {
           let currentTime = new Date(slotTime);
 
           for (let i = 0; i < slotsPerCall; i++) {
-            if (bookedSlots.has(currentTime.toISOString()) || currentTime < now) {
+            if (
+              bookedSlots.has(currentTime.toISOString()) ||
+              currentTime < now
+            ) {
               break;
             }
             callSlots.push(new Date(currentTime));
@@ -430,7 +460,11 @@ export class SlotAllocationService {
   /**
    * Match a weekly slot pattern to a specific day
    */
-  private static matchSlotToDay(slotTime: Date, targetDay: Date, scheduleType: string): Date | null {
+  private static matchSlotToDay(
+    slotTime: Date,
+    targetDay: Date,
+    scheduleType: string,
+  ): Date | null {
     if (scheduleType === ScheduleType.CUSTOM) {
       // Only match if exact same day
       if (new Date(slotTime).toDateString() === targetDay.toDateString()) {
@@ -488,7 +522,9 @@ export class SlotAllocationService {
             slotsOfAppointment: {
               create: callSlots.map((slotStart) => ({
                 slotStartTimeInUTC: slotStart,
-                slotEndTimeInUTC: new Date(slotStart.getTime() + 30 * 60 * 1000),
+                slotEndTimeInUTC: new Date(
+                  slotStart.getTime() + 30 * 60 * 1000,
+                ),
                 isTentative: false,
                 user: {
                   connect: consulteeUserId
@@ -556,7 +592,10 @@ export class SlotAllocationService {
         updates.status = "SCHEDULED";
         updates.startDate = firstSlot;
         if (eventType === "class") {
-          updates.endDate = addWeeks(firstSlot, (config.durationInMonths || 1) * 4);
+          updates.endDate = addWeeks(
+            firstSlot,
+            (config.durationInMonths || 1) * 4,
+          );
         }
         break;
     }
@@ -611,13 +650,16 @@ export class SlotAllocationService {
         config = {
           durationInMonths: event.subscriptionPlan?.durationInMonths,
           callsPerWeek: event.subscriptionPlan?.callsPerWeek,
-          sessionDurationInHours: event.subscriptionPlan?.sessionDurationInHours,
+          sessionDurationInHours:
+            event.subscriptionPlan?.sessionDurationInHours,
           startDate: event.startDate,
           endDate: event.endDate,
         };
         consulteeUserId = event.requestedBy?.user?.id;
         requestedSlots = event.appointments?.flatMap((app: any) =>
-          app.slotsOfAppointment.map((s: any) => new Date(s.slotStartTimeInUTC)),
+          app.slotsOfAppointment.map(
+            (s: any) => new Date(s.slotStartTimeInUTC),
+          ),
         );
         break;
 
@@ -633,8 +675,10 @@ export class SlotAllocationService {
         const classContents = event.classPlan?.classContents || [];
         const sessionDuration =
           classContents.length > 0
-            ? classContents.reduce((sum: number, c: any) => sum + c.hoursAllotted, 0) /
-              classContents.length
+            ? classContents.reduce(
+                (sum: number, c: any) => sum + c.hoursAllotted,
+                0,
+              ) / classContents.length
             : event.classPlan?.sessionDurationInHours || 1;
 
         config = {

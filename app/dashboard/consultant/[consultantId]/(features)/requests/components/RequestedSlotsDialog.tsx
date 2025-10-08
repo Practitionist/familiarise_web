@@ -175,7 +175,9 @@ export function RequestedSlotsDialog({
                 Slots Outside Availability
               </h3>
               {/* Group outside availability slots by date */}
-              {Array.from(groupSlotsByDate(outsideAvailability.map((s) => s.slot))).map(([date, slots]) => (
+              {Array.from(
+                groupSlotsByDate(outsideAvailability.map((s) => s.slot)),
+              ).map(([date, slots]) => (
                 <div key={date} className="mb-2">
                   <p className="text-sm font-medium text-yellow-800">{date}:</p>
                   <ul className="ml-3 space-y-1">
@@ -206,12 +208,16 @@ export function RequestedSlotsDialog({
               {/* Show requested slots grouped by date */}
               <div className="mt-2 text-sm text-green-700">
                 <p className="font-medium mb-1">Requested Times:</p>
-                {Array.from(groupSlotsByDate(requestedSlots)).map(([date, slots]) => (
-                  <div key={date} className="ml-2 mb-1">
-                    <span className="font-medium">{date}:</span>{" "}
-                    {slots.map((s) => new Date(s).toLocaleTimeString()).join(", ")}
-                  </div>
-                ))}
+                {Array.from(groupSlotsByDate(requestedSlots)).map(
+                  ([date, slots]) => (
+                    <div key={date} className="ml-2 mb-1">
+                      <span className="font-medium">{date}:</span>{" "}
+                      {slots
+                        .map((s) => new Date(s).toLocaleTimeString())
+                        .join(", ")}
+                    </div>
+                  ),
+                )}
               </div>
             </div>
           )}

@@ -22,9 +22,7 @@ import { SubscriptionValidationService } from "../subscriptionValidation";
  */
 export class SlotValidationService {
   constructor(
-    private readonly prismaClient:
-      | typeof prisma
-      | PrismaTransaction = prisma,
+    private readonly prismaClient: typeof prisma | PrismaTransaction = prisma,
   ) {}
 
   /**
@@ -386,8 +384,7 @@ export class SlotValidationService {
 
     // Check slot count
     if (slots.length !== requiredSlots) {
-      const durationText =
-        duration === 1 ? "1 hour" : `${duration} hours`;
+      const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
       errors.push(
         `Webinar (${durationText}) requires exactly ${requiredSlots} consecutive slot${requiredSlots > 1 ? "s" : ""}, but ${slots.length} provided`,
       );

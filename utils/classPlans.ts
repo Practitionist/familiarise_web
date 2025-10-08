@@ -94,9 +94,7 @@ export function getClassPlanDefaults(plan: ClassPlan): ClassPlanDefaults {
     Number.isNaN(Number(classesPerWeek))
   ) {
     classesPerWeek =
-      type !== "Custom"
-        ? CLASS_PLAN_DEFAULTS[type].classesPerWeek
-        : 2; // Default for Custom
+      type !== "Custom" ? CLASS_PLAN_DEFAULTS[type].classesPerWeek : 2; // Default for Custom
   }
 
   if (
@@ -105,9 +103,7 @@ export function getClassPlanDefaults(plan: ClassPlan): ClassPlanDefaults {
     Number.isNaN(Number(durationInMonths))
   ) {
     durationInMonths =
-      type !== "Custom"
-        ? CLASS_PLAN_DEFAULTS[type].durationInMonths
-        : 1; // Default for Custom
+      type !== "Custom" ? CLASS_PLAN_DEFAULTS[type].durationInMonths : 1; // Default for Custom
   }
 
   return {

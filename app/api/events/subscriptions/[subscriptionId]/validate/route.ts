@@ -150,7 +150,9 @@ export async function POST(
           error.includes("already booked") ||
           error.includes("conflicts with")
         ) {
-          const slotMatch = error.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+          const slotMatch = error.match(
+            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
+          );
           if (slotMatch) {
             result.conflicts.push({
               slot: slotMatch[1],
@@ -167,7 +169,9 @@ export async function POST(
           error.includes("does not match") ||
           error.includes("not in consultant's")
         ) {
-          const slotMatch = error.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+          const slotMatch = error.match(
+            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
+          );
           if (slotMatch) {
             result.outsideAvailability.push({ slot: slotMatch[1] });
           }

@@ -116,7 +116,8 @@ export function EventTimingsCalendar({
         return "Select consecutive time slots for your webinar session.";
       case "CLASS":
         const sessionDuration = eventDetails.sessionDurationInHours || 1;
-        const durationText = sessionDuration === 1 ? "1 hour" : `${sessionDuration} hours`;
+        const durationText =
+          sessionDuration === 1 ? "1 hour" : `${sessionDuration} hours`;
         return `Schedule ${eventDetails.callsPerWeek || 1} session${(eventDetails.callsPerWeek || 1) !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
       default:
         return "Select time slots for your event.";

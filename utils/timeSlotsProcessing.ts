@@ -92,7 +92,12 @@ export function processWeeklySlots(
     return processedSlots;
   }
 
-  if (!startDate || !endDate || isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+  if (
+    !startDate ||
+    !endDate ||
+    isNaN(startDate.getTime()) ||
+    isNaN(endDate.getTime())
+  ) {
     console.warn("⚠️ processWeeklySlots: invalid startDate or endDate");
     return processedSlots;
   }
@@ -113,8 +118,15 @@ export function processWeeklySlots(
 
     weeklySlots.forEach((slot) => {
       // Defensive: Skip slots with invalid data
-      if (!slot || !slot.id || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
-        console.warn(`⚠️ processWeeklySlots: skipping slot with missing required fields`);
+      if (
+        !slot ||
+        !slot.id ||
+        !slot.slotStartTimeInUTC ||
+        !slot.slotEndTimeInUTC
+      ) {
+        console.warn(
+          `⚠️ processWeeklySlots: skipping slot with missing required fields`,
+        );
         return;
       }
       if (slot.dayOfWeekforStartTimeInUTC === dayOfWeekEnum) {
@@ -177,7 +189,12 @@ export function processCustomSlots(
     return [];
   }
 
-  if (!startDate || !endDate || isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+  if (
+    !startDate ||
+    !endDate ||
+    isNaN(startDate.getTime()) ||
+    isNaN(endDate.getTime())
+  ) {
     console.warn("⚠️ processCustomSlots: invalid startDate or endDate");
     return [];
   }
@@ -190,8 +207,15 @@ export function processCustomSlots(
   return customSlots
     .filter((slot) => {
       // Defensive: Skip slots with invalid data
-      if (!slot || !slot.id || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
-        console.warn(`⚠️ processCustomSlots: skipping slot with missing required fields`);
+      if (
+        !slot ||
+        !slot.id ||
+        !slot.slotStartTimeInUTC ||
+        !slot.slotEndTimeInUTC
+      ) {
+        console.warn(
+          `⚠️ processCustomSlots: skipping slot with missing required fields`,
+        );
         return false;
       }
 
@@ -199,13 +223,17 @@ export function processCustomSlots(
       const start = new Date(slot.slotStartTimeInUTC);
       const end = new Date(slot.slotEndTimeInUTC);
       if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-        console.warn(`⚠️ processCustomSlots: skipping slot ${slot.id} with invalid date format`);
+        console.warn(
+          `⚠️ processCustomSlots: skipping slot ${slot.id} with invalid date format`,
+        );
         return false;
       }
 
       // Defensive: Check slot is not inverted (end <= start, not overnight)
       if (end <= start) {
-        console.warn(`⚠️ processCustomSlots: skipping slot ${slot.id} with end <= start`);
+        console.warn(
+          `⚠️ processCustomSlots: skipping slot ${slot.id} with end <= start`,
+        );
         return false;
       }
 
@@ -307,7 +335,12 @@ export function getSlotBookingStatus(
   appointmentSlots: AppointmentSlot[],
 ): BookingStatus {
   // Defensive: Validate input parameters
-  if (!slotStart || !slotEnd || isNaN(slotStart.getTime()) || isNaN(slotEnd.getTime())) {
+  if (
+    !slotStart ||
+    !slotEnd ||
+    isNaN(slotStart.getTime()) ||
+    isNaN(slotEnd.getTime())
+  ) {
     console.warn("⚠️ getSlotBookingStatus: invalid slotStart or slotEnd");
     return BOOKING_STATUS.AVAILABLE;
   }
@@ -327,7 +360,11 @@ export function getSlotBookingStatus(
   // Find all appointments that overlap with this slot (with defensive filtering)
   const overlappingAppointments = appointmentSlots.filter((apptSlot) => {
     // Defensive: Skip invalid appointment slots
-    if (!apptSlot || !apptSlot.slotStartTimeInUTC || !apptSlot.slotEndTimeInUTC) {
+    if (
+      !apptSlot ||
+      !apptSlot.slotStartTimeInUTC ||
+      !apptSlot.slotEndTimeInUTC
+    ) {
       return false;
     }
 

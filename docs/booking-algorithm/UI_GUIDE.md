@@ -24,18 +24,19 @@
 ## 1. Quick Start
 
 ### Prerequisites
+
 - Read [ARCHITECTURE.md](./ARCHITECTURE.md) for business logic understanding
 - Familiarize yourself with the database schema
 - Understand the 4 event types and 3 allocation modes
 
 ### Key UI Components
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| `EventTimingsCalendar` | `(features)/appointments/components/` | Main dialog for managing timings |
-| `RequestedSlotsDialog` | `(features)/requests/components/` | Approve consultee-requested slots |
-| `UnifiedCalendar` | `(features)/shared/components/` | Core calendar component (reusable) |
-| `SafeUnifiedCalendar` | `(features)/shared/components/` | Error boundary wrapper |
+| Component              | Location                              | Purpose                            |
+| ---------------------- | ------------------------------------- | ---------------------------------- |
+| `EventTimingsCalendar` | `(features)/appointments/components/` | Main dialog for managing timings   |
+| `RequestedSlotsDialog` | `(features)/requests/components/`     | Approve consultee-requested slots  |
+| `UnifiedCalendar`      | `(features)/shared/components/`       | Core calendar component (reusable) |
+| `SafeUnifiedCalendar`  | `(features)/shared/components/`       | Error boundary wrapper             |
 
 ### Quick Integration Example
 
@@ -124,19 +125,19 @@ function AppointmentsList() {
 interface UnifiedCalendarProps {
   // Required
   consultantId: string;
-  eventType: 'consultation' | 'subscription' | 'webinar' | 'class';
-  mode: 'view' | 'select' | 'allocate';
+  eventType: "consultation" | "subscription" | "webinar" | "class";
+  mode: "view" | "select" | "allocate";
 
   // Event-specific
-  eventId?: string;                   // Required for allocation
-  durationInHours?: number;           // For consultations/webinars (total)
-  sessionDurationInHours?: number;    // For subscriptions/classes (per session)
-  durationInMonths?: number;          // For subscriptions/classes
-  callsPerWeek?: number;              // For subscriptions/classes
+  eventId?: string; // Required for allocation
+  durationInHours?: number; // For consultations/webinars (total)
+  sessionDurationInHours?: number; // For subscriptions/classes (per session)
+  durationInMonths?: number; // For subscriptions/classes
+  callsPerWeek?: number; // For subscriptions/classes
 
   // Boundaries (for subscriptions/classes)
-  allowedStart?: Date;                // Earliest selectable date
-  allowedEnd?: Date;                  // Latest selectable date
+  allowedStart?: Date; // Earliest selectable date
+  allowedEnd?: Date; // Latest selectable date
 
   // UI
   showAllocationButtons?: boolean;
@@ -176,6 +177,7 @@ Dialog closes, appointments list refreshes
 ```
 
 **UI States:**
+
 1. **Initial Load:** Skeleton loader → Calendar appears
 2. **Auto Allocating:** Button shows spinner, disabled
 3. **Success:** Green toast, dialog closes
@@ -212,6 +214,7 @@ Success: Appointments created, dialog closes
 ```
 
 **Real-Time Validation Feedback:**
+
 - **Green border:** Slot is valid for selection
 - **Red border:** Slot conflicts with existing appointment
 - **Yellow border:** Slot is partially booked (overlapping user)
@@ -256,6 +259,7 @@ Success: Request approved, consultee notified
 ```
 
 **UI Considerations:**
+
 - **Conflict detection:** Real-time, shows specific appointment details
 - **Override option:** Only for availability mismatch, NOT for conflicts
 - **Refresh button:** Re-validate in case availability changed
@@ -271,13 +275,13 @@ Success: Request approved, consultee notified
 
 ```typescript
 const {
-  consultantDetails,          // Consultant profile data
-  availableSlots,             // Weekly or custom availability slots
-  existingAppointments,       // Already booked appointments
-  loading,                    // Initial data loading
-  error,                      // Fetch error
-  refetch,                    // Manual refetch function
-  getSlotStatusForInterval,   // Check if specific time is available/booked
+  consultantDetails, // Consultant profile data
+  availableSlots, // Weekly or custom availability slots
+  existingAppointments, // Already booked appointments
+  loading, // Initial data loading
+  error, // Fetch error
+  refetch, // Manual refetch function
+  getSlotStatusForInterval, // Check if specific time is available/booked
 } = useCalendarData({
   consultantId,
   eventType,
@@ -288,8 +292,15 @@ const {
 ```
 
 **Implementation:**
+
 ```typescript
-function useCalendarData({ consultantId, eventType, eventId, currentDate, view }) {
+function useCalendarData({
+  consultantId,
+  eventType,
+  eventId,
+  currentDate,
+  view,
+}) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -299,7 +310,7 @@ function useCalendarData({ consultantId, eventType, eventId, currentDate, view }
       setLoading(true);
       const [consultant, appointments] = await Promise.all([
         fetch(`/api/consultants/${consultantId}`),
-        fetch(`/api/events/${eventType}/${eventId}/appointments`)
+        fetch(`/api/events/${eventType}/${eventId}/appointments`),
       ]);
       setData({ consultant, appointments });
     } catch (err) {
@@ -323,17 +334,17 @@ function useCalendarData({ consultantId, eventType, eventId, currentDate, view }
 
 ```typescript
 const {
-  selectedSlots,            // Currently selected TimeSlot[]
-  setSelectedSlots,         // Setter for programmatic selection
-  isAllocating,             // API call in progress
-  allocationError,          // Allocation error message
-  toggleSlot,               // Add/remove slot from selection
-  clearSlots,               // Clear all selections
-  isSlotSelected,           // Check if slot is selected
-  manualAllocate,           // Call manual allocation API
-  autoAllocate,             // Call auto allocation API
-  preAllocate,              // Use requested times
-  slotLimits,               // Weekly/daily limits info
+  selectedSlots, // Currently selected TimeSlot[]
+  setSelectedSlots, // Setter for programmatic selection
+  isAllocating, // API call in progress
+  allocationError, // Allocation error message
+  toggleSlot, // Add/remove slot from selection
+  clearSlots, // Clear all selections
+  isSlotSelected, // Check if slot is selected
+  manualAllocate, // Call manual allocation API
+  autoAllocate, // Call auto allocation API
+  preAllocate, // Use requested times
+  slotLimits, // Weekly/daily limits info
 } = useEventSlotAllocation({
   eventType,
   eventId,
@@ -345,21 +356,24 @@ const {
   startDate,
   endDate,
   maxTotalCalls,
-  onSuccess,                // Callback on successful allocation
+  onSuccess, // Callback on successful allocation
 });
 ```
 
 **Key Methods:**
 
 **toggleSlot:**
+
 ```typescript
 function toggleSlot(slot: TimeSlot) {
-  setSelectedSlots(prev => {
-    const exists = prev.some(s =>
-      s.startTime.getTime() === slot.startTime.getTime()
+  setSelectedSlots((prev) => {
+    const exists = prev.some(
+      (s) => s.startTime.getTime() === slot.startTime.getTime(),
     );
     if (exists) {
-      return prev.filter(s => s.startTime.getTime() !== slot.startTime.getTime());
+      return prev.filter(
+        (s) => s.startTime.getTime() !== slot.startTime.getTime(),
+      );
     } else {
       return [...prev, slot];
     }
@@ -368,6 +382,7 @@ function toggleSlot(slot: TimeSlot) {
 ```
 
 **manualAllocate:**
+
 ```typescript
 async function manualAllocate() {
   setIsAllocating(true);
@@ -375,8 +390,8 @@ async function manualAllocate() {
     const result = await AllocationAPIClient.allocate({
       eventType,
       eventId,
-      mode: 'manual',
-      slots: selectedSlots.map(s => s.startTime.toISOString())
+      mode: "manual",
+      slots: selectedSlots.map((s) => s.startTime.toISOString()),
     });
     if (result.success) {
       onSuccess?.(result);
@@ -397,6 +412,7 @@ async function manualAllocate() {
 ### Loading States
 
 **Initial Load:**
+
 ```typescript
 {loading ? (
   <CalendarSkeleton />
@@ -408,6 +424,7 @@ async function manualAllocate() {
 ```
 
 **CalendarSkeleton Component:**
+
 ```typescript
 function CalendarSkeleton() {
   return (
@@ -425,6 +442,7 @@ function CalendarSkeleton() {
 ```
 
 **Button Loading States:**
+
 ```typescript
 <Button
   onClick={autoAllocate}
@@ -447,6 +465,7 @@ function CalendarSkeleton() {
 ### Empty States
 
 **No Availability:**
+
 ```typescript
 {availableSlots.length === 0 && (
   <div className="flex flex-col items-center justify-center h-96 text-muted-foreground">
@@ -461,6 +480,7 @@ function CalendarSkeleton() {
 ```
 
 **No Slots Selected:**
+
 ```typescript
 {selectedSlots.length === 0 && mode === 'allocate' && (
   <Alert className="mt-4">
@@ -478,17 +498,18 @@ function CalendarSkeleton() {
 
 ### Error Categories & Messages
 
-| Error Type | Cause | User Message | Recovery Action |
-|------------|-------|--------------|-----------------|
-| **Network Error** | API unreachable | "Unable to connect. Check your internet connection." | Retry button |
-| **Validation Error** | Business rule violated | "Week of Jan 15 full: 3/3 calls already scheduled" | Select different week |
-| **Conflict Error** | Double-booking | "Slot 10:00 AM conflicts with Consultation with Jane" | Select different time |
-| **Boundary Error** | Outside allowed period | "Slot outside allowed period (Jan 1 - Jun 30)" | Select within range |
-| **Not Found Error** | Invalid event ID | "Event not found. It may have been deleted." | Close dialog, refresh list |
+| Error Type           | Cause                  | User Message                                          | Recovery Action            |
+| -------------------- | ---------------------- | ----------------------------------------------------- | -------------------------- |
+| **Network Error**    | API unreachable        | "Unable to connect. Check your internet connection."  | Retry button               |
+| **Validation Error** | Business rule violated | "Week of Jan 15 full: 3/3 calls already scheduled"    | Select different week      |
+| **Conflict Error**   | Double-booking         | "Slot 10:00 AM conflicts with Consultation with Jane" | Select different time      |
+| **Boundary Error**   | Outside allowed period | "Slot outside allowed period (Jan 1 - Jun 30)"        | Select within range        |
+| **Not Found Error**  | Invalid event ID       | "Event not found. It may have been deleted."          | Close dialog, refresh list |
 
 ### Error Display Components
 
 **Toast Notifications (Transient Errors):**
+
 ```typescript
 toast({
   variant: 'destructive',
@@ -499,6 +520,7 @@ toast({
 ```
 
 **Inline Error Messages (Persistent Errors):**
+
 ```typescript
 {allocationError && (
   <Alert variant="destructive">
@@ -510,6 +532,7 @@ toast({
 ```
 
 **Error Boundary (Component Crashes):**
+
 ```typescript
 <ErrorBoundary
   fallback={<CalendarErrorFallback onReset={() => window.location.reload()} />}
@@ -521,6 +544,7 @@ toast({
 ### Retry Logic
 
 **Exponential Backoff:**
+
 ```typescript
 async function fetchWithRetry(fn, maxRetries = 3) {
   for (let i = 0; i < maxRetries; i++) {
@@ -528,7 +552,9 @@ async function fetchWithRetry(fn, maxRetries = 3) {
       return await fn();
     } catch (error) {
       if (i === maxRetries - 1) throw error;
-      await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
+      await new Promise((resolve) =>
+        setTimeout(resolve, 1000 * Math.pow(2, i)),
+      );
     }
   }
 }
@@ -540,15 +566,16 @@ async function fetchWithRetry(fn, maxRetries = 3) {
 
 ### Keyboard Navigation
 
-| Key | Action |
-|-----|--------|
-| `Tab` | Move focus between time slots |
-| `Enter`/`Space` | Toggle slot selection |
-| `Escape` | Close dialog / Clear selection |
-| `Arrow Keys` | Navigate between days in week view |
-| `Home`/`End` | Jump to start/end of week |
+| Key             | Action                             |
+| --------------- | ---------------------------------- |
+| `Tab`           | Move focus between time slots      |
+| `Enter`/`Space` | Toggle slot selection              |
+| `Escape`        | Close dialog / Clear selection     |
+| `Arrow Keys`    | Navigate between days in week view |
+| `Home`/`End`    | Jump to start/end of week          |
 
 **Implementation:**
+
 ```typescript
 <button
   role="gridcell"
@@ -570,6 +597,7 @@ async function fetchWithRetry(fn, maxRetries = 3) {
 ### Screen Reader Announcements
 
 **Live Regions for Dynamic Updates:**
+
 ```typescript
 <div aria-live="polite" aria-atomic="true" className="sr-only">
   {selectedSlots.length} slots selected.
@@ -578,6 +606,7 @@ async function fetchWithRetry(fn, maxRetries = 3) {
 ```
 
 **Semantic HTML:**
+
 ```typescript
 <div role="grid" aria-label="Weekly calendar">
   <div role="row">
@@ -594,6 +623,7 @@ async function fetchWithRetry(fn, maxRetries = 3) {
 ### Focus Management
 
 **Trap focus in dialog:**
+
 ```typescript
 <Dialog open={isOpen} onOpenChange={setIsOpen}>
   <DialogContent
@@ -617,13 +647,13 @@ async function fetchWithRetry(fn, maxRetries = 3) {
 ```typescript
 // Slot states (Tailwind classes)
 const slotStyles = {
-  available: 'bg-green-100 hover:bg-green-200 border-green-300',
-  selected: 'bg-primary text-primary-foreground border-primary-darker',
-  booked: 'bg-gray-300 cursor-not-allowed opacity-60',
-  conflict: 'bg-red-100 border-red-400 hover:bg-red-200',
-  partial: 'bg-yellow-100 border-yellow-300',
-  past: 'bg-gray-100 opacity-50 cursor-not-allowed',
-  disabled: 'bg-gray-50 cursor-not-allowed',
+  available: "bg-green-100 hover:bg-green-200 border-green-300",
+  selected: "bg-primary text-primary-foreground border-primary-darker",
+  booked: "bg-gray-300 cursor-not-allowed opacity-60",
+  conflict: "bg-red-100 border-red-400 hover:bg-red-200",
+  partial: "bg-yellow-100 border-yellow-300",
+  past: "bg-gray-100 opacity-50 cursor-not-allowed",
+  disabled: "bg-gray-50 cursor-not-allowed",
 };
 ```
 
@@ -669,6 +699,7 @@ const slotStyles = {
 ### Manual Testing Checklist
 
 **Consultation Allocation:**
+
 - [ ] Auto-allocate 1-hour consultation (2 consecutive slots)
 - [ ] Manually select 2 consecutive slots on same day
 - [ ] Try selecting slots on different days (should error)
@@ -676,6 +707,7 @@ const slotStyles = {
 - [ ] Select slot already booked (should show conflict tooltip)
 
 **Subscription Allocation:**
+
 - [ ] Auto-allocate 6-month subscription (3 calls/week)
 - [ ] Manually select slots across multiple weeks
 - [ ] Try selecting 4th call in week with 3/week limit (should error)
@@ -683,6 +715,7 @@ const slotStyles = {
 - [ ] View progress footer updates correctly
 
 **UI States:**
+
 - [ ] Loading skeleton appears on initial load
 - [ ] Error state shows when API fails
 - [ ] Empty state shows when no availability configured
@@ -690,6 +723,7 @@ const slotStyles = {
 - [ ] Dialog closes automatically on success
 
 **Accessibility:**
+
 - [ ] Tab navigation works through all slots
 - [ ] Enter/Space toggles slot selection
 - [ ] Screen reader announces slot state changes
@@ -732,6 +766,7 @@ describe('UnifiedCalendar', () => {
 ### Common Issues
 
 **Issue: Slots appear booked but shouldn't be**
+
 ```
 Cause: Stale data in calendar
 Fix: Call refetch() after allocation
@@ -739,6 +774,7 @@ Check: Ensure useEffect dependency array includes currentDate
 ```
 
 **Issue: Weekly limit not enforced correctly**
+
 ```
 Cause: Week counting algorithm mismatch
 Fix: Use SlotCalculationService.countWeeks() consistently
@@ -746,6 +782,7 @@ Check: Verify startDate/endDate are set correctly
 ```
 
 **Issue: Timezone conversion incorrect**
+
 ```
 Cause: Mixing local and UTC dates
 Fix: Always store UTC in DB, convert to local only for display
@@ -753,6 +790,7 @@ Check: Use date-fns-tz for timezone conversions
 ```
 
 **Issue: Calendar performance slow with many appointments**
+
 ```
 Cause: Re-rendering entire grid on every state change
 Fix: Memoize weekDates, useMemo for slot status calculations
@@ -760,6 +798,7 @@ Check: Use React DevTools Profiler to identify bottlenecks
 ```
 
 **Issue: Dialog doesn't close after successful allocation**
+
 ```
 Cause: onAllocationComplete callback not called
 Fix: Ensure SlotAllocationService calls onSuccess callback
@@ -769,11 +808,12 @@ Check: Verify onClose is wired to dialog's onOpenChange
 ### Debug Tools
 
 **Console Logging (Development Only):**
+
 ```typescript
 // EventTimingsCalendar.tsx (lines 150-209)
 // Already includes debug logs for subscription/class validation
 // Remove these in production builds
-console.log('[Subscription Validation Period]', {
+console.log("[Subscription Validation Period]", {
   subscriptionId,
   startDate,
   endDate,
@@ -782,10 +822,12 @@ console.log('[Subscription Validation Period]', {
 ```
 
 **React DevTools:**
+
 - **Components Tab:** Inspect prop drilling and state updates
 - **Profiler Tab:** Identify re-render performance issues
 
 **Network Tab:**
+
 - Check `/api/events/{type}/{id}/allocate` request/response
 - Verify slot format: `["2025-01-15T10:00:00.000Z", ...]`
 
@@ -795,12 +837,12 @@ console.log('[Subscription Validation Period]', {
 
 ### Event Type Cheat Sheet
 
-| Event Type | Duration Prop | Same-Day Required | Weekly Limits | Creates Multiple Appointments |
-|------------|---------------|-------------------|---------------|-------------------------------|
-| Consultation | `durationInHours` | ✅ Yes | ❌ No | ❌ No (1 appointment) |
-| Subscription | `sessionDurationInHours` | ❌ No | ✅ Yes | ✅ Yes (1 per call) |
-| Webinar | `durationInHours` | ❌ No | ❌ No | ❌ No (1 appointment) |
-| Class | `sessionDurationInHours` | ❌ No (but per session) | ✅ Yes | ✅ Yes (1 per session) |
+| Event Type   | Duration Prop            | Same-Day Required       | Weekly Limits | Creates Multiple Appointments |
+| ------------ | ------------------------ | ----------------------- | ------------- | ----------------------------- |
+| Consultation | `durationInHours`        | ✅ Yes                  | ❌ No         | ❌ No (1 appointment)         |
+| Subscription | `sessionDurationInHours` | ❌ No                   | ✅ Yes        | ✅ Yes (1 per call)           |
+| Webinar      | `durationInHours`        | ❌ No                   | ❌ No         | ❌ No (1 appointment)         |
+| Class        | `sessionDurationInHours` | ❌ No (but per session) | ✅ Yes        | ✅ Yes (1 per session)        |
 
 ### API Endpoints Quick Reference
 

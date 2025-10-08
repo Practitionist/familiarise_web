@@ -403,7 +403,7 @@ export function calculateRequiredSlots(
         } else {
           // Dates don't match duration - log warning and use durationInMonths
           console.warn(
-            `⚠️ Subscription date mismatch detected: ${weeksFromDates} weeks from dates vs ${expectedWeeks} weeks from ${durationInMonths} months. Using durationInMonths for calculation.`
+            `⚠️ Subscription date mismatch detected: ${weeksFromDates} weeks from dates vs ${expectedWeeks} weeks from ${durationInMonths} months. Using durationInMonths for calculation.`,
           );
         }
       }
@@ -443,7 +443,7 @@ export function calculateRequiredSlots(
         } else {
           // Dates don't match duration - log warning and use durationInMonths
           console.warn(
-            `⚠️ Class date mismatch detected: ${weeksFromDates} weeks from dates vs ${expectedWeeks} weeks from ${durationInMonths} months. Using durationInMonths for calculation.`
+            `⚠️ Class date mismatch detected: ${weeksFromDates} weeks from dates vs ${expectedWeeks} weeks from ${durationInMonths} months. Using durationInMonths for calculation.`,
           );
         }
       }

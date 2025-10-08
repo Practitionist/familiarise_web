@@ -120,7 +120,10 @@ export async function POST(
     };
 
     for (const error of validationResult.errors) {
-      if (error.includes("already booked") || error.includes("conflicts with")) {
+      if (
+        error.includes("already booked") ||
+        error.includes("conflicts with")
+      ) {
         // Extract slot time from error message
         const slotMatch = error.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
         if (slotMatch) {
@@ -128,7 +131,9 @@ export async function POST(
           result.conflicts.push({
             slot,
             existingAppointment: {
-              type: error.includes("Subscription") ? "Subscription" : "Consultation",
+              type: error.includes("Subscription")
+                ? "Subscription"
+                : "Consultation",
               with: "Another user",
               time: new Date(slot).toLocaleString(),
             },

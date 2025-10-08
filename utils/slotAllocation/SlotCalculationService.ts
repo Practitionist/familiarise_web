@@ -6,12 +6,7 @@
  */
 
 import { startOfWeek } from "date-fns";
-import {
-  EventType,
-  EventConfig,
-  TimeSlot,
-  ProgressInfo,
-} from "./types";
+import { EventType, EventConfig, TimeSlot, ProgressInfo } from "./types";
 
 /**
  * Service for calculating slots, weeks, and progress
@@ -90,7 +85,8 @@ export class SlotCalculationService {
 
     switch (eventType) {
       case "consultation": {
-        const duration = config.durationInHours || config.sessionDurationInHours;
+        const duration =
+          config.durationInHours || config.sessionDurationInHours;
         if (!duration || duration <= 0) {
           console.warn(
             "⚠️ Consultation duration missing or invalid. Using default: 1 hour",
@@ -101,7 +97,8 @@ export class SlotCalculationService {
       }
 
       case "webinar": {
-        const duration = config.durationInHours || config.sessionDurationInHours;
+        const duration =
+          config.durationInHours || config.sessionDurationInHours;
         if (!duration || duration <= 0) {
           return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
         }
@@ -130,7 +127,9 @@ export class SlotCalculationService {
           (config.durationInMonths || 0) * weeksPerMonth,
         );
         const totalCalls = totalWeeks * (config.callsPerWeek || 1);
-        const slotsPerCall = Math.ceil((config.sessionDurationInHours || 1) / 0.5);
+        const slotsPerCall = Math.ceil(
+          (config.sessionDurationInHours || 1) / 0.5,
+        );
         return totalCalls * slotsPerCall;
       }
 
@@ -261,8 +260,7 @@ export class SlotCalculationService {
         let consecutiveCount = 1;
         for (let i = 1; i < sorted.length; i++) {
           if (
-            sorted[i].startTime.getTime() ===
-            sorted[i - 1].endTime.getTime()
+            sorted[i].startTime.getTime() === sorted[i - 1].endTime.getTime()
           ) {
             consecutiveCount++;
             if (consecutiveCount === slotsPerCall) {
@@ -341,7 +339,9 @@ export class SlotCalculationService {
 
     // For subscriptions and classes
     if (scheduled === 0) {
-      const limitText = callsPerWeek ? ` | Limit: ${callsPerWeek}/${eventType === "class" ? "week" : "week"}` : "";
+      const limitText = callsPerWeek
+        ? ` | Limit: ${callsPerWeek}/${eventType === "class" ? "week" : "week"}`
+        : "";
       return `📅 Schedule ${required} ${sessionWordPlural} (${durationText} each)${limitText}`;
     } else if (remaining > 0) {
       const limitText = callsPerWeek ? ` | ${callsPerWeek}/week` : "";

@@ -68,7 +68,7 @@ Investigation of consultant `31e2e9f4-c9d5-4c4c-b281-e8531da623dd` (Mr. Jimmy Gi
 // Distribute calls across different days of the week (Mon-Fri)
 const dayOffset = (callIndex * 2) % 5; // Spread across weekdays
 const callDate = new Date(
-  weekStartDate.getTime() + dayOffset * 24 * 60 * 60 * 1000
+  weekStartDate.getTime() + dayOffset * 24 * 60 * 60 * 1000,
 );
 ```
 
@@ -322,7 +322,7 @@ const maxTotalCalls = callsPerWeek * totalWeeks;
 // Calculate actual weeks in THIS subscription instance
 const subscriptionDuration = endDate.getTime() - startDate.getTime();
 const subscriptionWeeks = Math.ceil(
-  subscriptionDuration / (7 * 24 * 60 * 60 * 1000)
+  subscriptionDuration / (7 * 24 * 60 * 60 * 1000),
 );
 const maxTotalCalls = callsPerWeek * subscriptionWeeks;
 

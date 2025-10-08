@@ -47,7 +47,7 @@ export interface SlotValidationResult extends ValidationResult {
  */
 export function validateSlot(
   slot: any,
-  slotType: "weekly" | "custom" | "appointment"
+  slotType: "weekly" | "custom" | "appointment",
 ): SlotValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -99,43 +99,47 @@ export function validateSlot(
   // Allow overnight slots, but flag if duration > 24 hours
   if (durationHours > QUALITY_THRESHOLDS.MAX_SLOT_DURATION_HOURS) {
     errors.push(
-      `Slot duration exceeds ${QUALITY_THRESHOLDS.MAX_SLOT_DURATION_HOURS} hours (${durationHours.toFixed(1)}h)`
+      `Slot duration exceeds ${QUALITY_THRESHOLDS.MAX_SLOT_DURATION_HOURS} hours (${durationHours.toFixed(1)}h)`,
     );
   }
 
   if (durationMinutes < QUALITY_THRESHOLDS.MIN_SLOT_DURATION_MINUTES) {
     errors.push(
-      `Slot duration is less than ${QUALITY_THRESHOLDS.MIN_SLOT_DURATION_MINUTES} minute(s)`
+      `Slot duration is less than ${QUALITY_THRESHOLDS.MIN_SLOT_DURATION_MINUTES} minute(s)`,
     );
   }
 
   // Check if slot is unreasonably far in the past
   const now = new Date();
   const yearsAgo = new Date();
-  yearsAgo.setFullYear(now.getFullYear() - QUALITY_THRESHOLDS.MAX_YEARS_IN_PAST);
+  yearsAgo.setFullYear(
+    now.getFullYear() - QUALITY_THRESHOLDS.MAX_YEARS_IN_PAST,
+  );
 
   if (endDate < yearsAgo) {
     warnings.push(
-      `Slot end date is more than ${QUALITY_THRESHOLDS.MAX_YEARS_IN_PAST} years in the past (${endDate.toISOString()})`
+      `Slot end date is more than ${QUALITY_THRESHOLDS.MAX_YEARS_IN_PAST} years in the past (${endDate.toISOString()})`,
     );
   }
 
   // Check if slot is unreasonably far in the future
   const yearsFromNow = new Date();
   yearsFromNow.setFullYear(
-    now.getFullYear() + QUALITY_THRESHOLDS.MAX_YEARS_IN_FUTURE
+    now.getFullYear() + QUALITY_THRESHOLDS.MAX_YEARS_IN_FUTURE,
   );
 
   if (startDate > yearsFromNow) {
     warnings.push(
-      `Slot start date is more than ${QUALITY_THRESHOLDS.MAX_YEARS_IN_FUTURE} years in the future (${startDate.toISOString()})`
+      `Slot start date is more than ${QUALITY_THRESHOLDS.MAX_YEARS_IN_FUTURE} years in the future (${startDate.toISOString()})`,
     );
   }
 
   // Weekly slot specific validation
   if (slotType === "weekly") {
     if (!slot.dayOfWeekforStartTimeInUTC) {
-      errors.push("Weekly slot missing required field: dayOfWeekforStartTimeInUTC");
+      errors.push(
+        "Weekly slot missing required field: dayOfWeekforStartTimeInUTC",
+      );
     }
   }
 
@@ -172,12 +176,12 @@ export function validateAppointment(appointment: any): ValidationResult {
         const slotValidation = validateSlot(slot, "appointment");
         if (!slotValidation.isValid) {
           errors.push(
-            `Slot ${index} in appointment ${appointment.id}: ${slotValidation.errors.join(", ")}`
+            `Slot ${index} in appointment ${appointment.id}: ${slotValidation.errors.join(", ")}`,
           );
         }
         if (slotValidation.warnings.length > 0) {
           warnings.push(
-            `Slot ${index} in appointment ${appointment.id}: ${slotValidation.warnings.join(", ")}`
+            `Slot ${index} in appointment ${appointment.id}: ${slotValidation.warnings.join(", ")}`,
           );
         }
       });
@@ -247,7 +251,7 @@ export function validateSubscription(subscription: any): ValidationResult {
 
   if (durationDays > 365 * 5) {
     warnings.push(
-      `Subscription duration exceeds 5 years (${Math.floor(durationDays)} days)`
+      `Subscription duration exceeds 5 years (${Math.floor(durationDays)} days)`,
     );
   }
 
@@ -261,7 +265,7 @@ export function validateSubscription(subscription: any): ValidationResult {
  */
 export function validateAppointmentAgainstAvailability(
   appointment: any,
-  consultantWeeklySlots: Array<{ dayOfWeekforStartTimeInUTC: DayOfWeek }>
+  consultantWeeklySlots: Array<{ dayOfWeekforStartTimeInUTC: DayOfWeek }>,
 ): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -272,12 +276,12 @@ export function validateAppointmentAgainstAvailability(
 
   // Get consultant's available days
   const availableDays = new Set(
-    consultantWeeklySlots.map((s) => s.dayOfWeekforStartTimeInUTC)
+    consultantWeeklySlots.map((s) => s.dayOfWeekforStartTimeInUTC),
   );
 
   if (availableDays.size === 0) {
     warnings.push(
-      "Consultant has no weekly availability slots, cannot validate appointment days"
+      "Consultant has no weekly availability slots, cannot validate appointment days",
     );
     return { isValid: true, errors, warnings };
   }
@@ -299,7 +303,7 @@ export function validateAppointmentAgainstAvailability(
 
     if (!availableDays.has(dayOfWeek)) {
       errors.push(
-        `Appointment slot on ${dayOfWeek} (${slotDate.toISOString()}) - consultant not available on this day`
+        `Appointment slot on ${dayOfWeek} (${slotDate.toISOString()}) - consultant not available on this day`,
       );
     }
   });
@@ -313,7 +317,7 @@ export function validateAppointmentAgainstAvailability(
  */
 export function validateAppointmentWithinSubscription(
   appointment: any,
-  subscription: any
+  subscription: any,
 ): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -335,7 +339,7 @@ export function validateAppointmentWithinSubscription(
 
     if (slotStart < subStart || slotEnd > subEnd) {
       errors.push(
-        `Slot ${index} (${slotStart.toISOString()}) is outside subscription period (${subStart.toISOString()} to ${subEnd.toISOString()})`
+        `Slot ${index} (${slotStart.toISOString()}) is outside subscription period (${subStart.toISOString()} to ${subEnd.toISOString()})`,
       );
     }
   });
@@ -353,8 +357,13 @@ export function validateAppointmentWithinSubscription(
  */
 export function validateSlots(
   slots: any[],
-  slotType: "weekly" | "custom" | "appointment"
-): { valid: number; invalid: number; warnings: number; details: SlotValidationResult[] } {
+  slotType: "weekly" | "custom" | "appointment",
+): {
+  valid: number;
+  invalid: number;
+  warnings: number;
+  details: SlotValidationResult[];
+} {
   const details = slots.map((slot) => validateSlot(slot, slotType));
 
   return {
@@ -370,7 +379,7 @@ export function validateSlots(
  */
 export function logValidationResults(
   context: string,
-  results: ValidationResult[]
+  results: ValidationResult[],
 ): void {
   const invalid = results.filter((r) => !r.isValid);
   const hasWarnings = results.filter((r) => r.warnings.length > 0);
@@ -383,13 +392,17 @@ export function logValidationResults(
   }
 
   if (hasWarnings.length > 0) {
-    console.warn(`⚠️  [${context}] Found ${hasWarnings.length} items with warnings:`);
+    console.warn(
+      `⚠️  [${context}] Found ${hasWarnings.length} items with warnings:`,
+    );
     hasWarnings.forEach((result, index) => {
       console.warn(`  Item ${index + 1}:`, result.warnings.join("; "));
     });
   }
 
   if (invalid.length === 0 && hasWarnings.length === 0) {
-    console.log(`✅ [${context}] All ${results.length} items validated successfully`);
+    console.log(
+      `✅ [${context}] All ${results.length} items validated successfully`,
+    );
   }
 }

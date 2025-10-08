@@ -274,7 +274,10 @@ export function AppointmentsTab({
                             : "flex items-center justify-between p-4 hover:bg-gray-100";
 
                           return (
-                            <li key={appointment.id} className={containerClasses}>
+                            <li
+                              key={appointment.id}
+                              className={containerClasses}
+                            >
                               <div className="flex items-center justify-between w-full">
                                 {/* Left: Avatar and User info */}
                                 <div className="flex items-center space-x-3 min-w-0">
@@ -299,14 +302,17 @@ export function AppointmentsTab({
                                           {getConsumeeName(appointment)}
                                         </h3>
                                         <p className="text-sm text-gray-600">
-                                          {getAppointmentTypeAndPlan(appointment)}
+                                          {getAppointmentTypeAndPlan(
+                                            appointment,
+                                          )}
                                         </p>
                                       </>
                                     )}
                                     <div className="text-sm text-gray-500">
                                       Starts:{" "}
                                       {(() => {
-                                        const startTime = getStartTime(appointment);
+                                        const startTime =
+                                          getStartTime(appointment);
                                         return startTime
                                           ? formatAppointmentTime(
                                               startTime.toISOString(),
@@ -319,7 +325,9 @@ export function AppointmentsTab({
                                   {/* Management buttons right after user info */}
                                   <div className="flex items-center gap-2 ml-4">
                                     {!isRecurring &&
-                                      canManageAppointmentTimings(appointment) && (
+                                      canManageAppointmentTimings(
+                                        appointment,
+                                      ) && (
                                         <Button
                                           variant="outline"
                                           size="sm"
@@ -333,7 +341,9 @@ export function AppointmentsTab({
                                         </Button>
                                       )}
                                     {!isRecurring &&
-                                      supportsParticipantManagement(appointment) && (
+                                      supportsParticipantManagement(
+                                        appointment,
+                                      ) && (
                                         <Button
                                           variant="outline"
                                           size="sm"
@@ -374,7 +384,9 @@ export function AppointmentsTab({
                                           ? !isJoinable
                                           : false
                                       }
-                                      onClick={() => handleJoinMeeting(appointment)}
+                                      onClick={() =>
+                                        handleJoinMeeting(appointment)
+                                      }
                                     >
                                       {process.env.NODE_ENV === "production"
                                         ? isJoinable
@@ -435,7 +447,9 @@ export function AppointmentsTab({
                                 className="text-xs"
                                 onClick={() => toggleShowAll(groupKey)}
                               >
-                                {paginationState.showAll ? "Show Less" : "Show All"}
+                                {paginationState.showAll
+                                  ? "Show Less"
+                                  : "Show All"}
                               </Button>
                             </div>
                           </li>
