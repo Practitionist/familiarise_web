@@ -3,17 +3,20 @@
  *
  * Refactored to use unified SlotAllocationService
  * Reduced from 590 lines to ~100 lines
+ *
+ * VALIDATION LAYERS:
+ * 1. Zod schema validation - Type-safe validation with automatic type inference
+ * 2. SlotAllocationService - Validates business rules and executes allocation
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
 import { AllocationMode } from "@/utils/slotAllocation/types";
-
-interface AllocationRequest {
-  isAuto: boolean;
-  slots?: string[];
-  useRequestedSlots?: boolean;
-}
+import {
+  allocationRequestSchema,
+  eventIdSchema,
+} from "@/schemas/slotAllocation/validationSchemas";
+import { ZodError } from "zod";
 
 export async function PATCH(
   request: NextRequest,
@@ -21,49 +24,54 @@ export async function PATCH(
 ) {
   try {
     const { consultationId } = await params;
-    const body: AllocationRequest = await request.json();
 
-    // Validate request body
-    if (typeof body.isAuto !== "boolean") {
-      return NextResponse.json(
-        { error: "isAuto flag is required" },
-        { status: 400 },
-      );
-    }
+    // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
+    try {
+      // Validate consultation ID from URL params
+      eventIdSchema.parse(consultationId);
 
-    // Determine allocation mode
-    let mode: AllocationMode;
-    if (body.useRequestedSlots) {
-      mode = "requested";
-    } else if (body.isAuto) {
-      mode = "auto";
-    } else {
-      mode = "manual";
-      if (!Array.isArray(body.slots) || body.slots.length === 0) {
-        return NextResponse.json(
-          { error: "slots array is required for manual allocation" },
-          { status: 400 },
-        );
+      // Validate request body and get typed data
+      const body = allocationRequestSchema.parse(await request.json());
+
+      // Determine allocation mode
+      let mode: AllocationMode;
+      if (body.useRequestedSlots) {
+        mode = "requested";
+      } else if (body.isAuto) {
+        mode = "auto";
+      } else {
+        mode = "manual";
       }
+
+      // LAYER 2: Business Logic Validation & Allocation
+      const result = await SlotAllocationService.allocate({
+        eventType: "consultation",
+        eventId: consultationId,
+        mode,
+        slots: body.slots,
+      });
+
+      if (!result.success) {
+        return NextResponse.json({ error: result.error }, { status: 500 });
+      }
+
+      return NextResponse.json({
+        data: result.appointments,
+        warnings: result.warnings,
+      });
+    } catch (validationError) {
+      // Zod validation errors - return 400 Bad Request
+      if (validationError instanceof ZodError) {
+        const errorMessage = validationError.errors
+          .map((err) => `${err.path.join(".")}: ${err.message}`)
+          .join("; ");
+
+        return NextResponse.json({ error: errorMessage }, { status: 400 });
+      }
+      throw validationError; // Re-throw non-validation errors
     }
-
-    // Use unified allocation service
-    const result = await SlotAllocationService.allocate({
-      eventType: "consultation",
-      eventId: consultationId,
-      mode,
-      slots: body.slots,
-    });
-
-    if (!result.success) {
-      return NextResponse.json({ error: result.error }, { status: 500 });
-    }
-
-    return NextResponse.json({
-      data: result.appointments,
-      warnings: result.warnings,
-    });
   } catch (error) {
+    // Catch-all for unexpected errors (database errors, network issues, etc.)
     console.error("Consultation allocation error:", error);
     return NextResponse.json(
       {

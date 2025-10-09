@@ -3,6 +3,11 @@
  *
  * Refactored to use unified SlotValidationService + SubscriptionValidationService
  * Reduced from 240 lines to ~100 lines
+ *
+ * VALIDATION LAYERS:
+ * 1. Zod schema validation - Type-safe validation with automatic type inference
+ * 2. SlotValidationService - Validates business rules (conflicts, availability, etc.)
+ * 3. SubscriptionValidationService - Validates subscription-specific rules (weekly limits, etc.)
  */
 
 import prisma from "@/lib/prisma";
@@ -10,10 +15,11 @@ import { RequestStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
 import { SubscriptionValidationService } from "@/utils/subscriptionValidation";
-
-interface ValidationRequest {
-  slots: string[];
-}
+import {
+  validationRequestSchema,
+  eventIdSchema,
+} from "@/schemas/slotAllocation/validationSchemas";
+import { ZodError } from "zod";
 
 interface ValidationResult {
   conflicts: {
@@ -75,13 +81,20 @@ export async function POST(
 ) {
   try {
     const { subscriptionId } = await params;
-    const body: ValidationRequest = await request.json();
 
-    // Fetch subscription with necessary relations
-    const subscription = await prisma.subscription.findUnique({
-      where: { id: subscriptionId },
-      include: subscriptionInclude,
-    });
+    // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
+    try {
+      // Validate subscription ID from URL params
+      eventIdSchema.parse(subscriptionId);
+
+      // Validate request body and get typed data
+      const body = validationRequestSchema.parse(await request.json());
+
+      // Fetch subscription with necessary relations
+      const subscription = await prisma.subscription.findUnique({
+        where: { id: subscriptionId },
+        include: subscriptionInclude,
+      });
 
     if (!subscription) {
       return NextResponse.json(
@@ -103,7 +116,7 @@ export async function POST(
     // Convert slots to Date objects
     const slotDates = body.slots.map((slot) => new Date(slot));
 
-    // Use unified validation service
+    // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
     const validationService = new SlotValidationService(prisma);
     const validationResult = await validationService.validate(
       "subscription",
@@ -125,7 +138,7 @@ export async function POST(
       },
     );
 
-    // Get subscription-specific validation details
+    // LAYER 3: Subscription-Specific Validation (weekly limits, total calls, etc.)
     const subscriptionValidationService = new SubscriptionValidationService(
       prisma,
     );
@@ -188,15 +201,30 @@ export async function POST(
     }
 
     // If subscription validation fails, no slots are valid
-    if (!subscriptionValidation.isValid) {
-      result.validSlots = [];
-    }
+      if (!subscriptionValidation.isValid) {
+        result.validSlots = [];
+      }
 
-    return NextResponse.json({ data: result });
+      return NextResponse.json({ data: result });
+    } catch (validationError) {
+      // Zod validation errors - return 400 Bad Request
+      if (validationError instanceof ZodError) {
+        const errorMessage = validationError.errors
+          .map((err) => `${err.path.join(".")}: ${err.message}`)
+          .join("; ");
+
+        return NextResponse.json({ error: errorMessage }, { status: 400 });
+      }
+      throw validationError; // Re-throw non-validation errors
+    }
   } catch (error) {
+    // Catch-all for unexpected errors (database errors, network issues, etc.)
     console.error("Validation error:", error);
     return NextResponse.json(
-      { error: "Failed to validate slots" },
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to validate slots",
+      },
       { status: 500 },
     );
   }

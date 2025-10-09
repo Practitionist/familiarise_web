@@ -1,3 +1,14 @@
+/**
+ * Webinar Slot Allocation API Route
+ *
+ * NOTE: This route uses inline allocation logic (not yet refactored to SlotAllocationService)
+ * Consider refactoring to use unified SlotAllocationService in the future.
+ *
+ * VALIDATION LAYERS:
+ * 1. Zod schema validation - Type-safe validation with automatic type inference
+ * 2. Inline business logic - Validates availability and conflicts
+ */
+
 import prisma from "@/lib/prisma";
 import {
   AppointmentsType,
@@ -7,17 +18,16 @@ import {
 } from "@prisma/client";
 import { addHours } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  allocationRequestSchema,
+  eventIdSchema,
+} from "@/schemas/slotAllocation/validationSchemas";
+import { ZodError } from "zod";
 
 type PrismaTransaction = Omit<
   Prisma.TransactionClient,
   "$connect" | "$disconnect" | "$on" | "$transaction" | "$use"
 >;
-
-interface AllocationRequest {
-  isAuto: boolean;
-  slots?: string[]; // Required for manual allocation
-  useRequestedSlots?: boolean; // For using pre-allocated slots
-}
 
 const webinarInclude = {
   webinarPlan: {
@@ -314,53 +324,47 @@ export async function PATCH(
 ) {
   try {
     const { webinarId } = await params;
-    const body: AllocationRequest = await request.json();
 
-    // Validate request body
-    if (typeof body.isAuto !== "boolean") {
-      return NextResponse.json(
-        { error: "isAuto flag is required" },
-        { status: 400 },
-      );
-    }
-
-    if (body.useRequestedSlots) {
-      // When using requested slots, we don't need manual slots
-      body.isAuto = false;
-    } else if (!body.isAuto && !Array.isArray(body.slots)) {
-      return NextResponse.json(
-        { error: "slots array is required for manual allocation" },
-        { status: 400 },
-      );
-    }
-
-    // Fetch webinar with necessary relations
-    const webinar = await prisma.webinar.findUnique({
-      where: { id: webinarId },
-      include: webinarInclude,
-    });
-
-    if (!webinar) {
-      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
-    }
-
-    // Validate user information
-    if (!webinar.webinarPlan?.consultantProfile?.user?.id) {
-      return NextResponse.json(
-        { error: "Missing consultant information" },
-        { status: 400 },
-      );
-    }
-
-    const { consultantProfile } = webinar.webinarPlan;
-    if (!consultantProfile) {
-      return NextResponse.json(
-        { error: "Consultant profile not found" },
-        { status: 400 },
-      );
-    }
-
+    // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
     try {
+      // Validate webinar ID from URL params
+      eventIdSchema.parse(webinarId);
+
+      // Validate request body and get typed data
+      const body = allocationRequestSchema.parse(await request.json());
+
+      if (body.useRequestedSlots) {
+        // When using requested slots, we don't need manual slots
+        body.isAuto = false;
+      }
+
+      // Fetch webinar with necessary relations
+      const webinar = await prisma.webinar.findUnique({
+        where: { id: webinarId },
+        include: webinarInclude,
+      });
+
+      if (!webinar) {
+        return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
+      }
+
+      // Validate user information
+      if (!webinar.webinarPlan?.consultantProfile?.user?.id) {
+        return NextResponse.json(
+          { error: "Missing consultant information" },
+          { status: 400 },
+        );
+      }
+
+      const { consultantProfile } = webinar.webinarPlan;
+      if (!consultantProfile) {
+        return NextResponse.json(
+          { error: "Consultant profile not found" },
+          { status: 400 },
+        );
+      }
+
+      // LAYER 2: Business Logic - Inline allocation and validation
       // Use transaction to ensure atomic updates
       const result = await prisma.$transaction(async (tx) => {
         // If using requested slots and appointment exists, just update status
@@ -483,24 +487,29 @@ export async function PATCH(
       });
 
       return NextResponse.json({ data: result });
-    } catch (error) {
-      if (error instanceof Error) {
-        console.error("Error: ", error.stack);
+    } catch (validationError) {
+      // Zod validation errors - return 400 Bad Request
+      if (validationError instanceof ZodError) {
+        const errorMessage = validationError.errors
+          .map((err) => `${err.path.join(".")}: ${err.message}`)
+          .join("; ");
+
+        return NextResponse.json({ error: errorMessage }, { status: 400 });
       }
-      return NextResponse.json(
-        {
-          error:
-            error instanceof Error ? error.message : "Failed to allocate slot",
-        },
-        { status: 500 },
-      );
+      throw validationError; // Re-throw non-validation errors
     }
   } catch (error) {
+    // Catch-all for unexpected errors (database errors, network issues, etc.)
     if (error instanceof Error) {
       console.error("Error: ", error.stack);
     }
     return NextResponse.json(
-      { error: "An error occurred during slot allocation" },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "An error occurred during slot allocation",
+      },
       { status: 500 },
     );
   }
