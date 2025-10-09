@@ -26,14 +26,13 @@ import {
 import { toast } from "@/components/ui/use-toast";
 import { TAppointment } from "@/types/appointment";
 import { DetailedTimeSlotMeta, TimeSlotMeta } from "@/utils/timeSlotsMeta";
-import { AppointmentsType, RequestStatus, ScheduleType } from "@prisma/client";
+import { AppointmentsType, RequestStatus } from "@prisma/client";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
 import { TimingsCalendar } from "./components/TimingsCalendar";
 import {
   AvailabilityApiResponse,
-  ConsultantApiResponse,
   ConsultationApiResponse,
   RequestedBy,
   SubscriptionApiResponse,
@@ -143,13 +142,6 @@ export function RequestSlotAllocationTab({
     useState(false);
   const [selectedRequestForDialog, setSelectedRequestForDialog] =
     useState<Request | null>(null);
-  const [consultantData, setConsultantData] = useState<{
-    scheduleType: ScheduleType;
-    timezone: string;
-  }>({
-    scheduleType: ScheduleType.WEEKLY,
-    timezone: "UTC",
-  });
 
   // Fetch requests, available slots, and existing appointments
   const fetchData = useCallback(async () => {
@@ -164,7 +156,6 @@ export function RequestSlotAllocationTab({
         weeklyAvailabilityResult,
         customAvailabilityResult,
         appointmentsResult,
-        consultantResult,
       ] = await Promise.all([
         fetchDataFromApi<ConsultationApiResponse[]>(
           `/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
@@ -181,9 +172,6 @@ export function RequestSlotAllocationTab({
         fetchDataFromApi<TAppointment[]>(
           `/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
         ),
-        fetchDataFromApi<ConsultantApiResponse>(
-          `/api/user/consultants/${consultantId}`,
-        ),
       ]);
 
       // Check results for the first error
@@ -193,7 +181,6 @@ export function RequestSlotAllocationTab({
         weeklyAvailabilityResult,
         customAvailabilityResult,
         appointmentsResult,
-        consultantResult,
       ];
 
       for (const result of results) {
@@ -312,9 +299,9 @@ export function RequestSlotAllocationTab({
             (appt.slotsOfAppointment || []).map(
               (slot): DetailedTimeSlotMeta => {
                 let title = "Booked Slot"; // Default
-                let type =
+                const type =
                   appt.appointmentType || AppointmentsType.CONSULTATION;
-                let id = appt.id || "unknown-appt-" + slot.id;
+                const id = appt.id || "unknown-appt-" + slot.id;
 
                 if (
                   appt.appointmentType === "CONSULTATION" &&
@@ -357,19 +344,6 @@ export function RequestSlotAllocationTab({
             ),
           ),
         );
-      }
-
-      // Process consultant data
-      if (consultantResult.ok && consultantResult.data) {
-        setConsultantData({
-          scheduleType:
-            consultantResult.data.scheduleType || ScheduleType.WEEKLY,
-          timezone: consultantResult.data.user?.currentTimezone || "UTC",
-        });
-      } else {
-        // Handle potential error in fetching consultant data, maybe set defaults or show specific error
-        console.error("Could not fetch consultant schedule/timezone info.");
-        // Keep default or previous state for consultantData
       }
 
       // --- Update State ---
@@ -691,11 +665,19 @@ export function RequestSlotAllocationTab({
                 <TableCell>
                   {request.requestedTimes &&
                   request.requestedTimes.length > 0 ? (
-                    request.requestedTimes.map((time, index) => (
-                      <div key={time + index} className="text-sm">
-                        {new Date(time).toLocaleString()}
-                      </div>
-                    ))
+                    <div className="space-y-1">
+                      {request.requestedTimes.slice(0, 5).map((time, index) => (
+                        <div key={time + index} className="text-sm">
+                          {new Date(time).toLocaleString()}
+                        </div>
+                      ))}
+                      {request.requestedTimes.length > 5 && (
+                        <div className="text-xs text-muted-foreground">
+                          ... and {request.requestedTimes.length - 5} more slot
+                          {request.requestedTimes.length - 5 !== 1 ? "s" : ""}
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <div className="text-sm text-muted-foreground">
                       Not available
@@ -869,6 +851,15 @@ export function RequestSlotAllocationTab({
             selectedRequestForDialog?.type || AppointmentsType.CONSULTATION
           }
           requestedSlots={selectedRequestForDialog?.requestedTimes || []}
+          schedulingPeriod={
+            selectedRequestForDialog?.startDate &&
+            selectedRequestForDialog?.endDate
+              ? {
+                  startDate: selectedRequestForDialog.startDate,
+                  endDate: selectedRequestForDialog.endDate,
+                }
+              : undefined
+          }
           onConfirm={handleRequestedAllocation}
           onCancel={() => {
             setRequestedSlotsDialogOpen(false);

@@ -24,6 +24,9 @@ interface ValidationResult {
   outsideAvailability: Array<{
     slot: string;
   }>;
+  outsidePeriod?: Array<{
+    slot: string;
+  }>;
   validSlots: string[];
 }
 
@@ -33,6 +36,7 @@ interface RequestedSlotsDialogProps {
   requestId: string;
   requestType: AppointmentsType;
   requestedSlots: string[];
+  schedulingPeriod?: { startDate?: Date; endDate?: Date };
   onConfirm: (override: boolean) => Promise<void>;
   onCancel: () => void;
 }
@@ -43,6 +47,7 @@ export function RequestedSlotsDialog({
   requestId,
   requestType,
   requestedSlots,
+  schedulingPeriod,
   onConfirm,
   onCancel,
 }: RequestedSlotsDialogProps) {
@@ -74,6 +79,7 @@ export function RequestedSlotsDialog({
         };
       });
 
+      // Server-side validation (conflicts, availability)
       const validationResponse = await AllocationService.validateSlots(
         eventType,
         requestId,
@@ -84,7 +90,27 @@ export function RequestedSlotsDialog({
         throw new Error(validationResponse.error || "Failed to validate slots");
       }
 
-      setValidationResult(validationResponse.data || null);
+      // Client-side scheduling period validation
+      const outsidePeriodSlots: Array<{ slot: string }> = [];
+      if (schedulingPeriod?.startDate && schedulingPeriod?.endDate) {
+        requestedSlots.forEach((slot) => {
+          const slotDate = new Date(slot);
+          if (
+            slotDate < schedulingPeriod.startDate! ||
+            slotDate > schedulingPeriod.endDate!
+          ) {
+            outsidePeriodSlots.push({ slot });
+          }
+        });
+      }
+
+      // Merge server-side and client-side validation results
+      setValidationResult({
+        conflicts: validationResponse.data?.conflicts || [],
+        outsideAvailability: validationResponse.data?.outsideAvailability || [],
+        outsidePeriod: outsidePeriodSlots,
+        validSlots: validationResponse.data?.validSlots || [],
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to validate slots");
     } finally {
@@ -102,8 +128,19 @@ export function RequestedSlotsDialog({
   // Safe access to validation result arrays
   const conflicts = validationResult?.conflicts || [];
   const outsideAvailability = validationResult?.outsideAvailability || [];
+  const outsidePeriod = validationResult?.outsidePeriod || [];
+  const validSlots = validationResult?.validSlots || [];
   const hasConflicts = conflicts.length > 0;
   const hasOutsideSlots = outsideAvailability.length > 0;
+  const hasOutsidePeriod = outsidePeriod.length > 0;
+  const hasIssues = hasConflicts || hasOutsideSlots || hasOutsidePeriod;
+
+  // Calculate available slots count
+  const availableSlotsCount =
+    requestedSlots.length -
+    conflicts.length -
+    outsideAvailability.length -
+    outsidePeriod.length;
 
   // Group slots by date for better visualization
   const groupSlotsByDate = (slots: string[]) => {
@@ -146,81 +183,225 @@ export function RequestedSlotsDialog({
     if (validationResult) {
       return (
         <>
+          {/* Summary Statistics Section */}
+          <div className="bg-gray-50 p-4 rounded-md mb-4 border border-gray-200">
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <span>📊</span> Validation Summary
+            </h3>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-600">Total Slots:</span>
+                <span className="font-semibold text-gray-900">
+                  {requestedSlots.length}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-600 flex items-center gap-1">
+                  <span className="text-green-600">✅</span> Available:
+                </span>
+                <span className="font-semibold text-green-700">
+                  {availableSlotsCount}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-600 flex items-center gap-1">
+                  <span className="text-red-600">🔴</span> Conflicting:
+                </span>
+                <span className="font-semibold text-red-700">
+                  {conflicts.length}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-600 flex items-center gap-1">
+                  <span className="text-yellow-600">🟡</span> Outside Availability:
+                </span>
+                <span className="font-semibold text-yellow-700">
+                  {outsideAvailability.length}
+                </span>
+              </div>
+              {requestType === AppointmentsType.SUBSCRIPTION && (
+                <div className="flex items-center justify-between col-span-2">
+                  <span className="text-gray-600 flex items-center gap-1">
+                    <span className="text-blue-600">🔵</span> Outside Period:
+                  </span>
+                  <span className="font-semibold text-blue-700">
+                    {outsidePeriod.length}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
           {hasConflicts && (
-            <div className="bg-red-50 p-4 rounded-md mb-4">
-              <h3 className="font-semibold text-red-700 mb-2">
-                Conflicting Slots
+            <div className="bg-red-50 p-4 rounded-md mb-4 border border-red-200">
+              <h3 className="font-semibold text-red-900 mb-2 flex items-center gap-2">
+                <span>🔴</span> Conflicting Slots ({conflicts.length})
               </h3>
-              <ul className="space-y-1">
-                {conflicts.map((conflict) => (
-                  <li key={conflict.slot} className="text-sm text-red-600">
-                    <span className="font-medium">
-                      {new Date(conflict.slot).toLocaleString()}
-                    </span>
-                    {" - "}
-                    {conflict.existingAppointment.type} with{" "}
-                    {conflict.existingAppointment.with}
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-3 text-xs text-red-600">
-                Cannot allocate slots that conflict with existing appointments.
+              <div className="max-h-48 overflow-y-auto mb-2">
+                <ul className="space-y-1">
+                  {conflicts.map((conflict) => (
+                    <li key={conflict.slot} className="text-sm text-red-700">
+                      <span className="font-medium">
+                        {new Date(conflict.slot).toLocaleString()}
+                      </span>
+                      {" - "}
+                      {conflict.existingAppointment.type} with{" "}
+                      {conflict.existingAppointment.with}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <p className="text-xs text-red-600">
+                ❌ Cannot allocate slots that conflict with existing appointments.
               </p>
             </div>
           )}
 
           {hasOutsideSlots && (
-            <div className="bg-yellow-50 p-4 rounded-md mb-4">
-              <h3 className="font-semibold text-yellow-800 mb-2">
-                Slots Outside Availability
+            <div className="bg-yellow-50 p-4 rounded-md mb-4 border border-yellow-200">
+              <h3 className="font-semibold text-yellow-900 mb-2 flex items-center gap-2">
+                <span>🟡</span> Slots Outside Availability ({outsideAvailability.length})
               </h3>
-              {/* Group outside availability slots by date */}
-              {Array.from(
-                groupSlotsByDate(outsideAvailability.map((s) => s.slot)),
-              ).map(([date, slots]) => (
-                <div key={date} className="mb-2">
-                  <p className="text-sm font-medium text-yellow-800">{date}:</p>
-                  <ul className="ml-3 space-y-1">
-                    {slots.map((slot) => (
-                      <li key={slot} className="text-sm text-yellow-700">
-                        {new Date(slot).toLocaleTimeString()}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-              <p className="mt-3 text-sm text-yellow-700 font-medium">
+              <div className="max-h-48 overflow-y-auto mb-2">
+                {/* Group outside availability slots by date */}
+                {Array.from(
+                  groupSlotsByDate(outsideAvailability.map((s) => s.slot)),
+                ).map(([date, slots]) => (
+                  <div key={date} className="mb-2">
+                    <p className="text-sm font-medium text-yellow-900">{date}:</p>
+                    <ul className="ml-3 space-y-1">
+                      {slots.map((slot) => (
+                        <li key={slot} className="text-sm text-yellow-700">
+                          {new Date(slot).toLocaleTimeString()}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+              <p className="text-sm text-yellow-700 font-medium">
                 ⚠️ These slots are outside your regular availability. You can
                 override and allocate them if needed.
               </p>
             </div>
           )}
 
-          {!hasConflicts && !hasOutsideSlots && (
-            <div className="bg-green-50 p-4 rounded-md mb-4">
-              <h3 className="font-semibold text-green-700 mb-2">
-                All Slots Available
+          {hasOutsidePeriod && (
+            <div className="bg-blue-50 p-4 rounded-md mb-4 border border-blue-200">
+              <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                <span>🔵</span> Slots Outside Scheduling Period ({outsidePeriod.length})
               </h3>
-              <p className="text-sm text-green-600 mb-3">
-                All requested slots are within your availability and have no
-                conflicts.
-              </p>
-              {/* Show requested slots grouped by date */}
-              <div className="mt-2 text-sm text-green-700">
-                <p className="font-medium mb-1">Requested Times:</p>
-                {Array.from(groupSlotsByDate(requestedSlots)).map(
-                  ([date, slots]) => (
-                    <div key={date} className="ml-2 mb-1">
-                      <span className="font-medium">{date}:</span>{" "}
-                      {slots
-                        .map((s) => new Date(s).toLocaleTimeString())
-                        .join(", ")}
-                    </div>
-                  ),
+              <p className="text-sm text-blue-700 mb-3">
+                The following slots are outside the subscription scheduling period{" "}
+                {schedulingPeriod?.startDate && schedulingPeriod?.endDate && (
+                  <>
+                    ({schedulingPeriod.startDate.toLocaleDateString()} -{" "}
+                    {schedulingPeriod.endDate.toLocaleDateString()})
+                  </>
                 )}
+                :
+              </p>
+              <div className="max-h-48 overflow-y-auto mb-2">
+                {/* Group outside period slots by date */}
+                {Array.from(
+                  groupSlotsByDate(outsidePeriod.map((s) => s.slot)),
+                ).map(([date, slots]) => (
+                  <div key={date} className="mb-2">
+                    <p className="text-sm font-medium text-blue-800">{date}:</p>
+                    <ul className="ml-3 space-y-1">
+                      {slots.map((slot) => (
+                        <li key={slot} className="text-sm text-blue-700">
+                          {new Date(slot).toLocaleTimeString()}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
               </div>
+              <p className="text-xs text-blue-600">
+                ❌ Cannot allocate slots outside the subscription period.
+              </p>
             </div>
           )}
+
+          {/* Show available slots section */}
+          {!hasIssues ? (
+            /* All slots available - show immediately */
+            <div className="bg-green-50 p-4 rounded-md mb-4 border border-green-200">
+              <h3 className="font-semibold text-green-900 mb-2 flex items-center gap-2">
+                <span>✅</span> All Slots Available
+              </h3>
+              <p className="text-sm text-green-700 mb-3">
+                All {requestedSlots.length} requested slots are within your availability and have no
+                conflicts.
+              </p>
+              {/* Show requested slots - collapsible if more than 10 */}
+              {requestedSlots.length <= 10 ? (
+                <div className="text-sm text-green-700">
+                  <p className="font-medium mb-1">Requested Times:</p>
+                  <div className="ml-2 space-y-1">
+                    {requestedSlots.map((slot, index) => (
+                      <div key={slot + index}>
+                        {new Date(slot).toLocaleString()}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <details className="mt-2">
+                  <summary className="cursor-pointer font-medium text-green-800 hover:text-green-900 select-none">
+                    ▶ View all {requestedSlots.length} available slots
+                  </summary>
+                  <div className="mt-3 max-h-64 overflow-y-auto text-sm text-green-700">
+                    {Array.from(groupSlotsByDate(requestedSlots)).map(
+                      ([date, slots]) => (
+                        <div key={date} className="mb-2">
+                          <p className="font-medium text-green-900">{date}:</p>
+                          <div className="ml-3 space-y-1">
+                            {slots.map((s, idx) => (
+                              <div key={s + idx}>
+                                {new Date(s).toLocaleTimeString()}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                </details>
+              )}
+            </div>
+          ) : availableSlotsCount > 0 ? (
+            /* Some issues but also some available - show collapsible */
+            <details className="bg-green-50 p-4 rounded-md border border-green-200">
+              <summary className="cursor-pointer font-semibold text-green-900 hover:text-green-800 select-none flex items-center gap-2">
+                <span>▶</span> View {availableSlotsCount} available slot{availableSlotsCount !== 1 ? 's' : ''}
+              </summary>
+              <div className="mt-3 max-h-64 overflow-y-auto text-sm text-green-700">
+                {Array.from(
+                  groupSlotsByDate(
+                    requestedSlots.filter(
+                      (slot) =>
+                        !conflicts.some((c) => c.slot === slot) &&
+                        !outsideAvailability.some((o) => o.slot === slot) &&
+                        !outsidePeriod.some((p) => p.slot === slot)
+                    )
+                  )
+                ).map(([date, slots]) => (
+                  <div key={date} className="mb-2">
+                    <p className="font-medium text-green-900">{date}:</p>
+                    <div className="ml-3 space-y-1">
+                      {slots.map((s, idx) => (
+                        <div key={s + idx}>
+                          {new Date(s).toLocaleTimeString()}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
+          ) : null}
         </>
       );
     }
@@ -245,7 +426,7 @@ export function RequestedSlotsDialog({
             Cancel
           </Button>
 
-          {!hasConflicts && !loading && validationResult && (
+          {!hasConflicts && !hasOutsidePeriod && !loading && validationResult && (
             <Button
               variant={hasOutsideSlots ? "destructive" : "default"}
               onClick={() => onConfirm(hasOutsideSlots)}
