@@ -195,47 +195,45 @@ const ReviewCard = ({ review }: { review: ReviewWithProfiles }) => {
     filled: position < review.rating,
   }));
   return (
-    <Card className="w-[300px] flex-shrink-0 mx-3 bg-white hover:shadow-lg transition-all duration-300 hover:-translate-y-1 hover:scale-[1.02] border border-gray-100">
-      <CardContent className="p-5">
-        <div className="flex items-start gap-3">
-          <Avatar className="h-10 w-10 border border-gray-100">
-            {review.consulteeProfile?.user?.image ? (
-              <AvatarImage
-                src={review.consulteeProfile.user.image}
-                alt={review.consulteeProfile.user.name || "Reviewer"}
-              />
-            ) : (
-              <AvatarFallback>
-                <User className="h-5 w-5" />
-              </AvatarFallback>
-            )}
-          </Avatar>
-          <div className="flex-1 min-w-0">
-            <div className="flex justify-between items-start gap-2">
-              <div className="min-w-0">
-                <h4 className="font-semibold truncate">
-                  {review.consulteeProfile?.user?.name || "Anonymous"}
-                </h4>
-                <p className="text-sm text-gray-500 truncate">
-                  Review for {review.consultantProfile?.user?.name}
-                </p>
-              </div>
-              <div className="flex items-center flex-shrink-0">
-                {stars.map((star) => (
-                  <Star
-                    key={star.id}
-                    className={`w-3 h-3 ${star.filled ? "text-yellow-400 fill-yellow-400" : "text-gray-300"}`}
-                  />
-                ))}
-              </div>
+    <div className="w-[300px] flex-shrink-0 mx-3 bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl hover:border-teal-500/50 transition-all duration-300 hover:-translate-y-1 p-5">
+      <div className="flex items-start gap-3">
+        <Avatar className="h-10 w-10 border border-gray-600">
+          {review.consulteeProfile?.user?.image ? (
+            <AvatarImage
+              src={review.consulteeProfile.user.image}
+              alt={review.consulteeProfile.user.name || "Reviewer"}
+            />
+          ) : (
+            <AvatarFallback className="bg-gray-700">
+              <User className="h-5 w-5 text-gray-300" />
+            </AvatarFallback>
+          )}
+        </Avatar>
+        <div className="flex-1 min-w-0">
+          <div className="flex justify-between items-start gap-2">
+            <div className="min-w-0">
+              <h4 className="font-semibold truncate text-white">
+                {review.consulteeProfile?.user?.name || "Anonymous"}
+              </h4>
+              <p className="text-sm text-gray-400 truncate">
+                Review for {review.consultantProfile?.user?.name}
+              </p>
             </div>
-            <p className="mt-3 text-gray-700 text-sm line-clamp-3">
-              {review.reviewDescription || "No review description provided"}
-            </p>
+            <div className="flex items-center flex-shrink-0">
+              {stars.map((star) => (
+                <Star
+                  key={star.id}
+                  className={`w-3 h-3 ${star.filled ? "text-yellow-400 fill-yellow-400" : "text-gray-600"}`}
+                />
+              ))}
+            </div>
           </div>
+          <p className="mt-3 text-gray-300 text-sm line-clamp-3">
+            {review.reviewDescription || "No review description provided"}
+          </p>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };
 
@@ -414,78 +412,16 @@ const faqItems = [
       "We use a collaborative approach, working closely with your team to understand your business and develop effective solutions.",
   },
 ];
-const BlurryBackground = () => {
+const DarkBackground = () => {
   return (
-    <div className="absolute inset-0 -z-10 overflow-hidden bg-transparent">
-      {/* === HERO SECTION === */}
-      <div className="absolute -top-32 -left-48 h-[400px] w-[400px] rounded-full bg-gradient-to-br from-pink-500 to-purple-600 opacity-50 blur-3xl animate-blob animation-delay-1000"></div>
-      <div className="absolute -top-32 -right-48 h-[400px] w-[400px] rounded-full bg-gradient-to-bl from-teal-400 to-blue-500 opacity-50 blur-3xl animate-blob animation-delay-3000"></div>
-      <div className="absolute -top-40 left-1/2 h-[450px] w-[450px] -translate-x-1/3 rounded-full bg-gradient-to-b from-cyan-400 to-indigo-500 opacity-50 blur-3xl animate-blob animation-delay-2500"></div>
-      <div className="absolute top-1/6 left-1/4 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-[#ff5ca0] to-[#7b73fc] opacity-45 blur-3xl animate-blob animation-delay-2000"></div>
-      <div className="absolute top-1/6 right-1/4 h-[450px] w-[450px] translate-x-1/2 rounded-full bg-gradient-to-tl from-amber-400 to-orange-500 opacity-45 blur-3xl animate-blob animation-delay-4000"></div>
-      <div className="absolute top-[20%] left-1/6 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-400 to-teal-500 opacity-45 blur-3xl animate-blob animation-delay-5000"></div>
-      <div className="absolute top-[25%] right-1/6 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-rose-400 to-pink-500 opacity-45 blur-3xl animate-blob animation-delay-6000"></div>
-      <div className="absolute top-[32%] left-1/5 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-400 to-teal-500 opacity-45 blur-3xl animate-blob animation-delay-5000"></div>
-      <div className="absolute top-[37%] right-1/5 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-rose-400 to-pink-500 opacity-45 blur-3xl animate-blob animation-delay-6000"></div>
-      <div className="absolute top-[42%] left-1/4 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-400 to-teal-500 opacity-45 blur-3xl animate-blob animation-delay-5000"></div>
-      <div className="absolute top-[36%] -left-48 h-[500px] w-[500px] rounded-full bg-gradient-to-tr from-violet-200 to-purple-300 opacity-45 blur-3xl animate-blob animation-delay-1500"></div>
-      <div className="absolute top-[36%] -right-48 h-[500px] w-[500px] rounded-full bg-gradient-to-tl from-sky-200 to-blue-300 opacity-45 blur-3xl animate-blob animation-delay-3500"></div>
-      <div className="absolute top-[48%] left-1/6 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-emerald-200 to-teal-300 opacity-45 blur-3xl animate-blob animation-delay-5000"></div>
-      <div className="absolute top-[48%] right-1/6 h-[500px] w-[800px] rounded-full bg-gradient-to-t from-rose-200 to-pink-300 opacity-45 blur-3xl animate-blob animation-delay-6000"></div>
+    <div className="absolute inset-0 -z-10 overflow-hidden">
+      {/* Base dark gradient */}
+      <div className="absolute inset-0 bg-gradient-to-b from-black via-gray-950 to-gray-900" />
 
-      {/* === TRANSFORM YOUR CAREER SECTION === */}
-      <div className="absolute top-[55%] -left-12 h-[300px] w-[300px] rounded-full bg-gradient-to-r from-green-200 to-cyan-300 opacity-55 blur-3xl animate-blob animation-delay-500"></div>
-      <div className="absolute top-[55%] -right-12 h-[300px] w-[300px] rounded-full bg-gradient-to-l from-blue-200 to-green-300 opacity-55 blur-3xl animate-blob animation-delay-3200"></div>
-      <div className="absolute top-[60%] -left-24 h-[300px] w-[300px] -translate-y-1/2 rounded-full bg-gradient-to-r from-cyan-200 to-sky-300 opacity-50 blur-3xl animate-blob animation-delay-4800"></div>
-      <div className="absolute top-[65%] left-1/3 h-[700px] w-[700px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-r from-purple-200 to-pink-300 opacity-45 blur-3xl animate-blob animation-delay-7000"></div>
-      <div className="absolute top-[57%] left-[15%] h-[350px] w-[350px] rounded-full bg-gradient-to-br from-emerald-200 to-green-400 opacity-50 blur-3xl animate-blob animation-delay-6000"></div>
-      <div className="absolute top-[61%] right-[20%] h-[250px] w-[250px] rounded-full bg-gradient-to-tl from-rose-200 to-red-300 opacity-45 blur-3xl animate-blob animation-delay-7500"></div>
-
-      {/* === UNLOCK POTENTIAL SECTION === */}
-      <div className="absolute top-[72%] -left-56 h-[350px] w-[350px] rounded-full bg-gradient-to-r from-sky-400 to-indigo-500 opacity-50 blur-3xl animate-blob animation-delay-1500"></div>
-      <div className="absolute top-[78%] -right-56 h-[350px] w-[350px] rounded-full bg-gradient-to-l from-rose-400 to-fuchsia-500 opacity-50 blur-3xl animate-blob animation-delay-3500"></div>
-      <div className="absolute top-[75%] left-1/2 h-[300px] w-[300px] -translate-x-1/4 -translate-y-1/4 rounded-full bg-gradient-to-tr from-yellow-300 to-orange-400 opacity-55 blur-3xl animate-blob animation-delay-8000"></div>
-      <div className="absolute top-[74%] left-[10%] h-[400px] w-[400px] rounded-full bg-gradient-to-bl from-cyan-300 to-sky-500 opacity-45 blur-3xl animate-blob animation-delay-5500"></div>
-      <div className="absolute top-[77%] right-[5%] h-[300px] w-[300px] rounded-full bg-gradient-to-tr from-pink-300 to-purple-400 opacity-50 blur-3xl animate-blob animation-delay-9000"></div>
-
-      {/* === BEST EXPERTS SECTION === */}
-      <div className="absolute top-2/3 -right-48 h-[300px] w-[300px] -translate-y-1/2 rounded-full bg-gradient-to-l from-pink-300 to-orange-300 opacity-50 blur-3xl animate-blob animation-delay-2200"></div>
-      <div className="absolute top-2/3 left-1/4 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-gradient-to-br from-purple-300 to-pink-400 opacity-50 blur-3xl animate-blob animation-delay-9500"></div>
-
-      {/* === FEATURED EXPERTS SECTION === */}
-      <div className="absolute top-3/4 right-1/4 h-[450px] w-[450px] translate-x-1/2 rounded-full bg-gradient-to-tl from-orange-300 to-yellow-400 opacity-50 blur-3xl animate-blob animation-delay-10000"></div>
-      <div className="absolute top-3/5 -right-32 h-[400px] w-[400px] rounded-full bg-gradient-to-l from-red-200 to-rose-300 opacity-50 blur-3xl animate-blob animation-delay-11000"></div>
-
-      {/* === OFFERINGS SECTION === */}
-      <div className="absolute bottom-1/3 left-1/2 -translate-x-1/2 h-[350px] w-[350px] rounded-full bg-gradient-to-t from-cyan-200 to-blue-300 opacity-50 blur-3xl animate-blob animation-delay-5500"></div>
-      <div className="absolute bottom-1/3 left-1/2 -translate-x-1/3 h-[600px] w-[600px] rounded-full bg-gradient-to-t from-green-300 to-teal-400 opacity-45 blur-3xl animate-blob animation-delay-10500"></div>
-      <div className="absolute bottom-1/4 right-1/3 translate-x-1/2 translate-y-1/2 h-[600px] w-[600px] rounded-full bg-gradient-to-l from-teal-200 to-cyan-300 opacity-45 blur-3xl animate-blob animation-delay-7500"></div>
-
-      {/* === TESTIMONIALS SECTION === */}
-      <div className="absolute -bottom-1/4 right-1/4 h-[500px] w-[500px] translate-x-1/2 rounded-full bg-gradient-to-tr from-[#facc15] to-[#fb923c] opacity-50 blur-3xl animate-blob animation-delay-4000"></div>
-      <div className="absolute -bottom-32 -left-32 h-[400px] w-[400px] rounded-full bg-gradient-to-tr from-lime-300 to-green-400 opacity-50 blur-3xl animate-blob animation-delay-5000"></div>
-      <div className="absolute -bottom-32 -right-32 h-[400px] w-[400px] rounded-full bg-gradient-to-tl from-orange-300 to-red-400 opacity-50 blur-3xl animate-blob animation-delay-6000"></div>
-
-      {/* === HOW PROCESS WORKS SECTION === */}
-      <div className="absolute -bottom-40 left-1/2 h-[450px] w-[450px] -translate-x-1/2 rounded-full bg-gradient-to-t from-amber-300 to-yellow-500 opacity-50 blur-3xl animate-blob animation-delay-4500"></div>
-      <div className="absolute -bottom-60 left-1/2 h-[600px] w-[600px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-green-300 to-yellow-400 opacity-45 blur-3xl animate-blob animation-delay-1000"></div>
-      <div className="absolute -bottom-80 left-1/3 h-[700px] w-[700px] -translate-x-1/2 rounded-full bg-gradient-to-tr from-lime-200 to-teal-400 opacity-50 blur-3xl animate-blob animation-delay-3800"></div>
-      <div className="absolute -bottom-80 right-1/3 h-[700px] w-[700px] translate-x-1/2 rounded-full bg-gradient-to-tl from-sky-300 to-indigo-400 opacity-50 blur-3xl animate-blob animation-delay-5200"></div>
-
-      {/* === JOIN COMMUNITY SECTION === */}
-      <div className="absolute top-[78%] -left-32 h-[400px] w-[400px] rounded-full bg-gradient-to-tr from-teal-300 to-cyan-400 opacity-50 blur-3xl animate-blob animation-delay-6500"></div>
-      <div className="absolute top-[78%] -right-32 h-[450px] w-[450px] rounded-full bg-gradient-to-tl from-purple-300 to-indigo-400 opacity-50 blur-3xl animate-blob animation-delay-7200"></div>
-      <div className="absolute bottom-0 left-1/4 h-[400px] w-[400px] rounded-full bg-gradient-to-tr from-blue-300 to-indigo-400 opacity-45 blur-3xl animate-blob animation-delay-9000"></div>
-
-      {/* === FAQ SECTION === */}
-      <div className="absolute top-[82%] left-1/2 -translate-x-1/2 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-45 blur-3xl animate-blob animation-delay-8200"></div>
-      <div className="absolute top-[86%] left-1/2 -translate-x-1/4 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-45 blur-3xl animate-blob animation-delay-8200"></div>
-      <div className="absolute top-[92%] left-1/2 -translate-x-3/4 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-45 blur-3xl animate-blob animation-delay-8200"></div>
-      <div className="absolute top-[98%] left-1/2 -translate-x-1/2 h-[500px] w-[700px] rounded-full bg-gradient-to-t from-orange-200 to-yellow-300 opacity-45 blur-3xl animate-blob animation-delay-8200"></div>
-      <div className="absolute -bottom-96 left-1/2 h-[800px] w-[800px] -translate-x-1/2 rounded-full bg-gradient-to-t from-green-200 to-cyan-300 opacity-45 blur-3xl animate-blob animation-delay-1800"></div>
-
-      {/* === NEWSLETTER SECTION === */}
-      <div className="absolute -bottom-40 left-1/2 h-[450px] w-[450px] -translate-x-1/2 rounded-full bg-gradient-to-t from-gray-800 to-gray-600 opacity-35 blur-3xl animate-blob animation-delay-4500"></div>
+      {/* Subtle accent gradients - no animation for performance */}
+      <div className="absolute top-0 left-1/4 h-[600px] w-[600px] rounded-full bg-teal-500/10 blur-3xl" />
+      <div className="absolute top-1/3 right-1/4 h-[500px] w-[500px] rounded-full bg-gray-700/20 blur-3xl" />
+      <div className="absolute bottom-1/4 left-1/3 h-[400px] w-[400px] rounded-full bg-gray-800/30 blur-3xl" />
     </div>
   );
 };
@@ -587,12 +523,12 @@ export default function Home() {
       console.error("Fetch - Failed to fetch reviews:", reviewsError);
   }, [imagesError, expertsError, reviewsError]);
 
-  // For Testimonials marquee effect
+  // For Testimonials marquee effect (reduced duplication for performance)
   const displayReviews =
     reviews.length >= 4
       ? reviews
-      : [...reviews, ...reviews, ...reviews, ...reviews]; // Ensure enough for smooth scroll
-  const marqueeGroups = Array.from({ length: 3 }, (_, i) => ({
+      : [...reviews, ...reviews]; // Reduced from 4x to 2x for performance
+  const marqueeGroups = Array.from({ length: 2 }, (_, i) => ({
     ltrId: `ltr-group-${i}-${Math.random()}`,
     rtlId: `rtl-group-${i}-${Math.random()}`,
   }));
@@ -658,162 +594,170 @@ export default function Home() {
           will-change: transform;
         }
       `}</style>
-      <main key="main-content-wrapper" className="flex-1 w-full relative">
-        <BlurryBackground key="blurry-background" />
+      <main key="main-content-wrapper" className="flex-1 w-full relative bg-black">
+        <DarkBackground key="dark-background" />
 
         {/* HeroSection */}
         <section
           key="hero-section"
-          className="relative py-12 md:py-24 lg:py-32 xl:py-40 overflow-hidden"
+          className="relative min-h-screen flex items-center justify-center overflow-hidden"
         >
-          <div className="absolute bottom-0 left-0 w-full h-24 bg-gradient-to-t from-white to-transparent"></div>
-          <div className="container relative z-10 mx-auto px-4 md:px-6">
-            <div className="flex flex-col items-center space-y-6 text-center mb-10">
-              <div className="flex space-x-2 mb-2">
-                <div className="inline-flex items-center rounded-full px-3 py-1 text-sm bg-amber-100 text-amber-800 border border-amber-200">
-                  <span className="mr-1">🏆</span> Project of the week
-                </div>
-                <div className="inline-flex items-center rounded-full px-3 py-1 text-sm bg-rose-100 text-rose-800 border border-rose-200">
-                  <span className="mr-1">🥇</span> #2 Product of the Day
-                </div>
-              </div>
-              <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold tracking-tighter text-gray-900">
-                Elevate Your Career with Familiarise
+          <div className="container relative z-10 mx-auto px-4 md:px-6 py-32">
+            <div className="flex flex-col items-center space-y-8 text-center max-w-4xl mx-auto">
+              <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tighter text-white">
+                Launch a Personal Site That Wins Opportunities
               </h1>
-              <p className="max-w-[700px] text-xl md:text-2xl text-gray-800">
-                A platform where experts share their advice through 1-1
-                sessions, classes, webinars, and conferences.
+              <p className="max-w-[700px] text-xl md:text-2xl text-gray-400">
+                Whether you're a designer, developer, or creator, Familiarise helps you stand out with a site that feels professional, and you.
               </p>
-              <div className="flex space-x-4">
+              <div className="flex space-x-4 pt-4">
                 <Link
                   href="/explore/experts"
-                  className="inline-flex h-12 items-center justify-center rounded-md bg-gray-900 px-6 py-3 text-sm font-medium text-white shadow transition-colors hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-950"
+                  className="inline-flex h-14 items-center justify-center rounded-lg bg-white px-8 py-4 text-base font-semibold text-black shadow-lg transition-all hover:bg-gray-100 hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                 >
-                  <span className="mr-2">Get Started</span>
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      d="M6 12L10 8L6 4"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                  Start Building
                 </Link>
-              </div>
-            </div>
-            <div className="relative max-w-5xl mx-auto rounded-xl overflow-hidden shadow-2xl border border-gray-200 bg-white">
-              <div className="relative w-full aspect-[16/9]">
-                {renderLCPImage(images, 0, "/placeholder.svg", 1920, 1080)}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* TransformCareerSection */}
-        <section
-          key="transform-career-section"
-          className="w-full py-16 md:py-24 lg:py-32"
-        >
-          <div className="container mx-auto px-4 md:px-6">
-            <div className="grid items-center gap-12 lg:grid-cols-2">
-              <div className="flex flex-col justify-center space-y-6">
-                <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tighter">
-                  Transform Your Career with Expert Guidance
-                </h2>
-                <ul className="space-y-4 text-lg text-gray-600 md:text-xl">
-                  <li>
-                    <span className="font-semibold">
-                      ✓ Accelerate Your Growth:
-                    </span>{" "}
-                    Gain years of industry insights in just hours through our
-                    1-1 sessions.
-                  </li>
-                  <li>
-                    <span className="font-semibold">
-                      ✓ Expand Your Network:
-                    </span>{" "}
-                    Connect with industry leaders and peers in our exclusive
-                    classes and webinars.
-                  </li>
-                  <li>
-                    <span className="font-semibold">
-                      ✓ Stay Ahead of the Curve:
-                    </span>{" "}
-                    Access cutting-edge knowledge and trends through our
-                    conferences.
-                  </li>
-                </ul>
                 <Link
-                  href="#"
-                  className="inline-flex w-full sm:w-auto items-center justify-center rounded-md bg-gray-900 px-6 py-3 text-sm font-medium text-white shadow transition-colors hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-950"
+                  href="/explore/programs"
+                  className="inline-flex h-14 items-center justify-center rounded-lg bg-gray-800/50 px-8 py-4 text-base font-semibold text-white border border-gray-700 shadow-lg transition-all hover:bg-gray-700/50 hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                 >
-                  Start Your Journey
+                  See Examples
                 </Link>
-              </div>
-              <div className="flex justify-center">
-                {renderLCPImage(images, 1, "/placeholder.svg", 550, 310)}
               </div>
             </div>
           </div>
         </section>
 
-        {/* UnlockPotentialSection */}
+        {/* Features / How It Works Section */}
         <section
-          key="unlock-potential-section"
-          className="w-full py-16 md:py-24 lg:py-32"
+          key="features-section"
+          className="w-full py-24 md:py-32 lg:py-40 bg-black"
         >
           <div className="container mx-auto px-4 md:px-6">
-            <div className="flex flex-col items-center justify-center space-y-6 text-center">
-              <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tighter">
-                Unlock Your Full Potential
+            <div className="text-center mb-16">
+              <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-white mb-4">
+                Notes with an AI assistant
               </h2>
-              <p className="max-w-[900px] text-lg text-gray-600 md:text-xl">
-                Experience transformative growth with our comprehensive
-                mentorship program.
+              <p className="max-w-2xl mx-auto text-lg text-gray-400">
+                Reflect uses GPT-4 and Whisper from OpenAI to improve your writing, organize your thoughts, and act as your intellectual thought partner.
               </p>
             </div>
-            <div className="grid lg:grid-cols-2 gap-12 mt-12">
-              <div className="flex flex-col justify-center space-y-6">
-                <ul className="space-y-6">
-                  <li>
-                    <h3 className="text-xl font-bold">
-                      Tailored Career Acceleration
-                    </h3>
-                    <p className="text-gray-600">
-                      Receive a personalized roadmap to fast-track your career
-                      goals, designed by industry experts who've walked the
-                      path.
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
+              {/* Card 1: Create Account */}
+              <div className="relative group">
+                <div className="h-full bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
+                  <div className="flex flex-col items-center text-center space-y-4">
+                    <div className="w-16 h-16 rounded-full bg-teal-500/10 flex items-center justify-center">
+                      <svg className="w-8 h-8 text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                    <h3 className="text-2xl font-semibold text-white">Create your account</h3>
+                    <p className="text-gray-400">
+                      Sign up easily and secure your profile in just a few steps.
                     </p>
-                  </li>
-                  <li>
-                    <h3 className="text-xl font-bold">
-                      Insider Knowledge & Strategies
-                    </h3>
-                    <p className="text-gray-600">
-                      Gain exclusive insights and proven strategies to navigate
-                      complex career challenges and seize hidden opportunities.
-                    </p>
-                  </li>
-                  <li>
-                    <h3 className="text-xl font-bold">
-                      Confidence & Skill Mastery
-                    </h3>
-                    <p className="text-gray-600">
-                      Develop unshakeable confidence and master critical skills
-                      through hands-on guidance and real-world application.
-                    </p>
-                  </li>
-                </ul>
+                  </div>
+                </div>
               </div>
-              <div className="flex justify-center items-center">
-                {renderLCPImage(images, 2, "/placeholder.svg", 550, 310)}
+
+              {/* Card 2: Browse Experts */}
+              <div className="relative group">
+                <div className="h-full bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
+                  <div className="flex flex-col items-center text-center space-y-4">
+                    <div className="w-16 h-16 rounded-full bg-teal-500/10 flex items-center justify-center">
+                      <svg className="w-8 h-8 text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                    </div>
+                    <h3 className="text-2xl font-semibold text-white">Browse experts</h3>
+                    <p className="text-gray-400">
+                      Explore our curated list of industry professionals and find your perfect mentor.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 3: Book Session */}
+              <div className="relative group">
+                <div className="h-full bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
+                  <div className="flex flex-col items-center text-center space-y-4">
+                    <div className="w-16 h-16 rounded-full bg-teal-500/10 flex items-center justify-center">
+                      <svg className="w-8 h-8 text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <h3 className="text-2xl font-semibold text-white">Start selling or convert</h3>
+                    <p className="text-gray-400">
+                      Enjoy the simplicity of a platform that makes every transaction seamless.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Platform Stats Section */}
+        <section
+          key="platform-stats-section"
+          className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black to-gray-950"
+        >
+          <div className="container mx-auto px-4 md:px-6">
+            <div className="text-center mb-16">
+              <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-white mb-4">
+                Token Performance & Market Analytics
+              </h2>
+              <p className="max-w-2xl mx-auto text-lg text-gray-400">
+                Tracking price action, trading volume, liquidity, and volatility to gauge market sentiment and investor behavior.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-7xl mx-auto">
+              {/* Stat 1: Total Experts */}
+              <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
+                <div className="flex flex-col space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-teal-400"></div>
+                    <p className="text-gray-400 text-sm uppercase tracking-wide">Total Experts</p>
+                  </div>
+                  <p className="text-5xl font-bold text-teal-400">6M+</p>
+                  <p className="text-gray-500 text-sm">Market Cap</p>
+                </div>
+              </div>
+
+              {/* Stat 2: Sessions Completed */}
+              <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
+                <div className="flex flex-col space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-purple-400"></div>
+                    <p className="text-gray-400 text-sm uppercase tracking-wide">Sessions Complete</p>
+                  </div>
+                  <p className="text-5xl font-bold text-purple-400">2M+</p>
+                  <p className="text-gray-500 text-sm">Burned Tokens</p>
+                </div>
+              </div>
+
+              {/* Stat 3: Average Rating */}
+              <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
+                <div className="flex flex-col space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
+                    <p className="text-gray-400 text-sm uppercase tracking-wide">Average Rating</p>
+                  </div>
+                  <p className="text-5xl font-bold text-yellow-400">4.8</p>
+                  <p className="text-gray-500 text-sm">out of 5.0</p>
+                </div>
+              </div>
+
+              {/* Stat 4: Active Students */}
+              <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
+                <div className="flex flex-col space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-blue-400"></div>
+                    <p className="text-gray-400 text-sm uppercase tracking-wide">Active Students</p>
+                  </div>
+                  <p className="text-5xl font-bold text-blue-400">$1.89K</p>
+                  <p className="text-gray-500 text-sm">Total Revenue</p>
+                </div>
               </div>
             </div>
           </div>
@@ -822,32 +766,24 @@ export default function Home() {
         {/* BestExpertsSection */}
         <section
           key="best-experts-section"
-          className="w-full pt-6 md:pt-12 lg:pt-16 xl:pt-20"
+          className="w-full py-16 md:py-24 lg:py-32 bg-black"
         >
-          <div className="px-4 md:px-6 space-y-10 xl:space-y-16">
-            <div className="grid max-w-[1300px] mx-auto gap-4 px-4 sm:px-6 md:px-10 md:grid-cols-2 md:gap-16">
-              <div>
-                <h1 className="lg:leading-tighter text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl xl:text-[3.4rem] 2xl:text-[3.75rem]">
+          <div className="container mx-auto px-4 md:px-6">
+            <div className="flex flex-col md:flex-row items-center justify-between gap-8 max-w-6xl mx-auto">
+              <div className="flex-1">
+                <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-white mb-4">
                   The Best Experts in the World
-                </h1>
-              </div>
-              <div className="flex flex-col items-start space-y-4">
-                <p className="mx-auto max-w-[700px] text-gray-500 md:text-xl dark:text-gray-400">
-                  Explore our wide range of consultants and find the right one
-                  for your business.
+                </h2>
+                <p className="text-lg text-gray-400 mb-6">
+                  Explore our wide range of consultants and find the right one for your business.
                 </p>
-                <div className="space-x-4">
-                  <Link
-                    href="#"
-                    className="inline-flex h-9 items-center justify-center rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-gray-50 shadow transition-colors hover:bg-gray-900/90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 disabled:pointer-events-none disabled:opacity-55 dark:bg-gray-50 dark:text-gray-900 dark:hover:bg-gray-50/90 dark:focus-visible:ring-gray-300"
-                  >
-                    Get Started
-                  </Link>
-                </div>
+                <Link
+                  href="/explore/experts"
+                  className="inline-flex h-12 items-center justify-center rounded-lg bg-white px-6 py-3 text-sm font-semibold text-black shadow-lg transition-all hover:bg-gray-100 hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                >
+                  Browse All Experts
+                </Link>
               </div>
-            </div>
-            <div className="w-full max-w-[1600px] mx-auto overflow-hidden">
-              {renderLCPImage(images, 3, "/placeholder.svg", 1300, 867)}
             </div>
           </div>
         </section>
@@ -855,19 +791,19 @@ export default function Home() {
         {/* FeaturedExpertsSection */}
         <section
           key="featured-experts-section"
-          className="w-full py-12 md:py-24 lg:py-32"
+          className="w-full py-12 md:py-24 lg:py-32 bg-gradient-to-b from-gray-950 to-black"
         >
           <div className="container mx-auto px-4 md:px-6 mb-12">
             <div className="text-center">
-              <h2 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold tracking-tighter">
+              <h2 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold tracking-tighter text-white">
                 Meet our Featured Experts
               </h2>
-              <p className="mt-4 mx-auto max-w-[700px] text-gray-500 md:text-xl">
+              <p className="mt-4 mx-auto max-w-[700px] text-gray-400 md:text-xl">
                 We have a diverse team of experts ready to share their knowledge
                 and expertise with you.
               </p>
               <Link href="/explore/experts">
-                <Button className="mt-8 dark:bg-gray-800 text-white hover:bg-gray-700 transition-colors duration-300">
+                <Button className="mt-8 bg-white text-black hover:bg-gray-100 hover:scale-105 transition-all duration-300 shadow-lg">
                   View All Experts
                 </Button>
               </Link>
@@ -886,8 +822,8 @@ export default function Home() {
                     if (experts.length > 0) {
                       return (
                         <>
-                          {/* Render multiple sets for marquee effect */}
-                          {Array.from({ length: 4 }).flatMap(
+                          {/* Render 2 sets for marquee effect (reduced from 4 for performance) */}
+                          {Array.from({ length: 2 }).flatMap(
                             (_, marqueeSetIndex) =>
                               experts.map((expert) => (
                                 <ExpertCard
@@ -911,41 +847,41 @@ export default function Home() {
         </section>
 
         {/* OfferingsSection */}
-        <section key="offerings-section" className="py-16">
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-center mb-12">
-            Check out our various offerings
-          </h2>
-          <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-4">
-            {OFFERINGS.map((offering) => (
-              <Card
-                key={offering.title}
-                className="rounded-lg shadow-md transition-transform duration-300 hover:-translate-y-2"
-              >
-                <CardHeader className="text-xl font-semibold">
-                  {offering.title}
-                </CardHeader>
-                <CardContent>
-                  <p className="text-gray-600">{offering.description}</p>
-                </CardContent>
-              </Card>
-            ))}
+        <section key="offerings-section" className="py-24 md:py-32 bg-black">
+          <div className="container mx-auto px-4 md:px-6">
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-center mb-16 text-white">
+              Check out our various offerings
+            </h2>
+            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 max-w-7xl mx-auto">
+              {OFFERINGS.map((offering) => (
+                <div
+                  key={offering.title}
+                  className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-6 hover:border-teal-500/50 transition-all duration-300 hover:-translate-y-1"
+                >
+                  <h3 className="text-xl font-semibold mb-3 text-white">
+                    {offering.title}
+                  </h3>
+                  <p className="text-gray-400 text-sm">{offering.description}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 
         {/* TestimonialsSection */}
         <section
           key="testimonials-section"
-          className="py-16 overflow-hidden relative"
+          className="py-24 md:py-32 overflow-hidden relative bg-gradient-to-b from-black to-gray-950"
         >
           <div
-            className="absolute inset-0 opacity-50"
+            className="absolute inset-0 opacity-5"
             style={{
-              backgroundImage: `radial-gradient(circle at 1px 1px, rgb(0 0 0 / 0.05) 1px, transparent 0)`,
+              backgroundImage: `radial-gradient(circle at 1px 1px, rgb(255 255 255 / 0.1) 1px, transparent 0)`,
               backgroundSize: "40px 40px",
             }}
           />
           <div className="container mx-auto px-4 relative">
-            <h2 className="text-3xl font-bold text-center mb-16">
+            <h2 className="text-4xl sm:text-5xl font-bold text-center mb-16 text-white">
               What Our Users Say
             </h2>
           </div>
@@ -990,20 +926,21 @@ export default function Home() {
         </section>
 
         {/* HowProcessWorksSection */}
-        <section key="how-process-works-section" className="py-20">
-          <motion.div
-            className="text-center mb-16"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
-            <h2 className="text-3xl font-bold mb-4">How The Process Works</h2>
-            <p className="text-muted-foreground max-w-2xl mx-auto">
-              Choose from our various learning formats and follow these simple
-              steps to start your journey
-            </p>
-          </motion.div>
-          <Card className="p-8 shadow-lg border-t-2 border-t-primary/50 max-w-5xl mx-auto">
+        <section key="how-process-works-section" className="py-24 md:py-32 bg-black">
+          <div className="container mx-auto px-4 md:px-6">
+            <motion.div
+              className="text-center mb-16"
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+            >
+              <h2 className="text-4xl sm:text-5xl font-bold mb-4 text-white">How The Process Works</h2>
+              <p className="text-gray-400 max-w-2xl mx-auto text-lg">
+                Choose from our various learning formats and follow these simple
+                steps to start your journey
+              </p>
+            </motion.div>
+            <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 shadow-lg max-w-5xl mx-auto">
             <Tabs defaultValue="consultation" className="w-full">
               <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 p-1 mb-2">
                 <TabsTrigger value="consultation">Consultation</TabsTrigger>
@@ -1025,33 +962,34 @@ export default function Home() {
                 </Suspense>
               </div>
             </Tabs>
-          </Card>
+            </div>
+          </div>
         </section>
 
         {/* JoinCommunitySection */}
         <section
           key="join-community-section"
-          className="w-full py-16 md:py-24 lg:py-32"
+          className="w-full py-24 md:py-32 bg-gradient-to-b from-black to-gray-950"
         >
           <div className="container mx-auto px-4 md:px-6 text-center">
-            <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tighter mb-4">
+            <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tighter mb-6 text-white">
               Join our Community of Experts
             </h2>
-            <p className="text-lg text-gray-600 md:text-xl max-w-[600px] mx-auto mb-8">
+            <p className="text-lg text-gray-400 md:text-xl max-w-[600px] mx-auto mb-8">
               Share your expertise with people who need it and grow your
               personal brand.
             </p>
-            <Button className="w-full sm:w-auto bg-gray-900 text-white hover:bg-gray-800">
+            <Button className="w-full sm:w-auto bg-white text-black hover:bg-gray-100 hover:scale-105 transition-all duration-300 shadow-lg h-12 px-8">
               Become an Expert
             </Button>
           </div>
         </section>
 
         {/* Faq */}
-        <section className="flex justify-center items-center py-10">
-          <Card className="shadow-lg w-full max-w-4xl mx-auto">
-            <CardContent className="p-6">
-              <h2 className="text-2xl font-semibold">
+        <section className="flex justify-center items-center py-24 md:py-32 bg-black">
+          <div className="container mx-auto px-4 md:px-6">
+            <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl shadow-lg w-full max-w-4xl mx-auto p-8">
+              <h2 className="text-3xl sm:text-4xl font-semibold mb-6 text-white">
                 Frequently Asked Questions
               </h2>
               <Accordion
@@ -1064,17 +1002,17 @@ export default function Home() {
                     key={`item-${index + 1}`}
                     value={`item-${index + 1}`}
                   >
-                    <AccordionTrigger className="w-full text-left">
+                    <AccordionTrigger className="w-full text-left text-white hover:text-teal-400 transition-colors">
                       <span className="flex-1">{item.question}</span>
                     </AccordionTrigger>
                     <AccordionContent>
-                      <p className="text-sm text-gray-600">{item.answer}</p>
+                      <p className="text-sm text-gray-400">{item.answer}</p>
                     </AccordionContent>
                   </AccordionItem>
                 ))}
               </Accordion>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </section>
 
         {/* Newsletter */}

@@ -3,6 +3,10 @@
     "shadcn": {
       "command": "npx",
       "args": ["-y", "mcp-remote", "https://www.shadcn.io/api/mcp"]
+    },
+    "browsermcp": {
+      "command": "npx",
+      "args": ["@browsermcp/mcp@latest"]
     }
   }
 }
