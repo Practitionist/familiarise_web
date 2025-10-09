@@ -113,14 +113,48 @@ const getDashboardUrl = (token: Token): string => {
 };
 
 /**
+ * Add CORS headers to a response
+ */
+const addCorsHeaders = (response: NextResponse, origin: string): NextResponse => {
+  // List of allowed origins
+  const allowedOrigins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://familiarise.netlify.app",
+  ];
+
+  // Check if the origin is allowed
+  const isAllowedOrigin = allowedOrigins.includes(origin);
+
+  if (isAllowedOrigin) {
+    response.headers.set("Access-Control-Allow-Origin", origin);
+    response.headers.set("Access-Control-Allow-Credentials", "true");
+  }
+
+  response.headers.set(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS",
+  );
+  response.headers.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-Requested-With",
+  );
+  response.headers.set("Access-Control-Max-Age", "86400");
+
+  return response;
+};
+
+/**
  * Optimized middleware function with early returns and simplified logic
  */
 export async function middleware(req: NextRequest): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
+  const origin = req.headers.get("origin") || "";
 
-  // Skip middleware in development/test for faster development
-  if (process.env.NODE_ENV !== "production") {
-    return NextResponse.next();
+  // Handle OPTIONS preflight requests for CORS
+  if (req.method === "OPTIONS") {
+    const response = new NextResponse(null, { status: 200 });
+    return addCorsHeaders(response, origin);
   }
 
   // Early return for static assets and Next.js internals
@@ -134,7 +168,8 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   // Handle public API routes first (most common, no auth needed)
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_API_PREFIXES)) {
-    return NextResponse.next();
+    const response = NextResponse.next();
+    return addCorsHeaders(response, origin);
   }
 
   // Get token with caching
@@ -144,16 +179,22 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   // Handle private API routes
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PRIVATE_API_PREFIXES)) {
-    return isAuthenticated
-      ? NextResponse.next()
-      : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!isAuthenticated) {
+      const response = NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return addCorsHeaders(response, origin);
+    }
+    const response = NextResponse.next();
+    return addCorsHeaders(response, origin);
   }
 
   // Handle protected API routes
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PROTECTED_API_PREFIXES)) {
-    return isAuthenticated
-      ? NextResponse.next()
-      : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!isAuthenticated) {
+      const response = NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return addCorsHeaders(response, origin);
+    }
+    const response = NextResponse.next();
+    return addCorsHeaders(response, origin);
   }
 
   // Handle public auth routes
