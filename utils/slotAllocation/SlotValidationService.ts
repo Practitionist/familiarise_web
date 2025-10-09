@@ -49,6 +49,18 @@ export class SlotValidationService {
     );
     if (!conflictCheck.isValid) return conflictCheck;
 
+    // FIX: Server-side scheduling period validation
+    // This was only done client-side, which could be bypassed
+    // Now enforced on the server for all subscriptions and classes
+    if (config.startDate && config.endDate) {
+      const periodCheck = this.validateSchedulingPeriod(
+        slots,
+        config.startDate,
+        config.endDate,
+      );
+      if (!periodCheck.isValid) return periodCheck;
+    }
+
     // Event-specific validations
     switch (eventType) {
       case "consultation":
@@ -74,15 +86,33 @@ export class SlotValidationService {
 
   /**
    * UNIVERSAL VALIDATOR: Ensure all slots are in the future
+   *
+   * FIX: Added 5-second buffer to prevent race conditions
+   *
+   * RACE CONDITION SCENARIO (before fix):
+   * 1. Auto-allocation finds slot at 10:00:00.000
+   * 2. By the time validation runs, it's 10:00:00.001
+   * 3. Slot rejected as "in the past"
+   * 4. Auto-allocation fails despite valid slot
+   *
+   * BUFFER RATIONALE:
+   * - 5 seconds accounts for processing time between operations
+   * - Prevents rejecting slots that become "now" during transaction
+   * - Still prevents genuine past slot attempts (minutes/hours old)
    */
   private validateSlotsInFuture(slots: Date[]): ValidationResult {
     const now = new Date();
+    const BUFFER_MS = 5000; // 5-second processing time buffer
+    const cutoff = new Date(now.getTime() + BUFFER_MS);
     const errors: string[] = [];
 
     for (const slot of slots) {
-      if (slot <= now) {
+      if (slot < cutoff) {
+        const secondsUntilSlot = (slot.getTime() - now.getTime()) / 1000;
         errors.push(
-          `Cannot allocate slots in the past: ${slot.toLocaleString()}`,
+          `Cannot allocate slots in the past or too soon: ${slot.toLocaleString()} ` +
+            `(${secondsUntilSlot >= 0 ? `only ${secondsUntilSlot.toFixed(1)}s` : `${Math.abs(secondsUntilSlot).toFixed(1)}s ago`}). ` +
+            `Slots must be at least 5 seconds in the future to allow for processing time.`,
         );
       }
     }
@@ -96,6 +126,23 @@ export class SlotValidationService {
 
   /**
    * UNIVERSAL VALIDATOR: Check for conflicts with existing appointments
+   *
+   * CRITICAL: This prevents double-booking by detecting time range overlaps.
+   *
+   * WHY RANGE OVERLAP MATTERS:
+   * - Each slot is 30 minutes: [startTime, endTime]
+   * - Two slots overlap if: slotA.start < slotB.end AND slotB.start < slotA.end
+   *
+   * EXAMPLE:
+   * - Existing: 10:00-10:30 (one slot)
+   * - Proposed: 10:00-11:00 (two slots: 10:00-10:30, 10:30-11:00)
+   * - Without range check: Only 10:00-10:30 flagged as conflict
+   * - With range check: Both slots properly detected as conflicts
+   *
+   * DATABASE QUERY LOGIC:
+   * - slotStartTimeInUTC < slotEnd: Existing slot starts before proposed ends
+   * - slotEndTimeInUTC > slot: Existing slot ends after proposed starts
+   * - Together: Detects ANY time period overlap
    */
   private async validateNoConflicts(
     slots: Date[],
@@ -104,6 +151,9 @@ export class SlotValidationService {
     const errors: string[] = [];
 
     for (const slot of slots) {
+      // Calculate the end time of the proposed slot (30-minute slots)
+      const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
+
       const existingAppointment = await this.prismaClient.appointment.findFirst(
         {
           where: {
@@ -119,7 +169,12 @@ export class SlotValidationService {
               {
                 slotsOfAppointment: {
                   some: {
-                    slotStartTimeInUTC: slot,
+                    // CRITICAL FIX: Check for range overlap instead of exact match
+                    // This prevents double-booking when slots partially overlap
+                    AND: [
+                      { slotStartTimeInUTC: { lt: slotEnd } },     // Existing starts before proposed ends
+                      { slotEndTimeInUTC: { gt: slot } },          // Existing ends after proposed starts
+                    ],
                     user: {
                       some: {
                         id: consultantUserId,
@@ -221,6 +276,44 @@ export class SlotValidationService {
   }
 
   /**
+   * UNIVERSAL VALIDATOR: Check scheduling period boundaries
+   *
+   * SECURITY: This is now enforced server-side (was previously only client-side)
+   * Prevents bypassing scheduling period restrictions via direct API calls.
+   *
+   * APPLIES TO:
+   * - Subscriptions: Must schedule all calls within [startDate, endDate]
+   * - Classes: Must schedule all sessions within [startDate, endDate]
+   *
+   * NOT APPLICABLE TO:
+   * - Consultations: One-time events, no scheduling period
+   * - Webinars: One-time events, no scheduling period
+   */
+  private validateSchedulingPeriod(
+    slots: Date[],
+    startDate: Date,
+    endDate: Date,
+  ): ValidationResult {
+    const errors: string[] = [];
+
+    for (const slot of slots) {
+      if (slot < startDate || slot > endDate) {
+        errors.push(
+          `Slot ${slot.toLocaleString()} is outside the scheduling period ` +
+            `(${startDate.toLocaleDateString()} - ${endDate.toLocaleDateString()}). ` +
+            `All slots must be scheduled within this date range.`,
+        );
+      }
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings: [],
+    };
+  }
+
+  /**
    * UNIVERSAL VALIDATOR: Check if slots are consecutive
    * Uses 1-second tolerance for timezone/precision issues
    */
@@ -294,20 +387,25 @@ export class SlotValidationService {
 
     // Calculate required slots
     const duration = config.durationInHours || config.sessionDurationInHours;
-    if (!duration) {
+
+    // FIX: Validate duration before use
+    try {
+      SlotCalculationService.validateDuration(duration, "Consultation duration");
+    } catch (error) {
       return {
         isValid: false,
-        errors: ["Consultation duration is required"],
+        errors: [error instanceof Error ? error.message : "Invalid consultation duration"],
         warnings: [],
       };
     }
 
-    const requiredSlots = SlotCalculationService.getSlotsPerCall(duration);
+    // After validation, duration is guaranteed to be a valid number
+    const requiredSlots = SlotCalculationService.getSlotsPerCall(duration!);
 
     // Check slot count
     if (slots.length !== requiredSlots) {
       errors.push(
-        `Consultation requires exactly ${requiredSlots} slot${requiredSlots !== 1 ? "s" : ""} (${duration} hour${duration > 1 ? "s" : ""}) but ${slots.length} provided`,
+        `Consultation requires exactly ${requiredSlots} slot${requiredSlots !== 1 ? "s" : ""} (${duration!} hour${duration! > 1 ? "s" : ""}) but ${slots.length} provided`,
       );
     }
 
@@ -372,19 +470,24 @@ export class SlotValidationService {
 
     // Calculate required slots
     const duration = config.durationInHours || config.sessionDurationInHours;
-    if (!duration) {
+
+    // FIX: Validate duration before use
+    try {
+      SlotCalculationService.validateDuration(duration, "Webinar duration");
+    } catch (error) {
       return {
         isValid: false,
-        errors: ["Webinar duration is required"],
+        errors: [error instanceof Error ? error.message : "Invalid webinar duration"],
         warnings: [],
       };
     }
 
-    const requiredSlots = SlotCalculationService.getSlotsPerCall(duration);
+    // After validation, duration is guaranteed to be a valid number
+    const requiredSlots = SlotCalculationService.getSlotsPerCall(duration!);
 
     // Check slot count
     if (slots.length !== requiredSlots) {
-      const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
+      const durationText = duration! === 1 ? "1 hour" : `${duration!} hours`;
       errors.push(
         `Webinar (${durationText}) requires exactly ${requiredSlots} consecutive slot${requiredSlots > 1 ? "s" : ""}, but ${slots.length} provided`,
       );
@@ -426,6 +529,17 @@ export class SlotValidationService {
       return {
         isValid: false,
         errors: ["Session duration is required for class validation"],
+        warnings: [],
+      };
+    }
+
+    // FIX: Validate duration before use
+    try {
+      SlotCalculationService.validateDuration(config.sessionDurationInHours, "Session duration");
+    } catch (error) {
+      return {
+        isValid: false,
+        errors: [error instanceof Error ? error.message : "Invalid session duration"],
         warnings: [],
       };
     }

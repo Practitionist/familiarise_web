@@ -151,6 +151,25 @@ export class SlotAllocationService {
 
   /**
    * MANUAL ALLOCATION: Validate and allocate user-selected slots
+   *
+   * IMPORTANT: This method allows consultants to manually select specific slots
+   * for appointments, bypassing the auto-allocation algorithm.
+   *
+   * VALIDATION REQUIREMENTS:
+   * 1. Slot count must be exact multiple of session duration
+   *    - Example: 2.5-hour session needs 5 slots (5 × 30min)
+   *    - Providing 7 slots creates incomplete appointment → rejected
+   *
+   * 2. All slots must pass universal validation:
+   *    - In the future (not past dates)
+   *    - Match consultant's availability schedule
+   *    - No conflicts with existing appointments
+   *
+   * 3. Event-specific rules apply:
+   *    - Consultations: All slots same day, consecutive
+   *    - Subscriptions: Weekly limits enforced
+   *    - Webinars: Consecutive slots required
+   *    - Classes: Session grouping validated
    */
   private static async manualAllocate(
     eventType: EventType,
@@ -168,6 +187,35 @@ export class SlotAllocationService {
 
       // Convert to Date objects
       const slots = slotStrings.map((s) => new Date(s));
+
+      // FIX: Detect and reject duplicate slots
+      // Duplicates can cause validation errors, inflated counts, and DB anomalies
+      const uniqueSlots = Array.from(
+        new Map(slots.map((s) => [s.toISOString(), s])).values(),
+      );
+
+      if (uniqueSlots.length !== slots.length) {
+        throw new Error(
+          `Duplicate slots detected: ${slots.length} slots provided but only ` +
+            `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
+        );
+      }
+
+      // CRITICAL FIX: Validate slot count matches session duration requirements
+      // This prevents incomplete appointments from being created
+      const slotsPerCall = SlotCalculationService.getSlotsPerCall(
+        config.sessionDurationInHours || config.durationInHours || 1,
+      );
+
+      if (slots.length % slotsPerCall !== 0) {
+        const sessionDuration =
+          config.sessionDurationInHours || config.durationInHours || 1;
+        throw new Error(
+          `Invalid slot count: ${slots.length} slots provided, but ${sessionDuration}-hour ` +
+            `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
+            `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
+        );
+      }
 
       // Validate
       const validator = new SlotValidationService(tx as any);
@@ -210,6 +258,23 @@ export class SlotAllocationService {
 
   /**
    * REQUESTED SLOTS: Use pre-selected slots from consultee
+   *
+   * WORKFLOW:
+   * 1. Consultee submits consultation/subscription request with preferred time slots
+   * 2. System creates tentative appointments with those slots
+   * 3. Consultant reviews and clicks "Use Requested Slots"
+   * 4. This method validates and approves those pre-created appointments
+   *
+   * CRITICAL VERIFICATION:
+   * We must verify appointments were actually created by the consultee.
+   * Without this check, a consultant could approve a request that has
+   * no appointments, resulting in an APPROVED status with no bookings.
+   *
+   * POSSIBLE FAILURE SCENARIOS:
+   * - Consultee abandoned request before creating appointments
+   * - Appointments were deleted by another process
+   * - Database transaction failed partially
+   * - Frontend didn't submit appointments correctly
    */
   private static async useRequestedSlots(
     eventType: EventType,
@@ -228,7 +293,37 @@ export class SlotAllocationService {
         throw new Error("No requested slots found");
       }
 
-      // Validate requested slots
+      // CRITICAL FIX: Verify appointments actually exist before approving
+      // This prevents approving requests with no actual bookings
+      const relationField = this.getEventRelationField(eventType);
+      const existingAppointments = await (tx as any).appointment.findMany({
+        where: { [`${relationField}Id`]: eventId },
+        include: { slotsOfAppointment: true },
+      });
+
+      if (existingAppointments.length === 0) {
+        throw new Error(
+          "Cannot approve requested slots: No appointments found. " +
+            "The consultee may not have created appointments yet, or they were deleted. " +
+            "Please ask the consultee to resubmit their request.",
+        );
+      }
+
+      // Verify appointment slots match requested slots
+      const existingSlotCount = existingAppointments.reduce(
+        (sum: number, app: any) => sum + app.slotsOfAppointment.length,
+        0,
+      );
+
+      if (existingSlotCount !== requestedSlots.length) {
+        throw new Error(
+          `Appointment mismatch: Found ${existingSlotCount} slots in appointments ` +
+            `but ${requestedSlots.length} requested slots. ` +
+            `The appointments may have been modified. Please review and try again.`,
+        );
+      }
+
+      // Validate requested slots still meet all requirements
       const validator = new SlotValidationService(tx as any);
       const validation = await validator.validate(
         eventType,
@@ -242,7 +337,7 @@ export class SlotAllocationService {
         throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
       }
 
-      // Just update event status to approved (appointments already exist)
+      // Update event status to approved (appointments already exist and verified)
       await this.updateEventStatus(
         tx,
         eventType,
@@ -253,6 +348,7 @@ export class SlotAllocationService {
 
       return {
         success: true,
+        appointments: existingAppointments,
         warnings: validation.warnings,
       };
     });
@@ -490,6 +586,20 @@ export class SlotAllocationService {
 
   /**
    * Create appointment records for allocated slots
+   *
+   * ARCHITECTURE:
+   * - One Appointment = One call/session
+   * - Each Appointment contains multiple SlotOfAppointment records
+   * - Number of slots per appointment = session duration / 30 minutes
+   *
+   * EXAMPLE: 2.5-hour subscription call
+   * - Creates 1 Appointment record
+   * - With 5 SlotOfAppointment records (2.5h ÷ 0.5h = 5 slots)
+   * - Each slot: [startTime, startTime + 30min]
+   *
+   * DEFENSIVE VALIDATION:
+   * This is a defensive check - slot count should already be validated
+   * by the caller, but we verify again to prevent data corruption.
    */
   private static async createAppointments(
     tx: PrismaTransaction,
@@ -503,6 +613,17 @@ export class SlotAllocationService {
     const slotsPerCall = SlotCalculationService.getSlotsPerCall(
       config?.sessionDurationInHours || config?.durationInHours || 1,
     );
+
+    // DEFENSIVE CHECK: Ensure slots divide evenly into complete appointments
+    // This should never fail if validation was done correctly, but prevents
+    // database corruption if validation was bypassed
+    if (slots.length % slotsPerCall !== 0) {
+      throw new Error(
+        `INTERNAL ERROR: Cannot create appointments - ${slots.length} slots ` +
+          `cannot be evenly divided into ${slotsPerCall}-slot sessions. ` +
+          `This indicates a validation bug.`,
+      );
+    }
 
     // Group slots by call (consecutive blocks)
     const calls: Date[][] = [];
@@ -693,6 +814,18 @@ export class SlotAllocationService {
 
     if (!consultantProfile) {
       throw new Error("Consultant profile not found");
+    }
+
+    // FIX: Validate date ordering for events with scheduling periods
+    // This prevents bugs in auto-allocation and week calculation
+    if (config.startDate && config.endDate) {
+      if (config.startDate >= config.endDate) {
+        throw new Error(
+          `Invalid date range: startDate (${config.startDate.toISOString()}) ` +
+            `must be before endDate (${config.endDate.toISOString()}). ` +
+            `Please check the ${eventType} configuration.`,
+        );
+      }
     }
 
     return {

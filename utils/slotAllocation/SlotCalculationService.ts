@@ -65,6 +65,60 @@ export class SlotCalculationService {
   }
 
   /**
+   * Validate duration parameter for all event types
+   *
+   * CRITICAL SAFETY CHECK:
+   * Duration is used in division and slot calculations throughout the app.
+   * Invalid values (0, negative, Infinity, undefined) can cause:
+   * - Division by zero errors
+   * - Infinite loops in slot allocation
+   * - Negative slot counts
+   * - Database corruption
+   *
+   * This centralized validation ensures all services use consistent rules.
+   *
+   * @param duration - The duration value to validate
+   * @param fieldName - Descriptive name for error messages (e.g., "sessionDurationInHours")
+   * @throws {Error} If duration is invalid
+   */
+  static validateDuration(duration: number | undefined, fieldName: string): void {
+    if (duration === undefined || duration === null) {
+      throw new Error(`${fieldName} is required but was not provided`);
+    }
+
+    if (typeof duration !== 'number') {
+      throw new Error(
+        `${fieldName} must be a number, but received type: ${typeof duration}`,
+      );
+    }
+
+    if (duration <= 0) {
+      throw new Error(
+        `${fieldName} must be positive, but received: ${duration}`,
+      );
+    }
+
+    if (!Number.isFinite(duration)) {
+      throw new Error(
+        `${fieldName} must be a finite number, but received: ${duration}`,
+      );
+    }
+
+    // Additional sanity check: duration should be reasonable (0.5 to 24 hours)
+    if (duration > 24) {
+      console.warn(
+        `⚠️ ${fieldName} is unusually large (${duration} hours). Maximum expected is 24 hours.`,
+      );
+    }
+
+    if (duration < 0.5) {
+      throw new Error(
+        `${fieldName} must be at least 0.5 hours (30 minutes), but received: ${duration}`,
+      );
+    }
+  }
+
+  /**
    * Calculate the total number of 30-minute slots required for an event.
    *
    * IMPORTANT: This function returns SLOT COUNT, not call/session count.
