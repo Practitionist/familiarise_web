@@ -25,9 +25,6 @@ import {
   ProcessFlowStepProps,
 } from "@/components/home/flows/ProcessFlowDisplay";
 import { OFFERINGS } from "@/constants/homePageData";
-import type { SupabaseImageFile } from "@/lib/supabase"; // Use SupabaseImageFile directly
-import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
-import { renderLCPImage } from "@/utils/image";
 
 import type { TConsultantProfile } from "@/types/consultant";
 import type { ReviewWithProfiles } from "@/types/review";
@@ -90,25 +87,6 @@ const pageStyles = {
 
 // --- Helper Components ---
 
-function RatingStars({ rating }: Readonly<{ rating: number }>) {
-  const fullStars = Math.floor(rating);
-  const hasHalfStar = rating % 1 >= 0.5;
-  return (
-    <div className="flex items-center gap-0.5 justify-center">
-      {Array.from({ length: fullStars }, (_, i) => (
-        <Star
-          key={`star-${i}`}
-          className="w-4 h-4 fill-yellow-400 text-yellow-400"
-        />
-      ))}
-      {hasHalfStar && (
-        <StarHalf className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-      )}
-      <span className="text-sm text-gray-600 ml-1">{rating.toFixed(1)}</span>
-    </div>
-  );
-}
-
 function ExpertCard({
   expert,
   className = "",
@@ -117,55 +95,63 @@ function ExpertCard({
   return (
     <Link
       href={`/explore/experts/${expert.id}`}
-      className={`block hover:no-underline flex-shrink-0 w-[280px] ${className}`}
+      className={`block hover:no-underline flex-shrink-0 w-[320px] ${className}`}
     >
-      <Card className="hover:shadow-lg transition-shadow duration-300 hover:-translate-y-0.5 h-full mx-3">
-        <CardHeader className="space-y-3">
-          <div className="relative mx-auto h-16 w-16">
+      <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm h-full mx-3 p-6">
+        <div className="space-y-4">
+          <div className="relative mx-auto h-20 w-20">
             {!isAvatarLoaded && (
-              <div className="absolute inset-0 h-16 w-16 rounded-full bg-gray-300 animate-pulse" />
+              <div className="absolute inset-0 h-20 w-20 rounded-full bg-gray-700 animate-pulse" />
             )}
             <Avatar
-              className={`mx-auto h-16 w-16 ${isAvatarLoaded ? "opacity-100" : "opacity-0"} transition-opacity duration-300`}
+              className={`mx-auto h-20 w-20 border-2 border-gray-700/50 ${isAvatarLoaded ? "opacity-100" : "opacity-0"} transition-opacity duration-300`}
             >
               <AvatarImage
                 src={expert.user.image ?? "/placeholder-user.jpg"}
                 alt={expert.user.name ?? "Expert"}
                 onLoad={() => setIsAvatarLoaded(true)}
-                onError={() => setIsAvatarLoaded(true)} // Also set to true on error to show fallback
+                onError={() => setIsAvatarLoaded(true)}
               />
-              <AvatarFallback>
-                <User className="h-8 w-8" />
+              <AvatarFallback className="bg-gray-800 border border-gray-700">
+                <User className="h-10 w-10 text-gray-400" />
               </AvatarFallback>
             </Avatar>
           </div>
-          <h3 className="text-lg font-semibold text-center line-clamp-1">
+          <h3 className="text-lg font-semibold text-center line-clamp-1 text-gray-100">
             {expert.user.name}
           </h3>
-          <RatingStars rating={expert.rating} />
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="text-center">
-            <p className="text-sm text-gray-600 font-medium line-clamp-1">
+          <div className="flex items-center gap-1 justify-center">
+            {Array.from({ length: Math.floor(expert.rating) }, (_, i) => (
+              <Star
+                key={`star-${i}`}
+                className="w-4 h-4 fill-gray-400 text-gray-400"
+              />
+            ))}
+            {expert.rating % 1 >= 0.5 && (
+              <StarHalf className="w-4 h-4 fill-gray-400 text-gray-400" />
+            )}
+            <span className="text-sm text-gray-400 ml-1">{expert.rating.toFixed(1)}</span>
+          </div>
+          <div className="text-center space-y-1">
+            <p className="text-sm text-gray-300 font-medium line-clamp-1">
               {expert.specialization || expert.domain.name}
             </p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-gray-500">
               {expert.experience} experience
             </p>
           </div>
           <div className="flex flex-wrap gap-2 justify-center">
             {expert.tags?.slice(0, 3).map((tag) => (
-              <Badge
+              <span
                 key={tag.id}
-                variant="secondary"
-                className="text-xs px-2 py-0.5"
+                className="text-xs px-3 py-1 bg-gray-800/50 border border-gray-700/50 rounded-full text-gray-400"
               >
                 {tag.name}
-              </Badge>
+              </span>
             ))}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </Link>
   );
 }
@@ -452,32 +438,8 @@ const fetchHomePageData = async <T = unknown,>(url: string): Promise<T> => {
   return jsonData.data as T; // Modify if your API structure is different, ensure type assertion is safe
 };
 
-// Specific fetcher for Supabase storage images
-const supabaseImagesFetcher = async ([, bucket, path]: [
-  string,
-  string,
-  string,
-]): Promise<SupabaseImageFile[]> => {
-  // Ensure fetchImagesFromSupabaseStorage is correctly imported and available in this scope
-  const imageData = await fetchImagesFromSupabaseStorage(bucket, path);
-  return imageData || []; // Default to empty array if null/undefined
-};
-
 export default function Home() {
   // React Query hooks for data fetching
-  const {
-    data: imagesData,
-    error: imagesError,
-    isLoading: isLoadingImages,
-  } = useQuery<SupabaseImageFile[]>({
-    queryKey: ["supabase_landing_images", "assets", "images/landing-page"],
-    queryFn: ({ queryKey }) =>
-      supabaseImagesFetcher(queryKey as [string, string, string]),
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    gcTime: 10 * 60 * 1000, // 10 minutes
-    retry: 2,
-  });
-
   const {
     data: expertsData,
     error: expertsError,
@@ -505,23 +467,19 @@ export default function Home() {
   });
 
   // Provide default empty arrays for rendering and downstream logic
-  const images: SupabaseImageFile[] = imagesData || [];
   const experts: TConsultantProfile[] = expertsData || [];
   const reviews: ReviewWithProfiles[] = reviewsData || []; // This 'reviews' will be used by displayReviews
 
-  // Combined loading state for initial page load, mimics previous global 'loading'
-  // Individual isLoadingImages, isLoadingExperts, isLoadingReviews can be used for per-section skeletons if needed.
-  const isLoading = isLoadingImages || isLoadingExperts || isLoadingReviews;
+  // Combined loading state for initial page load
+  const isLoading = isLoadingExperts || isLoadingReviews;
 
-  // Log errors from Fetch. Ensure useEffect is imported from 'react'.
+  // Log errors from Fetch
   useEffect(() => {
-    if (imagesError)
-      console.error("Fetch - Failed to fetch images:", imagesError);
     if (expertsError)
       console.error("Fetch - Failed to fetch experts:", expertsError);
     if (reviewsError)
       console.error("Fetch - Failed to fetch reviews:", reviewsError);
-  }, [imagesError, expertsError, reviewsError]);
+  }, [expertsError, reviewsError]);
 
   // For Testimonials marquee effect (reduced duplication for performance)
   const displayReviews =
@@ -603,92 +561,109 @@ export default function Home() {
           className="relative min-h-screen flex items-center justify-center overflow-hidden"
         >
           <div className="container relative z-10 mx-auto px-4 md:px-6 py-32">
-            <div className="flex flex-col items-center space-y-8 text-center max-w-4xl mx-auto">
-              <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tighter text-white">
-                Launch a Personal Site That Wins Opportunities
+            <div className="flex flex-col items-center space-y-8 text-center max-w-5xl mx-auto">
+              <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight bg-gradient-to-r from-gray-200 via-white to-gray-400 bg-clip-text text-transparent">
+                Connect with Expert Consultants Who Transform Your Career
               </h1>
-              <p className="max-w-[700px] text-xl md:text-2xl text-gray-400">
-                Whether you're a designer, developer, or creator, Familiarise helps you stand out with a site that feels professional, and you.
+              <p className="max-w-[800px] text-xl md:text-2xl text-gray-400 leading-relaxed">
+                Book 1-1 sessions, join classes, attend webinars, and get personalized guidance from industry professionals in 50+ domains.
               </p>
-              <div className="flex space-x-4 pt-4">
+              <div className="flex flex-col sm:flex-row gap-4 pt-6">
                 <Link
                   href="/explore/experts"
-                  className="inline-flex h-14 items-center justify-center rounded-lg bg-white px-8 py-4 text-base font-semibold text-black shadow-lg transition-all hover:bg-gray-100 hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  className="inline-flex h-14 items-center justify-center rounded-xl bg-white px-8 py-4 text-base font-semibold text-black shadow-2xl transition-all hover:bg-gray-100 hover:scale-105 hover:shadow-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                 >
-                  Start Building
+                  Browse Experts
                 </Link>
                 <Link
                   href="/explore/programs"
-                  className="inline-flex h-14 items-center justify-center rounded-lg bg-gray-800/50 px-8 py-4 text-base font-semibold text-white border border-gray-700 shadow-lg transition-all hover:bg-gray-700/50 hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  className="inline-flex h-14 items-center justify-center rounded-xl bg-gray-900/50 px-8 py-4 text-base font-semibold text-white border border-gray-700/50 shadow-xl transition-all hover:bg-gray-800/50 hover:scale-105 hover:border-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                 >
-                  See Examples
+                  View Programs
                 </Link>
               </div>
             </div>
+          </div>
+
+          {/* Curved arc separator */}
+          <div className="absolute bottom-0 left-0 right-0 h-32">
+            <svg
+              className="absolute bottom-0 w-full"
+              viewBox="0 0 1440 120"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              preserveAspectRatio="none"
+            >
+              <path
+                d="M0,64 C480,120 960,120 1440,64 L1440,120 L0,120 Z"
+                fill="white"
+                opacity="0.05"
+              />
+            </svg>
           </div>
         </section>
 
         {/* Features / How It Works Section */}
         <section
           key="features-section"
-          className="w-full py-24 md:py-32 lg:py-40 bg-black"
+          className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/50 to-black"
         >
           <div className="container mx-auto px-4 md:px-6">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-white mb-4">
-                Notes with an AI assistant
+            <div className="text-center mb-20">
+              <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent mb-6">
+                How Familiarise Works
               </h2>
-              <p className="max-w-2xl mx-auto text-lg text-gray-400">
-                Reflect uses GPT-4 and Whisper from OpenAI to improve your writing, organize your thoughts, and act as your intellectual thought partner.
+              <p className="max-w-2xl mx-auto text-xl text-gray-400 leading-relaxed">
+                Get personalized guidance from industry experts through our simple three-step process.
               </p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
-              {/* Card 1: Create Account */}
+              {/* Card 1: Browse Experts */}
               <div className="relative group">
-                <div className="h-full bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
-                  <div className="flex flex-col items-center text-center space-y-4">
-                    <div className="w-16 h-16 rounded-full bg-teal-500/10 flex items-center justify-center">
-                      <svg className="w-8 h-8 text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                <div className="h-full bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+                  <div className="flex flex-col items-center text-center space-y-5">
+                    <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/30 flex items-center justify-center border border-gray-700/30">
+                      <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                       </svg>
                     </div>
-                    <h3 className="text-2xl font-semibold text-white">Create your account</h3>
-                    <p className="text-gray-400">
-                      Sign up easily and secure your profile in just a few steps.
+                    <h3 className="text-2xl font-semibold text-gray-100">Browse Expert Consultants</h3>
+                    <p className="text-gray-400 leading-relaxed">
+                      Explore 500+ verified experts across 50+ domains. Filter by expertise, rating, and availability.
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Card 2: Browse Experts */}
+              {/* Card 2: Book Session */}
               <div className="relative group">
-                <div className="h-full bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
-                  <div className="flex flex-col items-center text-center space-y-4">
-                    <div className="w-16 h-16 rounded-full bg-teal-500/10 flex items-center justify-center">
-                      <svg className="w-8 h-8 text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                <div className="h-full bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+                  <div className="flex flex-col items-center text-center space-y-5">
+                    <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/30 flex items-center justify-center border border-gray-700/30">
+                      <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                       </svg>
                     </div>
-                    <h3 className="text-2xl font-semibold text-white">Browse experts</h3>
-                    <p className="text-gray-400">
-                      Explore our curated list of industry professionals and find your perfect mentor.
+                    <h3 className="text-2xl font-semibold text-gray-100">Book Your Session</h3>
+                    <p className="text-gray-400 leading-relaxed">
+                      Choose from 1-1 consultations, classes, webinars, or subscriptions. Schedule at your convenience.
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Card 3: Book Session */}
+              {/* Card 3: Join & Learn */}
               <div className="relative group">
-                <div className="h-full bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
-                  <div className="flex flex-col items-center text-center space-y-4">
-                    <div className="w-16 h-16 rounded-full bg-teal-500/10 flex items-center justify-center">
-                      <svg className="w-8 h-8 text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                <div className="h-full bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+                  <div className="flex flex-col items-center text-center space-y-5">
+                    <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/30 flex items-center justify-center border border-gray-700/30">
+                      <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                       </svg>
                     </div>
-                    <h3 className="text-2xl font-semibold text-white">Start selling or convert</h3>
-                    <p className="text-gray-400">
-                      Enjoy the simplicity of a platform that makes every transaction seamless.
+                    <h3 className="text-2xl font-semibold text-gray-100">Join & Learn</h3>
+                    <p className="text-gray-400 leading-relaxed">
+                      Connect instantly through our platform. Get actionable insights and transform your career.
                     </p>
                   </div>
                 </div>
@@ -700,63 +675,63 @@ export default function Home() {
         {/* Platform Stats Section */}
         <section
           key="platform-stats-section"
-          className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black to-gray-950"
+          className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/30 to-black"
         >
           <div className="container mx-auto px-4 md:px-6">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-white mb-4">
-                Token Performance & Market Analytics
+            <div className="text-center mb-20">
+              <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent mb-6">
+                Platform Metrics
               </h2>
-              <p className="max-w-2xl mx-auto text-lg text-gray-400">
-                Tracking price action, trading volume, liquidity, and volatility to gauge market sentiment and investor behavior.
+              <p className="max-w-2xl mx-auto text-xl text-gray-400 leading-relaxed">
+                Join thousands of professionals who have transformed their careers through expert guidance.
               </p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-7xl mx-auto">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 max-w-7xl mx-auto">
               {/* Stat 1: Total Experts */}
-              <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
-                <div className="flex flex-col space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-teal-400"></div>
-                    <p className="text-gray-400 text-sm uppercase tracking-wide">Total Experts</p>
+              <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+                <div className="flex flex-col space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-4 h-4 rounded-full bg-gradient-to-r from-gray-400 to-gray-500"></div>
+                    <p className="text-gray-400 text-sm uppercase tracking-wider font-medium">Expert Consultants</p>
                   </div>
-                  <p className="text-5xl font-bold text-teal-400">6M+</p>
-                  <p className="text-gray-500 text-sm">Market Cap</p>
+                  <p className="text-6xl font-bold bg-gradient-to-br from-gray-200 to-gray-400 bg-clip-text text-transparent">500+</p>
+                  <p className="text-gray-500 text-sm">Verified Professionals</p>
                 </div>
               </div>
 
-              {/* Stat 2: Sessions Completed */}
-              <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
-                <div className="flex flex-col space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-purple-400"></div>
-                    <p className="text-gray-400 text-sm uppercase tracking-wide">Sessions Complete</p>
+              {/* Stat 2: Consultations Completed */}
+              <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+                <div className="flex flex-col space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-4 h-4 rounded-full bg-gradient-to-r from-gray-400 to-gray-500"></div>
+                    <p className="text-gray-400 text-sm uppercase tracking-wider font-medium">Consultations</p>
                   </div>
-                  <p className="text-5xl font-bold text-purple-400">2M+</p>
-                  <p className="text-gray-500 text-sm">Burned Tokens</p>
+                  <p className="text-6xl font-bold bg-gradient-to-br from-gray-200 to-gray-400 bg-clip-text text-transparent">10K+</p>
+                  <p className="text-gray-500 text-sm">Sessions Completed</p>
                 </div>
               </div>
 
               {/* Stat 3: Average Rating */}
-              <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
-                <div className="flex flex-col space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
-                    <p className="text-gray-400 text-sm uppercase tracking-wide">Average Rating</p>
+              <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+                <div className="flex flex-col space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-4 h-4 rounded-full bg-gradient-to-r from-gray-400 to-gray-500"></div>
+                    <p className="text-gray-400 text-sm uppercase tracking-wider font-medium">Average Rating</p>
                   </div>
-                  <p className="text-5xl font-bold text-yellow-400">4.8</p>
-                  <p className="text-gray-500 text-sm">out of 5.0</p>
+                  <p className="text-6xl font-bold bg-gradient-to-br from-gray-200 to-gray-400 bg-clip-text text-transparent">4.8</p>
+                  <p className="text-gray-500 text-sm">out of 5.0 stars</p>
                 </div>
               </div>
 
-              {/* Stat 4: Active Students */}
-              <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 hover:border-teal-500/50 transition-all duration-300">
-                <div className="flex flex-col space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-blue-400"></div>
-                    <p className="text-gray-400 text-sm uppercase tracking-wide">Active Students</p>
+              {/* Stat 4: Domains Covered */}
+              <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+                <div className="flex flex-col space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-4 h-4 rounded-full bg-gradient-to-r from-gray-400 to-gray-500"></div>
+                    <p className="text-gray-400 text-sm uppercase tracking-wider font-medium">Expertise Areas</p>
                   </div>
-                  <p className="text-5xl font-bold text-blue-400">$1.89K</p>
-                  <p className="text-gray-500 text-sm">Total Revenue</p>
+                  <p className="text-6xl font-bold bg-gradient-to-br from-gray-200 to-gray-400 bg-clip-text text-transparent">50+</p>
+                  <p className="text-gray-500 text-sm">Domains Covered</p>
                 </div>
               </div>
             </div>
@@ -766,20 +741,20 @@ export default function Home() {
         {/* BestExpertsSection */}
         <section
           key="best-experts-section"
-          className="w-full py-16 md:py-24 lg:py-32 bg-black"
+          className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/30 to-black"
         >
           <div className="container mx-auto px-4 md:px-6">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-8 max-w-6xl mx-auto">
-              <div className="flex-1">
-                <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-white mb-4">
-                  The Best Experts in the World
+            <div className="flex flex-col md:flex-row items-center justify-between gap-12 max-w-6xl mx-auto text-center md:text-left">
+              <div className="flex-1 space-y-6">
+                <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+                  Top-Rated Consultants Ready to Help
                 </h2>
-                <p className="text-lg text-gray-400 mb-6">
-                  Explore our wide range of consultants and find the right one for your business.
+                <p className="text-xl text-gray-400 leading-relaxed max-w-2xl">
+                  Connect with industry leaders who have helped thousands of professionals achieve their goals.
                 </p>
                 <Link
                   href="/explore/experts"
-                  className="inline-flex h-12 items-center justify-center rounded-lg bg-white px-6 py-3 text-sm font-semibold text-black shadow-lg transition-all hover:bg-gray-100 hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  className="inline-flex h-14 items-center justify-center rounded-xl bg-white px-8 py-4 text-base font-semibold text-black shadow-2xl transition-all hover:bg-gray-100 hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                 >
                   Browse All Experts
                 </Link>
@@ -791,19 +766,18 @@ export default function Home() {
         {/* FeaturedExpertsSection */}
         <section
           key="featured-experts-section"
-          className="w-full py-12 md:py-24 lg:py-32 bg-gradient-to-b from-gray-950 to-black"
+          className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/50 to-black"
         >
-          <div className="container mx-auto px-4 md:px-6 mb-12">
+          <div className="container mx-auto px-4 md:px-6 mb-16">
             <div className="text-center">
-              <h2 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold tracking-tighter text-white">
-                Meet our Featured Experts
+              <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent mb-6">
+                Meet Our Featured Experts
               </h2>
-              <p className="mt-4 mx-auto max-w-[700px] text-gray-400 md:text-xl">
-                We have a diverse team of experts ready to share their knowledge
-                and expertise with you.
+              <p className="mt-4 mx-auto max-w-[800px] text-gray-400 text-xl leading-relaxed">
+                Browse through our curated selection of top consultants across various domains and find your perfect match.
               </p>
               <Link href="/explore/experts">
-                <Button className="mt-8 bg-white text-black hover:bg-gray-100 hover:scale-105 transition-all duration-300 shadow-lg">
+                <Button className="mt-8 h-14 px-8 bg-white text-black hover:bg-gray-100 hover:scale-105 transition-all duration-300 shadow-2xl rounded-xl font-semibold">
                   View All Experts
                 </Button>
               </Link>
@@ -847,21 +821,26 @@ export default function Home() {
         </section>
 
         {/* OfferingsSection */}
-        <section key="offerings-section" className="py-24 md:py-32 bg-black">
+        <section key="offerings-section" className="py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/30 to-black">
           <div className="container mx-auto px-4 md:px-6">
-            <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold text-center mb-16 text-white">
-              Check out our various offerings
-            </h2>
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4 max-w-7xl mx-auto">
+            <div className="text-center mb-20">
+              <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent mb-6">
+                Our Services
+              </h2>
+              <p className="max-w-2xl mx-auto text-xl text-gray-400 leading-relaxed">
+                Choose from flexible consultation formats that fit your learning style and schedule.
+              </p>
+            </div>
+            <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-4 max-w-7xl mx-auto">
               {OFFERINGS.map((offering) => (
                 <div
                   key={offering.title}
-                  className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-6 hover:border-teal-500/50 transition-all duration-300 hover:-translate-y-1"
+                  className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-8 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 hover:-translate-y-1 backdrop-blur-sm"
                 >
-                  <h3 className="text-xl font-semibold mb-3 text-white">
+                  <h3 className="text-2xl font-semibold mb-4 text-gray-100">
                     {offering.title}
                   </h3>
-                  <p className="text-gray-400 text-sm">{offering.description}</p>
+                  <p className="text-gray-400 leading-relaxed">{offering.description}</p>
                 </div>
               ))}
             </div>
@@ -881,8 +860,8 @@ export default function Home() {
             }}
           />
           <div className="container mx-auto px-4 relative">
-            <h2 className="text-4xl sm:text-5xl font-bold text-center mb-16 text-white">
-              What Our Users Say
+            <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-center mb-16 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+              What Our Clients Say
             </h2>
           </div>
           {isLoading && reviews.length === 0 ? (
@@ -934,10 +913,9 @@ export default function Home() {
               whileInView={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
             >
-              <h2 className="text-4xl sm:text-5xl font-bold mb-4 text-white">How The Process Works</h2>
-              <p className="text-gray-400 max-w-2xl mx-auto text-lg">
-                Choose from our various learning formats and follow these simple
-                steps to start your journey
+              <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold mb-6 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">How The Process Works</h2>
+              <p className="text-gray-400 max-w-2xl mx-auto text-xl leading-relaxed">
+                Choose from our various formats and follow these simple steps to start your learning journey
               </p>
             </motion.div>
             <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 shadow-lg max-w-5xl mx-auto">
@@ -972,12 +950,11 @@ export default function Home() {
           className="w-full py-24 md:py-32 bg-gradient-to-b from-black to-gray-950"
         >
           <div className="container mx-auto px-4 md:px-6 text-center">
-            <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tighter mb-6 text-white">
-              Join our Community of Experts
+            <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight mb-6 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+              Become a Consultant
             </h2>
-            <p className="text-lg text-gray-400 md:text-xl max-w-[600px] mx-auto mb-8">
-              Share your expertise with people who need it and grow your
-              personal brand.
+            <p className="text-xl text-gray-400 leading-relaxed max-w-[700px] mx-auto mb-8">
+              Share your expertise, build your reputation, and earn income by helping professionals achieve their goals.
             </p>
             <Button className="w-full sm:w-auto bg-white text-black hover:bg-gray-100 hover:scale-105 transition-all duration-300 shadow-lg h-12 px-8">
               Become an Expert
@@ -989,7 +966,7 @@ export default function Home() {
         <section className="flex justify-center items-center py-24 md:py-32 bg-black">
           <div className="container mx-auto px-4 md:px-6">
             <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl shadow-lg w-full max-w-4xl mx-auto p-8">
-              <h2 className="text-3xl sm:text-4xl font-semibold mb-6 text-white">
+              <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
                 Frequently Asked Questions
               </h2>
               <Accordion
