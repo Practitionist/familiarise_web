@@ -81,12 +81,15 @@ export class SlotCalculationService {
    * @param fieldName - Descriptive name for error messages (e.g., "sessionDurationInHours")
    * @throws {Error} If duration is invalid
    */
-  static validateDuration(duration: number | undefined, fieldName: string): void {
+  static validateDuration(
+    duration: number | undefined,
+    fieldName: string,
+  ): void {
     if (duration === undefined || duration === null) {
       throw new Error(`${fieldName} is required but was not provided`);
     }
 
-    if (typeof duration !== 'number') {
+    if (typeof duration !== "number") {
       throw new Error(
         `${fieldName} must be a number, but received type: ${typeof duration}`,
       );

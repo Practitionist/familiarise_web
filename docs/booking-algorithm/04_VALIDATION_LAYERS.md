@@ -82,6 +82,7 @@ export const allocationRequestSchema = z
 ```
 
 **What It Validates**:
+
 - `isAuto` is a boolean (required)
 - `useRequestedSlots` is a boolean (optional)
 - `slots` is an array of ISO 8601 datetime strings (optional)
@@ -134,13 +135,13 @@ export const validationRequestSchema = z.object({
       }),
     )
     .min(1, {
-      message:
-        "'slots' array must contain at least one time slot to validate",
+      message: "'slots' array must contain at least one time slot to validate",
     }),
 });
 ```
 
 **What It Validates**:
+
 - `slots` is an array of ISO 8601 datetime strings (required)
 - Array must contain at least one slot
 
@@ -155,6 +156,7 @@ export const eventIdSchema = z.string().uuid({
 ```
 
 **What It Validates**:
+
 - ID is a valid UUID v4 format
 - Example: `"123e4567-e89b-12d3-a456-426614174000"`
 
@@ -203,7 +205,6 @@ export async function PATCH(request: NextRequest, { params }) {
       // body.useRequestedSlots is boolean | undefined
 
       // ... proceed to Layer 2 ...
-
     } catch (validationError) {
       // Zod validation errors - return 400 Bad Request
       if (validationError instanceof ZodError) {
@@ -305,10 +306,12 @@ private validateSlotsInFuture(slots: Date[]): ValidationResult {
 ```
 
 **What It Validates**:
+
 - All slots are at least 5 seconds in the future
 - 5-second buffer prevents race conditions during processing
 
 **Example Error**:
+
 ```
 "Cannot allocate slots in the past or too soon: 1/15/2025, 10:00:00 AM (only 2.1s).
 Slots must be at least 5 seconds in the future to allow for processing time."
@@ -376,11 +379,13 @@ private async validateNoConflicts(
 ```
 
 **What It Validates**:
+
 - Slots don't overlap with existing approved appointments
 - Uses range overlap detection (not just exact match)
 - Checks all appointment types (consultations, subscriptions, webinars, classes)
 
 **Range Overlap Logic**:
+
 ```
 Slot A: [10:00, 10:30]
 Slot B: [10:15, 10:45]
@@ -391,6 +396,7 @@ Overlap if: A.start < B.end AND B.start < A.end
 ```
 
 **Example Error**:
+
 ```
 "Slot already booked: 1/15/2025, 10:00:00 AM (conflicts with consultation for John Doe)"
 ```
@@ -444,10 +450,12 @@ private validateMatchesSchedule(
 ```
 
 **What It Validates**:
+
 - **Weekly Schedule**: Slots match day-of-week + time-of-day patterns
 - **Custom Schedule**: Slots match exact datetime entries
 
 **Example Error**:
+
 ```
 "Slot 1/15/2025, 3:00:00 PM does not match consultant's weekly schedule"
 ```
@@ -477,10 +485,12 @@ private validateSchedulingPeriod(
 ```
 
 **What It Validates**:
+
 - All slots fall within `[startDate, endDate]` for subscriptions and classes
 - This was previously only enforced client-side (security fix)
 
 **Example Error**:
+
 ```
 "Slot 3/15/2025, 10:00:00 AM is outside the scheduling period (1/1/2025 - 3/1/2025).
 All slots must be scheduled within this date range."
@@ -518,10 +528,12 @@ private validateConsecutiveSlots(slots: Date[]): ValidationResult {
 ```
 
 **What It Validates**:
+
 - Slots are exactly 30 minutes apart
 - 1-second tolerance for floating-point precision issues
 
 **Example Error**:
+
 ```
 "Slots must be consecutive. Gap detected between 1/15/2025, 10:00:00 AM and 1/15/2025, 11:00:00 AM"
 ```
@@ -578,6 +590,7 @@ private validateConsultation(
 ```
 
 **What It Validates**:
+
 - Correct number of slots for duration
 - All slots on same day
 - All slots consecutive
@@ -626,6 +639,7 @@ private validateWebinar(
 ```
 
 **What It Validates**:
+
 - Correct number of slots for duration
 - All slots consecutive (no same-day requirement)
 
@@ -720,6 +734,7 @@ private validateClass(slots: Date[], config: EventConfig): ValidationResult {
 ```
 
 **What It Validates**:
+
 - Complete sessions per day (no partial sessions)
 - Consecutive slots within each day
 - Weekly session limits
@@ -765,7 +780,8 @@ export class SubscriptionValidationService {
     );
 
     // Group existing and proposed calls by week
-    const existingCallsByWeek = this.groupAppointmentsByWeek(existingAppointments);
+    const existingCallsByWeek =
+      this.groupAppointmentsByWeek(existingAppointments);
     const proposedCallsByWeek = this.groupSlotsByWeek(
       proposedSlotDates,
       subscriptionPlan.sessionDurationInHours,
@@ -788,7 +804,10 @@ export class SubscriptionValidationService {
       errors: weeklyValidation.errors,
       warnings: weeklyValidation.warnings,
       weeklyInfo,
-      totalCallsScheduled: weeklyInfo.reduce((sum, w) => sum + w.existingCalls, 0),
+      totalCallsScheduled: weeklyInfo.reduce(
+        (sum, w) => sum + w.existingCalls,
+        0,
+      ),
       maxTotalCalls: subscriptionPlan.callsPerWeek * exactWeeks,
       subscriptionPeriod: {
         start: subscription.startDate,
@@ -834,6 +853,7 @@ for (let i = 1; i < sortedSlots.length; i++) {
 ```
 
 **Why Tolerance Matters**:
+
 - Date arithmetic can introduce sub-second precision errors
 - Timezone conversions may cause rounding
 - Database timestamps may have microsecond precision
@@ -867,6 +887,7 @@ private generateWeeklyInfo(...): WeeklyCallInfo[] {
 ```
 
 **Why This Matters**:
+
 - Protects against infinite loops from bad data
 - Example malformed dates: startDate="3000-01-01", endDate="2020-01-01"
 - Prevents server hang/crash from date calculation bugs
@@ -1011,12 +1032,12 @@ private generateWeeklyInfo(...): WeeklyCallInfo[] {
 ### Testing Layer 1 (Zod)
 
 ```typescript
-import { allocationRequestSchema } from '@/schemas/slotAllocation/validationSchemas';
+import { allocationRequestSchema } from "@/schemas/slotAllocation/validationSchemas";
 
 // Test valid input
 const validInput = {
   isAuto: false,
-  slots: ["2025-01-15T10:00:00Z", "2025-01-15T10:30:00Z"]
+  slots: ["2025-01-15T10:00:00Z", "2025-01-15T10:30:00Z"],
 };
 const result = allocationRequestSchema.safeParse(validInput);
 expect(result.success).toBe(true);
@@ -1024,7 +1045,7 @@ expect(result.success).toBe(true);
 // Test invalid input
 const invalidInput = {
   isAuto: "yes", // Should be boolean
-  slots: ["invalid-date"]
+  slots: ["invalid-date"],
 };
 const result2 = allocationRequestSchema.safeParse(invalidInput);
 expect(result2.success).toBe(false);
@@ -1033,43 +1054,46 @@ expect(result2.success).toBe(false);
 ### Testing Layer 2 (Business Rules)
 
 ```typescript
-import { SlotValidationService } from '@/utils/slotAllocation/SlotValidationService';
+import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
 
 const validator = new SlotValidationService(prisma);
 
 // Test future slots validation
-const pastSlot = new Date('2020-01-01T10:00:00Z');
+const pastSlot = new Date("2020-01-01T10:00:00Z");
 const result = await validator.validate(
-  'consultation',
+  "consultation",
   consultationId,
   [pastSlot],
   consultant,
-  config
+  config,
 );
 expect(result.isValid).toBe(false);
-expect(result.errors[0]).toContain('Cannot allocate slots in the past');
+expect(result.errors[0]).toContain("Cannot allocate slots in the past");
 ```
 
 ### Testing Layer 3 (Subscription Limits)
 
 ```typescript
-import { SubscriptionValidationService } from '@/utils/subscriptionValidation';
+import { SubscriptionValidationService } from "@/utils/subscriptionValidation";
 
 const validator = new SubscriptionValidationService(prisma);
 
 // Test weekly limit violation
 const proposedSlots = [
   // 3 calls in week of Jan 12 (exceeds limit of 2)
-  "2025-01-13T10:00:00Z", "2025-01-13T10:30:00Z",
-  "2025-01-15T10:00:00Z", "2025-01-15T10:30:00Z",
-  "2025-01-17T10:00:00Z", "2025-01-17T10:30:00Z",
+  "2025-01-13T10:00:00Z",
+  "2025-01-13T10:30:00Z",
+  "2025-01-15T10:00:00Z",
+  "2025-01-15T10:30:00Z",
+  "2025-01-17T10:00:00Z",
+  "2025-01-17T10:30:00Z",
 ];
 const result = await validator.validateSubscriptionSlots(
   subscriptionId,
-  proposedSlots
+  proposedSlots,
 );
 expect(result.isValid).toBe(false);
-expect(result.errors[0]).toContain('exceeds call limit');
+expect(result.errors[0]).toContain("exceeds call limit");
 ```
 
 ---

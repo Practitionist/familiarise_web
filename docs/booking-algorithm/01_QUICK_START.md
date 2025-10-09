@@ -5,6 +5,7 @@ Welcome! This guide will help you understand the booking algorithm system in 15 
 ## 🎯 What Does This System Do?
 
 The booking algorithm manages time slot allocation and validation for:
+
 - **Consultations** - One-time sessions between consultee and consultant
 - **Subscriptions** - Recurring sessions over weeks/months
 - **Webinars** - One-time group sessions
@@ -29,23 +30,25 @@ An **appointment** groups multiple consecutive slots for a single session.
 // 1.5-hour consultation = 3 consecutive 30-min slots
 const appointment = {
   slots: [
-    "2025-01-15T10:00:00Z",  // Slot 1
-    "2025-01-15T10:30:00Z",  // Slot 2
-    "2025-01-15T11:00:00Z",  // Slot 3
-  ]
+    "2025-01-15T10:00:00Z", // Slot 1
+    "2025-01-15T10:30:00Z", // Slot 2
+    "2025-01-15T11:00:00Z", // Slot 3
+  ],
 };
 ```
 
 ### 3. Allocation Modes
 
 **Auto Mode** - System finds available slots automatically
+
 ```typescript
 {
-  isAuto: true
+  isAuto: true;
 }
 ```
 
 **Manual Mode** - User selects specific slots
+
 ```typescript
 {
   isAuto: false,
@@ -54,6 +57,7 @@ const appointment = {
 ```
 
 **Requested Mode** - Uses consultee's pre-selected slots
+
 ```typescript
 {
   isAuto: false,
@@ -89,6 +93,7 @@ const appointment = {
 ## 📡 API Endpoints
 
 ### Validate Slots
+
 ```http
 POST /api/events/consultations/:id/validate
 Content-Type: application/json
@@ -102,6 +107,7 @@ Content-Type: application/json
 ```
 
 **Response:**
+
 ```json
 {
   "data": {
@@ -113,6 +119,7 @@ Content-Type: application/json
 ```
 
 ### Allocate Slots
+
 ```http
 PATCH /api/events/consultations/:id/allocate
 Content-Type: application/json
@@ -127,6 +134,7 @@ Content-Type: application/json
 ```
 
 **Response:**
+
 ```json
 {
   "data": [
@@ -143,6 +151,7 @@ Content-Type: application/json
 ## 🛠️ Key Files
 
 ### API Routes (8 endpoints)
+
 ```
 app/api/events/
 ├── consultations/[consultationId]/
@@ -160,6 +169,7 @@ app/api/events/
 ```
 
 ### Services
+
 ```
 utils/slotAllocation/
 ├── SlotAllocationService.ts      # Main allocation logic
@@ -169,12 +179,14 @@ utils/slotAllocation/
 ```
 
 ### Validation
+
 ```
 schemas/slotAllocation/
 └── validationSchemas.ts           # Zod schemas (type-safe)
 ```
 
 ### Database Models
+
 ```
 prisma/schema.prisma
 ├── Consultation
@@ -191,8 +203,8 @@ prisma/schema.prisma
 
 ```typescript
 // In your API route or service
-import { validationRequestSchema } from '@/schemas/slotAllocation/validationSchemas';
-import { SlotValidationService } from '@/utils/slotAllocation/SlotValidationService';
+import { validationRequestSchema } from "@/schemas/slotAllocation/validationSchemas";
+import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
 
 // Validate input
 const body = validationRequestSchema.parse(await request.json());
@@ -200,11 +212,11 @@ const body = validationRequestSchema.parse(await request.json());
 // Check availability
 const service = new SlotValidationService(prisma);
 const result = await service.validate(
-  'consultation',
+  "consultation",
   consultationId,
-  body.slots.map(s => new Date(s)),
+  body.slots.map((s) => new Date(s)),
   consultantProfile,
-  { durationInHours: 1 }
+  { durationInHours: 1 },
 );
 
 // result.isValid tells you if slots are available
@@ -213,23 +225,23 @@ const result = await service.validate(
 ### Step 2: Allocate Slots
 
 ```typescript
-import { allocationRequestSchema } from '@/schemas/slotAllocation/validationSchemas';
-import { SlotAllocationService } from '@/utils/slotAllocation/SlotAllocationService';
+import { allocationRequestSchema } from "@/schemas/slotAllocation/validationSchemas";
+import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
 
 // Validate input
 const body = allocationRequestSchema.parse(await request.json());
 
 // Allocate slots
 const result = await SlotAllocationService.allocate({
-  eventType: 'consultation',
+  eventType: "consultation",
   eventId: consultationId,
-  mode: body.isAuto ? 'auto' : 'manual',
-  slots: body.slots
+  mode: body.isAuto ? "auto" : "manual",
+  slots: body.slots,
 });
 
 if (result.success) {
   // Appointments created!
-  console.log('Created appointments:', result.appointments);
+  console.log("Created appointments:", result.appointments);
 }
 ```
 
@@ -258,18 +270,22 @@ Before allocation succeeds, the system validates:
 ## 🐛 Common Errors
 
 ### "Slot already booked"
+
 **Cause**: Time range overlap with existing appointment
 **Fix**: Check consultant's calendar, select different time
 
 ### "Slot count must be multiple of session duration"
+
 **Cause**: 2-hour session needs 4 slots, but 5 provided
 **Fix**: Ensure `slots.length % slotsPerSession === 0`
 
 ### "Slots must be consecutive"
+
 **Cause**: Gap between selected slots
 **Fix**: Select adjacent 30-min blocks
 
 ### "Weekly limit exceeded"
+
 **Cause**: Subscription only allows 2 calls/week, trying to schedule 3
 **Fix**: Distribute slots across weeks
 
@@ -287,12 +303,14 @@ Now that you understand the basics:
 ## 💡 Pro Tips
 
 1. **Always use Zod schemas** - They provide automatic type inference
+
    ```typescript
    const body = allocationRequestSchema.parse(data);
    // TypeScript knows: { isAuto: boolean; slots?: string[]; ... }
    ```
 
 2. **Check validation before allocation** - Saves database round-trips
+
    ```typescript
    // Step 1: Validate (cheap)
    const validation = await validateSlots(...);
@@ -303,13 +321,14 @@ Now that you understand the basics:
    ```
 
 3. **Handle timezones carefully** - Store UTC, display local
+
    ```typescript
    // Store
    const utcSlot = new Date("2025-01-15T10:00:00Z");
 
    // Display
-   const localTime = utcSlot.toLocaleString('en-US', {
-     timeZone: consultant.currentTimezone
+   const localTime = utcSlot.toLocaleString("en-US", {
+     timeZone: consultant.currentTimezone,
    });
    ```
 

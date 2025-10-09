@@ -70,7 +70,10 @@ export async function POST(
       });
 
       if (!webinar) {
-        return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
+        return NextResponse.json(
+          { error: "Webinar not found" },
+          { status: 404 },
+        );
       }
 
       const { webinarPlan } = webinar;
@@ -95,8 +98,10 @@ export async function POST(
         {
           userId: consultantProfile.user.id,
           scheduleType: consultantProfile.scheduleType,
-          slotsOfAvailabilityWeekly: consultantProfile.slotsOfAvailabilityWeekly,
-          slotsOfAvailabilityCustom: consultantProfile.slotsOfAvailabilityCustom,
+          slotsOfAvailabilityWeekly:
+            consultantProfile.slotsOfAvailabilityWeekly,
+          slotsOfAvailabilityCustom:
+            consultantProfile.slotsOfAvailabilityCustom,
           currentTimezone: consultantProfile.user.currentTimezone || undefined,
         },
         {
@@ -127,7 +132,9 @@ export async function POST(
           error.includes("already booked") ||
           error.includes("conflicts with")
         ) {
-          const slotMatch = error.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+          const slotMatch = error.match(
+            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
+          );
           if (slotMatch) {
             const slot = slotMatch[1];
             result.conflicts.push({
@@ -147,7 +154,9 @@ export async function POST(
           error.includes("does not match") ||
           error.includes("not in consultant's")
         ) {
-          const slotMatch = error.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+          const slotMatch = error.match(
+            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
+          );
           if (slotMatch) {
             result.outsideAvailability.push({ slot: slotMatch[1] });
           }

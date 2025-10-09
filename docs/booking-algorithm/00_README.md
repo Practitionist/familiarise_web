@@ -5,6 +5,7 @@ Welcome to the Familiarise booking algorithm documentation. This comprehensive g
 ## 📚 Documentation Structure
 
 ### Getting Started
+
 - **[Quick Start Guide](./01_QUICK_START.md)** - New developer onboarding (15 min read)
   - System overview
   - Key concepts
@@ -12,6 +13,7 @@ Welcome to the Familiarise booking algorithm documentation. This comprehensive g
   - Common workflows
 
 ### Core Documentation
+
 - **[Architecture Overview](./02_ARCHITECTURE.md)** - System design and components
   - Service layer architecture
   - Database schema
@@ -38,6 +40,7 @@ Welcome to the Familiarise booking algorithm documentation. This comprehensive g
   - Timezone handling
 
 ### Reference
+
 - **[API Reference](./06_API_REFERENCE.md)** - Complete endpoint documentation
   - Allocate endpoints
   - Validate endpoints
@@ -50,6 +53,7 @@ Welcome to the Familiarise booking algorithm documentation. This comprehensive g
   - Impact and testing
 
 ### Troubleshooting & Testing
+
 - **[Troubleshooting Guide](./08_TROUBLESHOOTING.md)** - Common issues and solutions
   - Validation errors
   - Allocation failures
@@ -124,6 +128,7 @@ Welcome to the Familiarise booking algorithm documentation. This comprehensive g
 ## 🔄 Recent Changes
 
 ### December 2024 - Major Improvements
+
 - ✅ Migrated from custom InputValidator to industry-standard Zod
 - ✅ Fixed 10 critical bugs including double-booking prevention
 - ✅ Added comprehensive inline comments for new developers
@@ -155,6 +160,7 @@ When making changes to the booking algorithm:
 ## 📞 Support
 
 If you're stuck:
+
 1. Check the [Troubleshooting Guide](./08_TROUBLESHOOTING.md)
 2. Review the [Bug Fixes Changelog](./07_BUG_FIXES_CHANGELOG.md) for similar issues
 3. Consult the [API Reference](./06_API_REFERENCE.md) for endpoint details

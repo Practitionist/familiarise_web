@@ -172,8 +172,8 @@ export class SlotValidationService {
                     // CRITICAL FIX: Check for range overlap instead of exact match
                     // This prevents double-booking when slots partially overlap
                     AND: [
-                      { slotStartTimeInUTC: { lt: slotEnd } },     // Existing starts before proposed ends
-                      { slotEndTimeInUTC: { gt: slot } },          // Existing ends after proposed starts
+                      { slotStartTimeInUTC: { lt: slotEnd } }, // Existing starts before proposed ends
+                      { slotEndTimeInUTC: { gt: slot } }, // Existing ends after proposed starts
                     ],
                     user: {
                       some: {
@@ -390,11 +390,18 @@ export class SlotValidationService {
 
     // FIX: Validate duration before use
     try {
-      SlotCalculationService.validateDuration(duration, "Consultation duration");
+      SlotCalculationService.validateDuration(
+        duration,
+        "Consultation duration",
+      );
     } catch (error) {
       return {
         isValid: false,
-        errors: [error instanceof Error ? error.message : "Invalid consultation duration"],
+        errors: [
+          error instanceof Error
+            ? error.message
+            : "Invalid consultation duration",
+        ],
         warnings: [],
       };
     }
@@ -477,7 +484,9 @@ export class SlotValidationService {
     } catch (error) {
       return {
         isValid: false,
-        errors: [error instanceof Error ? error.message : "Invalid webinar duration"],
+        errors: [
+          error instanceof Error ? error.message : "Invalid webinar duration",
+        ],
         warnings: [],
       };
     }
@@ -535,11 +544,16 @@ export class SlotValidationService {
 
     // FIX: Validate duration before use
     try {
-      SlotCalculationService.validateDuration(config.sessionDurationInHours, "Session duration");
+      SlotCalculationService.validateDuration(
+        config.sessionDurationInHours,
+        "Session duration",
+      );
     } catch (error) {
       return {
         isValid: false,
-        errors: [error instanceof Error ? error.message : "Invalid session duration"],
+        errors: [
+          error instanceof Error ? error.message : "Invalid session duration",
+        ],
         warnings: [],
       };
     }

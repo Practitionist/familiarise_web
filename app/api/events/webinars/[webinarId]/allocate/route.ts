@@ -345,7 +345,10 @@ export async function PATCH(
       });
 
       if (!webinar) {
-        return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
+        return NextResponse.json(
+          { error: "Webinar not found" },
+          { status: 404 },
+        );
       }
 
       // Validate user information

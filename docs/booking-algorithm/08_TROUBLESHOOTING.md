@@ -14,18 +14,18 @@ Errors in the booking system fall into three categories:
 
 ## Quick Error Reference
 
-| Error Message Pattern | Category | Solution Reference |
-|----------------------|----------|-------------------|
-| "Slot already booked" | Conflict | [Overlap Detection](#1-slot-already-booked) |
-| "Slots must be consecutive" | Validation | [Consecutive Gaps](#2-slots-must-be-consecutive) |
-| "Invalid slot count" | Validation | [Slot Count](#3-invalid-slot-count) |
-| "Weekly limit exceeded" | Subscription | [Weekly Limits](#4-weekly-limit-exceeded) |
-| "Outside scheduling period" | Validation | [Scheduling Period](#5-outside-scheduling-period) |
-| "Slots in the past" | Validation | [Future Slots](#6-slots-in-the-past) |
-| "Each slot must be a valid ISO 8601" | Input | [Datetime Format](#7-invalid-datetime-format) |
-| "Manual allocation requires 'slots' array" | Input | [Request Body](#8-missing-slots-array) |
-| "Event not found" | System | [Event Lookup](#9-event-not-found) |
-| "does not match consultant's schedule" | Validation | [Availability](#10-outside-availability) |
+| Error Message Pattern                      | Category     | Solution Reference                                |
+| ------------------------------------------ | ------------ | ------------------------------------------------- |
+| "Slot already booked"                      | Conflict     | [Overlap Detection](#1-slot-already-booked)       |
+| "Slots must be consecutive"                | Validation   | [Consecutive Gaps](#2-slots-must-be-consecutive)  |
+| "Invalid slot count"                       | Validation   | [Slot Count](#3-invalid-slot-count)               |
+| "Weekly limit exceeded"                    | Subscription | [Weekly Limits](#4-weekly-limit-exceeded)         |
+| "Outside scheduling period"                | Validation   | [Scheduling Period](#5-outside-scheduling-period) |
+| "Slots in the past"                        | Validation   | [Future Slots](#6-slots-in-the-past)              |
+| "Each slot must be a valid ISO 8601"       | Input        | [Datetime Format](#7-invalid-datetime-format)     |
+| "Manual allocation requires 'slots' array" | Input        | [Request Body](#8-missing-slots-array)            |
+| "Event not found"                          | System       | [Event Lookup](#9-event-not-found)                |
+| "does not match consultant's schedule"     | Validation   | [Availability](#10-outside-availability)          |
 
 ---
 
@@ -34,6 +34,7 @@ Errors in the booking system fall into three categories:
 ### 1. "Slot already booked"
 
 **Full Error**:
+
 ```
 "Validation failed: Slot already booked: 2/15/2025, 10:00:00 AM (conflicts with consultation for John Doe)"
 ```
@@ -41,11 +42,13 @@ Errors in the booking system fall into three categories:
 **Cause**: Time slot overlaps with an existing approved appointment.
 
 **Why This Happens**:
+
 - The consultant is already booked at this time
 - Another event (consultation, subscription, webinar, class) occupies this slot
 - Uses range overlap detection (not just exact match)
 
 **Example Conflict**:
+
 ```
 Existing: 10:00-10:30 (consultation)
 Proposed: 10:00-11:00 (2 slots)
@@ -58,20 +61,25 @@ Conflicts:
 **Solutions**:
 
 1. **Check Consultant Calendar**: View consultant's existing appointments
+
    ```typescript
    // Fetch consultant's booked slots
    GET /api/consultants/{id}/appointments?startDate=2025-02-15&endDate=2025-02-15
    ```
 
 2. **Use Validation Endpoint First**: Check slots before allocation
+
    ```typescript
    // Validate before allocating
-   const validation = await POST /api/events/consultations/{id}/validate
+   const validation =
+     (await POST) / api / events / consultations / { id } / validate;
 
    if (validation.conflicts.length > 0) {
      // Show user which slots conflict
-     validation.conflicts.forEach(conflict => {
-       console.log(`${conflict.slot} conflicts with ${conflict.existingAppointment.type}`);
+     validation.conflicts.forEach((conflict) => {
+       console.log(
+         `${conflict.slot} conflicts with ${conflict.existingAppointment.type}`,
+       );
      });
    }
    ```
@@ -81,6 +89,7 @@ Conflicts:
    - Filter out slots in `conflicts` array
 
 **Prevention**:
+
 - Always call `/validate` before `/allocate`
 - Show real-time availability calendar to users
 - Highlight conflicting slots in UI
@@ -90,6 +99,7 @@ Conflicts:
 ### 2. "Slots must be consecutive"
 
 **Full Error**:
+
 ```
 "Validation failed: Slots must be consecutive. Gap detected between 2/15/2025, 10:00:00 AM and 2/15/2025, 11:00:00 AM"
 ```
@@ -97,11 +107,13 @@ Conflicts:
 **Cause**: Selected slots have gaps (not exactly 30 minutes apart).
 
 **Why This Happens**:
+
 - User skipped a 30-minute slot
 - Slots are not in sequential order
 - Time difference > 1 second tolerance
 
 **Example**:
+
 ```
 Valid consecutive:
   ✓ 10:00, 10:30, 11:00, 11:30
@@ -115,12 +127,14 @@ Invalid (gap):
 **Solutions**:
 
 1. **Fill the Gap**: Add missing slots
+
    ```typescript
    // Before: [10:00, 11:00]
    // After:  [10:00, 10:30, 11:00]
    ```
 
 2. **Auto-Generate Consecutive Slots**: Use helper function
+
    ```typescript
    function generateConsecutiveSlots(start: Date, count: number): Date[] {
      const slots = [start];
@@ -134,24 +148,26 @@ Invalid (gap):
    // Usage
    const slots = generateConsecutiveSlots(
      new Date("2025-02-15T10:00:00Z"),
-     4 // 2-hour session
+     4, // 2-hour session
    );
    // Result: [10:00, 10:30, 11:00, 11:30]
    ```
 
 3. **Sort Slots**: Ensure slots are in chronological order
    ```typescript
-   const sortedSlots = slots.sort((a, b) =>
-     new Date(a).getTime() - new Date(b).getTime()
+   const sortedSlots = slots.sort(
+     (a, b) => new Date(a).getTime() - new Date(b).getTime(),
    );
    ```
 
 **Debug Checklist**:
+
 - [ ] Are all 30-minute increments included?
 - [ ] Are slots sorted chronologically?
 - [ ] Is there a sub-second precision issue? (check milliseconds)
 
 **Prevention**:
+
 - Use datetime picker that enforces 30-minute increments
 - Provide "fill consecutive" UI helper
 - Validate on client-side before submission
@@ -161,6 +177,7 @@ Invalid (gap):
 ### 3. "Invalid slot count"
 
 **Full Error**:
+
 ```
 "Invalid slot count: 7 slots provided, but 2-hour sessions require multiples of 4 slots (30 minutes each). Valid counts: 4, 8, 12, etc."
 ```
@@ -168,11 +185,13 @@ Invalid (gap):
 **Cause**: Number of slots doesn't match session duration requirements.
 
 **Why This Happens**:
+
 - User selected wrong number of slots
 - Partial appointment created
 - Session duration changed after slot selection
 
 **Calculation**:
+
 ```
 Session duration: 2 hours
 Slots per session: 2 hours ÷ 0.5 hours = 4 slots
@@ -185,6 +204,7 @@ Provided: 7 slots
 **Solutions**:
 
 1. **Calculate Required Slots**:
+
    ```typescript
    function calculateRequiredSlots(durationHours: number): number {
      return Math.ceil(durationHours / 0.5);
@@ -198,6 +218,7 @@ Provided: 7 slots
 
 2. **For One-Time Events** (Consultations, Webinars):
    - Select exactly the required number of slots
+
    ```typescript
    // 1.5-hour consultation → 3 slots
    slots = ["10:00", "10:30", "11:00"] ✓
@@ -205,6 +226,7 @@ Provided: 7 slots
 
 3. **For Recurring Events** (Subscriptions, Classes):
    - Total slots must be multiple of slots per session
+
    ```typescript
    // 2-hour sessions (4 slots each)
    // Valid: 4, 8, 12, 16, 20, ... slots
@@ -221,6 +243,7 @@ Provided: 7 slots
    ```
 
 **Debug Example**:
+
 ```
 Session duration: 1.5 hours
 Required slots per session: 3
@@ -234,6 +257,7 @@ Fix: Select 9 or 12 slots
 ```
 
 **Prevention**:
+
 - Display required slot count in UI
 - Disable "submit" until correct number selected
 - Show progress: "3 of 4 slots selected"
@@ -243,6 +267,7 @@ Fix: Select 9 or 12 slots
 ### 4. "Weekly limit exceeded"
 
 **Full Error**:
+
 ```
 "Week of 2/9/2025 exceeds call limit. Maximum 2 calls per week, but 3 calls are scheduled."
 ```
@@ -250,11 +275,13 @@ Fix: Select 9 or 12 slots
 **Cause**: Subscription or class weekly limit exceeded.
 
 **Why This Happens**:
+
 - Week boundary (Sunday-Saturday) contains too many calls
 - Existing appointments already consume weekly quota
 - Proposed + existing > weekly limit
 
 **Week Calculation**:
+
 ```
 Subscription: 2 calls per week max
 Week of Feb 9: Sun Feb 9 - Sat Feb 15
@@ -274,6 +301,7 @@ Result: EXCEEDED ✗
 **Solutions**:
 
 1. **Check Weekly Info**: Get current weekly schedule
+
    ```typescript
    POST /api/events/subscriptions/{id}/validate
    { "slots": [] }
@@ -296,23 +324,23 @@ Result: EXCEEDED ✗
    ```
 
 2. **Spread Across Weeks**: Move slots to different weeks
+
    ```typescript
    // Before (3 calls in week of Feb 9)
    [
      "2025-02-10T10:00:00Z", // Week of Feb 9
      "2025-02-12T14:00:00Z", // Week of Feb 9
-     "2025-02-14T16:00:00Z"  // Week of Feb 9
-   ]
-
-   // After (distributed)
-   [
-     "2025-02-10T10:00:00Z", // Week of Feb 9 (1 call)
+     "2025-02-14T16:00:00Z", // Week of Feb 9
+   ][
+     // After (distributed)
+     ("2025-02-10T10:00:00Z", // Week of Feb 9 (1 call)
      "2025-02-12T14:00:00Z", // Week of Feb 9 (2 calls total ✓)
-     "2025-02-17T16:00:00Z"  // Week of Feb 16 (1 call ✓)
-   ]
+     "2025-02-17T16:00:00Z") // Week of Feb 16 (1 call ✓)
+   ];
    ```
 
 3. **Identify Week Boundaries**:
+
    ```typescript
    function getWeekBoundary(date: Date): { start: Date; end: Date } {
      const dayOfWeek = date.getDay(); // 0 = Sunday
@@ -333,12 +361,14 @@ Result: EXCEEDED ✗
    ```
 
 **Debug Checklist**:
+
 - [ ] What is the weekly limit? (check subscription plan)
 - [ ] How many calls already scheduled this week?
 - [ ] Which week do proposed slots fall into? (use Sunday-Saturday)
 - [ ] Can any slots be moved to a different week?
 
 **Prevention**:
+
 - Show weekly calendar with limits
 - Highlight weeks at capacity
 - Display "X of Y calls this week" in UI
@@ -348,6 +378,7 @@ Result: EXCEEDED ✗
 ### 5. "Outside scheduling period"
 
 **Full Error**:
+
 ```
 "Slot 4/15/2025, 10:00:00 AM is outside the scheduling period (1/1/2025 - 3/1/2025). All slots must be scheduled within this date range."
 ```
@@ -355,11 +386,13 @@ Result: EXCEEDED ✗
 **Cause**: Slot date not within subscription/class start and end dates.
 
 **Why This Happens**:
+
 - User selected date outside allowed range
 - Subscription expired or not yet started
 - Server-side validation caught client bypass
 
 **Example**:
+
 ```
 Subscription period: Jan 1, 2025 - Mar 1, 2025
 
@@ -375,6 +408,7 @@ Invalid slots:
 **Solutions**:
 
 1. **Check Scheduling Period**:
+
    ```typescript
    GET /api/events/subscriptions/{id}
 
@@ -386,13 +420,14 @@ Invalid slots:
    ```
 
 2. **Filter Slots by Date Range**:
+
    ```typescript
    function filterSlotsInPeriod(
      slots: string[],
      startDate: Date,
-     endDate: Date
+     endDate: Date,
    ): string[] {
-     return slots.filter(slot => {
+     return slots.filter((slot) => {
        const slotDate = new Date(slot);
        return slotDate >= startDate && slotDate <= endDate;
      });
@@ -402,13 +437,14 @@ Invalid slots:
    const validSlots = filterSlotsInPeriod(
      allSlots,
      new Date("2025-01-01"),
-     new Date("2025-03-01")
+     new Date("2025-03-01"),
    );
    ```
 
 3. **Request Period Extension**: Contact admin to extend subscription
 
 **Prevention**:
+
 - Disable date picker dates outside period
 - Show period boundaries clearly in UI
 - Client-side validation before API call
@@ -418,6 +454,7 @@ Invalid slots:
 ### 6. "Slots in the past"
 
 **Full Error**:
+
 ```
 "Cannot allocate slots in the past or too soon: 2/15/2025, 10:00:00 AM (only 2.1s). Slots must be at least 5 seconds in the future to allow for processing time."
 ```
@@ -425,12 +462,14 @@ Invalid slots:
 **Cause**: Slot time is in the past or too close to current time (< 5 seconds).
 
 **Why This Happens**:
+
 - User selected yesterday's date
 - Clock drift between client and server
 - Processing delay caused slot to become "now"
 - Auto-allocation race condition
 
 **5-Second Buffer Rationale**:
+
 ```
 Current time: 10:00:00.000
 
@@ -449,6 +488,7 @@ Result: VALID ✓
 **Solutions**:
 
 1. **Select Future Date**:
+
    ```typescript
    // Ensure slot is at least 10 seconds in future
    const now = new Date();
@@ -460,6 +500,7 @@ Result: VALID ✓
    ```
 
 2. **Handle Auto-Allocation Edge Case**:
+
    ```typescript
    // If auto-allocation fails with "too soon"
    // Wait a few seconds and retry
@@ -474,20 +515,25 @@ Result: VALID ✓
    ```
 
 3. **Check Server Time**:
+
    ```typescript
    // Get server time to check for clock drift
-   GET /api/server-time
+   GET / api / server - time;
 
-   const serverTime = await fetch('/api/server-time').then(r => r.json());
+   const serverTime = await fetch("/api/server-time").then((r) => r.json());
    const clientTime = new Date();
    const drift = Math.abs(serverTime.getTime() - clientTime.getTime());
 
-   if (drift > 60000) { // >1 minute
-     alert("Your computer clock is out of sync. Please synchronize your clock.");
+   if (drift > 60000) {
+     // >1 minute
+     alert(
+       "Your computer clock is out of sync. Please synchronize your clock.",
+     );
    }
    ```
 
 **Prevention**:
+
 - Disable past dates in date picker
 - Add minimum future time (e.g., 1 hour from now)
 - Sync client clock with NTP server
@@ -497,6 +543,7 @@ Result: VALID ✓
 ### 7. "Invalid datetime format"
 
 **Full Error**:
+
 ```
 "slots.0: Each slot must be a valid ISO 8601 datetime string (e.g., '2025-01-15T10:00:00Z')"
 ```
@@ -504,12 +551,14 @@ Result: VALID ✓
 **Cause**: Slot string is not in ISO 8601 format.
 
 **Why This Happens**:
+
 - Used local datetime format instead of UTC
 - Missing timezone indicator
 - Used date-only format
 - Typo in datetime string
 
 **Invalid Formats**:
+
 ```javascript
 ✗ "2025-01-15"                    // Date only, missing time
 ✗ "2025-01-15 10:00:00"           // Space instead of T
@@ -520,6 +569,7 @@ Result: VALID ✓
 ```
 
 **Valid Format**:
+
 ```javascript
 ✓ "2025-01-15T10:00:00Z"          // ISO 8601 with UTC
 ✓ "2025-01-15T10:00:00.000Z"      // ISO 8601 with milliseconds
@@ -528,6 +578,7 @@ Result: VALID ✓
 **Solutions**:
 
 1. **Convert to ISO String**:
+
    ```typescript
    // From Date object
    const date = new Date("2025-01-15T10:00:00");
@@ -540,6 +591,7 @@ Result: VALID ✓
    ```
 
 2. **Validation Helper**:
+
    ```typescript
    function isValidISOString(dateString: string): boolean {
      // ISO 8601 regex
@@ -558,6 +610,7 @@ Result: VALID ✓
    ```
 
 3. **Format Examples**:
+
    ```typescript
    // Correct formatting
    const now = new Date();
@@ -573,6 +626,7 @@ Result: VALID ✓
    ```
 
 **Prevention**:
+
 - Always use `toISOString()` method
 - Validate format before API call
 - Use date picker library that outputs ISO 8601
@@ -582,6 +636,7 @@ Result: VALID ✓
 ### 8. "Missing slots array"
 
 **Full Error**:
+
 ```
 "slots: Manual allocation requires 'slots' array with at least one time slot"
 ```
@@ -589,11 +644,13 @@ Result: VALID ✓
 **Cause**: Manual allocation requested without providing slots.
 
 **Why This Happens**:
+
 - `isAuto: false` but no `slots` field
 - Empty `slots` array
 - `useRequestedSlots` flag not set
 
 **Example**:
+
 ```typescript
 // ✗ WRONG: Manual without slots
 { "isAuto": false }
@@ -617,6 +674,7 @@ Result: VALID ✓
 **Solutions**:
 
 1. **Provide Slots Array**:
+
    ```typescript
    const request = {
      isAuto: false,
@@ -624,12 +682,13 @@ Result: VALID ✓
        "2025-02-15T10:00:00Z",
        "2025-02-15T10:30:00Z",
        "2025-02-15T11:00:00Z",
-       "2025-02-15T11:30:00Z"
-     ]
+       "2025-02-15T11:30:00Z",
+     ],
    };
    ```
 
 2. **Use Auto Allocation**:
+
    ```typescript
    const request = { isAuto: true };
    // System finds slots automatically
@@ -639,12 +698,13 @@ Result: VALID ✓
    ```typescript
    const request = {
      isAuto: false,
-     useRequestedSlots: true
+     useRequestedSlots: true,
    };
    // Uses pre-created appointments
    ```
 
 **Prevention**:
+
 - Validate request body before sending
 - UI should enforce: if manual mode, require slot selection
 - Show error in form if slots array empty
@@ -654,6 +714,7 @@ Result: VALID ✓
 ### 9. "Event not found"
 
 **Full Error**:
+
 ```json
 { "error": "Consultation not found" }
 ```
@@ -663,6 +724,7 @@ Result: VALID ✓
 **Cause**: Event ID doesn't exist in database.
 
 **Why This Happens**:
+
 - Typo in event ID
 - Event was deleted
 - Using wrong event type URL
@@ -671,26 +733,30 @@ Result: VALID ✓
 **Solutions**:
 
 1. **Verify Event ID**:
+
    ```typescript
    // Check if event exists
-   GET /api/events/consultations/{id}
+   GET / api / events / consultations / { id };
 
    // If 404, event doesn't exist
    ```
 
 2. **Check Event Type**:
+
    ```typescript
    // ✗ WRONG: Using consultation endpoint for subscription
-   POST /api/events/consultations/{subscriptionId}/validate
+   POST / api / events / consultations / { subscriptionId } / validate;
 
    // ✓ CORRECT: Match event type to endpoint
-   POST /api/events/subscriptions/{subscriptionId}/validate
+   POST / api / events / subscriptions / { subscriptionId } / validate;
    ```
 
 3. **Validate UUID Format**:
+
    ```typescript
    function isValidUUID(uuid: string): boolean {
-     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+     const uuidRegex =
+       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
      return uuidRegex.test(uuid);
    }
 
@@ -701,6 +767,7 @@ Result: VALID ✓
    ```
 
 **Debug Checklist**:
+
 - [ ] Is the event ID a valid UUID?
 - [ ] Does the event exist in the database?
 - [ ] Are you using the correct event type endpoint?
@@ -711,6 +778,7 @@ Result: VALID ✓
 ### 10. "Does not match consultant's schedule"
 
 **Full Error**:
+
 ```
 "Slot 2/15/2025, 3:00:00 PM does not match consultant's weekly schedule"
 ```
@@ -718,12 +786,14 @@ Result: VALID ✓
 **Cause**: Selected slot not in consultant's availability.
 
 **Why This Happens**:
+
 - Consultant not available at that time
 - Weekly schedule: day/time doesn't match pattern
 - Custom schedule: exact datetime not in list
 - Consultant changed availability after slot selection
 
 **Weekly Schedule Example**:
+
 ```
 Consultant availability (weekly):
   - Monday 10:00-12:00
@@ -742,6 +812,7 @@ Invalid slots:
 **Solutions**:
 
 1. **Fetch Consultant Availability**:
+
    ```typescript
    GET /api/consultants/{id}/availability?type=weekly
 
@@ -756,24 +827,36 @@ Invalid slots:
    ```
 
 2. **Filter Slots by Availability**:
+
    ```typescript
    function matchesWeeklySchedule(
      slot: Date,
-     availability: WeeklySlot[]
+     availability: WeeklySlot[],
    ): boolean {
-     const dayNames = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+     const dayNames = [
+       "SUNDAY",
+       "MONDAY",
+       "TUESDAY",
+       "WEDNESDAY",
+       "THURSDAY",
+       "FRIDAY",
+       "SATURDAY",
+     ];
      const slotDay = dayNames[slot.getDay()];
-     const slotTime = `${slot.getHours().toString().padStart(2, '0')}:${slot.getMinutes().toString().padStart(2, '0')}`;
+     const slotTime = `${slot.getHours().toString().padStart(2, "0")}:${slot.getMinutes().toString().padStart(2, "0")}`;
 
-     return availability.some(avail => {
-       return avail.dayOfWeek === slotDay &&
-              slotTime >= avail.startTime &&
-              slotTime < avail.endTime;
+     return availability.some((avail) => {
+       return (
+         avail.dayOfWeek === slotDay &&
+         slotTime >= avail.startTime &&
+         slotTime < avail.endTime
+       );
      });
    }
    ```
 
 3. **Use Validation Response**:
+
    ```typescript
    POST /api/events/consultations/{id}/validate
 
@@ -790,6 +873,7 @@ Invalid slots:
    ```
 
 **Prevention**:
+
 - Show consultant availability calendar
 - Disable unavailable time slots in picker
 - Real-time validation as user selects slots
@@ -804,9 +888,9 @@ Always validate before allocating:
 
 ```typescript
 // Step 1: Validate
-const validation = await fetch('/api/events/consultations/{id}/validate', {
-  method: 'POST',
-  body: JSON.stringify({ slots: proposedSlots })
+const validation = await fetch("/api/events/consultations/{id}/validate", {
+  method: "POST",
+  body: JSON.stringify({ slots: proposedSlots }),
 });
 
 const result = await validation.json();
@@ -821,9 +905,9 @@ if (result.outsideAvailability.length > 0) {
 
 // Step 3: Only allocate if all valid
 if (result.validSlots.length === proposedSlots.length) {
-  await fetch('/api/events/consultations/{id}/allocate', {
-    method: 'PATCH',
-    body: JSON.stringify({ isAuto: false, slots: proposedSlots })
+  await fetch("/api/events/consultations/{id}/allocate", {
+    method: "PATCH",
+    body: JSON.stringify({ isAuto: false, slots: proposedSlots }),
   });
 }
 ```
@@ -901,14 +985,14 @@ async function resolveConflicts(eventId: string, slots: string[]) {
     }
 
     // Remove conflicting slots
-    validation.conflicts.forEach(conflict => {
-      validSlots = validSlots.filter(s => s !== conflict.slot);
+    validation.conflicts.forEach((conflict) => {
+      validSlots = validSlots.filter((s) => s !== conflict.slot);
     });
 
     // Find replacement slots
     const replacements = await findAlternativeSlots(
       eventId,
-      validation.conflicts.length
+      validation.conflicts.length,
     );
 
     validSlots.push(...replacements);
@@ -924,7 +1008,7 @@ async function resolveConflicts(eventId: string, slots: string[]) {
 async function allocateWithRetry(
   eventId: string,
   slots: string[],
-  maxRetries = 3
+  maxRetries = 3,
 ) {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
@@ -944,18 +1028,18 @@ async function allocateWithRetry(
 ### Pattern 3: Batch Validation
 
 ```typescript
-async function validateBatch(
-  events: Array<{ id: string; slots: string[] }>
-) {
+async function validateBatch(events: Array<{ id: string; slots: string[] }>) {
   const results = await Promise.all(
-    events.map(event =>
-      validateSlots(event.id, event.slots)
-        .catch(error => ({ id: event.id, error }))
-    )
+    events.map((event) =>
+      validateSlots(event.id, event.slots).catch((error) => ({
+        id: event.id,
+        error,
+      })),
+    ),
   );
 
-  const valid = results.filter(r => !r.error);
-  const invalid = results.filter(r => r.error);
+  const valid = results.filter((r) => !r.error);
+  const invalid = results.filter((r) => r.error);
 
   return { valid, invalid };
 }

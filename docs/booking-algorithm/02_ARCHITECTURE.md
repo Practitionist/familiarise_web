@@ -88,6 +88,7 @@ The booking algorithm is a comprehensive time slot allocation system that manage
 **Purpose**: Central service for allocating time slots across all event types
 
 **Key Methods**:
+
 - `allocate(params: AllocationParams)` - Main allocation method supporting three modes
 - `allocateConsultation()` - Consultation-specific allocation
 - `allocateSubscription()` - Subscription-specific allocation with weekly limits
@@ -95,33 +96,35 @@ The booking algorithm is a comprehensive time slot allocation system that manage
 - `allocateClass()` - Multi-session class allocation
 
 **Allocation Modes**:
+
 ```typescript
-type AllocationMode = 'auto' | 'manual' | 'requested';
+type AllocationMode = "auto" | "manual" | "requested";
 
 // Auto Mode - System finds available slots
 await SlotAllocationService.allocate({
-  eventType: 'consultation',
-  eventId: 'uuid',
-  mode: 'auto',
+  eventType: "consultation",
+  eventId: "uuid",
+  mode: "auto",
 });
 
 // Manual Mode - User selects specific slots
 await SlotAllocationService.allocate({
-  eventType: 'consultation',
-  eventId: 'uuid',
-  mode: 'manual',
-  slots: ['2025-01-15T10:00:00Z', '2025-01-15T10:30:00Z'],
+  eventType: "consultation",
+  eventId: "uuid",
+  mode: "manual",
+  slots: ["2025-01-15T10:00:00Z", "2025-01-15T10:30:00Z"],
 });
 
 // Requested Mode - Uses consultee's pre-selected slots
 await SlotAllocationService.allocate({
-  eventType: 'consultation',
-  eventId: 'uuid',
-  mode: 'requested',
+  eventType: "consultation",
+  eventId: "uuid",
+  mode: "requested",
 });
 ```
 
 **Key Features**:
+
 - Transactional operations (all-or-nothing allocation)
 - Automatic conflict detection
 - Consultant availability validation
@@ -135,6 +138,7 @@ await SlotAllocationService.allocate({
 **Purpose**: Validates time slots against business rules without creating appointments
 
 **Key Methods**:
+
 - `validate(eventType, eventId, slots, consultantProfile, options)` - Main validation
 - `checkConflicts(slots, userId)` - Time range overlap detection
 - `checkAvailability(slots, consultantProfile)` - Availability matching
@@ -142,29 +146,31 @@ await SlotAllocationService.allocate({
 - `validateFutureSlots(slots)` - Ensures slots are not in the past
 
 **Return Type**:
+
 ```typescript
 interface ValidationResult {
   isValid: boolean;
-  conflicts: Date[];           // Already booked slots
+  conflicts: Date[]; // Already booked slots
   outsideAvailability: Date[]; // Slots outside consultant's schedule
-  validSlots: Date[];          // Available slots
+  validSlots: Date[]; // Available slots
 }
 ```
 
 **Usage Example**:
+
 ```typescript
 const validationService = new SlotValidationService(prisma);
 const result = await validationService.validate(
-  'consultation',
+  "consultation",
   consultationId,
-  [new Date('2025-01-15T10:00:00Z')],
+  [new Date("2025-01-15T10:00:00Z")],
   consultantProfile,
-  { durationInHours: 1 }
+  { durationInHours: 1 },
 );
 
 if (!result.isValid) {
-  console.log('Conflicts:', result.conflicts);
-  console.log('Outside availability:', result.outsideAvailability);
+  console.log("Conflicts:", result.conflicts);
+  console.log("Outside availability:", result.outsideAvailability);
 }
 ```
 
@@ -175,36 +181,38 @@ if (!result.isValid) {
 **Purpose**: Enforces subscription-specific business rules
 
 **Key Validations**:
+
 - **Weekly Call Limits**: Ensures `callsPerWeek` constraint is respected
 - **Total Call Limits**: Ensures total appointments ≤ `totalCalls`
 - **Week Distribution**: Validates slots are distributed across subscription period
 - **Scheduling Period**: Validates slots fall within start/end dates
 
 **Example Business Rules**:
+
 ```typescript
 // Subscription with 2 calls/week, 8 total calls, over 4 weeks
 const subscription = {
   callsPerWeek: 2,
   totalCalls: 8,
   durationInWeeks: 4,
-  startDate: new Date('2025-01-01'),
-  endDate: new Date('2025-01-29'),
+  startDate: new Date("2025-01-01"),
+  endDate: new Date("2025-01-29"),
 };
 
 // Valid allocation: 2 calls in week 1, 2 in week 2, etc.
 const validSlots = [
-  '2025-01-02T10:00:00Z', // Week 1, Call 1
-  '2025-01-03T10:00:00Z', // Week 1, Call 2
-  '2025-01-09T10:00:00Z', // Week 2, Call 1
-  '2025-01-10T10:00:00Z', // Week 2, Call 2
+  "2025-01-02T10:00:00Z", // Week 1, Call 1
+  "2025-01-03T10:00:00Z", // Week 1, Call 2
+  "2025-01-09T10:00:00Z", // Week 2, Call 1
+  "2025-01-10T10:00:00Z", // Week 2, Call 2
   // ... total 8 calls
 ];
 
 // Invalid: 3 calls in week 1 (exceeds callsPerWeek)
 const invalidSlots = [
-  '2025-01-02T10:00:00Z',
-  '2025-01-03T10:00:00Z',
-  '2025-01-04T10:00:00Z', // ❌ Third call in same week
+  "2025-01-02T10:00:00Z",
+  "2025-01-03T10:00:00Z",
+  "2025-01-04T10:00:00Z", // ❌ Third call in same week
 ];
 ```
 
@@ -215,12 +223,14 @@ const invalidSlots = [
 **Purpose**: Time slot mathematics and calculations
 
 **Key Methods**:
+
 - `calculateWeekNumber(date, subscriptionStart)` - Week index calculation
 - `areConsecutive(slots)` - Checks if slots are adjacent 30-min blocks
 - `getSlotDuration(startSlot, slotsPerSession)` - Calculates total duration
 - `isWithinSchedulingPeriod(slot, start, end)` - Date range validation
 
 **Week Calculation Algorithm**:
+
 ```typescript
 // Formula: weekNumber = floor(daysSinceStart / 7) + 1
 // Week 1: Days 0-6 from start
@@ -249,6 +259,7 @@ The system uses a **3-layer validation approach** to ensure data integrity and b
 **Key Schemas**:
 
 #### allocationRequestSchema
+
 ```typescript
 export const allocationRequestSchema = z
   .object({
@@ -256,14 +267,18 @@ export const allocationRequestSchema = z
       required_error: "'isAuto' is required",
       invalid_type_error: "'isAuto' must be a boolean (true/false)",
     }),
-    useRequestedSlots: z.boolean({
-      invalid_type_error: "'useRequestedSlots' must be a boolean",
-    }).optional(),
-    slots: z.array(
-      z.string().datetime({
-        message: "Each slot must be a valid ISO 8601 datetime string",
-      }),
-    ).optional(),
+    useRequestedSlots: z
+      .boolean({
+        invalid_type_error: "'useRequestedSlots' must be a boolean",
+      })
+      .optional(),
+    slots: z
+      .array(
+        z.string().datetime({
+          message: "Each slot must be a valid ISO 8601 datetime string",
+        }),
+      )
+      .optional(),
   })
   .refine(
     (data) => {
@@ -276,7 +291,7 @@ export const allocationRequestSchema = z
     {
       message: "Manual allocation requires 'slots' array",
       path: ["slots"],
-    }
+    },
   );
 
 // Automatic type inference
@@ -284,19 +299,23 @@ export type AllocationRequest = z.infer<typeof allocationRequestSchema>;
 ```
 
 #### validationRequestSchema
+
 ```typescript
 export const validationRequestSchema = z.object({
-  slots: z.array(
-    z.string().datetime({
-      message: "Each slot must be a valid ISO 8601 datetime string",
+  slots: z
+    .array(
+      z.string().datetime({
+        message: "Each slot must be a valid ISO 8601 datetime string",
+      }),
+    )
+    .min(1, {
+      message: "'slots' array must contain at least one time slot",
     }),
-  ).min(1, {
-    message: "'slots' array must contain at least one time slot",
-  }),
 });
 ```
 
 #### eventIdSchema
+
 ```typescript
 export const eventIdSchema = z.string().uuid({
   message: "Event ID must be a valid UUID format",
@@ -304,6 +323,7 @@ export const eventIdSchema = z.string().uuid({
 ```
 
 **Benefits of Zod**:
+
 - ✅ Automatic TypeScript type inference (`z.infer<typeof schema>`)
 - ✅ Declarative schema definition (vs imperative validation logic)
 - ✅ Industry-standard library (46M+ weekly downloads)
@@ -312,6 +332,7 @@ export const eventIdSchema = z.string().uuid({
 - ✅ ~75% less code than custom validator
 
 **Usage in API Routes**:
+
 ```typescript
 export async function PATCH(request: NextRequest, { params }) {
   try {
@@ -344,6 +365,7 @@ export async function PATCH(request: NextRequest, { params }) {
 **Validations**:
 
 #### Universal Rules (All Event Types)
+
 - ✅ Slots are in the future
 - ✅ No time range overlaps with existing appointments
 - ✅ Slots match consultant's availability (weekly or custom schedule)
@@ -352,20 +374,24 @@ export async function PATCH(request: NextRequest, { params }) {
 #### Event-Specific Rules
 
 **Consultations**:
+
 - Duration matches requested session length
 - Single appointment with N consecutive slots
 
 **Subscriptions**:
+
 - Weekly call limits respected (`callsPerWeek`)
 - Total call limits respected (`totalCalls`)
 - Slots distributed across subscription period
 - Slots within scheduling period (start/end dates)
 
 **Webinars**:
+
 - Exactly 1 slot required
 - Slot must be in the future
 
 **Classes**:
+
 - Multiple appointments (one per session)
 - Each appointment has correct number of slots
 - Weekly distribution respected
@@ -375,12 +401,14 @@ export async function PATCH(request: NextRequest, { params }) {
 **Implemented by**: Prisma schema constraints and transactions
 
 **Constraints**:
+
 - Foreign key relationships
 - NOT NULL constraints
 - ENUM validations (AppointmentType, RequestStatus, etc.)
 - Unique constraints where applicable
 
 **Transaction Safety**:
+
 ```typescript
 await prisma.$transaction(async (tx) => {
   // All operations succeed or all fail
@@ -395,6 +423,7 @@ await prisma.$transaction(async (tx) => {
 ### Core Models
 
 #### Consultation
+
 ```prisma
 model Consultation {
   id                    String         @id @default(uuid())
@@ -407,6 +436,7 @@ model Consultation {
 ```
 
 #### Subscription
+
 ```prisma
 model Subscription {
   id                    String         @id @default(uuid())
@@ -422,6 +452,7 @@ model Subscription {
 ```
 
 #### Appointment
+
 ```prisma
 model Appointment {
   id                    String            @id @default(uuid())
@@ -437,6 +468,7 @@ model Appointment {
 ```
 
 #### Slot
+
 ```prisma
 model Slot {
   id                    String      @id @default(uuid())
@@ -466,6 +498,7 @@ User (N) ──── (N) Slot (booked slots)
 ### Route Structure
 
 All routes follow the same pattern:
+
 ```
 /api/events/{eventType}/{eventId}/{action}
 ```
@@ -473,12 +506,14 @@ All routes follow the same pattern:
 ### 8 Endpoints
 
 #### Allocate Endpoints (4)
+
 - `PATCH /api/events/consultations/:id/allocate`
 - `PATCH /api/events/subscriptions/:id/allocate`
 - `PATCH /api/events/webinars/:id/allocate`
 - `PATCH /api/events/classes/:id/allocate`
 
 **Request Body**:
+
 ```typescript
 {
   isAuto: boolean;
@@ -488,6 +523,7 @@ All routes follow the same pattern:
 ```
 
 **Response (Success)**:
+
 ```typescript
 {
   data: Appointment[];
@@ -496,12 +532,14 @@ All routes follow the same pattern:
 ```
 
 #### Validate Endpoints (4)
+
 - `POST /api/events/consultations/:id/validate`
 - `POST /api/events/subscriptions/:id/validate`
 - `POST /api/events/webinars/:id/validate`
 - `POST /api/events/classes/:id/validate`
 
 **Request Body**:
+
 ```typescript
 {
   slots: string[]; // ISO 8601 datetime strings
@@ -509,6 +547,7 @@ All routes follow the same pattern:
 ```
 
 **Response**:
+
 ```typescript
 {
   data: {
@@ -522,6 +561,7 @@ All routes follow the same pattern:
 ### Error Handling
 
 **400 Bad Request** - Zod validation errors
+
 ```json
 {
   "error": "slots: Each slot must be a valid ISO 8601 datetime string"
@@ -529,6 +569,7 @@ All routes follow the same pattern:
 ```
 
 **404 Not Found** - Event not found
+
 ```json
 {
   "error": "Consultation not found"
@@ -536,6 +577,7 @@ All routes follow the same pattern:
 ```
 
 **500 Internal Server Error** - Business logic or database errors
+
 ```json
 {
   "error": "Weekly call limit exceeded"
@@ -549,15 +591,16 @@ All routes follow the same pattern:
 #### 1. Zod Migration ✅
 
 **Before**: Custom `InputValidator` class (208 lines)
+
 ```typescript
 // Old approach - Imperative validation
 class InputValidator {
   static validateAllocationRequest(body: unknown) {
-    if (typeof body !== 'object' || body === null) {
-      throw new Error('Request body must be an object');
+    if (typeof body !== "object" || body === null) {
+      throw new Error("Request body must be an object");
     }
-    if (typeof body.isAuto !== 'boolean') {
-      throw new Error('isAuto must be a boolean');
+    if (typeof body.isAuto !== "boolean") {
+      throw new Error("isAuto must be a boolean");
     }
     // ... 200+ more lines of imperative checks
   }
@@ -572,14 +615,17 @@ try {
 ```
 
 **After**: Zod schemas (50 lines)
+
 ```typescript
 // New approach - Declarative validation
-const allocationRequestSchema = z.object({
-  isAuto: z.boolean({
-    required_error: "'isAuto' is required",
-  }),
-  slots: z.array(z.string().datetime()).optional(),
-}).refine(/* business logic */);
+const allocationRequestSchema = z
+  .object({
+    isAuto: z.boolean({
+      required_error: "'isAuto' is required",
+    }),
+    slots: z.array(z.string().datetime()).optional(),
+  })
+  .refine(/* business logic */);
 
 // Usage with automatic type inference
 const body = allocationRequestSchema.parse(await request.json());
@@ -587,6 +633,7 @@ const body = allocationRequestSchema.parse(await request.json());
 ```
 
 **Benefits**:
+
 - ✅ 75% code reduction (208 → 50 lines)
 - ✅ Automatic TypeScript type inference
 - ✅ Industry-standard library (Zod v3.25.67 already installed)
@@ -611,6 +658,7 @@ See [07_BUG_FIXES_CHANGELOG.md](./07_BUG_FIXES_CHANGELOG.md) for detailed list. 
 #### 3. Documentation Overhaul ✅
 
 **Created**:
+
 - Comprehensive 10-document system (00-09 numbered files)
 - ~175 KB of documentation
 - Quick Start Guide for 15-minute onboarding
@@ -619,12 +667,14 @@ See [07_BUG_FIXES_CHANGELOG.md](./07_BUG_FIXES_CHANGELOG.md) for detailed list. 
 - Testing guide with Jest examples
 
 **Deleted**:
+
 - Old `docs/algorithm/` folder (~1236 lines of .txt files)
 - Scattered root-level docs (EVENT_TYPES_AND_SCHEDULING.md, etc.)
 
 #### 4. Code Comments ✅
 
 Added comprehensive inline comments across all services:
+
 - Layer identification (Layer 1, Layer 2, Layer 3)
 - Business rule explanations
 - Algorithm descriptions
@@ -636,6 +686,7 @@ Added comprehensive inline comments across all services:
 ### 1. Service Layer Pattern
 
 **Separation of Concerns**:
+
 - **API Routes**: HTTP handling, request/response formatting
 - **Services**: Business logic, validation, data manipulation
 - **Prisma**: Data persistence, transactions
@@ -643,6 +694,7 @@ Added comprehensive inline comments across all services:
 ### 2. Strategy Pattern
 
 **Allocation Modes**:
+
 ```typescript
 interface AllocationStrategy {
   allocate(params: AllocationParams): Promise<Appointment[]>;
@@ -670,6 +722,7 @@ class RequestedAllocationStrategy implements AllocationStrategy {
 ### 3. Repository Pattern
 
 **Database Abstraction**:
+
 ```typescript
 // Service doesn't know about Prisma specifics
 class SlotAllocationService {
@@ -684,13 +737,16 @@ class SlotAllocationService {
 ### 4. Builder Pattern
 
 **Zod Schema Composition**:
+
 ```typescript
 const baseSlotSchema = z.string().datetime();
 const slotsArraySchema = z.array(baseSlotSchema);
-const allocationRequestSchema = z.object({
-  isAuto: z.boolean(),
-  slots: slotsArraySchema.optional(),
-}).refine(/* custom logic */);
+const allocationRequestSchema = z
+  .object({
+    isAuto: z.boolean(),
+    slots: slotsArraySchema.optional(),
+  })
+  .refine(/* custom logic */);
 ```
 
 ## Data Flow
@@ -794,8 +850,12 @@ const consultation = await prisma.consultation.findUnique({
 
 // Bad: Multiple queries (N+1 problem)
 const consultation = await prisma.consultation.findUnique({ where: { id } });
-const plan = await prisma.consultationPlan.findUnique({ where: { id: consultation.planId } });
-const consultant = await prisma.consultantProfile.findUnique({ where: { id: plan.consultantId } });
+const plan = await prisma.consultationPlan.findUnique({
+  where: { id: consultation.planId },
+});
+const consultant = await prisma.consultantProfile.findUnique({
+  where: { id: plan.consultantId },
+});
 ```
 
 ### Conflict Detection Optimization
@@ -807,10 +867,10 @@ const conflicts = await prisma.appointment.findMany({
     AND: [
       {
         OR: [
-          { subscription: { requestStatus: 'APPROVED' } },
-          { consultation: { requestStatus: 'APPROVED' } },
-          { webinar: { status: 'SCHEDULED' } },
-          { class: { status: 'SCHEDULED' } },
+          { subscription: { requestStatus: "APPROVED" } },
+          { consultation: { requestStatus: "APPROVED" } },
+          { webinar: { status: "SCHEDULED" } },
+          { class: { status: "SCHEDULED" } },
         ],
       },
       {
@@ -831,11 +891,13 @@ const conflicts = await prisma.appointment.findMany({
 See [09_TESTING_GUIDE.md](./09_TESTING_GUIDE.md) for comprehensive testing guide.
 
 **Test Levels**:
+
 1. **Unit Tests**: Individual service methods
 2. **Integration Tests**: API routes with database
 3. **E2E Tests**: Full user flows
 
 **Key Test Cases**:
+
 - ✅ Conflict detection (overlapping time ranges)
 - ✅ Consecutive slot validation
 - ✅ Weekly limit enforcement (subscriptions)
@@ -878,6 +940,7 @@ The booking algorithm system is a robust, type-safe, and well-documented slot al
 - ✅ **10 Critical Bugs Fixed**: See changelog for details
 
 For implementation details, see:
+
 - [Quick Start Guide](./01_QUICK_START.md)
 - [API Reference](./06_API_REFERENCE.md)
 - [Testing Guide](./09_TESTING_GUIDE.md)

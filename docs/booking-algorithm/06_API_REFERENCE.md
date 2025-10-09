@@ -6,12 +6,12 @@ Complete API documentation for all booking algorithm endpoints.
 
 The booking algorithm exposes 8 endpoints (2 per event type):
 
-| Event Type | Validate Endpoint | Allocate Endpoint |
-|------------|-------------------|-------------------|
+| Event Type        | Validate Endpoint                              | Allocate Endpoint                               |
+| ----------------- | ---------------------------------------------- | ----------------------------------------------- |
 | **Consultations** | `POST /api/events/consultations/{id}/validate` | `PATCH /api/events/consultations/{id}/allocate` |
 | **Subscriptions** | `POST /api/events/subscriptions/{id}/validate` | `PATCH /api/events/subscriptions/{id}/allocate` |
-| **Webinars** | `POST /api/events/webinars/{id}/validate` | `PATCH /api/events/webinars/{id}/allocate` |
-| **Classes** | `POST /api/events/classes/{id}/validate` | `PATCH /api/events/classes/{id}/allocate` |
+| **Webinars**      | `POST /api/events/webinars/{id}/validate`      | `PATCH /api/events/webinars/{id}/allocate`      |
+| **Classes**       | `POST /api/events/classes/{id}/validate`       | `PATCH /api/events/classes/{id}/allocate`       |
 
 **Base URL**: `https://your-domain.com`
 
@@ -30,6 +30,7 @@ Validate proposed time slots without creating appointments.
 **URL Pattern**: `/api/events/{eventType}/{eventId}/validate`
 
 **Headers**:
+
 ```
 Content-Type: application/json
 Authorization: Bearer {token}
@@ -37,10 +38,10 @@ Authorization: Bearer {token}
 
 **URL Parameters**:
 
-| Parameter | Type | Description | Example |
-|-----------|------|-------------|---------|
-| `eventType` | string | Event type (`consultations`, `subscriptions`, `webinars`, `classes`) | `consultations` |
-| `eventId` | string (UUID) | Unique event identifier | `550e8400-e29b-41d4-a716-446655440000` |
+| Parameter   | Type          | Description                                                          | Example                                |
+| ----------- | ------------- | -------------------------------------------------------------------- | -------------------------------------- |
+| `eventType` | string        | Event type (`consultations`, `subscriptions`, `webinars`, `classes`) | `consultations`                        |
+| `eventId`   | string (UUID) | Unique event identifier                                              | `550e8400-e29b-41d4-a716-446655440000` |
 
 **Request Body**:
 
@@ -145,10 +146,7 @@ curl -X POST https://your-domain.com/api/events/consultations/550e8400-e29b-41d4
         "slot": "2025-02-15T11:30:00Z"
       }
     ],
-    "validSlots": [
-      "2025-02-15T10:30:00Z",
-      "2025-02-15T11:00:00Z"
-    ]
+    "validSlots": ["2025-02-15T10:30:00Z", "2025-02-15T11:00:00Z"]
   }
 }
 ```
@@ -160,10 +158,7 @@ curl -X POST https://your-domain.com/api/events/consultations/550e8400-e29b-41d4
   "data": {
     "conflicts": [],
     "outsideAvailability": [],
-    "validSlots": [
-      "2025-02-15T10:00:00Z",
-      "2025-02-15T10:30:00Z"
-    ],
+    "validSlots": ["2025-02-15T10:00:00Z", "2025-02-15T10:30:00Z"],
     "subscriptionValidation": {
       "isValid": true,
       "errors": [],
@@ -234,6 +229,7 @@ Create appointments by allocating time slots.
 **URL Pattern**: `/api/events/{eventType}/{eventId}/allocate`
 
 **Headers**:
+
 ```
 Content-Type: application/json
 Authorization: Bearer {token}
@@ -241,10 +237,10 @@ Authorization: Bearer {token}
 
 **URL Parameters**:
 
-| Parameter | Type | Description | Example |
-|-----------|------|-------------|---------|
-| `eventType` | string | Event type (`consultations`, `subscriptions`, `webinars`, `classes`) | `consultations` |
-| `eventId` | string (UUID) | Unique event identifier | `550e8400-e29b-41d4-a716-446655440000` |
+| Parameter   | Type          | Description                                                          | Example                                |
+| ----------- | ------------- | -------------------------------------------------------------------- | -------------------------------------- |
+| `eventType` | string        | Event type (`consultations`, `subscriptions`, `webinars`, `classes`) | `consultations`                        |
+| `eventId`   | string (UUID) | Unique event identifier                                              | `550e8400-e29b-41d4-a716-446655440000` |
 
 **Request Body**:
 
@@ -273,6 +269,7 @@ Authorization: Bearer {token}
 **Example Requests**:
 
 **Auto Allocation**:
+
 ```bash
 curl -X PATCH https://your-domain.com/api/events/consultations/550e8400-e29b-41d4-a716-446655440000/allocate \
   -H "Content-Type: application/json" \
@@ -283,6 +280,7 @@ curl -X PATCH https://your-domain.com/api/events/consultations/550e8400-e29b-41d
 ```
 
 **Manual Allocation**:
+
 ```bash
 curl -X PATCH https://your-domain.com/api/events/consultations/550e8400-e29b-41d4-a716-446655440000/allocate \
   -H "Content-Type: application/json" \
@@ -299,6 +297,7 @@ curl -X PATCH https://your-domain.com/api/events/consultations/550e8400-e29b-41d
 ```
 
 **Requested Slots**:
+
 ```bash
 curl -X PATCH https://your-domain.com/api/events/consultations/550e8400-e29b-41d4-a716-446655440000/allocate \
   -H "Content-Type: application/json" \
@@ -473,6 +472,7 @@ curl -X PATCH https://your-domain.com/api/events/consultations/550e8400-e29b-41d
 ### 1. Consultation Validate
 
 **Request**:
+
 ```http
 POST /api/events/consultations/550e8400-e29b-41d4-a716-446655440000/validate
 Content-Type: application/json
@@ -486,15 +486,13 @@ Content-Type: application/json
 ```
 
 **Response** (200 OK):
+
 ```json
 {
   "data": {
     "conflicts": [],
     "outsideAvailability": [],
-    "validSlots": [
-      "2025-02-15T10:00:00Z",
-      "2025-02-15T10:30:00Z"
-    ]
+    "validSlots": ["2025-02-15T10:00:00Z", "2025-02-15T10:30:00Z"]
   }
 }
 ```
@@ -504,6 +502,7 @@ Content-Type: application/json
 ### 2. Consultation Allocate (Manual)
 
 **Request**:
+
 ```http
 PATCH /api/events/consultations/550e8400-e29b-41d4-a716-446655440000/allocate
 Content-Type: application/json
@@ -518,6 +517,7 @@ Content-Type: application/json
 ```
 
 **Response** (200 OK):
+
 ```json
 {
   "data": [
@@ -550,6 +550,7 @@ Content-Type: application/json
 ### 3. Subscription Validate (with weekly limits)
 
 **Request**:
+
 ```http
 POST /api/events/subscriptions/sub-456/validate
 Content-Type: application/json
@@ -567,6 +568,7 @@ Content-Type: application/json
 ```
 
 **Response** (200 OK):
+
 ```json
 {
   "data": {
@@ -610,6 +612,7 @@ Content-Type: application/json
 ### 4. Subscription Allocate (Auto)
 
 **Request**:
+
 ```http
 PATCH /api/events/subscriptions/sub-456/allocate
 Content-Type: application/json
@@ -620,6 +623,7 @@ Content-Type: application/json
 ```
 
 **Response** (200 OK):
+
 ```json
 {
   "data": [
@@ -658,6 +662,7 @@ Content-Type: application/json
 ### 5. Webinar Allocate (Manual)
 
 **Request**:
+
 ```http
 PATCH /api/events/webinars/web-789/allocate
 Content-Type: application/json
@@ -674,6 +679,7 @@ Content-Type: application/json
 ```
 
 **Response** (200 OK):
+
 ```json
 {
   "data": [
@@ -718,6 +724,7 @@ Content-Type: application/json
 ### 6. Class Validate (with session grouping)
 
 **Request**:
+
 ```http
 POST /api/events/classes/class-101/validate
 Content-Type: application/json
@@ -737,6 +744,7 @@ Content-Type: application/json
 ```
 
 **Response** (200 OK):
+
 ```json
 {
   "data": {
@@ -760,12 +768,12 @@ Content-Type: application/json
 
 ## Error Code Summary
 
-| Status Code | Meaning | Common Causes |
-|-------------|---------|---------------|
-| **200** | Success | Request completed successfully |
-| **400** | Bad Request | Invalid input format, missing required fields, Zod validation failed |
-| **404** | Not Found | Event ID doesn't exist |
-| **500** | Internal Server Error | Validation failed, allocation failed, database error |
+| Status Code | Meaning               | Common Causes                                                        |
+| ----------- | --------------------- | -------------------------------------------------------------------- |
+| **200**     | Success               | Request completed successfully                                       |
+| **400**     | Bad Request           | Invalid input format, missing required fields, Zod validation failed |
+| **404**     | Not Found             | Event ID doesn't exist                                               |
+| **500**     | Internal Server Error | Validation failed, allocation failed, database error                 |
 
 ---
 
@@ -774,11 +782,13 @@ Content-Type: application/json
 ### 1. Invalid Event ID
 
 **Request**:
+
 ```http
 POST /api/events/consultations/invalid-uuid/validate
 ```
 
 **Response** (400):
+
 ```json
 {
   "error": "Event ID must be a valid UUID format"
@@ -790,6 +800,7 @@ POST /api/events/consultations/invalid-uuid/validate
 ### 2. Missing Slots Array
 
 **Request**:
+
 ```http
 POST /api/events/consultations/550e8400-e29b-41d4-a716-446655440000/validate
 Content-Type: application/json
@@ -798,6 +809,7 @@ Content-Type: application/json
 ```
 
 **Response** (400):
+
 ```json
 {
   "error": "slots: 'slots' array must contain at least one time slot to validate"
@@ -809,6 +821,7 @@ Content-Type: application/json
 ### 3. Invalid Datetime Format
 
 **Request**:
+
 ```http
 POST /api/events/consultations/550e8400-e29b-41d4-a716-446655440000/validate
 Content-Type: application/json
@@ -819,6 +832,7 @@ Content-Type: application/json
 ```
 
 **Response** (400):
+
 ```json
 {
   "error": "slots.0: Each slot must be a valid ISO 8601 datetime string (e.g., '2025-01-15T10:00:00Z')"
@@ -830,6 +844,7 @@ Content-Type: application/json
 ### 4. Manual Allocation Without Slots
 
 **Request**:
+
 ```http
 PATCH /api/events/consultations/550e8400-e29b-41d4-a716-446655440000/allocate
 Content-Type: application/json
@@ -840,6 +855,7 @@ Content-Type: application/json
 ```
 
 **Response** (400):
+
 ```json
 {
   "error": "slots: Manual allocation requires 'slots' array with at least one time slot"
@@ -851,6 +867,7 @@ Content-Type: application/json
 ### 5. Slot Already Booked
 
 **Request**:
+
 ```http
 PATCH /api/events/consultations/550e8400-e29b-41d4-a716-446655440000/allocate
 Content-Type: application/json
@@ -862,6 +879,7 @@ Content-Type: application/json
 ```
 
 **Response** (500):
+
 ```json
 {
   "error": "Validation failed: Slot already booked: 2/15/2025, 10:00:00 AM (conflicts with consultation for John Doe)"
@@ -873,6 +891,7 @@ Content-Type: application/json
 ### 6. Incorrect Slot Count
 
 **Request** (Consultation requires 4 slots but only 3 provided):
+
 ```http
 PATCH /api/events/consultations/550e8400-e29b-41d4-a716-446655440000/allocate
 Content-Type: application/json
@@ -888,6 +907,7 @@ Content-Type: application/json
 ```
 
 **Response** (500):
+
 ```json
 {
   "error": "Validation failed: Consultation requires exactly 4 slots (2 hours) but 3 provided"
@@ -899,6 +919,7 @@ Content-Type: application/json
 ### 7. Weekly Limit Exceeded
 
 **Request** (Subscription allows 2 calls/week but 3 scheduled):
+
 ```http
 PATCH /api/events/subscriptions/sub-456/allocate
 Content-Type: application/json
@@ -917,6 +938,7 @@ Content-Type: application/json
 ```
 
 **Response** (500):
+
 ```json
 {
   "error": "Validation failed: Week of 2/9/2025 exceeds call limit. Maximum 2 calls per week, but 3 calls are scheduled."
@@ -928,6 +950,7 @@ Content-Type: application/json
 ### 8. Slots Not Consecutive
 
 **Request**:
+
 ```http
 PATCH /api/events/consultations/550e8400-e29b-41d4-a716-446655440000/allocate
 Content-Type: application/json
@@ -942,6 +965,7 @@ Content-Type: application/json
 ```
 
 **Response** (500):
+
 ```json
 {
   "error": "Validation failed: Consultation slots must be consecutive (no gaps allowed)"
@@ -959,19 +983,16 @@ Content-Type: application/json
 async function validateSlots(
   eventType: string,
   eventId: string,
-  slots: string[]
+  slots: string[],
 ) {
-  const response = await fetch(
-    `/api/events/${eventType}/${eventId}/validate`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify({ slots }),
-    }
-  );
+  const response = await fetch(`/api/events/${eventType}/${eventId}/validate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ slots }),
+  });
 
   if (!response.ok) {
     const error = await response.json();
@@ -987,19 +1008,16 @@ async function allocateSlots(
   eventType: string,
   eventId: string,
   isAuto: boolean,
-  slots?: string[]
+  slots?: string[],
 ) {
-  const response = await fetch(
-    `/api/events/${eventType}/${eventId}/allocate`,
-    {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify({ isAuto, slots }),
-    }
-  );
+  const response = await fetch(`/api/events/${eventType}/${eventId}/allocate`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ isAuto, slots }),
+  });
 
   if (!response.ok) {
     const error = await response.json();
@@ -1014,25 +1032,25 @@ async function allocateSlots(
 try {
   // Validate first
   const validation = await validateSlots(
-    'consultations',
-    '550e8400-e29b-41d4-a716-446655440000',
-    ['2025-02-15T10:00:00Z', '2025-02-15T10:30:00Z']
+    "consultations",
+    "550e8400-e29b-41d4-a716-446655440000",
+    ["2025-02-15T10:00:00Z", "2025-02-15T10:30:00Z"],
   );
 
   if (validation.validSlots.length === 2) {
     // All slots valid, proceed to allocate
     const appointments = await allocateSlots(
-      'consultations',
-      '550e8400-e29b-41d4-a716-446655440000',
+      "consultations",
+      "550e8400-e29b-41d4-a716-446655440000",
       false,
-      ['2025-02-15T10:00:00Z', '2025-02-15T10:30:00Z']
+      ["2025-02-15T10:00:00Z", "2025-02-15T10:30:00Z"],
     );
-    console.log('Appointments created:', appointments);
+    console.log("Appointments created:", appointments);
   } else {
-    console.error('Some slots invalid:', validation.conflicts);
+    console.error("Some slots invalid:", validation.conflicts);
   }
 } catch (error) {
-  console.error('API error:', error.message);
+  console.error("API error:", error.message);
 }
 ```
 

@@ -26,6 +26,7 @@ The conflict detection logic only checked for exact slot start time matches, not
 **CRITICAL - Data Corruption**: Double-booking was possible when slots partially overlapped.
 
 **Example Scenario**:
+
 ```
 Existing appointment: 10:00-10:30 (1 slot)
 Proposed appointment: 10:00-11:00 (2 slots: 10:00-10:30, 10:30-11:00)
@@ -43,10 +44,13 @@ After fix:
 ### Root Cause
 
 Original query used exact match on start time:
+
 ```typescript
 // ❌ WRONG: Exact match only
 where: {
-  slotStartTimeInUTC: { equals: proposedSlot }
+  slotStartTimeInUTC: {
+    equals: proposedSlot;
+  }
 }
 ```
 
@@ -60,13 +64,14 @@ Implemented proper range overlap detection:
 // ✓ CORRECT: Range overlap detection
 where: {
   AND: [
-    { slotStartTimeInUTC: { lt: proposedSlotEnd } },  // Existing starts before proposed ends
-    { slotEndTimeInUTC: { gt: proposedSlot } }       // Existing ends after proposed starts
-  ]
+    { slotStartTimeInUTC: { lt: proposedSlotEnd } }, // Existing starts before proposed ends
+    { slotEndTimeInUTC: { gt: proposedSlot } }, // Existing ends after proposed starts
+  ];
 }
 ```
 
 **Overlap Logic**:
+
 ```
 Two time ranges [A.start, A.end] and [B.start, B.end] overlap if:
   A.start < B.end AND B.start < A.end
@@ -107,6 +112,7 @@ Manual allocation allowed creation of incomplete appointments (wrong number of s
 **HIGH - Data Inconsistency**: Database contained appointments with incorrect slot counts, breaking session duration logic.
 
 **Example Scenario**:
+
 ```
 Session duration: 2.5 hours (5 slots)
 User selects: 7 slots
@@ -135,25 +141,27 @@ const appointments = slots.map(createAppointment);
 Added slot count validation in multiple layers:
 
 **Layer 1 - Manual Allocation**:
+
 ```typescript
 // Validation before allocation
 if (slots.length % slotsPerCall !== 0) {
   throw new Error(
     `Invalid slot count: ${slots.length} slots provided, but ${sessionDuration}-hour ` +
-    `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
-    `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`
+      `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
+      `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
   );
 }
 ```
 
 **Layer 2 - Appointment Creation** (Defensive check):
+
 ```typescript
 // Double-check before database write
 if (slots.length % slotsPerCall !== 0) {
   throw new Error(
     `INTERNAL ERROR: Cannot create appointments - ${slots.length} slots ` +
-    `cannot be evenly divided into ${slotsPerCall}-slot sessions. ` +
-    `This indicates a validation bug.`
+      `cannot be evenly divided into ${slotsPerCall}-slot sessions. ` +
+      `This indicates a validation bug.`,
   );
 }
 ```
@@ -185,6 +193,7 @@ allocateSlots({ slots: 10 }) → Success ✓
 **CRITICAL - State Corruption**: Requests could be approved with no actual bookings, resulting in APPROVED status with zero appointments.
 
 **Example Scenario**:
+
 ```
 1. Consultee submits request but fails to create appointments (network error)
 2. Consultant clicks "Use Requested Slots"
@@ -282,6 +291,7 @@ Manual allocation accepted duplicate slots in the selection, causing inflated co
 **MEDIUM - UX Degradation**: Confusing error messages and incorrect slot counts.
 
 **Example Scenario**:
+
 ```
 User accidentally selects same slot twice:
   ["2025-01-15T10:00:00Z", "2025-01-15T10:00:00Z", "2025-01-15T10:30:00Z"]
@@ -308,18 +318,19 @@ Added duplicate detection using Set:
 ```typescript
 // ✓ CORRECT: Detect and reject duplicates
 const uniqueSlots = Array.from(
-  new Map(slots.map((s) => [s.toISOString(), s])).values()
+  new Map(slots.map((s) => [s.toISOString(), s])).values(),
 );
 
 if (uniqueSlots.length !== slots.length) {
   throw new Error(
     `Duplicate slots detected: ${slots.length} slots provided but only ` +
-    `${uniqueSlots.length} are unique. Each slot can only be selected once.`
+      `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
   );
 }
 ```
 
 **How it works**:
+
 1. Map each slot to its ISO string representation
 2. Use Map to automatically deduplicate (Map keys are unique)
 3. Compare original length vs unique length
@@ -354,6 +365,7 @@ Consecutive slot validation used exact equality, failing on sub-second precision
 **MEDIUM - False Positives**: Valid consecutive slots rejected due to microsecond differences.
 
 **Example Scenario**:
+
 ```
 Client sends:
   slot1: 2025-01-15T10:00:00.000Z
@@ -401,6 +413,7 @@ if (timeDiff > toleranceMs) {
 ```
 
 **Why 1 second?**:
+
 - Catches genuine gaps (30-second, 1-minute, etc.)
 - Allows for precision errors (milliseconds, microseconds)
 - Industry standard for time comparisons
@@ -441,6 +454,7 @@ Week generation loop had no maximum iteration limit, risking infinite loops from
 **HIGH - System Availability**: Server hang/crash from infinite loop consuming CPU indefinitely.
 
 **Example Scenario**:
+
 ```
 Malformed subscription dates:
   startDate: "3000-01-01"
@@ -487,8 +501,8 @@ while (currentWeek <= subscriptionEnd) {
   if (weekCount > MAX_WEEKS) {
     throw new Error(
       `Subscription period exceeds maximum duration (${MAX_WEEKS} weeks / 10 years). ` +
-      `Start: ${subscriptionStart.toISOString()}, End: ${subscriptionEnd.toISOString()}. ` +
-      `Please verify the subscription dates are correct.`
+        `Start: ${subscriptionStart.toISOString()}, End: ${subscriptionEnd.toISOString()}. ` +
+        `Please verify the subscription dates are correct.`,
     );
   }
 
@@ -498,6 +512,7 @@ while (currentWeek <= subscriptionEnd) {
 ```
 
 **Why 520 weeks?**:
+
 - 520 weeks = 10 years
 - Reasonable upper bound for any subscription
 - Catches infinite loops while allowing legitimate long subscriptions
@@ -533,6 +548,7 @@ No validation that `startDate < endDate` for recurring events, causing negative 
 **MEDIUM - Auto-Allocation Failure**: Auto-allocation silently fails or returns zero slots.
 
 **Example Scenario**:
+
 ```
 Subscription configuration:
   startDate: 2025-03-01
@@ -564,8 +580,8 @@ if (config.startDate && config.endDate) {
   if (config.startDate >= config.endDate) {
     throw new Error(
       `Invalid date range: startDate (${config.startDate.toISOString()}) ` +
-      `must be before endDate (${config.endDate.toISOString()}). ` +
-      `Please check the ${eventType} configuration.`
+        `must be before endDate (${config.endDate.toISOString()}). ` +
+        `Please check the ${eventType} configuration.`,
     );
   }
 }
@@ -599,6 +615,7 @@ Duration validation was scattered and inconsistent, allowing division by zero an
 **HIGH - System Crash**: Division by zero errors, infinite loops, negative slot counts.
 
 **Example Scenarios**:
+
 ```
 Scenario 1: Zero duration
   duration = 0
@@ -626,50 +643,52 @@ Created centralized `validateDuration()` function:
 
 ```typescript
 // ✓ CORRECT: Single validation function
-function validateDuration(duration: number | undefined, fieldName: string): void {
+function validateDuration(
+  duration: number | undefined,
+  fieldName: string,
+): void {
   // Check existence
   if (duration === undefined || duration === null) {
     throw new Error(`${fieldName} is required but was not provided`);
   }
 
   // Check type
-  if (typeof duration !== 'number') {
+  if (typeof duration !== "number") {
     throw new Error(
-      `${fieldName} must be a number, but received type: ${typeof duration}`
+      `${fieldName} must be a number, but received type: ${typeof duration}`,
     );
   }
 
   // Check positivity
   if (duration <= 0) {
-    throw new Error(
-      `${fieldName} must be positive, but received: ${duration}`
-    );
+    throw new Error(`${fieldName} must be positive, but received: ${duration}`);
   }
 
   // Check finiteness (catches Infinity, NaN)
   if (!Number.isFinite(duration)) {
     throw new Error(
-      `${fieldName} must be a finite number, but received: ${duration}`
+      `${fieldName} must be a finite number, but received: ${duration}`,
     );
   }
 
   // Check minimum (30 minutes)
   if (duration < 0.5) {
     throw new Error(
-      `${fieldName} must be at least 0.5 hours (30 minutes), but received: ${duration}`
+      `${fieldName} must be at least 0.5 hours (30 minutes), but received: ${duration}`,
     );
   }
 
   // Warn if unusually large
   if (duration > 24) {
     console.warn(
-      `⚠️ ${fieldName} is unusually large (${duration} hours). Maximum expected is 24 hours.`
+      `⚠️ ${fieldName} is unusually large (${duration} hours). Maximum expected is 24 hours.`,
     );
   }
 }
 ```
 
 **Used before every calculation**:
+
 ```typescript
 validateDuration(config.sessionDurationInHours, "Session duration");
 const slotsPerCall = getSlotsPerCall(config.sessionDurationInHours!);
@@ -707,6 +726,7 @@ Scheduling period validation (startDate/endDate boundaries) was only enforced cl
 **MEDIUM - Security/Data Integrity**: Users could schedule slots outside allowed period by bypassing frontend.
 
 **Example Scenario**:
+
 ```
 Subscription period: Jan 1 - Mar 1, 2025
 
@@ -757,6 +777,7 @@ private validateSchedulingPeriod(
 ```
 
 **Applied to all subscriptions and classes**:
+
 ```typescript
 if (config.startDate && config.endDate) {
   const periodCheck = this.validateSchedulingPeriod(
@@ -795,6 +816,7 @@ Future slot validation used exact "now" comparison, causing race conditions duri
 **HIGH - Auto-Allocation Failure**: Auto-allocation could find valid slots but fail validation milliseconds later.
 
 **Example Scenario**:
+
 ```
 Current time: 10:00:00.000
 
@@ -847,14 +869,15 @@ for (const slot of slots) {
     const secondsUntilSlot = (slot.getTime() - now.getTime()) / 1000;
     errors.push(
       `Cannot allocate slots in the past or too soon: ${slot.toLocaleString()} ` +
-      `(${secondsUntilSlot >= 0 ? `only ${secondsUntilSlot.toFixed(1)}s` : `${Math.abs(secondsUntilSlot).toFixed(1)}s ago`}). ` +
-      `Slots must be at least 5 seconds in the future to allow for processing time.`
+        `(${secondsUntilSlot >= 0 ? `only ${secondsUntilSlot.toFixed(1)}s` : `${Math.abs(secondsUntilSlot).toFixed(1)}s ago`}). ` +
+        `Slots must be at least 5 seconds in the future to allow for processing time.`,
     );
   }
 }
 ```
 
 **Buffer Rationale**:
+
 - Accounts for time between finding slots and validation
 - Prevents rejecting slots that become "now" during transaction
 - Still prevents genuine past slot attempts (minutes/hours old)
@@ -881,34 +904,37 @@ validateSlotsInFuture([slot2]) → Success ✓
 
 ## Summary Table
 
-| Bug # | Issue | Impact | Location |
-|-------|-------|--------|----------|
-| **1** | Range overlap detection | CRITICAL - Double-booking | SlotValidationService.ts:147-207 |
-| **2** | Complete appointments | HIGH - Data inconsistency | SlotAllocationService.ts:206-218, 620-626 |
-| **3** | Requested slots verification | CRITICAL - State corruption | SlotAllocationService.ts:279-354 |
-| **4** | Duplicate slot detection | MEDIUM - UX degradation | SlotAllocationService.ts:192-202 |
-| **5** | Consecutive tolerance | MEDIUM - False positives | SlotValidationService.ts:320-349 |
-| **6** | Iteration limits | HIGH - System crash | subscriptionValidation.ts:322-346 |
-| **7** | Date ordering validation | MEDIUM - Allocation failure | SlotAllocationService.ts:820-829 |
-| **8** | Duration validation | HIGH - System crash | SlotCalculationService.ts:84-119 |
-| **9** | Scheduling period | MEDIUM - Security bypass | SlotValidationService.ts:52-62, 292-314 |
-| **10** | Race condition buffer | HIGH - Auto-allocation failure | SlotValidationService.ts:103-125 |
+| Bug #  | Issue                        | Impact                         | Location                                  |
+| ------ | ---------------------------- | ------------------------------ | ----------------------------------------- |
+| **1**  | Range overlap detection      | CRITICAL - Double-booking      | SlotValidationService.ts:147-207          |
+| **2**  | Complete appointments        | HIGH - Data inconsistency      | SlotAllocationService.ts:206-218, 620-626 |
+| **3**  | Requested slots verification | CRITICAL - State corruption    | SlotAllocationService.ts:279-354          |
+| **4**  | Duplicate slot detection     | MEDIUM - UX degradation        | SlotAllocationService.ts:192-202          |
+| **5**  | Consecutive tolerance        | MEDIUM - False positives       | SlotValidationService.ts:320-349          |
+| **6**  | Iteration limits             | HIGH - System crash            | subscriptionValidation.ts:322-346         |
+| **7**  | Date ordering validation     | MEDIUM - Allocation failure    | SlotAllocationService.ts:820-829          |
+| **8**  | Duration validation          | HIGH - System crash            | SlotCalculationService.ts:84-119          |
+| **9**  | Scheduling period            | MEDIUM - Security bypass       | SlotValidationService.ts:52-62, 292-314   |
+| **10** | Race condition buffer        | HIGH - Auto-allocation failure | SlotValidationService.ts:103-125          |
 
 ---
 
 ## Impact Classification
 
 ### Critical (2 bugs)
+
 - **Bug #1**: Range overlap - Direct double-booking risk
 - **Bug #3**: Requested slots - Approved requests with no bookings
 
 ### High (4 bugs)
+
 - **Bug #2**: Complete appointments - Database inconsistency
 - **Bug #6**: Iteration limits - Server crash from infinite loop
 - **Bug #8**: Duration validation - Division by zero, NaN corruption
 - **Bug #10**: Race condition buffer - Auto-allocation broken
 
 ### Medium (4 bugs)
+
 - **Bug #4**: Duplicate slots - Poor user experience
 - **Bug #5**: Consecutive tolerance - Valid slots rejected
 - **Bug #7**: Date ordering - Silent allocation failure

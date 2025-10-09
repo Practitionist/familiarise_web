@@ -96,111 +96,113 @@ export async function POST(
         include: subscriptionInclude,
       });
 
-    if (!subscription) {
-      return NextResponse.json(
-        { error: "Subscription not found" },
-        { status: 404 },
-      );
-    }
-
-    const { subscriptionPlan } = subscription;
-    const { consultantProfile } = subscriptionPlan;
-
-    if (!consultantProfile) {
-      return NextResponse.json(
-        { error: "Consultant profile not found" },
-        { status: 400 },
-      );
-    }
-
-    // Convert slots to Date objects
-    const slotDates = body.slots.map((slot) => new Date(slot));
-
-    // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
-    const validationService = new SlotValidationService(prisma);
-    const validationResult = await validationService.validate(
-      "subscription",
-      subscriptionId,
-      slotDates,
-      {
-        userId: consultantProfile.user.id,
-        scheduleType: consultantProfile.scheduleType,
-        slotsOfAvailabilityWeekly: consultantProfile.slotsOfAvailabilityWeekly,
-        slotsOfAvailabilityCustom: consultantProfile.slotsOfAvailabilityCustom,
-        currentTimezone: consultantProfile.user.currentTimezone || undefined,
-      },
-      {
-        durationInMonths: subscriptionPlan.durationInMonths,
-        callsPerWeek: subscriptionPlan.callsPerWeek,
-        sessionDurationInHours: subscriptionPlan.sessionDurationInHours,
-        startDate: subscription.startDate,
-        endDate: subscription.endDate,
-      },
-    );
-
-    // LAYER 3: Subscription-Specific Validation (weekly limits, total calls, etc.)
-    const subscriptionValidationService = new SubscriptionValidationService(
-      prisma,
-    );
-    const subscriptionValidation =
-      await subscriptionValidationService.validateSubscriptionSlots(
-        subscriptionId,
-        body.slots,
-      );
-
-    // Build response
-    const result: ValidationResult = {
-      conflicts: [],
-      outsideAvailability: [],
-      validSlots: validationResult.isValid ? body.slots : [],
-      subscriptionValidation,
-    };
-
-    // Parse errors if validation failed
-    if (!validationResult.isValid) {
-      for (const error of validationResult.errors) {
-        if (
-          error.includes("already booked") ||
-          error.includes("conflicts with")
-        ) {
-          const slotMatch = error.match(
-            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
-          );
-          if (slotMatch) {
-            result.conflicts.push({
-              slot: slotMatch[1],
-              existingAppointment: {
-                type: error.includes("Subscription")
-                  ? "Subscription"
-                  : "Consultation",
-                with: "Another user",
-                time: new Date(slotMatch[1]).toLocaleString(),
-              },
-            });
-          }
-        } else if (
-          error.includes("does not match") ||
-          error.includes("not in consultant's")
-        ) {
-          const slotMatch = error.match(
-            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
-          );
-          if (slotMatch) {
-            result.outsideAvailability.push({ slot: slotMatch[1] });
-          }
-        }
+      if (!subscription) {
+        return NextResponse.json(
+          { error: "Subscription not found" },
+          { status: 404 },
+        );
       }
 
-      // Filter valid slots
-      result.validSlots = body.slots.filter((slot) => {
-        return (
-          !result.conflicts.some((c) => c.slot === slot) &&
-          !result.outsideAvailability.some((o) => o.slot === slot)
-        );
-      });
-    }
+      const { subscriptionPlan } = subscription;
+      const { consultantProfile } = subscriptionPlan;
 
-    // If subscription validation fails, no slots are valid
+      if (!consultantProfile) {
+        return NextResponse.json(
+          { error: "Consultant profile not found" },
+          { status: 400 },
+        );
+      }
+
+      // Convert slots to Date objects
+      const slotDates = body.slots.map((slot) => new Date(slot));
+
+      // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
+      const validationService = new SlotValidationService(prisma);
+      const validationResult = await validationService.validate(
+        "subscription",
+        subscriptionId,
+        slotDates,
+        {
+          userId: consultantProfile.user.id,
+          scheduleType: consultantProfile.scheduleType,
+          slotsOfAvailabilityWeekly:
+            consultantProfile.slotsOfAvailabilityWeekly,
+          slotsOfAvailabilityCustom:
+            consultantProfile.slotsOfAvailabilityCustom,
+          currentTimezone: consultantProfile.user.currentTimezone || undefined,
+        },
+        {
+          durationInMonths: subscriptionPlan.durationInMonths,
+          callsPerWeek: subscriptionPlan.callsPerWeek,
+          sessionDurationInHours: subscriptionPlan.sessionDurationInHours,
+          startDate: subscription.startDate,
+          endDate: subscription.endDate,
+        },
+      );
+
+      // LAYER 3: Subscription-Specific Validation (weekly limits, total calls, etc.)
+      const subscriptionValidationService = new SubscriptionValidationService(
+        prisma,
+      );
+      const subscriptionValidation =
+        await subscriptionValidationService.validateSubscriptionSlots(
+          subscriptionId,
+          body.slots,
+        );
+
+      // Build response
+      const result: ValidationResult = {
+        conflicts: [],
+        outsideAvailability: [],
+        validSlots: validationResult.isValid ? body.slots : [],
+        subscriptionValidation,
+      };
+
+      // Parse errors if validation failed
+      if (!validationResult.isValid) {
+        for (const error of validationResult.errors) {
+          if (
+            error.includes("already booked") ||
+            error.includes("conflicts with")
+          ) {
+            const slotMatch = error.match(
+              /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
+            );
+            if (slotMatch) {
+              result.conflicts.push({
+                slot: slotMatch[1],
+                existingAppointment: {
+                  type: error.includes("Subscription")
+                    ? "Subscription"
+                    : "Consultation",
+                  with: "Another user",
+                  time: new Date(slotMatch[1]).toLocaleString(),
+                },
+              });
+            }
+          } else if (
+            error.includes("does not match") ||
+            error.includes("not in consultant's")
+          ) {
+            const slotMatch = error.match(
+              /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
+            );
+            if (slotMatch) {
+              result.outsideAvailability.push({ slot: slotMatch[1] });
+            }
+          }
+        }
+
+        // Filter valid slots
+        result.validSlots = body.slots.filter((slot) => {
+          return (
+            !result.conflicts.some((c) => c.slot === slot) &&
+            !result.outsideAvailability.some((o) => o.slot === slot)
+          );
+        });
+      }
+
+      // If subscription validation fails, no slots are valid
       if (!subscriptionValidation.isValid) {
         result.validSlots = [];
       }

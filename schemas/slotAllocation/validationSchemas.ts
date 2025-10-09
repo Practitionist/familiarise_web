@@ -89,8 +89,7 @@ export const validationRequestSchema = z.object({
       }),
     )
     .min(1, {
-      message:
-        "'slots' array must contain at least one time slot to validate",
+      message: "'slots' array must contain at least one time slot to validate",
     }),
 });
 

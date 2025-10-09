@@ -29,16 +29,17 @@ The booking algorithm system supports four distinct event types, each with uniqu
 
 ```typescript
 {
-  id: string (UUID)
-  consultationPlanId: string
-  requestedById: string
-  requestStatus: RequestStatus (PENDING | APPROVED | REJECTED)
-  createdAt: DateTime
-  updatedAt: DateTime
+  id: string(UUID);
+  consultationPlanId: string;
+  requestedById: string;
+  requestStatus: RequestStatus(PENDING | APPROVED | REJECTED);
+  createdAt: DateTime;
+  updatedAt: DateTime;
 }
 ```
 
 **Related Tables**:
+
 - `ConsultationPlan` - Defines duration, price, consultant profile
 - `Appointment` - Single appointment record for the consultation
 - `SlotOfAppointment` - Multiple 30-minute slots for the appointment
@@ -128,18 +129,19 @@ The booking algorithm system supports four distinct event types, each with uniqu
 
 ```typescript
 {
-  id: string (UUID)
-  subscriptionPlanId: string
-  requestedById: string
-  requestStatus: RequestStatus (PENDING | APPROVED | REJECTED)
-  startDate: DateTime
-  endDate: DateTime
-  createdAt: DateTime
-  updatedAt: DateTime
+  id: string(UUID);
+  subscriptionPlanId: string;
+  requestedById: string;
+  requestStatus: RequestStatus(PENDING | APPROVED | REJECTED);
+  startDate: DateTime;
+  endDate: DateTime;
+  createdAt: DateTime;
+  updatedAt: DateTime;
 }
 ```
 
 **Related Tables**:
+
 - `SubscriptionPlan` - Defines duration, calls per week, session duration
 - `Appointment` - Multiple appointment records (one per call)
 - `SlotOfAppointment` - Multiple 30-minute slots per appointment
@@ -264,16 +266,17 @@ endDate: 2025-02-02 (Sunday)
 
 ```typescript
 {
-  id: string (UUID)
-  webinarPlanId: string
-  status: string (DRAFT | SCHEDULED | COMPLETED | CANCELLED)
-  startDate: DateTime (nullable)
-  createdAt: DateTime
-  updatedAt: DateTime
+  id: string(UUID);
+  webinarPlanId: string;
+  status: string(DRAFT | SCHEDULED | COMPLETED | CANCELLED);
+  startDate: DateTime(nullable);
+  createdAt: DateTime;
+  updatedAt: DateTime;
 }
 ```
 
 **Related Tables**:
+
 - `WebinarPlan` - Defines duration, price, max participants
 - `Appointment` - Single appointment record for the webinar
 - `SlotOfAppointment` - Multiple 30-minute slots for the appointment
@@ -357,17 +360,18 @@ endDate: 2025-02-02 (Sunday)
 
 ```typescript
 {
-  id: string (UUID)
-  classPlanId: string
-  status: string (DRAFT | SCHEDULED | ONGOING | COMPLETED | CANCELLED)
-  startDate: DateTime (nullable)
-  endDate: DateTime (nullable)
-  createdAt: DateTime
-  updatedAt: DateTime
+  id: string(UUID);
+  classPlanId: string;
+  status: string(DRAFT | SCHEDULED | ONGOING | COMPLETED | CANCELLED);
+  startDate: DateTime(nullable);
+  endDate: DateTime(nullable);
+  createdAt: DateTime;
+  updatedAt: DateTime;
 }
 ```
 
 **Related Tables**:
+
 - `ClassPlan` - Defines duration, calls per week, session duration
 - `ClassContent` - Individual topics/modules with hours allotted
 - `Appointment` - Multiple appointment records (one per session)
@@ -451,21 +455,21 @@ endDate: 2025-03-02 (Sunday)
 ```typescript
 // Class Plan
 {
-  sessionDurationInHours: 2  // Requires 4 consecutive slots
+  sessionDurationInHours: 2; // Requires 4 consecutive slots
 }
 
 // Invalid: Non-consecutive slots on same day
 [
-  "2025-02-03T10:00:00Z", "2025-02-03T10:30:00Z",
-  "2025-02-03T11:00:00Z", "2025-02-03T12:00:00Z"  // Gap at 11:30
-]
-// Error: "Day Mon Feb 3 has non-consecutive slots"
+  "2025-02-03T10:00:00Z",
+  "2025-02-03T10:30:00Z",
+  "2025-02-03T11:00:00Z",
+  "2025-02-03T12:00:00Z", // Gap at 11:30
+][
+  // Error: "Day Mon Feb 3 has non-consecutive slots"
 
-// Invalid: Incomplete session
-[
-  "2025-02-03T10:00:00Z", "2025-02-03T10:30:00Z",
-  "2025-02-03T11:00:00Z"  // Only 3 slots (needs 4)
-]
+  // Invalid: Incomplete session
+  ("2025-02-03T10:00:00Z", "2025-02-03T10:30:00Z", "2025-02-03T11:00:00Z") // Only 3 slots (needs 4)
+];
 // Error: "Day Mon Feb 3 has 3 slots but needs multiples of 4 (incomplete session)"
 ```
 
@@ -479,16 +483,16 @@ endDate: 2025-03-02 (Sunday)
 
 ## Event Type Comparison Table
 
-| Feature | Consultations | Subscriptions | Webinars | Classes |
-|---------|---------------|---------------|----------|---------|
-| **Type** | One-time | Recurring | One-time | Recurring |
-| **Participants** | 1-on-1 | 1-on-1 | Group | Group |
-| **Weekly Limits** | No | Yes | No | Yes |
-| **Same Day Requirement** | Yes | Per session | No | Per session |
-| **Scheduling Period** | N/A | Yes | N/A | Yes |
-| **Appointments Created** | 1 | Multiple | 1 | Multiple |
-| **Status Field** | requestStatus | requestStatus | status | status |
-| **Duration Source** | durationInHours | sessionDurationInHours | durationInHours | sessionDurationInHours |
+| Feature                  | Consultations   | Subscriptions          | Webinars        | Classes                |
+| ------------------------ | --------------- | ---------------------- | --------------- | ---------------------- |
+| **Type**                 | One-time        | Recurring              | One-time        | Recurring              |
+| **Participants**         | 1-on-1          | 1-on-1                 | Group           | Group                  |
+| **Weekly Limits**        | No              | Yes                    | No              | Yes                    |
+| **Same Day Requirement** | Yes             | Per session            | No              | Per session            |
+| **Scheduling Period**    | N/A             | Yes                    | N/A             | Yes                    |
+| **Appointments Created** | 1               | Multiple               | 1               | Multiple               |
+| **Status Field**         | requestStatus   | requestStatus          | status          | status                 |
+| **Duration Source**      | durationInHours | sessionDurationInHours | durationInHours | sessionDurationInHours |
 
 ---
 

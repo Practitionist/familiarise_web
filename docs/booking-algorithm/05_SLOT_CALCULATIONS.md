@@ -41,22 +41,23 @@ Each slot is represented as a pair of timestamps:
 
 ```typescript
 interface SlotOfAppointment {
-  slotStartTimeInUTC: DateTime  // e.g., 2025-01-15 10:00:00
-  slotEndTimeInUTC: DateTime    // e.g., 2025-01-15 10:30:00
+  slotStartTimeInUTC: DateTime; // e.g., 2025-01-15 10:00:00
+  slotEndTimeInUTC: DateTime; // e.g., 2025-01-15 10:30:00
 }
 
 // Invariant: endTime = startTime + 30 minutes
 ```
 
 **Example**:
+
 ```typescript
 // A 2-hour appointment consists of 4 slots:
 [
   { start: "2025-01-15T10:00:00Z", end: "2025-01-15T10:30:00Z" }, // Slot 1
   { start: "2025-01-15T10:30:00Z", end: "2025-01-15T11:00:00Z" }, // Slot 2
   { start: "2025-01-15T11:00:00Z", end: "2025-01-15T11:30:00Z" }, // Slot 3
-  { start: "2025-01-15T11:30:00Z", end: "2025-01-15T12:00:00Z" }  // Slot 4
-]
+  { start: "2025-01-15T11:30:00Z", end: "2025-01-15T12:00:00Z" }, // Slot 4
+];
 ```
 
 ---
@@ -73,14 +74,14 @@ function getSlotsPerCall(sessionDurationInHours: number): number {
 
 ### Calculation Table
 
-| Duration (hours) | Calculation | Slots Needed | Total Time |
-|------------------|-------------|--------------|------------|
-| 0.5 | Math.ceil(0.5 / 0.5) | 1 | 30 min |
-| 1.0 | Math.ceil(1.0 / 0.5) | 2 | 1 hour |
-| 1.5 | Math.ceil(1.5 / 0.5) | 3 | 1.5 hours |
-| 2.0 | Math.ceil(2.0 / 0.5) | 4 | 2 hours |
-| 2.5 | Math.ceil(2.5 / 0.5) | 5 | 2.5 hours |
-| 3.0 | Math.ceil(3.0 / 0.5) | 6 | 3 hours |
+| Duration (hours) | Calculation          | Slots Needed | Total Time |
+| ---------------- | -------------------- | ------------ | ---------- |
+| 0.5              | Math.ceil(0.5 / 0.5) | 1            | 30 min     |
+| 1.0              | Math.ceil(1.0 / 0.5) | 2            | 1 hour     |
+| 1.5              | Math.ceil(1.5 / 0.5) | 3            | 1.5 hours  |
+| 2.0              | Math.ceil(2.0 / 0.5) | 4            | 2 hours    |
+| 2.5              | Math.ceil(2.5 / 0.5) | 5            | 2.5 hours  |
+| 3.0              | Math.ceil(3.0 / 0.5) | 6            | 3 hours    |
 
 ### Why Math.ceil()?
 
@@ -142,6 +143,7 @@ function startOfWeekSunday(date: Date): Date {
 ```
 
 **Example**:
+
 ```typescript
 // Input: Wednesday, January 15, 2025, 14:30:00
 const date = new Date("2025-01-15T14:30:00Z");
@@ -248,6 +250,7 @@ Result: 2 weeks
 ### Common Pitfall: Month-Based Calculation
 
 **Wrong Approach** (don't do this):
+
 ```typescript
 // ❌ WRONG: Assumes 4.33 weeks per month
 const weeks = durationInMonths * 4.33;
@@ -258,6 +261,7 @@ const weeks = 1 * 4.33 = 4.33 → 4 weeks
 ```
 
 **Correct Approach**:
+
 ```typescript
 // ✓ CORRECT: Count actual Sunday boundaries
 const weeks = countWeeks(startDate, endDate);
@@ -279,6 +283,7 @@ function calculateRequiredSlots_OneTime(durationInHours: number): number {
 ```
 
 **Example**:
+
 ```typescript
 // 2-hour consultation
 calculateRequiredSlots_OneTime(2) → 4 slots
@@ -294,7 +299,7 @@ function calculateRequiredSlots_Recurring(
   startDate: Date,
   endDate: Date,
   callsPerWeek: number,
-  sessionDurationInHours: number
+  sessionDurationInHours: number,
 ): number {
   const totalWeeks = countWeeks(startDate, endDate);
   const totalCalls = totalWeeks * callsPerWeek;
@@ -304,6 +309,7 @@ function calculateRequiredSlots_Recurring(
 ```
 
 **Example**:
+
 ```typescript
 // 2-month subscription
 // - Start: Jan 6, 2025 (Mon)
@@ -332,7 +338,7 @@ Result: 54 slots needed
 function calculateRequiredSlots_Fallback(
   durationInMonths: number,
   callsPerWeek: number,
-  sessionDurationInHours: number
+  sessionDurationInHours: number,
 ): number {
   const weeksPerMonth = 4.33;
   const totalWeeks = Math.ceil(durationInMonths * weeksPerMonth);
@@ -381,6 +387,7 @@ function validateConsecutiveSlots(slots: Date[]): boolean {
 **Problem**: Floating-point arithmetic and timezone conversions can introduce sub-second precision errors.
 
 **Example Scenario**:
+
 ```typescript
 // Client sends:
 const slot1 = new Date("2025-01-15T10:00:00.000Z");
@@ -405,27 +412,19 @@ timeDiff = 1ms < 1000ms → ACCEPTED ✓
 
 ```typescript
 // Perfect consecutive (no gaps)
-[
-  "2025-01-15T10:00:00Z",
-  "2025-01-15T10:30:00Z",
-  "2025-01-15T11:00:00Z"
-]
-// ✓ Each slot exactly 30 minutes apart
+["2025-01-15T10:00:00Z", "2025-01-15T10:30:00Z", "2025-01-15T11:00:00Z"][
+  // ✓ Each slot exactly 30 minutes apart
 
-// Consecutive with sub-second precision
-[
-  "2025-01-15T10:00:00.000Z",
-  "2025-01-15T10:30:00.001Z",  // +1ms (within tolerance)
-  "2025-01-15T11:00:00.000Z"
-]
-// ✓ Differences < 1 second
+  // Consecutive with sub-second precision
+  ("2025-01-15T10:00:00.000Z",
+  "2025-01-15T10:30:00.001Z", // +1ms (within tolerance)
+  "2025-01-15T11:00:00.000Z")
+][
+  // ✓ Differences < 1 second
 
-// Out of order (sorted before validation)
-[
-  "2025-01-15T11:00:00Z",
-  "2025-01-15T10:00:00Z",
-  "2025-01-15T10:30:00Z"
-]
+  // Out of order (sorted before validation)
+  ("2025-01-15T11:00:00Z", "2025-01-15T10:00:00Z", "2025-01-15T10:30:00Z")
+];
 // ✓ Sorted to [10:00, 10:30, 11:00] → consecutive
 ```
 
@@ -435,25 +434,20 @@ timeDiff = 1ms < 1000ms → ACCEPTED ✓
 // Missing slot (gap)
 [
   "2025-01-15T10:00:00Z",
-  "2025-01-15T11:00:00Z"  // Missing 10:30
-]
-// ❌ Gap: 10:00 + 30min = 10:30 ≠ 11:00
-// timeDiff = 30 minutes > 1 second
+  "2025-01-15T11:00:00Z", // Missing 10:30
+][
+  // ❌ Gap: 10:00 + 30min = 10:30 ≠ 11:00
+  // timeDiff = 30 minutes > 1 second
 
-// Non-contiguous slots
-[
-  "2025-01-15T10:00:00Z",
-  "2025-01-15T10:30:00Z",
-  "2025-01-15T14:00:00Z"  // Afternoon slot
-]
-// ❌ Gap: 10:30 + 30min = 11:00 ≠ 14:00
-// timeDiff = 3.5 hours > 1 second
+  // Non-contiguous slots
+  ("2025-01-15T10:00:00Z", "2025-01-15T10:30:00Z", "2025-01-15T14:00:00Z") // Afternoon slot
+][
+  // ❌ Gap: 10:30 + 30min = 11:00 ≠ 14:00
+  // timeDiff = 3.5 hours > 1 second
 
-// Overlapping slots
-[
-  "2025-01-15T10:00:00Z",
-  "2025-01-15T10:15:00Z"  // Starts 15min after previous
-]
+  // Overlapping slots
+  ("2025-01-15T10:00:00Z", "2025-01-15T10:15:00Z") // Starts 15min after previous
+];
 // ❌ Not 30-minute increment
 // timeDiff = 15 minutes > 1 second
 ```
@@ -465,44 +459,45 @@ timeDiff = 1ms < 1000ms → ACCEPTED ✓
 ### Validation Function
 
 ```typescript
-function validateDuration(duration: number | undefined, fieldName: string): void {
+function validateDuration(
+  duration: number | undefined,
+  fieldName: string,
+): void {
   // Check existence
   if (duration === undefined || duration === null) {
     throw new Error(`${fieldName} is required but was not provided`);
   }
 
   // Check type
-  if (typeof duration !== 'number') {
+  if (typeof duration !== "number") {
     throw new Error(
-      `${fieldName} must be a number, but received type: ${typeof duration}`
+      `${fieldName} must be a number, but received type: ${typeof duration}`,
     );
   }
 
   // Check positivity
   if (duration <= 0) {
-    throw new Error(
-      `${fieldName} must be positive, but received: ${duration}`
-    );
+    throw new Error(`${fieldName} must be positive, but received: ${duration}`);
   }
 
   // Check finiteness
   if (!Number.isFinite(duration)) {
     throw new Error(
-      `${fieldName} must be a finite number, but received: ${duration}`
+      `${fieldName} must be a finite number, but received: ${duration}`,
     );
   }
 
   // Check minimum (30 minutes)
   if (duration < 0.5) {
     throw new Error(
-      `${fieldName} must be at least 0.5 hours (30 minutes), but received: ${duration}`
+      `${fieldName} must be at least 0.5 hours (30 minutes), but received: ${duration}`,
     );
   }
 
   // Warn if unusually large
   if (duration > 24) {
     console.warn(
-      `⚠️ ${fieldName} is unusually large (${duration} hours). Maximum expected is 24 hours.`
+      `⚠️ ${fieldName} is unusually large (${duration} hours). Maximum expected is 24 hours.`,
     );
   }
 }
@@ -511,6 +506,7 @@ function validateDuration(duration: number | undefined, fieldName: string): void
 ### Why Centralized Validation?
 
 **Problem**: Duration is used in division throughout the app. Invalid values cause:
+
 - Division by zero errors
 - Infinite loops in slot allocation
 - Negative slot counts
@@ -574,6 +570,7 @@ function groupSlotsByDay(slots: TimeSlot[]): Map<string, TimeSlot[]> {
 **Usage**: Validate complete sessions per day for classes.
 
 **Example**:
+
 ```typescript
 const slots = [
   { startTime: new Date("2025-01-15T10:00:00Z"), ... }, // Wed
@@ -613,6 +610,7 @@ function groupSlotsByWeek(slots: TimeSlot[]): Map<string, TimeSlot[]> {
 **Usage**: Validate weekly limits for subscriptions and classes.
 
 **Example**:
+
 ```typescript
 const slots = [
   { startTime: new Date("2025-01-13T10:00:00Z"), ... }, // Mon, Week of Jan 12
@@ -635,11 +633,11 @@ groupSlotsByWeek(slots)
 
 ```typescript
 interface ProgressInfo {
-  scheduled: number;      // Calls/sessions scheduled so far
-  required: number;       // Total calls/sessions needed
-  remaining: number;      // Calls/sessions still needed
+  scheduled: number; // Calls/sessions scheduled so far
+  required: number; // Total calls/sessions needed
+  remaining: number; // Calls/sessions still needed
   sessionDuration: number; // Duration per call in hours
-  displayText: string;    // User-friendly progress message
+  displayText: string; // User-friendly progress message
 }
 ```
 
@@ -651,7 +649,8 @@ function calculateProgress(
   eventType: EventType,
   config: EventConfig,
 ): ProgressInfo {
-  const sessionDuration = config.sessionDurationInHours || config.durationInHours || 1;
+  const sessionDuration =
+    config.sessionDurationInHours || config.durationInHours || 1;
   const slotsPerCall = getSlotsPerCall(sessionDuration);
 
   let scheduled = 0;
@@ -717,9 +716,7 @@ function countCompletedCalls(
     if (sorted.length >= slotsPerCall) {
       let consecutiveCount = 1;
       for (let i = 1; i < sorted.length; i++) {
-        if (
-          sorted[i].startTime.getTime() === sorted[i - 1].endTime.getTime()
-        ) {
+        if (sorted[i].startTime.getTime() === sorted[i - 1].endTime.getTime()) {
           consecutiveCount++;
           if (consecutiveCount === slotsPerCall) {
             completed++;
@@ -737,6 +734,7 @@ function countCompletedCalls(
 ```
 
 **Example**:
+
 ```typescript
 // Subscription: 2 calls per week, 1.5 hours per call (3 slots)
 const selectedSlots = [
@@ -788,7 +786,7 @@ const slot = new Date("2025-03-09T10:00:00"); // Ambiguous timezone
 // ✓ CORRECT: Count actual weeks
 const weeks = countWeeks(
   new Date("2024-02-01"),
-  new Date("2024-02-29") // Leap year
+  new Date("2024-02-29"), // Leap year
 );
 // → 5 weeks (Feb 1 is Thu, Feb 29 is Thu, spans 5 Sundays)
 
@@ -801,6 +799,7 @@ const weeks = 1 * 4.33; // → 4.33 weeks (inaccurate)
 **Problem**: Consultant and consultee in different timezones.
 
 **Example**:
+
 ```
 Consultant (UTC+0): Sets availability for 10:00 AM UTC
 Consultee (UTC-5): Sees slot as 5:00 AM local time
@@ -810,10 +809,10 @@ Consultee (UTC-5): Sees slot as 5:00 AM local time
 
 ```typescript
 // Database: UTC
-slotStartTimeInUTC: "2025-01-15T10:00:00Z"
+slotStartTimeInUTC: "2025-01-15T10:00:00Z";
 
 // UI Display (for UTC-5 user)
-"Jan 15, 2025 at 5:00 AM EST (10:00 AM consultant time)"
+("Jan 15, 2025 at 5:00 AM EST (10:00 AM consultant time)");
 ```
 
 ### Scenario 4: Very Long Duration
@@ -859,7 +858,7 @@ for (const slot of proposedSlots) {
 }
 
 // ✓ FAST: O(n) - set lookup
-const existingSet = new Set(existingSlots.map(s => s.toISOString()));
+const existingSet = new Set(existingSlots.map((s) => s.toISOString()));
 for (const slot of proposedSlots) {
   if (existingSet.has(slot.toISOString())) {
     // conflict
@@ -890,8 +889,8 @@ for (const slot of slots) {
 // ✓ FAST: 1 query for all slots
 const conflicts = await db.appointment.findMany({
   where: {
-    slot: { in: slots }
-  }
+    slot: { in: slots },
+  },
 });
 ```
 
@@ -902,62 +901,62 @@ const conflicts = await db.appointment.findMany({
 ### Unit Test Examples
 
 ```typescript
-describe('SlotCalculationService', () => {
-  describe('getSlotsPerCall', () => {
-    it('should calculate correct slots for standard durations', () => {
+describe("SlotCalculationService", () => {
+  describe("getSlotsPerCall", () => {
+    it("should calculate correct slots for standard durations", () => {
       expect(getSlotsPerCall(0.5)).toBe(1);
       expect(getSlotsPerCall(1)).toBe(2);
       expect(getSlotsPerCall(1.5)).toBe(3);
       expect(getSlotsPerCall(2)).toBe(4);
     });
 
-    it('should round up fractional slots', () => {
+    it("should round up fractional slots", () => {
       expect(getSlotsPerCall(1.25)).toBe(3); // Rounds 2.5 → 3
     });
   });
 
-  describe('countWeeks', () => {
-    it('should count weeks correctly across month boundaries', () => {
-      const start = new Date('2025-01-06'); // Monday
-      const end = new Date('2025-02-02'); // Sunday
+  describe("countWeeks", () => {
+    it("should count weeks correctly across month boundaries", () => {
+      const start = new Date("2025-01-06"); // Monday
+      const end = new Date("2025-02-02"); // Sunday
       expect(countWeeks(start, end)).toBe(5);
     });
 
-    it('should return 1 for dates in same week', () => {
-      const start = new Date('2025-01-06'); // Monday
-      const end = new Date('2025-01-10'); // Friday
+    it("should return 1 for dates in same week", () => {
+      const start = new Date("2025-01-06"); // Monday
+      const end = new Date("2025-01-10"); // Friday
       expect(countWeeks(start, end)).toBe(1);
     });
 
-    it('should return 0 if end is before start', () => {
-      const start = new Date('2025-02-01');
-      const end = new Date('2025-01-01');
+    it("should return 0 if end is before start", () => {
+      const start = new Date("2025-02-01");
+      const end = new Date("2025-01-01");
       expect(countWeeks(start, end)).toBe(0);
     });
   });
 
-  describe('validateConsecutiveSlots', () => {
-    it('should accept perfectly consecutive slots', () => {
+  describe("validateConsecutiveSlots", () => {
+    it("should accept perfectly consecutive slots", () => {
       const slots = [
-        new Date('2025-01-15T10:00:00Z'),
-        new Date('2025-01-15T10:30:00Z'),
-        new Date('2025-01-15T11:00:00Z'),
+        new Date("2025-01-15T10:00:00Z"),
+        new Date("2025-01-15T10:30:00Z"),
+        new Date("2025-01-15T11:00:00Z"),
       ];
       expect(validateConsecutiveSlots(slots).isValid).toBe(true);
     });
 
-    it('should reject slots with gaps', () => {
+    it("should reject slots with gaps", () => {
       const slots = [
-        new Date('2025-01-15T10:00:00Z'),
-        new Date('2025-01-15T11:00:00Z'), // Missing 10:30
+        new Date("2025-01-15T10:00:00Z"),
+        new Date("2025-01-15T11:00:00Z"), // Missing 10:30
       ];
       expect(validateConsecutiveSlots(slots).isValid).toBe(false);
     });
 
-    it('should tolerate sub-second precision errors', () => {
+    it("should tolerate sub-second precision errors", () => {
       const slots = [
-        new Date('2025-01-15T10:00:00.000Z'),
-        new Date('2025-01-15T10:30:00.001Z'), // 1ms difference
+        new Date("2025-01-15T10:00:00.000Z"),
+        new Date("2025-01-15T10:30:00.001Z"), // 1ms difference
       ];
       expect(validateConsecutiveSlots(slots).isValid).toBe(true);
     });
@@ -969,14 +968,14 @@ describe('SlotCalculationService', () => {
 
 ## Summary Formulas
 
-| Calculation | Formula | Example |
-|-------------|---------|---------|
-| **Slots per call** | `Math.ceil(duration / 0.5)` | 1.5 hours → 3 slots |
-| **Week start** | `date - date.getDay() days, 00:00:00` | Jan 15 (Wed) → Jan 12 (Sun) |
-| **Week count** | Count Sundays from start to end | Jan 6 to Feb 2 → 5 weeks |
-| **Total slots (one-time)** | `slots_per_call` | 2 hours → 4 slots |
-| **Total slots (recurring)** | `weeks × calls/week × slots/call` | 5 wk × 2 call/wk × 3 slot → 30 slots |
-| **Consecutive check** | `slot[i].start == slot[i-1].end ± 1s` | 10:30:00.001 vs 10:30:00.000 → OK |
+| Calculation                 | Formula                               | Example                              |
+| --------------------------- | ------------------------------------- | ------------------------------------ |
+| **Slots per call**          | `Math.ceil(duration / 0.5)`           | 1.5 hours → 3 slots                  |
+| **Week start**              | `date - date.getDay() days, 00:00:00` | Jan 15 (Wed) → Jan 12 (Sun)          |
+| **Week count**              | Count Sundays from start to end       | Jan 6 to Feb 2 → 5 weeks             |
+| **Total slots (one-time)**  | `slots_per_call`                      | 2 hours → 4 slots                    |
+| **Total slots (recurring)** | `weeks × calls/week × slots/call`     | 5 wk × 2 call/wk × 3 slot → 30 slots |
+| **Consecutive check**       | `slot[i].start == slot[i-1].end ± 1s` | 10:30:00.001 vs 10:30:00.000 → OK    |
 
 ---
 
