@@ -1,6 +1,5 @@
-import { UnifiedCalendar } from "../../shared/components/UnifiedCalendar";
+import { SafeUnifiedCalendar } from "../../shared/components/SafeUnifiedCalendar";
 import { TimeSlot } from "../../shared/utils/calendarUtils";
-import { useEffect, useState } from "react";
 
 type TimingsCalendarProps = {
   consultantId: string;
@@ -11,6 +10,9 @@ type TimingsCalendarProps = {
   requiredSlots: number;
   durationInMonths?: number;
   callsPerWeek?: number;
+  sessionDurationInHours?: number;
+  allowedStart?: Date;
+  allowedEnd?: Date;
 };
 
 export function TimingsCalendar({
@@ -19,9 +21,12 @@ export function TimingsCalendar({
   eventId,
   onSlotSelect,
   selectedSlots = [],
-  requiredSlots,
+  requiredSlots: _requiredSlots, // Used by parent for validation
   durationInMonths,
   callsPerWeek,
+  sessionDurationInHours,
+  allowedStart,
+  allowedEnd,
 }: TimingsCalendarProps) {
   // Convert string slots to TimeSlot objects for the unified calendar
   const convertToTimeSlots = (slotStrings: string[]): TimeSlot[] => {
@@ -45,15 +50,19 @@ export function TimingsCalendar({
   };
 
   return (
-    <UnifiedCalendar
+    <SafeUnifiedCalendar
       consultantId={consultantId}
       eventType={eventType}
       eventId={eventId}
       durationInMonths={durationInMonths}
       callsPerWeek={callsPerWeek}
+      sessionDurationInHours={sessionDurationInHours}
       mode="select"
       onSlotsSelected={handleSlotsSelected}
       preSelectedSlots={convertToTimeSlots(selectedSlots)}
+      showAllocationButtons={false}
+      allowedStart={allowedStart}
+      allowedEnd={allowedEnd}
       className="h-full"
     />
   );

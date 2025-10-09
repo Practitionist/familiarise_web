@@ -14,7 +14,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Table,
@@ -65,6 +64,10 @@ interface Request {
   allocatedSlots?: string[];
   durationInMonths?: number;
   callsPerWeek?: number;
+  sessionDurationInHours?: number;
+  durationInHours?: number;
+  startDate?: Date;
+  endDate?: Date;
 }
 
 // interface SlotInterval { ... } // Removed - Now imported
@@ -225,7 +228,12 @@ export function RequestSlotAllocationTab({
                 (slot) => slot.slotStartTimeInUTC,
               ) || [],
             status: consultation.requestStatus,
-            requiredSlots: 1, // Consultations always require 1 slot
+            requiredSlots: Math.ceil(
+              (consultation.consultationPlan?.durationInHours || 1) / 0.5,
+            ), // Convert hours to 30-min slots
+            durationInHours:
+              consultation.consultationPlan?.durationInHours || 1,
+            // No scheduling period for consultations (one-time event)
           })),
         );
       }
@@ -237,27 +245,42 @@ export function RequestSlotAllocationTab({
         (type === "all" || type === "subscription")
       ) {
         processedRequests.push(
-          ...subscriptionsResult.data.map((subscription) => ({
-            id: subscription.id,
-            type: AppointmentsType.SUBSCRIPTION,
-            title: subscription.subscriptionPlan?.title || "Untitled Plan",
-            requestedBy: subscription.requestedBy,
-            requestedAt: subscription.requestedAt,
-            requestedTimes:
-              subscription.appointments?.flatMap(
-                (appt) =>
-                  appt.slotsOfAppointment?.map(
-                    (slot) => slot.slotStartTimeInUTC,
-                  ) || [],
-              ) || [],
-            status: subscription.requestStatus,
-            requiredSlots:
-              (subscription.subscriptionPlan?.callsPerWeek ?? 0) *
-                4 *
-                (subscription.subscriptionPlan?.durationInMonths ?? 0) || 0,
-            durationInMonths: subscription.subscriptionPlan?.durationInMonths,
-            callsPerWeek: subscription.subscriptionPlan?.callsPerWeek,
-          })),
+          ...subscriptionsResult.data.map((subscription) => {
+            const sessionDuration =
+              subscription.subscriptionPlan?.sessionDurationInHours || 1;
+            const slotsPerSession = Math.ceil(sessionDuration / 0.5);
+
+            return {
+              id: subscription.id,
+              type: AppointmentsType.SUBSCRIPTION,
+              title: subscription.subscriptionPlan?.title || "Untitled Plan",
+              requestedBy: subscription.requestedBy,
+              requestedAt: subscription.requestedAt,
+              requestedTimes:
+                subscription.appointments?.flatMap(
+                  (appt) =>
+                    appt.slotsOfAppointment?.map(
+                      (slot) => slot.slotStartTimeInUTC,
+                    ) || [],
+                ) || [],
+              status: subscription.requestStatus,
+              requiredSlots:
+                (subscription.subscriptionPlan?.callsPerWeek ?? 0) *
+                  4 *
+                  (subscription.subscriptionPlan?.durationInMonths ?? 0) *
+                  slotsPerSession || 0,
+              durationInMonths: subscription.subscriptionPlan?.durationInMonths,
+              callsPerWeek: subscription.subscriptionPlan?.callsPerWeek,
+              sessionDurationInHours: sessionDuration,
+              // Scheduling period for subscriptions
+              startDate: subscription.startDate
+                ? new Date(subscription.startDate)
+                : undefined,
+              endDate: subscription.endDate
+                ? new Date(subscription.endDate)
+                : undefined,
+            };
+          }),
         );
       }
 
@@ -745,10 +768,41 @@ export function RequestSlotAllocationTab({
               <DialogTitle>Allocate Slots</DialogTitle>
               <DialogDescription>
                 {selectedRequest && (
-                  <>
-                    Choose {selectedRequest.requiredSlots} slots for{" "}
-                    {selectedRequest.type.toLowerCase()}
-                  </>
+                  <div className="space-y-1">
+                    <p>
+                      Choose {selectedRequest.requiredSlots} slots for{" "}
+                      {selectedRequest.type.toLowerCase()}
+                    </p>
+                    {selectedRequest.type === "SUBSCRIPTION" &&
+                      selectedRequest.sessionDurationInHours && (
+                        <p className="text-xs">
+                          Each call is{" "}
+                          {selectedRequest.sessionDurationInHours === 1
+                            ? "1 hour"
+                            : `${selectedRequest.sessionDurationInHours} hours`}{" "}
+                          ({Math.ceil(selectedRequest.sessionDurationInHours / 0.5)}{" "}
+                          consecutive slots per call)
+                        </p>
+                      )}
+                    {selectedRequest.type === "CONSULTATION" &&
+                      selectedRequest.durationInHours && (
+                        <p className="text-xs">
+                          Consultation is{" "}
+                          {selectedRequest.durationInHours === 1
+                            ? "1 hour"
+                            : `${selectedRequest.durationInHours} hours`}{" "}
+                          ({Math.ceil(selectedRequest.durationInHours / 0.5)}{" "}
+                          consecutive slots)
+                        </p>
+                      )}
+                    {selectedRequest.startDate && selectedRequest.endDate && (
+                      <p className="text-xs text-blue-600">
+                        Scheduling period:{" "}
+                        {selectedRequest.startDate.toLocaleDateString()} -{" "}
+                        {selectedRequest.endDate.toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
                 )}
               </DialogDescription>
             </DialogHeader>
@@ -774,6 +828,13 @@ export function RequestSlotAllocationTab({
                     ? selectedRequest.callsPerWeek
                     : undefined
                 }
+                sessionDurationInHours={
+                  selectedRequest.type === "SUBSCRIPTION"
+                    ? selectedRequest.sessionDurationInHours
+                    : selectedRequest.durationInHours
+                }
+                allowedStart={selectedRequest.startDate}
+                allowedEnd={selectedRequest.endDate}
               />
             )}
             <DialogFooter>
