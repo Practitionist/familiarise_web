@@ -4,33 +4,27 @@ import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { User, Star, StarHalf } from "lucide-react";
 import { TConsultantProfile } from "@/types/consultant";
 
+// Fetcher function for the experts API
+const fetchFeaturedExperts = async (): Promise<TConsultantProfile[]> => {
+  const response = await fetch("/api/user/consultants?limit=5");
+  if (!response.ok) throw new Error("Failed to fetch experts");
+  const data = await response.json();
+  return data?.data || [];
+};
+
 export function FeaturedExperts() {
-  const [experts, setExperts] = useState<TConsultantProfile[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function fetchExperts() {
-      try {
-        const response = await fetch("/api/user/consultants?limit=5");
-        if (!response.ok) throw new Error("Failed to fetch");
-
-        const data = await response.json();
-        if (data?.data && data.data.length > 0) {
-          setExperts(data.data);
-        }
-      } catch (error) {
-        console.error("Error fetching experts:", error);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchExperts();
-  }, []);
+  const { data: experts = [], isLoading } = useQuery({
+    queryKey: ["featured-experts"],
+    queryFn: fetchFeaturedExperts,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
+    retry: 2,
+  });
 
   const renderRating = (rating: number) => {
     const fullStars = Math.floor(rating);
@@ -67,7 +61,7 @@ export function FeaturedExperts() {
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 max-w-7xl mx-auto">
-          {loading
+          {isLoading
             ? // Show loading skeletons
               Array(5)
                 .fill(0)

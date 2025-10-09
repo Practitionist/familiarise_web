@@ -1,6 +1,6 @@
 "use client";
 
-import useSWR from "swr";
+import { useQuery } from "@tanstack/react-query";
 
 import { AnimatePresence, motion } from "framer-motion";
 import { Star, StarHalf, User } from "lucide-react";
@@ -496,8 +496,8 @@ interface FetchError extends Error {
   status?: number;
 }
 
-// Fetcher function for useSWR (expects API to return { data: [...] })
-const fetcher = async <T = unknown,>(url: string): Promise<T> => {
+// Fetcher function for home page APIs (expects API to return { data: [...] })
+const fetchHomePageData = async <T = unknown,>(url: string): Promise<T> => {
   const res = await fetch(url);
   if (!res.ok) {
     const error: FetchError = new Error(
@@ -527,48 +527,46 @@ const supabaseImagesFetcher = async ([, bucket, path]: [
   return imageData || []; // Default to empty array if null/undefined
 };
 
-// Optimized SWR configuration for a SaaS landing page
-const swrOptions = {
-  revalidateOnFocus: false,
-  revalidateOnReconnect: false,
-  refreshInterval: 0, // Disable polling, landing page data is not typically real-time
-  shouldRetryOnError: true, // Retry on error for critical data
-  errorRetryCount: 2, // Number of retry attempts
-  dedupingInterval: 5000, // 5 seconds to prevent duplicate requests for the same key
-  keepPreviousData: true, // Show stale data while revalidating, prevents UI flashes
-};
-
 export default function Home() {
-  // SWR hooks for data fetching
+  // React Query hooks for data fetching
   const {
     data: imagesData,
     error: imagesError,
     isLoading: isLoadingImages,
-  } = useSWR<SupabaseImageFile[]>(
-    ["supabase_landing_images", "assets", "images/landing-page"],
-    supabaseImagesFetcher,
-    swrOptions,
-  );
+  } = useQuery<SupabaseImageFile[]>({
+    queryKey: ["supabase_landing_images", "assets", "images/landing-page"],
+    queryFn: ({ queryKey }) =>
+      supabaseImagesFetcher(queryKey as [string, string, string]),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
+    retry: 2,
+  });
 
   const {
     data: expertsData,
     error: expertsError,
     isLoading: isLoadingExperts,
-  } = useSWR<TConsultantProfile[]>(
-    "/api/user/consultants?limit=10",
-    fetcher,
-    swrOptions,
-  );
+  } = useQuery<TConsultantProfile[]>({
+    queryKey: ["home-experts"],
+    queryFn: () =>
+      fetchHomePageData<TConsultantProfile[]>("/api/user/consultants?limit=10"),
+    staleTime: 2 * 60 * 1000, // 2 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
+    retry: 2,
+  });
 
   const {
     data: reviewsData,
     error: reviewsError,
     isLoading: isLoadingReviews,
-  } = useSWR<ReviewWithProfiles[]>(
-    "/api/user/reviews?rating=4",
-    fetcher,
-    swrOptions,
-  );
+  } = useQuery<ReviewWithProfiles[]>({
+    queryKey: ["home-reviews"],
+    queryFn: () =>
+      fetchHomePageData<ReviewWithProfiles[]>("/api/user/reviews?rating=4"),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
+    retry: 2,
+  });
 
   // Provide default empty arrays for rendering and downstream logic
   const images: SupabaseImageFile[] = imagesData || [];
@@ -579,14 +577,14 @@ export default function Home() {
   // Individual isLoadingImages, isLoadingExperts, isLoadingReviews can be used for per-section skeletons if needed.
   const isLoading = isLoadingImages || isLoadingExperts || isLoadingReviews;
 
-  // Log errors from SWR. Ensure useEffect is imported from 'react'.
+  // Log errors from Fetch. Ensure useEffect is imported from 'react'.
   useEffect(() => {
     if (imagesError)
-      console.error("SWR - Failed to fetch images:", imagesError);
+      console.error("Fetch - Failed to fetch images:", imagesError);
     if (expertsError)
-      console.error("SWR - Failed to fetch experts:", expertsError);
+      console.error("Fetch - Failed to fetch experts:", expertsError);
     if (reviewsError)
-      console.error("SWR - Failed to fetch reviews:", reviewsError);
+      console.error("Fetch - Failed to fetch reviews:", reviewsError);
   }, [imagesError, expertsError, reviewsError]);
 
   // For Testimonials marquee effect

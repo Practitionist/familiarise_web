@@ -35,7 +35,6 @@ function FindExperts() {
     isLoadingMore,
     hasMore,
     loadMore,
-    prefetchNextPage,
     refresh: refreshConsultants,
   } = useConsultants({
     selectedDomain,
@@ -55,25 +54,16 @@ function FindExperts() {
       observer.current = new IntersectionObserver((entries) => {
         if (entries[0].isIntersecting && hasMore) {
           loadMore();
-          // Prefetch the next page when we're near the end
-          prefetchNextPage();
         }
       });
 
       if (node) observer.current.observe(node);
     },
-    [isLoadingMore, hasMore, loadMore, prefetchNextPage],
+    [isLoadingMore, hasMore, loadMore],
   );
 
   // Group consultants by domain
   const groupedConsultants = groupConsultantsByDomain(consultants);
-
-  // Prefetch next page when component mounts or filters change
-  useEffect(() => {
-    if (!isLoadingConsultants && hasMore) {
-      prefetchNextPage();
-    }
-  }, [isLoadingConsultants, hasMore, prefetchNextPage]);
 
   if (isLoadingMetadata) {
     return (
@@ -129,32 +119,34 @@ function FindExperts() {
         ) : (
           <>
             {metadata?.domains.map((domain) => {
-              const domainConsultants = groupedConsultants.get(domain.id) || [];
+              const domainConsultants = groupedConsultants[domain.name] || [];
 
               if (domainConsultants.length === 0) return null;
 
               return (
                 <div key={domain.id} className="space-y-4">
                   <h2 className="text-2xl font-bold">{domain.name}</h2>
-                  {domainConsultants.map((consultant, index) => {
-                    if (domainConsultants.length === index + 1) {
+                  {domainConsultants.map(
+                    (consultant: TConsultantProfile, index: number) => {
+                      if (domainConsultants.length === index + 1) {
+                        return (
+                          <div key={consultant.id} ref={lastConsultantRef}>
+                            <ConsultantCard
+                              consultant={consultant}
+                              metadata={metadata}
+                            />
+                          </div>
+                        );
+                      }
                       return (
-                        <div key={consultant.id} ref={lastConsultantRef}>
-                          <ConsultantCard
-                            consultant={consultant}
-                            metadata={metadata}
-                          />
-                        </div>
+                        <ConsultantCard
+                          key={consultant.id}
+                          consultant={consultant}
+                          metadata={metadata}
+                        />
                       );
-                    }
-                    return (
-                      <ConsultantCard
-                        key={consultant.id}
-                        consultant={consultant}
-                        metadata={metadata}
-                      />
-                    );
-                  })}
+                    },
+                  )}
                 </div>
               );
             })}
