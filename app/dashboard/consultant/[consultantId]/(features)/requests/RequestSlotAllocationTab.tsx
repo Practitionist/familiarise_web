@@ -762,7 +762,10 @@ export function RequestSlotAllocationTab({
                           {selectedRequest.sessionDurationInHours === 1
                             ? "1 hour"
                             : `${selectedRequest.sessionDurationInHours} hours`}{" "}
-                          ({Math.ceil(selectedRequest.sessionDurationInHours / 0.5)}{" "}
+                          (
+                          {Math.ceil(
+                            selectedRequest.sessionDurationInHours / 0.5,
+                          )}{" "}
                           consecutive slots per call)
                         </p>
                       )}

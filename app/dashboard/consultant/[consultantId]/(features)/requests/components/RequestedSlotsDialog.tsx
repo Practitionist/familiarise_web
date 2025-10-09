@@ -213,7 +213,8 @@ export function RequestedSlotsDialog({
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-gray-600 flex items-center gap-1">
-                  <span className="text-yellow-600">🟡</span> Outside Availability:
+                  <span className="text-yellow-600">🟡</span> Outside
+                  Availability:
                 </span>
                 <span className="font-semibold text-yellow-700">
                   {outsideAvailability.length}
@@ -252,7 +253,8 @@ export function RequestedSlotsDialog({
                 </ul>
               </div>
               <p className="text-xs text-red-600">
-                ❌ Cannot allocate slots that conflict with existing appointments.
+                ❌ Cannot allocate slots that conflict with existing
+                appointments.
               </p>
             </div>
           )}
@@ -260,7 +262,8 @@ export function RequestedSlotsDialog({
           {hasOutsideSlots && (
             <div className="bg-yellow-50 p-4 rounded-md mb-4 border border-yellow-200">
               <h3 className="font-semibold text-yellow-900 mb-2 flex items-center gap-2">
-                <span>🟡</span> Slots Outside Availability ({outsideAvailability.length})
+                <span>🟡</span> Slots Outside Availability (
+                {outsideAvailability.length})
               </h3>
               <div className="max-h-48 overflow-y-auto mb-2">
                 {/* Group outside availability slots by date */}
@@ -268,7 +271,9 @@ export function RequestedSlotsDialog({
                   groupSlotsByDate(outsideAvailability.map((s) => s.slot)),
                 ).map(([date, slots]) => (
                   <div key={date} className="mb-2">
-                    <p className="text-sm font-medium text-yellow-900">{date}:</p>
+                    <p className="text-sm font-medium text-yellow-900">
+                      {date}:
+                    </p>
                     <ul className="ml-3 space-y-1">
                       {slots.map((slot) => (
                         <li key={slot} className="text-sm text-yellow-700">
@@ -289,10 +294,12 @@ export function RequestedSlotsDialog({
           {hasOutsidePeriod && (
             <div className="bg-blue-50 p-4 rounded-md mb-4 border border-blue-200">
               <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
-                <span>🔵</span> Slots Outside Scheduling Period ({outsidePeriod.length})
+                <span>🔵</span> Slots Outside Scheduling Period (
+                {outsidePeriod.length})
               </h3>
               <p className="text-sm text-blue-700 mb-3">
-                The following slots are outside the subscription scheduling period{" "}
+                The following slots are outside the subscription scheduling
+                period{" "}
                 {schedulingPeriod?.startDate && schedulingPeriod?.endDate && (
                   <>
                     ({schedulingPeriod.startDate.toLocaleDateString()} -{" "}
@@ -332,8 +339,8 @@ export function RequestedSlotsDialog({
                 <span>✅</span> All Slots Available
               </h3>
               <p className="text-sm text-green-700 mb-3">
-                All {requestedSlots.length} requested slots are within your availability and have no
-                conflicts.
+                All {requestedSlots.length} requested slots are within your
+                availability and have no conflicts.
               </p>
               {/* Show requested slots - collapsible if more than 10 */}
               {requestedSlots.length <= 10 ? (
@@ -375,7 +382,8 @@ export function RequestedSlotsDialog({
             /* Some issues but also some available - show collapsible */
             <details className="bg-green-50 p-4 rounded-md border border-green-200">
               <summary className="cursor-pointer font-semibold text-green-900 hover:text-green-800 select-none flex items-center gap-2">
-                <span>▶</span> View {availableSlotsCount} available slot{availableSlotsCount !== 1 ? 's' : ''}
+                <span>▶</span> View {availableSlotsCount} available slot
+                {availableSlotsCount !== 1 ? "s" : ""}
               </summary>
               <div className="mt-3 max-h-64 overflow-y-auto text-sm text-green-700">
                 {Array.from(
@@ -384,9 +392,9 @@ export function RequestedSlotsDialog({
                       (slot) =>
                         !conflicts.some((c) => c.slot === slot) &&
                         !outsideAvailability.some((o) => o.slot === slot) &&
-                        !outsidePeriod.some((p) => p.slot === slot)
-                    )
-                  )
+                        !outsidePeriod.some((p) => p.slot === slot),
+                    ),
+                  ),
                 ).map(([date, slots]) => (
                   <div key={date} className="mb-2">
                     <p className="font-medium text-green-900">{date}:</p>
@@ -426,17 +434,20 @@ export function RequestedSlotsDialog({
             Cancel
           </Button>
 
-          {!hasConflicts && !hasOutsidePeriod && !loading && validationResult && (
-            <Button
-              variant={hasOutsideSlots ? "destructive" : "default"}
-              onClick={() => onConfirm(hasOutsideSlots)}
-              disabled={loading}
-            >
-              {hasOutsideSlots
-                ? "Override and Allocate"
-                : "Allocate Requested Times"}
-            </Button>
-          )}
+          {!hasConflicts &&
+            !hasOutsidePeriod &&
+            !loading &&
+            validationResult && (
+              <Button
+                variant={hasOutsideSlots ? "destructive" : "default"}
+                onClick={() => onConfirm(hasOutsideSlots)}
+                disabled={loading}
+              >
+                {hasOutsideSlots
+                  ? "Override and Allocate"
+                  : "Allocate Requested Times"}
+              </Button>
+            )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
