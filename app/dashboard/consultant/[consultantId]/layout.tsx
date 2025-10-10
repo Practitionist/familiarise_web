@@ -11,16 +11,29 @@ import { usePathname, useRouter } from "next/navigation";
 import { use, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchConsultantData } from "./utils/fetchHelpers";
+import {
+  LayoutDashboard,
+  MessageCircle,
+  Calendar,
+  ClipboardList,
+  FileText,
+  FileCheck,
+  HelpCircle,
+  Settings,
+  LogOut,
+  User,
+  ChevronDown,
+} from "lucide-react";
 
 // Navigation configuration
 const NAV_ITEMS = [
-  { name: "Home", path: "home", icon: "🏠" },
-  { name: "Chats", path: "chats", icon: "💬" },
-  { name: "Appointments", path: "appointments", icon: "📅" },
-  { name: "Event Planner", path: "planner", icon: "📋" },
-  { name: "Requests", path: "requests", icon: "📝" },
-  { name: "Documents for Review", path: "documents", icon: "📄" },
-  { name: "Help", path: "help", icon: "❓" },
+  { name: "Dashboard", path: "home", icon: LayoutDashboard },
+  { name: "Chats", path: "chats", icon: MessageCircle },
+  { name: "Appointments", path: "appointments", icon: Calendar },
+  { name: "Event Planner", path: "planner", icon: ClipboardList },
+  { name: "Requests", path: "requests", icon: FileText },
+  { name: "Documents", path: "documents", icon: FileCheck },
+  { name: "Help & Support", path: "help", icon: HelpCircle },
 ] as const;
 
 interface PageProps {
@@ -146,97 +159,104 @@ export default function ConsultantLayout({
 
   // Main layout - Note we always render the layout even during loading
   return (
-    <div className="flex min-h-screen bg-gray-100">
+    <div className="flex min-h-screen bg-gray-50">
       {/* Sidebar */}
-      <aside className="w-64 bg-white border-r relative min-h-screen flex flex-col">
+      <aside className="w-64 bg-white border-r border-gray-200 fixed left-0 top-0 h-screen flex flex-col">
+        {/* Branding Section */}
+        <div className="p-6 border-b border-gray-200 flex-shrink-0">
+          <h1 className="text-xl font-bold text-gray-900">Familiarise</h1>
+        </div>
+
         {/* Profile Section */}
-        <div className="p-4 border-b">
+        <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0">
           {isLoading ? (
             <div className="flex items-center space-x-3">
-              <Skeleton className="h-12 w-12 rounded-full" />
+              <Skeleton className="h-10 w-10 rounded-full" />
               <div className="space-y-2">
-                <Skeleton className="h-4 w-[150px]" />
-                <Skeleton className="h-4 w-[100px]" />
+                <Skeleton className="h-4 w-[120px]" />
+                <Skeleton className="h-3 w-[80px]" />
               </div>
             </div>
           ) : (
             <div className="flex items-center space-x-3">
-              <Avatar className="h-12 w-12">
+              <Avatar className="h-10 w-10">
                 <AvatarImage
                   src={consultantData?.user.image || "/placeholder.svg"}
                   alt={consultantData?.user.name || ""}
                 />
-                <AvatarFallback>
+                <AvatarFallback className="bg-gray-200 text-gray-700">
                   {consultantData?.user.name?.charAt(0) || "?"}
                 </AvatarFallback>
               </Avatar>
-              <div>
-                <h2 className="font-semibold">{consultantData?.user.name}</h2>
-                <p className="text-sm text-gray-500">CONSULTANT</p>
+              <div className="flex-1 min-w-0">
+                <h2 className="font-medium text-sm text-gray-900 truncate">
+                  {consultantData?.user.name}
+                </h2>
+                <p className="text-xs text-gray-500 truncate">
+                  {consultantData?.specialization || "Consultant"}
+                </p>
               </div>
             </div>
           )}
         </div>
 
-        {/* Navigation */}
-        <nav className="p-4 flex-grow">
-          <ul className="space-y-2">
-            {NAV_ITEMS.map((item) => (
-              <li key={item.path}>
-                <Link
-                  href={`/dashboard/consultant/${consultantId}/${item.path}`}
-                  className={`flex items-center space-x-2 p-2 rounded-md transition-colors ${
-                    currentPath === item.path
-                      ? "bg-blue-50 text-blue-600"
-                      : "text-gray-600 hover:bg-gray-100"
-                  }`}
-                  prefetch={true}
-                  onMouseEnter={() => handleNavHover(item.path)}
-                >
-                  <span>{item.icon}</span>
-                  <span>{item.name}</span>
-                </Link>
-              </li>
-            ))}
+        {/* Navigation - Scrollable */}
+        <nav className="flex-1 px-3 py-4 overflow-y-auto">
+          <ul className="space-y-1">
+            {NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <li key={item.path}>
+                  <Link
+                    href={`/dashboard/consultant/${consultantId}/${item.path}`}
+                    className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-colors text-sm font-medium ${
+                      currentPath === item.path
+                        ? "bg-gray-100 text-gray-900"
+                        : "text-gray-600 hover:bg-gray-50"
+                    }`}
+                    prefetch={true}
+                    onMouseEnter={() => handleNavHover(item.path)}
+                  >
+                    <Icon size={20} className={currentPath === item.path ? "text-gray-900" : "text-gray-500"} />
+                    <span>{item.name}</span>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         </nav>
 
-        {/* Bottom Navigation */}
-        <div className="border-t bg-white mt-auto">
-          <Link
-            href="/"
-            className="flex items-center space-x-2 p-4 text-gray-600 hover:bg-gray-100 transition-colors"
-          >
-            <span>⬅️</span>
-            <span>Back</span>
-          </Link>
-          <Link
-            href={`/dashboard/consultant/${consultantId}/settings`}
-            className={`flex items-center space-x-2 p-4 transition-colors ${
-              currentPath === "settings"
-                ? "bg-blue-50 text-blue-600"
-                : "text-gray-600 hover:bg-gray-100"
-            }`}
-            prefetch={true}
-            onMouseEnter={() =>
-              router.prefetch(`/dashboard/consultant/${consultantId}/settings`)
-            }
-          >
-            <span>⚙️</span>
-            <span>Settings</span>
-          </Link>
-          <button
-            onClick={() => signOut()}
-            className="flex items-center space-x-2 p-4 w-full text-red-600 hover:bg-red-50 transition-colors"
-          >
-            <span>🚪</span>
-            <span>Logout</span>
-          </button>
+        {/* Bottom Navigation - Sticky at Bottom */}
+        <div className="border-t border-gray-200 bg-white px-3 py-3 flex-shrink-0">
+          <div className="space-y-1">
+            <Link
+              href={`/dashboard/consultant/${consultantId}/settings`}
+              className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-colors text-sm font-medium ${
+                currentPath === "settings"
+                  ? "bg-gray-100 text-gray-900"
+                  : "text-gray-600 hover:bg-gray-50"
+              }`}
+              prefetch={true}
+              onMouseEnter={() =>
+                router.prefetch(`/dashboard/consultant/${consultantId}/settings`)
+              }
+            >
+              <Settings size={20} className={currentPath === "settings" ? "text-gray-900" : "text-gray-500"} />
+              <span>Settings</span>
+            </Link>
+            <button
+              onClick={() => signOut()}
+              className="flex items-center space-x-3 px-3 py-2.5 rounded-lg transition-colors text-sm font-medium w-full text-gray-600 hover:bg-gray-50"
+            >
+              <LogOut size={20} className="text-gray-500" />
+              <span>Logout</span>
+            </button>
+          </div>
         </div>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 p-8 overflow-auto">
+      <main className="flex-1 ml-64 p-8 overflow-auto">
         {error ? (
           // Display error within the main content area
           <div className="flex items-center justify-center h-full">

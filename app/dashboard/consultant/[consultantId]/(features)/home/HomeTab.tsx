@@ -8,7 +8,6 @@ import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
 import { useStreamVideoClient } from "@stream-io/video-react-sdk";
 import { useRouter } from "next/navigation";
 import { Suspense } from "react";
-import { ClientActivity } from "../../components/ClientActivity";
 import {
   formatAppointmentTime,
   getAppointmentStatus,
@@ -24,7 +23,7 @@ import {
   sortAppointmentsByStartTime,
 } from "../../utils/appointmentHelpers";
 
-import { IActivity, IApproval, BADGE_STYLES } from "../../types";
+import { IApproval, BADGE_STYLES } from "../../types";
 import { TAppointment } from "@/types/appointment";
 import { RequestSlotAllocationTabMini } from "../requests/RequestSlotAllocationTabMini";
 import { convertTAppointmentToIAppointment } from "../appointments/utils/appointmentTypeAdapter";
@@ -34,14 +33,12 @@ type BadgeStyleMap = typeof BADGE_STYLES; // Use typeof if BADGE_STYLES is an ob
 
 interface HomeTabProps {
   appointments: TAppointment[];
-  activities: IActivity[];
   approvals: IApproval[];
   badgeStyles: BadgeStyleMap; // Accept the data object
 }
 
 export function HomeTab({
   appointments,
-  activities,
   badgeStyles, // Destructure the new prop
 }: Readonly<HomeTabProps>) {
   const router = useRouter();
@@ -336,30 +333,12 @@ export function HomeTab({
         </Suspense>
       </div>
       <div className="space-y-4 lg:space-y-6">
-        <Suspense fallback={<div>Loading client activity...</div>}>
-          <div className="bg-white p-4 lg:p-6 rounded-lg shadow">
-            <h2 className="text-lg lg:text-xl font-semibold mb-3 lg:mb-4">
-              Clients Activity
-            </h2>
-            <ClientActivity
-              activities={activities.map((activity) => ({
-                id: activity.id,
-                name: activity.name,
-                action: activity.action,
-                time: activity.time,
-              }))}
-            />
-            <Button className="mt-3 lg:mt-4 w-full bg-blue-500 text-white">
-              Login Report
-            </Button>
-          </div>
-        </Suspense>
         <Suspense fallback={<div>Loading approvals...</div>}>
           <div className="bg-white p-4 lg:p-6 rounded-lg shadow">
             <h2 className="text-lg lg:text-xl font-semibold mb-3 lg:mb-4">
               Pending Approvals
             </h2>
-            <div className="max-h-[300px] overflow-auto">
+            <div className="max-h-[calc(100vh-200px)] overflow-auto">
               <RequestSlotAllocationTabMini />
             </div>
           </div>

@@ -202,15 +202,11 @@ export async function GET(
       time: formatTime(approval.requestedAt),
     }));
 
-    // Activities are empty for now (as in original)
-    const activities: any[] = [];
-
     // Return consolidated response
     return NextResponse.json({
       success: true,
       data: {
         appointments: transformedAppointments,
-        activities,
         approvals,
       },
     });

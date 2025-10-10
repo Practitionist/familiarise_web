@@ -4,7 +4,7 @@ import {
   TSubscription,
 } from "@/types/appointment";
 import { TConsultantProfile } from "@/types/consultant";
-import { ApiResponse, IActivity, IApproval, IDocument } from "../types";
+import { ApiResponse, IApproval, IDocument } from "../types";
 
 // Helper to get the base URL, preferring VERCEL_URL if available
 const getBaseUrl = () => {
@@ -113,25 +113,6 @@ export async function fetchApprovals(
     return approvals;
   } catch (error) {
     console.error("Error fetching approvals:", error);
-    throw error;
-  }
-}
-
-export async function fetchActivities(
-  consultantId: string,
-): Promise<IActivity[]> {
-  const baseUrl = getBaseUrl();
-  try {
-    const response = await fetch(
-      `${baseUrl}/api/activities?consultantId=${consultantId}`,
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to fetch activities: ${response.statusText}`);
-    }
-    const data: ApiResponse<IActivity[]> = await response.json();
-    return data.data;
-  } catch (error) {
-    console.error("Error fetching activities:", error);
     throw error;
   }
 }

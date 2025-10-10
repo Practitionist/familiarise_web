@@ -170,13 +170,6 @@ export interface IDocument {
   tag: string;
 }
 
-export interface IActivity {
-  id: string;
-  name: string;
-  action: string;
-  time: string;
-}
-
 export interface IApproval {
   id: string;
   name: string;
@@ -193,7 +186,6 @@ export interface WithBadgeStyle {
 // Props for each tab component
 export interface HomeTabProps {
   appointments: TAppointment[];
-  activities: IActivity[];
   approvals: IApproval[];
   badgeStyles: BadgeStyleMap;
   onUpdate?: () => void;
@@ -218,10 +210,6 @@ export interface DocumentsTabProps {
 export interface AppointmentCardProps {
   appointment: TAppointment;
   badgeStyles: BadgeStyleMap;
-}
-
-export interface ClientActivityProps {
-  activities: IActivity[];
 }
 
 // Utility type for badge styles

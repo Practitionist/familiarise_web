@@ -64,7 +64,6 @@ export default function HomePage({
     <DashboardErrorBoundary>
       <HomeTab
         appointments={dashboardData.appointments}
-        activities={dashboardData.activities}
         approvals={dashboardData.approvals}
         badgeStyles={BADGE_STYLES}
       />
