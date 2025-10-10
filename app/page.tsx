@@ -585,6 +585,16 @@ export default function Home() {
             </div>
           </div>
 
+          {/* Moon arc lighting effect */}
+          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[150%] h-[500px] pointer-events-none">
+            <div
+              className="absolute inset-0 blur-3xl"
+              style={{
+                background: 'radial-gradient(ellipse at center bottom, rgba(192,192,192,0.35) 0%, rgba(192,192,192,0.15) 35%, rgba(192,192,192,0.05) 55%, transparent 75%)'
+              }}
+            />
+          </div>
+
           {/* Curved arc separator */}
           <div className="absolute bottom-0 left-0 right-0 h-32">
             <svg
