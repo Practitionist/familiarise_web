@@ -30,6 +30,13 @@ import type { TConsultantProfile } from "@/types/consultant";
 import type { ReviewWithProfiles } from "@/types/review";
 
 // Styles from CSS modules, combined into a single object
+// Reusable glow effect constants for consistent lighting across the page
+const GLOW_EFFECTS = {
+  moonArc: 'radial-gradient(ellipse at center bottom, rgba(220,220,220,0.4) 0%, rgba(220,220,220,0.2) 30%, rgba(220,220,220,0.08) 50%, transparent 70%)',
+  cardGlow: 'radial-gradient(circle at center, rgba(220,220,220,0.03) 0%, transparent 70%)',
+  sectionGlow: 'radial-gradient(ellipse at center, rgba(220,220,220,0.05) 0%, rgba(220,220,220,0.02) 50%, transparent 75%)',
+} as const;
+
 const pageStyles = {
   // From FeaturedExpertsSection.module.css
   "featured-marquee-container": {
@@ -590,7 +597,7 @@ export default function Home() {
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: 'radial-gradient(ellipse at center bottom, rgba(192,192,192,0.35) 0%, rgba(192,192,192,0.15) 35%, rgba(192,192,192,0.05) 55%, transparent 75%)'
+                background: GLOW_EFFECTS.moonArc
               }}
             />
           </div>
@@ -685,9 +692,18 @@ export default function Home() {
         {/* Platform Stats Section */}
         <section
           key="platform-stats-section"
-          className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/30 to-black"
+          className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/30 to-black relative"
         >
-          <div className="container mx-auto px-4 md:px-6">
+          {/* Section glow effect */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[80%] h-[60%] pointer-events-none">
+            <div
+              className="absolute inset-0 blur-3xl"
+              style={{
+                background: GLOW_EFFECTS.sectionGlow
+              }}
+            />
+          </div>
+          <div className="container mx-auto px-4 md:px-6 relative z-10">
             <div className="text-center mb-20">
               <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent mb-6">
                 Platform Metrics
@@ -776,9 +792,18 @@ export default function Home() {
         {/* FeaturedExpertsSection */}
         <section
           key="featured-experts-section"
-          className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/50 to-black"
+          className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/50 to-black relative"
         >
-          <div className="container mx-auto px-4 md:px-6 mb-16">
+          {/* Section glow effect */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[70%] h-[50%] pointer-events-none">
+            <div
+              className="absolute inset-0 blur-3xl"
+              style={{
+                background: GLOW_EFFECTS.sectionGlow
+              }}
+            />
+          </div>
+          <div className="container mx-auto px-4 md:px-6 mb-16 relative z-10">
             <div className="text-center">
               <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent mb-6">
                 Meet Our Featured Experts
@@ -915,8 +940,17 @@ export default function Home() {
         </section>
 
         {/* HowProcessWorksSection */}
-        <section key="how-process-works-section" className="py-24 md:py-32 bg-black">
-          <div className="container mx-auto px-4 md:px-6">
+        <section key="how-process-works-section" className="py-24 md:py-32 bg-black relative">
+          {/* Section glow effect */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[60%] h-[70%] pointer-events-none">
+            <div
+              className="absolute inset-0 blur-3xl"
+              style={{
+                background: GLOW_EFFECTS.sectionGlow
+              }}
+            />
+          </div>
+          <div className="container mx-auto px-4 md:px-6 relative z-10">
             <motion.div
               className="text-center mb-16"
               initial={{ opacity: 0, y: 20 }}
@@ -928,7 +962,9 @@ export default function Home() {
                 Choose from our various formats and follow these simple steps to start your learning journey
               </p>
             </motion.div>
-            <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-8 shadow-lg max-w-5xl mx-auto">
+            <div className="relative bg-gradient-to-br from-gray-900/95 to-gray-800/90 border border-gray-700/50 rounded-3xl p-10 shadow-2xl max-w-5xl mx-auto backdrop-blur-sm">
+              {/* Card glow effect */}
+              <div className="absolute inset-0 -z-10 rounded-3xl" style={{ background: GLOW_EFFECTS.cardGlow, filter: 'blur(40px)' }} />
             <Tabs defaultValue="consultation" className="w-full">
               <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 p-1 mb-2">
                 <TabsTrigger value="consultation">Consultation</TabsTrigger>
@@ -973,9 +1009,20 @@ export default function Home() {
         </section>
 
         {/* Faq */}
-        <section className="flex justify-center items-center py-24 md:py-32 bg-black">
-          <div className="container mx-auto px-4 md:px-6">
-            <div className="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl shadow-lg w-full max-w-4xl mx-auto p-8">
+        <section className="flex justify-center items-center py-24 md:py-32 bg-black relative">
+          {/* Section glow effect */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[50%] h-[60%] pointer-events-none">
+            <div
+              className="absolute inset-0 blur-3xl"
+              style={{
+                background: GLOW_EFFECTS.sectionGlow
+              }}
+            />
+          </div>
+          <div className="container mx-auto px-4 md:px-6 relative z-10">
+            <div className="relative bg-gradient-to-br from-gray-900/95 to-gray-800/90 border border-gray-700/50 rounded-3xl shadow-2xl w-full max-w-4xl mx-auto p-10 backdrop-blur-sm">
+              {/* Card glow effect */}
+              <div className="absolute inset-0 -z-10 rounded-3xl" style={{ background: GLOW_EFFECTS.cardGlow, filter: 'blur(40px)' }} />
               <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
                 Frequently Asked Questions
               </h2>
