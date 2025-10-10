@@ -2,6 +2,7 @@
 
 import React from "react";
 import { motion } from "framer-motion";
+import { Check } from "lucide-react";
 
 export interface ProcessFlowStepProps {
   readonly number: number;
@@ -17,38 +18,79 @@ export function ProcessFlowDisplay({
   isLast = false,
 }: ProcessFlowStepProps) {
   return (
-    <div className="relative">
+    <div className="relative pl-16">
+      {/* Timeline Connector Line */}
+      {!isLast && (
+        <div className="absolute left-[27px] top-[68px] w-0.5 h-[calc(100%-8px)] bg-gradient-to-b from-white/40 via-white/20 to-white/5" />
+      )}
+
       <motion.div
-        className="flex gap-6 items-start relative z-10 group p-6 rounded-2xl hover:bg-gray-800/40 backdrop-blur-sm transition-all duration-500"
-        initial={{ opacity: 0, y: 20 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        whileHover={{ x: 8, y: -2 }}
+        className="relative group"
+        initial={{ opacity: 0, x: -20 }}
+        whileInView={{ opacity: 1, x: 0 }}
+        transition={{
+          duration: 0.5,
+          delay: number * 0.1,
+        }}
+        viewport={{ once: true }}
       >
-        <div className="relative flex-shrink-0">
-          {/* Badge with silver gradient and glow */}
-          <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-600 via-gray-700 to-gray-800 border border-gray-500/50 flex items-center justify-center shadow-2xl font-bold text-3xl text-gray-100 group-hover:scale-110 group-hover:border-gray-400/60 group-hover:shadow-gray-400/20 transition-all duration-500">
-            {number}
-          </div>
-          {/* Silver glow effect on hover */}
-          <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-gray-400/0 to-gray-500/0 group-hover:from-gray-400/10 group-hover:to-gray-500/5 blur-xl transition-all duration-500" />
+        {/* Large Circle Number */}
+        <div className="absolute -left-16 top-3">
+          <motion.div
+            className="relative"
+            whileHover={{ scale: 1.05 }}
+            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+          >
+            {/* Outer ring */}
+            <div className="absolute inset-0 rounded-full border-2 border-white/20 group-hover:border-white/40 transition-colors duration-300" style={{ width: '56px', height: '56px' }} />
+
+            {/* Inner circle with number */}
+            <div className="relative w-14 h-14 rounded-full bg-white/10 backdrop-blur-md border border-white/30 flex items-center justify-center group-hover:bg-white/15 transition-all duration-300">
+              <span className="text-2xl font-bold text-white">
+                {number}
+              </span>
+
+              {/* Checkmark overlay on hover */}
+              <motion.div
+                className="absolute inset-0 rounded-full bg-white/20 flex items-center justify-center"
+                initial={{ opacity: 0, scale: 0.5 }}
+                whileHover={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.2 }}
+              >
+                <Check className="w-7 h-7 text-white" strokeWidth={3} />
+              </motion.div>
+            </div>
+
+            {/* Pulsing ring effect */}
+            <motion.div
+              className="absolute inset-0 rounded-full border-2 border-white/30"
+              animate={{
+                scale: [1, 1.2, 1],
+                opacity: [0.3, 0, 0.3],
+              }}
+              transition={{
+                duration: 2,
+                repeat: Infinity,
+                ease: "easeInOut",
+              }}
+              style={{ width: '56px', height: '56px' }}
+            />
+          </motion.div>
         </div>
-        <div className="flex-1 pt-3">
-          <h4 className="font-semibold text-xl mb-2 text-gray-100 group-hover:text-white transition-colors">
+
+        {/* Content Card */}
+        <motion.div
+          className="bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-2xl p-5 transition-all duration-300 hover:shadow-2xl hover:shadow-white/5 min-h-[110px] flex flex-col justify-center"
+          whileHover={{ x: 4 }}
+        >
+          <h4 className="text-base font-semibold text-white mb-1.5 leading-snug">
             {title}
           </h4>
-          <p className="text-gray-400 group-hover:text-gray-300 transition-colors leading-relaxed">
+          <p className="text-gray-300 text-xs leading-relaxed">
             {description}
           </p>
-        </div>
+        </motion.div>
       </motion.div>
-      {!isLast && (
-        <div className="absolute left-10 top-28 w-[3px] h-[calc(100%-2rem)] pointer-events-none">
-          {/* Silver-tinted connecting line with glow */}
-          <div className="absolute inset-0 bg-gradient-to-b from-gray-500/40 via-gray-600/25 to-transparent rounded-full" />
-          <div className="absolute inset-0 bg-gradient-to-b from-gray-400/20 via-gray-500/10 to-transparent rounded-full blur-sm" />
-        </div>
-      )}
     </div>
   );
 }

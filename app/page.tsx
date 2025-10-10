@@ -106,7 +106,7 @@ function ExpertCard({
       href={`/explore/experts/${expert.id}`}
       className={`block hover:no-underline flex-shrink-0 w-[320px] ${className}`}
     >
-      <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm h-full mx-3 p-6">
+      <div className="bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl hover:border-white/30 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-3xl h-full mx-3 p-6">
         <div className="space-y-4">
           <div className="relative mx-auto h-20 w-20">
             {!isAvatarLoaded && (
@@ -190,7 +190,7 @@ const ReviewCard = ({ review }: { review: ReviewWithProfiles }) => {
     filled: position < review.rating,
   }));
   return (
-    <div className="w-[300px] flex-shrink-0 mx-3 bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl hover:border-gray-500/50 transition-all duration-300 hover:-translate-y-1 p-5">
+    <div className="w-[300px] flex-shrink-0 mx-3 bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-2xl hover:border-white/30 transition-all duration-300 hover:-translate-y-1 backdrop-blur-3xl p-5">
       <div className="flex items-start gap-3">
         <Avatar className="h-10 w-10 border border-gray-600">
           {review.consulteeProfile?.user?.image ? (
@@ -658,7 +658,7 @@ export default function Home() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
               {/* Card 1: Browse Experts */}
               <div className="relative group">
-                <div className="h-full bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+                <div className="h-full bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl p-10 hover:border-white/30 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-3xl">
                   <div className="flex flex-col items-center text-center space-y-5">
                     <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/30 flex items-center justify-center border border-gray-700/30">
                       <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -675,7 +675,7 @@ export default function Home() {
 
               {/* Card 2: Book Session */}
               <div className="relative group">
-                <div className="h-full bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+                <div className="h-full bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl p-10 hover:border-white/30 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-3xl">
                   <div className="flex flex-col items-center text-center space-y-5">
                     <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/30 flex items-center justify-center border border-gray-700/30">
                       <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -692,7 +692,7 @@ export default function Home() {
 
               {/* Card 3: Join & Learn */}
               <div className="relative group">
-                <div className="h-full bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+                <div className="h-full bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl p-10 hover:border-white/30 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-3xl">
                   <div className="flex flex-col items-center text-center space-y-5">
                     <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/30 flex items-center justify-center border border-gray-700/30">
                       <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -744,7 +744,7 @@ export default function Home() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 max-w-7xl mx-auto">
               {/* Stat 1: Total Experts */}
-              <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+              <div className="bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl p-10 hover:border-white/30 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-3xl">
                 <div className="flex flex-col space-y-3">
                   <div className="flex items-center gap-3">
                     <div className="w-4 h-4 rounded-full bg-gradient-to-r from-gray-400 to-gray-500"></div>
@@ -756,7 +756,7 @@ export default function Home() {
               </div>
 
               {/* Stat 2: Consultations Completed */}
-              <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+              <div className="bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl p-10 hover:border-white/30 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-3xl">
                 <div className="flex flex-col space-y-3">
                   <div className="flex items-center gap-3">
                     <div className="w-4 h-4 rounded-full bg-gradient-to-r from-gray-400 to-gray-500"></div>
@@ -768,7 +768,7 @@ export default function Home() {
               </div>
 
               {/* Stat 3: Average Rating */}
-              <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+              <div className="bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl p-10 hover:border-white/30 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-3xl">
                 <div className="flex flex-col space-y-3">
                   <div className="flex items-center gap-3">
                     <div className="w-4 h-4 rounded-full bg-gradient-to-r from-gray-400 to-gray-500"></div>
@@ -780,7 +780,7 @@ export default function Home() {
               </div>
 
               {/* Stat 4: Domains Covered */}
-              <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-10 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-sm">
+              <div className="bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl p-10 hover:border-white/30 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-3xl">
                 <div className="flex flex-col space-y-3">
                   <div className="flex items-center gap-3">
                     <div className="w-4 h-4 rounded-full bg-gradient-to-r from-gray-400 to-gray-500"></div>
@@ -980,7 +980,7 @@ export default function Home() {
               {OFFERINGS.map((offering) => (
                 <div
                   key={offering.title}
-                  className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-8 hover:border-gray-600/50 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 hover:-translate-y-1 backdrop-blur-sm"
+                  className="bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl p-8 hover:border-white/30 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 hover:-translate-y-1 backdrop-blur-3xl"
                 >
                   <h3 className="text-2xl font-semibold mb-4 text-gray-100">
                     {offering.title}
@@ -1034,15 +1034,15 @@ export default function Home() {
                 Choose from our various formats and follow these simple steps to start your learning journey
               </p>
             </motion.div>
-            <div className="relative bg-gradient-to-br from-gray-900/95 to-gray-800/90 border border-gray-700/50 rounded-3xl p-10 shadow-2xl max-w-5xl mx-auto backdrop-blur-sm">
+            <div className="relative bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl p-10 shadow-2xl max-w-5xl mx-auto backdrop-blur-3xl">
               {/* Card glow effect */}
               <div className="absolute inset-0 -z-10 rounded-3xl" style={{ background: GLOW_EFFECTS.cardGlow, filter: 'blur(40px)' }} />
             <Tabs defaultValue="consultation" className="w-full">
-              <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 p-1.5 mb-2 bg-gray-800/60 border border-gray-700/50 rounded-xl">
-                <TabsTrigger value="consultation" className="data-[state=active]:bg-gray-700/70 data-[state=active]:text-white data-[state=active]:border-gray-500/50 data-[state=active]:shadow-lg text-gray-400 transition-all duration-300 hover:text-gray-300">Consultation</TabsTrigger>
-                <TabsTrigger value="subscription" className="data-[state=active]:bg-gray-700/70 data-[state=active]:text-white data-[state=active]:border-gray-500/50 data-[state=active]:shadow-lg text-gray-400 transition-all duration-300 hover:text-gray-300">Subscription</TabsTrigger>
-                <TabsTrigger value="webinar" className="data-[state=active]:bg-gray-700/70 data-[state=active]:text-white data-[state=active]:border-gray-500/50 data-[state=active]:shadow-lg text-gray-400 transition-all duration-300 hover:text-gray-300">Webinar</TabsTrigger>
-                <TabsTrigger value="class" className="data-[state=active]:bg-gray-700/70 data-[state=active]:text-white data-[state=active]:border-gray-500/50 data-[state=active]:shadow-lg text-gray-400 transition-all duration-300 hover:text-gray-300">Class</TabsTrigger>
+              <TabsList className="flex flex-wrap justify-center gap-3 mb-8 bg-transparent border-0">
+                <TabsTrigger value="consultation" className="data-[state=active]:bg-white data-[state=active]:text-black data-[state=active]:shadow-xl data-[state=active]:shadow-white/20 bg-white/5 border border-white/10 text-gray-400 transition-all duration-300 hover:text-gray-200 hover:bg-white/10 hover:border-white/20 rounded-full py-3 px-8 font-medium whitespace-nowrap">Consultation</TabsTrigger>
+                <TabsTrigger value="subscription" className="data-[state=active]:bg-white data-[state=active]:text-black data-[state=active]:shadow-xl data-[state=active]:shadow-white/20 bg-white/5 border border-white/10 text-gray-400 transition-all duration-300 hover:text-gray-200 hover:bg-white/10 hover:border-white/20 rounded-full py-3 px-8 font-medium whitespace-nowrap">Subscription</TabsTrigger>
+                <TabsTrigger value="webinar" className="data-[state=active]:bg-white data-[state=active]:text-black data-[state=active]:shadow-xl data-[state=active]:shadow-white/20 bg-white/5 border border-white/10 text-gray-400 transition-all duration-300 hover:text-gray-200 hover:bg-white/10 hover:border-white/20 rounded-full py-3 px-8 font-medium whitespace-nowrap">Webinar</TabsTrigger>
+                <TabsTrigger value="class" className="data-[state=active]:bg-white data-[state=active]:text-black data-[state=active]:shadow-xl data-[state=active]:shadow-white/20 bg-white/5 border border-white/10 text-gray-400 transition-all duration-300 hover:text-gray-200 hover:bg-white/10 hover:border-white/20 rounded-full py-3 px-8 font-medium whitespace-nowrap">Class</TabsTrigger>
               </TabsList>
               <div className="mt-8">
                 <Suspense fallback={<div>Loading process flows...</div>}>
@@ -1093,7 +1093,7 @@ export default function Home() {
             />
           </div>
           <div className="container mx-auto px-4 md:px-6 relative z-10">
-            <div className="relative bg-gradient-to-br from-gray-900/95 to-gray-800/90 border border-gray-700/50 rounded-3xl shadow-2xl w-full max-w-4xl mx-auto p-10 md:p-12 backdrop-blur-sm">
+            <div className="relative bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl shadow-2xl w-full max-w-4xl mx-auto p-10 md:p-12 backdrop-blur-3xl">
               {/* Card glow effect */}
               <div className="absolute inset-0 -z-10 rounded-3xl" style={{ background: GLOW_EFFECTS.cardGlow, filter: 'blur(40px)' }} />
 
