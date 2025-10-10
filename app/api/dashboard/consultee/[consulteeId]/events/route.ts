@@ -31,6 +31,16 @@ export async function GET(
       ? parseInt(searchParams.get("appointmentsOffset")!)
       : 0;
 
+    // Parse upcomingWindow parameter for filtering near-future appointments
+    const upcomingWindowDays = searchParams.get("upcomingWindow");
+    const upcomingWindow = upcomingWindowDays
+      ? parseInt(upcomingWindowDays)
+      : null;
+    const upcomingWindowDate =
+      upcomingWindow && upcomingWindow > 0
+        ? new Date(Date.now() + upcomingWindow * 24 * 60 * 60 * 1000)
+        : null;
+
     // Fetch all consultee events in parallel using direct Prisma queries
     // Only select fields actually needed by the UI
     const [consultations, subscriptions, webinars, classes] =
@@ -152,6 +162,18 @@ export async function GET(
               },
             },
             appointments: {
+              where: upcomingWindowDate
+                ? {
+                    slotsOfAppointment: {
+                      some: {
+                        slotStartTimeInUTC: {
+                          gte: new Date(),
+                          lte: upcomingWindowDate,
+                        },
+                      },
+                    },
+                  }
+                : undefined,
               select: {
                 id: true,
                 createdAt: true,
@@ -352,6 +374,18 @@ export async function GET(
               },
             },
             appointments: {
+              where: upcomingWindowDate
+                ? {
+                    slotsOfAppointment: {
+                      some: {
+                        slotStartTimeInUTC: {
+                          gte: new Date(),
+                          lte: upcomingWindowDate,
+                        },
+                      },
+                    },
+                  }
+                : undefined,
               select: {
                 id: true,
                 createdAt: true,

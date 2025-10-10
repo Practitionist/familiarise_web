@@ -25,6 +25,16 @@ export async function GET(
       ? parseInt(searchParams.get("appointmentsOffset")!)
       : 0;
 
+    // Parse upcomingWindow parameter for filtering near-future appointments
+    const upcomingWindowDays = searchParams.get("upcomingWindow");
+    const upcomingWindow = upcomingWindowDays
+      ? parseInt(upcomingWindowDays)
+      : null;
+    const upcomingWindowDate =
+      upcomingWindow && upcomingWindow > 0
+        ? new Date(Date.now() + upcomingWindow * 24 * 60 * 60 * 1000)
+        : null;
+
     // Fetch all requests data in parallel using direct Prisma queries
     const [
       consultations,
@@ -202,39 +212,57 @@ export async function GET(
       // Approved appointments
       prisma.appointment.findMany({
         where: {
-          OR: [
+          AND: [
             {
-              consultation: {
-                consultationPlan: {
-                  consultantProfileId: consultantId,
+              OR: [
+                {
+                  consultation: {
+                    consultationPlan: {
+                      consultantProfileId: consultantId,
+                    },
+                    requestStatus: RequestStatus.APPROVED,
+                  },
                 },
-                requestStatus: RequestStatus.APPROVED,
-              },
-            },
-            {
-              subscription: {
-                subscriptionPlan: {
-                  consultantProfileId: consultantId,
+                {
+                  subscription: {
+                    subscriptionPlan: {
+                      consultantProfileId: consultantId,
+                    },
+                    requestStatus: RequestStatus.APPROVED,
+                  },
                 },
-                requestStatus: RequestStatus.APPROVED,
-              },
-            },
-            {
-              webinar: {
-                webinarPlan: {
-                  consultantProfileId: consultantId,
+                {
+                  webinar: {
+                    webinarPlan: {
+                      consultantProfileId: consultantId,
+                    },
+                    status: "SCHEDULED",
+                  },
                 },
-                status: "SCHEDULED",
-              },
-            },
-            {
-              class: {
-                classPlan: {
-                  consultantProfileId: consultantId,
+                {
+                  class: {
+                    classPlan: {
+                      consultantProfileId: consultantId,
+                    },
+                    status: "SCHEDULED",
+                  },
                 },
-                status: "SCHEDULED",
-              },
+              ],
             },
+            ...(upcomingWindowDate
+              ? [
+                  {
+                    slotsOfAppointment: {
+                      some: {
+                        slotStartTimeInUTC: {
+                          gte: new Date(),
+                          lte: upcomingWindowDate,
+                        },
+                      },
+                    },
+                  },
+                ]
+              : []),
           ],
         },
         select: {
