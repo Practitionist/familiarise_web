@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
 
 interface ConsulteeEventsData {
   consultations: any[];
@@ -21,59 +22,379 @@ export async function GET(
       );
     }
 
-    const baseUrl = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-
-    // Fetch all consultee events in parallel
-    const [consultationsRes, subscriptionsRes, webinarsRes, classesRes] =
+    // Fetch all consultee events in parallel using direct Prisma queries
+    // Only select fields actually needed by the UI
+    const [consultations, subscriptions, webinars, classes] =
       await Promise.all([
-        fetch(
-          `${baseUrl}/api/events/consultations?consulteeProfileId=${consulteeId}`,
-        ),
-        fetch(
-          `${baseUrl}/api/events/subscriptions?consulteeProfileId=${consulteeId}`,
-        ),
-        fetch(
-          `${baseUrl}/api/events/webinars?consulteeProfileId=${consulteeId}`,
-        ),
-        fetch(
-          `${baseUrl}/api/events/classes?consulteeProfileId=${consulteeId}`,
-        ),
-      ]);
+        // Consultations - only get essential fields
+        prisma.consultation.findMany({
+          where: { requestedById: consulteeId },
+          select: {
+            id: true,
+            requestStatus: true,
+            requestedAt: true,
+            consultationPlan: {
+              select: {
+                id: true,
+                title: true,
+                consultantProfile: {
+                  select: {
+                    id: true,
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              select: {
+                id: true,
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+            appointment: {
+              select: {
+                id: true,
+                createdAt: true,
+                slotsOfAppointment: {
+                  select: {
+                    id: true,
+                    slotStartTimeInUTC: true,
+                    slotEndTimeInUTC: true,
+                    isTentative: true,
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        image: true,
+                      },
+                    },
+                  },
+                  orderBy: {
+                    slotStartTimeInUTC: "asc",
+                  },
+                },
+                payment: {
+                  select: {
+                    id: true,
+                    amount: true,
+                    paymentStatus: true,
+                    createdAt: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: {
+            requestedAt: "desc",
+          },
+        }),
 
-    // Check for errors in any of the responses
-    const responses = [
-      { name: "consultations", response: consultationsRes },
-      { name: "subscriptions", response: subscriptionsRes },
-      { name: "webinars", response: webinarsRes },
-      { name: "classes", response: classesRes },
-    ];
+        // Subscriptions - limit appointments to 50 most recent
+        prisma.subscription.findMany({
+          where: { requestedById: consulteeId },
+          select: {
+            id: true,
+            requestStatus: true,
+            requestedAt: true,
+            startDate: true,
+            endDate: true,
+            subscriptionPlan: {
+              select: {
+                id: true,
+                title: true,
+                durationInMonths: true,
+                callsPerWeek: true,
+                consultantProfile: {
+                  select: {
+                    id: true,
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            requestedBy: {
+              select: {
+                id: true,
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    image: true,
+                  },
+                },
+              },
+            },
+            appointments: {
+              select: {
+                id: true,
+                createdAt: true,
+                slotsOfAppointment: {
+                  select: {
+                    id: true,
+                    slotStartTimeInUTC: true,
+                    slotEndTimeInUTC: true,
+                    isTentative: true,
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+                payment: {
+                  select: {
+                    id: true,
+                    amount: true,
+                    paymentStatus: true,
+                    createdAt: true,
+                  },
+                },
+              },
+              take: 50, // Limit to 50 most recent appointments
+              orderBy: {
+                createdAt: "desc",
+              },
+            },
+          },
+          orderBy: {
+            requestedAt: "desc",
+          },
+        }),
 
-    for (const { name, response } of responses) {
-      if (!response.ok) {
-        console.error(`Failed to fetch ${name}:`, response.statusText);
-        return NextResponse.json(
-          { error: `Failed to fetch ${name} data` },
-          { status: response.status },
-        );
-      }
-    }
+        // Webinars - using appointments and waitlist pattern
+        prisma.webinar.findMany({
+          where: {
+            OR: [
+              // Webinars where consultee is registered through appointments
+              {
+                appointment: {
+                  slotsOfAppointment: {
+                    some: {
+                      user: {
+                        some: {
+                          consulteeProfile: {
+                            id: consulteeId,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              // Webinars where consultee is in waitlist
+              {
+                waitlist: {
+                  some: {
+                    user: {
+                      consulteeProfile: {
+                        id: consulteeId,
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+          select: {
+            id: true,
+            status: true,
+            createdAt: true,
+            webinarPlan: {
+              select: {
+                id: true,
+                title: true,
+                consultantProfile: {
+                  select: {
+                    id: true,
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            appointment: {
+              select: {
+                id: true,
+                createdAt: true,
+                slotsOfAppointment: {
+                  select: {
+                    id: true,
+                    slotStartTimeInUTC: true,
+                    slotEndTimeInUTC: true,
+                    isTentative: true,
+                  },
+                  orderBy: {
+                    slotStartTimeInUTC: "asc",
+                  },
+                },
+                payment: {
+                  select: {
+                    id: true,
+                    amount: true,
+                    paymentStatus: true,
+                    createdAt: true,
+                  },
+                },
+              },
+            },
+            waitlist: {
+              where: {
+                user: {
+                  consulteeProfile: {
+                    id: consulteeId,
+                  },
+                },
+              },
+              select: {
+                id: true,
+                joinedAt: true,
+              },
+            },
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
+        }),
 
-    // Parse all responses
-    const [consultationsData, subscriptionsData, webinarsData, classesData] =
-      await Promise.all([
-        consultationsRes.json(),
-        subscriptionsRes.json(),
-        webinarsRes.json(),
-        classesRes.json(),
+        // Classes - using appointments and waitlist pattern
+        prisma.class.findMany({
+          where: {
+            OR: [
+              // Classes where consultee is registered through appointments
+              {
+                appointments: {
+                  some: {
+                    slotsOfAppointment: {
+                      some: {
+                        user: {
+                          some: {
+                            consulteeProfile: {
+                              id: consulteeId,
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              // Classes where consultee is in waitlist
+              {
+                waitlist: {
+                  some: {
+                    user: {
+                      consulteeProfile: {
+                        id: consulteeId,
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+          select: {
+            id: true,
+            status: true,
+            startDate: true,
+            endDate: true,
+            createdAt: true,
+            classPlan: {
+              select: {
+                id: true,
+                title: true,
+                consultantProfile: {
+                  select: {
+                    id: true,
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            appointments: {
+              select: {
+                id: true,
+                createdAt: true,
+                slotsOfAppointment: {
+                  select: {
+                    id: true,
+                    slotStartTimeInUTC: true,
+                    slotEndTimeInUTC: true,
+                    isTentative: true,
+                  },
+                  orderBy: {
+                    slotStartTimeInUTC: "asc",
+                  },
+                },
+                payment: {
+                  select: {
+                    id: true,
+                    amount: true,
+                    paymentStatus: true,
+                    createdAt: true,
+                  },
+                },
+              },
+              take: 50, // Limit to 50 most recent appointments
+              orderBy: {
+                createdAt: "desc",
+              },
+            },
+            waitlist: {
+              where: {
+                user: {
+                  consulteeProfile: {
+                    id: consulteeId,
+                  },
+                },
+              },
+              select: {
+                id: true,
+                joinedAt: true,
+              },
+            },
+          },
+          orderBy: {
+            startDate: "desc",
+          },
+        }),
       ]);
 
     const eventsData: ConsulteeEventsData = {
-      consultations: consultationsData.data || [],
-      subscriptions: subscriptionsData.data || [],
-      webinars: webinarsData.data || [],
-      classes: classesData.data || [],
+      consultations: consultations || [],
+      subscriptions: subscriptions || [],
+      webinars: webinars || [],
+      classes: classes || [],
     };
 
     return NextResponse.json({
@@ -83,7 +404,10 @@ export async function GET(
   } catch (error) {
     console.error("Error fetching consultee events:", error);
     return NextResponse.json(
-      { error: "Failed to fetch consultee events" },
+      {
+        error: "Failed to fetch consultee events",
+        message: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 },
     );
   }

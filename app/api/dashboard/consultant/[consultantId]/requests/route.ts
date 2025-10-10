@@ -1,54 +1,6 @@
 import { NextResponse } from "next/server";
-import {
-  TAppointment,
-  TConsultation,
-  TSubscription,
-} from "@/types/appointment";
-import { TConsultantProfile } from "@/types/consultant";
-import { Prisma } from "@prisma/client";
-
-// Type for weekly availability slots
-type TWeeklyAvailability = Prisma.SlotOfAvailabilityWeeklyGetPayload<{
-  include: {
-    consultantProfile: {
-      select: {
-        id: true;
-        user: {
-          select: {
-            name: true;
-            email: true;
-          };
-        };
-      };
-    };
-  };
-}>;
-
-// Type for custom availability slots
-type TCustomAvailability = Prisma.SlotOfAvailabilityCustomGetPayload<{
-  include: {
-    consultantProfile: {
-      select: {
-        id: true;
-        user: {
-          select: {
-            name: true;
-            email: true;
-          };
-        };
-      };
-    };
-  };
-}>;
-
-interface RequestsData {
-  consultations: TConsultation[];
-  subscriptions: TSubscription[];
-  weeklyAvailability: TWeeklyAvailability[];
-  customAvailability: TCustomAvailability[];
-  appointments: TAppointment[];
-  consultant: TConsultantProfile | null;
-}
+import prisma from "@/lib/prisma";
+import { RequestStatus } from "@prisma/client";
 
 export async function GET(
   request: Request,
@@ -64,81 +16,404 @@ export async function GET(
       );
     }
 
-    const baseUrl = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-
-    // Fetch all requests data in parallel
+    // Fetch all requests data in parallel using direct Prisma queries
     const [
-      consultationsRes,
-      subscriptionsRes,
-      weeklyAvailabilityRes,
-      customAvailabilityRes,
-      appointmentsRes,
-      consultantRes,
+      consultations,
+      subscriptions,
+      weeklyAvailability,
+      customAvailability,
+      appointments,
+      consultant,
     ] = await Promise.all([
-      fetch(
-        `${baseUrl}/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
-      ),
-      fetch(
-        `${baseUrl}/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
-      ),
-      fetch(
-        `${baseUrl}/api/slots/availability/weekly?consultantProfileId=${consultantId}`,
-      ),
-      fetch(
-        `${baseUrl}/api/slots/availability/custom?consultantProfileId=${consultantId}`,
-      ),
-      fetch(
-        `${baseUrl}/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
-      ),
-      fetch(`${baseUrl}/api/user/consultants/${consultantId}`),
+      // Pending consultations
+      prisma.consultation.findMany({
+        where: {
+          consultationPlan: {
+            consultantProfileId: consultantId,
+          },
+          requestStatus: RequestStatus.PENDING,
+        },
+        select: {
+          id: true,
+          requestStatus: true,
+          requestedAt: true,
+          requestNotes: true,
+          consultationPlan: {
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              durationInHours: true,
+              price: true,
+              consultantProfile: {
+                select: {
+                  id: true,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          requestedBy: {
+            select: {
+              id: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          requestedAt: "desc",
+        },
+      }),
+
+      // Pending subscriptions
+      prisma.subscription.findMany({
+        where: {
+          subscriptionPlan: {
+            consultantProfileId: consultantId,
+          },
+          requestStatus: RequestStatus.PENDING,
+        },
+        select: {
+          id: true,
+          requestStatus: true,
+          requestedAt: true,
+          requestNotes: true,
+          startDate: true,
+          endDate: true,
+          subscriptionPlan: {
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              durationInMonths: true,
+              price: true,
+              callsPerWeek: true,
+              consultantProfile: {
+                select: {
+                  id: true,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          requestedBy: {
+            select: {
+              id: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          requestedAt: "desc",
+        },
+      }),
+
+      // Weekly availability slots
+      prisma.slotOfAvailabilityWeekly.findMany({
+        where: {
+          consultantProfileId: consultantId,
+        },
+        select: {
+          id: true,
+          dayOfWeekforStartTimeInUTC: true,
+          slotStartTimeInUTC: true,
+          dayOfWeekforEndTimeInUTC: true,
+          slotEndTimeInUTC: true,
+          consultantProfile: {
+            select: {
+              id: true,
+              user: {
+                select: {
+                  name: true,
+                  email: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          dayOfWeekforStartTimeInUTC: "asc",
+        },
+      }),
+
+      // Custom availability slots
+      prisma.slotOfAvailabilityCustom.findMany({
+        where: {
+          consultantProfileId: consultantId,
+        },
+        select: {
+          id: true,
+          slotStartTimeInUTC: true,
+          slotEndTimeInUTC: true,
+          consultantProfile: {
+            select: {
+              id: true,
+              user: {
+                select: {
+                  name: true,
+                  email: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          slotStartTimeInUTC: "asc",
+        },
+      }),
+
+      // Approved appointments
+      prisma.appointment.findMany({
+        where: {
+          OR: [
+            {
+              consultation: {
+                consultationPlan: {
+                  consultantProfileId: consultantId,
+                },
+                requestStatus: RequestStatus.APPROVED,
+              },
+            },
+            {
+              subscription: {
+                subscriptionPlan: {
+                  consultantProfileId: consultantId,
+                },
+                requestStatus: RequestStatus.APPROVED,
+              },
+            },
+            {
+              webinar: {
+                webinarPlan: {
+                  consultantProfileId: consultantId,
+                },
+                status: "SCHEDULED",
+              },
+            },
+            {
+              class: {
+                classPlan: {
+                  consultantProfileId: consultantId,
+                },
+                status: "SCHEDULED",
+              },
+            },
+          ],
+        },
+        select: {
+          id: true,
+          appointmentType: true,
+          slotsOfAppointment: {
+            select: {
+              id: true,
+              slotStartTimeInUTC: true,
+              slotEndTimeInUTC: true,
+              isTentative: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                  phone: true,
+                  consulteeProfileId: true,
+                },
+              },
+            },
+          },
+          consultation: {
+            select: {
+              id: true,
+              requestStatus: true,
+              consultationPlan: {
+                select: {
+                  id: true,
+                  title: true,
+                  consultantProfile: {
+                    select: {
+                      id: true,
+                      user: {
+                        select: {
+                          id: true,
+                          name: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              requestedBy: {
+                select: {
+                  id: true,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          subscription: {
+            select: {
+              id: true,
+              requestStatus: true,
+              startDate: true,
+              endDate: true,
+              subscriptionPlan: {
+                select: {
+                  id: true,
+                  title: true,
+                  consultantProfile: {
+                    select: {
+                      id: true,
+                      user: {
+                        select: {
+                          id: true,
+                          name: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              requestedBy: {
+                select: {
+                  id: true,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          webinar: {
+            select: {
+              id: true,
+              status: true,
+              webinarPlan: {
+                select: {
+                  id: true,
+                  title: true,
+                  consultantProfile: {
+                    select: {
+                      id: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          class: {
+            select: {
+              id: true,
+              status: true,
+              classPlan: {
+                select: {
+                  id: true,
+                  title: true,
+                  consultantProfile: {
+                    select: {
+                      id: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        take: 100,
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
+
+      // Consultant profile
+      prisma.consultantProfile.findUnique({
+        where: {
+          id: consultantId,
+        },
+        select: {
+          id: true,
+          description: true,
+          qualifications: true,
+          specialization: true,
+          experience: true,
+          rating: true,
+          scheduleType: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+              phone: true,
+              role: true,
+            },
+          },
+          domain: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          subDomains: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          tags: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      }),
     ]);
 
-    // Check for errors in any of the responses
-    const responses = [
-      { name: "consultations", response: consultationsRes },
-      { name: "subscriptions", response: subscriptionsRes },
-      { name: "weeklyAvailability", response: weeklyAvailabilityRes },
-      { name: "customAvailability", response: customAvailabilityRes },
-      { name: "appointments", response: appointmentsRes },
-      { name: "consultant", response: consultantRes },
-    ];
-
-    for (const { name, response } of responses) {
-      if (!response.ok) {
-        console.error(`Failed to fetch ${name}:`, response.statusText);
-        return NextResponse.json(
-          { error: `Failed to fetch ${name} data` },
-          { status: response.status },
-        );
-      }
-    }
-
-    // Parse all responses with proper typing
-    const [
-      consultationsData,
-      subscriptionsData,
-      weeklyAvailabilityData,
-      customAvailabilityData,
-      appointmentsData,
-      consultantData,
-    ] = await Promise.all([
-      consultationsRes.json() as Promise<{ data: TConsultation[] }>,
-      subscriptionsRes.json() as Promise<{ data: TSubscription[] }>,
-      weeklyAvailabilityRes.json() as Promise<{ data: TWeeklyAvailability[] }>,
-      customAvailabilityRes.json() as Promise<{ data: TCustomAvailability[] }>,
-      appointmentsRes.json() as Promise<{ data: TAppointment[] }>,
-      consultantRes.json() as Promise<{ data: TConsultantProfile }>,
-    ]);
-
-    const requestsData: RequestsData = {
-      consultations: consultationsData.data || [],
-      subscriptions: subscriptionsData.data || [],
-      weeklyAvailability: weeklyAvailabilityData.data || [],
-      customAvailability: customAvailabilityData.data || [],
-      appointments: appointmentsData.data || [],
-      consultant: consultantData.data || null,
+    const requestsData = {
+      consultations: consultations || [],
+      subscriptions: subscriptions || [],
+      weeklyAvailability: weeklyAvailability || [],
+      customAvailability: customAvailability || [],
+      appointments: appointments || [],
+      consultant: consultant || null,
     };
 
     return NextResponse.json({

@@ -384,6 +384,8 @@ model ConsultationPlan {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
 }
 
 model Consultation {
@@ -405,6 +407,8 @@ model Consultation {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([requestedById])
 }
 
 model SubscriptionPlan {
@@ -430,6 +434,8 @@ model SubscriptionPlan {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
 }
 
 model Subscription {
@@ -453,6 +459,8 @@ model Subscription {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([requestedById])
 }
 
 enum RequestStatus {
@@ -487,6 +495,8 @@ model WebinarPlan {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
 }
 
 model Webinar {
@@ -541,6 +551,8 @@ model ClassPlan {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([consultantProfileId])
 }
 
 model Class {

@@ -1,16 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  TAppointment,
-  TConsultation,
-  TSubscription,
-} from "@/types/appointment";
-import { ApiResponse } from "@/app/dashboard/consultant/[consultantId]/types";
-
-// Helper to get the base URL, preferring VERCEL_URL if available
-const getBaseUrl = () => {
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-};
+import prisma from "@/lib/prisma";
+import { RequestStatus } from "@prisma/client";
 
 export async function GET(
   request: NextRequest,
@@ -19,170 +9,323 @@ export async function GET(
   try {
     const resolvedParams = await params;
     const { consultantId } = resolvedParams;
-    const baseUrl = getBaseUrl();
 
-    // Fetch all dashboard data in parallel
-    const [appointmentsRes, consultationsRes, subscriptionsRes] =
-      await Promise.all([
-        fetch(
-          `${baseUrl}/api/slots/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } },
-        ),
-        fetch(
-          `${baseUrl}/api/events/consultations?consultantProfileId=${consultantId}&status=PENDING`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } },
-        ),
-        fetch(
-          `${baseUrl}/api/events/subscriptions?consultantProfileId=${consultantId}&status=PENDING`,
-          { headers: { Cookie: request.headers.get("cookie") || "" } },
-        ),
-      ]);
-
-    // Check for errors
-    if (!appointmentsRes.ok) {
-      throw new Error(
-        `Failed to fetch appointments: ${appointmentsRes.statusText}`,
-      );
-    }
-    if (!consultationsRes.ok) {
-      throw new Error(
-        `Failed to fetch consultations: ${consultationsRes.statusText}`,
-      );
-    }
-    if (!subscriptionsRes.ok) {
-      throw new Error(
-        `Failed to fetch subscriptions: ${subscriptionsRes.statusText}`,
-      );
-    }
-
-    // Parse responses
-    const appointmentsData: ApiResponse<TAppointment[]> =
-      await appointmentsRes.json();
-    const consultationsData: ApiResponse<TConsultation[]> =
-      await consultationsRes.json();
-    const subscriptionsData: ApiResponse<TSubscription[]> =
-      await subscriptionsRes.json();
-
-    // Transform appointments (same logic as fetchHelpers.ts)
-    const transformedAppointments = appointmentsData.data.map(
-      (appointment) => ({
-        id: appointment.id,
-        appointmentType: appointment.appointmentType,
-        slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
-          id: slot.id,
-          slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
-          slotEndTimeInUTC: slot.slotEndTimeInUTC
-            ? new Date(slot.slotEndTimeInUTC)
-            : null,
-          isTentative: slot.isTentative,
-          user: Array.isArray(slot.user)
-            ? slot.user.map((u) => ({
-                id: u.id,
-                name: u.name,
-                email: u.email,
-                image: u.image,
-                phone: u.phone || null,
-                address: u.address || null,
-                password: u.password || null,
-                passwordResetToken: u.passwordResetToken || null,
-                passwordResetExpires: u.passwordResetExpires || null,
-                onlineStatus: u.onlineStatus,
-                currentTimezone: u.currentTimezone || null,
-                onboardingCompleted: u.onboardingCompleted,
-                role: u.role,
-                consultantProfileId: u.consultantProfileId,
-                consulteeProfileId: u.consulteeProfileId,
-                staffProfileId: u.staffProfileId,
-              }))
-            : [],
-        })),
-        consultation: appointment.consultation
-          ? {
-              id: appointment.consultation.id,
+    // Fetch all dashboard data in parallel using direct Prisma queries
+    const [appointments, consultations, subscriptions] = await Promise.all([
+      // Appointments with APPROVED status
+      prisma.appointment.findMany({
+        where: {
+          OR: [
+            {
+              consultation: {
+                consultationPlan: {
+                  consultantProfileId: consultantId,
+                },
+                requestStatus: RequestStatus.APPROVED,
+              },
+            },
+            {
+              subscription: {
+                subscriptionPlan: {
+                  consultantProfileId: consultantId,
+                },
+                requestStatus: RequestStatus.APPROVED,
+              },
+            },
+            {
+              webinar: {
+                webinarPlan: {
+                  consultantProfileId: consultantId,
+                },
+                status: "SCHEDULED",
+              },
+            },
+            {
+              class: {
+                classPlan: {
+                  consultantProfileId: consultantId,
+                },
+                status: "SCHEDULED",
+              },
+            },
+          ],
+        },
+        select: {
+          id: true,
+          appointmentType: true,
+          slotsOfAppointment: {
+            select: {
+              id: true,
+              slotStartTimeInUTC: true,
+              slotEndTimeInUTC: true,
+              isTentative: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                  phone: true,
+                  address: true,
+                  onlineStatus: true,
+                  currentTimezone: true,
+                  onboardingCompleted: true,
+                  role: true,
+                  consultantProfileId: true,
+                  consulteeProfileId: true,
+                  staffProfileId: true,
+                },
+              },
+            },
+            orderBy: {
+              slotStartTimeInUTC: "asc",
+            },
+          },
+          consultation: {
+            select: {
+              id: true,
+              requestStatus: true,
               consultationPlan: {
-                ...appointment.consultation.consultationPlan,
-                consultantProfile: appointment.consultation.consultationPlan
-                  .consultantProfile as any,
-              },
-              requestStatus: appointment.consultation.requestStatus,
-              requestedBy: {
-                id: appointment.consultation.requestedBy?.id ?? "",
-                user: {
-                  name:
-                    appointment.consultation.requestedBy?.user?.name ?? null,
-                  image:
-                    appointment.consultation.requestedBy?.user?.image ?? null,
+                select: {
+                  id: true,
+                  title: true,
+                  description: true,
+                  durationInHours: true,
+                  price: true,
+                  consultantProfile: {
+                    select: {
+                      id: true,
+                      user: {
+                        select: {
+                          id: true,
+                          name: true,
+                          image: true,
+                        },
+                      },
+                    },
+                  },
                 },
               },
-            }
-          : undefined,
-        subscription: appointment.subscription
-          ? {
-              id: appointment.subscription.id,
+              requestedBy: {
+                select: {
+                  id: true,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          subscription: {
+            select: {
+              id: true,
+              requestStatus: true,
+              startDate: true,
+              endDate: true,
               subscriptionPlan: {
-                ...appointment.subscription.subscriptionPlan,
-                consultantProfile: appointment.subscription.subscriptionPlan
-                  .consultantProfile as any,
-              },
-              requestStatus: appointment.subscription.requestStatus,
-              requestedBy: {
-                id: appointment.subscription.requestedBy?.id ?? "",
-                user: {
-                  name:
-                    appointment.subscription.requestedBy?.user?.name ?? null,
-                  image:
-                    appointment.subscription.requestedBy?.user?.image ?? null,
+                select: {
+                  id: true,
+                  title: true,
+                  description: true,
+                  durationInMonths: true,
+                  price: true,
+                  consultantProfile: {
+                    select: {
+                      id: true,
+                      user: {
+                        select: {
+                          id: true,
+                          name: true,
+                          image: true,
+                        },
+                      },
+                    },
+                  },
                 },
               },
-              startDate: new Date(
-                appointment.subscription.startDate,
-              ).toISOString(),
-              endDate: new Date(appointment.subscription.endDate).toISOString(),
-            }
-          : undefined,
-        webinar: appointment.webinar
-          ? {
-              id: appointment.webinar.id,
+              requestedBy: {
+                select: {
+                  id: true,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          webinar: {
+            select: {
+              id: true,
+              status: true,
               webinarPlan: {
-                ...appointment.webinar.webinarPlan,
-                consultantProfile: appointment.webinar.webinarPlan
-                  .consultantProfile as any,
+                select: {
+                  id: true,
+                  title: true,
+                  description: true,
+                  price: true,
+                  consultantProfile: {
+                    select: {
+                      id: true,
+                      user: {
+                        select: {
+                          id: true,
+                          name: true,
+                          image: true,
+                        },
+                      },
+                    },
+                  },
+                },
               },
-              status: appointment.webinar.status,
-            }
-          : undefined,
-        class: appointment.class
-          ? {
-              id: appointment.class.id,
+            },
+          },
+          class: {
+            select: {
+              id: true,
+              status: true,
               classPlan: {
-                ...appointment.class.classPlan,
-                consultantProfile: appointment.class.classPlan
-                  .consultantProfile as any,
+                select: {
+                  id: true,
+                  title: true,
+                  description: true,
+                  price: true,
+                  consultantProfile: {
+                    select: {
+                      id: true,
+                      user: {
+                        select: {
+                          id: true,
+                          name: true,
+                          image: true,
+                        },
+                      },
+                    },
+                  },
+                },
               },
-              status: appointment.class.status,
-            }
-          : undefined,
+            },
+          },
+        },
+        take: 100, // Limit to 100 most recent appointments
+        orderBy: {
+          createdAt: "desc",
+        },
       }),
-    );
 
-    // Transform approvals (same logic as fetchHelpers.ts)
-    const consultationApprovals = consultationsData.data.map(
-      (consultation: TConsultation) => ({
-        id: consultation.id,
-        type: "Consultation",
-        name: consultation.requestedBy?.user?.name ?? "Unknown",
-        requestedAt: consultation.requestedAt,
+      // Consultations with PENDING status
+      prisma.consultation.findMany({
+        where: {
+          consultationPlan: {
+            consultantProfileId: consultantId,
+          },
+          requestStatus: RequestStatus.PENDING,
+        },
+        select: {
+          id: true,
+          requestStatus: true,
+          requestedAt: true,
+          consultationPlan: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+          requestedBy: {
+            select: {
+              id: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  image: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          requestedAt: "desc",
+        },
       }),
-    );
 
-    const subscriptionApprovals = subscriptionsData.data.map(
-      (subscription: TSubscription) => ({
-        id: subscription.id,
-        type: "Subscription",
-        name: subscription.requestedBy?.user?.name ?? "Unknown",
-        requestedAt: subscription.requestedAt,
+      // Subscriptions with PENDING status
+      prisma.subscription.findMany({
+        where: {
+          subscriptionPlan: {
+            consultantProfileId: consultantId,
+          },
+          requestStatus: RequestStatus.PENDING,
+        },
+        select: {
+          id: true,
+          requestStatus: true,
+          requestedAt: true,
+          subscriptionPlan: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+          requestedBy: {
+            select: {
+              id: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  image: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          requestedAt: "desc",
+        },
       }),
-    );
+    ]);
+
+    // Transform appointments for response format
+    const transformedAppointments = appointments.map((appointment) => ({
+      ...appointment,
+      slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
+        ...slot,
+        slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
+        slotEndTimeInUTC: slot.slotEndTimeInUTC
+          ? new Date(slot.slotEndTimeInUTC)
+          : null,
+      })),
+      subscription: appointment.subscription
+        ? {
+            ...appointment.subscription,
+            startDate: new Date(appointment.subscription.startDate).toISOString(),
+            endDate: new Date(appointment.subscription.endDate).toISOString(),
+          }
+        : undefined,
+    }));
+
+    // Transform approvals
+    const consultationApprovals = consultations.map((consultation) => ({
+      id: consultation.id,
+      type: "Consultation",
+      name: consultation.requestedBy?.user?.name ?? "Unknown",
+      requestedAt: consultation.requestedAt,
+    }));
+
+    const subscriptionApprovals = subscriptions.map((subscription) => ({
+      id: subscription.id,
+      type: "Subscription",
+      name: subscription.requestedBy?.user?.name ?? "Unknown",
+      requestedAt: subscription.requestedAt,
+    }));
 
     // Sort by requestedAt (ISO string) for type safety
     const sortedApprovals = [

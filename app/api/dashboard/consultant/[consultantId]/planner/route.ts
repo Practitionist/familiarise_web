@@ -1,21 +1,5 @@
 import { NextResponse } from "next/server";
-import { TWebinar, TClass } from "@/types/appointment";
-
-// Type for webinar events in planner with type discriminator
-type WebinarEvent = TWebinar & {
-  type: "webinar";
-};
-
-// Type for class events in planner with type discriminator
-type ClassEvent = TClass & {
-  type: "class";
-};
-
-interface PlannerData {
-  webinars: WebinarEvent[];
-  classes: ClassEvent[];
-  participantCounts: Record<string, number>;
-}
+import prisma from "@/lib/prisma";
 
 export async function GET(
   request: Request,
@@ -31,112 +15,224 @@ export async function GET(
       );
     }
 
-    const baseUrl = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    // Fetch webinars and classes in parallel using direct Prisma queries
+    const [webinars, classes] = await Promise.all([
+      // Webinars with participant counts
+      prisma.webinar.findMany({
+        where: {
+          webinarPlan: {
+            consultantProfileId: consultantId,
+          },
+        },
+        select: {
+          id: true,
+          status: true,
+          feedbackSummary: true,
+          createdAt: true,
+          webinarPlan: {
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              price: true,
+              durationInHours: true,
+              maxParticipants: true,
+              language: true,
+              level: true,
+              consultantProfile: {
+                select: {
+                  id: true,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
+              topics: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+          appointment: {
+            select: {
+              id: true,
+              slotsOfAppointment: {
+                select: {
+                  id: true,
+                  slotStartTimeInUTC: true,
+                  slotEndTimeInUTC: true,
+                  isTentative: true,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          waitlist: {
+            select: {
+              id: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
 
-    // Fetch webinars and classes in parallel
-    const [webinarsRes, classesRes] = await Promise.all([
-      fetch(
-        `${baseUrl}/api/events/webinars?consultantProfileId=${consultantId}`,
-      ),
-      fetch(
-        `${baseUrl}/api/events/classes?consultantProfileId=${consultantId}`,
-      ),
+      // Classes with participant counts
+      prisma.class.findMany({
+        where: {
+          classPlan: {
+            consultantProfileId: consultantId,
+          },
+        },
+        select: {
+          id: true,
+          status: true,
+          startDate: true,
+          endDate: true,
+          feedbackSummary: true,
+          recordingUrls: true,
+          createdAt: true,
+          classPlan: {
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              price: true,
+              durationInMonths: true,
+              callsPerWeek: true,
+              sessionDurationInHours: true,
+              maxParticipants: true,
+              language: true,
+              level: true,
+              consultantProfile: {
+                select: {
+                  id: true,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
+              topics: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+              classContents: {
+                select: {
+                  id: true,
+                  title: true,
+                  description: true,
+                  order: true,
+                  hoursAllotted: true,
+                },
+                orderBy: {
+                  order: "asc",
+                },
+              },
+            },
+          },
+          appointments: {
+            select: {
+              id: true,
+              slotsOfAppointment: {
+                select: {
+                  id: true,
+                  slotStartTimeInUTC: true,
+                  slotEndTimeInUTC: true,
+                  isTentative: true,
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      image: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          waitlist: {
+            select: {
+              id: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      }),
     ]);
 
-    // Check for errors in responses
-    if (!webinarsRes.ok) {
-      console.error("Failed to fetch webinars:", webinarsRes.statusText);
-      return NextResponse.json(
-        { error: "Failed to fetch webinars" },
-        { status: webinarsRes.status },
-      );
-    }
-
-    if (!classesRes.ok) {
-      console.error("Failed to fetch classes:", classesRes.statusText);
-      return NextResponse.json(
-        { error: "Failed to fetch classes" },
-        { status: classesRes.status },
-      );
-    }
-
-    // Parse responses
-    const [webinarsData, classesData] = await Promise.all([
-      webinarsRes.json(),
-      classesRes.json(),
-    ]);
-
-    // Transform webinars to include type discriminator (same as PlannerService.fetchWebinars)
-    const webinars: WebinarEvent[] = (webinarsData.data || []).map(
-      (webinar: TWebinar) => ({
-        ...webinar,
-        type: "webinar" as const,
-      }),
-    );
-
-    // Transform classes to include type discriminator (same as PlannerService.fetchClasses)
-    const classes: ClassEvent[] = (classesData.data || []).map(
-      (classEvent: TClass) => ({
-        ...classEvent,
-        type: "class" as const,
-      }),
-    );
-
-    // Fetch participant counts for all events in parallel
-    const participantCountPromises = [
-      ...webinars.map(async (webinar: WebinarEvent) => {
-        try {
-          const response = await fetch(
-            `${baseUrl}/api/participants/webinar/${webinar.id}`,
-          );
-          if (response.ok) {
-            const data = await response.json();
-            return {
-              eventId: webinar.id,
-              count: data.participants?.length || 0,
-            };
-          }
-        } catch (error) {
-          console.error(
-            `Failed to fetch participants for webinar ${webinar.id}:`,
-            error,
-          );
-        }
-        return { eventId: webinar.id, count: 0 };
-      }),
-      ...classes.map(async (classEvent: ClassEvent) => {
-        try {
-          const response = await fetch(
-            `${baseUrl}/api/participants/class/${classEvent.id}`,
-          );
-          if (response.ok) {
-            const data = await response.json();
-            return {
-              eventId: classEvent.id,
-              count: data.participants?.length || 0,
-            };
-          }
-        } catch (error) {
-          console.error(
-            `Failed to fetch participants for class ${classEvent.id}:`,
-            error,
-          );
-        }
-        return { eventId: classEvent.id, count: 0 };
-      }),
-    ];
-
-    const participantCountResults = await Promise.all(participantCountPromises);
+    // Calculate participant counts from appointments and waitlist
     const participantCounts: Record<string, number> = {};
-    participantCountResults.forEach(({ eventId, count }) => {
-      participantCounts[eventId] = count;
+
+    // Count webinar participants
+    webinars.forEach((webinar) => {
+      const appointmentUsers =
+        webinar.appointment?.slotsOfAppointment?.[0]?.user.length || 0;
+      const waitlistUsers = webinar.waitlist?.length || 0;
+      participantCounts[webinar.id] = appointmentUsers + waitlistUsers;
     });
 
-    const plannerData: PlannerData = {
-      webinars,
-      classes,
+    // Count class participants
+    classes.forEach((classEvent) => {
+      const appointmentUsers = classEvent.appointments.reduce((sum, apt) => {
+        return sum + (apt.slotsOfAppointment?.[0]?.user.length || 0);
+      }, 0);
+      const waitlistUsers = classEvent.waitlist?.length || 0;
+      participantCounts[classEvent.id] = appointmentUsers + waitlistUsers;
+    });
+
+    // Transform to include type discriminator
+    const webinarsWithType = webinars.map((webinar) => ({
+      ...webinar,
+      type: "webinar" as const,
+    }));
+
+    const classesWithType = classes.map((classEvent) => ({
+      ...classEvent,
+      type: "class" as const,
+    }));
+
+    const plannerData = {
+      webinars: webinarsWithType,
+      classes: classesWithType,
       participantCounts,
     };
 
