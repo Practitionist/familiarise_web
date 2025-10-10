@@ -966,11 +966,11 @@ export default function Home() {
               {/* Card glow effect */}
               <div className="absolute inset-0 -z-10 rounded-3xl" style={{ background: GLOW_EFFECTS.cardGlow, filter: 'blur(40px)' }} />
             <Tabs defaultValue="consultation" className="w-full">
-              <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 p-1 mb-2">
-                <TabsTrigger value="consultation">Consultation</TabsTrigger>
-                <TabsTrigger value="subscription">Subscription</TabsTrigger>
-                <TabsTrigger value="webinar">Webinar</TabsTrigger>
-                <TabsTrigger value="class">Class</TabsTrigger>
+              <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 p-1.5 mb-2 bg-gray-800/60 border border-gray-700/50 rounded-xl">
+                <TabsTrigger value="consultation" className="data-[state=active]:bg-gray-700/70 data-[state=active]:text-white data-[state=active]:border-gray-500/50 data-[state=active]:shadow-lg text-gray-400 transition-all duration-300 hover:text-gray-300">Consultation</TabsTrigger>
+                <TabsTrigger value="subscription" className="data-[state=active]:bg-gray-700/70 data-[state=active]:text-white data-[state=active]:border-gray-500/50 data-[state=active]:shadow-lg text-gray-400 transition-all duration-300 hover:text-gray-300">Subscription</TabsTrigger>
+                <TabsTrigger value="webinar" className="data-[state=active]:bg-gray-700/70 data-[state=active]:text-white data-[state=active]:border-gray-500/50 data-[state=active]:shadow-lg text-gray-400 transition-all duration-300 hover:text-gray-300">Webinar</TabsTrigger>
+                <TabsTrigger value="class" className="data-[state=active]:bg-gray-700/70 data-[state=active]:text-white data-[state=active]:border-gray-500/50 data-[state=active]:shadow-lg text-gray-400 transition-all duration-300 hover:text-gray-300">Class</TabsTrigger>
               </TabsList>
               <div className="mt-8">
                 <Suspense fallback={<div>Loading process flows...</div>}>
@@ -1020,31 +1020,77 @@ export default function Home() {
             />
           </div>
           <div className="container mx-auto px-4 md:px-6 relative z-10">
-            <div className="relative bg-gradient-to-br from-gray-900/95 to-gray-800/90 border border-gray-700/50 rounded-3xl shadow-2xl w-full max-w-4xl mx-auto p-10 backdrop-blur-sm">
+            <div className="relative bg-gradient-to-br from-gray-900/95 to-gray-800/90 border border-gray-700/50 rounded-3xl shadow-2xl w-full max-w-4xl mx-auto p-10 md:p-12 backdrop-blur-sm">
               {/* Card glow effect */}
               <div className="absolute inset-0 -z-10 rounded-3xl" style={{ background: GLOW_EFFECTS.cardGlow, filter: 'blur(40px)' }} />
-              <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
-                Frequently Asked Questions
-              </h2>
-              <Accordion
-                className="w-full mt-4"
-                type="multiple"
-                defaultValue={[]}
+
+              {/* Animated heading */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5 }}
+                viewport={{ once: true }}
+                className="text-center mb-10"
               >
-                {faqItems.map((item, index) => (
-                  <AccordionItem
-                    key={`item-${index + 1}`}
-                    value={`item-${index + 1}`}
-                  >
-                    <AccordionTrigger className="w-full text-left text-white hover:text-teal-400 transition-colors">
-                      <span className="flex-1">{item.question}</span>
-                    </AccordionTrigger>
-                    <AccordionContent>
-                      <p className="text-sm text-gray-400">{item.answer}</p>
-                    </AccordionContent>
-                  </AccordionItem>
-                ))}
-              </Accordion>
+                <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+                  Frequently Asked Questions
+                </h2>
+                <p className="text-gray-400 text-lg">Everything you need to know about our platform</p>
+              </motion.div>
+
+              {/* Animated accordion with stagger */}
+              <motion.div
+                initial="hidden"
+                whileInView="visible"
+                viewport={{ once: true }}
+                variants={{
+                  hidden: { opacity: 0 },
+                  visible: {
+                    opacity: 1,
+                    transition: {
+                      staggerChildren: 0.1
+                    }
+                  }
+                }}
+              >
+                <Accordion
+                  className="w-full space-y-4"
+                  type="multiple"
+                  defaultValue={[]}
+                >
+                  {faqItems.map((item, index) => (
+                    <motion.div
+                      key={`item-${index + 1}`}
+                      variants={{
+                        hidden: { opacity: 0, y: 20 },
+                        visible: { opacity: 1, y: 0 }
+                      }}
+                    >
+                      <AccordionItem
+                        value={`item-${index + 1}`}
+                        className="border-0 group"
+                      >
+                        <div className="border border-gray-700/50 rounded-2xl transition-all duration-300 hover:border-gray-500/60 hover:bg-gray-800/30">
+                          <AccordionTrigger className="w-full text-left px-6 py-5 hover:no-underline">
+                            <div className="flex items-center gap-4 flex-1">
+                              {/* Number badge */}
+                              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-gray-600 via-gray-700 to-gray-800 border border-gray-500/50 flex items-center justify-center text-sm font-bold text-gray-200 group-hover:border-gray-400/60 group-hover:shadow-lg transition-all duration-300">
+                                {String(index + 1).padStart(2, '0')}
+                              </div>
+                              <span className="flex-1 font-semibold text-lg md:text-xl text-white group-hover:text-gray-100 transition-colors">
+                                {item.question}
+                              </span>
+                            </div>
+                          </AccordionTrigger>
+                          <AccordionContent className="px-6 pb-5">
+                            <p className="text-base text-gray-400 leading-relaxed ml-14">{item.answer}</p>
+                          </AccordionContent>
+                        </div>
+                      </AccordionItem>
+                    </motion.div>
+                  ))}
+                </Accordion>
+              </motion.div>
             </div>
           </div>
         </section>
