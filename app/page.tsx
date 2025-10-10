@@ -794,7 +794,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Transition gradient between Stats and Best Experts */}
+        {/* Transition gradient between Stats and Testimonials */}
         <div className="h-64 relative pointer-events-none">
           <div
             className="absolute inset-0"
@@ -804,39 +804,72 @@ export default function Home() {
           />
         </div>
 
-        {/* BestExpertsSection */}
+        {/* TestimonialsSection */}
         <section
-          key="best-experts-section"
-          className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/30 to-black relative"
+          key="testimonials-section"
+          className="py-24 md:py-32 overflow-hidden relative bg-black"
         >
-          {/* Top fade shadow */}
-          <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none">
-            <div
-              className="absolute inset-0 blur-3xl"
-              style={{
-                background: GLOW_EFFECTS.sectionTopFade
-              }}
-            />
+          <div
+            className="absolute inset-0 opacity-5"
+            style={{
+              backgroundImage: `radial-gradient(circle at 1px 1px, rgb(255 255 255 / 0.1) 1px, transparent 0)`,
+              backgroundSize: "40px 40px",
+            }}
+          />
+          <div className="container mx-auto px-4 relative">
+            <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-center mb-16 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+              What Our Clients Say
+            </h2>
           </div>
-          <div className="container mx-auto px-4 md:px-6 relative z-10">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-12 max-w-6xl mx-auto text-center md:text-left">
-              <div className="flex-1 space-y-6">
-                <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
-                  Top-Rated Consultants Ready to Help
-                </h2>
-                <p className="text-xl text-gray-400 leading-relaxed max-w-2xl">
-                  Connect with industry leaders who have helped thousands of professionals achieve their goals.
-                </p>
-                <Link
-                  href="/explore/experts"
-                  className="inline-flex h-14 items-center justify-center rounded-xl bg-white px-8 py-4 text-base font-semibold text-black shadow-2xl transition-all hover:bg-gray-100 hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-                >
-                  Browse All Experts
-                </Link>
+          {isLoading && reviews.length === 0 ? (
+            <TestimonialLoadingSkeleton />
+          ) : (
+            <div className="space-y-12">
+              <div className="relative py-4">
+                <div style={pageStyles["testimonials-marqueeContainer"]}>
+                  <div style={pageStyles["testimonials-marquee-track-ltr"]}>
+                    {marqueeGroups.map((group) => (
+                      <div key={group.ltrId} className="flex">
+                        {displayReviews.map((review) => (
+                          <ReviewCard
+                            key={`${review.id}-${group.ltrId}`}
+                            review={review}
+                          />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="relative py-4">
+                <div style={pageStyles["testimonials-marqueeContainer"]}>
+                  <div style={pageStyles["testimonials-marquee-track-rtl"]}>
+                    {marqueeGroups.map((group) => (
+                      <div key={group.rtlId} className="flex">
+                        {displayReviews.map((review) => (
+                          <ReviewCard
+                            key={`${review.id}-${group.rtlId}`}
+                            review={review}
+                          />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </section>
+
+        {/* Transition gradient between Testimonials and Featured Experts */}
+        <div className="h-64 relative pointer-events-none">
+          <div
+            className="absolute inset-0"
+            style={{
+              background: GLOW_EFFECTS.transitionGradient
+            }}
+          />
+        </div>
 
         {/* FeaturedExpertsSection */}
         <section
@@ -864,14 +897,14 @@ export default function Home() {
           <div className="container mx-auto px-4 md:px-6 mb-16 relative z-10">
             <div className="text-center">
               <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent mb-6">
-                Meet Our Featured Experts
+                Top-Rated Consultants Ready to Help
               </h2>
               <p className="mt-4 mx-auto max-w-[800px] text-gray-400 text-xl leading-relaxed">
-                Browse through our curated selection of top consultants across various domains and find your perfect match.
+                Connect with industry leaders who have helped thousands of professionals achieve their goals. Browse through our curated selection of top consultants across various domains.
               </p>
               <Link href="/explore/experts">
                 <Button className="mt-8 h-14 px-8 bg-white text-black hover:bg-gray-100 hover:scale-105 transition-all duration-300 shadow-2xl rounded-xl font-semibold">
-                  View All Experts
+                  Browse All Experts
                 </Button>
               </Link>
             </div>
@@ -959,64 +992,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* TestimonialsSection */}
-        <section
-          key="testimonials-section"
-          className="py-24 md:py-32 overflow-hidden relative bg-black"
-        >
-          <div
-            className="absolute inset-0 opacity-5"
-            style={{
-              backgroundImage: `radial-gradient(circle at 1px 1px, rgb(255 255 255 / 0.1) 1px, transparent 0)`,
-              backgroundSize: "40px 40px",
-            }}
-          />
-          <div className="container mx-auto px-4 relative">
-            <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-center mb-16 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
-              What Our Clients Say
-            </h2>
-          </div>
-          {isLoading && reviews.length === 0 ? (
-            <TestimonialLoadingSkeleton />
-          ) : (
-            <div className="space-y-12">
-              <div className="relative py-4">
-                <div style={pageStyles["testimonials-marqueeContainer"]}>
-                  <div style={pageStyles["testimonials-marquee-track-ltr"]}>
-                    {marqueeGroups.map((group) => (
-                      <div key={group.ltrId} className="flex">
-                        {displayReviews.map((review) => (
-                          <ReviewCard
-                            key={`${review.id}-${group.ltrId}`}
-                            review={review}
-                          />
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <div className="relative py-4">
-                <div style={pageStyles["testimonials-marqueeContainer"]}>
-                  <div style={pageStyles["testimonials-marquee-track-rtl"]}>
-                    {marqueeGroups.map((group) => (
-                      <div key={group.rtlId} className="flex">
-                        {displayReviews.map((review) => (
-                          <ReviewCard
-                            key={`${review.id}-${group.rtlId}`}
-                            review={review}
-                          />
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* Transition gradient between Testimonials and Process */}
+        {/* Transition gradient between Offerings and Process */}
         <div className="h-64 relative pointer-events-none">
           <div
             className="absolute inset-0"
@@ -1086,34 +1062,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* JoinCommunitySection */}
-        <section
-          key="join-community-section"
-          className="w-full py-24 md:py-32 bg-black relative"
-        >
-          {/* Top fade shadow */}
-          <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none">
-            <div
-              className="absolute inset-0 blur-3xl"
-              style={{
-                background: GLOW_EFFECTS.sectionTopFade
-              }}
-            />
-          </div>
-          <div className="container mx-auto px-4 md:px-6 text-center relative z-10">
-            <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight mb-6 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
-              Become a Consultant
-            </h2>
-            <p className="text-xl text-gray-400 leading-relaxed max-w-[700px] mx-auto mb-8">
-              Share your expertise, build your reputation, and earn income by helping professionals achieve their goals.
-            </p>
-            <Button className="w-full sm:w-auto bg-white text-black hover:bg-gray-100 hover:scale-105 transition-all duration-300 shadow-lg h-12 px-8">
-              Become an Expert
-            </Button>
-          </div>
-        </section>
-
-        {/* Transition gradient between Join Community and FAQ */}
+        {/* Transition gradient between Process and FAQ */}
         <div className="h-64 relative pointer-events-none">
           <div
             className="absolute inset-0"
@@ -1219,7 +1168,44 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Transition gradient between FAQ and Newsletter */}
+        {/* Transition gradient between FAQ and Become a Consultant */}
+        <div className="h-64 relative pointer-events-none">
+          <div
+            className="absolute inset-0"
+            style={{
+              background: GLOW_EFFECTS.transitionGradient
+            }}
+          />
+        </div>
+
+        {/* JoinCommunitySection */}
+        <section
+          key="join-community-section"
+          className="w-full py-24 md:py-32 bg-black relative"
+        >
+          {/* Top fade shadow */}
+          <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none">
+            <div
+              className="absolute inset-0 blur-3xl"
+              style={{
+                background: GLOW_EFFECTS.sectionTopFade
+              }}
+            />
+          </div>
+          <div className="container mx-auto px-4 md:px-6 text-center relative z-10">
+            <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight mb-6 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+              Become a Consultant
+            </h2>
+            <p className="text-xl text-gray-400 leading-relaxed max-w-[700px] mx-auto mb-8">
+              Share your expertise, build your reputation, and earn income by helping professionals achieve their goals.
+            </p>
+            <Button className="w-full sm:w-auto bg-white text-black hover:bg-gray-100 hover:scale-105 transition-all duration-300 shadow-lg h-12 px-8">
+              Become an Expert
+            </Button>
+          </div>
+        </section>
+
+        {/* Transition gradient between Become a Consultant and Newsletter */}
         <div className="h-64 relative pointer-events-none">
           <div
             className="absolute inset-0"
