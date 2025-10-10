@@ -411,7 +411,7 @@ const DarkBackground = () => {
   return (
     <div className="absolute inset-0 -z-10 overflow-hidden">
       {/* Base dark gradient */}
-      <div className="absolute inset-0 bg-gradient-to-b from-black via-gray-950 to-gray-900" />
+      <div className="absolute inset-0 bg-black" />
 
       {/* Subtle accent gradients - no animation for performance */}
       <div className="absolute top-0 left-1/4 h-[600px] w-[600px] rounded-full bg-gray-500/10 blur-3xl" />
@@ -962,7 +962,7 @@ export default function Home() {
         {/* TestimonialsSection */}
         <section
           key="testimonials-section"
-          className="py-24 md:py-32 overflow-hidden relative bg-gradient-to-b from-black to-gray-950"
+          className="py-24 md:py-32 overflow-hidden relative bg-black"
         >
           <div
             className="absolute inset-0 opacity-5"
@@ -1089,7 +1089,7 @@ export default function Home() {
         {/* JoinCommunitySection */}
         <section
           key="join-community-section"
-          className="w-full py-24 md:py-32 bg-gradient-to-b from-black to-gray-950 relative"
+          className="w-full py-24 md:py-32 bg-black relative"
         >
           {/* Top fade shadow */}
           <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none">
