@@ -66,22 +66,23 @@ export default function Programs() {
   const uniqueLevels = getUniqueLevels(programs);
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-40 pb-32">
-      <div className="mb-12 text-center">
-        <h1 className="text-4xl font-bold mb-4 text-gray-900">
-          Search Classes and Webinars
-        </h1>
-        <p className="text-lg text-gray-600">
-          Find the perfect class or webinar to suit your needs.
-        </p>
-      </div>
+    <div className="w-full min-h-screen bg-black">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-40 pb-32">
+        <div className="mb-12 text-center">
+          <h1 className="text-4xl font-bold mb-4 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+            Search Classes and Webinars
+          </h1>
+          <p className="text-lg text-gray-400">
+            Find the perfect class or webinar to suit your needs.
+          </p>
+        </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 mb-12">
+        <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl shadow-2xl backdrop-blur-sm p-8 mb-12">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <div>
             <Label
               htmlFor="type"
-              className="text-sm font-medium text-gray-700 mb-2"
+              className="text-sm font-medium text-gray-300 mb-2"
             >
               Type
             </Label>
@@ -91,7 +92,7 @@ export default function Programs() {
             >
               <SelectTrigger
                 id="type"
-                className="w-full rounded-lg border-gray-200 bg-white"
+                className="w-full rounded-lg border-gray-700 bg-gray-800/50 text-gray-100"
               >
                 <SelectValue placeholder="Select type" />
               </SelectTrigger>
@@ -105,7 +106,7 @@ export default function Programs() {
           <div>
             <Label
               htmlFor="category"
-              className="text-sm font-medium text-gray-700 mb-2"
+              className="text-sm font-medium text-gray-300 mb-2"
             >
               Level
             </Label>
@@ -115,7 +116,7 @@ export default function Programs() {
             >
               <SelectTrigger
                 id="category"
-                className="w-full rounded-lg border-gray-200 bg-white"
+                className="w-full rounded-lg border-gray-700 bg-gray-800/50 text-gray-100"
               >
                 <SelectValue placeholder="All Levels" />
               </SelectTrigger>
@@ -132,14 +133,14 @@ export default function Programs() {
           <div>
             <Label
               htmlFor="sort"
-              className="text-sm font-medium text-gray-700 mb-2"
+              className="text-sm font-medium text-gray-300 mb-2"
             >
               Sort By
             </Label>
             <Select value={sortBy} onValueChange={setSortBy}>
               <SelectTrigger
                 id="sort"
-                className="w-full rounded-lg border-gray-200 bg-white"
+                className="w-full rounded-lg border-gray-700 bg-gray-800/50 text-gray-100"
               >
                 <SelectValue placeholder="Select sorting option" />
               </SelectTrigger>
@@ -154,7 +155,7 @@ export default function Programs() {
           <div>
             <Label
               htmlFor="view"
-              className="text-sm font-medium text-gray-700 mb-2"
+              className="text-sm font-medium text-gray-300 mb-2"
             >
               View Mode
             </Label>
@@ -164,7 +165,7 @@ export default function Programs() {
             >
               <SelectTrigger
                 id="view"
-                className="w-full rounded-lg border-gray-200 bg-white"
+                className="w-full rounded-lg border-gray-700 bg-gray-800/50 text-gray-100"
               >
                 <SelectValue>
                   <div className="flex items-center gap-2">
@@ -210,12 +211,12 @@ export default function Programs() {
             placeholder="Search classes and webinars"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full rounded-lg border-gray-200 bg-white pl-4 pr-12 py-3 text-sm focus:border-gray-300 focus:ring-gray-300"
+            className="w-full rounded-lg border-gray-700 bg-gray-800/50 text-gray-100 placeholder:text-gray-500 pl-4 pr-12 py-3 text-sm focus:border-gray-600 focus:ring-gray-600"
             aria-label="Search classes and webinars"
           />
           <div className="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none">
             <svg
-              className="h-5 w-5 text-gray-400"
+              className="h-5 w-5 text-gray-500"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -230,7 +231,7 @@ export default function Programs() {
             </svg>
           </div>
         </div>
-      </div>
+        </div>
 
       {viewMode === "grid" ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -242,7 +243,7 @@ export default function Programs() {
                   ? lastElementRef
                   : null
               }
-              className="w-full text-left bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-all duration-300"
+              className="w-full text-left bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl overflow-hidden shadow-xl backdrop-blur-sm cursor-pointer hover:border-gray-600/50 hover:shadow-2xl transition-all duration-500 hover:-translate-y-1"
               onClick={() => handleProgramClick(item)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -264,26 +265,26 @@ export default function Programs() {
               />
               <div className="p-6">
                 <div className="flex justify-between items-start mb-3">
-                  <h3 className="text-lg font-semibold text-gray-900">
+                  <h3 className="text-lg font-semibold text-gray-100">
                     {item.title}
                   </h3>
                   <output
-                    className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
+                    className="bg-gray-800/50 text-gray-400 border border-gray-700/50 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
                     aria-label={`Program type: ${item.type}`}
                   >
                     {item.type}
                   </output>
                 </div>
-                <p className="text-gray-600 text-sm mb-4 line-clamp-2">
+                <p className="text-gray-400 text-sm mb-4 line-clamp-2">
                   {item.description}
                 </p>
                 <div className="flex items-center justify-between">
-                  <div className="text-gray-900 font-semibold">
-                    $${item.price}
+                  <div className="text-gray-100 font-semibold">
+                    ${item.price}
                   </div>
                   <Button
                     variant="outline"
-                    className="text-sm border-gray-200 hover:bg-gray-50"
+                    className="text-sm border-gray-700 bg-gray-800/50 text-gray-300 hover:bg-gray-700 hover:text-white"
                     onClick={(e) => {
                       e.stopPropagation();
                       handleProgramClick(item);
@@ -307,7 +308,7 @@ export default function Programs() {
                   ? lastElementRef
                   : null
               }
-              className="w-full text-left bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 flex cursor-pointer hover:shadow-md transition-all duration-300"
+              className="w-full text-left bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl overflow-hidden shadow-xl backdrop-blur-sm flex cursor-pointer hover:border-gray-600/50 hover:shadow-2xl transition-all duration-500 hover:-translate-y-1"
               onClick={() => handleProgramClick(item)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -329,26 +330,26 @@ export default function Programs() {
               />
               <div className="p-6 flex-1">
                 <div className="flex justify-between items-start mb-3">
-                  <h3 className="text-lg font-semibold text-gray-900">
+                  <h3 className="text-lg font-semibold text-gray-100">
                     {item.title}
                   </h3>
                   <output
-                    className="bg-gray-100 text-gray-600 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
+                    className="bg-gray-800/50 text-gray-400 border border-gray-700/50 text-xs px-2.5 py-1 rounded-full font-medium inline-block"
                     aria-label={`Program type: ${item.type}`}
                   >
                     {item.type}
                   </output>
                 </div>
-                <p className="text-gray-600 text-sm mb-4 line-clamp-2">
+                <p className="text-gray-400 text-sm mb-4 line-clamp-2">
                   {item.description}
                 </p>
                 <div className="flex items-center justify-between">
-                  <div className="text-gray-900 font-semibold">
-                    $${item.price}
+                  <div className="text-gray-100 font-semibold">
+                    ${item.price}
                   </div>
                   <Button
                     variant="outline"
-                    className="text-sm border-gray-200 hover:bg-gray-50"
+                    className="text-sm border-gray-700 bg-gray-800/50 text-gray-300 hover:bg-gray-700 hover:text-white"
                     onClick={(e) => {
                       e.stopPropagation();
                       handleProgramClick(item);
@@ -364,9 +365,10 @@ export default function Programs() {
         </div>
       )}
 
-      {isLoading && (
-        <div className="text-center py-8 text-gray-500">Loading more...</div>
-      )}
+        {isLoading && (
+          <div className="text-center py-8 text-gray-400">Loading more...</div>
+        )}
+      </div>
     </div>
   );
 }

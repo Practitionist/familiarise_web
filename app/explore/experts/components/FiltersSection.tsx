@@ -99,10 +99,10 @@ export function FiltersSection({
 
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-      <div className="border border-gray-200 rounded-lg p-4 flex flex-col justify-between dark:border-gray-800">
+      <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-4 flex flex-col justify-between backdrop-blur-sm">
         <div>
           <label
-            className="block mb-2 text-sm font-medium text-black dark:text-black"
+            className="block mb-2 text-sm font-medium text-gray-300"
             htmlFor="domain"
           >
             Domain
@@ -111,18 +111,17 @@ export function FiltersSection({
             value={selectedDomain || "all"}
             onValueChange={handleDomainChange}
           >
-            <SelectTrigger id="domain" aria-label="Select domain">
+            <SelectTrigger id="domain" aria-label="Select domain" className="bg-gray-800/50 border-gray-700 text-gray-100">
               <SelectValue placeholder="All Domains" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all" className="bg-slate-200 text-black">
+              <SelectItem value="all">
                 All Domains
               </SelectItem>
               {metadata?.domains.map((domain) => (
                 <SelectItem
                   key={domain.id}
                   value={domain.id}
-                  className="bg-slate-200 text-black"
                 >
                   {domain.name}
                 </SelectItem>
@@ -132,7 +131,7 @@ export function FiltersSection({
         </div>
         <div className="mt-4">
           <label
-            className="block mb-2 text-sm font-medium text-black dark:text-black"
+            className="block mb-2 text-sm font-medium text-gray-300"
             htmlFor="subdomain"
           >
             Subdomain
@@ -142,7 +141,7 @@ export function FiltersSection({
             value={selectedSubdomain || "all"}
             onValueChange={handleSubdomainChange}
           >
-            <SelectTrigger id="subdomain" aria-label="Select subdomain">
+            <SelectTrigger id="subdomain" aria-label="Select subdomain" className="bg-gray-800/50 border-gray-700 text-gray-100">
               <SelectValue
                 placeholder={
                   selectedDomain ? "All Subdomains" : "Select a domain first"
@@ -150,7 +149,7 @@ export function FiltersSection({
               />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all" className="bg-slate-200 text-black">
+              <SelectItem value="all">
                 All Subdomains
               </SelectItem>
               {metadata?.subdomains
@@ -159,7 +158,6 @@ export function FiltersSection({
                   <SelectItem
                     key={subdomain.id}
                     value={subdomain.id}
-                    className="bg-slate-200 text-black"
                   >
                     {subdomain.name}
                   </SelectItem>
@@ -168,17 +166,17 @@ export function FiltersSection({
           </Select>
         </div>
       </div>
-      <div className="border border-gray-200 rounded-lg p-4 flex flex-col justify-between bg-white text-black dark:border-gray-800">
+      <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-4 flex flex-col justify-between backdrop-blur-sm">
         <div>
           <label
-            className="block mb-2 text-sm font-medium text-black"
+            className="block mb-2 text-sm font-medium text-gray-300"
             htmlFor="tags"
           >
             Tags
           </label>
           <div className="relative">
             <input
-              className="bg-white border border-gray-300 text-black text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+              className="bg-gray-800/50 border border-gray-700 text-gray-100 text-sm rounded-lg focus:ring-gray-600 focus:border-gray-600 block w-full p-2.5 placeholder:text-gray-500"
               id="tags"
               placeholder={
                 selectedDomain ? "Search tags..." : "Select a domain first"
@@ -190,12 +188,12 @@ export function FiltersSection({
               disabled={!selectedDomain}
             />
             {isDropdownOpen && filteredTags.length > 0 && (
-              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg">
+              <div className="absolute z-10 w-full mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-lg">
                 <ul className="py-1 overflow-auto max-h-60">
                   {filteredTags.map((tag) => (
                     <li
                       key={tag.id}
-                      className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-black"
+                      className="px-3 py-2 hover:bg-gray-700 cursor-pointer text-gray-100"
                       onClick={() => handleTagSelect(tag.name)}
                     >
                       {tag.name}
@@ -209,11 +207,11 @@ export function FiltersSection({
             {selectedTags.map((tag) => (
               <span
                 key={tag}
-                className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-black"
+                className="inline-flex items-center rounded-full bg-gray-800/50 border border-gray-700/50 px-3 py-1 text-xs font-medium text-gray-300"
               >
                 {tag}
                 <button
-                  className="ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:text-gray-500"
+                  className="ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full text-gray-500 hover:text-gray-300"
                   onClick={() => handleTagRemove(tag)}
                 >
                   <XIcon className="h-3 w-3" />
@@ -223,10 +221,10 @@ export function FiltersSection({
           </div>
         </div>
       </div>
-      <div className="border border-gray-200 rounded-lg p-4 flex flex-col justify-between dark:border-gray-800">
+      <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-4 flex flex-col justify-between backdrop-blur-sm">
         <div>
           <label
-            className="block mb-2 text-sm font-medium text-black"
+            className="block mb-2 text-sm font-medium text-gray-300"
             htmlFor="experience"
           >
             Experience Years
@@ -237,14 +235,14 @@ export function FiltersSection({
             max="30"
             value={experienceYears}
             onChange={(e) => setExperienceYears(Number(e.target.value))}
-            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
           />
-          <div className="flex justify-between mt-2 text-sm text-gray-600">
+          <div className="flex justify-between mt-2 text-sm text-gray-400">
             <span>0</span>
             <span>15</span>
             <span>30+</span>
           </div>
-          <div className="text-center mt-2 font-semibold text-lg">
+          <div className="text-center mt-2 font-semibold text-lg text-gray-100">
             {experienceYears === 30 ? "30+" : experienceYears} years
           </div>
         </div>

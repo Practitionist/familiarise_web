@@ -98,15 +98,15 @@ export function ClientWebinarRegistration({
     }
 
     return (
-      <Card>
+      <Card className="bg-gradient-to-br from-gray-900/90 to-gray-800/80 border-gray-700/50">
         <CardHeader>
-          <CardTitle>Register for Webinar</CardTitle>
+          <CardTitle className="text-white">Register for Webinar</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-gray-600 mb-4">
+          <p className="text-gray-300 mb-4">
             {sessionInfoText} {/* Show current session status info */}
           </p>
-          <p className="text-gray-600 mb-4">
+          <p className="text-gray-300 mb-4">
             Please sign in to register for this webinar.
           </p>
           <Button
@@ -124,12 +124,12 @@ export function ClientWebinarRegistration({
   }
 
   return (
-    <Card>
+    <Card className="bg-gradient-to-br from-gray-900/90 to-gray-800/80 border-gray-700/50">
       <CardHeader>
-        <CardTitle>Join Webinar</CardTitle>
+        <CardTitle className="text-white">Join Webinar</CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-gray-600 mb-4">{sessionInfoText}</p>
+        <p className="text-sm text-gray-300 mb-4">{sessionInfoText}</p>
       </CardContent>
       <CardFooter>
         <Button

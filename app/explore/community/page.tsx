@@ -5,25 +5,6 @@
  * Documentation: https://v0.dev/docs#integrating-generated-code-into-your-nextjs-app
  */
 
-/** Add fonts into your Next.js project:
-
-import { Archivo } from 'next/font/google'
-import { Libre_Franklin } from 'next/font/google'
-
-archivo({
-  subsets: ['latin'],
-  display: 'swap',
-})
-
-libre_franklin({
-  subsets: ['latin'],
-  display: 'swap',
-})
-
-To read more about using these font, please visit the Next.js documentation:
-- App Directory: https://nextjs.org/docs/app/building-your-application/optimizing/fonts
-- Pages Directory: https://nextjs.org/docs/pages/building-your-application/optimizing/fonts
-**/
 import Link from "next/link";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -37,21 +18,21 @@ import Image from "next/image";
 
 export default function CommunitySection() {
   return (
-    <div className="w-full">
-      <section className="flex justify-center items-center py-20 md:py-32 lg:py-40 xl:py-48 bg-zinc-900 text-white">
+    <div className="w-full min-h-screen bg-black">
+      <section className="flex justify-center items-center py-20 md:py-32 lg:py-40 xl:py-48 bg-gradient-to-b from-black via-gray-950/50 to-black">
         <div className="px-4 md:px-6 max-w-7xl w-full">
           <div className="grid gap-6 md:grid-cols-2 items-center">
             <div className="space-y-4">
-              <h1 className="text-4xl font-bold md:text-5xl lg:text-6xl">
+              <h1 className="text-4xl font-bold md:text-5xl lg:text-6xl bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
                 Join Our Thriving Community
               </h1>
-              <p className="text-lg md:text-xl text-primary-foreground/80">
+              <p className="text-lg md:text-xl text-gray-400">
                 Connect with like-minded professionals, share insights, and
                 collaborate on projects.
               </p>
               <Link
                 href="#"
-                className="inline-flex h-10 items-center justify-center rounded-md bg-white px-8 text-sm font-medium text-black shadow transition-colors hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                className="inline-flex h-10 items-center justify-center rounded-md bg-white px-8 text-sm font-medium text-black shadow transition-colors hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
                 prefetch={false}
               >
                 Join the Community
@@ -73,7 +54,7 @@ export default function CommunitySection() {
       <section className="py-12 md:py-20 flex justify-center items-center">
         <div className="px-4 md:px-6 max-w-7xl w-full">
           <div className="space-y-4 mb-8 text-center">
-            <h2 className="text-3xl font-bold">Meet Our Community</h2>
+            <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">Meet Our Community</h2>
             <p className="text-gray-400">
               Explore the diverse backgrounds and expertise of our community
               members.
@@ -86,7 +67,7 @@ export default function CommunitySection() {
                 <AvatarFallback>JD</AvatarFallback>
               </Avatar>
               <div className="text-center">
-                <p className="font-medium">John Doe</p>
+                <p className="font-medium text-gray-100">John Doe</p>
                 <p className="text-sm text-gray-400">Software Engineer</p>
               </div>
             </div>
@@ -96,7 +77,7 @@ export default function CommunitySection() {
                 <AvatarFallback>SM</AvatarFallback>
               </Avatar>
               <div className="text-center">
-                <p className="font-medium">Sarah Miller</p>
+                <p className="font-medium text-gray-100">Sarah Miller</p>
                 <p className="text-sm text-gray-400">Product Manager</p>
               </div>
             </div>
@@ -106,7 +87,7 @@ export default function CommunitySection() {
                 <AvatarFallback>JB</AvatarFallback>
               </Avatar>
               <div className="text-center">
-                <p className="font-medium">James Brown</p>
+                <p className="font-medium text-gray-100">James Brown</p>
                 <p className="text-sm text-gray-400">UX Designer</p>
               </div>
             </div>
@@ -116,7 +97,7 @@ export default function CommunitySection() {
                 <AvatarFallback>LW</AvatarFallback>
               </Avatar>
               <div className="text-center">
-                <p className="font-medium">Lisa Wang</p>
+                <p className="font-medium text-gray-100">Lisa Wang</p>
                 <p className="text-sm text-gray-400">Data Analyst</p>
               </div>
             </div>
@@ -126,7 +107,7 @@ export default function CommunitySection() {
                 <AvatarFallback>MR</AvatarFallback>
               </Avatar>
               <div className="text-center">
-                <p className="font-medium">Michael Rodriguez</p>
+                <p className="font-medium text-gray-100">Michael Rodriguez</p>
                 <p className="text-sm text-gray-400">Project Manager</p>
               </div>
             </div>
@@ -134,21 +115,21 @@ export default function CommunitySection() {
         </div>
       </section>
 
-      <section className="bg-muted py-12 md:py-20">
-        <div className="px-4 md:px-6">
+      <section className="bg-gradient-to-b from-black via-gray-950/30 to-black py-12 md:py-20">
+        <div className="px-4 md:px-6 max-w-7xl mx-auto">
           <div className="space-y-4 mb-8">
-            <h2 className="text-3xl font-bold">Recent Community Activity</h2>
-            <p className="text-muted-foreground">
+            <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">Recent Community Activity</h2>
+            <p className="text-gray-400">
               Stay up-to-date with the latest discussions and interactions.
             </p>
           </div>
           <div className="grid gap-6">
-            <Card>
+            <Card className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border-gray-800/50 backdrop-blur-sm">
               <CardHeader>
-                <CardTitle>
+                <CardTitle className="text-gray-100">
                   New Discussion: Best Practices for Remote Work
                 </CardTitle>
-                <CardDescription>
+                <CardDescription className="text-gray-400">
                   Join the conversation on optimizing productivity and
                   collaboration for remote teams.
                 </CardDescription>
@@ -160,23 +141,23 @@ export default function CommunitySection() {
                     <AvatarFallback>JD</AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="font-medium">John Doe</p>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="font-medium text-gray-100">John Doe</p>
+                    <p className="text-sm text-gray-400">
                       Software Engineer
                     </p>
                   </div>
-                  <div className="ml-auto text-sm text-muted-foreground">
+                  <div className="ml-auto text-sm text-gray-500">
                     2 days ago
                   </div>
                 </div>
               </CardContent>
             </Card>
-            <Card>
+            <Card className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border-gray-800/50 backdrop-blur-sm">
               <CardHeader>
-                <CardTitle>
+                <CardTitle className="text-gray-100">
                   New Resource: Guide to Building Effective Client Relationships
                 </CardTitle>
-                <CardDescription>
+                <CardDescription className="text-gray-400">
                   Check out our latest guide on strengthening client
                   partnerships.
                 </CardDescription>
@@ -188,23 +169,23 @@ export default function CommunitySection() {
                     <AvatarFallback>SM</AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="font-medium">Sarah Miller</p>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="font-medium text-gray-100">Sarah Miller</p>
+                    <p className="text-sm text-gray-400">
                       Product Manager
                     </p>
                   </div>
-                  <div className="ml-auto text-sm text-muted-foreground">
+                  <div className="ml-auto text-sm text-gray-500">
                     1 week ago
                   </div>
                 </div>
               </CardContent>
             </Card>
-            <Card>
+            <Card className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 border-gray-800/50 backdrop-blur-sm">
               <CardHeader>
-                <CardTitle>
+                <CardTitle className="text-gray-100">
                   New Announcement: Upcoming Community Meetup in San Francisco
                 </CardTitle>
-                <CardDescription>
+                <CardDescription className="text-gray-400">
                   Join us for an in-person networking event and workshop.
                 </CardDescription>
               </CardHeader>
@@ -215,12 +196,12 @@ export default function CommunitySection() {
                     <AvatarFallback>MR</AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="font-medium">Michael Rodriguez</p>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="font-medium text-gray-100">Michael Rodriguez</p>
+                    <p className="text-sm text-gray-400">
                       Project Manager
                     </p>
                   </div>
-                  <div className="ml-auto text-sm text-muted-foreground">
+                  <div className="ml-auto text-sm text-gray-500">
                     2 weeks ago
                   </div>
                 </div>

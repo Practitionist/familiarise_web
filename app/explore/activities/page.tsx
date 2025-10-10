@@ -10,137 +10,136 @@ import Image from "next/image";
 
 export default function Programs() {
   return (
-    <>
-      {/* <div className="bg-white xl:py-40 lg:py-32 md:py-24 sm:py-16 py-12"> */}
-      <div className="bg-white mt-20 sm:mt-30 md:mt-30 lg:mt-30 xl:mt-40">
+    <div className="w-full min-h-screen bg-black">
+      <div className="mt-20 sm:mt-30 md:mt-30 lg:mt-30 xl:mt-40 pb-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col">
-            <div className="flex justify-between border-b border-gray-200 py-6">
+            <div className="flex justify-between border-b border-gray-800 py-6">
               <div className="flex space-x-4">
-                <Button className="bg-gray-100 text-gray-900" variant="ghost">
+                <Button className="bg-gray-800/50 text-gray-100 hover:bg-gray-700" variant="ghost">
                   Home
                 </Button>
-                <Button className="text-gray-900" variant="ghost">
+                <Button className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50" variant="ghost">
                   Events
                 </Button>
-                <Button className="text-gray-900" variant="ghost">
+                <Button className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50" variant="ghost">
                   Hackathons
                 </Button>
-                <Button className="text-gray-900" variant="ghost">
+                <Button className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50" variant="ghost">
                   Webinars
                 </Button>
-                <Button className="text-gray-900" variant="ghost">
+                <Button className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50" variant="ghost">
                   Community
                 </Button>
               </div>
               <div>
-                <Input className="border-gray-300" placeholder="Search" />
+                <Input className="border-gray-700 bg-gray-800/50 text-gray-100 placeholder:text-gray-500" placeholder="Search" />
               </div>
             </div>
             <div className="flex space-x-2 py-4">
-              <Button className="bg-gray-100 text-gray-900" variant="ghost">
+              <Button className="bg-gray-800/50 text-gray-100 hover:bg-gray-700" variant="ghost">
                 Upcoming
               </Button>
-              <Button className="text-gray-900" variant="ghost">
+              <Button className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50" variant="ghost">
                 Past Events
               </Button>
-              <Button className="text-gray-900" variant="ghost">
+              <Button className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50" variant="ghost">
                 Popular
               </Button>
             </div>
-            <div className="grid grid-cols-3 gap-6">
-              <Card className="w-full">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <Card className="w-full bg-gradient-to-br from-gray-900/80 to-gray-800/60 border-gray-800/50 backdrop-blur-sm hover:border-gray-600/50 transition-all duration-500">
                 <Image
                   alt="Event thumbnail"
-                  className="aspect-video"
+                  className="aspect-video w-full rounded-t-lg"
                   height="180"
                   src="/placeholder.svg"
                   width="320"
                 />
                 <div className="p-4">
-                  <h3 className="text-lg font-semibold">AI Hackathon 2024</h3>
-                  <p className="text-gray-500">Starts in 3 days</p>
+                  <h3 className="text-lg font-semibold text-gray-100">AI Hackathon 2024</h3>
+                  <p className="text-gray-400">Starts in 3 days</p>
                 </div>
               </Card>
-              <Card className="w-full">
+              <Card className="w-full bg-gradient-to-br from-gray-900/80 to-gray-800/60 border-gray-800/50 backdrop-blur-sm hover:border-gray-600/50 transition-all duration-500">
                 <Image
                   alt="Event thumbnail"
-                  className="aspect-video"
+                  className="aspect-video w-full rounded-t-lg"
                   height="180"
                   src="/placeholder.svg"
                   width="320"
                 />
                 <div className="p-4">
-                  <h3 className="text-lg font-semibold">
+                  <h3 className="text-lg font-semibold text-gray-100">
                     Online Web Development Workshop
                   </h3>
-                  <p className="text-gray-500">Starts in 1 week</p>
+                  <p className="text-gray-400">Starts in 1 week</p>
                 </div>
               </Card>
-              <Card className="w-full">
+              <Card className="w-full bg-gradient-to-br from-gray-900/80 to-gray-800/60 border-gray-800/50 backdrop-blur-sm hover:border-gray-600/50 transition-all duration-500">
                 <Image
                   alt="Event thumbnail"
-                  className="aspect-video"
+                  className="aspect-video w-full rounded-t-lg"
                   height="180"
                   src="/placeholder.svg"
                   width="320"
                 />
                 <div className="p-4">
-                  <h3 className="text-lg font-semibold">
+                  <h3 className="text-lg font-semibold text-gray-100">
                     Data Science Seminar
                   </h3>
-                  <p className="text-gray-500">Starts in 2 weeks</p>
+                  <p className="text-gray-400">Starts in 2 weeks</p>
                 </div>
               </Card>
-              <Card className="w-full">
+              <Card className="w-full bg-gradient-to-br from-gray-900/80 to-gray-800/60 border-gray-800/50 backdrop-blur-sm hover:border-gray-600/50 transition-all duration-500">
                 <Image
                   alt="Event thumbnail"
-                  className="aspect-video"
+                  className="aspect-video w-full rounded-t-lg"
                   height="180"
                   src="/placeholder.svg"
                   width="320"
                 />
                 <div className="p-4">
-                  <h3 className="text-lg font-semibold">
+                  <h3 className="text-lg font-semibold text-gray-100">
                     Blockchain Hackathon 2024
                   </h3>
-                  <p className="text-gray-500">Starts in 3 weeks</p>
+                  <p className="text-gray-400">Starts in 3 weeks</p>
                 </div>
               </Card>
-              <Card className="w-full">
+              <Card className="w-full bg-gradient-to-br from-gray-900/80 to-gray-800/60 border-gray-800/50 backdrop-blur-sm hover:border-gray-600/50 transition-all duration-500">
                 <Image
                   alt="Event thumbnail"
-                  className="aspect-video"
+                  className="aspect-video w-full rounded-t-lg"
                   height="180"
                   src="/placeholder.svg"
                   width="320"
                 />
                 <div className="p-4">
-                  <h3 className="text-lg font-semibold">
+                  <h3 className="text-lg font-semibold text-gray-100">
                     Offline Networking Event
                   </h3>
-                  <p className="text-gray-500">Starts in 1 month</p>
+                  <p className="text-gray-400">Starts in 1 month</p>
                 </div>
               </Card>
-              <Card className="w-full">
+              <Card className="w-full bg-gradient-to-br from-gray-900/80 to-gray-800/60 border-gray-800/50 backdrop-blur-sm hover:border-gray-600/50 transition-all duration-500">
                 <Image
                   alt="Event thumbnail"
-                  className="aspect-video"
+                  className="aspect-video w-full rounded-t-lg"
                   height="180"
                   src="/placeholder.svg"
                   width="320"
                 />
                 <div className="p-4">
-                  <h3 className="text-lg font-semibold">
+                  <h3 className="text-lg font-semibold text-gray-100">
                     Online Consultation with Industry Experts
                   </h3>
-                  <p className="text-gray-500">Available now</p>
+                  <p className="text-gray-400">Available now</p>
                 </div>
               </Card>
             </div>
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }

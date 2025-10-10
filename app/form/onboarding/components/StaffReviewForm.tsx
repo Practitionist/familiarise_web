@@ -162,7 +162,7 @@ const StaffReviewForm: React.FC<Props> = ({ onSubmit, onBack, formData }) => {
         <Button
           type="button"
           onClick={handleSubmit(onSubmitForm)}
-          variant="night"
+          variant="default"
           disabled={!formData.termsAccepted || !formData.privacyAccepted}
         >
           Submit

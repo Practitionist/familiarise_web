@@ -33,12 +33,12 @@ export function ClientClassRegistration({
 
   if (!isLoggedIn) {
     return (
-      <Card>
+      <Card className="bg-gradient-to-br from-gray-900/90 to-gray-800/80 border-gray-700/50">
         <CardHeader>
-          <CardTitle>Register for Class</CardTitle>
+          <CardTitle className="text-white">Register for Class</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-gray-600 mb-4">
+          <p className="text-gray-300 mb-4">
             Please sign in to register for this class.
           </p>
           {/* TODO: Implement registration form for non-logged in users
@@ -118,12 +118,12 @@ export function ClientClassRegistration({
   }
 
   return (
-    <Card>
+    <Card className="bg-gradient-to-br from-gray-900/90 to-gray-800/80 border-gray-700/50">
       <CardHeader>
-        <CardTitle>Join Class</CardTitle>
+        <CardTitle className="text-white">Join Class</CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-gray-600 mb-4">
+        <p className="text-sm text-gray-300 mb-4">
           {startDate
             ? `Class starts on ${new Date(startDate).toLocaleString(undefined, {
                 dateStyle: "long",

@@ -67,8 +67,8 @@ function FindExperts() {
 
   if (isLoadingMetadata) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-900 dark:border-gray-100" />
+      <div className="flex items-center justify-center min-h-screen bg-black">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-100" />
       </div>
     );
   }
@@ -76,10 +76,10 @@ function FindExperts() {
   return (
     <div key="1" className="w-full px-4 py-6 space-y-6 md:px-6 md:py-12">
       <div className="flex flex-col space-y-2">
-        <h1 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl">
+        <h1 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
           Meet Your Perfect Mentor
         </h1>
-        <p className="text-gray-500 grid-rows-2 dark:text-gray-400">
+        <p className="text-gray-400">
           Ready to level up? Our amazing mentors are here to guide you! Use
           keywords to find someone who matches your goals.
         </p>
@@ -113,8 +113,8 @@ function FindExperts() {
 
       <div className="space-y-4 min-h-[400px] relative">
         {isLoadingConsultants ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/50 dark:bg-black/50">
-            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-900 dark:border-gray-100" />
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-100" />
           </div>
         ) : (
           <>
@@ -125,7 +125,7 @@ function FindExperts() {
 
               return (
                 <div key={domain.id} className="space-y-4">
-                  <h2 className="text-2xl font-bold">{domain.name}</h2>
+                  <h2 className="text-2xl font-bold text-gray-100">{domain.name}</h2>
                   {domainConsultants.map(
                     (consultant: TConsultantProfile, index: number) => {
                       if (domainConsultants.length === index + 1) {
@@ -153,7 +153,7 @@ function FindExperts() {
 
             {consultants.length === 0 && (
               <div className="text-center py-8">
-                <p className="text-gray-500 text-lg">
+                <p className="text-gray-400 text-lg">
                   Oops! We couldn't find any mentors matching your search. Try
                   tweaking your filters to discover more awesome mentors!
                 </p>
@@ -162,7 +162,7 @@ function FindExperts() {
 
             {isLoadingMore && (
               <div className="flex justify-center py-4">
-                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-gray-900 dark:border-gray-100" />
+                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-gray-100" />
               </div>
             )}
           </>
@@ -174,10 +174,10 @@ function FindExperts() {
 
 export default function ExploreExperts() {
   return (
-    <>
+    <div className="w-full min-h-screen bg-black">
       <FeaturedExperts />
       <FindExperts />
       <SatisfiedTestimonial />
-    </>
+    </div>
   );
 }

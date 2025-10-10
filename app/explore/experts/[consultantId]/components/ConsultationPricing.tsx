@@ -128,10 +128,10 @@ export function ConsultationPricing({
   );
 
   return (
-    <div className="flex flex-col items-center w-1/4 ml-10">
+    <div className="flex flex-col items-center w-full">
       <Image
         alt="Profile"
-        className="rounded-full mb-6"
+        className="rounded-full mb-6 border-2 border-gray-700/50 hidden lg:block"
         height="1350"
         src={userDetails.image || "/placeholder.svg"}
         style={{
@@ -140,8 +140,11 @@ export function ConsultationPricing({
         }}
         width="1080"
       />
-      <div className="card p-6 bg-white shadow-lg rounded-lg w-full">
-        <h3 className="text-lg font-semibold mb-4">Consultation Pricing</h3>
+      <div className="card p-8 bg-gradient-to-br from-gray-900/90 to-gray-800/80 border border-gray-700/50 backdrop-blur-sm shadow-2xl rounded-2xl w-full">
+        <div className="mb-6">
+          <h3 className="text-2xl font-bold mb-2 text-white tracking-tight">Consultation Pricing</h3>
+          <div className="h-1 w-16 bg-gradient-to-r from-white to-gray-600 rounded-full"></div>
+        </div>
         <PricingToggle
           consultationOptions={consultationOptions}
           subscriptionOptions={subscriptionOptions}

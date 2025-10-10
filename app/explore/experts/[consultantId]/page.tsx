@@ -21,6 +21,7 @@ import { ProfileHeader } from "./components/ProfileHeader";
 import { ReviewsSection } from "./components/ReviewsSection";
 import { useTimezone } from "./hooks/useTimezone";
 import { format as formatTz } from "date-fns-tz";
+import { V0ConsultationPricing } from "@/components/v0-consultation-pricing";
 
 type Params = Promise<{ consultantId: string }>;
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
@@ -279,13 +280,13 @@ export default function ExpertProfile(
 
   if (error || !consultantDetails || !userDetails) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen">
-        <h1 className="text-3xl font-bold mb-4">Oops! Consultant not found</h1>
-        <p className="text-lg mb-6">
+      <div className="flex flex-col items-center justify-center h-screen bg-black">
+        <h1 className="text-3xl font-bold mb-4 text-gray-100">Oops! Consultant not found</h1>
+        <p className="text-lg mb-6 text-gray-400">
           Here are some other consultants you might want to try out
         </p>
         <Link href="/search">
-          <Button variant="night" className="rounded-full">
+          <Button variant="outline" className="rounded-full">
             Search Consultants
           </Button>
         </Link>
@@ -294,48 +295,78 @@ export default function ExpertProfile(
   }
 
   return (
-    <div key={params.consultantId} className="flex justify-center py-40">
-      <div className="flex flex-col w-1/2">
-        <div className="space-y-8">
-          <ProfileHeader
-            userDetails={userDetails}
-            consultantDetails={consultantDetails}
-          />
+    <div key={params.consultantId} className="bg-black min-h-screen py-8 lg:py-20">
+      <div className="container mx-auto px-4">
+        <div className="flex flex-col lg:flex-row gap-8 lg:gap-10">
+          {/* Main Content */}
+          <div className="flex flex-col w-full lg:w-2/3">
+            <div className="space-y-8">
+              <ProfileHeader
+                userDetails={userDetails}
+                consultantDetails={consultantDetails}
+              />
 
-          <AboutSection
-            userDetails={userDetails}
-            consultantDetails={consultantDetails}
-          />
+              <AboutSection
+                userDetails={userDetails}
+                consultantDetails={consultantDetails}
+              />
 
-          <ConsultantAvailability
-            consultantDetails={consultantDetails}
-            timezone={timezone || "UTC"}
-          />
+              <ConsultantAvailability
+                consultantDetails={consultantDetails}
+                timezone={timezone || "UTC"}
+              />
+            </div>
+
+            <ClassesAndWebinars
+              classPlans={consultantDetails.classPlans}
+              webinarPlans={consultantDetails.webinarPlans}
+            />
+
+            <ReviewsSection reviews={reviews} />
+          </div>
+
+          {/* Pricing Sidebar */}
+          <div className="w-full lg:w-1/3 lg:sticky lg:top-8 lg:self-start space-y-8">
+            <ConsultationPricing
+              userDetails={userDetails}
+              consultantDetails={consultantDetails}
+              handleConsultationBooking={handleConsultationBooking}
+              handleSubscriptionBooking={handleSubscriptionBooking}
+              selectedDate={selectedDate}
+              setSelectedDate={setSelectedDate}
+              currentDate={currentDate}
+              setCurrentDate={setCurrentDate}
+              renderCalendar={renderCalendar}
+              slotTimings={slotTimings}
+              selectedSlot={selectedSlot}
+              setSelectedSlot={setSelectedSlot}
+              timezone={timezone || "UTC"}
+            />
+
+            {/* Modern V0 Pricing Section */}
+            <V0ConsultationPricing
+              consultantDetails={consultantDetails}
+              onConsultationBook={(plan) => {
+                // This would need slot selection - for now just show toast
+                toast({
+                  title: "Please select a time slot",
+                  description: "Use the pricing sidebar to book a consultation with a specific time slot.",
+                  variant: "default",
+                })
+              }}
+              onSubscriptionBook={(plan) => {
+                // Trigger the existing subscription booking flow
+                handleSubscriptionBooking({
+                  title: `${plan.durationInMonths} Month${plan.durationInMonths > 1 ? 's' : ''}`,
+                  price: plan.price,
+                  duration: `${plan.durationInMonths}`,
+                  durationInMonths: plan.durationInMonths,
+                })
+              }}
+            />
+          </div>
         </div>
-
-        <ClassesAndWebinars
-          classPlans={consultantDetails.classPlans}
-          webinarPlans={consultantDetails.webinarPlans}
-        />
-
-        <ReviewsSection reviews={reviews} />
       </div>
-
-      <ConsultationPricing
-        userDetails={userDetails}
-        consultantDetails={consultantDetails}
-        handleConsultationBooking={handleConsultationBooking}
-        handleSubscriptionBooking={handleSubscriptionBooking}
-        selectedDate={selectedDate}
-        setSelectedDate={setSelectedDate}
-        currentDate={currentDate}
-        setCurrentDate={setCurrentDate}
-        renderCalendar={renderCalendar}
-        slotTimings={slotTimings}
-        selectedSlot={selectedSlot}
-        setSelectedSlot={setSelectedSlot}
-        timezone={timezone || "UTC"}
-      />
     </div>
   );
 }

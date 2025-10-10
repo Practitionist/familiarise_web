@@ -22,24 +22,24 @@ export const ConsultantSkeletonLoader: React.FC = () => {
   }, []);
 
   return (
-    <div className="flex flex-col justify-center items-center min-h-screen">
-      <div className="text-2xl font-semibold mb-8 text-center animate-pulse">
+    <div className="flex flex-col justify-center items-center min-h-screen bg-black">
+      <div className="text-2xl font-semibold mb-8 text-center animate-pulse text-gray-100">
         {loadingText}
       </div>
       <div className="flex justify-center w-full max-w-6xl">
         <div className="flex flex-col w-1/2">
-          <Skeleton className="h-8 w-32 mb-2" />
-          <Skeleton className="h-10 w-64 mb-4" />
-          <Skeleton className="h-6 w-full mb-4" />
-          <Skeleton className="h-40 w-full mb-6" />
-          <Skeleton className="h-6 w-full mb-2" />
-          <Skeleton className="h-24 w-full mb-6" />
-          <Skeleton className="h-6 w-full mb-2" />
-          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-8 w-32 mb-2 bg-gray-800/50" />
+          <Skeleton className="h-10 w-64 mb-4 bg-gray-800/50" />
+          <Skeleton className="h-6 w-full mb-4 bg-gray-800/50" />
+          <Skeleton className="h-40 w-full mb-6 bg-gray-800/50" />
+          <Skeleton className="h-6 w-full mb-2 bg-gray-800/50" />
+          <Skeleton className="h-24 w-full mb-6 bg-gray-800/50" />
+          <Skeleton className="h-6 w-full mb-2 bg-gray-800/50" />
+          <Skeleton className="h-24 w-full bg-gray-800/50" />
         </div>
         <div className="flex flex-col items-center w-1/4 ml-10">
-          <Skeleton className="h-64 w-64 rounded-full mb-6" />
-          <Skeleton className="h-80 w-full rounded-lg" />
+          <Skeleton className="h-64 w-64 rounded-full mb-6 bg-gray-800/50" />
+          <Skeleton className="h-80 w-full rounded-lg bg-gray-800/50" />
         </div>
       </div>
     </div>

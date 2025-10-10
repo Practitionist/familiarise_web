@@ -220,10 +220,8 @@ export default function PricingToggle({
 
   if (consultationOptions.length === 0 && subscriptionOptions.length === 0) {
     return (
-      <div className="w-full max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
-        <div className="text-center text-gray-300">
-          <p>No pricing options available at the moment.</p>
-        </div>
+      <div className="text-center text-gray-300">
+        <p>No pricing options available at the moment.</p>
       </div>
     );
   }
@@ -233,27 +231,24 @@ export default function PricingToggle({
     ["consultant", "staff"].includes(session.user.role.toLowerCase())
   ) {
     return (
-      <div className="w-full max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
-        <div className="text-center text-gray-300 space-y-3">
-          <h3 className="text-2xl font-medium tracking-tight">
-            Consultee Access Required
-          </h3>
-          <p className="text-gray-400">
-            To book consultations or subscribe to services, please sign in with
-            a consultee account.
-          </p>
-        </div>
+      <div className="text-center text-gray-300 space-y-3">
+        <h3 className="text-2xl font-medium tracking-tight">
+          Consultee Access Required
+        </h3>
+        <p className="text-gray-400">
+          To book consultations or subscribe to services, please sign in with
+          a consultee account.
+        </p>
       </div>
     );
   }
 
   return (
-    <div className="w-full max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-gray-900 to-black rounded-3xl shadow-2xl">
-      <Tabs
-        value={activeTab}
-        onValueChange={setActiveTab}
-        className="space-y-8"
-      >
+    <Tabs
+      value={activeTab}
+      onValueChange={setActiveTab}
+      className="space-y-8"
+    >
         <TabsList className="inline-flex p-1.5 bg-gray-800/50 backdrop-blur-sm rounded-2xl border border-gray-700/50 shadow-lg">
           {consultationOptions.length > 0 && (
             <TabsTrigger
@@ -668,6 +663,5 @@ export default function PricingToggle({
           </TabsContent>
         )}
       </Tabs>
-    </div>
   );
 }

@@ -165,15 +165,15 @@ export function ConsultantAvailability({
 
   if (isLoading) {
     return (
-      <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-8 backdrop-blur-sm relative">
-        <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl pointer-events-none" />
+      <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 rounded-2xl shadow-xl border border-gray-800/50 p-8 backdrop-blur-sm relative">
+        <div className="absolute inset-0 bg-gradient-to-r from-gray-800/20 to-transparent rounded-2xl pointer-events-none" />
         <div className="relative">
-          <h3 className="text-xl font-bold mb-4 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
+          <h3 className="text-xl font-bold mb-4 text-gray-100">
             Consultant Availability
           </h3>
           <div className="flex items-center justify-center py-8">
-            <div className="text-gray-500 flex items-center space-x-2">
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-500"></div>
+            <div className="text-gray-300 flex items-center space-x-2">
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-300"></div>
               <span>Loading availability...</span>
             </div>
           </div>
@@ -185,10 +185,10 @@ export function ConsultantAvailability({
   return (
     <div className="space-y-6">
       <div className="text-center">
-        <h3 className="text-2xl font-bold mb-3 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
+        <h3 className="text-2xl font-bold mb-3 text-white">
           Consultant Availability
         </h3>
-        <p className="text-sm text-gray-600 bg-gradient-to-br from-gray-50 to-white px-4 py-2 rounded-xl border border-gray-200/50 shadow-sm inline-block">
+        <p className="text-sm text-gray-200 bg-gradient-to-br from-gray-800/50 to-gray-900/50 px-4 py-2 rounded-xl border border-gray-700/50 shadow-sm inline-block">
           {consultantDetails.scheduleType === "WEEKLY"
             ? "Weekly schedule. Use the 'Book Now' button to schedule a meeting."
             : "Custom schedule for the next 7 days. Use the 'Book Now' button to schedule a meeting."}

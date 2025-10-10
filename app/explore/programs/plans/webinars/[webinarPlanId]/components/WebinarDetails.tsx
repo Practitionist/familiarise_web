@@ -56,7 +56,7 @@ type FeatureItemProps = {
 const FeatureItem = ({ icon, label, value }: FeatureItemProps) => (
   <div className="flex items-center gap-2">
     {icon}
-    <span className="text-sm text-gray-600">
+    <span className="text-sm text-gray-300">
       {label}: {value}
     </span>
   </div>
@@ -133,7 +133,7 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-black">
       <div className="relative h-[300px] w-full">
         <Image
           src={generateProgramImageUrl(plan.id, 1200, 300)} // plan.id is WebinarPlan.id
@@ -148,10 +148,10 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
       <div className="container mx-auto px-4 -mt-20 relative">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           <div className="md:col-span-2">
-            <Card className="mb-8">
+            <Card className="mb-8 bg-gradient-to-br from-gray-900/90 to-gray-800/80 border-gray-700/50">
               <CardContent className="p-6">
-                <h1 className="text-3xl font-bold mb-2">{plan.title}</h1>
-                <p className="text-xl font-semibold mb-4 text-blue-600">
+                <h1 className="text-3xl font-bold mb-2 text-white">{plan.title}</h1>
+                <p className="text-xl font-semibold mb-4 text-white">
                   ${plan.price} USD
                 </p>
 
@@ -195,10 +195,10 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
 
                 <div className="space-y-6">
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">
+                    <h2 className="text-xl font-semibold mb-2 text-white">
                       About this Webinar
                     </h2>
-                    <p className="text-gray-600 whitespace-pre-line">
+                    <p className="text-gray-300 whitespace-pre-line">
                       {plan.description}
                     </p>
                   </div>
@@ -209,12 +209,12 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
                   {/* The schedule display logic should remain in page.tsx or be passed differently if needed here */}
 
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">
+                    <h2 className="text-xl font-semibold mb-2 text-white">
                       What you'll learn
                     </h2>
                     {/* Ensure learningOutcomes is part of WebinarPlanData type or WebinarPlan model */}
                     {plan.learningOutcomes && (
-                      <ul className="list-disc list-inside text-gray-600 space-y-1">
+                      <ul className="list-disc list-inside text-gray-300 space-y-1">
                         {plan.learningOutcomes.map(
                           (outcome: string, _index: number) => (
                             <li key={outcome}>{outcome}</li>
@@ -225,7 +225,7 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
                   </div>
 
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">
+                    <h2 className="text-xl font-semibold mb-2 text-white">
                       Topics Covered
                     </h2>
                     <div className="flex flex-wrap gap-2">
@@ -242,9 +242,9 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
           </div>
 
           <div>
-            <Card className="sticky top-24 mb-6">
+            <Card className="sticky top-24 mb-6 bg-gradient-to-br from-gray-900/90 to-gray-800/80 border-gray-700/50">
               <CardHeader>
-                <CardTitle>Instructor</CardTitle>
+                <CardTitle className="text-white">Instructor</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="flex items-center gap-4 mb-4">
@@ -260,13 +260,13 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
                     />
                   </div>
                   <div>
-                    <h3 className="font-semibold">
+                    <h3 className="font-semibold text-white">
                       {plan.consultantProfile?.user?.name}
                     </h3>
-                    <p className="text-sm text-gray-600">Expert Instructor</p>
+                    <p className="text-sm text-gray-300">Expert Instructor</p>
                   </div>
                 </div>
-                <p className="text-sm text-gray-600">
+                <p className="text-sm text-gray-300">
                   An experienced professional dedicated to sharing knowledge and
                   expertise.
                 </p>

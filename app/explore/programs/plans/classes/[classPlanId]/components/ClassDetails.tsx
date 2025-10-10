@@ -76,7 +76,7 @@ type FeatureItemProps = {
 const FeatureItem = ({ icon, label, value }: FeatureItemProps) => (
   <div className="flex items-center gap-2">
     {icon}
-    <span className="text-sm text-gray-600">
+    <span className="text-sm text-gray-300">
       {label}: {value}
     </span>
   </div>
@@ -88,7 +88,7 @@ interface ClassDetailsProps {
 
 export function ClassDetails({ plan }: ClassDetailsProps) {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-black">
       <div className="relative h-[300px] w-full">
         <Image
           src={generateProgramImageUrl(plan.id, 1200, 300)}
@@ -103,10 +103,10 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
       <div className="container mx-auto px-4 -mt-20 relative">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           <div className="md:col-span-2">
-            <Card className="mb-8">
+            <Card className="mb-8 bg-gradient-to-br from-gray-900/90 to-gray-800/80 border-gray-700/50">
               <CardContent className="p-6">
-                <h1 className="text-3xl font-bold mb-2">{plan.title}</h1>
-                <p className="text-xl font-semibold mb-4 text-blue-600">
+                <h1 className="text-3xl font-bold mb-2 text-white">{plan.title}</h1>
+                <p className="text-xl font-semibold mb-4 text-white">
                   ${plan.price} USD
                 </p>
 
@@ -155,19 +155,19 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
 
                 <div className="space-y-6">
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">
+                    <h2 className="text-xl font-semibold mb-2 text-white">
                       About this Class
                     </h2>
-                    <p className="text-gray-600 whitespace-pre-line">
+                    <p className="text-gray-300 whitespace-pre-line">
                       {plan.description}
                     </p>
                   </div>
 
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">
+                    <h2 className="text-xl font-semibold mb-2 text-white">
                       What you'll learn
                     </h2>
-                    <ul className="list-disc list-inside text-gray-600 space-y-1">
+                    <ul className="list-disc list-inside text-gray-300 space-y-1">
                       {plan.learningOutcomes.map(
                         (outcome: string, _index: number) => (
                           <li key={outcome}>{outcome}</li>
@@ -177,28 +177,28 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                   </div>
 
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">
+                    <h2 className="text-xl font-semibold mb-2 text-white">
                       Prerequisites
                     </h2>
-                    <p className="text-gray-600">
+                    <p className="text-gray-300">
                       {plan.prerequisites ?? "No prerequisites required"}
                     </p>
                   </div>
 
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">
+                    <h2 className="text-xl font-semibold mb-2 text-white">
                       Course Content
                     </h2>
                     <div className="space-y-4">
                       {plan.classContents.map((content, index) => (
                         <div
                           key={content.id}
-                          className="bg-gray-800/10 p-4 rounded-lg"
+                          className="bg-gray-800/60 border border-gray-700/50 p-4 rounded-lg"
                         >
-                          <h3 className="font-semibold">
+                          <h3 className="font-semibold text-white">
                             Module {index + 1}: {content.title}
                           </h3>
-                          <p className="text-gray-600 mt-1">
+                          <p className="text-gray-300 mt-1">
                             {content.description}
                           </p>
                         </div>
@@ -207,7 +207,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                   </div>
 
                   <div>
-                    <h2 className="text-xl font-semibold mb-2">
+                    <h2 className="text-xl font-semibold mb-2 text-white">
                       Topics Covered
                     </h2>
                     <div className="flex flex-wrap gap-2">
@@ -220,7 +220,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                   </div>
 
                   <div>
-                    <h2 className="text-xl font-semibold mb-3">
+                    <h2 className="text-xl font-semibold mb-3 text-white">
                       Class Schedule
                     </h2>
                     {plan.classes && plan.classes.length > 0 ? (
@@ -228,10 +228,10 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                         {plan.classes.map((classInstance, classIndex) => (
                           <div
                             key={classInstance.id}
-                            className="p-4 border rounded-lg bg-gray-50"
+                            className="p-4 border border-gray-700/50 rounded-lg bg-gray-800/60"
                           >
                             {plan.classes.length > 1 && (
-                              <h3 className="font-medium text-lg mb-2">
+                              <h3 className="font-medium text-lg mb-2 text-white">
                                 {`Class Session ${classIndex + 1}`}
                               </h3>
                             )}
@@ -280,7 +280,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                                         return (
                                           <div
                                             key={slot.id}
-                                            className="text-sm text-gray-700 pl-4"
+                                            className="text-sm text-gray-300 pl-4"
                                           >
                                             <div>
                                               {" "}
@@ -303,7 +303,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                                       },
                                     )
                                   ) : (
-                                    <p className="text-sm text-gray-500 pl-4">
+                                    <p className="text-sm text-gray-400 pl-4">
                                       No specific time slots scheduled for this
                                       session yet.
                                     </p>
@@ -311,7 +311,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                                 </div>
                               ))
                             ) : (
-                              <p className="text-sm text-gray-500">
+                              <p className="text-sm text-gray-400">
                                 Schedule to be announced for this class session.
                               </p>
                             )}
@@ -319,7 +319,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                         ))}
                       </div>
                     ) : (
-                      <p className="text-gray-600">
+                      <p className="text-gray-300">
                         Class schedule to be announced.
                       </p>
                     )}
@@ -330,9 +330,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
           </div>
 
           <div>
-            <Card className="sticky top-24 mb-6">
+            <Card className="sticky top-24 mb-6 bg-gradient-to-br from-gray-900/90 to-gray-800/80 border-gray-700/50">
               <CardHeader>
-                <CardTitle>Instructor</CardTitle>
+                <CardTitle className="text-white">Instructor</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="flex items-center gap-4 mb-4">
@@ -348,13 +348,13 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                     />
                   </div>
                   <div>
-                    <h3 className="font-semibold">
+                    <h3 className="font-semibold text-white">
                       {plan.consultantProfile?.user?.name}
                     </h3>
-                    <p className="text-sm text-gray-600">Expert Instructor</p>
+                    <p className="text-sm text-gray-300">Expert Instructor</p>
                   </div>
                 </div>
-                <p className="text-sm text-gray-600">
+                <p className="text-sm text-gray-300">
                   An experienced professional dedicated to sharing knowledge and
                   expertise.
                 </p>

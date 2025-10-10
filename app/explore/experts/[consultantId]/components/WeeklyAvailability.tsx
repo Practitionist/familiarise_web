@@ -50,9 +50,9 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
   };
 
   return (
-    <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-6 backdrop-blur-sm">
+    <div className="bg-gradient-to-br from-gray-900/80 to-gray-800/60 rounded-2xl shadow-xl border border-gray-800/50 p-6 backdrop-blur-sm">
       {/* Glossy overlay effect */}
-      <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-2xl pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-r from-gray-800/20 to-transparent rounded-2xl pointer-events-none" />
 
       <div className="relative">
         <div className="grid grid-cols-7 gap-3">
@@ -60,7 +60,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
             <div key={day} className="space-y-3">
               {/* Day header with glossy effect */}
               <div className="text-center">
-                <h4 className="font-semibold text-sm text-gray-800 bg-gradient-to-b from-gray-100 to-gray-200/80 px-3 py-2 rounded-xl border border-gray-300/50 shadow-sm">
+                <h4 className="font-semibold text-sm text-gray-100 bg-gradient-to-b from-gray-800/80 to-gray-900/80 px-3 py-2 rounded-xl border border-gray-700/50 shadow-sm">
                   {day.charAt(0) + day.slice(1).toLowerCase()}
                 </h4>
               </div>
@@ -92,10 +92,10 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                             border shadow-lg backdrop-blur-sm relative overflow-hidden
                             ${
                               isFullyBooked
-                                ? "bg-gradient-to-br from-gray-300 to-gray-400 text-gray-600 border-gray-300 shadow-gray-400/20"
+                                ? "bg-gradient-to-br from-gray-700 to-gray-800 text-gray-300 border-gray-600 shadow-gray-700/20"
                                 : isPartiallyBooked
-                                  ? "bg-gradient-to-br from-amber-200 to-amber-300 border-amber-400 text-amber-900 shadow-amber-400/25"
-                                  : "bg-gradient-to-br from-emerald-100 to-emerald-200 text-emerald-800 border-emerald-300 shadow-emerald-400/20"
+                                  ? "bg-gradient-to-br from-gray-700/70 to-gray-800/70 border-gray-600/60 text-gray-200 shadow-gray-700/25"
+                                  : "bg-gradient-to-br from-gray-600/50 to-gray-700/50 text-gray-200 border-gray-500/50 shadow-gray-700/20"
                             }
                           `}
                         >
@@ -109,19 +109,22 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                               {roundTime(slot.localEndTime)}
                             </div>
 
-                            {/* Status and date for booked slots */}
-                            {isFullyBooked && (
+                            {/* Status labels for all slot types */}
+                            {isFullyBooked ? (
                               <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
                                 Booked
                                 <br />
                                 {bookedDate && `(${bookedDate})`}
                               </div>
-                            )}
-                            {isPartiallyBooked && (
+                            ) : isPartiallyBooked ? (
                               <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
                                 Partially
                                 <br />
                                 Booked {bookedDate && `(${bookedDate})`}
+                              </div>
+                            ) : (
+                              <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                                Available
                               </div>
                             )}
                           </div>
@@ -129,7 +132,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                       );
                     })
                 ) : (
-                  <div className="h-16 flex items-center justify-center text-xs text-gray-400 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200 shadow-sm">
+                  <div className="h-16 flex items-center justify-center text-xs text-gray-500 bg-gradient-to-br from-gray-800/30 to-gray-900/30 rounded-xl border border-gray-700/30 shadow-sm">
                     No slots
                   </div>
                 )}

@@ -87,7 +87,7 @@ const ConsulteeReviewForm: React.FC<Props> = ({
         <Button type="button" onClick={onBack} variant="outline">
           Back
         </Button>
-        <Button type="button" onClick={handleSubmit} variant="night">
+        <Button type="button" onClick={handleSubmit} variant="default">
           Submit
         </Button>
       </div>

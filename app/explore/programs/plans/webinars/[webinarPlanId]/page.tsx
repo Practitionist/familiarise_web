@@ -36,8 +36,9 @@ export default function WebinarDetailsPage({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
+      <div className="flex flex-col items-center justify-center h-screen bg-black">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-white mb-4"></div>
+        <p className="text-gray-300 animate-pulse">Loading webinar details...</p>
       </div>
     );
   }
