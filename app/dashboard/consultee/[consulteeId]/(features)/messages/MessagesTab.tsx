@@ -76,9 +76,18 @@ export default function MessagesTab() {
   if (loading || !userId) {
     return (
       <div className="min-h-[calc(100vh-200px)]">
-        <h2 className="text-3xl font-bold mb-6">Messages</h2>
-        <div className="h-[calc(100vh-280px)] w-full flex items-center justify-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+        <div className="h-[calc(100vh-220px)] w-full flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <div className="relative inline-flex">
+              <div className="animate-spin rounded-full h-16 w-16 border-4 border-blue-200 border-t-blue-600"></div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="h-8 w-8 rounded-full bg-blue-100"></div>
+              </div>
+            </div>
+            <div className="text-gray-700 text-base font-medium">
+              Loading messages...
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -86,15 +95,17 @@ export default function MessagesTab() {
 
   return (
     <div className="min-h-[calc(100vh-200px)] flex flex-col w-full">
-      {/* <h2 className="text-3xl font-bold mb-6">Messages</h2> */}
       {initializing && (
-        <div className="mb-4 p-4 bg-blue-50 rounded-lg w-full">
-          <p className="text-sm text-blue-600">
-            Initializing channels... This may take a moment.
-          </p>
+        <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-500 rounded-xl shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="animate-spin rounded-full h-5 w-5 border-2 border-blue-200 border-t-blue-600"></div>
+            <p className="text-sm text-blue-700 font-medium">
+              Initializing channels... This may take a moment.
+            </p>
+          </div>
         </div>
       )}
-      <div className="h-[calc(100vh-220px)] w-full bg-white rounded-lg shadow-lg overflow-hidden flex-grow">
+      <div className="h-[calc(100vh-220px)] w-full bg-white rounded-2xl shadow-xl border-2 border-gray-100 overflow-hidden flex-grow">
         <StreamChatProvider userId={userId}>
           <ChatLayout />
         </StreamChatProvider>

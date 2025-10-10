@@ -183,23 +183,27 @@ export function SlotCard({
 
   return (
     <Card
-      className={`h-full border rounded-lg ${
-        isFirst ? "border-blue-200 bg-blue-50/30" : "border-gray-200 bg-white"
-      } hover:border-gray-300 hover:shadow-sm transition-all duration-200`}
+      className={`h-full border-2 rounded-2xl group ${
+        isFirst
+          ? "border-blue-300 bg-gradient-to-br from-blue-50 via-indigo-50/50 to-blue-50 shadow-lg shadow-blue-100/50"
+          : "border-gray-200 bg-white shadow-md"
+      } hover:border-blue-400 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 ease-out`}
     >
-      <div className="p-3 flex flex-col h-full">
+      <div className="p-4 flex flex-col h-full">
         <div className="flex items-start gap-3">
-          <Avatar className="h-9 w-9">
+          <Avatar className="h-11 w-11 ring-2 ring-offset-2 ring-gray-100 group-hover:ring-blue-400 transition-all duration-300 shadow-sm">
             <AvatarImage
               src={consultantImage ?? "/placeholder.svg"}
               alt="Consultant"
             />
-            <AvatarFallback>{consultantInitial}</AvatarFallback>
+            <AvatarFallback className="bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-semibold">
+              {consultantInitial}
+            </AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
-            <div className="flex justify-between items-center mb-1">
+            <div className="flex justify-between items-center mb-1.5">
               <h3
-                className="font-semibold text-sm text-gray-800 truncate"
+                className="font-bold text-base text-gray-900 truncate group-hover:text-blue-600 transition-colors"
                 title={eventTitle}
               >
                 {eventTitle}
@@ -207,18 +211,18 @@ export function SlotCard({
               <Badge
                 className={`flex-shrink-0 ${
                   isJoinable
-                    ? "bg-green-100 text-green-800 animate-pulse"
-                    : "bg-blue-100 text-blue-800"
-                } text-xs px-2 py-0.5 rounded-full`}
+                    ? "bg-gradient-to-r from-green-500 to-emerald-600 text-white animate-pulse shadow-md shadow-green-200"
+                    : "bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-sm"
+                } text-xs px-2.5 py-1 rounded-full font-semibold`}
               >
                 {isJoinable ? "Now!" : formatTimeUntil(diffInMinutes)}
               </Badge>
             </div>
-            <div className="space-y-0.5 text-xs text-gray-500">
-              <p className="truncate" title={consultantName}>
+            <div className="space-y-1 text-sm text-gray-600">
+              <p className="truncate font-medium" title={consultantName}>
                 {consultantName}
               </p>
-              <p>
+              <p className="text-xs text-gray-500">
                 {formatDateTime(
                   new Date(slot.slotStartTimeInUTC),
                   slot.slotEndTimeInUTC
@@ -229,27 +233,27 @@ export function SlotCard({
             </div>
           </div>
         </div>
-        <div className="mt-auto pt-2 flex items-center justify-between gap-2">
+        <div className="mt-auto pt-3 flex items-center justify-between gap-2 border-t border-gray-100 pt-3">
           <div className="flex items-center gap-1.5 flex-wrap">
             <Badge
               variant="outline"
-              className="text-xs rounded-full px-2 py-0.5"
+              className="text-xs rounded-full px-2.5 py-1 border-2 font-medium"
             >
               {appointmentType}
             </Badge>
             <Badge
-              className={`${getStatusColor(status)} text-xs rounded-full px-2 py-0.5`}
+              className={`${getStatusColor(status)} text-xs rounded-full px-2.5 py-1 font-medium shadow-sm`}
             >
               {status}
             </Badge>
             {isTentative && (
-              <span className="text-red-500 text-xs italic">*Tentative</span>
+              <span className="text-red-600 text-xs font-semibold italic">*Tentative</span>
             )}
           </div>
           {(isDevelopmentEnvironment() || isJoinable) && (
             <Button
               onClick={handleJoinMeeting}
-              className="ml-auto bg-gradient-to-b from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white text-xs h-6 px-2.5 rounded-md shadow-sm hover:shadow-md transition-all duration-200"
+              className="ml-auto bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white text-xs h-8 px-4 rounded-lg shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 font-semibold"
             >
               {isDevelopmentEnvironment() ? "Join (Dev)" : "Join"}
             </Button>
@@ -288,25 +292,27 @@ export function MonthlyEventCard({
   };
 
   return (
-    <div>
+    <div className="group">
       <Button
         onClick={handleClick}
         variant="ghost"
-        className="w-full text-left px-6 py-4 h-auto hover:bg-gray-50 block"
+        className="w-full text-left px-6 py-4 h-auto hover:bg-gradient-to-r hover:from-blue-50/50 hover:to-indigo-50/30 rounded-xl transition-all duration-200 block"
       >
         <div className="flex items-center gap-4">
-          <Avatar className="h-8 w-8">
+          <Avatar className="h-10 w-10 ring-2 ring-gray-100 group-hover:ring-blue-300 transition-all duration-200 shadow-sm">
             <AvatarImage src={image ?? "/placeholder.svg"} alt="Consultant" />
-            <AvatarFallback>{initial}</AvatarFallback>
+            <AvatarFallback className="bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-semibold">
+              {initial}
+            </AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h3 className="font-medium text-sm text-gray-900 truncate">
+                <h3 className="font-bold text-base text-gray-900 truncate group-hover:text-blue-600 transition-colors">
                   {title}
                 </h3>
                 <span
-                  className="text-sm text-gray-600"
+                  className="text-sm text-gray-600 font-medium"
                   data-testid="consultant-name"
                 >
                   {name}
@@ -316,14 +322,14 @@ export function MonthlyEventCard({
                 <Badge
                   className={`${
                     eventType === "Subscription"
-                      ? "bg-purple-100 text-purple-800"
-                      : "bg-indigo-100 text-indigo-800"
-                  } text-xs px-2 py-0.5`}
+                      ? "bg-gradient-to-r from-purple-500 to-pink-600 text-white"
+                      : "bg-gradient-to-r from-indigo-500 to-blue-600 text-white"
+                  } text-xs px-3 py-1 shadow-sm font-semibold rounded-full`}
                 >
                   {eventType}
                 </Badge>
                 <Badge
-                  className={`${getStatusColor(status)} text-xs px-2 py-0.5`}
+                  className={`${getStatusColor(status)} text-xs px-3 py-1 shadow-sm font-semibold rounded-full`}
                   data-testid="event-status"
                 >
                   {status}
@@ -334,33 +340,33 @@ export function MonthlyEventCard({
         </div>
       </Button>
       <div className="px-6 pb-4">
-        <div className="mt-2 space-y-1">
+        <div className="mt-2 space-y-2 bg-gray-50/50 rounded-lg p-3">
           {slots.map((slot) => (
             <div
               key={slot.id}
-              className="text-sm text-gray-600 flex items-center gap-4"
+              className="text-sm text-gray-700 flex items-center gap-4 hover:text-gray-900 transition-colors"
               data-testid="monthly-slot"
             >
-              <span className="min-w-[100px]">
+              <span className="min-w-[110px] font-semibold text-gray-800">
                 {new Date(slot.slotStartTimeInUTC).toLocaleString(undefined, {
                   weekday: "short",
                   day: "numeric",
                   month: "short",
                 })}
               </span>
-              <span>
+              <span className="font-medium">
                 {slot.slotEndTimeInUTC
                   ? `${formatTimeString(new Date(slot.slotStartTimeInUTC))} - ${formatTimeString(new Date(slot.slotEndTimeInUTC))}`
                   : formatTimeString(new Date(slot.slotStartTimeInUTC))}
                 {slot.isTentative && (
-                  <span className="text-red-500 ml-1">*</span>
+                  <span className="text-red-600 ml-1 font-bold">*</span>
                 )}
               </span>
             </div>
           ))}
           {slots.some((slot) => slot.isTentative) && (
             <div
-              className="text-xs text-red-500"
+              className="text-xs text-red-600 font-semibold italic pt-1"
               data-testid="tentative-notice"
             >
               * Subject to change

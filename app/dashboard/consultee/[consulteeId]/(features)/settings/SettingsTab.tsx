@@ -165,52 +165,59 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100 mb-6">
-        <h2 className="text-3xl font-bold text-gray-900">Settings</h2>
-        <p className="mt-2 text-gray-600">
-          Manage your account settings and preferences
-        </p>
+    <div className="space-y-8 animate-fade-in">
+      <div className="relative overflow-hidden bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 rounded-2xl p-8 shadow-xl">
+        <div className="absolute inset-0 bg-grid-white/10 [mask-image:linear-gradient(0deg,transparent,white)]"></div>
+        <div className="relative z-10">
+          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-2">Settings</h2>
+          <p className="text-blue-100 text-lg">
+            Manage your account settings and preferences
+          </p>
+        </div>
+        <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/10 rounded-full blur-3xl"></div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Profile Settings</CardTitle>
+      <Card className="border-2 border-gray-100 shadow-xl rounded-2xl overflow-hidden">
+        <CardHeader className="bg-gradient-to-r from-gray-50 to-white border-b-2 border-gray-100 p-6">
+          <CardTitle className="text-2xl font-bold text-gray-900">Profile Settings</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+        <CardContent className="space-y-6 p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <Label htmlFor="education">Education</Label>
+              <Label htmlFor="education" className="text-sm font-semibold text-gray-700">Education</Label>
               <Input
                 id="education"
                 name="education"
                 value={profileSettings.education ?? ""}
                 onChange={handleProfileChange}
                 placeholder="Your educational background"
+                className="rounded-lg border-2 border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="occupation">Occupation</Label>
+              <Label htmlFor="occupation" className="text-sm font-semibold text-gray-700">Occupation</Label>
               <Input
                 id="occupation"
                 name="occupation"
                 value={profileSettings.occupation ?? ""}
                 onChange={handleProfileChange}
                 placeholder="Your current occupation"
+                className="rounded-lg border-2 border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="preferredLanguage">Preferred Language</Label>
+              <Label htmlFor="preferredLanguage" className="text-sm font-semibold text-gray-700">Preferred Language</Label>
               <Input
                 id="preferredLanguage"
                 name="preferredLanguage"
                 value={profileSettings.preferredLanguage ?? ""}
                 onChange={handleProfileChange}
                 placeholder="Your preferred language"
+                className="rounded-lg border-2 border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="preferredCommunicationMethod">
+              <Label htmlFor="preferredCommunicationMethod" className="text-sm font-semibold text-gray-700">
                 Communication Method
               </Label>
               <select
@@ -218,7 +225,7 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
                 name="preferredCommunicationMethod"
                 value={profileSettings.preferredCommunicationMethod.toString()}
                 onChange={handleProfileChange}
-                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+                className="w-full rounded-lg border-2 border-gray-200 bg-white px-4 py-2.5 text-sm font-medium focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 cursor-pointer"
               >
                 <option value={ConsultationMode.VIDEO}>Video</option>
                 <option value={ConsultationMode.AUDIO}>Audio</option>
@@ -227,43 +234,47 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
             </div>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="aboutMe">About Me</Label>
+            <Label htmlFor="aboutMe" className="text-sm font-semibold text-gray-700">About Me</Label>
             <Textarea
               id="aboutMe"
               name="aboutMe"
               value={profileSettings.aboutMe ?? ""}
               onChange={handleProfileChange}
               placeholder="Tell us about yourself"
+              className="rounded-lg border-2 border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 min-h-[100px]"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="specialRequirements">Special Requirements</Label>
+            <Label htmlFor="specialRequirements" className="text-sm font-semibold text-gray-700">Special Requirements</Label>
             <Textarea
               id="specialRequirements"
               name="specialRequirements"
               value={profileSettings.specialRequirements ?? ""}
               onChange={handleProfileChange}
               placeholder="Any special requirements or accommodations needed"
+              className="rounded-lg border-2 border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 min-h-[100px]"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="interests">Interests</Label>
+            <Label htmlFor="interests" className="text-sm font-semibold text-gray-700">Interests</Label>
             <Textarea
               id="interests"
               name="interests"
               value={profileSettings.interests ?? ""}
               onChange={handleProfileChange}
               placeholder="Your interests and areas you'd like to explore"
+              className="rounded-lg border-2 border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 min-h-[100px]"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="goals">Goals</Label>
+            <Label htmlFor="goals" className="text-sm font-semibold text-gray-700">Goals</Label>
             <Textarea
               id="goals"
               name="goals"
               value={profileSettings.goals ?? ""}
               onChange={handleProfileChange}
               placeholder="What you hope to achieve"
+              className="rounded-lg border-2 border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 min-h-[100px]"
             />
           </div>
         </CardContent>
@@ -272,10 +283,17 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
       <div className="flex justify-end">
         <Button
           onClick={handleSave}
-          className="bg-blue-600 hover:bg-blue-700"
+          className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold px-8 py-3 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105"
           disabled={isSaving}
         >
-          {isSaving ? "Saving..." : "Save Changes"}
+          {isSaving ? (
+            <span className="flex items-center gap-2">
+              <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+              Saving...
+            </span>
+          ) : (
+            "Save Changes"
+          )}
         </Button>
       </div>
     </div>

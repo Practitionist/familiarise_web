@@ -26,12 +26,17 @@ export default function AppointmentsTab({
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
-          <div className="flex items-center justify-center min-h-[400px]">
-            <div className="text-center space-y-3">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-              <div className="text-gray-500 text-sm">
+      <div className="min-h-screen">
+        <div className="w-full">
+          <div className="flex items-center justify-center min-h-[500px]">
+            <div className="text-center space-y-4">
+              <div className="relative inline-flex">
+                <div className="animate-spin rounded-full h-16 w-16 border-4 border-blue-200 border-t-blue-600"></div>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="h-8 w-8 rounded-full bg-blue-100"></div>
+                </div>
+              </div>
+              <div className="text-gray-700 text-base font-medium">
                 Loading appointments...
               </div>
             </div>
@@ -43,14 +48,14 @@ export default function AppointmentsTab({
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
-          <div className="flex items-center justify-center min-h-[400px]">
+      <div className="min-h-screen">
+        <div className="w-full">
+          <div className="flex items-center justify-center min-h-[500px]">
             <div className="max-w-md w-full">
-              <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
-                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <div className="bg-gradient-to-br from-red-50 to-red-100/50 border-2 border-red-200 rounded-2xl p-8 text-center shadow-xl">
+                <div className="w-16 h-16 bg-gradient-to-br from-red-500 to-red-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
                   <svg
-                    className="w-6 h-6 text-red-600"
+                    className="w-8 h-8 text-white"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -63,16 +68,16 @@ export default function AppointmentsTab({
                     />
                   </svg>
                 </div>
-                <h3 className="text-lg font-semibold text-red-900 mb-2">
+                <h3 className="text-xl font-bold text-red-900 mb-3">
                   Error Loading Appointments
                 </h3>
-                <p className="text-red-700 text-sm mb-4">
+                <p className="text-red-700 text-sm mb-6">
                   {error.message ||
                     "Failed to load appointments. Please try again."}
                 </p>
                 <button
                   onClick={() => window.location.reload()}
-                  className="bg-red-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-red-700 transition-colors"
+                  className="bg-gradient-to-r from-red-600 to-red-700 text-white px-6 py-3 rounded-lg text-sm font-bold hover:from-red-700 hover:to-red-800 transition-all duration-200 shadow-lg hover:shadow-xl hover:scale-105"
                 >
                   Retry
                 </button>
@@ -85,25 +90,25 @@ export default function AppointmentsTab({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
+    <div className="min-h-screen">
+      <div className="w-full">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
-          <Tabs defaultValue="overview" className="w-full space-y-6">
-            <div className="border-b border-gray-200 bg-white rounded-t-lg">
+          <Tabs defaultValue="overview" className="w-full space-y-8">
+            <div className="border-b border-gray-200 bg-white rounded-2xl shadow-lg overflow-hidden">
               <TabsList className="h-auto p-0 bg-transparent w-full justify-start">
                 <TabsTrigger
                   value="overview"
-                  className="px-6 py-4 text-sm font-medium border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 bg-transparent rounded-none"
+                  className="px-8 py-5 text-sm font-semibold border-b-3 border-transparent data-[state=active]:border-blue-600 data-[state=active]:text-blue-600 data-[state=active]:bg-blue-50/30 bg-transparent rounded-none transition-all duration-200"
                 >
                   Overview
                 </TabsTrigger>
                 <TabsTrigger
                   value="calendar"
-                  className="px-6 py-4 text-sm font-medium border-b-2 border-transparent data-[state=active]:border-blue-500 data-[state=active]:text-blue-600 bg-transparent rounded-none"
+                  className="px-8 py-5 text-sm font-semibold border-b-3 border-transparent data-[state=active]:border-blue-600 data-[state=active]:text-blue-600 data-[state=active]:bg-blue-50/30 bg-transparent rounded-none transition-all duration-200"
                 >
                   Calendar View
                 </TabsTrigger>

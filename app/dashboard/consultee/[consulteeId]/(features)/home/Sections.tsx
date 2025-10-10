@@ -36,15 +36,15 @@ export function UpcomingSection({ slots }: Readonly<UpcomingSectionProps>) {
   };
 
   return (
-    <div className="bg-white rounded-xl">
-      <div className="flex justify-between items-center px-6 py-4">
-        <h2 className="text-lg font-semibold">Upcoming Sessions</h2>
+    <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
+      <div className="flex justify-between items-center px-6 py-5 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white">
+        <h2 className="text-xl font-bold text-gray-900">Upcoming Sessions</h2>
         <div className="flex gap-2">
           <Button
             variant="outline"
             size="icon"
             onClick={() => scrollCarousel("left")}
-            className="h-8 w-8 rounded-full"
+            className="h-9 w-9 rounded-full hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600 transition-all duration-200 shadow-sm"
             data-testid="prev-upcoming"
           >
             <ArrowLeftIcon className="h-4 w-4" />
@@ -53,7 +53,7 @@ export function UpcomingSection({ slots }: Readonly<UpcomingSectionProps>) {
             variant="outline"
             size="icon"
             onClick={() => scrollCarousel("right")}
-            className="h-8 w-8 rounded-full"
+            className="h-9 w-9 rounded-full hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600 transition-all duration-200 shadow-sm"
             data-testid="next-upcoming"
           >
             <ArrowRightIcon className="h-4 w-4" />
@@ -62,7 +62,7 @@ export function UpcomingSection({ slots }: Readonly<UpcomingSectionProps>) {
       </div>
       <div
         ref={carouselRef}
-        className="flex overflow-x-auto gap-6 px-6 pb-6 scrollbar-hide scroll-smooth"
+        className="flex overflow-x-auto gap-6 px-6 py-6 scrollbar-hide scroll-smooth"
         style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
         data-testid="upcoming-slot-list"
       >
@@ -81,8 +81,13 @@ export function UpcomingSection({ slots }: Readonly<UpcomingSectionProps>) {
           </div>
         ))}
         {slots.length === 0 && (
-          <div className="w-full text-center py-8">
-            <p className="text-gray-500">No upcoming sessions</p>
+          <div className="w-full text-center py-12">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-100 mb-3">
+              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <p className="text-gray-500 font-medium">No upcoming sessions</p>
           </div>
         )}
       </div>
@@ -107,10 +112,10 @@ export function MonthlySection({
   onNextMonth,
 }: Readonly<MonthlySectionProps>) {
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      <div className="lg:col-span-8 bg-white rounded-xl">
-        <div className="flex justify-between items-center px-6 py-4 border-b">
-          <h2 className="text-lg font-semibold">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <div className="lg:col-span-8 bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
+        <div className="flex justify-between items-center px-6 py-5 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white">
+          <h2 className="text-xl font-bold text-gray-900">
             {currentMonth.toLocaleString("default", {
               month: "long",
               year: "numeric",
@@ -121,7 +126,7 @@ export function MonthlySection({
               variant="outline"
               size="icon"
               onClick={onPreviousMonth}
-              className="h-8 w-8 rounded-full"
+              className="h-9 w-9 rounded-full hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600 transition-all duration-200 shadow-sm"
               data-testid="prev-month"
             >
               <ArrowLeftIcon className="h-4 w-4" />
@@ -130,7 +135,7 @@ export function MonthlySection({
               variant="outline"
               size="icon"
               onClick={onNextMonth}
-              className="h-8 w-8 rounded-full"
+              className="h-9 w-9 rounded-full hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600 transition-all duration-200 shadow-sm"
               data-testid="next-month"
             >
               <ArrowRightIcon className="h-4 w-4" />
@@ -138,7 +143,7 @@ export function MonthlySection({
           </div>
         </div>
         <div
-          className="divide-y max-h-[600px] overflow-y-auto"
+          className="divide-y divide-gray-100 max-h-[600px] overflow-y-auto custom-scrollbar"
           data-testid="monthly-slot-list"
         >
           {events.map(({ event, slots }) => (
@@ -150,74 +155,89 @@ export function MonthlySection({
             </div>
           ))}
           {events.length === 0 && (
-            <div className="text-center py-8">
-              <p className="text-gray-500">No sessions this month</p>
+            <div className="text-center py-12">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-100 mb-3">
+                <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <p className="text-gray-500 font-medium">No sessions this month</p>
             </div>
           )}
         </div>
       </div>
 
       <div className="lg:col-span-4">
-        <div className="bg-white rounded-xl p-6">
-          <h3 className="text-lg font-semibold mb-4">
-            Unlock Premium Features
-          </h3>
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <svg
-                className="w-4 h-4 text-blue-600"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              <span>Unlimited Access to Expert Sessions</span>
+        <div className="relative overflow-hidden bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 rounded-2xl p-6 shadow-xl">
+          <div className="absolute inset-0 bg-grid-white/10"></div>
+          <div className="relative z-10">
+            <h3 className="text-xl font-bold mb-4 text-white">
+              Unlock Premium Features
+            </h3>
+            <div className="space-y-3 mb-6">
+              <div className="flex items-center gap-3 text-sm text-white">
+                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+                  <svg
+                    className="w-4 h-4 text-white"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </div>
+                <span className="font-medium">Unlimited Access to Expert Sessions</span>
+              </div>
+              <div className="flex items-center gap-3 text-sm text-white">
+                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+                  <svg
+                    className="w-4 h-4 text-white"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </div>
+                <span className="font-medium">24/7 Priority Support</span>
+              </div>
+              <div className="flex items-center gap-3 text-sm text-white">
+                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+                  <svg
+                    className="w-4 h-4 text-white"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </div>
+                <span className="font-medium">Exclusive Webinars & Workshops</span>
+              </div>
             </div>
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <svg
-                className="w-4 h-4 text-blue-600"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              <span>24/7 Priority Support</span>
+            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 mb-4">
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-bold text-white">$99</span>
+                <span className="text-sm text-blue-100">/month</span>
+              </div>
+              <p className="text-sm text-blue-100 mt-1 font-medium">
+                Save 20% with annual billing
+              </p>
             </div>
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <svg
-                className="w-4 h-4 text-blue-600"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              <span>Exclusive Webinars & Workshops</span>
-            </div>
+            <Button className="w-full bg-white text-blue-600 hover:bg-blue-50 font-bold shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105">
+              Upgrade Now
+            </Button>
           </div>
-          <div className="mt-6">
-            <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-bold text-blue-600">$99</span>
-              <span className="text-sm text-gray-600">/month</span>
-            </div>
-            <p className="text-sm text-blue-600 mt-1">
-              Save 20% with annual billing
-            </p>
-          </div>
-          <Button className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white">
-            Upgrade Now
-          </Button>
+          <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/10 rounded-full blur-3xl"></div>
         </div>
       </div>
     </div>

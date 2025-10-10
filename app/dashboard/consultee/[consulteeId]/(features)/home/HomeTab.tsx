@@ -86,15 +86,20 @@ export default function HomeTab({
   };
 
   return (
-    <div className="space-y-6 min-h-[calc(100vh-200px)] p-6 bg-gray-50">
+    <div className="space-y-8 min-h-[calc(100vh-200px)] animate-fade-in">
       {/* Welcome Section */}
-      <div className="bg-white rounded-xl p-6">
-        <h2 className="text-2xl font-bold text-blue-600">
-          Welcome back, {userDetails.name}
-        </h2>
-        <p className="mt-1 text-gray-600">
-          Here's what's coming up in your learning journey
-        </p>
+      <div className="relative overflow-hidden bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 rounded-2xl p-8 shadow-xl">
+        <div className="absolute inset-0 bg-grid-white/10 [mask-image:linear-gradient(0deg,transparent,white)]"></div>
+        <div className="relative z-10">
+          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-2">
+            Welcome back, {userDetails.name}
+          </h2>
+          <p className="text-blue-100 text-lg">
+            Here's what's coming up in your learning journey
+          </p>
+        </div>
+        <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/10 rounded-full blur-3xl"></div>
+        <div className="absolute -left-10 -top-10 w-32 h-32 bg-purple-300/20 rounded-full blur-2xl"></div>
       </div>
 
       {/* Upcoming Sessions */}

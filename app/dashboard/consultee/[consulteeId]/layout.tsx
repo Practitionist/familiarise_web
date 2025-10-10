@@ -75,9 +75,9 @@ function ConsulteeNav({
   const firstName = userName?.split(" ")[0] || "User";
 
   return (
-    <nav className="p-4 sm:p-8 bg-white shadow-sm">
+    <nav className="sticky top-0 z-40 px-4 sm:px-8 py-4 bg-white/80 backdrop-blur-xl border-b border-gray-100 shadow-sm">
       <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-        <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
           {NAV_ITEMS.map((item) => (
             <Link
               key={item.name}
@@ -88,9 +88,9 @@ function ConsulteeNav({
               <Button
                 className={`${
                   currentPath === item.path
-                    ? "bg-[#f87171] text-white"
-                    : "text-gray-600 hover:bg-gray-100 hover:shadow-sm transition-all duration-150 ease-in-out"
-                } rounded-md px-4 py-2 transition-colors whitespace-nowrap`}
+                    ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-200 hover:shadow-lg hover:shadow-blue-300"
+                    : "text-gray-700 hover:bg-gray-50 hover:text-gray-900 hover:shadow-sm"
+                } rounded-lg px-4 py-2.5 transition-all duration-200 ease-out whitespace-nowrap font-medium text-sm`}
                 variant={currentPath === item.path ? "default" : "ghost"}
               >
                 {item.name}
@@ -100,11 +100,11 @@ function ConsulteeNav({
         </div>
 
         {/* User Profile Section */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           {/* Welcome Message */}
           <div className="hidden md:block">
-            <p className="text-sm font-medium text-gray-700">
-              Welcome, {firstName}
+            <p className="text-sm font-semibold text-gray-800">
+              Welcome, <span className="text-blue-600">{firstName}</span>
             </p>
           </div>
 
@@ -113,19 +113,21 @@ function ConsulteeNav({
             variant="ghost"
             size="sm"
             onClick={() => signOut()}
-            className="text-red-600 hover:bg-red-50 hover:text-red-700"
+            className="text-red-600 hover:bg-red-50 hover:text-red-700 rounded-lg transition-all duration-200 font-medium"
           >
             Sign Out
           </Button>
 
           {/* User Profile Avatar */}
           <Link href="/profile">
-            <Avatar className="h-10 w-10 cursor-pointer hover:ring-2 hover:ring-offset-2 hover:ring-blue-400 transition-all">
+            <Avatar className="h-11 w-11 cursor-pointer hover:ring-2 hover:ring-offset-2 hover:ring-blue-500 transition-all duration-200 shadow-sm hover:shadow-md border-2 border-white">
               <AvatarImage
                 src={userImage || "/placeholder.svg"}
                 alt={userName || "User Profile"}
               />
-              <AvatarFallback>{userName?.charAt(0) || "U"}</AvatarFallback>
+              <AvatarFallback className="bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-semibold">
+                {userName?.charAt(0) || "U"}
+              </AvatarFallback>
             </Avatar>
           </Link>
         </div>
@@ -295,7 +297,7 @@ export default function ConsulteeLayout({
   // Main layout
   return (
     <UserProvider userDetails={userDetails}>
-      <div className="bg-slate-50 min-h-screen flex flex-col">
+      <div className="bg-gradient-to-br from-gray-50 via-blue-50/30 to-gray-50 min-h-screen flex flex-col">
         <ConsulteeNav
           consulteeId={consulteeId}
           currentPath={currentPath}
@@ -303,7 +305,7 @@ export default function ConsulteeLayout({
           userName={userDetails.name}
           onNavHover={handleNavHover}
         />
-        <main className="flex-grow overflow-y-auto p-8">
+        <main className="flex-grow overflow-y-auto p-6 sm:p-8 w-full">
           <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
         </main>
       </div>
