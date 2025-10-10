@@ -22,6 +22,15 @@ export async function GET(
       );
     }
 
+    // Parse pagination parameters for appointments
+    const { searchParams } = new URL(request.url);
+    const appointmentsLimit = searchParams.get("appointmentsLimit")
+      ? parseInt(searchParams.get("appointmentsLimit")!)
+      : 200; // Default: 200 appointments (covers most 12-month subscriptions)
+    const appointmentsOffset = searchParams.get("appointmentsOffset")
+      ? parseInt(searchParams.get("appointmentsOffset")!)
+      : 0;
+
     // Fetch all consultee events in parallel using direct Prisma queries
     // Only select fields actually needed by the UI
     const [consultations, subscriptions, webinars, classes] =
@@ -170,7 +179,8 @@ export async function GET(
                   },
                 },
               },
-              take: 50, // Limit to 50 most recent appointments
+              take: appointmentsLimit,
+              skip: appointmentsOffset,
               orderBy: {
                 createdAt: "desc",
               },
@@ -365,7 +375,8 @@ export async function GET(
                   },
                 },
               },
-              take: 50, // Limit to 50 most recent appointments
+              take: appointmentsLimit,
+              skip: appointmentsOffset,
               orderBy: {
                 createdAt: "desc",
               },

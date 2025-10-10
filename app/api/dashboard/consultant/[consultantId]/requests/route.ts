@@ -16,6 +16,15 @@ export async function GET(
       );
     }
 
+    // Parse pagination parameters for appointments
+    const { searchParams } = new URL(request.url);
+    const appointmentsLimit = searchParams.get("appointmentsLimit")
+      ? parseInt(searchParams.get("appointmentsLimit")!)
+      : 100; // Default: 100 appointments
+    const appointmentsOffset = searchParams.get("appointmentsOffset")
+      ? parseInt(searchParams.get("appointmentsOffset")!)
+      : 0;
+
     // Fetch all requests data in parallel using direct Prisma queries
     const [
       consultations,
@@ -356,7 +365,8 @@ export async function GET(
             },
           },
         },
-        take: 100,
+        take: appointmentsLimit,
+        skip: appointmentsOffset,
         orderBy: {
           createdAt: "desc",
         },

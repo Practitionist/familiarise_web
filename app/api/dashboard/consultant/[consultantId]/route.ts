@@ -10,6 +10,15 @@ export async function GET(
     const resolvedParams = await params;
     const { consultantId } = resolvedParams;
 
+    // Parse pagination parameters for appointments
+    const { searchParams } = new URL(request.url);
+    const appointmentsLimit = searchParams.get("appointmentsLimit")
+      ? parseInt(searchParams.get("appointmentsLimit")!)
+      : 100; // Default: 100 appointments
+    const appointmentsOffset = searchParams.get("appointmentsOffset")
+      ? parseInt(searchParams.get("appointmentsOffset")!)
+      : 0;
+
     // Fetch all dashboard data in parallel using direct Prisma queries
     const [appointments, consultations, subscriptions] = await Promise.all([
       // Appointments with APPROVED status
@@ -214,7 +223,8 @@ export async function GET(
             },
           },
         },
-        take: 100, // Limit to 100 most recent appointments
+        take: appointmentsLimit,
+        skip: appointmentsOffset,
         orderBy: {
           createdAt: "desc",
         },
