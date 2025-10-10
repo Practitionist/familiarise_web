@@ -35,9 +35,8 @@ const GLOW_EFFECTS = {
   moonArc: 'radial-gradient(ellipse at center bottom, rgba(220,220,220,0.4) 0%, rgba(220,220,220,0.2) 30%, rgba(220,220,220,0.08) 50%, transparent 70%)',
   cardGlow: 'radial-gradient(circle at center, rgba(220,220,220,0.03) 0%, transparent 70%)',
   sectionGlow: 'radial-gradient(ellipse at center, rgba(220,220,220,0.05) 0%, rgba(220,220,220,0.02) 50%, transparent 75%)',
-  sectionTopFade: 'radial-gradient(ellipse at center top, rgba(200,200,200,0.15) 0%, rgba(200,200,200,0.08) 20%, rgba(200,200,200,0.03) 40%, transparent 60%)',
-  sectionBottomFade: 'radial-gradient(ellipse at center bottom, rgba(200,200,200,0.15) 0%, rgba(200,200,200,0.08) 20%, rgba(200,200,200,0.03) 40%, transparent 60%)',
-  transitionGradient: 'linear-gradient(to bottom, transparent 0%, rgba(150,150,150,0.03) 20%, rgba(150,150,150,0.05) 50%, rgba(150,150,150,0.03) 80%, transparent 100%)',
+  sectionTopFade: 'radial-gradient(ellipse at center top, rgba(200,200,200,0.2) 0%, rgba(200,200,200,0.12) 30%, rgba(200,200,200,0.06) 60%, transparent 80%)',
+  transitionGradient: 'linear-gradient(to bottom, transparent 0%, rgba(150,150,150,0.06) 20%, rgba(150,150,150,0.1) 50%, rgba(150,150,150,0.06) 80%, transparent 100%)',
 } as const;
 
 const pageStyles = {
@@ -191,7 +190,7 @@ const ReviewCard = ({ review }: { review: ReviewWithProfiles }) => {
     filled: position < review.rating,
   }));
   return (
-    <div className="w-[300px] flex-shrink-0 mx-3 bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl hover:border-teal-500/50 transition-all duration-300 hover:-translate-y-1 p-5">
+    <div className="w-[300px] flex-shrink-0 mx-3 bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-2xl hover:border-gray-500/50 transition-all duration-300 hover:-translate-y-1 p-5">
       <div className="flex items-start gap-3">
         <Avatar className="h-10 w-10 border border-gray-600">
           {review.consulteeProfile?.user?.image ? (
@@ -415,7 +414,7 @@ const DarkBackground = () => {
       <div className="absolute inset-0 bg-gradient-to-b from-black via-gray-950 to-gray-900" />
 
       {/* Subtle accent gradients - no animation for performance */}
-      <div className="absolute top-0 left-1/4 h-[600px] w-[600px] rounded-full bg-teal-500/10 blur-3xl" />
+      <div className="absolute top-0 left-1/4 h-[600px] w-[600px] rounded-full bg-gray-500/10 blur-3xl" />
       <div className="absolute top-1/3 right-1/4 h-[500px] w-[500px] rounded-full bg-gray-700/20 blur-3xl" />
       <div className="absolute bottom-1/4 left-1/3 h-[400px] w-[400px] rounded-full bg-gray-800/30 blur-3xl" />
     </div>
@@ -639,20 +638,11 @@ export default function Home() {
           className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/50 to-black relative"
         >
           {/* Top fade shadow */}
-          <div className="absolute top-0 left-0 right-0 h-80 pointer-events-none">
+          <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none">
             <div
               className="absolute inset-0 blur-3xl"
               style={{
                 background: GLOW_EFFECTS.sectionTopFade
-              }}
-            />
-          </div>
-          {/* Bottom fade shadow */}
-          <div className="absolute bottom-0 left-0 right-0 h-80 pointer-events-none">
-            <div
-              className="absolute inset-0 blur-3xl"
-              style={{
-                background: GLOW_EFFECTS.sectionBottomFade
               }}
             />
           </div>
@@ -726,20 +716,11 @@ export default function Home() {
           className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/30 to-black relative"
         >
           {/* Top fade shadow */}
-          <div className="absolute top-0 left-0 right-0 h-48 pointer-events-none z-10">
+          <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none z-10">
             <div
-              className="absolute inset-0 blur-2xl"
+              className="absolute inset-0 blur-3xl"
               style={{
                 background: GLOW_EFFECTS.sectionTopFade
-              }}
-            />
-          </div>
-          {/* Bottom fade shadow */}
-          <div className="absolute bottom-0 left-0 right-0 h-48 pointer-events-none z-10">
-            <div
-              className="absolute inset-0 blur-2xl"
-              style={{
-                background: GLOW_EFFECTS.sectionBottomFade
               }}
             />
           </div>
@@ -829,20 +810,11 @@ export default function Home() {
           className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/30 to-black relative"
         >
           {/* Top fade shadow */}
-          <div className="absolute top-0 left-0 right-0 h-80 pointer-events-none">
+          <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none">
             <div
               className="absolute inset-0 blur-3xl"
               style={{
                 background: GLOW_EFFECTS.sectionTopFade
-              }}
-            />
-          </div>
-          {/* Bottom fade shadow */}
-          <div className="absolute bottom-0 left-0 right-0 h-80 pointer-events-none">
-            <div
-              className="absolute inset-0 blur-3xl"
-              style={{
-                background: GLOW_EFFECTS.sectionBottomFade
               }}
             />
           </div>
@@ -872,20 +844,11 @@ export default function Home() {
           className="w-full py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/50 to-black relative"
         >
           {/* Top fade shadow */}
-          <div className="absolute top-0 left-0 right-0 h-48 pointer-events-none z-10">
+          <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none z-10">
             <div
-              className="absolute inset-0 blur-2xl"
+              className="absolute inset-0 blur-3xl"
               style={{
                 background: GLOW_EFFECTS.sectionTopFade
-              }}
-            />
-          </div>
-          {/* Bottom fade shadow */}
-          <div className="absolute bottom-0 left-0 right-0 h-48 pointer-events-none z-10">
-            <div
-              className="absolute inset-0 blur-2xl"
-              style={{
-                background: GLOW_EFFECTS.sectionBottomFade
               }}
             />
           </div>
@@ -963,20 +926,11 @@ export default function Home() {
         {/* OfferingsSection */}
         <section key="offerings-section" className="py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/30 to-black relative">
           {/* Top fade shadow */}
-          <div className="absolute top-0 left-0 right-0 h-80 pointer-events-none">
+          <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none">
             <div
               className="absolute inset-0 blur-3xl"
               style={{
                 background: GLOW_EFFECTS.sectionTopFade
-              }}
-            />
-          </div>
-          {/* Bottom fade shadow */}
-          <div className="absolute bottom-0 left-0 right-0 h-80 pointer-events-none">
-            <div
-              className="absolute inset-0 blur-3xl"
-              style={{
-                background: GLOW_EFFECTS.sectionBottomFade
               }}
             />
           </div>
@@ -1017,24 +971,6 @@ export default function Home() {
               backgroundSize: "40px 40px",
             }}
           />
-          {/* Top fade shadow */}
-          <div className="absolute top-0 left-0 right-0 h-48 pointer-events-none z-10">
-            <div
-              className="absolute inset-0 blur-2xl"
-              style={{
-                background: GLOW_EFFECTS.sectionTopFade
-              }}
-            />
-          </div>
-          {/* Bottom fade shadow */}
-          <div className="absolute bottom-0 left-0 right-0 h-48 pointer-events-none z-10">
-            <div
-              className="absolute inset-0 blur-2xl"
-              style={{
-                background: GLOW_EFFECTS.sectionBottomFade
-              }}
-            />
-          </div>
           <div className="container mx-auto px-4 relative">
             <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-center mb-16 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
               What Our Clients Say
@@ -1093,20 +1029,11 @@ export default function Home() {
         {/* HowProcessWorksSection */}
         <section key="how-process-works-section" className="py-24 md:py-32 bg-black relative">
           {/* Top fade shadow */}
-          <div className="absolute top-0 left-0 right-0 h-48 pointer-events-none z-10">
+          <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none z-10">
             <div
-              className="absolute inset-0 blur-2xl"
+              className="absolute inset-0 blur-3xl"
               style={{
                 background: GLOW_EFFECTS.sectionTopFade
-              }}
-            />
-          </div>
-          {/* Bottom fade shadow */}
-          <div className="absolute bottom-0 left-0 right-0 h-48 pointer-events-none z-10">
-            <div
-              className="absolute inset-0 blur-2xl"
-              style={{
-                background: GLOW_EFFECTS.sectionBottomFade
               }}
             />
           </div>
@@ -1165,20 +1092,11 @@ export default function Home() {
           className="w-full py-24 md:py-32 bg-gradient-to-b from-black to-gray-950 relative"
         >
           {/* Top fade shadow */}
-          <div className="absolute top-0 left-0 right-0 h-80 pointer-events-none">
+          <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none">
             <div
               className="absolute inset-0 blur-3xl"
               style={{
                 background: GLOW_EFFECTS.sectionTopFade
-              }}
-            />
-          </div>
-          {/* Bottom fade shadow */}
-          <div className="absolute bottom-0 left-0 right-0 h-80 pointer-events-none">
-            <div
-              className="absolute inset-0 blur-3xl"
-              style={{
-                background: GLOW_EFFECTS.sectionBottomFade
               }}
             />
           </div>
@@ -1208,20 +1126,11 @@ export default function Home() {
         {/* Faq */}
         <section className="flex justify-center items-center py-24 md:py-32 bg-black relative">
           {/* Top fade shadow */}
-          <div className="absolute top-0 left-0 right-0 h-48 pointer-events-none z-10">
+          <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none z-10">
             <div
-              className="absolute inset-0 blur-2xl"
+              className="absolute inset-0 blur-3xl"
               style={{
                 background: GLOW_EFFECTS.sectionTopFade
-              }}
-            />
-          </div>
-          {/* Bottom fade shadow */}
-          <div className="absolute bottom-0 left-0 right-0 h-48 pointer-events-none z-10">
-            <div
-              className="absolute inset-0 blur-2xl"
-              style={{
-                background: GLOW_EFFECTS.sectionBottomFade
               }}
             />
           </div>
@@ -1323,20 +1232,11 @@ export default function Home() {
         {/* Newsletter */}
         <section className="w-full py-8 md:py-16 lg:py-24 xl:py-40 bg-black relative">
           {/* Top fade shadow */}
-          <div className="absolute top-0 left-0 right-0 h-80 pointer-events-none">
+          <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none">
             <div
               className="absolute inset-0 blur-3xl"
               style={{
                 background: GLOW_EFFECTS.sectionTopFade
-              }}
-            />
-          </div>
-          {/* Bottom fade shadow */}
-          <div className="absolute bottom-0 left-0 right-0 h-80 pointer-events-none">
-            <div
-              className="absolute inset-0 blur-3xl"
-              style={{
-                background: GLOW_EFFECTS.sectionBottomFade
               }}
             />
           </div>
