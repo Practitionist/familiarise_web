@@ -99,14 +99,35 @@ export const validationRequestSchema = z.object({
  * Used by: All API routes for validating URL path parameters
  *
  * Validates:
- * - ID is a valid UUID format (v4)
+ * - ID is a valid UUID or CUID format
  *
  * UUID format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
- * Example: "123e4567-e89b-12d3-a456-426614174000"
+ * CUID format: cxxxxxxxxxxxxxxxxxxxxxxxxx
+ *
+ * COMPATIBILITY FIX:
+ * Different Prisma models use different ID formats based on schema.prisma:
+ * - UUID events: Consultation (@default(uuid()))
+ * - CUID events: Subscription, Webinar, Class (all @default(cuid()))
+ * - CUID plans: ConsultationPlan, SubscriptionPlan, WebinarPlan, ClassPlan
  */
-export const eventIdSchema = z.string().uuid({
-  message: "Event ID must be a valid UUID format",
-});
+export const eventIdSchema = z
+  .string()
+  .min(1, { message: "Event ID is required" })
+  .refine(
+    (id) => {
+      // UUID format: 8-4-4-4-12 hexadecimal characters
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      // CUID format: starts with 'c' followed by 24 alphanumeric characters
+      const cuidRegex = /^c[a-z0-9]{24}$/i;
+
+      return uuidRegex.test(id) || cuidRegex.test(id);
+    },
+    {
+      message:
+        "Event ID must be a valid UUID or CUID format (received invalid format)",
+    },
+  );
 
 /**
  * PAGINATION SCHEMA

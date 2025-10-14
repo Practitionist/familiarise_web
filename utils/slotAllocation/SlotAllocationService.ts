@@ -530,6 +530,9 @@ export class SlotAllocationService {
 
   /**
    * Get next occurrence of a weekly slot starting from now
+   *
+   * FIX: Ensure returned slot matches the exact day-of-week, hour, and minute
+   * pattern from the consultant's weekly schedule.
    */
   private static getNextOccurrence(slotTime: Date, scheduleType: string): Date {
     if (scheduleType === ScheduleType.CUSTOM) {
@@ -537,24 +540,39 @@ export class SlotAllocationService {
     }
 
     const now = new Date();
-    const targetDay = new Date(slotTime).getDay();
-    const currentDay = now.getDay();
+    const slotDate = new Date(slotTime);
+    const targetDay = slotDate.getUTCDay(); // Use UTC day to match validation
+    const targetHours = slotDate.getUTCHours();
+    const targetMinutes = slotDate.getUTCMinutes();
+    const currentDay = now.getUTCDay();
 
-    const daysToAdd = (targetDay - currentDay + 7) % 7;
+    // Calculate days until next occurrence
+    let daysToAdd = targetDay - currentDay;
+    if (daysToAdd < 0) {
+      daysToAdd += 7; // Next week
+    } else if (daysToAdd === 0) {
+      // Same day - check if time has passed
+      const nowHours = now.getUTCHours();
+      const nowMinutes = now.getUTCMinutes();
+      if (
+        nowHours > targetHours ||
+        (nowHours === targetHours && nowMinutes >= targetMinutes)
+      ) {
+        daysToAdd = 7; // Next week
+      }
+    }
+
     const nextOccurrence = new Date(now);
-    nextOccurrence.setDate(now.getDate() + daysToAdd);
-    nextOccurrence.setHours(
-      new Date(slotTime).getHours(),
-      new Date(slotTime).getMinutes(),
-      0,
-      0,
-    );
+    nextOccurrence.setUTCDate(now.getUTCDate() + daysToAdd);
+    nextOccurrence.setUTCHours(targetHours, targetMinutes, 0, 0);
 
     return nextOccurrence;
   }
 
   /**
    * Match a weekly slot pattern to a specific day
+   *
+   * FIX: Use UTC methods consistently to match validation logic
    */
   private static matchSlotToDay(
     slotTime: Date,
@@ -562,19 +580,27 @@ export class SlotAllocationService {
     scheduleType: string,
   ): Date | null {
     if (scheduleType === ScheduleType.CUSTOM) {
-      // Only match if exact same day
-      if (new Date(slotTime).toDateString() === targetDay.toDateString()) {
+      // Only match if exact same day (use UTC for consistency)
+      const slotDate = new Date(slotTime);
+      const slotDateStr = `${slotDate.getUTCFullYear()}-${slotDate.getUTCMonth()}-${slotDate.getUTCDate()}`;
+      const targetDateStr = `${targetDay.getUTCFullYear()}-${targetDay.getUTCMonth()}-${targetDay.getUTCDate()}`;
+
+      if (slotDateStr === targetDateStr) {
         return new Date(slotTime);
       }
       return null;
     }
 
-    // Weekly: match day of week
-    if (new Date(slotTime).getDay() === targetDay.getDay()) {
+    // Weekly: match day of week using UTC
+    const slotDate = new Date(slotTime);
+    const slotDayOfWeek = slotDate.getUTCDay();
+    const targetDayOfWeek = targetDay.getUTCDay();
+
+    if (slotDayOfWeek === targetDayOfWeek) {
       const result = new Date(targetDay);
-      result.setHours(
-        new Date(slotTime).getHours(),
-        new Date(slotTime).getMinutes(),
+      result.setUTCHours(
+        slotDate.getUTCHours(),
+        slotDate.getUTCMinutes(),
         0,
         0,
       );

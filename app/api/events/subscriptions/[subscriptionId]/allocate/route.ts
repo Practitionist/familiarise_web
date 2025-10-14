@@ -22,6 +22,7 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ subscriptionId: string }> },
 ) {
+  const startTime = Date.now();
   try {
     const { subscriptionId } = await params;
 
@@ -29,6 +30,9 @@ export async function PATCH(
     try {
       // Validate subscription ID from URL params
       eventIdSchema.parse(subscriptionId);
+      console.log(
+        `[Subscription Allocation] Starting allocation for subscription: ${subscriptionId}`,
+      );
 
       // Validate request body and get typed data
       const body = allocationRequestSchema.parse(await request.json());
@@ -43,6 +47,10 @@ export async function PATCH(
         mode = "manual";
       }
 
+      console.log(
+        `[Subscription Allocation] Mode: ${mode}, Slots: ${body.slots ? body.slots.length : "auto"}`,
+      );
+
       // LAYER 2: Business Logic Validation & Allocation
       const result = await SlotAllocationService.allocate({
         eventType: "subscription",
@@ -51,8 +59,32 @@ export async function PATCH(
         slots: body.slots,
       });
 
+      const duration = Date.now() - startTime;
       if (!result.success) {
-        return NextResponse.json({ error: result.error }, { status: 500 });
+        console.error(
+          `[Subscription Allocation] Failed after ${duration}ms: ${result.error}`,
+        );
+        return NextResponse.json(
+          {
+            error: result.error,
+            details: {
+              subscriptionId,
+              mode,
+              slotsProvided: body.slots ? body.slots.length : 0,
+              duration,
+            },
+          },
+          { status: 500 },
+        );
+      }
+
+      console.log(
+        `[Subscription Allocation] Success after ${duration}ms. Created ${result.appointments?.length || 0} appointment(s)`,
+      );
+      if (result.warnings && result.warnings.length > 0) {
+        console.warn(
+          `[Subscription Allocation] Warnings: ${result.warnings.join("; ")}`,
+        );
       }
 
       return NextResponse.json({
@@ -60,25 +92,40 @@ export async function PATCH(
         warnings: result.warnings,
       });
     } catch (validationError) {
+      const duration = Date.now() - startTime;
       // Zod validation errors - return 400 Bad Request
       if (validationError instanceof ZodError) {
         const errorMessage = validationError.errors
           .map((err) => `${err.path.join(".")}: ${err.message}`)
           .join("; ");
 
-        return NextResponse.json({ error: errorMessage }, { status: 400 });
+        console.error(
+          `[Subscription Allocation] Validation failed after ${duration}ms:`,
+          JSON.stringify(validationError.errors, null, 2),
+        );
+
+        return NextResponse.json(
+          {
+            error: errorMessage,
+            details: validationError.errors,
+            subscriptionId,
+          },
+          { status: 400 },
+        );
       }
       throw validationError; // Re-throw non-validation errors
     }
   } catch (error) {
+    const duration = Date.now() - startTime;
     // Catch-all for unexpected errors (database errors, network issues, etc.)
-    console.error("Subscription allocation error:", error);
+    console.error(`[Subscription Allocation] Error after ${duration}ms:`, error);
     return NextResponse.json(
       {
         error:
           error instanceof Error
             ? error.message
             : "An error occurred during slot allocation",
+        duration,
       },
       { status: 500 },
     );

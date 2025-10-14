@@ -226,6 +226,9 @@ export class SlotValidationService {
 
   /**
    * UNIVERSAL VALIDATOR: Ensure slots match consultant's schedule
+   *
+   * FIX: Use UTC methods consistently and provide detailed error messages
+   * showing which slots are invalid and what patterns are expected.
    */
   private validateMatchesSchedule(
     slots: Date[],
@@ -234,22 +237,63 @@ export class SlotValidationService {
     const errors: string[] = [];
 
     if (consultant.scheduleType === ScheduleType.WEEKLY) {
-      // Create a set of valid day+time patterns
+      // Create a set of valid day+time patterns using UTC
       const validPatterns = new Set<string>();
+      const patternDetails: string[] = [];
+
       for (const slot of consultant.slotsOfAvailabilityWeekly) {
-        const slotDay = new Date(slot.slotStartTimeInUTC).getDay();
-        const slotHours = new Date(slot.slotStartTimeInUTC).getHours();
-        const slotMinutes = new Date(slot.slotStartTimeInUTC).getMinutes();
-        validPatterns.add(`${slotDay}-${slotHours}-${slotMinutes}`);
+        const slotDate = new Date(slot.slotStartTimeInUTC);
+        const slotDay = slotDate.getUTCDay();
+        const slotHours = slotDate.getUTCHours();
+        const slotMinutes = slotDate.getUTCMinutes();
+        const pattern = `${slotDay}-${slotHours}-${slotMinutes}`;
+        validPatterns.add(pattern);
+
+        // Build readable description for error messages
+        const dayNames = [
+          "Sunday",
+          "Monday",
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday",
+          "Saturday",
+        ];
+        const timeStr = `${slotHours.toString().padStart(2, "0")}:${slotMinutes.toString().padStart(2, "0")}`;
+        patternDetails.push(`${dayNames[slotDay]} at ${timeStr} UTC`);
       }
 
+      // Validate each requested slot
+      const invalidSlots: string[] = [];
       for (const slot of slots) {
-        const pattern = `${slot.getDay()}-${slot.getHours()}-${slot.getMinutes()}`;
+        const slotDay = slot.getUTCDay();
+        const slotHours = slot.getUTCHours();
+        const slotMinutes = slot.getUTCMinutes();
+        const pattern = `${slotDay}-${slotHours}-${slotMinutes}`;
+
         if (!validPatterns.has(pattern)) {
-          errors.push(
-            `Slot ${slot.toLocaleString()} does not match consultant's weekly schedule`,
+          const dayNames = [
+            "Sunday",
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+          ];
+          const timeStr = `${slotHours.toString().padStart(2, "0")}:${slotMinutes.toString().padStart(2, "0")}`;
+          invalidSlots.push(
+            `${dayNames[slotDay]} at ${timeStr} UTC (${slot.toLocaleString()})`,
           );
         }
+      }
+
+      if (invalidSlots.length > 0) {
+        errors.push(
+          `${invalidSlots.length} slot(s) do not match consultant's weekly schedule:\n` +
+            `Invalid: ${invalidSlots.join(", ")}\n` +
+            `Expected patterns: ${patternDetails.slice(0, 5).join(", ")}${patternDetails.length > 5 ? ` and ${patternDetails.length - 5} more...` : ""}`,
+        );
       }
     } else {
       // Custom schedule - validate exact datetime match
@@ -259,12 +303,18 @@ export class SlotValidationService {
         ),
       );
 
+      const invalidSlots: string[] = [];
       for (const slot of slots) {
         if (!validTimes.has(slot.toISOString())) {
-          errors.push(
-            `Slot ${slot.toLocaleString()} is not in consultant's custom schedule`,
-          );
+          invalidSlots.push(slot.toLocaleString());
         }
+      }
+
+      if (invalidSlots.length > 0) {
+        errors.push(
+          `${invalidSlots.length} slot(s) not in consultant's custom schedule: ${invalidSlots.join(", ")}. ` +
+            `Only ${consultant.slotsOfAvailabilityCustom.length} specific time(s) are available.`,
+        );
       }
     }
 

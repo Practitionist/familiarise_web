@@ -371,6 +371,9 @@ export function UnifiedCalendar({
     setSelectedSlots,
     isAllocating,
     allocationError,
+    isValid,
+    validationErrors,
+    requiredSlots,
     toggleSlot,
     clearSlots,
     isSlotSelected,
@@ -1090,7 +1093,21 @@ export function UnifiedCalendar({
             variant="default"
             size="sm"
             onClick={() => manualAllocate()}
-            disabled={isAllocating}
+            disabled={
+              isAllocating ||
+              !isValid ||
+              selectedSlots.length === 0 ||
+              selectedSlots.length !== requiredSlots
+            }
+            title={
+              !isValid
+                ? `Invalid selection: ${validationErrors.join(", ")}`
+                : selectedSlots.length === 0
+                  ? "Please select slots first"
+                  : selectedSlots.length !== requiredSlots
+                    ? `Need ${requiredSlots} slots, but ${selectedSlots.length} selected`
+                    : "Allocate the selected slots"
+            }
           >
             <Users className="h-4 w-4 mr-2" />
             {isAllocating ? "Allocating..." : "Allocate Manual Slots"}
