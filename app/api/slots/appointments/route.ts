@@ -10,6 +10,12 @@ export async function GET(request: NextRequest) {
   const consulteeProfileId = searchParams.get("consulteeProfileId");
   const userId = searchParams.get("userId");
 
+  // Get specific event IDs for filtering
+  const webinarId = searchParams.get("webinarId");
+  const classId = searchParams.get("classId");
+  const consultationId = searchParams.get("consultationId");
+  const subscriptionId = searchParams.get("subscriptionId");
+
   // Get status for each appointment type
   const consultationStatus = searchParams
     .get("consultationStatus")
@@ -95,6 +101,12 @@ export async function GET(request: NextRequest) {
       },
       startDate,
       endDate,
+      {
+        webinarId,
+        classId,
+        consultationId,
+        subscriptionId,
+      },
     );
 
     return NextResponse.json({ data: appointments });
@@ -120,6 +132,12 @@ async function getAppointments(
   },
   startDate?: string | null,
   endDate?: string | null,
+  eventIds?: {
+    webinarId?: string | null;
+    classId?: string | null;
+    consultationId?: string | null;
+    subscriptionId?: string | null;
+  },
 ) {
   const whereClause: Prisma.AppointmentWhereInput = {};
 
@@ -208,6 +226,20 @@ async function getAppointments(
 
   if (type) {
     whereClause.appointmentType = type;
+  }
+
+  // Filter by specific event IDs
+  if (eventIds?.webinarId) {
+    whereClause.webinar = { id: eventIds.webinarId };
+  }
+  if (eventIds?.classId) {
+    whereClause.class = { id: eventIds.classId };
+  }
+  if (eventIds?.consultationId) {
+    whereClause.consultation = { id: eventIds.consultationId };
+  }
+  if (eventIds?.subscriptionId) {
+    whereClause.subscription = { id: eventIds.subscriptionId };
   }
 
   const appointments = await prisma.appointment.findMany({
