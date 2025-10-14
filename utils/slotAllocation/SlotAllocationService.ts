@@ -494,6 +494,7 @@ export class SlotAllocationService {
 
         for (let i = 0; i < slotsPerCall; i++) {
           const currentTimeStr = currentTime.toISOString();
+
           // FIX BUG #2: Check both booked slots AND availability
           if (
             bookedSlots.has(currentTimeStr) ||
@@ -721,13 +722,6 @@ export class SlotAllocationService {
       calls.push(slots.slice(i, i + slotsPerCall));
     }
 
-    console.log(`[SlotAllocationService] Creating appointments for ${eventType}:`, {
-      totalSlots: slots.length,
-      slotsPerCall,
-      numberOfAppointments: calls.length,
-      firstCallSlots: calls[0]?.map(s => s.toISOString()),
-    });
-
     // CRITICAL: For consultations/webinars, ensure only ONE appointment is created
     if ((eventType === "consultation" || eventType === "webinar") && calls.length > 1) {
       throw new Error(
@@ -738,33 +732,36 @@ export class SlotAllocationService {
 
     // Create appointment for each call
     const appointments = await Promise.all(
-      calls.map((callSlots) =>
-        (tx as any).appointment.create({
+      calls.map((callSlots) => {
+        const slotsToCreate = callSlots.map((slotStart) => {
+          const endTime = new Date(slotStart.getTime() + 30 * 60 * 1000);
+          return {
+            slotStartTimeInUTC: slotStart,
+            slotEndTimeInUTC: endTime,
+            isTentative: false,
+            user: {
+              connect: consulteeUserId
+                ? [{ id: consultantUserId }, { id: consulteeUserId }]
+                : [{ id: consultantUserId }],
+            },
+          };
+        });
+
+        return (tx as any).appointment.create({
           data: {
             appointmentType: this.getAppointmentType(eventType),
             [this.getEventRelationField(eventType)]: {
               connect: { id: eventId },
             },
             slotsOfAppointment: {
-              create: callSlots.map((slotStart) => ({
-                slotStartTimeInUTC: slotStart,
-                slotEndTimeInUTC: new Date(
-                  slotStart.getTime() + 30 * 60 * 1000,
-                ),
-                isTentative: false,
-                user: {
-                  connect: consulteeUserId
-                    ? [{ id: consultantUserId }, { id: consulteeUserId }]
-                    : [{ id: consultantUserId }],
-                },
-              })),
+              create: slotsToCreate,
             },
           },
           include: {
             slotsOfAppointment: true,
           },
-        }),
-      ),
+        });
+      }),
     );
 
     return appointments;
