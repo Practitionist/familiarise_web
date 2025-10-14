@@ -239,7 +239,7 @@ export class AllocationService {
    */
   static async allocateWebinarSlots(
     webinarId: string,
-    slots: string[],
+    request: AllocationRequest,
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
@@ -249,7 +249,7 @@ export class AllocationService {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ slots }),
+          body: JSON.stringify(request),
         },
       );
 
@@ -281,7 +281,7 @@ export class AllocationService {
    */
   static async allocateClassSlots(
     classId: string,
-    slots: string[],
+    request: AllocationRequest,
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(`/api/events/classes/${classId}/allocate`, {
@@ -289,7 +289,7 @@ export class AllocationService {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ slots }),
+        body: JSON.stringify(request),
       });
 
       const data = await response.json();
@@ -329,26 +329,25 @@ export class AllocationService {
   ): Promise<AllocationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
 
+    // Build the request object consistently for all event types
+    const request: AllocationRequest = {
+      isAuto: allocationOptions?.isAuto || false,
+      slots: slotStrings,
+      useRequestedSlots: allocationOptions?.useRequestedSlots,
+    };
+
     switch (eventType) {
       case "consultation":
-        return this.allocateConsultationSlots(eventId, {
-          isAuto: allocationOptions?.isAuto || false,
-          slots: slotStrings,
-          useRequestedSlots: allocationOptions?.useRequestedSlots,
-        });
+        return this.allocateConsultationSlots(eventId, request);
 
       case "subscription":
-        return this.allocateSubscriptionSlots(eventId, {
-          isAuto: allocationOptions?.isAuto || false,
-          slots: slotStrings,
-          useRequestedSlots: allocationOptions?.useRequestedSlots,
-        });
+        return this.allocateSubscriptionSlots(eventId, request);
 
       case "webinar":
-        return this.allocateWebinarSlots(eventId, slotStrings);
+        return this.allocateWebinarSlots(eventId, request);
 
       case "class":
-        return this.allocateClassSlots(eventId, slotStrings);
+        return this.allocateClassSlots(eventId, request);
 
       default:
         return {

@@ -289,10 +289,11 @@ export class SlotValidationService {
       }
 
       if (invalidSlots.length > 0) {
+        const slotWord = invalidSlots.length === 1 ? "slot" : "slots";
+        const verbTense = invalidSlots.length === 1 ? "does" : "do";
         errors.push(
-          `${invalidSlots.length} slot(s) do not match consultant's weekly schedule:\n` +
-            `Invalid: ${invalidSlots.join(", ")}\n` +
-            `Expected patterns: ${patternDetails.slice(0, 5).join(", ")}${patternDetails.length > 5 ? ` and ${patternDetails.length - 5} more...` : ""}`,
+          `The selected ${slotWord} ${verbTense} not match the consultant's available days and times. ` +
+            `Please choose from the green "Available" slots shown in the calendar.`,
         );
       }
     } else {
@@ -303,17 +304,21 @@ export class SlotValidationService {
         ),
       );
 
-      const invalidSlots: string[] = [];
+      let hasInvalidSlots = false;
       for (const slot of slots) {
         if (!validTimes.has(slot.toISOString())) {
-          invalidSlots.push(slot.toLocaleString());
+          hasInvalidSlots = true;
+          break; // No need to check all slots, just need to know if any are invalid
         }
       }
 
-      if (invalidSlots.length > 0) {
+      if (hasInvalidSlots) {
+        const slotWord = slots.length === 1 ? "slot" : "slots";
+        const verbTense = slots.length === 1 ? "is" : "are";
         errors.push(
-          `${invalidSlots.length} slot(s) not in consultant's custom schedule: ${invalidSlots.join(", ")}. ` +
-            `Only ${consultant.slotsOfAvailabilityCustom.length} specific time(s) are available.`,
+          `The selected ${slotWord} ${verbTense} not available in the consultant's schedule. ` +
+            `Please choose from the green "Available" slots shown in the calendar. ` +
+            `Only specific times are available for booking.`,
         );
       }
     }

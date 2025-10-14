@@ -1854,12 +1854,22 @@ export function useEventSlotAllocation(
       } else {
         const errorMessage = result.error || "Manual allocation failed";
         setAllocationError(errorMessage);
+        toast({
+          variant: "destructive",
+          title: "Allocation Failed",
+          description: errorMessage,
+        });
         onError?.(errorMessage);
       }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Allocation failed";
       setAllocationError(errorMessage);
+      toast({
+        variant: "destructive",
+        title: "Allocation Error",
+        description: errorMessage,
+      });
       onError?.(errorMessage);
     } finally {
       setIsAllocating(false);
