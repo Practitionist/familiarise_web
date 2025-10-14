@@ -421,6 +421,31 @@ export class SlotAllocationService {
     const now = new Date();
     const selectedSlots: Date[] = [];
 
+    // FIX BUG #2: Create lookup set for fast availability checking
+    // Without this, the algorithm blindly increments time without verifying
+    // each slot exists in the consultant's availability schedule
+    const availableSlotsSet = new Set<string>();
+
+    // For WEEKLY schedules, we need to generate all future occurrences
+    if (consultant.scheduleType === ScheduleType.WEEKLY) {
+      // Generate next 8 weeks of occurrences for each weekly slot
+      for (const slot of availableTimeSlots) {
+        for (let week = 0; week < 8; week++) {
+          const occurrence = this.getNextOccurrence(
+            slot.slotStartTimeInUTC,
+            consultant.scheduleType
+          );
+          occurrence.setDate(occurrence.getDate() + (week * 7));
+          availableSlotsSet.add(occurrence.toISOString());
+        }
+      }
+    } else {
+      // For CUSTOM schedules, use slots as-is
+      for (const slot of availableTimeSlots) {
+        availableSlotsSet.add(new Date(slot.slotStartTimeInUTC).toISOString());
+      }
+    }
+
     // For consultations/webinars: find one consecutive block
     if (eventType === "consultation" || eventType === "webinar") {
       for (const slot of sortedSlots) {
@@ -438,7 +463,13 @@ export class SlotAllocationService {
         let currentTime = new Date(slotStart);
 
         for (let i = 0; i < slotsPerCall; i++) {
-          if (bookedSlots.has(currentTime.toISOString()) || currentTime < now) {
+          const currentTimeStr = currentTime.toISOString();
+          // FIX BUG #2: Check both booked slots AND availability
+          if (
+            bookedSlots.has(currentTimeStr) ||
+            !availableSlotsSet.has(currentTimeStr) ||
+            currentTime < now
+          ) {
             break;
           }
           consecutiveBlock.push(new Date(currentTime));
@@ -497,8 +528,11 @@ export class SlotAllocationService {
           let currentTime = new Date(slotTime);
 
           for (let i = 0; i < slotsPerCall; i++) {
+            const currentTimeStr = currentTime.toISOString();
+            // FIX BUG #2: Check both booked slots AND availability
             if (
-              bookedSlots.has(currentTime.toISOString()) ||
+              bookedSlots.has(currentTimeStr) ||
+              !availableSlotsSet.has(currentTimeStr) ||
               currentTime < now
             ) {
               break;

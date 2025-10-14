@@ -6,6 +6,7 @@ type TimingsCalendarProps = {
   eventType: "consultation" | "subscription";
   eventId?: string;
   onSlotSelect: (slotStartTimeUTC: string) => void;
+  onSlotsChange?: (slots: string[]) => void; // New prop for bulk updates
   selectedSlots: string[] | undefined;
   requiredSlots: number;
   durationInMonths?: number;
@@ -21,6 +22,7 @@ export function TimingsCalendar({
   eventType,
   eventId,
   onSlotSelect,
+  onSlotsChange,
   selectedSlots = [],
   requiredSlots: _requiredSlots, // Used by parent for validation
   durationInMonths,
@@ -45,10 +47,19 @@ export function TimingsCalendar({
   };
 
   const handleSlotsSelected = (slots: TimeSlot[]) => {
-    // Convert TimeSlot objects back to ISO strings for the parent component
-    slots.forEach((slot) => {
-      onSlotSelect(slot.startTime.toISOString());
-    });
+    // FIX BUG #3: Use bulk update callback if available to avoid state desync
+    // The issue was that iterating and calling onSlotSelect for each slot caused
+    // the parent to toggle slots individually, resulting in mismatched state
+    if (onSlotsChange) {
+      // Convert TimeSlot objects to ISO strings and set all at once
+      const slotStrings = slots.map((slot) => slot.startTime.toISOString());
+      onSlotsChange(slotStrings);
+    } else {
+      // Fallback to individual slot toggling (legacy behavior)
+      slots.forEach((slot) => {
+        onSlotSelect(slot.startTime.toISOString());
+      });
+    }
   };
 
   return (

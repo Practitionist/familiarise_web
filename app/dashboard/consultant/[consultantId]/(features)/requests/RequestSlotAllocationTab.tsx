@@ -392,6 +392,13 @@ export function RequestSlotAllocationTab({
     });
   };
 
+  // FIX BUG #3: Handle bulk slot updates from calendar
+  // This replaces the entire selection rather than toggling individual slots
+  // which prevents state desynchronization between calendar and parent
+  const handleSlotsChange = (slots: string[]) => {
+    setSelectedSlots(slots.sort());
+  };
+
   const handleManualAllocation = async () => {
     if (!selectedRequest) return;
     if (isAllocating) return;
@@ -801,6 +808,7 @@ export function RequestSlotAllocationTab({
                 }
                 eventId={selectedRequest.id}
                 onSlotSelect={handleSlotSelect}
+                onSlotsChange={handleSlotsChange}
                 selectedSlots={selectedSlots}
                 requiredSlots={selectedRequest.requiredSlots}
                 durationInMonths={
