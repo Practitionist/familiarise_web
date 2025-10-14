@@ -808,6 +808,11 @@ export function RequestSlotAllocationTab({
                     ? selectedRequest.durationInMonths
                     : undefined
                 }
+                durationInHours={
+                  selectedRequest.type === "CONSULTATION"
+                    ? selectedRequest.durationInHours
+                    : undefined
+                }
                 callsPerWeek={
                   selectedRequest.type === "SUBSCRIPTION"
                     ? selectedRequest.callsPerWeek
@@ -816,7 +821,7 @@ export function RequestSlotAllocationTab({
                 sessionDurationInHours={
                   selectedRequest.type === "SUBSCRIPTION"
                     ? selectedRequest.sessionDurationInHours
-                    : selectedRequest.durationInHours
+                    : undefined
                 }
                 allowedStart={selectedRequest.startDate}
                 allowedEnd={selectedRequest.endDate}

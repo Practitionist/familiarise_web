@@ -9,8 +9,9 @@ type TimingsCalendarProps = {
   selectedSlots: string[] | undefined;
   requiredSlots: number;
   durationInMonths?: number;
+  durationInHours?: number; // For consultations
   callsPerWeek?: number;
-  sessionDurationInHours?: number;
+  sessionDurationInHours?: number; // For subscriptions
   allowedStart?: Date;
   allowedEnd?: Date;
 };
@@ -23,6 +24,7 @@ export function TimingsCalendar({
   selectedSlots = [],
   requiredSlots: _requiredSlots, // Used by parent for validation
   durationInMonths,
+  durationInHours,
   callsPerWeek,
   sessionDurationInHours,
   allowedStart,
@@ -55,6 +57,7 @@ export function TimingsCalendar({
       eventType={eventType}
       eventId={eventId}
       durationInMonths={durationInMonths}
+      durationInHours={durationInHours}
       callsPerWeek={callsPerWeek}
       sessionDurationInHours={sessionDurationInHours}
       mode="select"
