@@ -297,29 +297,78 @@ export class SlotValidationService {
         );
       }
     } else {
-      // Custom schedule - validate exact datetime match
-      const validTimes = new Set(
-        consultant.slotsOfAvailabilityCustom.map((s) =>
-          new Date(s.slotStartTimeInUTC).toISOString(),
-        ),
-      );
+      // Custom schedule - validate using OVERLAP detection (same logic as calendar display)
+      // FIX: Previously only checked START times, which failed when consultant created
+      // larger slots (e.g., 1-hour slot from 16:30-17:30) that the calendar breaks down
+      // into multiple 30-minute display intervals (16:30-17:00 and 17:00-17:30)
+
+      console.log('[SlotValidationService] Custom schedule validation:', {
+        consultantAvailableSlots: consultant.slotsOfAvailabilityCustom.slice(0, 5).map(s => ({
+          start: new Date(s.slotStartTimeInUTC).toISOString(),
+          end: new Date(s.slotEndTimeInUTC).toISOString(),
+          duration: `${(new Date(s.slotEndTimeInUTC).getTime() - new Date(s.slotStartTimeInUTC).getTime()) / (1000 * 60)} mins`,
+        })),
+        totalAvailable: consultant.slotsOfAvailabilityCustom.length,
+        requestedSlots: slots.slice(0, 3).map(s => s.toISOString()), // First 3 for debugging
+        totalRequested: slots.length,
+      });
 
       let hasInvalidSlots = false;
+      const invalidSlotsList: string[] = [];
       for (const slot of slots) {
-        if (!validTimes.has(slot.toISOString())) {
+        // Calculate the end time of the requested slot (30-minute slots)
+        const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
+
+        // Check if this slot overlaps with ANY available custom slot
+        // Uses same overlap logic as calendar: intervalStart < slotEnd && slotStart < intervalEnd
+        const hasOverlap = consultant.slotsOfAvailabilityCustom.some((availableSlot) => {
+          const availableStart = new Date(availableSlot.slotStartTimeInUTC);
+          const availableEnd = new Date(availableSlot.slotEndTimeInUTC);
+          return slot < availableEnd && availableStart < slotEnd;
+        });
+
+        if (!hasOverlap) {
           hasInvalidSlots = true;
-          break; // No need to check all slots, just need to know if any are invalid
+          invalidSlotsList.push(slot.toISOString());
         }
       }
 
       if (hasInvalidSlots) {
+        console.error('[SlotValidationService] Invalid slots found:', {
+          invalidSlots: invalidSlotsList,
+          availableSlotRanges: consultant.slotsOfAvailabilityCustom.slice(0, 10).map(s => ({
+            start: new Date(s.slotStartTimeInUTC).toISOString(),
+            end: new Date(s.slotEndTimeInUTC).toISOString(),
+          })),
+        });
+
         const slotWord = slots.length === 1 ? "slot" : "slots";
         const verbTense = slots.length === 1 ? "is" : "are";
-        errors.push(
-          `The selected ${slotWord} ${verbTense} not available in the consultant's schedule. ` +
-            `Please choose from the green "Available" slots shown in the calendar. ` +
-            `Only specific times are available for booking.`,
-        );
+
+        // Check if this looks like a consecutive slot issue (some slots valid, some not)
+        const validSlotCount = slots.filter(slot => {
+          const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
+          return consultant.slotsOfAvailabilityCustom.some((availableSlot) => {
+            const availableStart = new Date(availableSlot.slotStartTimeInUTC);
+            const availableEnd = new Date(availableSlot.slotEndTimeInUTC);
+            return slot < availableEnd && availableStart < slotEnd;
+          });
+        }).length;
+        const isConsecutiveIssue = validSlotCount > 0 && validSlotCount < slots.length;
+
+        if (isConsecutiveIssue) {
+          errors.push(
+            `The consultant doesn't have enough consecutive availability for this ${slots.length === 2 ? '1-hour' : `${slots.length * 0.5}-hour`} event. ` +
+            `Only ${validSlotCount} of ${slots.length} required time slots ${verbTense} available. ` +
+            `The consultant needs to add more consecutive time slots to their schedule.`,
+          );
+        } else {
+          errors.push(
+            `The selected ${slotWord} ${verbTense} not available in the consultant's schedule. ` +
+              `Please choose from the green "Available" slots shown in the calendar. ` +
+              `Only specific times are available for booking.`,
+          );
+        }
       }
     }
 

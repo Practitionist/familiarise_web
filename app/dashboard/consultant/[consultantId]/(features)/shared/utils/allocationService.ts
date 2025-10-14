@@ -1,4 +1,3 @@
-import { AppointmentsType } from "@prisma/client";
 import { TimeSlot } from "./calendarUtils";
 
 export interface AllocationRequest {
@@ -447,6 +446,11 @@ export class AllocationService {
     slots: TimeSlot[],
   ): Promise<ValidationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
+
+    console.log(`[AllocationService] Validating ${slotStrings.length} slots for ${eventType}:`, {
+      eventId,
+      slots: slotStrings.slice(0, 3), // Log first 3 for debugging
+    });
 
     switch (eventType) {
       case "consultation":

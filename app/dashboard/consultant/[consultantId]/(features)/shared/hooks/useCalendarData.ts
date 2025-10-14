@@ -395,15 +395,17 @@ export function useCalendarData(
       interval: { hour: number; minute: number },
       date: Date,
     ): SlotStatusResult => {
-      // STEP 1: Calculate the 30-minute interval boundaries
+      // STEP 1: Calculate the 30-minute interval boundaries in local time
       const localIntervalStartDate = new Date(date);
       localIntervalStartDate.setHours(interval.hour, interval.minute, 0, 0);
       const localIntervalEndDate = new Date(localIntervalStartDate);
       localIntervalEndDate.setMinutes(localIntervalStartDate.getMinutes() + 30);
 
-      // STEP 2: Convert to UTC for server data comparison - FIXED timezone handling
-      const intervalStartUTC = new Date(localIntervalStartDate.toISOString());
-      const intervalEndUTC = new Date(localIntervalEndDate.toISOString());
+      // STEP 2: Get UTC times for comparison with server data
+      // The Date objects are already in the correct time - just use them directly
+      // toISOString() will convert them to UTC format correctly
+      const intervalStartUTC = localIntervalStartDate;
+      const intervalEndUTC = localIntervalEndDate;
 
       // STEP 3: Find overlapping slots from raw availability data
       // KEY CHANGE: Use server-calculated booking status instead of manual calculation

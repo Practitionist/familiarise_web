@@ -735,15 +735,19 @@ export class SlotAllocationService {
         break;
 
       case "webinar":
+        // Webinar model does NOT have startDate/endDate fields
+        // Start date is stored in the Appointment's slots
+        updates.status = "SCHEDULED";
+        break;
+
       case "class":
+        // Class model HAS startDate/endDate fields
         updates.status = "SCHEDULED";
         updates.startDate = firstSlot;
-        if (eventType === "class") {
-          updates.endDate = addWeeks(
-            firstSlot,
-            (config.durationInMonths || 1) * 4,
-          );
-        }
+        updates.endDate = addWeeks(
+          firstSlot,
+          (config.durationInMonths || 1) * 4,
+        );
         break;
     }
 
