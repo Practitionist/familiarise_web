@@ -237,50 +237,48 @@ export class SlotValidationService {
     const errors: string[] = [];
 
     if (consultant.scheduleType === ScheduleType.WEEKLY) {
-      // Create a set of valid day+time patterns using UTC
-      const validPatterns = new Set<string>();
-      const patternDetails: string[] = [];
+      // FIX: Check if slots fall WITHIN availability ranges, not just exact start time matches
+      // Availability slots can be any duration (e.g., 1 hour), but we schedule in 30-minute blocks
+      // Example: 9:00-10:00 availability should allow both 9:00-9:30 and 9:30-10:00 bookings
 
-      for (const slot of consultant.slotsOfAvailabilityWeekly) {
-        const slotDate = new Date(slot.slotStartTimeInUTC);
-        const slotDay = slotDate.getUTCDay();
-        const slotHours = slotDate.getUTCHours();
-        const slotMinutes = slotDate.getUTCMinutes();
-        const pattern = `${slotDay}-${slotHours}-${slotMinutes}`;
-        validPatterns.add(pattern);
-
-        // Build readable description for error messages
-        const dayNames = [
-          "Sunday",
-          "Monday",
-          "Tuesday",
-          "Wednesday",
-          "Thursday",
-          "Friday",
-          "Saturday",
-        ];
-        const timeStr = `${slotHours.toString().padStart(2, "0")}:${slotMinutes.toString().padStart(2, "0")}`;
-        patternDetails.push(`${dayNames[slotDay]} at ${timeStr} UTC`);
-      }
-
-      // Validate each requested slot
       const invalidSlots: string[] = [];
+      const dayNames = [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+      ];
+
       for (const slot of slots) {
         const slotDay = slot.getUTCDay();
         const slotHours = slot.getUTCHours();
         const slotMinutes = slot.getUTCMinutes();
-        const pattern = `${slotDay}-${slotHours}-${slotMinutes}`;
+        const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000); // 30-minute slot
 
-        if (!validPatterns.has(pattern)) {
-          const dayNames = [
-            "Sunday",
-            "Monday",
-            "Tuesday",
-            "Wednesday",
-            "Thursday",
-            "Friday",
-            "Saturday",
-          ];
+        // Check if this slot falls within ANY weekly availability slot
+        const matchesAvailability = consultant.slotsOfAvailabilityWeekly.some((availSlot) => {
+          const availStart = new Date(availSlot.slotStartTimeInUTC);
+          const availEnd = new Date(availSlot.slotEndTimeInUTC);
+          const availDay = availStart.getUTCDay();
+
+          // Must be same day of week
+          if (slotDay !== availDay) return false;
+
+          // Check if the requested time falls within this availability slot's time range
+          // Compare ONLY the time-of-day part (hours:minutes), not the full date
+          const slotTimeMinutes = slotHours * 60 + slotMinutes;
+          const slotEndMinutes = slotEnd.getUTCHours() * 60 + slotEnd.getUTCMinutes();
+          const availStartMinutes = availStart.getUTCHours() * 60 + availStart.getUTCMinutes();
+          const availEndMinutes = availEnd.getUTCHours() * 60 + availEnd.getUTCMinutes();
+
+          // Slot must start >= availability start AND end <= availability end
+          return slotTimeMinutes >= availStartMinutes && slotEndMinutes <= availEndMinutes;
+        });
+
+        if (!matchesAvailability) {
           const timeStr = `${slotHours.toString().padStart(2, "0")}:${slotMinutes.toString().padStart(2, "0")}`;
           invalidSlots.push(
             `${dayNames[slotDay]} at ${timeStr} UTC (${slot.toLocaleString()})`,

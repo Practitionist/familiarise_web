@@ -430,19 +430,49 @@ export class SlotAllocationService {
     if (consultant.scheduleType === ScheduleType.WEEKLY) {
       // Generate next 8 weeks of occurrences for each weekly slot
       for (const slot of availableTimeSlots) {
+        // CRITICAL FIX: Get base occurrence once, then create new Date objects for each week
+        // Previous bug: Called getNextOccurrence() inside loop, which returned the same Date
+        // object repeatedly, then mutated it. Result: only final occurrence (week 7) was added.
+        const baseOccurrence = this.getNextOccurrence(
+          slot.slotStartTimeInUTC,
+          consultant.scheduleType
+        );
+
+        // CRITICAL FIX: Break down each availability slot into 30-minute blocks
+        // Availability slots can be any duration (e.g., 1 hour, 2 hours)
+        // But algorithm searches for 30-minute consecutive slots
+        // Example: 9:00-10:00 (1hr) should add: 9:00, 9:30
+        const slotStart = new Date(slot.slotStartTimeInUTC);
+        const slotEnd = new Date(slot.slotEndTimeInUTC);
+        const slotDurationMs = slotEnd.getTime() - slotStart.getTime();
+        const thirtyMinutesMs = 30 * 60 * 1000;
+        const blocksPerSlot = Math.floor(slotDurationMs / thirtyMinutesMs);
+
         for (let week = 0; week < 8; week++) {
-          const occurrence = this.getNextOccurrence(
-            slot.slotStartTimeInUTC,
-            consultant.scheduleType
-          );
-          occurrence.setDate(occurrence.getDate() + (week * 7));
-          availableSlotsSet.add(occurrence.toISOString());
+          // Create NEW Date object for each week to avoid mutation bug
+          const weekOccurrence = new Date(baseOccurrence);
+          weekOccurrence.setDate(weekOccurrence.getDate() + (week * 7));
+
+          // Add all 30-minute blocks within this slot
+          for (let block = 0; block < blocksPerSlot; block++) {
+            const blockTime = new Date(weekOccurrence.getTime() + (block * thirtyMinutesMs));
+            availableSlotsSet.add(blockTime.toISOString());
+          }
         }
       }
     } else {
-      // For CUSTOM schedules, use slots as-is
+      // For CUSTOM schedules, break down each slot into 30-minute blocks
       for (const slot of availableTimeSlots) {
-        availableSlotsSet.add(new Date(slot.slotStartTimeInUTC).toISOString());
+        const slotStart = new Date(slot.slotStartTimeInUTC);
+        const slotEnd = new Date(slot.slotEndTimeInUTC);
+        const slotDurationMs = slotEnd.getTime() - slotStart.getTime();
+        const thirtyMinutesMs = 30 * 60 * 1000;
+        const blocksPerSlot = Math.floor(slotDurationMs / thirtyMinutesMs);
+
+        for (let block = 0; block < blocksPerSlot; block++) {
+          const blockTime = new Date(slotStart.getTime() + (block * thirtyMinutesMs));
+          availableSlotsSet.add(blockTime.toISOString());
+        }
       }
     }
 

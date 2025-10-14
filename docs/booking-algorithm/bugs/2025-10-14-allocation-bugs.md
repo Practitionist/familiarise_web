@@ -209,201 +209,349 @@ export function TimingsCalendar({
 
 ---
 
-## Bug #2: Server-Side Auto-Allocation Algorithm ❌ CRITICAL - NOT FIXED
+## Bug #2: Server-Side Auto-Allocation Algorithm ✅ FIXED
 
 ### Classification
 - **Severity**: **CRITICAL** (Blocks auto-allocation feature)
-- **Type**: Logic Error / Algorithm Bug
-- **Status**: **OPEN** - Fix Pending Deployment
+- **Type**: Multiple Algorithm Bugs (Date Mutation, 30-Minute Block Generation, Validation Range Check)
+- **Status**: **FULLY RESOLVED** (October 14, 2025)
 
 ### Affected Components
-- `utils/slotAllocation/SlotAllocationService.ts` (Lines 348-378, `findAvailableSlots` method)
+- `utils/slotAllocation/SlotAllocationService.ts` (Lines 429-477, `findAvailableSlots` method)
+- `utils/slotAllocation/SlotValidationService.ts` (Lines 239-296, `validateMatchesSchedule` method)
 
 ### Description
 
-Auto-allocation fails with **500 Internal Server Error** even when the consultant has valid consecutive available slots that meet all requirements.
+Auto-allocation **completely fails** for consultations, subscriptions, webinars, and classes. The algorithm returns "No consecutive slots available" or "Need N, found 1" errors even when the consultant has valid available slots.
 
-**Test Case**:
-- Consultant has 4 consecutive available slots: Wednesday Oct 15, 2025 at 19:30, 20:00, 20:30, 21:00 (UTC)
-- Consultation requires 2 hours (4 consecutive 30-minute slots)
-- No conflicting appointments during this time
-- All slots are in the future
-- **Expected**: Auto-allocation succeeds
-- **Actual**: 500 error, auto-allocation fails
+**Test Case #1** (Initial Discovery):
+- Consultant: 56f9a948-2b13-4f49-8a7c-e2a04cc8a816
+- Has 22 weekly availability slots (1-hour blocks: 9:00-10:00, 11:00-12:00, etc.)
+- Consultation requires 1 hour (2 consecutive 30-minute slots)
+- **Expected**: Auto-allocation succeeds with slots like 9:00-9:30 and 9:30-10:00
+- **Actual**: Error "Need 2, found 1"
 
-**Console Error**:
-```
-Failed to load resource: the server responded with a status of 500 (Internal Server Error)
-allocate:undefined:undefined
-```
+**Test Case #2** (After First Fix):
+- Same consultant, same availability
+- Algorithm FINDS consecutive slots
+- **Expected**: Validation passes, appointment created
+- **Actual**: Validation error "The selected slot does not match the consultant's available days and times"
 
-### Root Cause
+### Root Cause - THREE INTERCONNECTED BUGS
 
-The `findAvailableSlots()` method in `SlotAllocationService` builds consecutive slot blocks by **incrementing time by 30 minutes** but **does not verify** that each incremented slot actually exists in the consultant's `availableTimeSlots` array. It only checks if slots are booked.
+This was a cascade of three critical bugs that each prevented auto-allocation from working:
 
-**Problematic Code** (Lines 348-378):
+#### Bug #2A: Date Object Mutation in Availability Set Generation
 
+**Location**: `SlotAllocationService.ts` lines 429-447
+
+The algorithm creates an `availableSlotsSet` lookup for WEEKLY schedules by generating 8 weeks of future occurrences. However, it called `getNextOccurrence()` **inside** the week loop and then mutated the same Date object repeatedly. Result: only the final occurrence (week 7) was added to the set.
+
+**Broken Code**:
 ```typescript
-private static findAvailableSlots(
-  availableTimeSlots: AvailabilitySlotResponse[],
-  appointments: AppointmentSlotResponse[],
-  slotsPerCall: number,
-  scheduleType: "FLEXIBLE" | "FIXED",
-): Date[] | null {
-  const now = new Date();
-  const bookedSlots = new Set(
-    appointments.map((a) => a.slotStartTimeInUTC.toISOString())
-  );
-  const sortedSlots = this.sortSlotsByTime(availableTimeSlots);
-
-  for (const slot of sortedSlots) {
-    const slotStart = this.getNextOccurrence(
-      slot.slotStartTimeInUTC,
-      scheduleType
-    );
-
-    if (slotStart < now || bookedSlots.has(slotStart.toISOString())) {
-      continue;
-    }
-
-    // ❌ BUG: Try to build consecutive block WITHOUT checking if each slot exists
-    const consecutiveBlock: Date[] = [];
-    let currentTime = new Date(slotStart);
-
-    for (let i = 0; i < slotsPerCall; i++) {
-      const currentTimeStr = currentTime.toISOString();
-
-      // ❌ ONLY checks if booked or past, NOT if slot exists in availability
-      if (bookedSlots.has(currentTimeStr) || currentTime < now) {
-        break;
-      }
-
-      consecutiveBlock.push(new Date(currentTime));
-      currentTime = new Date(currentTime.getTime() + 30 * 60 * 1000); // Blindly increments
-    }
-
-    if (consecutiveBlock.length === slotsPerCall) {
-      return consecutiveBlock;
+// For WEEKLY schedules, we need to generate all future occurrences
+if (consultant.scheduleType === ScheduleType.WEEKLY) {
+  for (const slot of availableTimeSlots) {
+    for (let week = 0; week < 8; week++) {
+      const occurrence = this.getNextOccurrence(  // ❌ Same object every iteration
+        slot.slotStartTimeInUTC,
+        consultant.scheduleType
+      );
+      occurrence.setDate(occurrence.getDate() + (week * 7));  // ❌ Mutates same object
+      availableSlotsSet.add(occurrence.toISOString());  // ❌ Only final value preserved
     }
   }
-
-  return null;
 }
 ```
 
-**Problem Scenario**:
-1. Consultant has availability slots at: 15:00, 15:30, 16:00, 16:30, 17:30, 18:00 (missing 17:00)
-2. Algorithm starts at 15:00 and increments: 15:00 → 15:30 → 16:00 → 16:30 ✅
-3. Tries to continue: → 17:00 ❌ (doesn't exist in availability!)
-4. Algorithm assumes 17:00 is available because it's not booked and not in past
-5. Returns invalid consecutive block including non-existent slot 17:00
-6. Later validation or database operation fails → 500 error
+**Impact**: Set has 1 entry instead of 8 per availability slot → "Need 2, found 1" errors
 
-### Fix Required
+#### Bug #2B: Missing 30-Minute Block Generation
 
-**Solution**: Create a lookup set of available slot times and verify each incremented time exists before adding to consecutive block.
+**Location**: `SlotAllocationService.ts` lines 429-477
 
-**Code Changes** (`SlotAllocationService.ts` lines ~348-378):
+Even after fixing the Date mutation, the algorithm still failed because it only added the **START time** of each availability slot to `availableSlotsSet`, not breaking down larger slots into 30-minute blocks.
 
+**Example Problem**:
+- Consultant has availability: Monday 9:00-10:00 (1-hour slot)
+- Algorithm added to set: `2025-10-20T09:00:00.000Z` (only the start time)
+- Should have added: BOTH `09:00:00` AND `09:30:00` (two 30-minute blocks)
+- When searching for 1-hour consultation (needs 9:00-9:30 and 9:30-10:00):
+  - Check 9:00 → ✅ Found in set
+  - Check 9:30 → ❌ NOT in set
+  - Result: "No 2 consecutive slots available"
+
+**Broken Logic**:
 ```typescript
-private static findAvailableSlots(
-  availableTimeSlots: AvailabilitySlotResponse[],
-  appointments: AppointmentSlotResponse[],
-  slotsPerCall: number,
-  scheduleType: "FLEXIBLE" | "FIXED",
-): Date[] | null {
-  const now = new Date();
-  const bookedSlots = new Set(
-    appointments.map((a) => a.slotStartTimeInUTC.toISOString())
-  );
-
-  // ✅ ADD: Create lookup set for available slots
-  const availableSlotsSet = new Set(
-    availableTimeSlots.map((s) => s.slotStartTimeInUTC.toISOString())
-  );
-
-  const sortedSlots = this.sortSlotsByTime(availableTimeSlots);
-
-  for (const slot of sortedSlots) {
-    const slotStart = this.getNextOccurrence(
-      slot.slotStartTimeInUTC,
-      scheduleType
-    );
-
-    if (slotStart < now || bookedSlots.has(slotStart.toISOString())) {
-      continue;
-    }
-
-    // Try to build consecutive block
-    const consecutiveBlock: Date[] = [];
-    let currentTime = new Date(slotStart);
-
-    for (let i = 0; i < slotsPerCall; i++) {
-      const currentTimeStr = currentTime.toISOString();
-
-      // ✅ FIXED: Check all three conditions
-      if (
-        bookedSlots.has(currentTimeStr) ||
-        !availableSlotsSet.has(currentTimeStr) || // ← ADD THIS CHECK
-        currentTime < now
-      ) {
-        break; // Slot doesn't meet requirements
-      }
-
-      consecutiveBlock.push(new Date(currentTime));
-      currentTime = new Date(currentTime.getTime() + 30 * 60 * 1000);
-    }
-
-    if (consecutiveBlock.length === slotsPerCall) {
-      return consecutiveBlock;
-    }
-  }
-
-  return null;
+// OLD: Only added start time
+for (let week = 0; week < 8; week++) {
+  const occurrence = new Date(baseOccurrence);
+  occurrence.setDate(occurrence.getDate() + (week * 7));
+  availableSlotsSet.add(occurrence.toISOString());  // ❌ Only ONE slot per week
 }
 ```
 
-**Key Changes**:
-1. **Line ~358**: Add `availableSlotsSet` creation for O(1) lookup
-2. **Line ~373**: Add `!availableSlotsSet.has(currentTimeStr)` check before adding to consecutive block
+#### Bug #2C: Validation Using Exact Match Instead of Range Check
+
+**Location**: `SlotValidationService.ts` lines 239-296
+
+After fixing both allocation bugs, auto-allocation finally FOUND consecutive slots, but the validator rejected them! The validation logic checked if each 30-minute slot **exactly matched** an availability start time, instead of checking if it falls **WITHIN** an availability time range.
+
+**Example Problem**:
+- Consultant weekly availability: Monday 9:00-10:00
+- Allocated slots: 9:00-9:30 and 9:30-10:00
+- OLD validation logic:
+  - Check 9:00: Pattern exists for Monday-9-0 → ✅ Valid
+  - Check 9:30: Pattern exists for Monday-9-30? → ❌ NO! (Only Monday-9-0 exists)
+  - Result: Validation fails with "slots do not match consultant's available days and times"
+
+**Broken Code**:
+```typescript
+// OLD: Created exact time pattern match
+const validPatterns = new Set<string>();
+for (const slot of consultant.slotsOfAvailabilityWeekly) {
+  const slotDate = new Date(slot.slotStartTimeInUTC);
+  const slotDay = slotDate.getUTCDay();
+  const slotHours = slotDate.getUTCHours();
+  const slotMinutes = slotDate.getUTCMinutes();
+  const pattern = `${slotDay}-${slotHours}-${slotMinutes}`;  // ❌ Only start time
+  validPatterns.add(pattern);  // Example: "1-9-0" (Monday 9:00)
+}
+
+// Check each allocated slot
+for (const slot of slots) {
+  const pattern = `${slot.getUTCDay()}-${slot.getUTCHours()}-${slot.getUTCMinutes()}`;
+  if (!validPatterns.has(pattern)) {  // ❌ 9:30 fails! (pattern "1-9-30" not in set)
+    errors.push("Slot does not match available times");
+  }
+}
+
+```
+
+### Fixes Applied
+
+Three interconnected fixes were required to fully resolve auto-allocation:
+
+#### Fix #2A: Prevent Date Mutation
+
+**File**: `SlotAllocationService.ts` lines 429-462
+
+**Solution**: Move `getNextOccurrence()` outside the week loop and create NEW Date objects for each week
+
+```typescript
+// FIXED CODE:
+if (consultant.scheduleType === ScheduleType.WEEKLY) {
+  for (const slot of availableTimeSlots) {
+    // ✅ Get base occurrence ONCE, outside inner loop
+    const baseOccurrence = this.getNextOccurrence(
+      slot.slotStartTimeInUTC,
+      consultant.scheduleType
+    );
+
+    // NEW: Calculate 30-minute blocks per slot
+    const slotStart = new Date(slot.slotStartTimeInUTC);
+    const slotEnd = new Date(slot.slotEndTimeInUTC);
+    const slotDurationMs = slotEnd.getTime() - slotStart.getTime();
+    const thirtyMinutesMs = 30 * 60 * 1000;
+    const blocksPerSlot = Math.floor(slotDurationMs / thirtyMinutesMs);
+
+    for (let week = 0; week < 8; week++) {
+      // ✅ Create NEW Date object for each week (prevents mutation)
+      const weekOccurrence = new Date(baseOccurrence);
+      weekOccurrence.setDate(weekOccurrence.getDate() + (week * 7));
+
+      // Fix #2B: Add all 30-minute blocks within this slot
+      for (let block = 0; block < blocksPerSlot; block++) {
+        const blockTime = new Date(weekOccurrence.getTime() + (block * thirtyMinutesMs));
+        availableSlotsSet.add(blockTime.toISOString());
+      }
+    }
+  }
+}
+```
+
+**Result**:
+- 1-hour availability slot (9:00-10:00) now generates 2 blocks × 8 weeks = **16 entries** in set
+- Before: Only 1 entry (the final week 7)
+
+#### Fix #2B: Generate 30-Minute Blocks
+
+**File**: `SlotAllocationService.ts` lines 441-461 (within Fix #2A)
+
+**Solution**: Calculate how many 30-minute blocks fit in each availability slot and add them all
+
+```typescript
+// Calculate blocks: 1-hour slot = 2 blocks, 2-hour slot = 4 blocks
+const blocksPerSlot = Math.floor(slotDurationMs / thirtyMinutesMs);
+
+// Add ALL blocks, not just start time
+for (let block = 0; block < blocksPerSlot; block++) {
+  const blockTime = new Date(weekOccurrence.getTime() + (block * thirtyMinutesMs));
+  availableSlotsSet.add(blockTime.toISOString());
+}
+```
+
+**Example**:
+- Availability: Monday 9:00-10:00 (60 minutes)
+- Blocks: `60 / 30 = 2`
+- Added to set:
+  - Block 0: 9:00 ✅
+  - Block 1: 9:30 ✅
+
+#### Fix #2C: Validation Range Check
+
+**File**: `SlotValidationService.ts` lines 239-296
+
+**Solution**: Check if 30-minute slots fall WITHIN availability ranges instead of exact time match
+
+```typescript
+// FIXED: Range-based validation
+if (consultant.scheduleType === ScheduleType.WEEKLY) {
+  for (const slot of slots) {
+    const slotDay = slot.getUTCDay();
+    const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
+
+    // Check if slot falls within ANY availability slot's time range
+    const matchesAvailability = consultant.slotsOfAvailabilityWeekly.some((availSlot) => {
+      const availStart = new Date(availSlot.slotStartTimeInUTC);
+      const availEnd = new Date(availSlot.slotEndTimeInUTC);
+      const availDay = availStart.getUTCDay();
+
+      // Must be same day of week
+      if (slotDay !== availDay) return false;
+
+      // Convert to minutes for time-of-day comparison
+      const slotTimeMinutes = slot.getUTCHours() * 60 + slot.getUTCMinutes();
+      const slotEndMinutes = slotEnd.getUTCHours() * 60 + slotEnd.getUTCMinutes();
+      const availStartMinutes = availStart.getUTCHours() * 60 + availStart.getUTCMinutes();
+      const availEndMinutes = availEnd.getUTCHours() * 60 + availEnd.getUTCMinutes();
+
+      // ✅ Slot must fall completely within availability range
+      return slotTimeMinutes >= availStartMinutes && slotEndMinutes <= availEndMinutes;
+    });
+
+    if (!matchesAvailability) {
+      errors.push("Slot does not match available times");
+    }
+  }
+}
+```
+
+**Example**:
+- Availability: Monday 9:00-10:00
+- Allocated slot: Monday 9:30-10:00
+- OLD: Check pattern "1-9-30" → ❌ Not found (only "1-9-0" exists)
+- NEW: Check if 9:30-10:00 falls within 9:00-10:00 → ✅ Valid (570 >= 540 AND 600 <= 600)
 
 ### Testing Verification
 
-**Before Fix**:
+#### Test #1: Before Any Fixes (Only Date Mutation Bug)
 ```bash
-# Auto-allocate API call
-PATCH /api/events/consultations/83a590c8-5593-4b33-b8e9-2ba64f9f61b5/allocate
-Body: { "isAuto": true }
+# 1-hour consultation (2 consecutive 30-min slots)
+curl -X PATCH /api/events/consultations/dfe966dd-9b66-4918-80c9-0c7a46116b7f/allocate \
+  -H "Content-Type: application/json" \
+  -d '{"isAuto": true}'
 
-Response: 500 Internal Server Error
-Body: { "error": "Failed to allocate slots" }
+Response:
+{"error":"No 2 consecutive slots available for consultation"}
+```
+**Reason**: `availableSlotsSet` nearly empty due to Date mutation bug
+
+#### Test #2: After Fix #2A (Date Mutation Fixed)
+```bash
+# Same consultation
+curl -X PATCH /api/events/consultations/dfe966dd-9b66-4918-80c9-0c7a46116b7f/allocate \
+  -H "Content-Type: application/json" \
+  -d '{"isAuto": true}'
+
+Response:
+{"error":"No 2 consecutive slots available for consultation"}
+```
+**Reason**: Algorithm still failed because 30-minute blocks weren't generated (Bug #2B)
+
+#### Test #3: After Fix #2A + #2B (Both Allocation Fixes)
+```bash
+# Same consultation
+curl -X PATCH /api/events/consultations/dfe966dd-9b66-4918-80c9-0c7a46116b7f/allocate \
+  -H "Content-Type: application/json" \
+  -d '{"isAuto": true}'
+
+Response:
+{"error":"Validation failed: The selected slot does not match the consultant's available days and times."}
+```
+**Reason**: Algorithm FOUND slots but validation rejected them (Bug #2C)
+
+#### Test #4: After ALL Fixes (#2A + #2B + #2C)
+```bash
+# Same consultation - FINALLY WORKS!
+curl -X PATCH /api/events/consultations/dfe966dd-9b66-4918-80c9-0c7a46116b7f/allocate \
+  -H "Content-Type: application/json" \
+  -d '{"isAuto": true}'
+
+Response: 200 OK ✅
+{
+  "data": [{
+    "id": "23afcc17-9ec7-4541-aed6-bcf2cf7ace66",
+    "appointmentType": "CONSULTATION",
+    "consultationId": "dfe966dd-9b66-4918-80c9-0c7a46116b7f",
+    "slotsOfAppointment": [
+      {
+        "slotStartTimeInUTC": "2025-10-20T09:00:00.000Z",
+        "slotEndTimeInUTC": "2025-10-20T09:30:00.000Z"
+      },
+      {
+        "slotStartTimeInUTC": "2025-10-20T09:30:00.000Z",
+        "slotEndTimeInUTC": "2025-10-20T10:00:00.000Z"
+      }
+    ]
+  }],
+  "warnings": []
+}
 ```
 
-**After Fix** (Expected):
+#### Database Verification
 ```bash
-# Same API call
-Response: 200 OK
-Body: {
-  "success": true,
+# Verify consultation status changed to APPROVED
+GET /api/events/consultations/dfe966dd-9b66-4918-80c9-0c7a46116b7f
+
+Response:
+{
   "data": {
-    "appointmentId": "...",
-    "slots": [
-      "2025-10-15T19:30:00.000Z",
-      "2025-10-15T20:00:00.000Z",
-      "2025-10-15T20:30:00.000Z",
-      "2025-10-15T21:00:00.000Z"
-    ]
+    "id": "dfe966dd-9b66-4918-80c9-0c7a46116b7f",
+    "requestStatus": "APPROVED",  ✅
+    "appointment": {
+      "id": "23afcc17-9ec7-4541-aed6-bcf2cf7ace66",
+      "slotsOfAppointment": [
+        {
+          "slotStartTimeInUTC": "2025-10-20T09:00:00.000Z",
+          "slotEndTimeInUTC": "2025-10-20T09:30:00.000Z",
+          "isTentative": false,  ✅
+          "user": [
+            { "name": "Dean Rippin" },  // Consultant
+            { "name": "Mr. Jose Anderson" }  // Consultee
+          ]
+        },
+        {
+          "slotStartTimeInUTC": "2025-10-20T09:30:00.000Z",
+          "slotEndTimeInUTC": "2025-10-20T10:00:00.000Z",
+          "isTentative": false,  ✅
+          "user": [
+            { "name": "Dean Rippin" },
+            { "name": "Mr. Jose Anderson" }
+          ]
+        }
+      ]
+    }
   }
 }
-
-# Database verification
-SELECT * FROM "Appointment" WHERE "consultationId" = '83a590c8-5593-4b33-b8e9-2ba64f9f61b5';
--- Should return 1 appointment
-
-SELECT COUNT(*) FROM "SlotOfAppointment"
-WHERE "appointmentId" = [new appointment id];
--- Should return 4
 ```
+
+**Verification Results**: ✅ ALL PASSED
+- Consultation status: APPROVED
+- 1 appointment created with 2 consecutive slots
+- Slots allocated to Monday Oct 20, 2025, 9:00-10:00 (within consultant's availability)
+- Both consultant and consultee linked to both slots
+- Tentative flag: false (confirmed booking)
 
 ### Impact
 - **User Experience**: Consultants cannot use auto-allocation feature at all
@@ -690,19 +838,20 @@ This will cause a hydration error.%s <p> p
 | Bug # | Title | Severity | Status | Blocker | Fix Available |
 |-------|-------|----------|--------|---------|---------------|
 | #1 | Frontend Configuration | Medium | ✅ FIXED | No | ✅ Deployed |
-| #2 | Auto-Allocation Algorithm | CRITICAL | ❌ Open | Yes | ✅ Ready |
-| #3 | Manual Allocation Button | CRITICAL | ❌ Open | Yes | ⏳ Investigating |
+| #2 | Auto-Allocation Date Mutation | CRITICAL | ✅ FIXED | Yes | ✅ Deployed |
+| #3 | Manual Allocation Button | CRITICAL | ✅ FIXED | Yes | ✅ Deployed |
 
 **Critical Path**:
-1. Deploy Bug #2 fix → Enables auto-allocation
-2. Complete Bug #3 investigation → Identify root cause
-3. Deploy Bug #3 fix → Enables manual allocation
+1. ✅ Fix Bug #2 Date mutation → Enables auto-allocation
+2. ✅ Fix Bug #3 callback chain → Enables manual allocation
+3. ⏳ Comprehensive testing → Verify all event types work
 4. Full system functional ✅
 
-**Estimated Resolution Timeline**:
-- Bug #2: Fix ready, deploy today
-- Bug #3: Investigation in progress, fix within 24 hours
-- All issues resolved: Within 1-2 business days
+**Resolution Timeline**:
+- Bug #1: ✅ Fixed and deployed
+- Bug #2: ✅ Fixed and deployed
+- Bug #3: ✅ Fixed and deployed
+- **Next**: Large-scale testing of all event types and allocation modes
 
 ---
 
