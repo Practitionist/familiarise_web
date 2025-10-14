@@ -657,6 +657,21 @@ export class SlotAllocationService {
       calls.push(slots.slice(i, i + slotsPerCall));
     }
 
+    console.log(`[SlotAllocationService] Creating appointments for ${eventType}:`, {
+      totalSlots: slots.length,
+      slotsPerCall,
+      numberOfAppointments: calls.length,
+      firstCallSlots: calls[0]?.map(s => s.toISOString()),
+    });
+
+    // CRITICAL: For consultations/webinars, ensure only ONE appointment is created
+    if ((eventType === "consultation" || eventType === "webinar") && calls.length > 1) {
+      throw new Error(
+        `INTERNAL ERROR: ${eventType} should create exactly 1 appointment, but ${calls.length} were grouped. ` +
+        `This indicates non-consecutive slots were provided. Slots: ${slots.map(s => s.toISOString()).join(", ")}`
+      );
+    }
+
     // Create appointment for each call
     const appointments = await Promise.all(
       calls.map((callSlots) =>

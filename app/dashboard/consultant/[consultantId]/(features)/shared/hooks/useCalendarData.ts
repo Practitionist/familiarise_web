@@ -335,6 +335,13 @@ export function useCalendarData(
     try {
       const data = await AllocationService.fetchEventSlots(eventType, eventId);
 
+      console.log('[useCalendarData] fetchEventSlots response:', {
+        eventType,
+        eventId,
+        dataLength: data?.length,
+        firstAppointment: data?.[0],
+      });
+
       if (data && data.length > 0 && data[0].slotsOfAppointment?.length > 0) {
         const slots: TimeSlot[] = data[0].slotsOfAppointment.flatMap(
           (slot: {
@@ -365,8 +372,16 @@ export function useCalendarData(
             return intervalSlots;
           },
         );
+        console.log('[useCalendarData] Setting eventSlots:', {
+          slotsCount: slots.length,
+          firstSlot: slots[0] ? {
+            startTime: slots[0].startTime.toISOString(),
+            endTime: slots[0].endTime.toISOString(),
+          } : null,
+        });
         setEventSlots(slots);
       } else {
+        console.log('[useCalendarData] No event slots found, setting empty array');
         setEventSlots([]);
       }
     } catch (error) {
@@ -374,6 +389,49 @@ export function useCalendarData(
       setEventSlots([]);
     }
   }, [eventType, eventId]);
+
+  /**
+   * Helper function to extract appointment plan title
+   */
+  const extractAppointmentTitle = (appointment: any): string => {
+    if (!appointment) return "Unknown";
+
+    switch (appointment.appointmentType) {
+      case "CONSULTATION":
+        return (
+          appointment.consultation?.consultationPlan?.title || "Consultation"
+        );
+      case "SUBSCRIPTION":
+        return (
+          appointment.subscription?.subscriptionPlan?.title || "Subscription"
+        );
+      case "WEBINAR":
+        return appointment.webinar?.webinarPlan?.title || "Webinar";
+      case "CLASS":
+        return appointment.class?.classPlan?.title || "Class";
+      default:
+        return appointment.appointmentType || "Unknown";
+    }
+  };
+
+  /**
+   * Helper function to extract appointment participant name
+   */
+  const extractAppointmentParticipant = (appointment: any): string => {
+    if (!appointment) return "";
+
+    switch (appointment.appointmentType) {
+      case "CONSULTATION":
+        return appointment.consultation?.requestedBy?.user?.name || "";
+      case "SUBSCRIPTION":
+        return appointment.subscription?.requestedBy?.user?.name || "";
+      case "WEBINAR":
+      case "CLASS":
+        return appointment.slotsOfAppointment?.[0]?.user?.[0]?.name || "";
+      default:
+        return "";
+    }
+  };
 
   /**
    * CRITICAL FUNCTION - SLOT STATUS CALCULATION REFACTOR
@@ -432,8 +490,8 @@ export function useCalendarData(
             .map((_slot) => ({
               id: appointment.id,
               type: appointment.appointmentType,
-              title: appointment.appointmentType,
-              with: "", // Add if available in data
+              title: extractAppointmentTitle(appointment),
+              with: extractAppointmentParticipant(appointment),
             })) || [],
       );
 

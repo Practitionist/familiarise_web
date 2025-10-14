@@ -353,6 +353,7 @@ export function UnifiedCalendar({
     consultantDetails,
     availableSlots,
     existingAppointments,
+    eventSlots,
     loading,
     error,
     refetch,
@@ -574,6 +575,39 @@ export function UnifiedCalendar({
 
       const isCurrentlySelected = isSlotSelected(slot);
 
+      // Check if this slot belongs to the current event (already booked for THIS event)
+      // Use robust timestamp matching with tolerance for floating point precision
+      const isCurrentEventSlot = eventSlots.some((eventSlot) => {
+        const slotTime = slot.startTime.getTime();
+        const eventTime = eventSlot.startTime.getTime();
+        const timeDiff = Math.abs(slotTime - eventTime);
+
+        // Match with 1-second tolerance for precision issues
+        const timeMatch = timeDiff < 1000;
+
+        // Fallback: compare ISO strings for exact match
+        const stringMatch =
+          slot.startTime.toISOString() === eventSlot.startTime.toISOString();
+
+        return timeMatch || stringMatch;
+      });
+
+      // Enhanced debug logging
+      if (eventSlots.length > 0 && !isCurrentEventSlot && slot.isBooked) {
+        console.log('[UnifiedCalendar] Slot not matching eventSlots:', {
+          slotTime: slot.startTime.toISOString(),
+          slotTimeMs: slot.startTime.getTime(),
+          eventSlotsCount: eventSlots.length,
+          eventSlotTimes: eventSlots.map(s => ({
+            time: s.startTime.toISOString(),
+            ms: s.startTime.getTime(),
+            diff: Math.abs(slot.startTime.getTime() - s.startTime.getTime())
+          })),
+          eventType,
+          eventId,
+        });
+      }
+
       // Check if slot is outside allowed period for subscriptions/classes
       const intervalStart = new Date(status.intervalStartUTCString);
       const intervalEnd = new Date(status.intervalEndUTCString);
@@ -598,10 +632,17 @@ export function UnifiedCalendar({
         status.overlappingAppointments.length > 0;
 
       if (isCurrentlySelected) {
+        // Dark green for manually selected slots
         cellClassName +=
-          " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
+          " bg-green-700 text-white hover:bg-green-800 border-green-900";
         buttonText = "Selected";
+      } else if (isCurrentEventSlot) {
+        // Black for this event's already booked slots
+        cellClassName +=
+          " bg-black text-white cursor-pointer hover:bg-gray-900 border-gray-800";
+        buttonText = "This Event";
       } else if (status.isBookedForDisplay) {
+        // Grey for other appointments
         cellClassName +=
           " bg-slate-400 text-slate-800 cursor-pointer hover:bg-slate-500";
         cellClassName += status.isInPast ? " opacity-50" : "";
@@ -699,6 +740,7 @@ export function UnifiedCalendar({
       allowedStart,
       allowedEnd,
       eventType,
+      eventSlots,
     ],
   );
 

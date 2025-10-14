@@ -209,7 +209,7 @@ export const getTodayAppointments = (
     999,
   );
 
-  // First expand appointments with multiple slots
+  // First expand appointments with multiple slots (only for subscriptions and classes)
   const expandedAppointments = appointments.flatMap((appointment) => {
     if (
       !appointment.slotsOfAppointment ||
@@ -218,12 +218,21 @@ export const getTodayAppointments = (
       return [appointment];
     }
 
-    // Create separate appointments for each slot
-    return appointment.slotsOfAppointment.map((slot) => ({
-      ...appointment,
-      id: `${appointment.id}-${slot.id}`,
-      slotsOfAppointment: [slot],
-    }));
+    // Only expand subscriptions and classes by slot
+    // Consultations and webinars keep all slots together as one event
+    if (
+      appointment.appointmentType === "SUBSCRIPTION" ||
+      appointment.appointmentType === "CLASS"
+    ) {
+      return appointment.slotsOfAppointment.map((slot) => ({
+        ...appointment,
+        id: `${appointment.id}-${slot.id}`,
+        slotsOfAppointment: [slot],
+      }));
+    }
+
+    // Keep consultations and webinars as single appointments
+    return [appointment];
   });
 
   return expandedAppointments.filter((appointment) => {
@@ -311,10 +320,15 @@ export const groupRecurringAppointments = (
       groups[groupKey] = [];
     }
 
-    // For appointments with slots, create separate entries for each slot
+    // For SUBSCRIPTION and CLASS appointments with slots, create separate entries for each slot
+    // (because each slot represents a separate session)
+    // For CONSULTATION and WEBINAR appointments, keep all slots together
+    // (because all slots form one single event)
     if (
       appointment.slotsOfAppointment &&
-      appointment.slotsOfAppointment.length > 0
+      appointment.slotsOfAppointment.length > 0 &&
+      (appointment.appointmentType === "SUBSCRIPTION" ||
+        appointment.appointmentType === "CLASS")
     ) {
       appointment.slotsOfAppointment.forEach((slot) => {
         groups[groupKey].push({
@@ -324,11 +338,8 @@ export const groupRecurringAppointments = (
         });
       });
     } else {
-      // For appointments without slots, add them as is
-      groups[groupKey].push({
-        ...appointment,
-        id: `${appointment.id}-default`,
-      });
+      // For appointments without slots or single-event types, add them as is
+      groups[groupKey].push(appointment);
     }
   });
 
