@@ -57,13 +57,13 @@ export async function GET(
           some: {
             OR: [
               {
-                slotStartTimeInUTC: {
+                startsAt: {
                   gte: new Date(startDateInUtc),
                   lte: new Date(endDateInUtc),
                 },
               },
               {
-                slotEndTimeInUTC: {
+                endsAt: {
                   gte: new Date(startDateInUtc),
                   lte: new Date(endDateInUtc),
                 },
@@ -81,8 +81,8 @@ export async function GET(
     const allocatedSlots = new Map();
     appointments.forEach((appointment) => {
       appointment.slotsOfAppointment.forEach((slot) => {
-        const start = slot.slotStartTimeInUTC;
-        const end = slot.slotEndTimeInUTC;
+        const start = slot.startsAt;
+        const end = slot.endsAt;
         allocatedSlots.set(
           `${start.toISOString()}-${end.toISOString()}`,
           slot.isTentative,
@@ -94,11 +94,11 @@ export async function GET(
     const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
       where: {
         consultantProfileId: consultantId,
-        slotStartTimeInUTC: { gte: new Date(startDateInUtc) },
-        slotEndTimeInUTC: { lte: new Date(endDateInUtc) },
+        availabilityStartsAt: { gte: new Date(startDateInUtc) },
+        availabilityEndsAt: { lte: new Date(endDateInUtc) },
       },
       orderBy: {
-        slotStartTimeInUTC: "asc",
+        availabilityStartsAt: "asc",
       },
     });
 
@@ -108,14 +108,14 @@ export async function GET(
         consultantProfileId: consultantId,
       },
       orderBy: [
-        { dayOfWeekforStartTimeInUTC: "asc" },
-        { slotStartTimeInUTC: "asc" },
+        { dayOfWeekForStartsAt: "asc" },
+        { availabilityStartsAt: "asc" },
       ],
     });
 
     // Filter out allocated custom slots
     const unallocatedCustomSlots = customSlots.filter((slot) => {
-      const key = `${slot.slotStartTimeInUTC.toISOString()}-${slot.slotEndTimeInUTC.toISOString()}`;
+      const key = `${slot.availabilityStartsAt.toISOString()}-${slot.availabilityEndsAt.toISOString()}`;
       return !allocatedSlots.has(key);
     });
 
@@ -130,17 +130,16 @@ export async function GET(
       while (currentDate <= end) {
         // Check if this day matches the slot's day
         if (
-          currentDate.getDay() ===
-          dayToNumber[weeklySlot.dayOfWeekforStartTimeInUTC]
+          currentDate.getDay() === dayToNumber[weeklySlot.dayOfWeekForStartsAt]
         ) {
           // Create slot instance for this date
           const slotStart = new Date(currentDate);
-          slotStart.setHours(weeklySlot.slotStartTimeInUTC.getHours());
-          slotStart.setMinutes(weeklySlot.slotStartTimeInUTC.getMinutes());
+          slotStart.setHours(weeklySlot.availabilityStartsAt.getHours());
+          slotStart.setMinutes(weeklySlot.availabilityStartsAt.getMinutes());
 
           const slotEnd = new Date(currentDate);
-          slotEnd.setHours(weeklySlot.slotEndTimeInUTC.getHours());
-          slotEnd.setMinutes(weeklySlot.slotEndTimeInUTC.getMinutes());
+          slotEnd.setHours(weeklySlot.availabilityEndsAt.getHours());
+          slotEnd.setMinutes(weeklySlot.availabilityEndsAt.getMinutes());
 
           // Check if this instance is allocated
           const key = `${slotStart.toISOString()}-${slotEnd.toISOString()}`;
@@ -148,7 +147,7 @@ export async function GET(
             unallocatedWeeklySlots.push({
               slotId: weeklySlot.id,
               dateInISO: currentDate.toISOString(),
-              dayOfWeek: weeklySlot.dayOfWeekforStartTimeInUTC,
+              dayOfWeek: weeklySlot.dayOfWeekForStartsAt,
               slotStartTimeInUTC: slotStart.toISOString(),
               slotEndTimeInUTC: slotEnd.toISOString(),
               slotOfAvailabilityId: weeklySlot.id,
@@ -169,14 +168,16 @@ export async function GET(
     const formattedCustomSlots: TSlotTiming[] = unallocatedCustomSlots.map(
       (slot) => ({
         slotId: slot.id,
-        dateInISO: slot.slotStartTimeInUTC.toISOString(),
-        dayOfWeek: dayMap[new Date(slot.slotStartTimeInUTC).getDay()],
-        slotStartTimeInUTC: slot.slotStartTimeInUTC.toISOString(),
-        slotEndTimeInUTC: slot.slotEndTimeInUTC.toISOString(),
+        dateInISO: slot.availabilityStartsAt.toISOString(),
+        dayOfWeek: dayMap[new Date(slot.availabilityStartsAt).getDay()],
+        slotStartTimeInUTC: slot.availabilityStartsAt.toISOString(),
+        slotEndTimeInUTC: slot.availabilityEndsAt.toISOString(),
         slotOfAvailabilityId: slot.id,
         slotOfAppointmentId: "",
-        localStartTime: new Date(slot.slotStartTimeInUTC).toLocaleTimeString(),
-        localEndTime: new Date(slot.slotEndTimeInUTC).toLocaleTimeString(),
+        localStartTime: new Date(
+          slot.availabilityStartsAt,
+        ).toLocaleTimeString(),
+        localEndTime: new Date(slot.availabilityEndsAt).toLocaleTimeString(),
         type: "CUSTOM" as const,
       }),
     );

@@ -25,13 +25,13 @@ export interface IUser
   name: string | null;
   email: string | null;
   image: string | null;
-  currentTimezone: string | null;
+  timezone: string | null;
 }
 
 export interface ISlotOfAppointment {
   id: string;
-  slotStartTimeInUTC: Date;
-  slotEndTimeInUTC: Date | null;
+  startsAt: Date;
+  endsAt: Date | null;
   isTentative: boolean;
   user: IUser[];
 }

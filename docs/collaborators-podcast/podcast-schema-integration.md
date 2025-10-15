@@ -355,14 +355,14 @@ enum AppointmentsType {
 // Consultant uploads audio file directly
 const episode = await prisma.podcastEpisode.create({
   data: {
-    title: 'How to Build Startups',
-    audioFileUrl: 'https://storage.../episode-1.mp3',
-    podcastPlanId: 'series-123',
-    consultantProfileId: 'consultant-abc',
-    status: 'PUBLISHED',
+    title: "How to Build Startups",
+    audioFileUrl: "https://storage.../episode-1.mp3",
+    podcastPlanId: "series-123",
+    consultantProfileId: "consultant-abc",
+    status: "PUBLISHED",
     publishedAt: new Date(),
     // appointmentId: null (no live recording)
-  }
+  },
 });
 ```
 
@@ -372,25 +372,25 @@ const episode = await prisma.podcastEpisode.create({
 // Step 1: Schedule live recording
 const appointment = await prisma.appointment.create({
   data: {
-    appointmentType: 'PODCAST_LIVE',
+    appointmentType: "PODCAST_LIVE",
     slotsOfAppointment: {
       create: {
-        slotStartTimeInUTC: new Date('2025-10-15T18:00:00Z'),
-        slotEndTimeInUTC: new Date('2025-10-15T19:00:00Z')
-      }
-    }
-  }
+        slotStartTimeInUTC: new Date("2025-10-15T18:00:00Z"),
+        slotEndTimeInUTC: new Date("2025-10-15T19:00:00Z"),
+      },
+    },
+  },
 });
 
 // Step 2: Create episode linked to appointment
 const episode = await prisma.podcastEpisode.create({
   data: {
-    title: 'Live Q&A: Startup Funding',
+    title: "Live Q&A: Startup Funding",
     appointmentId: appointment.id,
-    podcastPlanId: 'series-123',
-    consultantProfileId: 'consultant-abc',
-    status: 'SCHEDULED'
-  }
+    podcastPlanId: "series-123",
+    consultantProfileId: "consultant-abc",
+    status: "SCHEDULED",
+  },
 });
 
 // Step 3: After live recording, attach recording URL
@@ -398,9 +398,9 @@ await prisma.podcastEpisode.update({
   where: { id: episode.id },
   data: {
     audioFileUrl: meetingSession.recordings[0].recordingUrl,
-    status: 'PUBLISHED',
-    publishedAt: new Date()
-  }
+    status: "PUBLISHED",
+    publishedAt: new Date(),
+  },
 });
 ```
 
@@ -417,11 +417,11 @@ await prisma.podcastEpisode.update({
 
 ### Summary of Architectural Decisions
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| **Naming** | `PodcastPlan` + `PodcastAccess` | Consistency with `*Plan` pattern, avoids confusion with `Subscription` |
-| **Episodes** | Flexible (Series + Standalone) | Support all business models, maximum flexibility |
-| **Scheduling** | Hybrid (Live + On-Demand) | Leverage existing infrastructure, support all recording workflows |
+| Decision       | Choice                          | Rationale                                                              |
+| -------------- | ------------------------------- | ---------------------------------------------------------------------- |
+| **Naming**     | `PodcastPlan` + `PodcastAccess` | Consistency with `*Plan` pattern, avoids confusion with `Subscription` |
+| **Episodes**   | Flexible (Series + Standalone)  | Support all business models, maximum flexibility                       |
+| **Scheduling** | Hybrid (Live + On-Demand)       | Leverage existing infrastructure, support all recording workflows      |
 
 ---
 
@@ -613,50 +613,59 @@ async function getConsultantRevenue(consultantId: string) {
     // Scheduled content (consultations, subscriptions, webinars, classes)
     prisma.payment.aggregate({
       where: {
-        paymentStatus: 'SUCCEEDED',
+        paymentStatus: "SUCCEEDED",
         appointment: {
           OR: [
-            { consultation: { consultationPlan: { consultantProfileId: consultantId } } },
-            { subscription: { subscriptionPlan: { consultantProfileId: consultantId } } },
+            {
+              consultation: {
+                consultationPlan: { consultantProfileId: consultantId },
+              },
+            },
+            {
+              subscription: {
+                subscriptionPlan: { consultantProfileId: consultantId },
+              },
+            },
             // ... webinars, classes
-          ]
-        }
+          ],
+        },
       },
-      _sum: { amount: true }
+      _sum: { amount: true },
     }),
 
     // Podcast series purchases
     prisma.payment.aggregate({
       where: {
-        paymentStatus: 'SUCCEEDED',
+        paymentStatus: "SUCCEEDED",
         podcastAccess: {
-          podcastPlan: { consultantProfileId: consultantId }
-        }
+          podcastPlan: { consultantProfileId: consultantId },
+        },
       },
-      _sum: { amount: true }
+      _sum: { amount: true },
     }),
 
     // Individual episode purchases
     prisma.payment.aggregate({
       where: {
-        paymentStatus: 'SUCCEEDED',
+        paymentStatus: "SUCCEEDED",
         episodePurchase: {
-          episode: { consultantProfileId: consultantId }
-        }
+          episode: { consultantProfileId: consultantId },
+        },
       },
-      _sum: { amount: true }
-    })
+      _sum: { amount: true },
+    }),
   ]);
 
   return {
-    total: (scheduledRevenue._sum.amount || 0) +
-           (seriesRevenue._sum.amount || 0) +
-           (episodeRevenue._sum.amount || 0),
+    total:
+      (scheduledRevenue._sum.amount || 0) +
+      (seriesRevenue._sum.amount || 0) +
+      (episodeRevenue._sum.amount || 0),
     byType: {
       scheduled: scheduledRevenue._sum.amount || 0,
       podcastSeries: seriesRevenue._sum.amount || 0,
-      podcastEpisodes: episodeRevenue._sum.amount || 0
-    }
+      podcastEpisodes: episodeRevenue._sum.amount || 0,
+    },
   };
 }
 ```
@@ -673,43 +682,54 @@ Create unified types for all purchasable content:
 // types/content.ts
 
 type PurchasedContent =
-  | { type: 'CONSULTATION', data: Consultation & { appointment: Appointment } }
-  | { type: 'SUBSCRIPTION', data: Subscription & { appointments: Appointment[] } }
-  | { type: 'WEBINAR', data: Webinar & { appointment: Appointment } }
-  | { type: 'CLASS', data: Class & { appointments: Appointment[] } }
-  | { type: 'PODCAST_SERIES', data: PodcastAccess }
-  | { type: 'PODCAST_EPISODE', data: EpisodePurchase };
+  | { type: "CONSULTATION"; data: Consultation & { appointment: Appointment } }
+  | {
+      type: "SUBSCRIPTION";
+      data: Subscription & { appointments: Appointment[] };
+    }
+  | { type: "WEBINAR"; data: Webinar & { appointment: Appointment } }
+  | { type: "CLASS"; data: Class & { appointments: Appointment[] } }
+  | { type: "PODCAST_SERIES"; data: PodcastAccess }
+  | { type: "PODCAST_EPISODE"; data: EpisodePurchase };
 
 // Unified purchase history query
-async function getAllPurchases(consulteeId: string): Promise<PurchasedContent[]> {
-  const [consultations, subscriptions, webinars, classes, podcastSeries, episodes] =
-    await Promise.all([
-      // Scheduled content queries...
+async function getAllPurchases(
+  consulteeId: string,
+): Promise<PurchasedContent[]> {
+  const [
+    consultations,
+    subscriptions,
+    webinars,
+    classes,
+    podcastSeries,
+    episodes,
+  ] = await Promise.all([
+    // Scheduled content queries...
 
-      // Podcast series access
-      prisma.podcastAccess.findMany({
-        where: { consulteeProfileId: consulteeId },
-        include: { podcastPlan: true, payment: true }
-      }),
+    // Podcast series access
+    prisma.podcastAccess.findMany({
+      where: { consulteeProfileId: consulteeId },
+      include: { podcastPlan: true, payment: true },
+    }),
 
-      // Individual episode purchases
-      prisma.episodePurchase.findMany({
-        where: { consulteeProfileId: consulteeId },
-        include: { episode: { include: { podcastPlan: true } }, payment: true }
-      })
-    ]);
+    // Individual episode purchases
+    prisma.episodePurchase.findMany({
+      where: { consulteeProfileId: consulteeId },
+      include: { episode: { include: { podcastPlan: true } }, payment: true },
+    }),
+  ]);
 
   const allContent: PurchasedContent[] = [
-    ...consultations.map(c => ({ type: 'CONSULTATION' as const, data: c })),
-    ...subscriptions.map(s => ({ type: 'SUBSCRIPTION' as const, data: s })),
-    ...webinars.map(w => ({ type: 'WEBINAR' as const, data: w })),
-    ...classes.map(c => ({ type: 'CLASS' as const, data: c })),
-    ...podcastSeries.map(p => ({ type: 'PODCAST_SERIES' as const, data: p })),
-    ...episodes.map(e => ({ type: 'PODCAST_EPISODE' as const, data: e }))
+    ...consultations.map((c) => ({ type: "CONSULTATION" as const, data: c })),
+    ...subscriptions.map((s) => ({ type: "SUBSCRIPTION" as const, data: s })),
+    ...webinars.map((w) => ({ type: "WEBINAR" as const, data: w })),
+    ...classes.map((c) => ({ type: "CLASS" as const, data: c })),
+    ...podcastSeries.map((p) => ({ type: "PODCAST_SERIES" as const, data: p })),
+    ...episodes.map((e) => ({ type: "PODCAST_EPISODE" as const, data: e })),
   ];
 
-  return allContent.sort((a, b) =>
-    getContentDate(b).getTime() - getContentDate(a).getTime()
+  return allContent.sort(
+    (a, b) => getContentDate(b).getTime() - getContentDate(a).getTime(),
   );
 }
 ```
@@ -732,8 +752,8 @@ interface RevenueBreakdown {
     podcastEpisodes: number;
   };
   growthMetrics: {
-    scheduled: number;    // Scheduled content revenue
-    onDemand: number;     // Podcast revenue
+    scheduled: number; // Scheduled content revenue
+    onDemand: number; // Podcast revenue
   };
 }
 ```
@@ -833,11 +853,11 @@ export async function GET(request: Request, { params }) {
             id: true,
             title: true,
             coverImageUrl: true,
-            _count: { select: { episodes: true } }
-          }
+            _count: { select: { episodes: true } },
+          },
         },
-        payment: { select: { amount: true, createdAt: true } }
-      }
+        payment: { select: { amount: true, createdAt: true } },
+      },
     }),
 
     // Individual episode purchases
@@ -849,12 +869,12 @@ export async function GET(request: Request, { params }) {
             id: true,
             title: true,
             audioFileUrl: true,
-            podcastPlan: { select: { id: true, title: true } }
-          }
+            podcastPlan: { select: { id: true, title: true } },
+          },
         },
-        payment: { select: { amount: true, createdAt: true } }
-      }
-    })
+        payment: { select: { amount: true, createdAt: true } },
+      },
+    }),
   ]);
 
   return NextResponse.json({
@@ -863,9 +883,9 @@ export async function GET(request: Request, { params }) {
       scheduled,
       podcasts: {
         series: podcastAccess,
-        episodes: episodePurchases
-      }
-    }
+        episodes: episodePurchases,
+      },
+    },
   });
 }
 ```
@@ -1245,11 +1265,11 @@ model Tag {
 
 ### Architectural Decisions
 
-| Aspect | Decision | Alternative Options Rejected |
-|--------|----------|------------------------------|
-| **Naming** | `PodcastPlan` + `PodcastAccess` | ❌ PodcastSubscription (naming collision)<br>⚠️ PodcastMembership (breaks convention) |
-| **Episodes** | Flexible (Series + Standalone) | ❌ Series-Only (too restrictive)<br>❌ Standalone-Only (no bundling) |
-| **Scheduling** | Hybrid (Live + On-Demand) | ❌ On-Demand Only (misses live opportunity)<br>❌ Live-Only (too rigid) |
+| Aspect         | Decision                        | Alternative Options Rejected                                                          |
+| -------------- | ------------------------------- | ------------------------------------------------------------------------------------- |
+| **Naming**     | `PodcastPlan` + `PodcastAccess` | ❌ PodcastSubscription (naming collision)<br>⚠️ PodcastMembership (breaks convention) |
+| **Episodes**   | Flexible (Series + Standalone)  | ❌ Series-Only (too restrictive)<br>❌ Standalone-Only (no bundling)                  |
+| **Scheduling** | Hybrid (Live + On-Demand)       | ❌ On-Demand Only (misses live opportunity)<br>❌ Live-Only (too rigid)               |
 
 ### Key Features
 

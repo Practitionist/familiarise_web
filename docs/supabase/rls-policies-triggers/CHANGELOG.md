@@ -7,9 +7,11 @@ Track all database policy and trigger changes here.
 ## October 10, 2025 - Audit Triggers Removal
 
 ### Summary
+
 Removed broken audit triggers that referenced non-existent `audit_logs` table, which was causing OAuth sign-in failures.
 
 ### Problem
+
 - OAuth authentication failing with error: `The table 'audit_logs' does not exist in the current database`
 - Error occurred during `prisma.user.update()` in NextAuth callback
 - Audit triggers existed but the required `audit_logs` table was never created
@@ -17,6 +19,7 @@ Removed broken audit triggers that referenced non-existent `audit_logs` table, w
 ### Investigation Results
 
 **Affected Tables:**
+
 - ✅ users
 - ✅ Appointment
 - ✅ ConsultantProfile
@@ -26,6 +29,7 @@ Removed broken audit triggers that referenced non-existent `audit_logs` table, w
 - ✅ Payment
 
 **Triggers Found:**
+
 ```sql
 audit_users_trigger
 audit_appointment_trigger
@@ -37,6 +41,7 @@ audit_payment_trigger
 ```
 
 **Functions Found:**
+
 ```sql
 audit_users_changes()
 audit_appointment_changes()
@@ -50,6 +55,7 @@ audit_payment_changes()
 ### Changes Made
 
 **Removed Triggers:**
+
 ```sql
 DROP TRIGGER IF EXISTS audit_users_trigger ON users;
 DROP TRIGGER IF EXISTS audit_appointment_trigger ON "Appointment";
@@ -61,6 +67,7 @@ DROP TRIGGER IF EXISTS audit_payment_trigger ON "Payment";
 ```
 
 **Removed Functions:**
+
 ```sql
 DROP FUNCTION IF EXISTS audit_users_changes();
 DROP FUNCTION IF EXISTS audit_appointment_changes();
@@ -74,12 +81,14 @@ DROP FUNCTION IF EXISTS audit_payment_changes();
 ### Impact Assessment
 
 **✅ No Negative Impact:**
+
 - Audit logging was not implemented in Next.js app
 - Audit logging was not implemented in Flutter app
 - No application code referenced audit_logs table
 - All application functionality continues to work
 
 **✅ Positive Impact:**
+
 - OAuth sign-in now works correctly
 - No more database errors during user updates
 - Cleaner database with only functional triggers
@@ -87,6 +96,7 @@ DROP FUNCTION IF EXISTS audit_payment_changes();
 ### Verification
 
 **Tests Performed:**
+
 - ✅ OAuth sign-in flow (Google provider)
 - ✅ User profile updates
 - ✅ Consultant profile operations
@@ -94,6 +104,7 @@ DROP FUNCTION IF EXISTS audit_payment_changes();
 - ✅ All CRUD operations on affected tables
 
 **Database State After Changes:**
+
 ```sql
 -- Verified no audit triggers remain
 SELECT count(*) FROM pg_trigger
@@ -201,37 +212,45 @@ CREATE TRIGGER audit_users_trigger
 
 Use this template when making database changes:
 
-```markdown
+````markdown
 ## YYYY-MM-DD - [Change Title]
 
 ### Summary
+
 Brief description of what changed and why.
 
 ### Problem (if applicable)
+
 What issue was being addressed?
 
 ### Investigation (if applicable)
+
 What was discovered during investigation?
 
 ### Changes Made
 
 **SQL Commands:**
+
 ```sql
 -- Commands executed
 ```
+````
 
 ### Impact Assessment
 
 **Positive Impact:**
+
 - What improved?
 
 **Potential Negative Impact:**
+
 - What might break?
 - Mitigation steps taken
 
 ### Verification
 
 **Tests Performed:**
+
 - [ ] Test 1
 - [ ] Test 2
 
@@ -242,7 +261,9 @@ What was discovered during investigation?
 ```
 
 ### Related
+
 - Links to issues, PRs, or discussions
+
 ```
 
 ---
@@ -286,3 +307,4 @@ Document planned database changes here:
 - Include rollback procedures for all major changes
 - Keep backup of current state before making changes
 - Coordinate with Flutter team for shared Supabase project
+```

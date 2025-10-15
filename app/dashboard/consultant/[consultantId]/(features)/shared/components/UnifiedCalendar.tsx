@@ -594,14 +594,14 @@ export function UnifiedCalendar({
 
       // Enhanced debug logging
       if (eventSlots.length > 0 && !isCurrentEventSlot && slot.isBooked) {
-        console.log('[UnifiedCalendar] Slot not matching eventSlots:', {
+        console.log("[UnifiedCalendar] Slot not matching eventSlots:", {
           slotTime: slot.startTime.toISOString(),
           slotTimeMs: slot.startTime.getTime(),
           eventSlotsCount: eventSlots.length,
-          eventSlotTimes: eventSlots.map(s => ({
+          eventSlotTimes: eventSlots.map((s) => ({
             time: s.startTime.toISOString(),
             ms: s.startTime.getTime(),
-            diff: Math.abs(slot.startTime.getTime() - s.startTime.getTime())
+            diff: Math.abs(slot.startTime.getTime() - s.startTime.getTime()),
           })),
           eventType,
           eventId,

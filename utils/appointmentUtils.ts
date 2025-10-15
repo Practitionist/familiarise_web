@@ -25,7 +25,7 @@ export async function checkOverlappingAppointments(
             // Partial overlaps
             // Start within the range of an existing appointment
             {
-              slotStartTimeInUTC: {
+              startsAt: {
                 gte: startTime,
                 lt: endTime,
               },
@@ -33,7 +33,7 @@ export async function checkOverlappingAppointments(
 
             // End within the range of an existing appointment
             {
-              slotEndTimeInUTC: {
+              endsAt: {
                 gt: startTime,
                 lte: endTime,
               },
@@ -42,8 +42,8 @@ export async function checkOverlappingAppointments(
             // Completely encompasses the new appointment
             {
               AND: [
-                { slotStartTimeInUTC: { lte: startTime } },
-                { slotEndTimeInUTC: { gte: endTime } },
+                { startsAt: { lte: startTime } },
+                { endsAt: { gte: endTime } },
               ],
             },
           ],

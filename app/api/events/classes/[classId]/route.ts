@@ -65,8 +65,8 @@ export async function PUT(
     const classData = await prisma.class.update({
       where: { id: classId },
       data: {
-        startDate: body.startDate,
-        endDate: body.endDate,
+        schedulingPeriodStartsAt: body.schedulingPeriodStartsAt,
+        schedulingPeriodEndsAt: body.schedulingPeriodEndsAt,
         status: body.status,
         recordingUrls: body.recordingUrls,
         feedbackSummary: body.feedbackSummary,

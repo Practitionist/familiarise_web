@@ -189,7 +189,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
         break;
       case "account":
         payload = {
-          currentTimezone: staffData.currentTimezone,
+          timezone: staffData.timezone,
           // Add other account fields if they become editable
         };
         break;
@@ -500,10 +500,10 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
                 <div className="space-y-2">
                   <Label htmlFor="timezone">Timezone</Label>
                   <Select
-                    name="currentTimezone"
-                    value={staffData.currentTimezone ?? ""}
+                    name="timezone"
+                    value={staffData.timezone ?? ""}
                     onValueChange={(value) =>
-                      handleSelectChange(value, "currentTimezone")
+                      handleSelectChange(value, "timezone")
                     }
                   >
                     <SelectTrigger>

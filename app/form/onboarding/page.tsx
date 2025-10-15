@@ -245,7 +245,7 @@ const MultiStepForm: React.FC = () => {
                   phone: formData.phone,
                   address: formData.address,
                   onlineStatus: formData.onlineStatus,
-                  currentTimezone: formData.currentTimezone,
+                  timezone: formData.timezone,
                   onboardingCompleted: formData.onboardingCompleted,
                   role: formData.role,
                   emailVerified: formData.emailVerified,

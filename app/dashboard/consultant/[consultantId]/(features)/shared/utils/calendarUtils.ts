@@ -29,8 +29,8 @@ export interface AppointmentDetail {
 
 export interface AppointmentSlot {
   id?: string;
-  slotStartTimeInUTC: string | Date;
-  slotEndTimeInUTC: string | Date;
+  startsAt: string | Date;
+  endsAt: string | Date;
   isTentative?: boolean;
   appointmentDetails?: AppointmentDetail;
 }
@@ -58,7 +58,7 @@ export interface ConsultantData {
   slotsOfAvailabilityWeekly: SlotOfAvailabilityWeekly[];
   slotsOfAvailabilityCustom: SlotOfAvailabilityCustom[];
   user?: {
-    currentTimezone?: string;
+    timezone?: string;
   };
 }
 
@@ -127,12 +127,12 @@ export function mapWeeklySlots(
   while (iterDate <= endDate) {
     const dayOfWeek = iterDate.getDay();
     const matchingSlots = consultantData.slotsOfAvailabilityWeekly.filter(
-      (slot) => DAY_INDEX[slot.dayOfWeekforStartTimeInUTC] === dayOfWeek,
+      (slot) => DAY_INDEX[slot.dayOfWeekForStartsAt] === dayOfWeek,
     );
 
     matchingSlots.forEach((slot) => {
-      const startTime = new Date(slot.slotStartTimeInUTC);
-      const endTime = new Date(slot.slotEndTimeInUTC);
+      const startTime = new Date(slot.availabilityStartsAt);
+      const endTime = new Date(slot.availabilityEndsAt);
 
       // FIXED: Create new date objects to avoid mutations
       const slotStartTime = new Date(iterDate);
@@ -196,8 +196,8 @@ export function mapCustomSlots(
   const slots: TimeSlot[] = [];
 
   consultantData.slotsOfAvailabilityCustom.forEach((slot) => {
-    const startTime = new Date(slot.slotStartTimeInUTC);
-    const endTime = new Date(slot.slotEndTimeInUTC);
+    const startTime = new Date(slot.availabilityStartsAt);
+    const endTime = new Date(slot.availabilityEndsAt);
 
     // Create intervals with configurable duration for the custom slot
     let currentInterval = new Date(startTime);
@@ -228,8 +228,8 @@ export function mapCustomSlots(
 export function slotsOverlap(slot1: TimeSlot, slot2: AppointmentSlot): boolean {
   const slot1Start = slot1.startTime.getTime();
   const slot1End = slot1.endTime.getTime();
-  const slot2Start = new Date(slot2.slotStartTimeInUTC).getTime();
-  const slot2End = new Date(slot2.slotEndTimeInUTC).getTime();
+  const slot2Start = new Date(slot2.startsAt).getTime();
+  const slot2End = new Date(slot2.endsAt).getTime();
 
   return slot1Start < slot2End && slot1End > slot2Start;
 }
@@ -266,8 +266,8 @@ export function getSlotStatus(
 
   existingAppointments.forEach((appointment) => {
     appointment.slotsOfAppointment?.forEach((apptSlot) => {
-      const apptStart = new Date(apptSlot.slotStartTimeInUTC);
-      const apptEnd = new Date(apptSlot.slotEndTimeInUTC);
+      const apptStart = new Date(apptSlot.startsAt);
+      const apptEnd = new Date(apptSlot.endsAt);
 
       // Check if slots overlap
       if (slotStart < apptEnd && slotEnd > apptStart) {

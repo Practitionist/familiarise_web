@@ -252,14 +252,14 @@ export async function validateSlotAvailability(
           OR: [
             {
               AND: [
-                { slotStartTimeInUTC: { lte: slotStart } },
-                { slotEndTimeInUTC: { gt: slotStart } },
+                { startsAt: { lte: slotStart } },
+                { endsAt: { gt: slotStart } },
               ],
             },
             {
               AND: [
-                { slotStartTimeInUTC: { lt: slotEnd } },
-                { slotEndTimeInUTC: { gte: slotEnd } },
+                { startsAt: { lt: slotEnd } },
+                { endsAt: { gte: slotEnd } },
               ],
             },
           ],
@@ -282,14 +282,14 @@ export async function validateSlotAvailability(
             OR: [
               {
                 AND: [
-                  { slotStartTimeInUTC: { lte: slotStart } },
-                  { slotEndTimeInUTC: { gt: slotStart } },
+                  { startsAt: { lte: slotStart } },
+                  { endsAt: { gt: slotStart } },
                 ],
               },
               {
                 AND: [
-                  { slotStartTimeInUTC: { lt: slotEnd } },
-                  { slotEndTimeInUTC: { gte: slotEnd } },
+                  { startsAt: { lt: slotEnd } },
+                  { endsAt: { gte: slotEnd } },
                 ],
               },
             ],
@@ -348,14 +348,14 @@ export async function validateSlotAvailability(
           OR: [
             {
               AND: [
-                { slotStartTimeInUTC: { lte: slotStart } },
-                { slotEndTimeInUTC: { gt: slotStart } },
+                { startsAt: { lte: slotStart } },
+                { endsAt: { gt: slotStart } },
               ],
             },
             {
               AND: [
-                { slotStartTimeInUTC: { lt: slotEnd } },
-                { slotEndTimeInUTC: { gte: slotEnd } },
+                { startsAt: { lt: slotEnd } },
+                { endsAt: { gte: slotEnd } },
               ],
             },
           ],
@@ -444,8 +444,8 @@ export async function handleConsultationCheckout(
       consultationId: consultation.id,
       slotsOfAppointment: {
         create: {
-          slotStartTimeInUTC: new Date(data.slotStartTimeInUTC!),
-          slotEndTimeInUTC: new Date(data.slotEndTimeInUTC!),
+          startsAt: new Date(data.slotStartTimeInUTC!),
+          endsAt: new Date(data.slotEndTimeInUTC!),
           isTentative: !skipPayment,
         },
       },
@@ -495,8 +495,8 @@ export async function handleSubscriptionCheckout(
         : RequestStatus.PENDING,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
-      startDate,
-      endDate,
+      schedulingPeriodStartsAt: startDate,
+      schedulingPeriodEndsAt: endDate,
     },
   });
 
@@ -507,8 +507,8 @@ export async function handleSubscriptionCheckout(
       subscriptionId: subscription.id,
       slotsOfAppointment: {
         create: {
-          slotStartTimeInUTC: new Date(data.slotStartTimeInUTC!),
-          slotEndTimeInUTC: new Date(data.slotEndTimeInUTC!),
+          startsAt: new Date(data.slotStartTimeInUTC!),
+          endsAt: new Date(data.slotEndTimeInUTC!),
           isTentative: !skipPayment,
         },
       },
@@ -577,12 +577,9 @@ export async function handleWebinarCheckout(
   await tx.slotOfAppointment.create({
     data: {
       appointmentId: appointment.id,
-      slotStartTimeInUTC:
-        webinar.appointment?.slotsOfAppointment[0]?.slotStartTimeInUTC ||
-        new Date(),
-      slotEndTimeInUTC:
-        webinar.appointment?.slotsOfAppointment[0]?.slotEndTimeInUTC ||
-        new Date(),
+      startsAt:
+        webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(),
+      endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
       isTentative: !skipPayment,
       user: {
         connect: { id: userId },
@@ -646,8 +643,8 @@ export async function handleClassCheckout(
       classId: classInstance.id,
       slotsOfAppointment: {
         create: {
-          slotStartTimeInUTC: classInstance.startDate || new Date(),
-          slotEndTimeInUTC: classInstance.endDate || new Date(),
+          startsAt: classInstance.schedulingPeriodStartsAt || new Date(),
+          endsAt: classInstance.schedulingPeriodEndsAt || new Date(),
           isTentative: !skipPayment,
           user: {
             connect: { id: userId },

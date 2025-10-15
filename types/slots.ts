@@ -17,14 +17,14 @@ export type TSlotTiming = {
 
 export type TWeeklySlot = {
   id: string;
-  dayOfWeekforStartTimeInUTC: DayOfWeek;
-  slotStartTimeInUTC: string | Date;
-  dayOfWeekforEndTimeInUTC: DayOfWeek;
-  slotEndTimeInUTC: string | Date;
+  dayOfWeekForStartsAt: DayOfWeek;
+  availabilityStartsAt: string | Date;
+  dayOfWeekForEndsAt: DayOfWeek;
+  availabilityEndsAt: string | Date;
 };
 
 export type TCustomSlot = {
   id: string;
-  slotStartTimeInUTC: string | Date;
-  slotEndTimeInUTC: string | Date;
+  availabilityStartsAt: string | Date;
+  availabilityEndsAt: string | Date;
 };

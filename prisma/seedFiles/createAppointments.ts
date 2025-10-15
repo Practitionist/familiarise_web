@@ -158,8 +158,8 @@ const createConsultationAppointment = (
         user: {
           connect: [{ id: consultee.id }],
         },
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
+        startsAt: slotStartTimeInUTC,
+        endsAt: slotEndTimeInUTC,
         isTentative: defaultStatus === RequestStatus.PENDING,
         meetingSession: createMeetingSessionData(isPastAppointment),
       },
@@ -213,7 +213,7 @@ const createSubscriptionAppointment = (
 
   // Get consultant's available days of week from their weekly slots
   const availableDaysSet = new Set(
-    consultantWeeklySlots.map((s) => s.dayOfWeekforStartTimeInUTC),
+    consultantWeeklySlots.map((s) => s.dayOfWeekForStartsAt),
   );
   const availableDays = Array.from(availableDaysSet);
 
@@ -250,7 +250,7 @@ const createSubscriptionAppointment = (
     if (availableDays.includes(currentDayOfWeek)) {
       // Find available time slots for this day
       const daySlotsForConsultant = consultantWeeklySlots.filter(
-        (s) => s.dayOfWeekforStartTimeInUTC === currentDayOfWeek,
+        (s) => s.dayOfWeekForStartsAt === currentDayOfWeek,
       );
 
       if (daySlotsForConsultant.length > 0) {
@@ -260,8 +260,8 @@ const createSubscriptionAppointment = (
         // Create appointment slot at this time
         const slotStart = new Date(currentDate);
         slotStart.setUTCHours(
-          randomSlot.slotStartTimeInUTC.getUTCHours(),
-          randomSlot.slotStartTimeInUTC.getUTCMinutes(),
+          randomSlot.availabilityStartsAt.getUTCHours(),
+          randomSlot.availabilityStartsAt.getUTCMinutes(),
           0,
           0,
         );
@@ -277,8 +277,8 @@ const createSubscriptionAppointment = (
             user: {
               connect: [{ id: consultee.id }],
             },
-            slotStartTimeInUTC: slotStart,
-            slotEndTimeInUTC: slotEnd,
+            startsAt: slotStart,
+            endsAt: slotEnd,
             isTentative: defaultStatus === RequestStatus.PENDING,
             meetingSession: createMeetingSessionData(
               isPastAppointment && slotStart < new Date(),
@@ -301,8 +301,8 @@ const createSubscriptionAppointment = (
     const randomSlot = faker.helpers.arrayElement(consultantWeeklySlots);
     const slotStart = new Date(startDate);
     slotStart.setUTCHours(
-      randomSlot.slotStartTimeInUTC.getUTCHours(),
-      randomSlot.slotStartTimeInUTC.getUTCMinutes(),
+      randomSlot.availabilityStartsAt.getUTCHours(),
+      randomSlot.availabilityStartsAt.getUTCMinutes(),
       0,
       0,
     );
@@ -315,8 +315,8 @@ const createSubscriptionAppointment = (
       user: {
         connect: [{ id: consultee.id }],
       },
-      slotStartTimeInUTC: slotStart,
-      slotEndTimeInUTC: slotEnd,
+      startsAt: slotStart,
+      endsAt: slotEnd,
       isTentative: defaultStatus === RequestStatus.PENDING,
       meetingSession: createMeetingSessionData(isPastAppointment),
     });
@@ -338,8 +338,9 @@ const createSubscriptionAppointment = (
         requestStatus: defaultStatus,
         requestedAt: new Date(),
         requestNotes: faker.lorem.sentence(),
-        startDate,
-        endDate,
+        schedulingPeriodStartsAt: startDate,
+        schedulingPeriodEndsAt: endDate,
+        schedulingTimezone: "UTC",
         feedbackFromConsultee: isPastAppointment
           ? faker.lorem.paragraph()
           : null,
@@ -372,8 +373,8 @@ const createWebinarAppointment = async (
         user: {
           connect: [{ id: consultee.id }],
         },
-        slotStartTimeInUTC,
-        slotEndTimeInUTC,
+        startsAt: slotStartTimeInUTC,
+        endsAt: slotEndTimeInUTC,
         isTentative: false,
         meetingSession: createMeetingSessionData(isPastAppointment),
       },
@@ -442,8 +443,8 @@ const createClassAppointment = async (
           user: {
             connect: [{ id: consultee.id }],
           },
-          slotStartTimeInUTC: slotStart,
-          slotEndTimeInUTC: slotEnd,
+          startsAt: slotStart,
+          endsAt: slotEnd,
           isTentative: false,
           meetingSession: createMeetingSessionData(
             isPastAppointment && index === limitedSlots - 1,
@@ -456,8 +457,9 @@ const createClassAppointment = async (
         classPlan: {
           connect: { id: faker.helpers.arrayElement(classPlans).id },
         },
-        startDate: startDate,
-        endDate: endDate,
+        schedulingPeriodStartsAt: startDate,
+        schedulingPeriodEndsAt: endDate,
+        schedulingTimezone: "UTC",
         status: isPastAppointment
           ? ClassStatus.COMPLETED
           : faker.helpers.arrayElement(Object.values(ClassStatus)),
@@ -581,10 +583,10 @@ async function createAppointmentBatch(
 
       // Extract just the time pattern (hours and minutes) from the slot
       const slotTime = slotData.slot;
-      const startHours = slotTime.slotStartTimeInUTC.getUTCHours();
-      const startMinutes = slotTime.slotStartTimeInUTC.getUTCMinutes();
-      const endHours = slotTime.slotEndTimeInUTC.getUTCHours();
-      const endMinutes = slotTime.slotEndTimeInUTC.getUTCMinutes();
+      const startHours = slotTime.availabilityStartsAt.getUTCHours();
+      const startMinutes = slotTime.availabilityStartsAt.getUTCMinutes();
+      const endHours = slotTime.availabilityEndsAt.getUTCHours();
+      const endMinutes = slotTime.availabilityEndsAt.getUTCMinutes();
 
       // Create new dates using the appointment's actual date
       const actualStartTime = new Date(startDate);

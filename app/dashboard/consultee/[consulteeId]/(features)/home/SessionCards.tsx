@@ -39,7 +39,7 @@ export function SlotCard({
   isFirst = false,
 }: Readonly<SlotCardProps>) {
   const now = new Date();
-  const startTime = new Date(slot.slotStartTimeInUTC);
+  const startTime = new Date(slot.startsAt);
   const diffInMinutes = Math.floor(
     (startTime.getTime() - now.getTime()) / 60000,
   );
@@ -220,10 +220,8 @@ export function SlotCard({
               </p>
               <p>
                 {formatDateTime(
-                  new Date(slot.slotStartTimeInUTC),
-                  slot.slotEndTimeInUTC
-                    ? new Date(slot.slotEndTimeInUTC)
-                    : undefined,
+                  new Date(slot.startsAt),
+                  slot.endsAt ? new Date(slot.endsAt) : undefined,
                 )}
               </p>
             </div>
@@ -342,16 +340,16 @@ export function MonthlyEventCard({
               data-testid="monthly-slot"
             >
               <span className="min-w-[100px]">
-                {new Date(slot.slotStartTimeInUTC).toLocaleString(undefined, {
+                {new Date(slot.startsAt).toLocaleString(undefined, {
                   weekday: "short",
                   day: "numeric",
                   month: "short",
                 })}
               </span>
               <span>
-                {slot.slotEndTimeInUTC
-                  ? `${formatTimeString(new Date(slot.slotStartTimeInUTC))} - ${formatTimeString(new Date(slot.slotEndTimeInUTC))}`
-                  : formatTimeString(new Date(slot.slotStartTimeInUTC))}
+                {slot.endsAt
+                  ? `${formatTimeString(new Date(slot.startsAt))} - ${formatTimeString(new Date(slot.endsAt))}`
+                  : formatTimeString(new Date(slot.startsAt))}
                 {slot.isTentative && (
                   <span className="text-red-500 ml-1">*</span>
                 )}

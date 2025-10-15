@@ -2,7 +2,7 @@ import { PrismaClient, Prisma, RequestStatus } from "@prisma/client";
 import { addWeeks, startOfWeek, endOfWeek, isWithinInterval } from "date-fns";
 import { countSundayWeeksInclusive } from "@/app/dashboard/consultant/[consultantId]/(features)/shared/utils/calendarUtils";
 
-type AppointmentSlotRecord = { slotStartTimeInUTC: Date };
+type AppointmentSlotRecord = { startsAt: Date };
 type AppointmentWithSlots = {
   id: string;
   slotsOfAppointment: AppointmentSlotRecord[];
@@ -81,8 +81,8 @@ export class SubscriptionValidationService {
 
     // FIXED: Use the correct Sunday-to-Saturday week counting logic
     const exactWeeks = countSundayWeeksInclusive(
-      subscription.startDate,
-      subscription.endDate,
+      subscription.schedulingPeriodStartsAt,
+      subscription.schedulingPeriodEndsAt,
     );
 
     // Initialize result
@@ -94,16 +94,16 @@ export class SubscriptionValidationService {
       totalCallsScheduled: 0,
       maxTotalCalls: subscriptionPlan.callsPerWeek * exactWeeks,
       subscriptionPeriod: {
-        start: subscription.startDate,
-        end: subscription.endDate,
+        start: subscription.schedulingPeriodStartsAt,
+        end: subscription.schedulingPeriodEndsAt,
       },
     };
 
     // Check if proposed slots are within subscription period
     const subscriptionPeriodValid = this.validateSubscriptionPeriod(
       proposedSlotDates,
-      subscription.startDate,
-      subscription.endDate,
+      subscription.schedulingPeriodStartsAt,
+      subscription.schedulingPeriodEndsAt,
     );
 
     if (!subscriptionPeriodValid.isValid) {
@@ -129,8 +129,8 @@ export class SubscriptionValidationService {
 
     // Generate weekly info for the entire subscription period
     const weeklyInfo = this.generateWeeklyInfo(
-      subscription.startDate,
-      subscription.endDate,
+      subscription.schedulingPeriodStartsAt,
+      subscription.schedulingPeriodEndsAt,
       subscriptionPlan.callsPerWeek,
       existingCallsByWeek,
       proposedCallsByWeek,
@@ -226,7 +226,7 @@ export class SubscriptionValidationService {
 
     for (const appointment of appointments) {
       for (const slot of appointment.slotsOfAppointment) {
-        const weekStart = startOfWeek(new Date(slot.slotStartTimeInUTC));
+        const weekStart = startOfWeek(new Date(slot.startsAt));
         const weekKey = weekStart.toISOString();
 
         weeklyCallCount.set(weekKey, (weeklyCallCount.get(weekKey) || 0) + 1);

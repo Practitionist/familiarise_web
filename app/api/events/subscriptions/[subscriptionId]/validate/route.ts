@@ -129,14 +129,14 @@ export async function POST(
             consultantProfile.slotsOfAvailabilityWeekly,
           slotsOfAvailabilityCustom:
             consultantProfile.slotsOfAvailabilityCustom,
-          currentTimezone: consultantProfile.user.currentTimezone || undefined,
+          timezone: consultantProfile.user.timezone || undefined,
         },
         {
           durationInMonths: subscriptionPlan.durationInMonths,
           callsPerWeek: subscriptionPlan.callsPerWeek,
           sessionDurationInHours: subscriptionPlan.sessionDurationInHours,
-          startDate: subscription.startDate,
-          endDate: subscription.endDate,
+          schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
+          schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt,
         },
       );
 

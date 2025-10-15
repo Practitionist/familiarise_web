@@ -54,8 +54,8 @@ export async function GET(req: NextRequest) {
     const allocatedSlots = new Map();
     appointments.forEach((appointment) => {
       appointment.slotsOfAppointment.forEach((slot) => {
-        const start = slot.slotStartTimeInUTC;
-        const end = slot.slotEndTimeInUTC;
+        const start = slot.startsAt;
+        const end = slot.endsAt;
         allocatedSlots.set(
           `${start.toISOString()}-${end.toISOString()}`,
           slot.isTentative,
@@ -70,8 +70,8 @@ export async function GET(req: NextRequest) {
           consultantProfileId,
         },
         orderBy: [
-          { dayOfWeekforStartTimeInUTC: "asc" },
-          { slotStartTimeInUTC: "asc" },
+          { dayOfWeekForStartsAt: "asc" },
+          { availabilityStartsAt: "asc" },
         ],
         include: {
           consultantProfile: {
@@ -104,17 +104,15 @@ export async function GET(req: NextRequest) {
 
       while (currentDate <= endDate) {
         // Check if current date matches the slot's day
-        if (
-          currentDate.getDay() === dayToNumber[slot.dayOfWeekforStartTimeInUTC]
-        ) {
+        if (currentDate.getDay() === dayToNumber[slot.dayOfWeekForStartsAt]) {
           // Set the time from the slot
           const start = new Date(currentDate);
-          start.setHours(slot.slotStartTimeInUTC.getHours());
-          start.setMinutes(slot.slotStartTimeInUTC.getMinutes());
+          start.setHours(slot.availabilityStartsAt.getHours());
+          start.setMinutes(slot.availabilityStartsAt.getMinutes());
 
           const end = new Date(currentDate);
-          end.setHours(slot.slotEndTimeInUTC.getHours());
-          end.setMinutes(slot.slotEndTimeInUTC.getMinutes());
+          end.setHours(slot.availabilityEndsAt.getHours());
+          end.setMinutes(slot.availabilityEndsAt.getMinutes());
 
           // Check if this instance is allocated
           const key = `${start.toISOString()}-${end.toISOString()}`;

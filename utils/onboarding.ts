@@ -12,17 +12,17 @@ import { experienceValidation } from "@/schemas/shared";
 // #region Shared Zod Schema Definitions
 
 export const SlotWeeklyCreateInputSchema = z.object({
-  dayOfWeekforStartTimeInUTC: z.nativeEnum(DayOfWeek),
-  slotStartTimeInUTC: z.string(),
-  dayOfWeekforEndTimeInUTC: z.nativeEnum(DayOfWeek),
-  slotEndTimeInUTC: z.string(),
+  dayOfWeekForStartsAt: z.nativeEnum(DayOfWeek),
+  availabilityStartsAt: z.string(),
+  dayOfWeekForEndsAt: z.nativeEnum(DayOfWeek),
+  availabilityEndsAt: z.string(),
 });
 
 export const SlotCustomCreateInputSchema = z.object({
-  slotStartTimeInUTC: z
+  availabilityStartsAt: z
     .string()
     .datetime({ message: "Invalid start datetime string for custom slot" }),
-  slotEndTimeInUTC: z
+  availabilityEndsAt: z
     .string()
     .datetime({ message: "Invalid end datetime string for custom slot" }),
 });
@@ -91,7 +91,7 @@ export const OnboardingBaseSchema = z.object({
   email: z.string().email("Invalid email address"),
   phone: z.string().optional(),
   address: z.string().optional(),
-  currentTimezone: z.string().optional(),
+  timezone: z.string().optional(),
   onlineStatus: z.boolean().optional().default(false),
   onboardingCompleted: z.boolean().optional().default(false),
 });
@@ -185,7 +185,7 @@ export const FrontendOnboardingBaseSchema = z.object({
   email: z.string().email("Invalid email address"),
   phone: z.string().optional(),
   address: z.string().optional(),
-  currentTimezone: z.string().optional(),
+  timezone: z.string().optional(),
   onlineStatus: z.boolean().default(false),
   onboardingCompleted: z.boolean().default(false),
   role: z.nativeEnum(UserRole),
@@ -296,7 +296,7 @@ export const PreferredScheduleFormSchema = z.object({
 // Combined form data type for frontend use
 export const OnboardingFormDataSchema = PersonalInfoAndRoleFormSchema.extend({
   // Add missing fields from PersonalInfoAndRole
-  currentTimezone: z.string().optional(),
+  timezone: z.string().optional(),
   onlineStatus: z.boolean().default(false),
   onboardingCompleted: z.boolean().default(false),
   emailVerified: z.date().optional(),
@@ -371,9 +371,8 @@ export function transformOnboardingFormToServerData(
     email: formData.email,
     phone: formData.phone,
     address: formData.address,
-    currentTimezone:
-      formData.currentTimezone ||
-      Intl.DateTimeFormat().resolvedOptions().timeZone,
+    timezone:
+      formData.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
     onlineStatus: formData.onlineStatus || false,
     onboardingCompleted: true, // Set to true when completing onboarding
     role: formData.role,
@@ -415,11 +414,11 @@ export function transformOnboardingFormToServerData(
             slotsOfAvailabilityCustom: formData.customSlots?.length
               ? {
                   create: formData.customSlots.map((slot) => ({
-                    slotStartTimeInUTC: new Date(
-                      slot.slotStartTimeInUTC,
+                    availabilityStartsAt: new Date(
+                      slot.availabilityStartsAt,
                     ).toISOString(),
-                    slotEndTimeInUTC: new Date(
-                      slot.slotEndTimeInUTC,
+                    availabilityEndsAt: new Date(
+                      slot.availabilityEndsAt,
                     ).toISOString(),
                   })),
                 }
@@ -489,7 +488,7 @@ export function transformFrontendToServerData(
     email: frontendData.email,
     phone: frontendData.phone,
     address: frontendData.address,
-    currentTimezone: frontendData.currentTimezone,
+    timezone: frontendData.timezone,
     onlineStatus: frontendData.onlineStatus,
     onboardingCompleted: frontendData.onboardingCompleted,
     role: frontendData.role,
@@ -749,17 +748,17 @@ async function updateConsultantProfileAndRelations(
     if (weeklySlotsToCreate && weeklySlotsToCreate.length > 0) {
       const validWeeklySlots = weeklySlotsToCreate.filter((slot) =>
         isValidTimeRange(
-          slot.slotStartTimeInUTC.split("T")[1]?.slice(0, 5) || "",
-          slot.slotEndTimeInUTC.split("T")[1]?.slice(0, 5) || "",
+          slot.availabilityStartsAt.split("T")[1]?.slice(0, 5) || "",
+          slot.availabilityEndsAt.split("T")[1]?.slice(0, 5) || "",
         ),
       );
       if (validWeeklySlots.length > 0) {
         await tx.slotOfAvailabilityWeekly.createMany({
           data: validWeeklySlots.map((slot) => ({
-            dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
-            slotStartTimeInUTC: slot.slotStartTimeInUTC,
-            dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
-            slotEndTimeInUTC: slot.slotEndTimeInUTC,
+            dayOfWeekForStartsAt: slot.dayOfWeekForStartsAt,
+            availabilityStartsAt: slot.availabilityStartsAt,
+            dayOfWeekForEndsAt: slot.dayOfWeekForEndsAt,
+            availabilityEndsAt: slot.availabilityEndsAt,
             consultantProfileId: consultantProfile.id,
           })),
         });
@@ -776,15 +775,15 @@ async function updateConsultantProfileAndRelations(
     if (customSlotsToCreate && customSlotsToCreate.length > 0) {
       const validCustomSlots = customSlotsToCreate.filter((slot) =>
         isValidTimeRange(
-          new Date(slot.slotStartTimeInUTC).toTimeString().slice(0, 5),
-          new Date(slot.slotEndTimeInUTC).toTimeString().slice(0, 5),
+          new Date(slot.availabilityStartsAt).toTimeString().slice(0, 5),
+          new Date(slot.availabilityEndsAt).toTimeString().slice(0, 5),
         ),
       );
       if (validCustomSlots.length > 0) {
         await tx.slotOfAvailabilityCustom.createMany({
           data: validCustomSlots.map((slot) => ({
-            slotStartTimeInUTC: slot.slotStartTimeInUTC,
-            slotEndTimeInUTC: slot.slotEndTimeInUTC,
+            availabilityStartsAt: slot.availabilityStartsAt,
+            availabilityEndsAt: slot.availabilityEndsAt,
             consultantProfileId: consultantProfile.id,
           })),
         });
@@ -929,7 +928,7 @@ export async function processOnboardingData(
         address: validatedBody.address,
         role: validatedBody.role,
         onboardingCompleted: true,
-        currentTimezone: validatedBody.currentTimezone,
+        timezone: validatedBody.timezone,
         consultantProfileId: null,
         consulteeProfileId: null,
         staffProfileId: null,

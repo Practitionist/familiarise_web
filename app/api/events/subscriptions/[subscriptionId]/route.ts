@@ -89,8 +89,8 @@ export async function PUT(
     const subscriptionData = await prisma.subscription.update({
       where: { id: subscriptionId },
       data: {
-        startDate: body.startDate,
-        endDate: body.endDate,
+        schedulingPeriodStartsAt: body.schedulingPeriodStartsAt,
+        schedulingPeriodEndsAt: body.schedulingPeriodEndsAt,
         requestStatus: body.requestStatus,
         requestNotes: body.requestNotes,
         feedbackFromConsultee: body.feedbackFromConsultee,
@@ -312,8 +312,8 @@ export async function PATCH(
             where: { id: subscriptionId },
             data: {
               requestStatus: status,
-              startDate: startDate,
-              endDate: endDate,
+              schedulingPeriodStartsAt: startDate,
+              schedulingPeriodEndsAt: endDate,
             },
             include: {
               subscriptionPlan: {
@@ -344,11 +344,7 @@ export async function PATCH(
 
           // If approved, create appointments
           if (status === RequestStatus.APPROVED) {
-            const appointments = await createAppointmentsForSubscription(
-              subscription,
-              tx,
-            );
-            subscription.appointments = appointments;
+            await createAppointmentsForSubscription(subscription, tx);
           }
 
           return subscription;
@@ -419,7 +415,7 @@ async function createAppointmentsForSubscription(subscription: any, tx: any) {
           subscription: { id: subscription.id },
           slotsOfAppointment: {
             some: {
-              slotStartTimeInUTC: appointmentDate,
+              startsAt: appointmentDate,
             },
           },
         },
@@ -433,8 +429,8 @@ async function createAppointmentsForSubscription(subscription: any, tx: any) {
           },
           slotsOfAppointment: {
             create: {
-              slotStartTimeInUTC: appointmentDate,
-              slotEndTimeInUTC: addHours(appointmentDate, 1),
+              startsAt: appointmentDate,
+              endsAt: addHours(appointmentDate, 1),
               isTentative: false,
               user: {
                 connect: [

@@ -68,6 +68,7 @@ model WebinarPlan {
 ```
 
 **Key Features**:
+
 - ✅ Multiple contributors per content piece
 - ✅ Role-based permissions (who can edit, publish, view analytics)
 - ✅ Revenue sharing (automatic payment splits)
@@ -119,6 +120,7 @@ collaborators Collaborator[]  // In WebinarPlan
 ```
 
 **Why it's problematic**:
+
 - ❌ Can't add custom fields (revenueShare, joinedAt, status)
 - ❌ Can't track when a collaborator was added to a specific webinar
 - ❌ Can't have different roles per webinar (user might be co-host on one, moderator on another)
@@ -142,6 +144,7 @@ model Collaborator {
 ```
 
 **Real-world need**:
+
 - Co-host gets 50% of revenue
 - Guest speaker gets 30%
 - Technical producer gets 20%
@@ -162,6 +165,7 @@ model Collaborator {
 ```
 
 **Real scenario**:
+
 - User A is **co-host** on "Marketing Webinar" (50% revenue)
 - User A is **guest speaker** on "Sales Webinar" (30% revenue)
 - User A is **moderator** on "Tech Webinar" (10% revenue)
@@ -175,13 +179,14 @@ model Collaborator {
 **Problem**: How do you invite someone to collaborate?
 
 Current flow would require:
+
 ```typescript
 // ❌ Immediately creates collaborator (no pending state)
 await prisma.collaborator.create({
   data: {
-    consultantProfileId: 'invitee-id',
-    webinarPlans: { connect: { id: 'webinar-123' } }
-  }
+    consultantProfileId: "invitee-id",
+    webinarPlans: { connect: { id: "webinar-123" } },
+  },
 });
 // Now they're a collaborator, even if they haven't accepted!
 ```
@@ -398,8 +403,8 @@ enum PodcastEpisodeRole {
 ```typescript
 // User A on different webinars
 const collaborations = await prisma.webinarCollaborator.findMany({
-  where: { consultantId: 'user-a' },
-  include: { webinarPlan: true }
+  where: { consultantId: "user-a" },
+  include: { webinarPlan: true },
 });
 
 /*
@@ -426,30 +431,30 @@ model WebinarCollaborator {
 // Step 1: Owner invites collaborator
 const invitation = await prisma.webinarCollaborator.create({
   data: {
-    consultantId: 'invitee-id',
-    webinarPlanId: 'webinar-123',
-    role: 'CO_HOST',
+    consultantId: "invitee-id",
+    webinarPlanId: "webinar-123",
+    role: "CO_HOST",
     revenueSharePercentage: 40,
-    invitedById: 'owner-id',
-    status: 'PENDING'
-  }
+    invitedById: "owner-id",
+    status: "PENDING",
+  },
 });
 
 // Step 2: Invitee accepts
 await prisma.webinarCollaborator.update({
   where: { id: invitation.id },
   data: {
-    status: 'ACCEPTED',
-    acceptedAt: new Date()
-  }
+    status: "ACCEPTED",
+    acceptedAt: new Date(),
+  },
 });
 
 // Step 3: Query active collaborators
 const activeCollabs = await prisma.webinarCollaborator.findMany({
   where: {
-    webinarPlanId: 'webinar-123',
-    status: 'ACCEPTED'
-  }
+    webinarPlanId: "webinar-123",
+    status: "ACCEPTED",
+  },
 });
 ```
 
@@ -481,7 +486,7 @@ interface RevenueBreakdown {
 
 async function calculateRevenueSplit(
   webinarPlanId: string,
-  totalAmount: number
+  totalAmount: number,
 ): Promise<RevenueBreakdown> {
   // Get webinar owner and collaborators
   const webinar = await prisma.webinarPlan.findUnique({
@@ -489,41 +494,42 @@ async function calculateRevenueSplit(
     include: {
       consultantProfile: { include: { user: true } },
       collaborators: {
-        where: { status: 'ACCEPTED' },
-        include: { consultant: { include: { user: true } } }
-      }
-    }
+        where: { status: "ACCEPTED" },
+        include: { consultant: { include: { user: true } } },
+      },
+    },
   });
 
-  if (!webinar) throw new Error('Webinar not found');
+  if (!webinar) throw new Error("Webinar not found");
 
   // Calculate collaborator shares
-  const collaboratorShares = webinar.collaborators.map(collab => ({
+  const collaboratorShares = webinar.collaborators.map((collab) => ({
     consultantId: collab.consultantId,
-    name: collab.consultant.user.name || 'Unknown',
+    name: collab.consultant.user.name || "Unknown",
     role: collab.role,
     sharePercentage: collab.revenueSharePercentage,
-    amount: Math.round(totalAmount * (collab.revenueSharePercentage / 100))
+    amount: Math.round(totalAmount * (collab.revenueSharePercentage / 100)),
   }));
 
   // Owner gets remainder
   const totalCollabPercentage = collaboratorShares.reduce(
-    (sum, share) => sum + share.sharePercentage, 0
+    (sum, share) => sum + share.sharePercentage,
+    0,
   );
   const ownerPercentage = 100 - totalCollabPercentage;
-  const ownerShare = totalAmount - collaboratorShares.reduce(
-    (sum, share) => sum + share.amount, 0
-  );
+  const ownerShare =
+    totalAmount -
+    collaboratorShares.reduce((sum, share) => sum + share.amount, 0);
 
   return {
     totalAmount,
     ownerShare,
-    collaboratorShares
+    collaboratorShares,
   };
 }
 
 // Example usage
-const split = await calculateRevenueSplit('webinar-123', 10000); // $100.00
+const split = await calculateRevenueSplit("webinar-123", 10000); // $100.00
 /*
 {
   totalAmount: 10000,
@@ -544,16 +550,17 @@ const split = await calculateRevenueSplit('webinar-123', 10000); // $100.00
 // Prevent over-allocation
 async function validateRevenueShares(webinarPlanId: string): Promise<boolean> {
   const collaborators = await prisma.webinarCollaborator.findMany({
-    where: { webinarPlanId, status: 'ACCEPTED' }
+    where: { webinarPlanId, status: "ACCEPTED" },
   });
 
   const totalShares = collaborators.reduce(
-    (sum, c) => sum + c.revenueSharePercentage, 0
+    (sum, c) => sum + c.revenueSharePercentage,
+    0,
   );
 
   if (totalShares > 100) {
     throw new Error(
-      `Total revenue shares (${totalShares}%) exceed 100%. Adjust allocations.`
+      `Total revenue shares (${totalShares}%) exceed 100%. Adjust allocations.`,
     );
   }
 
@@ -636,33 +643,38 @@ async function processWebinarPayment(paymentData: {
     data: {
       amount: paymentData.amount,
       userId: paymentData.userId,
-      paymentStatus: 'SUCCEEDED',
+      paymentStatus: "SUCCEEDED",
       // ... other fields
-    }
+    },
   });
 
   // 2. Calculate revenue split
-  const split = await calculateRevenueSplit(paymentData.webinarId, paymentData.amount);
+  const split = await calculateRevenueSplit(
+    paymentData.webinarId,
+    paymentData.amount,
+  );
 
   // 3. Create earnings for owner
   const webinar = await prisma.webinarPlan.findUnique({
     where: { id: paymentData.webinarId },
-    select: { consultantProfileId: true }
+    select: { consultantProfileId: true },
   });
 
   await prisma.collaboratorEarnings.create({
     data: {
       consultantId: webinar!.consultantProfileId,
-      contentType: 'WEBINAR',
+      contentType: "WEBINAR",
       contentId: paymentData.webinarId,
       grossRevenue: paymentData.amount,
-      sharePercentage: 100 - split.collaboratorShares.reduce((s, c) => s + c.sharePercentage, 0),
+      sharePercentage:
+        100 -
+        split.collaboratorShares.reduce((s, c) => s + c.sharePercentage, 0),
       earnedAmount: split.ownerShare,
       platformFee: Math.round(split.ownerShare * 0.05), // 5% platform fee
       netAmount: Math.round(split.ownerShare * 0.95),
-      payoutStatus: 'PENDING',
-      paymentId: payment.id
-    }
+      payoutStatus: "PENDING",
+      paymentId: payment.id,
+    },
   });
 
   // 4. Create earnings for each collaborator
@@ -670,16 +682,16 @@ async function processWebinarPayment(paymentData: {
     await prisma.collaboratorEarnings.create({
       data: {
         consultantId: collab.consultantId,
-        contentType: 'WEBINAR',
+        contentType: "WEBINAR",
         contentId: paymentData.webinarId,
         grossRevenue: paymentData.amount,
         sharePercentage: collab.sharePercentage,
         earnedAmount: collab.amount,
         platformFee: Math.round(collab.amount * 0.05),
         netAmount: Math.round(collab.amount * 0.95),
-        payoutStatus: 'PENDING',
-        paymentId: payment.id
-      }
+        payoutStatus: "PENDING",
+        paymentId: payment.id,
+      },
     });
   }
 
@@ -697,33 +709,37 @@ async function processPodcastSeriesPayment(paymentData: {
     data: {
       amount: paymentData.amount,
       userId: paymentData.userId,
-      paymentStatus: 'SUCCEEDED',
+      paymentStatus: "SUCCEEDED",
       // ... other fields
-    }
+    },
   });
 
   // 2. Calculate revenue split for podcast series
-  const split = await calculatePodcastRevenueSplit(paymentData.podcastPlanId, paymentData.amount);
+  const split = await calculatePodcastRevenueSplit(
+    paymentData.podcastPlanId,
+    paymentData.amount,
+  );
 
   // 3. Create earnings for owner
   const podcastPlan = await prisma.podcastPlan.findUnique({
     where: { id: paymentData.podcastPlanId },
-    select: { consultantProfileId: true }
+    select: { consultantProfileId: true },
   });
 
   await prisma.collaboratorEarnings.create({
     data: {
       consultantId: podcastPlan!.consultantProfileId,
-      contentType: 'PODCAST_SERIES',
+      contentType: "PODCAST_SERIES",
       contentId: paymentData.podcastPlanId,
       grossRevenue: paymentData.amount,
-      sharePercentage: 100 - split.collaborators.reduce((s, c) => s + c.sharePercentage, 0),
+      sharePercentage:
+        100 - split.collaborators.reduce((s, c) => s + c.sharePercentage, 0),
       earnedAmount: split.owner,
       platformFee: Math.round(split.owner * 0.05),
       netAmount: Math.round(split.owner * 0.95),
-      payoutStatus: 'PENDING',
-      paymentId: payment.id
-    }
+      payoutStatus: "PENDING",
+      paymentId: payment.id,
+    },
   });
 
   // 4. Create earnings for each series-level collaborator
@@ -731,16 +747,16 @@ async function processPodcastSeriesPayment(paymentData: {
     await prisma.collaboratorEarnings.create({
       data: {
         consultantId: collab.consultantId,
-        contentType: 'PODCAST_SERIES',
+        contentType: "PODCAST_SERIES",
         contentId: paymentData.podcastPlanId,
         grossRevenue: paymentData.amount,
         sharePercentage: collab.sharePercentage,
         earnedAmount: collab.amount,
         platformFee: Math.round(collab.amount * 0.05),
         netAmount: Math.round(collab.amount * 0.95),
-        payoutStatus: 'PENDING',
-        paymentId: payment.id
-      }
+        payoutStatus: "PENDING",
+        paymentId: payment.id,
+      },
     });
   }
 
@@ -758,34 +774,41 @@ async function processEpisodePurchasePayment(paymentData: {
     data: {
       amount: paymentData.amount,
       userId: paymentData.userId,
-      paymentStatus: 'SUCCEEDED',
+      paymentStatus: "SUCCEEDED",
       // ... other fields
-    }
+    },
   });
 
   // 2. Calculate revenue split (includes both series and episode collaborators)
-  const split = await calculateEpisodeRevenueSplit(paymentData.episodeId, paymentData.amount);
+  const split = await calculateEpisodeRevenueSplit(
+    paymentData.episodeId,
+    paymentData.amount,
+  );
 
   // 3. Create earnings for owner
   const episode = await prisma.podcastEpisode.findUnique({
     where: { id: paymentData.episodeId },
-    select: { consultantProfileId: true }
+    select: { consultantProfileId: true },
   });
 
   await prisma.collaboratorEarnings.create({
     data: {
       consultantId: episode!.consultantProfileId,
-      contentType: 'PODCAST_EPISODE',
+      contentType: "PODCAST_EPISODE",
       contentId: paymentData.episodeId,
       grossRevenue: paymentData.amount,
-      sharePercentage: 100 - [...split.seriesCollaborators, ...split.episodeCollaborators]
-        .reduce((s, c) => s + c.sharePercentage, 0),
+      sharePercentage:
+        100 -
+        [...split.seriesCollaborators, ...split.episodeCollaborators].reduce(
+          (s, c) => s + c.sharePercentage,
+          0,
+        ),
       earnedAmount: split.owner,
       platformFee: Math.round(split.owner * 0.05),
       netAmount: Math.round(split.owner * 0.95),
-      payoutStatus: 'PENDING',
-      paymentId: payment.id
-    }
+      payoutStatus: "PENDING",
+      paymentId: payment.id,
+    },
   });
 
   // 4. Create earnings for series-level collaborators
@@ -793,16 +816,16 @@ async function processEpisodePurchasePayment(paymentData: {
     await prisma.collaboratorEarnings.create({
       data: {
         consultantId: collab.consultantId,
-        contentType: 'PODCAST_EPISODE',
+        contentType: "PODCAST_EPISODE",
         contentId: paymentData.episodeId,
         grossRevenue: paymentData.amount,
         sharePercentage: collab.sharePercentage,
         earnedAmount: collab.amount,
         platformFee: Math.round(collab.amount * 0.05),
         netAmount: Math.round(collab.amount * 0.95),
-        payoutStatus: 'PENDING',
-        paymentId: payment.id
-      }
+        payoutStatus: "PENDING",
+        paymentId: payment.id,
+      },
     });
   }
 
@@ -811,16 +834,16 @@ async function processEpisodePurchasePayment(paymentData: {
     await prisma.collaboratorEarnings.create({
       data: {
         consultantId: collab.consultantId,
-        contentType: 'PODCAST_EPISODE',
+        contentType: "PODCAST_EPISODE",
         contentId: paymentData.episodeId,
         grossRevenue: paymentData.amount,
         sharePercentage: collab.sharePercentage,
         earnedAmount: collab.amount,
         platformFee: Math.round(collab.amount * 0.05),
         netAmount: Math.round(collab.amount * 0.95),
-        payoutStatus: 'PENDING',
-        paymentId: payment.id
-      }
+        payoutStatus: "PENDING",
+        paymentId: payment.id,
+      },
     });
   }
 
@@ -836,19 +859,19 @@ async function processEpisodePurchasePayment(paymentData: {
 // API: GET /api/dashboard/consultant/[id]/earnings
 
 interface EarningsSummary {
-  totalEarned: number;        // All-time earnings
-  pendingPayout: number;      // Not yet paid out
-  thisMonth: number;          // Current month earnings
+  totalEarned: number; // All-time earnings
+  pendingPayout: number; // Not yet paid out
+  thisMonth: number; // Current month earnings
   byContent: {
     webinars: number;
     classes: number;
-    podcastSeries: number;    // PodcastAccess earnings
-    podcastEpisodes: number;  // EpisodePurchase earnings
+    podcastSeries: number; // PodcastAccess earnings
+    podcastEpisodes: number; // EpisodePurchase earnings
     consultations: number;
   };
   byRole: {
-    owner: number;            // As primary creator
-    collaborator: number;     // As collaborator on others' content
+    owner: number; // As primary creator
+    collaborator: number; // As collaborator on others' content
   };
   recentEarnings: Array<{
     contentTitle: string;
@@ -859,50 +882,66 @@ interface EarningsSummary {
   }>;
 }
 
-async function getConsultantEarnings(consultantId: string): Promise<EarningsSummary> {
+async function getConsultantEarnings(
+  consultantId: string,
+): Promise<EarningsSummary> {
   const earnings = await prisma.collaboratorEarnings.findMany({
     where: { consultantId },
     include: {
-      payment: true
+      payment: true,
     },
-    orderBy: { createdAt: 'desc' }
+    orderBy: { createdAt: "desc" },
   });
 
   const totalEarned = earnings.reduce((sum, e) => sum + e.netAmount, 0);
   const pendingPayout = earnings
-    .filter(e => e.payoutStatus === 'PENDING')
+    .filter((e) => e.payoutStatus === "PENDING")
     .reduce((sum, e) => sum + e.netAmount, 0);
 
   // Group by content type
   const byContent = {
-    webinars: earnings.filter(e => e.contentType === 'WEBINAR').reduce((s, e) => s + e.netAmount, 0),
-    classes: earnings.filter(e => e.contentType === 'CLASS').reduce((s, e) => s + e.netAmount, 0),
-    podcastSeries: earnings.filter(e => e.contentType === 'PODCAST_SERIES').reduce((s, e) => s + e.netAmount, 0),
-    podcastEpisodes: earnings.filter(e => e.contentType === 'PODCAST_EPISODE').reduce((s, e) => s + e.netAmount, 0),
-    consultations: earnings.filter(e => e.contentType === 'CONSULTATION').reduce((s, e) => s + e.netAmount, 0),
+    webinars: earnings
+      .filter((e) => e.contentType === "WEBINAR")
+      .reduce((s, e) => s + e.netAmount, 0),
+    classes: earnings
+      .filter((e) => e.contentType === "CLASS")
+      .reduce((s, e) => s + e.netAmount, 0),
+    podcastSeries: earnings
+      .filter((e) => e.contentType === "PODCAST_SERIES")
+      .reduce((s, e) => s + e.netAmount, 0),
+    podcastEpisodes: earnings
+      .filter((e) => e.contentType === "PODCAST_EPISODE")
+      .reduce((s, e) => s + e.netAmount, 0),
+    consultations: earnings
+      .filter((e) => e.contentType === "CONSULTATION")
+      .reduce((s, e) => s + e.netAmount, 0),
   };
 
   // Determine if owner or collaborator by checking sharePercentage
   const byRole = {
-    owner: earnings.filter(e => e.sharePercentage >= 50).reduce((s, e) => s + e.netAmount, 0),
-    collaborator: earnings.filter(e => e.sharePercentage < 50).reduce((s, e) => s + e.netAmount, 0)
+    owner: earnings
+      .filter((e) => e.sharePercentage >= 50)
+      .reduce((s, e) => s + e.netAmount, 0),
+    collaborator: earnings
+      .filter((e) => e.sharePercentage < 50)
+      .reduce((s, e) => s + e.netAmount, 0),
   };
 
   return {
     totalEarned,
     pendingPayout,
     thisMonth: earnings
-      .filter(e => isThisMonth(e.createdAt))
+      .filter((e) => isThisMonth(e.createdAt))
       .reduce((sum, e) => sum + e.netAmount, 0),
     byContent,
     byRole,
-    recentEarnings: earnings.slice(0, 10).map(e => ({
-      contentTitle: 'Loaded from content relation',
+    recentEarnings: earnings.slice(0, 10).map((e) => ({
+      contentTitle: "Loaded from content relation",
       contentType: e.contentType,
-      role: e.sharePercentage >= 50 ? 'Owner' : 'Collaborator',
+      role: e.sharePercentage >= 50 ? "Owner" : "Collaborator",
       earnedAmount: e.netAmount,
-      date: e.createdAt
-    }))
+      date: e.createdAt,
+    })),
   };
 }
 ```
@@ -960,13 +999,13 @@ model PodcastEpisodeCollaborator {
 // Add permanent co-host to podcast series
 const cohost = await prisma.podcastCollaborator.create({
   data: {
-    consultantId: 'user-b',
-    podcastPlanId: 'podcast-123',
-    role: 'CO_HOST',
-    revenueSharePercentage: 50,  // Equal partners
-    invitedById: 'owner-id',
-    status: 'ACCEPTED'
-  }
+    consultantId: "user-b",
+    podcastPlanId: "podcast-123",
+    role: "CO_HOST",
+    revenueSharePercentage: 50, // Equal partners
+    invitedById: "owner-id",
+    status: "ACCEPTED",
+  },
 });
 
 // Now all future episodes automatically have co-host revenue split
@@ -980,14 +1019,14 @@ const cohost = await prisma.podcastCollaborator.create({
 // Invite guest for Episode 5
 const guest = await prisma.podcastEpisodeCollaborator.create({
   data: {
-    consultantId: 'guest-id',
-    episodeId: 'episode-5',
-    role: 'GUEST',
-    credit: 'Guest: Jane Smith, AI Researcher at Stanford',
-    revenueSharePercentage: 20,  // One-time guest fee
-    invitedById: 'owner-id',
-    status: 'ACCEPTED'
-  }
+    consultantId: "guest-id",
+    episodeId: "episode-5",
+    role: "GUEST",
+    credit: "Guest: Jane Smith, AI Researcher at Stanford",
+    revenueSharePercentage: 20, // One-time guest fee
+    invitedById: "owner-id",
+    status: "ACCEPTED",
+  },
 });
 ```
 
@@ -999,13 +1038,13 @@ const guest = await prisma.podcastEpisodeCollaborator.create({
 // Technical producer (flat fee, no percentage)
 const producer = await prisma.podcastCollaborator.create({
   data: {
-    consultantId: 'producer-id',
-    podcastPlanId: 'podcast-123',
-    role: 'PRODUCER',
-    revenueSharePercentage: 0,  // Paid separately, not from revenue
-    invitedById: 'owner-id',
-    status: 'ACCEPTED'
-  }
+    consultantId: "producer-id",
+    podcastPlanId: "podcast-123",
+    role: "PRODUCER",
+    revenueSharePercentage: 0, // Paid separately, not from revenue
+    invitedById: "owner-id",
+    status: "ACCEPTED",
+  },
 });
 
 // Producer gets access to edit episodes but no revenue share
@@ -1018,10 +1057,13 @@ const producer = await prisma.podcastCollaborator.create({
 
 ```typescript
 // When someone purchases access to a podcast series (creates PodcastAccess)
-async function calculatePodcastRevenueSplit(podcastPlanId: string, amount: number) {
+async function calculatePodcastRevenueSplit(
+  podcastPlanId: string,
+  amount: number,
+) {
   // Get series-level collaborators
   const seriesCollabs = await prisma.podcastCollaborator.findMany({
-    where: { podcastPlanId, status: 'ACCEPTED' }
+    where: { podcastPlanId, status: "ACCEPTED" },
   });
 
   // Note: This is called when creating PodcastAccess (series access)
@@ -1029,16 +1071,17 @@ async function calculatePodcastRevenueSplit(podcastPlanId: string, amount: numbe
   // They only earn from individual episode sales (EpisodePurchase)
 
   const totalCollabShare = seriesCollabs.reduce(
-    (sum, c) => sum + c.revenueSharePercentage, 0
+    (sum, c) => sum + c.revenueSharePercentage,
+    0,
   );
 
   return {
     owner: amount * ((100 - totalCollabShare) / 100),
-    collaborators: seriesCollabs.map(c => ({
+    collaborators: seriesCollabs.map((c) => ({
       consultantId: c.consultantId,
       role: c.role,
-      amount: amount * (c.revenueSharePercentage / 100)
-    }))
+      amount: amount * (c.revenueSharePercentage / 100),
+    })),
   };
 }
 
@@ -1049,34 +1092,39 @@ async function calculateEpisodeRevenueSplit(episodeId: string, amount: number) {
     include: {
       podcastPlan: {
         include: {
-          collaborators: { where: { status: 'ACCEPTED' } }
-        }
+          collaborators: { where: { status: "ACCEPTED" } },
+        },
       },
-      episodeCollaborators: { where: { status: 'ACCEPTED' } }
-    }
+      episodeCollaborators: { where: { status: "ACCEPTED" } },
+    },
   });
 
   // Note: This is called when creating EpisodePurchase (individual episode purchase)
   // Both series-level AND episode-level collaborators get paid
-  const seriesShare = episode.podcastPlan?.collaborators.reduce(
-    (sum, c) => sum + c.revenueSharePercentage, 0
-  ) || 0;
+  const seriesShare =
+    episode.podcastPlan?.collaborators.reduce(
+      (sum, c) => sum + c.revenueSharePercentage,
+      0,
+    ) || 0;
   const episodeShare = episode.episodeCollaborators.reduce(
-    (sum, c) => sum + c.revenueSharePercentage, 0
+    (sum, c) => sum + c.revenueSharePercentage,
+    0,
   );
 
   const ownerShare = 100 - seriesShare - episodeShare;
 
   return {
     owner: amount * (ownerShare / 100),
-    seriesCollaborators: (episode.podcastPlan?.collaborators || []).map(c => ({
+    seriesCollaborators: (episode.podcastPlan?.collaborators || []).map(
+      (c) => ({
+        consultantId: c.consultantId,
+        amount: amount * (c.revenueSharePercentage / 100),
+      }),
+    ),
+    episodeCollaborators: episode.episodeCollaborators.map((c) => ({
       consultantId: c.consultantId,
-      amount: amount * (c.revenueSharePercentage / 100)
+      amount: amount * (c.revenueSharePercentage / 100),
     })),
-    episodeCollaborators: episode.episodeCollaborators.map(c => ({
-      consultantId: c.consultantId,
-      amount: amount * (c.revenueSharePercentage / 100)
-    }))
   };
 }
 ```
@@ -1087,13 +1135,13 @@ async function calculateEpisodeRevenueSplit(episodeId: string, amount: number) {
 
 ### Permission Matrix
 
-| Role | Edit Content | Publish | Delete | Invite Collaborators | View Analytics | Manage Revenue |
-|------|--------------|---------|--------|---------------------|----------------|----------------|
-| **Owner** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **CO_HOST** | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ |
-| **PRODUCER** | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| **GUEST** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **MODERATOR** | ❌ | ❌ | ❌ | ❌ | ⚠️ Limited | ❌ |
+| Role          | Edit Content | Publish | Delete | Invite Collaborators | View Analytics | Manage Revenue |
+| ------------- | ------------ | ------- | ------ | -------------------- | -------------- | -------------- |
+| **Owner**     | ✅           | ✅      | ✅     | ✅                   | ✅             | ✅             |
+| **CO_HOST**   | ✅           | ✅      | ❌     | ✅                   | ✅             | ❌             |
+| **PRODUCER**  | ✅           | ❌      | ❌     | ❌                   | ✅             | ❌             |
+| **GUEST**     | ❌           | ❌      | ❌     | ❌                   | ❌             | ❌             |
+| **MODERATOR** | ❌           | ❌      | ❌     | ❌                   | ⚠️ Limited     | ❌             |
 
 ### Permission Schema
 
@@ -1144,24 +1192,24 @@ const DEFAULT_PERMISSIONS: Record<string, CollaboratorPermissions> = {
 // middleware/checkCollaboratorPermission.ts
 
 type Permission =
-  | 'canEdit'
-  | 'canPublish'
-  | 'canDelete'
-  | 'canInvite'
-  | 'canViewAnalytics'
-  | 'canManageRevenue';
+  | "canEdit"
+  | "canPublish"
+  | "canDelete"
+  | "canInvite"
+  | "canViewAnalytics"
+  | "canManageRevenue";
 
 async function checkWebinarPermission(
   consultantId: string,
   webinarPlanId: string,
-  requiredPermission: Permission
+  requiredPermission: Permission,
 ): Promise<boolean> {
   // Check if owner
   const webinar = await prisma.webinarPlan.findFirst({
     where: {
       id: webinarPlanId,
-      consultantProfileId: consultantId
-    }
+      consultantProfileId: consultantId,
+    },
   });
 
   if (webinar) {
@@ -1173,15 +1221,16 @@ async function checkWebinarPermission(
     where: {
       consultantId,
       webinarPlanId,
-      status: 'ACCEPTED'
-    }
+      status: "ACCEPTED",
+    },
   });
 
   if (!collaboration) {
     return false; // Not owner or collaborator
   }
 
-  const permissions = collaboration.permissions as CollaboratorPermissions | null;
+  const permissions =
+    collaboration.permissions as CollaboratorPermissions | null;
 
   // If custom permissions set, use those; otherwise use role defaults
   if (permissions) {
@@ -1195,7 +1244,7 @@ async function checkWebinarPermission(
 // Usage in API route
 export async function PATCH(
   request: Request,
-  { params }: { params: { webinarId: string } }
+  { params }: { params: { webinarId: string } },
 ) {
   const session = await getServerSession();
   const consultantId = session.user.consultantProfileId;
@@ -1203,13 +1252,13 @@ export async function PATCH(
   const canEdit = await checkWebinarPermission(
     consultantId,
     params.webinarId,
-    'canEdit'
+    "canEdit",
   );
 
   if (!canEdit) {
     return NextResponse.json(
-      { error: 'You do not have permission to edit this webinar' },
-      { status: 403 }
+      { error: "You do not have permission to edit this webinar" },
+      { status: 403 },
     );
   }
 
@@ -1244,12 +1293,12 @@ export async function POST(request: Request, { params }) {
   const webinar = await prisma.webinarPlan.findFirst({
     where: {
       id: params.webinarId,
-      consultantProfileId: session.user.consultantProfileId
-    }
+      consultantProfileId: session.user.consultantProfileId,
+    },
   });
 
   if (!webinar) {
-    return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
   // Validate revenue share doesn't exceed 100%
@@ -1264,13 +1313,13 @@ export async function POST(request: Request, { params }) {
       revenueSharePercentage: body.revenueSharePercentage,
       permissions: body.permissions || DEFAULT_PERMISSIONS[body.role],
       invitedById: session.user.consultantProfileId,
-      status: 'PENDING'
+      status: "PENDING",
     },
     include: {
       consultant: {
-        include: { user: { select: { name: true, email: true } } }
-      }
-    }
+        include: { user: { select: { name: true, email: true } } },
+      },
+    },
   });
 
   // Send notification/email to invitee
@@ -1285,7 +1334,7 @@ export async function POST(request: Request, { params }) {
 
 // PATCH /api/collaborations/[collaborationId]/respond
 interface RespondToInvitationRequest {
-  action: 'accept' | 'decline';
+  action: "accept" | "decline";
 }
 
 export async function PATCH(request: Request, { params }) {
@@ -1296,21 +1345,24 @@ export async function PATCH(request: Request, { params }) {
     where: {
       id: params.collaborationId,
       consultantId: session.user.consultantProfileId,
-      status: 'PENDING'
-    }
+      status: "PENDING",
+    },
   });
 
   if (!collaboration) {
-    return NextResponse.json({ error: 'Invitation not found' }, { status: 404 });
+    return NextResponse.json(
+      { error: "Invitation not found" },
+      { status: 404 },
+    );
   }
 
   const updated = await prisma.webinarCollaborator.update({
     where: { id: params.collaborationId },
     data: {
-      status: body.action === 'accept' ? 'ACCEPTED' : 'DECLINED',
-      ...(body.action === 'accept' && { acceptedAt: new Date() }),
-      ...(body.action === 'decline' && { declinedAt: new Date() })
-    }
+      status: body.action === "accept" ? "ACCEPTED" : "DECLINED",
+      ...(body.action === "accept" && { acceptedAt: new Date() }),
+      ...(body.action === "decline" && { declinedAt: new Date() }),
+    },
   });
 
   return NextResponse.json({ data: updated });
@@ -1325,18 +1377,18 @@ export async function GET(request: Request, { params }) {
   const collaborators = await prisma.webinarCollaborator.findMany({
     where: {
       webinarPlanId: params.webinarId,
-      status: { in: ['PENDING', 'ACCEPTED'] }
+      status: { in: ["PENDING", "ACCEPTED"] },
     },
     include: {
       consultant: {
         include: {
           user: {
-            select: { id: true, name: true, email: true, image: true }
-          }
-        }
-      }
+            select: { id: true, name: true, email: true, image: true },
+          },
+        },
+      },
     },
-    orderBy: { createdAt: 'desc' }
+    orderBy: { createdAt: "desc" },
   });
 
   return NextResponse.json({ data: collaborators });
@@ -1360,20 +1412,24 @@ export async function PATCH(request: Request, { params }) {
   const canManage = await checkWebinarPermission(
     session.user.consultantProfileId,
     params.webinarId,
-    'canManageRevenue'
+    "canManageRevenue",
   );
 
   if (!canManage) {
-    return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
   if (body.revenueSharePercentage !== undefined) {
-    await validateRevenueShares(params.webinarId, body.revenueSharePercentage, params.collaboratorId);
+    await validateRevenueShares(
+      params.webinarId,
+      body.revenueSharePercentage,
+      params.collaboratorId,
+    );
   }
 
   const updated = await prisma.webinarCollaborator.update({
     where: { id: params.collaboratorId },
-    data: body
+    data: body,
   });
 
   return NextResponse.json({ data: updated });
@@ -1391,21 +1447,21 @@ export async function DELETE(request: Request, { params }) {
   const webinar = await prisma.webinarPlan.findFirst({
     where: {
       id: params.webinarId,
-      consultantProfileId: session.user.consultantProfileId
-    }
+      consultantProfileId: session.user.consultantProfileId,
+    },
   });
 
   if (!webinar) {
-    return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
+    return NextResponse.json({ error: "Not authorized" }, { status: 403 });
   }
 
   // Soft delete by updating status
   await prisma.webinarCollaborator.update({
     where: { id: params.collaboratorId },
     data: {
-      status: 'REMOVED',
-      removedAt: new Date()
-    }
+      status: "REMOVED",
+      removedAt: new Date(),
+    },
   });
 
   return NextResponse.json({ success: true });
@@ -1636,20 +1692,20 @@ npx prisma migrate dev --name add_earnings_tracking
 
 ```typescript
 // Integration tests
-describe('Collaborator System', () => {
-  it('should allow owner to invite collaborator', async () => {
+describe("Collaborator System", () => {
+  it("should allow owner to invite collaborator", async () => {
     // ...
   });
 
-  it('should prevent over-allocation of revenue shares', async () => {
+  it("should prevent over-allocation of revenue shares", async () => {
     // ...
   });
 
-  it('should split revenue correctly', async () => {
+  it("should split revenue correctly", async () => {
     // ...
   });
 
-  it('should respect permission matrix', async () => {
+  it("should respect permission matrix", async () => {
     // ...
   });
 });

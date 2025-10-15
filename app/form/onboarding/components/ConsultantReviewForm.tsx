@@ -1,48 +1,8 @@
 import { Button } from "@/components/ui/button";
-import { Domain, SubDomain, Tag } from "@/schemas/plans";
-import {
-  ConsultantProfile,
-  PersonalInfoAndRole,
-  PreferredSchedule,
-} from "@/schemas/user";
 import { formatDate, formatTime } from "@/utils/dateTimeUtils";
+import { OnboardingFormData } from "@/utils/onboarding";
 import React from "react";
 import { useThemeClasses } from "../useTheme";
-
-type OnboardingFormData = PersonalInfoAndRole &
-  Partial<ConsultantProfile> &
-  Partial<PreferredSchedule> & {
-    termsAccepted?: boolean;
-    privacyAccepted?: boolean;
-    domain?: Domain;
-    subDomains?: SubDomain[];
-    tags?: Tag[];
-    weeklySlots?: {
-      dayOfWeekforStartTimeInUTC:
-        | "MONDAY"
-        | "TUESDAY"
-        | "WEDNESDAY"
-        | "THURSDAY"
-        | "FRIDAY"
-        | "SATURDAY"
-        | "SUNDAY";
-      slotStartTimeInUTC: string;
-      dayOfWeekforEndTimeInUTC:
-        | "MONDAY"
-        | "TUESDAY"
-        | "WEDNESDAY"
-        | "THURSDAY"
-        | "FRIDAY"
-        | "SATURDAY"
-        | "SUNDAY";
-      slotEndTimeInUTC: string;
-    }[];
-    customSlots?: {
-      slotStartTimeInUTC: string;
-      slotEndTimeInUTC: string;
-    }[];
-    preferredCommunicationMethod: "VIDEO" | "AUDIO" | "IN_PERSON";
-  };
 
 interface Props {
   onSubmit: (data: OnboardingFormData) => void;
@@ -65,11 +25,11 @@ const ConsultantReviewForm: React.FC<Props> = ({
   };
 
   const isValidSlot = (slot: {
-    slotStartTimeInUTC: string;
-    slotEndTimeInUTC: string;
+    availabilityStartsAt: string;
+    availabilityEndsAt: string;
   }): boolean => {
-    const startTime = formatTime(slot.slotStartTimeInUTC, "12h");
-    const endTime = formatTime(slot.slotEndTimeInUTC, "12h");
+    const startTime = formatTime(slot.availabilityStartsAt, "12h");
+    const endTime = formatTime(slot.availabilityEndsAt, "12h");
     return startTime !== endTime;
   };
 
@@ -90,11 +50,10 @@ const ConsultantReviewForm: React.FC<Props> = ({
             <h4 className="text-md font-medium text-white">Weekly Slots</h4>
             <ul className="space-y-2 list-none pl-0">
               {formData.weeklySlots.filter(isValidSlot).map((slot, index) => {
-                const startTime = formatTime(slot.slotStartTimeInUTC, "12h");
-                const endTime = formatTime(slot.slotEndTimeInUTC, "12h");
+                const startTime = formatTime(slot.availabilityStartsAt, "12h");
+                const endTime = formatTime(slot.availabilityEndsAt, "12h");
                 const isSameDay =
-                  slot.dayOfWeekforStartTimeInUTC ===
-                  slot.dayOfWeekforEndTimeInUTC;
+                  slot.dayOfWeekForStartsAt === slot.dayOfWeekForEndsAt;
 
                 return (
                   <li
@@ -102,13 +61,13 @@ const ConsultantReviewForm: React.FC<Props> = ({
                     className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white"
                   >
                     <span className="font-medium">
-                      {slot.dayOfWeekforStartTimeInUTC}
+                      {slot.dayOfWeekForStartsAt}
                     </span>{" "}
                     <span className="text-white/70">{startTime}</span>
                     {" to "}
                     {!isSameDay && (
                       <span className="font-medium">
-                        {slot.dayOfWeekforEndTimeInUTC}{" "}
+                        {slot.dayOfWeekForEndsAt}{" "}
                       </span>
                     )}
                     <span className="text-white/70">{endTime}</span>
@@ -123,10 +82,10 @@ const ConsultantReviewForm: React.FC<Props> = ({
             <h4 className="text-md font-medium text-white">Custom Slots</h4>
             <ul className="space-y-2 list-none pl-0">
               {formData.customSlots.filter(isValidSlot).map((slot, index) => {
-                const startDate = formatDate(slot.slotStartTimeInUTC);
-                const endDate = formatDate(slot.slotEndTimeInUTC);
-                const startTime = formatTime(slot.slotStartTimeInUTC, "12h");
-                const endTime = formatTime(slot.slotEndTimeInUTC, "12h");
+                const startDate = formatDate(slot.availabilityStartsAt);
+                const endDate = formatDate(slot.availabilityEndsAt);
+                const startTime = formatTime(slot.availabilityStartsAt, "12h");
+                const endTime = formatTime(slot.availabilityEndsAt, "12h");
                 const isSameDay = startDate === endDate;
 
                 return (

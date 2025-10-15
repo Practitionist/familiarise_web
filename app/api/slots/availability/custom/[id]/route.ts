@@ -40,15 +40,15 @@ export async function PUT(
     const { id } = await params;
     const body = await req.json();
 
-    if (!body.slotStartTimeInUTC || !body.slotEndTimeInUTC) {
+    if (!body.availabilityStartsAt || !body.availabilityEndsAt) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },
       );
     }
 
-    const startTime = new Date(body.slotStartTimeInUTC);
-    const endTime = new Date(body.slotEndTimeInUTC);
+    const startTime = new Date(body.availabilityStartsAt);
+    const endTime = new Date(body.availabilityEndsAt);
 
     if (startTime >= endTime) {
       return NextResponse.json(
@@ -64,16 +64,16 @@ export async function PUT(
         consultantProfileId: body.consultantProfileId,
         OR: [
           {
-            slotStartTimeInUTC: { lte: startTime },
-            slotEndTimeInUTC: { gt: startTime },
+            availabilityStartsAt: { lte: startTime },
+            availabilityEndsAt: { gt: startTime },
           },
           {
-            slotStartTimeInUTC: { lt: endTime },
-            slotEndTimeInUTC: { gte: endTime },
+            availabilityStartsAt: { lt: endTime },
+            availabilityEndsAt: { gte: endTime },
           },
           {
-            slotStartTimeInUTC: { gte: startTime },
-            slotEndTimeInUTC: { lte: endTime },
+            availabilityStartsAt: { gte: startTime },
+            availabilityEndsAt: { lte: endTime },
           },
         ],
       },
@@ -89,8 +89,8 @@ export async function PUT(
     const updatedSlot = await prisma.slotOfAvailabilityCustom.update({
       where: { id: id },
       data: {
-        slotStartTimeInUTC: startTime,
-        slotEndTimeInUTC: endTime,
+        availabilityStartsAt: startTime,
+        availabilityEndsAt: endTime,
         consultantProfile: body.consultantProfileId
           ? { connect: { id: body.consultantProfileId } }
           : undefined,
@@ -137,12 +137,12 @@ export async function PATCH(
       );
     }
 
-    const startTime = body.slotStartTimeInUTC
-      ? new Date(body.slotStartTimeInUTC)
-      : currentSlot.slotStartTimeInUTC;
-    const endTime = body.slotEndTimeInUTC
-      ? new Date(body.slotEndTimeInUTC)
-      : currentSlot.slotEndTimeInUTC;
+    const startTime = body.availabilityStartsAt
+      ? new Date(body.availabilityStartsAt)
+      : currentSlot.availabilityStartsAt;
+    const endTime = body.availabilityEndsAt
+      ? new Date(body.availabilityEndsAt)
+      : currentSlot.availabilityEndsAt;
 
     if (startTime >= endTime) {
       return NextResponse.json(
@@ -159,16 +159,16 @@ export async function PATCH(
           body.consultantProfileId || currentSlot.consultantProfileId,
         OR: [
           {
-            slotStartTimeInUTC: { lte: startTime },
-            slotEndTimeInUTC: { gt: startTime },
+            availabilityStartsAt: { lte: startTime },
+            availabilityEndsAt: { gt: startTime },
           },
           {
-            slotStartTimeInUTC: { lt: endTime },
-            slotEndTimeInUTC: { gte: endTime },
+            availabilityStartsAt: { lt: endTime },
+            availabilityEndsAt: { gte: endTime },
           },
           {
-            slotStartTimeInUTC: { gte: startTime },
-            slotEndTimeInUTC: { lte: endTime },
+            availabilityStartsAt: { gte: startTime },
+            availabilityEndsAt: { lte: endTime },
           },
         ],
       },
@@ -184,8 +184,8 @@ export async function PATCH(
     const updatedSlot = await prisma.slotOfAvailabilityCustom.update({
       where: { id: id },
       data: {
-        slotStartTimeInUTC: startTime,
-        slotEndTimeInUTC: endTime,
+        availabilityStartsAt: startTime,
+        availabilityEndsAt: endTime,
         consultantProfile: body.consultantProfileId
           ? { connect: { id: body.consultantProfileId } }
           : undefined,

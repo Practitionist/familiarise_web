@@ -334,7 +334,7 @@ export function useCalendarData(
     try {
       const data = await AllocationService.fetchEventSlots(eventType, eventId);
 
-      console.log('[useCalendarData] fetchEventSlots response:', {
+      console.log("[useCalendarData] fetchEventSlots response:", {
         eventType,
         eventId,
         dataLength: data?.length,
@@ -371,16 +371,20 @@ export function useCalendarData(
             return intervalSlots;
           },
         );
-        console.log('[useCalendarData] Setting eventSlots:', {
+        console.log("[useCalendarData] Setting eventSlots:", {
           slotsCount: slots.length,
-          firstSlot: slots[0] ? {
-            startTime: slots[0].startTime.toISOString(),
-            endTime: slots[0].endTime.toISOString(),
-          } : null,
+          firstSlot: slots[0]
+            ? {
+                startTime: slots[0].startTime.toISOString(),
+                endTime: slots[0].endTime.toISOString(),
+              }
+            : null,
         });
         setEventSlots(slots);
       } else {
-        console.log('[useCalendarData] No event slots found, setting empty array');
+        console.log(
+          "[useCalendarData] No event slots found, setting empty array",
+        );
         setEventSlots([]);
       }
     } catch (error) {

@@ -21,7 +21,7 @@ async function investigateSundaySlots() {
     const sundaySlots = await prisma.slotOfAvailabilityWeekly.findMany({
       where: {
         consultantProfileId: CONSULTANT_ID,
-        dayOfWeekforStartTimeInUTC: DayOfWeek.SUNDAY,
+        dayOfWeekForStartsAt: DayOfWeek.SUNDAY,
       },
     });
 
@@ -31,8 +31,8 @@ async function investigateSundaySlots() {
       console.log("❌ ERROR: Consultant should NOT have Sunday slots!");
       sundaySlots.forEach((slot, idx) => {
         console.log(`\nSlot ${idx + 1}:`);
-        console.log(`  Start: ${slot.slotStartTimeInUTC.toISOString()}`);
-        console.log(`  End: ${slot.slotEndTimeInUTC.toISOString()}`);
+        console.log(`  Start: ${slot.availabilityStartsAt.toISOString()}`);
+        console.log(`  End: ${slot.availabilityEndsAt.toISOString()}`);
       });
     } else {
       console.log("✅ Correct: No Sunday slots in database");
@@ -57,7 +57,7 @@ async function investigateSundaySlots() {
         appointments: {
           include: {
             slotsOfAppointment: {
-              orderBy: { slotStartTimeInUTC: "asc" },
+              orderBy: { startsAt: "asc" },
             },
           },
         },
@@ -74,14 +74,16 @@ async function investigateSundaySlots() {
     console.log(`Plan: ${subscription.subscriptionPlan.title}`);
     console.log(`Status: ${subscription.requestStatus}`);
     console.log(`Client: ${subscription.requestedBy.user.name}`);
-    console.log(`Start: ${subscription.startDate.toISOString()}`);
-    console.log(`End: ${subscription.endDate.toISOString()}`);
+    console.log(
+      `Start: ${subscription.schedulingPeriodStartsAt.toISOString()}`,
+    );
+    console.log(`End: ${subscription.schedulingPeriodEndsAt.toISOString()}`);
     console.log(`\nIn IST (UTC+5:30):`);
     console.log(
-      `Start: ${new Date(subscription.startDate).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`,
+      `Start: ${new Date(subscription.schedulingPeriodStartsAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`,
     );
     console.log(
-      `End: ${new Date(subscription.endDate).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`,
+      `End: ${new Date(subscription.schedulingPeriodEndsAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`,
     );
     console.log("\n");
 
@@ -94,7 +96,7 @@ async function investigateSundaySlots() {
       console.log(`  Total slots: ${appt.slotsOfAppointment.length}`);
 
       appt.slotsOfAppointment.forEach((slot) => {
-        const startDate = new Date(slot.slotStartTimeInUTC);
+        const startDate = new Date(slot.startsAt);
         const dayOfWeek = startDate.toLocaleDateString("en-US", {
           weekday: "long",
         });
@@ -103,11 +105,11 @@ async function investigateSundaySlots() {
         });
 
         // Check if slot is outside subscription period
-        const isBeforeStart = startDate < subscription.startDate;
-        const isAfterEnd = startDate > subscription.endDate;
+        const isBeforeStart = startDate < subscription.schedulingPeriodStartsAt;
+        const isAfterEnd = startDate > subscription.schedulingPeriodEndsAt;
         const isOutside = isBeforeStart || isAfterEnd;
 
-        console.log(`    📅 ${slot.slotStartTimeInUTC.toISOString()}`);
+        console.log(`    📅 ${slot.startsAt.toISOString()}`);
         console.log(`       Day: ${dayOfWeek}`);
         console.log(`       IST: ${istTime}`);
         console.log(`       Tentative: ${slot.isTentative}`);
@@ -116,11 +118,11 @@ async function investigateSundaySlots() {
           console.log(`       ⚠️  WARNING: OUTSIDE SUBSCRIPTION PERIOD!`);
           if (isBeforeStart) {
             console.log(
-              `           ${((subscription.startDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)).toFixed(1)} days before start`,
+              `           ${((subscription.schedulingPeriodStartsAt.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)).toFixed(1)} days before start`,
             );
           } else {
             console.log(
-              `           ${((startDate.getTime() - subscription.endDate.getTime()) / (1000 * 60 * 60 * 24)).toFixed(1)} days after end`,
+              `           ${((startDate.getTime() - subscription.schedulingPeriodEndsAt.getTime()) / (1000 * 60 * 60 * 24)).toFixed(1)} days after end`,
             );
           }
         }
@@ -148,7 +150,7 @@ async function investigateSundaySlots() {
         },
         slotsOfAppointment: {
           some: {
-            slotStartTimeInUTC: {
+            startsAt: {
               gte: augustStart,
               lte: augustEnd,
             },
@@ -172,12 +174,12 @@ async function investigateSundaySlots() {
         },
         slotsOfAppointment: {
           where: {
-            slotStartTimeInUTC: {
+            startsAt: {
               gte: augustStart,
               lte: augustEnd,
             },
           },
-          orderBy: { slotStartTimeInUTC: "asc" },
+          orderBy: { startsAt: "asc" },
         },
       },
     });
@@ -194,24 +196,22 @@ async function investigateSundaySlots() {
         console.log(`  Plan: ${appt.subscription.subscriptionPlan.title}`);
         console.log(`  Client: ${appt.subscription.requestedBy.user.name}`);
         console.log(
-          `  Subscription Period: ${appt.subscription.startDate.toISOString()} to ${appt.subscription.endDate.toISOString()}`,
+          `  Subscription Period: ${appt.subscription.schedulingPeriodStartsAt.toISOString()} to ${appt.subscription.schedulingPeriodEndsAt.toISOString()}`,
         );
         console.log(`  August Slots: ${appt.slotsOfAppointment.length}`);
 
         appt.slotsOfAppointment.forEach((slot) => {
-          const dayOfWeek = new Date(
-            slot.slotStartTimeInUTC,
-          ).toLocaleDateString("en-US", { weekday: "short" });
-          const istTime = new Date(slot.slotStartTimeInUTC).toLocaleString(
-            "en-IN",
-            {
-              timeZone: "Asia/Kolkata",
-              month: "short",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            },
+          const dayOfWeek = new Date(slot.startsAt).toLocaleDateString(
+            "en-US",
+            { weekday: "short" },
           );
+          const istTime = new Date(slot.startsAt).toLocaleString("en-IN", {
+            timeZone: "Asia/Kolkata",
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
           console.log(
             `    ${dayOfWeek} ${istTime} ${slot.isTentative ? "(TENTATIVE)" : "(CONFIRMED)"}`,
           );

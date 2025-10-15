@@ -112,7 +112,7 @@ export async function PUT(
         address,
         onboardingCompleted,
         role: role as UserRole,
-        currentTimezone,
+        timezone: currentTimezone,
       },
       select: {
         id: true,
@@ -123,7 +123,7 @@ export async function PUT(
         address: true,
         onboardingCompleted: true,
         role: true,
-        currentTimezone: true,
+        timezone: true,
       },
     });
 

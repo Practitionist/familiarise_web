@@ -125,8 +125,8 @@ export async function POST(req: NextRequest) {
             appointmentType: "CONSULTATION",
             slotsOfAppointment: {
               create: {
-                slotStartTimeInUTC: startTime,
-                slotEndTimeInUTC: endTime,
+                startsAt: startTime,
+                endsAt: endTime,
                 isTentative: true, // Mark as tentative since it's pending approval
                 user: {
                   connect: [

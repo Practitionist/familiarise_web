@@ -118,7 +118,10 @@ export async function PATCH(
   } catch (error) {
     const duration = Date.now() - startTime;
     // Catch-all for unexpected errors (database errors, network issues, etc.)
-    console.error(`[Subscription Allocation] Error after ${duration}ms:`, error);
+    console.error(
+      `[Subscription Allocation] Error after ${duration}ms:`,
+      error,
+    );
     return NextResponse.json(
       {
         error:

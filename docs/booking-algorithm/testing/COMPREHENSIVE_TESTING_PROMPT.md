@@ -53,6 +53,7 @@ You are testing a **booking allocation system** for a consultation/subscription 
 **Base**: `/dashboard/consultant/[consultantId]`
 
 **Key Pages**:
+
 - `/requests` - View and allocate slots for pending requests
   - Tab: "All", "Consultation", "Subscription"
   - Shows table of pending requests with:
@@ -60,12 +61,14 @@ You are testing a **booking allocation system** for a consultation/subscription 
     - Actions: "Use Requested Times", "Allocate Slots"
 
 **Allocation Dialog Components**:
+
 - `RequestSlotAllocationTab.tsx` - Main tab component
 - `TimingsCalendar.tsx` - Wrapper for calendar component
 - `UnifiedCalendar.tsx` - Core calendar UI with slot selection
 - `SafeUnifiedCalendar.tsx` - Error boundary wrapper
 
 **Allocation Modes**:
+
 1. **Auto Allocate**: System finds first available consecutive slots
 2. **Manual Allocate**: Consultant selects specific slots
 3. **Use Requested Times**: Approve consultee's requested times (with optional override)
@@ -75,6 +78,7 @@ You are testing a **booking allocation system** for a consultation/subscription 
 ## API Routes
 
 ### Consultation Endpoints
+
 - `GET /api/events/consultations?consultantProfileId=X&status=PENDING`
 - `PATCH /api/events/consultations/[id]/allocate` - Allocate slots
   - Body: `{ isAuto: boolean, slots?: string[], useRequestedSlots?: boolean, override?: boolean }`
@@ -82,14 +86,17 @@ You are testing a **booking allocation system** for a consultation/subscription 
   - Body: `{ slots: string[] }`
 
 ### Subscription Endpoints
+
 - `GET /api/events/subscriptions?consultantProfileId=X&status=PENDING`
 - `PATCH /api/events/subscriptions/[id]/allocate`
 - `POST /api/events/subscriptions/[id]/validate`
 
 ### Webinar & Class Endpoints
+
 - Similar pattern: `/api/events/webinars/[id]/allocate`, `/api/events/classes/[id]/allocate`
 
 ### Availability & Appointments
+
 - `GET /api/slots/availability/weekly?consultantProfileId=X`
 - `GET /api/slots/availability/custom?consultantProfileId=X`
 - `GET /api/slots/appointments?consultantProfileId=X&consultationStatus=APPROVED&subscriptionStatus=APPROVED`
@@ -99,6 +106,7 @@ You are testing a **booking allocation system** for a consultation/subscription 
 ## Testing Scenarios
 
 ### Prerequisites
+
 ```bash
 # Supabase MCP Tools
 - mcp__supabase__list_projects
@@ -119,6 +127,7 @@ You are testing a **booking allocation system** for a consultation/subscription 
 ### Test Setup
 
 1. **Query Database Baseline**:
+
 ```sql
 -- Get test consultant
 SELECT id, "userId" FROM "ConsultantProfile" LIMIT 1;
@@ -150,6 +159,7 @@ ORDER BY s."slotStartTimeInUTC";
 ```
 
 2. **Navigate to Consultant Dashboard**:
+
 ```
 URL: http://localhost:3000/dashboard/consultant/[consultantId]/requests
 - Login as consultant
@@ -161,10 +171,12 @@ URL: http://localhost:3000/dashboard/consultant/[consultantId]/requests
 ### Scenario 1: Auto-Allocation for 2-Hour Consultation
 
 **Setup**:
+
 - Consultant has consecutive availability: Wed 19:30, 20:00, 20:30, 21:00
 - Pending consultation requires 2 hours (4 consecutive 30-min slots)
 
 **Steps**:
+
 1. Take snapshot of requests table
 2. Click "Allocate Slots" button for the consultation
 3. In dialog, verify:
@@ -175,6 +187,7 @@ URL: http://localhost:3000/dashboard/consultant/[consultantId]/requests
 5. Monitor console for errors
 6. Verify success toast appears
 7. Query database to confirm:
+
    ```sql
    SELECT * FROM "Appointment"
    WHERE "consultationId" = 'CONSULTATION_ID';
@@ -187,9 +200,11 @@ URL: http://localhost:3000/dashboard/consultant/[consultantId]/requests
    SELECT "requestStatus" FROM "Consultation"
    WHERE id = 'CONSULTATION_ID';
    ```
+
 8. Expected: Status changed to APPROVED, 4 consecutive slots allocated
 
 **Edge Cases**:
+
 - Insufficient consecutive availability
 - Consultant has slots but not consecutive
 - All slots booked
@@ -199,10 +214,12 @@ URL: http://localhost:3000/dashboard/consultant/[consultantId]/requests
 ### Scenario 2: Manual Allocation for 1-Hour Consultation
 
 **Setup**:
+
 - Consultant has various non-consecutive available slots
 - Pending consultation requires 1 hour (2 consecutive slots)
 
 **Steps**:
+
 1. Click "Allocate Slots"
 2. Manually select 2 consecutive available slots (e.g., Thu 14:00, 14:30)
 3. Verify:
@@ -213,6 +230,7 @@ URL: http://localhost:3000/dashboard/consultant/[consultantId]/requests
 5. Verify success and database update
 
 **Edge Cases**:
+
 - Select non-consecutive slots (should show error)
 - Select past slots (should prevent selection)
 - Select booked slots (should be disabled)
@@ -222,11 +240,13 @@ URL: http://localhost:3000/dashboard/consultant/[consultantId]/requests
 ### Scenario 3: Subscription Allocation (Multi-Month Recurring)
 
 **Setup**:
+
 - Subscription plan: 3 months, 2 calls/week, 1-hour sessions
 - Required slots: 3 months × 4 weeks × 2 calls × 2 slots = 48 slots
 - Date range: startDate to endDate (3 months span)
 
 **Steps**:
+
 1. Click "Allocate Slots" for subscription
 2. Verify dialog shows:
    - "Each call is 1 hour (2 consecutive slots per call)"
@@ -234,6 +254,7 @@ URL: http://localhost:3000/dashboard/consultant/[consultantId]/requests
    - Calendar restricted to date range
 3. Attempt auto-allocation
 4. If successful, verify database:
+
    ```sql
    SELECT COUNT(*) FROM "Appointment"
    WHERE "subscriptionId" = 'SUBSCRIPTION_ID';
@@ -250,10 +271,12 @@ URL: http://localhost:3000/dashboard/consultant/[consultantId]/requests
 ### Scenario 4: Use Requested Times with Conflicts
 
 **Setup**:
+
 - Consultee requested specific times
 - Some requested times conflict with consultant's existing appointments
 
 **Steps**:
+
 1. Click "Use Requested Times" button
 2. Dialog shows:
    - Requested slots listed
@@ -269,10 +292,12 @@ URL: http://localhost:3000/dashboard/consultant/[consultantId]/requests
 ### Scenario 5: Webinar Allocation (Group Event)
 
 **Setup**:
+
 - Webinar requires single time slot (e.g., 1.5 hours)
 - No individual consultee, multiple attendees
 
 **Steps**:
+
 1. Navigate to webinar requests
 2. Allocate single slot for webinar start time
 3. Verify appointment created with correct duration
@@ -282,10 +307,12 @@ URL: http://localhost:3000/dashboard/consultant/[consultantId]/requests
 ### Scenario 6: Class Allocation (Recurring Course)
 
 **Setup**:
+
 - Class plan: Weekly class for 8 weeks
 - Same day/time each week (e.g., Monday 10:00-11:00)
 
 **Steps**:
+
 1. Allocate slots for class
 2. Verify 8 appointments created (one per week)
 3. Check appointments don't conflict with other bookings
@@ -330,6 +357,7 @@ URL: http://localhost:3000/dashboard/consultant/[consultantId]/requests
 After each test scenario:
 
 **UI Verification**:
+
 - [ ] Calendar displays correctly (available=green, booked=gray, selected=dark green)
 - [ ] Slot count accurate ("X selected out of Y required")
 - [ ] Buttons enable/disable appropriately
@@ -338,12 +366,14 @@ After each test scenario:
 - [ ] Request removed from table after allocation
 
 **Console Verification**:
+
 - [ ] No JavaScript errors
 - [ ] No 500 server errors
 - [ ] Allocation API calls successful (200 OK)
 - [ ] Validation API calls working
 
 **Database Verification**:
+
 ```sql
 -- Verify appointment created
 SELECT * FROM "Appointment" WHERE id = 'APPOINTMENT_ID';
@@ -377,9 +407,11 @@ HAVING COUNT(*) > 1;
 ## Known Issues to Test
 
 ### Bug #1: Configuration Warning (FIXED)
+
 - ✅ Frontend now correctly passes `durationInHours` prop
 
 ### Bug #2: Auto-Allocation Algorithm
+
 - ❌ Auto-allocate may fail even with valid consecutive slots
 - Test: Consultant has Wed 19:30-21:00 available (4 consecutive slots)
 - Expected: Auto-allocate should succeed
@@ -387,6 +419,7 @@ HAVING COUNT(*) > 1;
 - Root Cause: Algorithm doesn't verify each incremented slot exists in availability
 
 ### Bug #3: Manual Allocation Button Disabled
+
 - ❌ Button remains disabled even when all required slots selected
 - Test: Manually select all 4 required consecutive slots
 - Expected: "Allocate Manual Slots" button enabled
@@ -406,27 +439,32 @@ For each scenario, provide:
 **Tester**: [Name/Tool]
 
 ### Setup
+
 - Consultant ID: [ID]
 - Event ID: [ID]
 - Event Type: [TYPE]
 - Required Slots: [N]
 
 ### Execution Steps
+
 1. [Step with screenshot]
 2. [Step with console output]
 3. [Step with database query result]
 
 ### Results
+
 - ✅ Success / ❌ Failure
 - Console Errors: [None / List errors]
 - Database State: [Query results]
 - Screenshots: [Links/attachments]
 
 ### Issues Found
+
 - [Issue #1 description]
 - [Issue #2 description]
 
 ### Notes
+
 [Any additional observations]
 ```
 
@@ -435,16 +473,19 @@ For each scenario, provide:
 ## Advanced Testing: Load & Concurrency
 
 ### Multiple Simultaneous Allocations
+
 - Open 3 browser tabs
 - Attempt to allocate same consultant's slots simultaneously
 - Verify only one succeeds, others get conflict errors
 
 ### Large Subscription Allocation
+
 - Test subscription with 6 months, 5 calls/week, 2-hour sessions
 - Required: 240 slots
 - Verify performance and database consistency
 
 ### Timezone Handling
+
 - Consultant in UTC+5:30 (Asia/Calcutta)
 - Consultee in UTC-5:00 (US EST)
 - Verify slot times correctly converted and displayed
@@ -454,17 +495,25 @@ For each scenario, provide:
 ## Debugging Tools
 
 ### Enable Verbose Logging
+
 Add to components:
+
 ```typescript
-console.log('[DEBUG] Component State:', { selectedSlots, requiredSlots, isQuotaMet });
+console.log("[DEBUG] Component State:", {
+  selectedSlots,
+  requiredSlots,
+  isQuotaMet,
+});
 ```
 
 ### Network Monitoring
+
 - Use Chrome DevTools → Network tab
 - Filter: `/api/events/`
 - Check request/response payloads
 
 ### Database Queries
+
 ```sql
 -- Recent appointments
 SELECT * FROM "Appointment"
