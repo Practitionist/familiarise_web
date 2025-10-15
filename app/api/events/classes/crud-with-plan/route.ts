@@ -152,8 +152,8 @@ export async function POST(request: NextRequest) {
       const classEvent = await tx.class.create({
         data: {
           status,
-          startDate: start, // Will be undefined if not provided
-          endDate: end, // Will be undefined if start is not provided
+          schedulingPeriodStartsAt: start, // Will be undefined if not provided
+          schedulingPeriodEndsAt: end, // Will be undefined if start is not provided
           classPlan: { connect: { id: classPlan.id } },
           // Create initial appointments for the first month
           appointments: {
@@ -173,8 +173,8 @@ export async function POST(request: NextRequest) {
                     appointmentType: "CLASS",
                     slotsOfAppointment: {
                       create: {
-                        slotStartTimeInUTC: slotStart,
-                        slotEndTimeInUTC: slotEnd,
+                        startsAt: slotStart,
+                        endsAt: slotEnd,
                         isTentative: true, // Mark as tentative until confirmed
                       },
                     },
@@ -493,8 +493,8 @@ export async function PATCH(request: NextRequest) {
           // Prepare update data for the Class instance, handling optional validated fields
           const classUpdateData: {
             status?: ClassStatus;
-            startDate?: Date | null;
-            endDate?: Date | null;
+            schedulingPeriodStartsAt?: Date | null;
+            schedulingPeriodEndsAt?: Date | null;
           } = {};
 
           // Only include status if it's provided in the validated data
@@ -505,13 +505,13 @@ export async function PATCH(request: NextRequest) {
           // Handle startDate: update if provided, set to null if explicitly null, otherwise leave unchanged
           // Need to parse the string date from validated data
           if (startDateString !== undefined) {
-            classUpdateData.startDate = startDateString
+            classUpdateData.schedulingPeriodStartsAt = startDateString
               ? new Date(startDateString)
               : null;
-            // Optional: Add check for valid date parsing: !isNaN(classUpdateData.startDate?.getTime())
+            // Optional: Add check for valid date parsing: !isNaN(classUpdateData.schedulingPeriodStartsAt?.getTime())
             if (
-              classUpdateData.startDate &&
-              isNaN(classUpdateData.startDate.getTime())
+              classUpdateData.schedulingPeriodStartsAt &&
+              isNaN(classUpdateData.schedulingPeriodStartsAt.getTime())
             ) {
               console.warn(
                 "Invalid startDate received in PATCH:",
@@ -519,23 +519,23 @@ export async function PATCH(request: NextRequest) {
               );
               // Decide how to handle: throw error, ignore, set null?
               // For now, let's ignore the invalid date update for startDate
-              delete classUpdateData.startDate;
+              delete classUpdateData.schedulingPeriodStartsAt;
             }
           }
 
           // Handle endDate: update if provided, set to null if explicitly null, otherwise leave unchanged
           if (endDateString !== undefined) {
-            classUpdateData.endDate = endDateString
+            classUpdateData.schedulingPeriodEndsAt = endDateString
               ? new Date(endDateString)
               : null;
             // Optional: Add check for valid date parsing
             if (
-              classUpdateData.endDate &&
-              isNaN(classUpdateData.endDate.getTime())
+              classUpdateData.schedulingPeriodEndsAt &&
+              isNaN(classUpdateData.schedulingPeriodEndsAt.getTime())
             ) {
               console.warn("Invalid endDate received in PATCH:", endDateString);
               // Ignore invalid date update for endDate
-              delete classUpdateData.endDate;
+              delete classUpdateData.schedulingPeriodEndsAt;
             }
           }
 

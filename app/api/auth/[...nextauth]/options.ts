@@ -259,7 +259,7 @@ const authOptions: NextAuthOptions = {
               image: true,
               phone: true,
               address: true,
-              currentTimezone: true,
+              timezone: true,
             },
           });
 
@@ -269,8 +269,8 @@ const authOptions: NextAuthOptions = {
               ...user,
               phone: user.phone ?? "",
               address: user.address ?? "",
-              currentTimezone:
-                user.currentTimezone ??
+              timezone:
+                user.timezone ??
                 Intl.DateTimeFormat().resolvedOptions().timeZone,
             });
           }

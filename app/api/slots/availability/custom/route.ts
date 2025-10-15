@@ -28,10 +28,10 @@ export async function GET(req: NextRequest) {
           { status: 400 },
         );
       }
-      whereClause.slotStartTimeInUTC = {
+      whereClause.availabilityStartsAt = {
         gte: new Date(startDate),
       };
-      whereClause.slotEndTimeInUTC = {
+      whereClause.availabilityEndsAt = {
         lte: new Date(endDate),
       };
     }
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
       prisma.slotOfAvailabilityCustom.findMany({
         where: whereClause,
         orderBy: {
-          slotStartTimeInUTC: "asc",
+          availabilityStartsAt: "asc",
         },
         include: {
           consultantProfile: {
@@ -85,9 +85,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { consultantProfileId, slotStartTimeInUTC, slotEndTimeInUTC } = body;
+    const { consultantProfileId, availabilityStartsAt, availabilityEndsAt } = body;
 
-    if (!consultantProfileId || !slotStartTimeInUTC || !slotEndTimeInUTC) {
+    if (!consultantProfileId || !availabilityStartsAt || !availabilityEndsAt) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },
@@ -95,8 +95,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (
-      isNaN(Date.parse(slotStartTimeInUTC)) ||
-      isNaN(Date.parse(slotEndTimeInUTC))
+      isNaN(Date.parse(availabilityStartsAt)) ||
+      isNaN(Date.parse(availabilityEndsAt))
     ) {
       return NextResponse.json(
         { error: "Invalid date format" },
@@ -104,8 +104,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const startTime = new Date(slotStartTimeInUTC);
-    const endTime = new Date(slotEndTimeInUTC);
+    const startTime = new Date(availabilityStartsAt);
+    const endTime = new Date(availabilityEndsAt);
 
     if (startTime >= endTime) {
       return NextResponse.json(
@@ -120,16 +120,16 @@ export async function POST(req: NextRequest) {
         consultantProfileId,
         OR: [
           {
-            slotStartTimeInUTC: { lte: startTime },
-            slotEndTimeInUTC: { gt: startTime },
+            availabilityStartsAt: { lte: startTime },
+            availabilityEndsAt: { gt: startTime },
           },
           {
-            slotStartTimeInUTC: { lt: endTime },
-            slotEndTimeInUTC: { gte: endTime },
+            availabilityStartsAt: { lt: endTime },
+            availabilityEndsAt: { gte: endTime },
           },
           {
-            slotStartTimeInUTC: { gte: startTime },
-            slotEndTimeInUTC: { lte: endTime },
+            availabilityStartsAt: { gte: startTime },
+            availabilityEndsAt: { lte: endTime },
           },
         ],
       },
@@ -145,8 +145,8 @@ export async function POST(req: NextRequest) {
     const newCustomSlot = await prisma.slotOfAvailabilityCustom.create({
       data: {
         consultantProfileId,
-        slotStartTimeInUTC: startTime,
-        slotEndTimeInUTC: endTime,
+        availabilityStartsAt: startTime,
+        availabilityEndsAt: endTime,
       },
       include: {
         consultantProfile: {

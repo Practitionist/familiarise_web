@@ -147,8 +147,8 @@ async function getAppointments(
     whereClause.slotsOfAppointment = {
       some: {
         AND: [
-          { slotStartTimeInUTC: { lt: new Date(endDate) } },
-          { slotEndTimeInUTC: { gt: new Date(startDate) } },
+          { startsAt: { lt: new Date(endDate) } },
+          { endsAt: { gt: new Date(startDate) } },
         ],
       },
     };
@@ -285,8 +285,8 @@ async function getAppointments(
               user: true,
             },
           },
-          startDate: true,
-          endDate: true,
+          schedulingPeriodStartsAt: true,
+          schedulingPeriodEndsAt: true,
           requestStatus: true,
         },
       },
@@ -323,8 +323,8 @@ async function getAppointments(
   return appointments
     .filter((appointment) => appointment.slotsOfAppointment?.length > 0)
     .sort((a, b) => {
-      const aTime = a.slotsOfAppointment[0]?.slotStartTimeInUTC;
-      const bTime = b.slotsOfAppointment[0]?.slotStartTimeInUTC;
+      const aTime = a.slotsOfAppointment[0]?.startsAt;
+      const bTime = b.slotsOfAppointment[0]?.startsAt;
       if (!aTime || !bTime) return 0;
       return new Date(aTime).getTime() - new Date(bTime).getTime();
     });
@@ -348,12 +348,12 @@ export async function POST(request: NextRequest) {
       slotsOfAppointment: {
         create: slotsOfAppointment.createMany.data.map(
           (slot: {
-            slotStartTimeInUTC: string;
-            slotEndTimeInUTC: string;
+            startsAt: string;
+            endsAt: string;
             type?: "WEEKLY" | "CUSTOM";
           }) => ({
-            slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
-            slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+            startsAt: new Date(slot.startsAt),
+            endsAt: new Date(slot.endsAt),
             type: slot.type || "WEEKLY", // Default to WEEKLY if not specified
           }),
         ),
@@ -403,8 +403,8 @@ export async function POST(request: NextRequest) {
                 user: true,
               },
             },
-            startDate: true,
-            endDate: true,
+            schedulingPeriodStartsAt: true,
+            schedulingPeriodEndsAt: true,
             requestStatus: true,
           },
         },

@@ -184,23 +184,23 @@ export function EventTimingsCalendar({
           // UI guard rails: restrict selection window based on validation period
           allowedStart={
             appointment.appointmentType === "SUBSCRIPTION"
-              ? appointment.subscription?.startDate
-                ? new Date(appointment.subscription.startDate)
+              ? appointment.subscription?.schedulingPeriodStartsAt
+                ? new Date(appointment.subscription.schedulingPeriodStartsAt)
                 : undefined
               : appointment.appointmentType === "CLASS"
-                ? (appointment.class as any)?.startDate
-                  ? new Date((appointment.class as any).startDate)
+                ? (appointment.class as any)?.schedulingPeriodStartsAt
+                  ? new Date((appointment.class as any).schedulingPeriodStartsAt)
                   : undefined
                 : undefined
           }
           allowedEnd={
             appointment.appointmentType === "SUBSCRIPTION"
-              ? appointment.subscription?.endDate
-                ? new Date(appointment.subscription.endDate)
+              ? appointment.subscription?.schedulingPeriodEndsAt
+                ? new Date(appointment.subscription.schedulingPeriodEndsAt)
                 : undefined
               : appointment.appointmentType === "CLASS"
-                ? (appointment.class as any)?.endDate
-                  ? new Date((appointment.class as any).endDate)
+                ? (appointment.class as any)?.schedulingPeriodEndsAt
+                  ? new Date((appointment.class as any).schedulingPeriodEndsAt)
                   : undefined
                 : undefined
           }

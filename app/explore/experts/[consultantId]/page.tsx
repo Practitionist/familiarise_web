@@ -48,7 +48,7 @@ export default function ExpertProfile(
   const { toast } = useToast();
 
   // Prioritize browser timezone over user timezone
-  const timezone = browserTimezone || userDetails?.currentTimezone;
+  const timezone = browserTimezone || userDetails?.timezone;
 
   useEffect(() => {
     const fetchData = async () => {

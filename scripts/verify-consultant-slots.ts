@@ -79,8 +79,8 @@ async function verifyConsultantSlots() {
       const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
         where: { consultantProfileId: CONSULTANT_ID },
         orderBy: [
-          { dayOfWeekforStartTimeInUTC: "asc" },
-          { slotStartTimeInUTC: "asc" },
+          { dayOfWeekForStartsAt: "asc" },
+          { availabilityStartsAt: "asc" },
         ],
       });
 
@@ -88,10 +88,10 @@ async function verifyConsultantSlots() {
         `=== WEEKLY AVAILABILITY SLOTS (Total: ${weeklySlots.length}) ===`,
       );
       weeklySlots.forEach((slot, idx) => {
-        const startTime = new Date(slot.slotStartTimeInUTC);
-        const endTime = new Date(slot.slotEndTimeInUTC);
+        const startTime = new Date(slot.availabilityStartsAt);
+        const endTime = new Date(slot.availabilityEndsAt);
         console.log(`\nSlot ${idx + 1}:`);
-        console.log(`  Day: ${slot.dayOfWeekforStartTimeInUTC}`);
+        console.log(`  Day: ${slot.dayOfWeekForStartsAt}`);
         console.log(
           `  Time: ${startTime.toISOString().slice(11, 16)} - ${endTime.toISOString().slice(11, 16)} UTC`,
         );
@@ -102,12 +102,12 @@ async function verifyConsultantSlots() {
       const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
         where: {
           consultantProfileId: CONSULTANT_ID,
-          slotStartTimeInUTC: {
+          availabilityStartsAt: {
             gte: START_DATE,
             lte: END_DATE,
           },
         },
-        orderBy: { slotStartTimeInUTC: "asc" },
+        orderBy: { availabilityStartsAt: "asc" },
       });
 
       console.log(
@@ -115,8 +115,8 @@ async function verifyConsultantSlots() {
       );
       console.log(`Total slots in range: ${customSlots.length}\n`);
       customSlots.forEach((slot, idx) => {
-        const startTime = new Date(slot.slotStartTimeInUTC);
-        const endTime = new Date(slot.slotEndTimeInUTC);
+        const startTime = new Date(slot.availabilityStartsAt);
+        const endTime = new Date(slot.availabilityEndsAt);
         console.log(`Slot ${idx + 1}:`);
         console.log(`  ${startTime.toISOString()} - ${endTime.toISOString()}`);
       });
@@ -146,12 +146,12 @@ async function verifyConsultantSlots() {
           include: {
             slotsOfAppointment: {
               where: {
-                slotStartTimeInUTC: {
+                startsAt: {
                   gte: START_DATE,
                   lte: END_DATE,
                 },
               },
-              orderBy: { slotStartTimeInUTC: "asc" },
+              orderBy: { startsAt: "asc" },
             },
           },
         },
@@ -167,16 +167,16 @@ async function verifyConsultantSlots() {
       console.log(
         `  Client: ${sub.requestedBy.user.name} (${sub.requestedBy.user.email})`,
       );
-      console.log(`  Start: ${sub.startDate.toISOString()}`);
-      console.log(`  End: ${sub.endDate.toISOString()}`);
+      console.log(`  Start: ${sub.schedulingPeriodStartsAt.toISOString()}`);
+      console.log(`  End: ${sub.schedulingPeriodEndsAt.toISOString()}`);
       console.log(`  Appointments: ${sub.appointments.length}`);
 
       // Check if date range is in the future relative to subscription end date
-      if (START_DATE > sub.endDate) {
+      if (START_DATE > sub.schedulingPeriodEndsAt) {
         console.log(
           `  ⚠️ WARNING: Viewing dates (Oct 5-11, 2025) are AFTER subscription end date!`,
         );
-        console.log(`     Subscription ends: ${sub.endDate.toISOString()}`);
+        console.log(`     Subscription ends: ${sub.schedulingPeriodEndsAt.toISOString()}`);
         console.log(`     Current view starts: ${START_DATE.toISOString()}`);
       }
 
@@ -186,7 +186,7 @@ async function verifyConsultantSlots() {
           console.log(`\n  Appointment ${apptIdx + 1} (${appt.id}):`);
           appt.slotsOfAppointment.forEach((slot) => {
             console.log(
-              `    📅 ${slot.slotStartTimeInUTC.toISOString()} - ${slot.slotEndTimeInUTC.toISOString()}`,
+              `    📅 ${slot.startsAt.toISOString()} - ${slot.endsAt.toISOString()}`,
             );
             console.log(`       Tentative: ${slot.isTentative}`);
           });
@@ -200,7 +200,7 @@ async function verifyConsultantSlots() {
       where: {
         slotsOfAppointment: {
           some: {
-            slotStartTimeInUTC: {
+            startsAt: {
               gte: START_DATE,
               lte: END_DATE,
             },
@@ -240,12 +240,12 @@ async function verifyConsultantSlots() {
       include: {
         slotsOfAppointment: {
           where: {
-            slotStartTimeInUTC: {
+            startsAt: {
               gte: START_DATE,
               lte: END_DATE,
             },
           },
-          orderBy: { slotStartTimeInUTC: "asc" },
+          orderBy: { startsAt: "asc" },
         },
         consultation: {
           include: {
@@ -276,12 +276,12 @@ async function verifyConsultantSlots() {
 
       console.log(`  Slots in range: ${appt.slotsOfAppointment.length}`);
       appt.slotsOfAppointment.forEach((slot) => {
-        const day = slot.slotStartTimeInUTC.toLocaleDateString("en-US", {
+        const day = slot.startsAt.toLocaleDateString("en-US", {
           weekday: "short",
           month: "short",
           day: "numeric",
         });
-        const time = slot.slotStartTimeInUTC.toISOString().slice(11, 16);
+        const time = slot.startsAt.toISOString().slice(11, 16);
         console.log(
           `    🔒 ${day} ${time} UTC ${slot.isTentative ? "(TENTATIVE)" : "(CONFIRMED)"}`,
         );
@@ -297,7 +297,7 @@ async function verifyConsultantSlots() {
 
     // Check for critical issue
     const hasActiveSubscriptionsOutsideRange = subscriptions.some(
-      (sub) => START_DATE > sub.endDate,
+      (sub) => START_DATE > sub.schedulingPeriodEndsAt,
     );
 
     if (hasActiveSubscriptionsOutsideRange) {

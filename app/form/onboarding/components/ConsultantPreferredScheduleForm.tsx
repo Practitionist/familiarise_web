@@ -50,15 +50,15 @@ interface Props {
 }
 
 interface WeeklySlot {
-  dayOfWeekforStartTimeInUTC: DayOfWeek;
-  dayOfWeekforEndTimeInUTC: DayOfWeek;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  dayOfWeekForStartsAt: DayOfWeek;
+  dayOfWeekForEndsAt: DayOfWeek;
+  availabilityStartsAt: string;
+  availabilityEndsAt: string;
 }
 
 interface CustomSlot {
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  availabilityStartsAt: string;
+  availabilityEndsAt: string;
 }
 
 const isValidSlot = (slot: SlotType): slot is SlotType & { isValid: true } => {
@@ -91,17 +91,17 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
     if (initialData.weeklySlots?.length) {
       const formattedWeeklySlots: SlotsType = {};
       initialData.weeklySlots.forEach((slot) => {
-        const day = slot.dayOfWeekforStartTimeInUTC.toLowerCase();
+        const day = slot.dayOfWeekForStartsAt.toLowerCase();
         if (!formattedWeeklySlots[day]) {
           formattedWeeklySlots[day] = [];
         }
         formattedWeeklySlots[day].push({
           startTime: extractTimeFromUtcSlot(
-            slot.slotStartTimeInUTC.toString(),
+            slot.availabilityStartsAt.toString(),
             timezone,
           ),
           endTime: extractTimeFromUtcSlot(
-            slot.slotEndTimeInUTC.toString(),
+            slot.availabilityEndsAt.toString(),
             timezone,
           ),
           isValid: true,
@@ -120,7 +120,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
       const formattedCustomSlots: SlotsType = {};
       initialData.customSlots.forEach((slot) => {
         try {
-          const startDate = new Date(slot.slotStartTimeInUTC);
+          const startDate = new Date(slot.availabilityStartsAt);
           // Get date in target timezone
           const dateString = startDate.toLocaleDateString("en-CA", {
             timeZone: timezone,
@@ -130,11 +130,11 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           }
           formattedCustomSlots[dateString].push({
             startTime: convertUtcToTimezone(
-              slot.slotStartTimeInUTC.toString(),
+              slot.availabilityStartsAt.toString(),
               timezone,
             ),
             endTime: convertUtcToTimezone(
-              slot.slotEndTimeInUTC.toString(),
+              slot.availabilityEndsAt.toString(),
               timezone,
             ),
             isValid: true,
@@ -226,10 +226,10 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
               // This slot ends at midnight, don't split it
               return [
                 {
-                  dayOfWeekforStartTimeInUTC: day.toUpperCase() as DayOfWeek,
-                  dayOfWeekforEndTimeInUTC: day.toUpperCase() as DayOfWeek,
-                  slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
-                  slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
+                  dayOfWeekForStartsAt: day.toUpperCase() as DayOfWeek,
+                  dayOfWeekForEndsAt: day.toUpperCase() as DayOfWeek,
+                  availabilityStartsAt: startUTC, // Already a string from convertTimezoneToUtc
+                  availabilityEndsAt: endUTC, // Already a string from convertTimezoneToUtc
                 },
               ];
             }
@@ -252,26 +252,26 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 
             return [
               {
-                dayOfWeekforStartTimeInUTC: startDay,
-                dayOfWeekforEndTimeInUTC: startDay,
-                slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
-                slotEndTimeInUTC: justBeforeMidnightUTC.toISOString(),
+                dayOfWeekForStartsAt: startDay,
+                dayOfWeekForEndsAt: startDay,
+                availabilityStartsAt: startUTC, // Already a string from convertTimezoneToUtc
+                availabilityEndsAt: justBeforeMidnightUTC.toISOString(),
               },
               {
-                dayOfWeekforStartTimeInUTC: endDay,
-                dayOfWeekforEndTimeInUTC: endDay,
-                slotStartTimeInUTC: midnightUTC, // Already a string from convertTimezoneToUtc
-                slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
+                dayOfWeekForStartsAt: endDay,
+                dayOfWeekForEndsAt: endDay,
+                availabilityStartsAt: midnightUTC, // Already a string from convertTimezoneToUtc
+                availabilityEndsAt: endUTC, // Already a string from convertTimezoneToUtc
               },
             ];
           }
 
           return [
             {
-              dayOfWeekforStartTimeInUTC: day.toUpperCase() as DayOfWeek,
-              dayOfWeekforEndTimeInUTC: day.toUpperCase() as DayOfWeek,
-              slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
-              slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
+              dayOfWeekForStartsAt: day.toUpperCase() as DayOfWeek,
+              dayOfWeekForEndsAt: day.toUpperCase() as DayOfWeek,
+              availabilityStartsAt: startUTC, // Already a string from convertTimezoneToUtc
+              availabilityEndsAt: endUTC, // Already a string from convertTimezoneToUtc
             },
           ];
         });
@@ -318,8 +318,8 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
               // This slot ends at midnight, don't split it
               return [
                 {
-                  slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
-                  slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
+                  availabilityStartsAt: startUTC, // Already a string from convertTimezoneToUtc
+                  availabilityEndsAt: endUTC, // Already a string from convertTimezoneToUtc
                 },
               ];
             }
@@ -338,20 +338,20 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
 
             return [
               {
-                slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
-                slotEndTimeInUTC: justBeforeMidnightUTC.toISOString(),
+                availabilityStartsAt: startUTC, // Already a string from convertTimezoneToUtc
+                availabilityEndsAt: justBeforeMidnightUTC.toISOString(),
               },
               {
-                slotStartTimeInUTC: midnightUTC, // Already a string from convertTimezoneToUtc
-                slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
+                availabilityStartsAt: midnightUTC, // Already a string from convertTimezoneToUtc
+                availabilityEndsAt: endUTC, // Already a string from convertTimezoneToUtc
               },
             ];
           }
 
           return [
             {
-              slotStartTimeInUTC: startUTC, // Already a string from convertTimezoneToUtc
-              slotEndTimeInUTC: endUTC, // Already a string from convertTimezoneToUtc
+              availabilityStartsAt: startUTC, // Already a string from convertTimezoneToUtc
+              availabilityEndsAt: endUTC, // Already a string from convertTimezoneToUtc
             },
           ];
         });

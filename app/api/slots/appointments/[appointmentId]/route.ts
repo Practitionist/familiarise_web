@@ -324,8 +324,8 @@ export async function PATCH(
       slotsOfAppointment: {
         deleteMany: {},
         create: body.slotsOfAppointment.createMany.data.map((slot) => ({
-          slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
-          slotEndTimeInUTC: new Date(slot.slotEndTimeInUTC),
+          startsAt: new Date(slot.slotStartTimeInUTC),
+          endsAt: new Date(slot.slotEndTimeInUTC),
           type: slot.type || "WEEKLY", // Default to WEEKLY if not specified
         })),
       },

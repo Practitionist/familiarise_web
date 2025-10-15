@@ -102,7 +102,7 @@ export async function POST(
             consultantProfile.slotsOfAvailabilityWeekly,
           slotsOfAvailabilityCustom:
             consultantProfile.slotsOfAvailabilityCustom,
-          currentTimezone: consultantProfile.user.currentTimezone || undefined,
+          timezone: consultantProfile.user.timezone || undefined,
         },
         {
           durationInHours: webinarPlan.durationInHours || 1,

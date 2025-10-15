@@ -15,7 +15,7 @@ export async function GET(request: Request) {
       startDateStr && endDateStr
         ? {
             // Filter classes where the class's own start date falls within the range
-            startDate: {
+            schedulingPeriodStartsAt: {
               gte: new Date(startDateStr),
               lte: new Date(endDateStr),
             },
@@ -111,7 +111,7 @@ export async function GET(request: Request) {
         },
         orderBy: [
           {
-            startDate: "desc",
+            schedulingPeriodStartsAt: "desc",
           },
           {
             status: "asc",

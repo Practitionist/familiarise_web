@@ -255,7 +255,7 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
           phone: sanitizePhone(faker.phone.number()),
           address: sanitizeString(faker.location.streetAddress()),
           onlineStatus: faker.datatype.boolean(),
-          currentTimezone: sanitizeString(faker.location.timeZone()),
+          timezone: sanitizeString(faker.location.timeZone()),
           onboardingCompleted: faker.datatype.boolean(),
           role: userRole,
           cookiePreferences: {

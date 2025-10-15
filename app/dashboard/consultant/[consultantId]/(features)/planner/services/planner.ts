@@ -1109,8 +1109,8 @@ export class PlannerService {
         updatedAt: now,
       },
       // Other optional root fields for ClassEvent
-      startDate: undefined, // Let API handle based on logic
-      endDate: undefined, // Let API handle based on logic
+      schedulingPeriodStartsAt: undefined, // Let API handle based on logic
+      schedulingPeriodEndsAt: undefined, // Let API handle based on logic
       status: ClassStatus.SCHEDULED, // Provide default status
       recordingUrls: [],
       feedbackSummary: null,

@@ -104,14 +104,14 @@ export async function POST(
             consultantProfile.slotsOfAvailabilityWeekly,
           slotsOfAvailabilityCustom:
             consultantProfile.slotsOfAvailabilityCustom,
-          currentTimezone: consultantProfile.user.currentTimezone || undefined,
+          timezone: consultantProfile.user.timezone || undefined,
         },
         {
           durationInMonths: classPlan.durationInMonths || 1,
           callsPerWeek: classPlan.callsPerWeek || 2,
           sessionDurationInHours: classPlan.sessionDurationInHours || 1,
-          startDate: classEntity.startDate ?? undefined,
-          endDate: classEntity.endDate ?? undefined,
+          schedulingPeriodStartsAt: classEntity.schedulingPeriodStartsAt ?? undefined,
+          schedulingPeriodEndsAt: classEntity.schedulingPeriodEndsAt ?? undefined,
         },
       );
 

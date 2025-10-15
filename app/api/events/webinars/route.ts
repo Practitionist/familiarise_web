@@ -18,7 +18,7 @@ export async function GET(request: Request) {
             appointment: {
               slotsOfAppointment: {
                 some: {
-                  slotStartTimeInUTC: {
+                  startsAt: {
                     gte: new Date(startDateStr),
                     lte: new Date(endDateStr),
                   },
@@ -133,7 +133,7 @@ export async function GET(request: Request) {
         whereClause.appointment = {
           slotsOfAppointment: {
             some: {
-              slotStartTimeInUTC: {
+              startsAt: {
                 gte: new Date(startDateStr),
                 lte: new Date(endDateStr),
               },

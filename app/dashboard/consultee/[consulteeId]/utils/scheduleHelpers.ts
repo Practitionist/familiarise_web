@@ -30,13 +30,13 @@ export function getActualSlots(event: EventWithType): SlotOfAppointment[] {
   // Filter out past slots and sort
   return appointmentSlots
     .filter(
-      (slot) => new Date(slot.slotStartTimeInUTC).getTime() >= now.getTime(), // Keep only future or current slots
-      // && new Date(slot.slotStartTimeInUTC).getFullYear() > PREVIOUS_YEAR // Removed year filter
+      (slot) => new Date(slot.startsAt).getTime() >= now.getTime(), // Keep only future or current slots
+      // && new Date(slot.startsAt).getFullYear() > PREVIOUS_YEAR // Removed year filter
     )
     .sort(
       (a, b) =>
-        new Date(a.slotStartTimeInUTC).getTime() -
-        new Date(b.slotStartTimeInUTC).getTime(),
+        new Date(a.startsAt).getTime() -
+        new Date(b.startsAt).getTime(),
     );
 }
 
@@ -47,7 +47,7 @@ export function getActualNextSlotTime(
   const now = Date.now();
   const slots = getActualSlots(event);
   const futureSlots = slots.filter(
-    (slot) => new Date(slot.slotStartTimeInUTC).getTime() > now,
+    (slot) => new Date(slot.startsAt).getTime() > now,
   );
   return futureSlots.length > 0 ? futureSlots[0] : null;
 }
@@ -68,16 +68,16 @@ export function getActualUpcomingSlots(events: EventWithType[]): Array<{
   events.forEach((event) => {
     const slots = getActualSlots(event);
     const futureSlots = slots.filter(
-      (slot) => new Date(slot.slotStartTimeInUTC).getTime() > now.getTime(),
+      (slot) => new Date(slot.startsAt).getTime() > now.getTime(),
     );
 
     futureSlots.forEach((prismaSlot) => {
       // 1. Construct ISlotOfAppointment
       const iSlot: ISlotOfAppointment = {
         id: prismaSlot.id,
-        slotStartTimeInUTC: new Date(prismaSlot.slotStartTimeInUTC),
-        slotEndTimeInUTC: prismaSlot.slotEndTimeInUTC
-          ? new Date(prismaSlot.slotEndTimeInUTC)
+        startsAt: new Date(prismaSlot.startsAt),
+        endsAt: prismaSlot.endsAt
+          ? new Date(prismaSlot.endsAt)
           : null,
         isTentative: prismaSlot.isTentative,
         // Explicitly set user to empty array as relation is likely missing
@@ -154,7 +154,7 @@ export function getActualUpcomingSlots(events: EventWithType[]): Array<{
   // Sort the final array
   return allUpcomingItems.sort(
     (a, b) =>
-      a.slot.slotStartTimeInUTC.getTime() - b.slot.slotStartTimeInUTC.getTime(),
+      a.slot.startsAt.getTime() - b.slot.startsAt.getTime(),
   );
 }
 
@@ -183,13 +183,13 @@ export function getActualMonthlyEvents(
       const monthlySlots = relevantSlots
         .filter(
           (slot) =>
-            new Date(slot.slotStartTimeInUTC) >= startOfMonth &&
-            new Date(slot.slotStartTimeInUTC) <= endOfMonth,
+            new Date(slot.startsAt) >= startOfMonth &&
+            new Date(slot.startsAt) <= endOfMonth,
         )
         .sort(
           (a, b) =>
-            new Date(a.slotStartTimeInUTC).getTime() -
-            new Date(b.slotStartTimeInUTC).getTime(),
+            new Date(a.startsAt).getTime() -
+            new Date(b.startsAt).getTime(),
         )
         .map((slot) => ({ ...slot /* Add enrichment flags here if needed */ }));
 
@@ -208,7 +208,7 @@ export function isEventJoinable(event: EventWithType): boolean {
 
   const now = new Date();
   const diffInMinutes = Math.floor(
-    (new Date(nextSlot.slotStartTimeInUTC).getTime() - now.getTime()) / 60000,
+    (new Date(nextSlot.startsAt).getTime() - now.getTime()) / 60000,
   );
   return diffInMinutes <= 10 && diffInMinutes > -30;
 }

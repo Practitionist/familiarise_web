@@ -81,7 +81,7 @@ export const getInitialWeeklySlots = (
   try {
     consultant.slotsOfAvailabilityWeekly.forEach((slot) => {
       try {
-        if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+        if (!slot || !slot.availabilityStartsAt || !slot.availabilityEndsAt) {
           console.warn("Invalid weekly slot data:", slot);
           return;
         }
@@ -89,15 +89,15 @@ export const getInitialWeeklySlots = (
         // Use the day-of-week stored in the database. This is the consultant's
         // intended day for the recurring slot. The time will be converted,
         // but the day grouping should remain consistent with the original setting.
-        const day = (slot.dayOfWeekforStartTimeInUTC as string).toLowerCase();
+        const day = (slot.dayOfWeekForStartsAt as string).toLowerCase();
 
         // Use timezone-aware time extraction so displayed times stay correct
         const startTime = extractTimeFromUtcSlot(
-          slot.slotStartTimeInUTC.toString(),
+          slot.availabilityStartsAt.toString(),
           timezone,
         );
         const endTime = extractTimeFromUtcSlot(
-          slot.slotEndTimeInUTC.toString(),
+          slot.availabilityEndsAt.toString(),
           timezone,
         );
 
@@ -144,19 +144,19 @@ export const getInitialCustomSlots = (
   try {
     consultant.slotsOfAvailabilityCustom.forEach((slot) => {
       try {
-        if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+        if (!slot || !slot.availabilityStartsAt || !slot.availabilityEndsAt) {
           console.warn("Invalid custom slot data:", slot);
           return;
         }
 
-        const startDate = new Date(slot.slotStartTimeInUTC);
-        const endDate = new Date(slot.slotEndTimeInUTC);
+        const startDate = new Date(slot.availabilityStartsAt);
+        const endDate = new Date(slot.availabilityEndsAt);
 
         if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
           console.warn(
             "Invalid date in custom slot:",
-            slot.slotStartTimeInUTC,
-            slot.slotEndTimeInUTC,
+            slot.availabilityStartsAt,
+            slot.availabilityEndsAt,
           );
           return;
         }
@@ -168,11 +168,11 @@ export const getInitialCustomSlots = (
         }); // en-CA gives YYYY-MM-DD format
 
         const startTime = convertUtcToTimezone(
-          slot.slotStartTimeInUTC.toString(),
+          slot.availabilityStartsAt.toString(),
           timezone,
         );
         const endTime = convertUtcToTimezone(
-          slot.slotEndTimeInUTC.toString(),
+          slot.availabilityEndsAt.toString(),
           timezone,
         );
 

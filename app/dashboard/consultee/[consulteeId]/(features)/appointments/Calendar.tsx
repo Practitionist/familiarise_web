@@ -65,7 +65,7 @@ export function Calendar({
         ...consultations.flatMap((c) => {
           const slots = getActualSlots({ ...c, type: "Consultation" });
           return slots.map((slot) => {
-            const startTime = new Date(slot.slotStartTimeInUTC);
+            const startTime = new Date(slot.startsAt);
             return {
               id: `${c.id}-${startTime.getTime()}`,
               title: c.consultationPlan.title,
@@ -87,7 +87,7 @@ export function Calendar({
         ...subscriptions.flatMap((s) => {
           const slots = getActualSlots({ ...s, type: "Subscription" });
           return slots.map((slot) => {
-            const startTime = new Date(slot.slotStartTimeInUTC);
+            const startTime = new Date(slot.startsAt);
             return {
               id: `${s.id}-${startTime.getTime()}`,
               title: s.subscriptionPlan.title,
@@ -109,7 +109,7 @@ export function Calendar({
         ...classes.flatMap((c) => {
           const slots = getActualSlots({ ...c, type: "Class" });
           return slots.map((slot) => {
-            const startTime = new Date(slot.slotStartTimeInUTC);
+            const startTime = new Date(slot.startsAt);
             return {
               id: `${c.id}-${startTime.getTime()}`,
               title: c.classPlan.title,
@@ -130,7 +130,7 @@ export function Calendar({
         ...webinars.flatMap((w) => {
           const slots = getActualSlots({ ...w, type: "Webinar" });
           return slots.map((slot) => {
-            const startTime = new Date(slot.slotStartTimeInUTC);
+            const startTime = new Date(slot.startsAt);
             return {
               id: `${w.id}-${startTime.getTime()}`,
               title: w.webinarPlan.title,

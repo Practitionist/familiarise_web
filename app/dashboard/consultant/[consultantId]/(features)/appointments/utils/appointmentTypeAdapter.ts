@@ -14,9 +14,9 @@ export function convertTAppointmentToIAppointment(
     slotsOfAppointment: tAppointment.slotsOfAppointment.map(
       (slot): ISlotOfAppointment => ({
         id: slot.id,
-        slotStartTimeInUTC: new Date(slot.slotStartTimeInUTC),
-        slotEndTimeInUTC: slot.slotEndTimeInUTC
-          ? new Date(slot.slotEndTimeInUTC)
+        startsAt: new Date(slot.startsAt),
+        endsAt: slot.endsAt
+          ? new Date(slot.endsAt)
           : null,
         isTentative: slot.isTentative,
         user: slot.user.map(
@@ -31,7 +31,7 @@ export function convertTAppointmentToIAppointment(
             passwordResetToken: u.passwordResetToken,
             passwordResetExpires: u.passwordResetExpires,
             onlineStatus: u.onlineStatus,
-            currentTimezone: u.currentTimezone,
+            timezone: u.timezone,
             onboardingCompleted: u.onboardingCompleted,
             role: u.role,
             consultantProfileId: u.consultantProfileId,
@@ -118,13 +118,13 @@ export function convertTAppointmentToIAppointment(
             },
           },
           startDate:
-            typeof tAppointment.subscription.startDate === "string"
-              ? tAppointment.subscription.startDate
-              : tAppointment.subscription.startDate.toISOString(),
+            typeof tAppointment.subscription.schedulingPeriodStartsAt === "string"
+              ? tAppointment.subscription.schedulingPeriodStartsAt
+              : tAppointment.subscription.schedulingPeriodStartsAt.toISOString(),
           endDate:
-            typeof tAppointment.subscription.endDate === "string"
-              ? tAppointment.subscription.endDate
-              : tAppointment.subscription.endDate.toISOString(),
+            typeof tAppointment.subscription.schedulingPeriodEndsAt === "string"
+              ? tAppointment.subscription.schedulingPeriodEndsAt
+              : tAppointment.subscription.schedulingPeriodEndsAt.toISOString(),
         }
       : undefined,
     webinar: tAppointment.webinar

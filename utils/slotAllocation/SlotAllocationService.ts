@@ -122,18 +122,18 @@ export class SlotAllocationService {
       }
 
       // CRITICAL FIX: Validate all slots are within configured scheduling period
-      // This prevents slots from being allocated before startDate or after endDate
-      if (config.startDate && config.endDate) {
+      // This prevents slots from being allocated before schedulingPeriodStartsAt or after schedulingPeriodEndsAt
+      if (config.schedulingPeriodStartsAt && config.schedulingPeriodEndsAt) {
         const slotsOutsidePeriod = selectedSlots.filter(
-          (slot) => slot < config.startDate! || slot > config.endDate!
+          (slot) => slot < config.schedulingPeriodStartsAt! || slot > config.schedulingPeriodEndsAt!
         );
 
         if (slotsOutsidePeriod.length > 0) {
           const firstBad = slotsOutsidePeriod[0];
           throw new Error(
             `Cannot allocate slots outside scheduling period. ` +
-            `Period: ${config.startDate.toISOString()} to ${config.endDate.toISOString()}. ` +
-            `Found slot at: ${firstBad.toISOString()} (${firstBad < config.startDate! ? 'before start' : 'after end'}). ` +
+            `Period: ${config.schedulingPeriodStartsAt.toISOString()} to ${config.schedulingPeriodEndsAt.toISOString()}. ` +
+            `Found slot at: ${firstBad.toISOString()} (${firstBad < config.schedulingPeriodStartsAt! ? 'before start' : 'after end'}). ` +
             `Total violations: ${slotsOutsidePeriod.length}`
           );
         }
@@ -420,7 +420,7 @@ export class SlotAllocationService {
     const bookedSlots = new Set(
       existingAppointments.flatMap((app: any) =>
         app.slotsOfAppointment.map((slot: any) =>
-          new Date(slot.slotStartTimeInUTC).toISOString(),
+          new Date(slot.startsAt).toISOString(),
         ),
       ),
     );
@@ -437,8 +437,8 @@ export class SlotAllocationService {
 
     // Sort by time of day to prioritize earlier slots
     const sortedSlots = [...availableTimeSlots].sort((a, b) => {
-      const timeA = new Date(a.slotStartTimeInUTC).getHours();
-      const timeB = new Date(b.slotStartTimeInUTC).getHours();
+      const timeA = new Date(a.availabilityStartsAt).getHours();
+      const timeB = new Date(b.availabilityStartsAt).getHours();
       return timeA - timeB;
     });
 
@@ -458,7 +458,7 @@ export class SlotAllocationService {
         // Previous bug: Called getNextOccurrence() inside loop, which returned the same Date
         // object repeatedly, then mutated it. Result: only final occurrence (week 7) was added.
         const baseOccurrence = this.getNextOccurrence(
-          slot.slotStartTimeInUTC,
+          slot.availabilityStartsAt,
           consultant.scheduleType
         );
 
@@ -466,8 +466,8 @@ export class SlotAllocationService {
         // Availability slots can be any duration (e.g., 1 hour, 2 hours)
         // But algorithm searches for 30-minute consecutive slots
         // Example: 9:00-10:00 (1hr) should add: 9:00, 9:30
-        const slotStart = new Date(slot.slotStartTimeInUTC);
-        const slotEnd = new Date(slot.slotEndTimeInUTC);
+        const slotStart = new Date(slot.availabilityStartsAt);
+        const slotEnd = new Date(slot.availabilityEndsAt);
         const slotDurationMs = slotEnd.getTime() - slotStart.getTime();
         const thirtyMinutesMs = 30 * 60 * 1000;
         const blocksPerSlot = Math.floor(slotDurationMs / thirtyMinutesMs);
@@ -487,8 +487,8 @@ export class SlotAllocationService {
     } else {
       // For CUSTOM schedules, break down each slot into 30-minute blocks
       for (const slot of availableTimeSlots) {
-        const slotStart = new Date(slot.slotStartTimeInUTC);
-        const slotEnd = new Date(slot.slotEndTimeInUTC);
+        const slotStart = new Date(slot.availabilityStartsAt);
+        const slotEnd = new Date(slot.availabilityEndsAt);
         const slotDurationMs = slotEnd.getTime() - slotStart.getTime();
         const thirtyMinutesMs = 30 * 60 * 1000;
         const blocksPerSlot = Math.floor(slotDurationMs / thirtyMinutesMs);
@@ -504,7 +504,7 @@ export class SlotAllocationService {
     if (eventType === "consultation" || eventType === "webinar") {
       for (const slot of sortedSlots) {
         const slotStart = this.getNextOccurrence(
-          slot.slotStartTimeInUTC,
+          slot.availabilityStartsAt,
           consultant.scheduleType,
         );
 
@@ -542,13 +542,13 @@ export class SlotAllocationService {
     }
 
     // For subscriptions/classes: find distributed slots across weeks
-    const startDate = config.startDate || new Date();
+    const startDate = config.schedulingPeriodStartsAt || new Date();
     const endDate =
-      config.endDate || addMonths(startDate, config.durationInMonths || 1);
+      config.schedulingPeriodEndsAt || addMonths(startDate, config.durationInMonths || 1);
     const callsPerWeek = config.callsPerWeek || 1;
 
-    // FIX: Start from the week containing startDate, but ensure we don't
-    // allocate slots before the actual startDate (even if they're in the same week)
+    // FIX: Start from the week containing schedulingPeriodStartsAt, but ensure we don't
+    // allocate slots before the actual schedulingPeriodStartsAt (even if they're in the same week)
     let currentWeek = SlotCalculationService.startOfWeekSunday(startDate);
     const totalWeeks = SlotCalculationService.countWeeks(startDate, endDate);
 
@@ -566,7 +566,7 @@ export class SlotAllocationService {
         // Find first available slot on this day
         for (const slot of sortedSlots) {
           const slotTime = this.matchSlotToDay(
-            slot.slotStartTimeInUTC,
+            slot.availabilityStartsAt,
             currentDay,
             consultant.scheduleType,
           );
@@ -762,8 +762,8 @@ export class SlotAllocationService {
         const slotsToCreate = callSlots.map((slotStart) => {
           const endTime = new Date(slotStart.getTime() + 30 * 60 * 1000);
           return {
-            slotStartTimeInUTC: slotStart,
-            slotEndTimeInUTC: endTime,
+            startsAt: slotStart,
+            endsAt: endTime,
             isTentative: false,
             user: {
               connect: consulteeUserId
@@ -831,12 +831,12 @@ export class SlotAllocationService {
       case "subscription":
         updates.requestStatus = RequestStatus.APPROVED;
         if (eventType === "subscription") {
-          // FIX: Only set startDate/endDate if they're not already configured
+          // FIX: Only set schedulingPeriod if not already configured
           // This prevents overwriting the user's scheduling period with the first allocated slot
           // which could cause slots to appear outside the intended scheduling window
-          if (!config.startDate || !config.endDate) {
-            updates.startDate = firstSlot;
-            updates.endDate = addMonths(firstSlot, config.durationInMonths || 1);
+          if (!config.schedulingPeriodStartsAt || !config.schedulingPeriodEndsAt) {
+            updates.schedulingPeriodStartsAt = firstSlot;
+            updates.schedulingPeriodEndsAt = addMonths(firstSlot, config.durationInMonths || 1);
           }
         }
         break;
@@ -848,10 +848,10 @@ export class SlotAllocationService {
         break;
 
       case "class":
-        // Class model HAS startDate/endDate fields
+        // Class model HAS schedulingPeriod fields
         updates.status = "SCHEDULED";
-        updates.startDate = firstSlot;
-        updates.endDate = addWeeks(
+        updates.schedulingPeriodStartsAt = firstSlot;
+        updates.schedulingPeriodEndsAt = addWeeks(
           firstSlot,
           (config.durationInMonths || 1) * 4,
         );
@@ -899,7 +899,7 @@ export class SlotAllocationService {
         };
         consulteeUserId = event.requestedBy?.user?.id;
         requestedSlots = event.appointment?.slotsOfAppointment?.map(
-          (s: any) => new Date(s.slotStartTimeInUTC),
+          (s: any) => new Date(s.startsAt),
         );
         break;
 
@@ -910,13 +910,13 @@ export class SlotAllocationService {
           callsPerWeek: event.subscriptionPlan?.callsPerWeek,
           sessionDurationInHours:
             event.subscriptionPlan?.sessionDurationInHours,
-          startDate: event.startDate,
-          endDate: event.endDate,
+          schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
+          schedulingPeriodEndsAt: event.schedulingPeriodEndsAt,
         };
         consulteeUserId = event.requestedBy?.user?.id;
         requestedSlots = event.appointments?.flatMap((app: any) =>
           app.slotsOfAppointment.map(
-            (s: any) => new Date(s.slotStartTimeInUTC),
+            (s: any) => new Date(s.startsAt),
           ),
         );
         break;
@@ -943,8 +943,8 @@ export class SlotAllocationService {
           durationInMonths: event.classPlan?.durationInMonths,
           callsPerWeek: event.classPlan?.callsPerWeek,
           sessionDurationInHours: sessionDuration,
-          startDate: event.startDate,
-          endDate: event.endDate,
+          schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
+          schedulingPeriodEndsAt: event.schedulingPeriodEndsAt,
         };
         break;
     }
@@ -955,11 +955,11 @@ export class SlotAllocationService {
 
     // FIX: Validate date ordering for events with scheduling periods
     // This prevents bugs in auto-allocation and week calculation
-    if (config.startDate && config.endDate) {
-      if (config.startDate >= config.endDate) {
+    if (config.schedulingPeriodStartsAt && config.schedulingPeriodEndsAt) {
+      if (config.schedulingPeriodStartsAt >= config.schedulingPeriodEndsAt) {
         throw new Error(
-          `Invalid date range: startDate (${config.startDate.toISOString()}) ` +
-            `must be before endDate (${config.endDate.toISOString()}). ` +
+          `Invalid date range: schedulingPeriodStartsAt (${config.schedulingPeriodStartsAt.toISOString()}) ` +
+            `must be before schedulingPeriodEndsAt (${config.schedulingPeriodEndsAt.toISOString()}). ` +
             `Please check the ${eventType} configuration.`,
         );
       }
@@ -971,7 +971,7 @@ export class SlotAllocationService {
         scheduleType: consultantProfile.scheduleType,
         slotsOfAvailabilityWeekly: consultantProfile.slotsOfAvailabilityWeekly,
         slotsOfAvailabilityCustom: consultantProfile.slotsOfAvailabilityCustom,
-        currentTimezone: consultantProfile.user.currentTimezone,
+        timezone: consultantProfile.user.timezone,
       },
       config,
       consulteeUserId,

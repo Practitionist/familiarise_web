@@ -165,10 +165,10 @@ export async function createSlotsOfAvailability(
 
             weeklySlots.push({
               consultantProfileId: consultant.consultantProfile.id,
-              dayOfWeekforStartTimeInUTC: dayOfWeek,
-              dayOfWeekforEndTimeInUTC: dayOfWeek, // Same day since it's a 1-hour slot
-              slotStartTimeInUTC: slotStartTime,
-              slotEndTimeInUTC: new Date(
+              dayOfWeekForStartsAt: dayOfWeek,
+              dayOfWeekForEndsAt: dayOfWeek, // Same day since it's a 1-hour slot
+              availabilityStartsAt: slotStartTime,
+              availabilityEndsAt: new Date(
                 slotStartTime.getTime() + 60 * 60 * 1000,
               ), // 1 hour duration
             });
@@ -193,10 +193,10 @@ export async function createSlotsOfAvailability(
 
               weeklySlots.push({
                 consultantProfileId: consultant.consultantProfile.id,
-                dayOfWeekforStartTimeInUTC: dayOfWeek,
-                dayOfWeekforEndTimeInUTC: dayOfWeek, // Same day since it's a 1-hour slot
-                slotStartTimeInUTC: slotStartTime,
-                slotEndTimeInUTC: new Date(
+                dayOfWeekForStartsAt: dayOfWeek,
+                dayOfWeekForEndsAt: dayOfWeek, // Same day since it's a 1-hour slot
+                availabilityStartsAt: slotStartTime,
+                availabilityEndsAt: new Date(
                   slotStartTime.getTime() + 60 * 60 * 1000,
                 ), // 1 hour duration
               });
@@ -247,8 +247,8 @@ export async function createSlotsOfAvailability(
             if (slotDate > startDate && slotDate < endDate) {
               customSlots.push({
                 consultantProfileId: consultant.consultantProfile.id,
-                slotStartTimeInUTC: slotDate,
-                slotEndTimeInUTC: new Date(slotDate.getTime() + 60 * 60 * 1000),
+                availabilityStartsAt: slotDate,
+                availabilityEndsAt: new Date(slotDate.getTime() + 60 * 60 * 1000),
               });
             }
           }

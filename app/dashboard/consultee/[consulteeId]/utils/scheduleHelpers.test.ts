@@ -50,13 +50,13 @@ describe("Schedule Data Consistency Tests", () => {
             slot,
           }: {
             appointment: any;
-            slot: { slotStartTimeInUTC: Date };
+            slot: { startsAt: Date };
             isTentative: boolean;
           },
           index: number,
         ) => {
           const diffInDays = Math.floor(
-            (slot.slotStartTimeInUTC.getTime() - now.getTime()) /
+            (slot.startsAt.getTime() - now.getTime()) /
               (1000 * 60 * 60 * 24),
           );
           expect(diffInDays).toBe(expectedDays[index]);
@@ -83,7 +83,7 @@ describe("Schedule Data Consistency Tests", () => {
 
         // Now, check the tentative status for all relevant (future) slots
         relevantSlots.forEach(
-          (slot: { slotStartTimeInUTC: Date; isTentative: boolean }) => {
+          (slot: { startsAt: Date; isTentative: boolean }) => {
             expect(slot.isTentative).toBe(expectedTentative);
           },
         );
@@ -107,10 +107,10 @@ describe("Schedule Data Consistency Tests", () => {
           slot,
         }: {
           appointment: any;
-          slot: { slotStartTimeInUTC: Date };
+          slot: { startsAt: Date };
           isTentative: boolean;
         }) => {
-          const slotTime = slot.slotStartTimeInUTC;
+          const slotTime = slot.startsAt;
           return (
             slotTime.getMonth() === january2025.getMonth() &&
             slotTime.getFullYear() === january2025.getFullYear()
@@ -125,19 +125,19 @@ describe("Schedule Data Consistency Tests", () => {
           slot,
         }: {
           appointment: IAppointment;
-          slot: { slotStartTimeInUTC: Date };
+          slot: { startsAt: Date };
           isTentative: boolean;
         }) => {
           const foundInMonthly = monthlyEvents.some(
             (monthly: {
               event: EventWithType;
-              slots: Array<{ slotStartTimeInUTC: Date }>;
+              slots: Array<{ startsAt: Date }>;
             }) =>
               monthly.event.id === (appointment as any).id &&
               monthly.slots.some(
-                (monthlySlot: { slotStartTimeInUTC: Date }) =>
-                  monthlySlot.slotStartTimeInUTC.getTime() ===
-                  slot.slotStartTimeInUTC.getTime(),
+                (monthlySlot: { startsAt: Date }) =>
+                  monthlySlot.startsAt.getTime() ===
+                  slot.startsAt.getTime(),
               ),
           );
           expect(foundInMonthly).toBe(true);
@@ -148,20 +148,20 @@ describe("Schedule Data Consistency Tests", () => {
       monthlyEvents.forEach(
         (monthly: {
           event: EventWithType;
-          slots: Array<{ slotStartTimeInUTC: Date }>;
+          slots: Array<{ startsAt: Date }>;
         }) => {
-          monthly.slots.forEach((monthlySlot: { slotStartTimeInUTC: Date }) => {
+          monthly.slots.forEach((monthlySlot: { startsAt: Date }) => {
             // Find corresponding slot in upcomingSlots
             const upcomingSlot = upcomingSlotsInJan.find(
               ({
                 slot,
               }: {
                 appointment: any;
-                slot: { slotStartTimeInUTC: Date };
+                slot: { startsAt: Date };
                 isTentative: boolean;
               }) =>
-                slot.slotStartTimeInUTC.getTime() ===
-                monthlySlot.slotStartTimeInUTC.getTime(),
+                slot.startsAt.getTime() ===
+                monthlySlot.startsAt.getTime(),
             );
             expect(upcomingSlot).toBeDefined();
           });
@@ -215,10 +215,10 @@ describe("Schedule Data Consistency Tests", () => {
       expect(slots).toHaveLength(2);
 
       // Verify specific time slots from the UI
-      expect(slots[0].slotStartTimeInUTC).toEqual(
+      expect(slots[0].startsAt).toEqual(
         new Date("2025-01-01T12:00:00Z"),
       );
-      expect(slots[1].slotStartTimeInUTC).toEqual(
+      expect(slots[1].startsAt).toEqual(
         new Date("2025-01-08T13:00:00Z"),
       );
     });
@@ -250,13 +250,13 @@ describe("Schedule Data Consistency Tests", () => {
     it("should format time until next session correctly", () => {
       const nextSlot = getActualNextSlotTime(mockEvents[0]);
       expect(nextSlot).not.toBeNull();
-      expect(nextSlot!.slotStartTimeInUTC).toEqual(
+      expect(nextSlot!.startsAt).toEqual(
         new Date("2024-12-30T13:00:00Z"),
       );
 
       // Calculate difference in minutes and pass to formatTimeUntil
       const diffInMinutes = Math.floor(
-        (nextSlot!.slotStartTimeInUTC.getTime() - now.getTime()) / 60000,
+        (nextSlot!.startsAt.getTime() - now.getTime()) / 60000,
       );
       const formattedTime = formatTimeUntil(diffInMinutes);
       expect(formattedTime).toBe("2 days away");
@@ -417,8 +417,8 @@ describe("Schedule Data Consistency Tests", () => {
             appointmentType: "CLASS",
             slotsOfAppointment: [
               {
-                slotStartTimeInUTC: "2023-01-01T10:00:00Z",
-                slotEndTimeInUTC: "2023-01-01T11:00:00Z",
+                startsAt: "2023-01-01T10:00:00Z",
+                endsAt: "2023-01-01T11:00:00Z",
                 isTentative: false,
                 user: [],
               },
@@ -457,19 +457,19 @@ describe("Schedule Data Consistency Tests", () => {
       expect(upcoming.length).toBe(3);
 
       // Verify the structure and times
-      expect(upcoming[0].slot.slotStartTimeInUTC).toEqual(
+      expect(upcoming[0].slot.startsAt).toEqual(
         new Date("2024-12-30T13:00:00Z"),
       );
       expect(upcoming[0].appointment.appointmentType).toBe("SUBSCRIPTION");
       expect(upcoming[0].slot.isTentative).toBe(true);
 
-      expect(upcoming[1].slot.slotStartTimeInUTC).toEqual(
+      expect(upcoming[1].slot.startsAt).toEqual(
         new Date("2025-01-01T12:00:00Z"),
       );
       expect(upcoming[1].appointment.appointmentType).toBe("CLASS");
       expect(upcoming[1].slot.isTentative).toBe(false);
 
-      expect(upcoming[2].slot.slotStartTimeInUTC).toEqual(
+      expect(upcoming[2].slot.startsAt).toEqual(
         new Date("2025-01-08T13:00:00Z"),
       );
       expect(upcoming[2].appointment.appointmentType).toBe("CLASS");
@@ -488,10 +488,10 @@ describe("Schedule Data Consistency Tests", () => {
       expect(janEvents.length).toBe(1);
       expect(janEvents[0].event.type).toBe("Class");
       expect(janEvents[0].slots.length).toBe(2);
-      expect(janEvents[0].slots[0].slotStartTimeInUTC).toEqual(
+      expect(janEvents[0].slots[0].startsAt).toEqual(
         new Date("2025-01-01T12:00:00Z"),
       );
-      expect(janEvents[0].slots[1].slotStartTimeInUTC).toEqual(
+      expect(janEvents[0].slots[1].startsAt).toEqual(
         new Date("2025-01-08T13:00:00Z"),
       );
     });
@@ -512,7 +512,7 @@ describe("Schedule Data Consistency Tests", () => {
   describe("getActualNextSlotTime Edge Cases", () => {
     it("should find the absolute next slot", () => {
       const nextSlotResult = getActualNextSlotTime(mockEvents[0]);
-      expect(nextSlotResult?.slotStartTimeInUTC.toISOString()).toBe(
+      expect(nextSlotResult?.startsAt.toISOString()).toBe(
         "2024-12-30T13:00:00.000Z",
       );
     });

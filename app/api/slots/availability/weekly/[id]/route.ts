@@ -41,10 +41,10 @@ export async function PUT(
     const body = await req.json();
 
     if (
-      !body.dayOfWeekforStartTimeInUTC ||
-      !body.dayOfWeekforEndTimeInUTC ||
-      !body.slotStartTimeInUTC ||
-      !body.slotEndTimeInUTC
+      !body.dayOfWeekForStartsAt ||
+      !body.dayOfWeekForEndsAt ||
+      !body.availabilityStartsAt ||
+      !body.availabilityEndsAt
     ) {
       return NextResponse.json(
         { error: "Missing required fields" },
@@ -53,8 +53,8 @@ export async function PUT(
     }
 
     if (
-      !Object.values(DayOfWeek).includes(body.dayOfWeekforStartTimeInUTC) ||
-      !Object.values(DayOfWeek).includes(body.dayOfWeekforEndTimeInUTC)
+      !Object.values(DayOfWeek).includes(body.dayOfWeekForStartsAt) ||
+      !Object.values(DayOfWeek).includes(body.dayOfWeekForEndsAt)
     ) {
       return NextResponse.json(
         { error: "Invalid day of week" },
@@ -62,8 +62,8 @@ export async function PUT(
       );
     }
 
-    const startTime = new Date(body.slotStartTimeInUTC);
-    const endTime = new Date(body.slotEndTimeInUTC);
+    const startTime = new Date(body.availabilityStartsAt);
+    const endTime = new Date(body.availabilityEndsAt);
 
     if (startTime >= endTime) {
       return NextResponse.json(
@@ -77,19 +77,19 @@ export async function PUT(
       where: {
         id: { not: id },
         consultantProfileId: body.consultantProfileId,
-        dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
+        dayOfWeekForStartsAt: body.dayOfWeekForStartsAt,
         OR: [
           {
-            slotStartTimeInUTC: { lte: startTime },
-            slotEndTimeInUTC: { gt: startTime },
+            availabilityStartsAt: { lte: startTime },
+            availabilityEndsAt: { gt: startTime },
           },
           {
-            slotStartTimeInUTC: { lt: endTime },
-            slotEndTimeInUTC: { gte: endTime },
+            availabilityStartsAt: { lt: endTime },
+            availabilityEndsAt: { gte: endTime },
           },
           {
-            slotStartTimeInUTC: { gte: startTime },
-            slotEndTimeInUTC: { lte: endTime },
+            availabilityStartsAt: { gte: startTime },
+            availabilityEndsAt: { lte: endTime },
           },
         ],
       },
@@ -105,10 +105,10 @@ export async function PUT(
     const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
       where: { id: id },
       data: {
-        dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
-        dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
-        slotStartTimeInUTC: startTime,
-        slotEndTimeInUTC: endTime,
+        dayOfWeekForStartsAt: body.dayOfWeekForStartsAt,
+        dayOfWeekForEndsAt: body.dayOfWeekForEndsAt,
+        availabilityStartsAt: startTime,
+        availabilityEndsAt: endTime,
         consultantProfile: body.consultantProfileId
           ? { connect: { id: body.consultantProfileId } }
           : undefined,
@@ -145,8 +145,8 @@ export async function PATCH(
     const body = await req.json();
 
     if (
-      body.dayOfWeekforStartTimeInUTC &&
-      !Object.values(DayOfWeek).includes(body.dayOfWeekforStartTimeInUTC)
+      body.dayOfWeekForStartsAt &&
+      !Object.values(DayOfWeek).includes(body.dayOfWeekForStartsAt)
     ) {
       return NextResponse.json(
         { error: "Invalid day of week for start time" },
@@ -155,8 +155,8 @@ export async function PATCH(
     }
 
     if (
-      body.dayOfWeekforEndTimeInUTC &&
-      !Object.values(DayOfWeek).includes(body.dayOfWeekforEndTimeInUTC)
+      body.dayOfWeekForEndsAt &&
+      !Object.values(DayOfWeek).includes(body.dayOfWeekForEndsAt)
     ) {
       return NextResponse.json(
         { error: "Invalid day of week for end time" },
@@ -175,12 +175,12 @@ export async function PATCH(
       );
     }
 
-    const startTime = body.slotStartTimeInUTC
-      ? new Date(body.slotStartTimeInUTC)
-      : currentSlot.slotStartTimeInUTC;
-    const endTime = body.slotEndTimeInUTC
-      ? new Date(body.slotEndTimeInUTC)
-      : currentSlot.slotEndTimeInUTC;
+    const startTime = body.availabilityStartsAt
+      ? new Date(body.availabilityStartsAt)
+      : currentSlot.availabilityStartsAt;
+    const endTime = body.availabilityEndsAt
+      ? new Date(body.availabilityEndsAt)
+      : currentSlot.availabilityEndsAt;
 
     if (startTime >= endTime) {
       return NextResponse.json(
@@ -195,21 +195,21 @@ export async function PATCH(
         id: { not: id },
         consultantProfileId:
           body.consultantProfileId || currentSlot.consultantProfileId,
-        dayOfWeekforStartTimeInUTC:
-          body.dayOfWeekforStartTimeInUTC ||
-          currentSlot.dayOfWeekforStartTimeInUTC,
+        dayOfWeekForStartsAt:
+          body.dayOfWeekForStartsAt ||
+          currentSlot.dayOfWeekForStartsAt,
         OR: [
           {
-            slotStartTimeInUTC: { lte: startTime },
-            slotEndTimeInUTC: { gt: startTime },
+            availabilityStartsAt: { lte: startTime },
+            availabilityEndsAt: { gt: startTime },
           },
           {
-            slotStartTimeInUTC: { lt: endTime },
-            slotEndTimeInUTC: { gte: endTime },
+            availabilityStartsAt: { lt: endTime },
+            availabilityEndsAt: { gte: endTime },
           },
           {
-            slotStartTimeInUTC: { gte: startTime },
-            slotEndTimeInUTC: { lte: endTime },
+            availabilityStartsAt: { gte: startTime },
+            availabilityEndsAt: { lte: endTime },
           },
         ],
       },
@@ -225,10 +225,10 @@ export async function PATCH(
     const updatedSlot = await prisma.slotOfAvailabilityWeekly.update({
       where: { id: id },
       data: {
-        dayOfWeekforStartTimeInUTC: body.dayOfWeekforStartTimeInUTC,
-        dayOfWeekforEndTimeInUTC: body.dayOfWeekforEndTimeInUTC,
-        slotStartTimeInUTC: startTime,
-        slotEndTimeInUTC: endTime,
+        dayOfWeekForStartsAt: body.dayOfWeekForStartsAt,
+        dayOfWeekForEndsAt: body.dayOfWeekForEndsAt,
+        availabilityStartsAt: startTime,
+        availabilityEndsAt: endTime,
         consultantProfile: body.consultantProfileId
           ? { connect: { id: body.consultantProfileId } }
           : undefined,

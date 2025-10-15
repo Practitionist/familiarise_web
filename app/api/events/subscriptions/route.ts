@@ -177,8 +177,8 @@ export async function PATCH(request: NextRequest) {
         where: { id },
         data: {
           requestStatus: status,
-          startDate: startDate,
-          endDate: endDate,
+          schedulingPeriodStartsAt: startDate,
+          schedulingPeriodEndsAt: endDate,
         },
         include: {
           subscriptionPlan: {
@@ -280,8 +280,8 @@ async function createAppointmentsForSubscription(subscription: any) {
         },
         slotsOfAppointment: {
           create: {
-            slotStartTimeInUTC: appointmentDate,
-            slotEndTimeInUTC: addHours(appointmentDate, 1),
+            startsAt: appointmentDate,
+            endsAt: addHours(appointmentDate, 1),
             isTentative: false,
             user: {
               connect: [

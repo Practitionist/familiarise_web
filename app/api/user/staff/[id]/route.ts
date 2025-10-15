@@ -85,7 +85,7 @@ export async function PUT(
     if (name) userData.name = name;
     if (phone) userData.phone = phone;
     if (address) userData.address = address;
-    if (currentTimezone) userData.currentTimezone = currentTimezone;
+    if (currentTimezone) userData.timezone = currentTimezone;
     if (typeof onboardingCompleted === "boolean")
       userData.onboardingCompleted = onboardingCompleted;
 

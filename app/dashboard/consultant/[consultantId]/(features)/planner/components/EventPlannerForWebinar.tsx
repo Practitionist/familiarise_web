@@ -147,15 +147,15 @@ export function EventPlannerForWebinar({
     ) {
       const slot = initialData.appointment.slotsOfAppointment[0];
       console.log(
-        "[EventPlannerForWebinar] Raw slotStartTimeInUTC from initialData:",
-        slot.slotStartTimeInUTC,
+        "[EventPlannerForWebinar] Raw startsAt from initialData:",
+        slot.startsAt,
       );
       console.log("Found existing slot for appointment:", {
         slotId: slot.id,
-        startTime: slot.slotStartTimeInUTC,
-        endTime: slot.slotEndTimeInUTC,
+        startTime: slot.startsAt,
+        endTime: slot.endsAt,
       });
-      return formatDateTimeForInput(slot.slotStartTimeInUTC);
+      return formatDateTimeForInput(slot.startsAt);
     }
     return formatDateTimeForInput();
   };

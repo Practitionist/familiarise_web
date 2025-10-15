@@ -49,7 +49,7 @@ export default function WebinarDetailsPage({
   const firstWebinarInstance = webinarData.webinars?.[0];
   const nextSession =
     firstWebinarInstance?.appointment?.slotsOfAppointment?.[0]
-      ?.slotStartTimeInUTC;
+      ?.startsAt;
 
   // Pass the entire webinarData (WebinarPlanData) as the 'plan' prop.
   // 'webinarInstanceId' is currently the WebinarPlan.id.

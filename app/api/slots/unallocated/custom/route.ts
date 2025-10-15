@@ -24,13 +24,13 @@ export async function GET(req: NextRequest) {
           some: {
             OR: [
               {
-                slotStartTimeInUTC: {
+                startsAt: {
                   gte: startDateInUtc ? new Date(startDateInUtc) : undefined,
                   lte: endDateInUtc ? new Date(endDateInUtc) : undefined,
                 },
               },
               {
-                slotEndTimeInUTC: {
+                endsAt: {
                   gte: startDateInUtc ? new Date(startDateInUtc) : undefined,
                   lte: endDateInUtc ? new Date(endDateInUtc) : undefined,
                 },
@@ -48,8 +48,8 @@ export async function GET(req: NextRequest) {
     const allocatedSlots = new Map();
     appointments.forEach((appointment) => {
       appointment.slotsOfAppointment.forEach((slot) => {
-        const start = slot.slotStartTimeInUTC;
-        const end = slot.slotEndTimeInUTC;
+        const start = slot.startsAt;
+        const end = slot.endsAt;
         allocatedSlots.set(
           `${start.toISOString()}-${end.toISOString()}`,
           slot.isTentative,
@@ -64,13 +64,13 @@ export async function GET(req: NextRequest) {
           consultantProfileId,
           ...(startDateInUtc && endDateInUtc
             ? {
-                slotStartTimeInUTC: { gte: new Date(startDateInUtc) },
-                slotEndTimeInUTC: { lte: new Date(endDateInUtc) },
+                availabilityStartsAt: { gte: new Date(startDateInUtc) },
+                availabilityEndsAt: { lte: new Date(endDateInUtc) },
               }
             : {}),
         },
         orderBy: {
-          slotStartTimeInUTC: "asc",
+          availabilityStartsAt: "asc",
         },
         include: {
           consultantProfile: {
@@ -93,8 +93,8 @@ export async function GET(req: NextRequest) {
           consultantProfileId,
           ...(startDateInUtc && endDateInUtc
             ? {
-                slotStartTimeInUTC: { gte: new Date(startDateInUtc) },
-                slotEndTimeInUTC: { lte: new Date(endDateInUtc) },
+                availabilityStartsAt: { gte: new Date(startDateInUtc) },
+                availabilityEndsAt: { lte: new Date(endDateInUtc) },
               }
             : {}),
         },
@@ -103,7 +103,7 @@ export async function GET(req: NextRequest) {
 
     // Filter out allocated slots
     const unallocatedSlots = customSlots.filter((slot) => {
-      const key = `${slot.slotStartTimeInUTC.toISOString()}-${slot.slotEndTimeInUTC.toISOString()}`;
+      const key = `${slot.availabilityStartsAt.toISOString()}-${slot.availabilityEndsAt.toISOString()}`;
       return !allocatedSlots.has(key);
     });
 

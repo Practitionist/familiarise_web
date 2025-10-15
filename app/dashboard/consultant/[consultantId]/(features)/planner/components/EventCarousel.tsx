@@ -253,11 +253,11 @@ export function EventCarousel({
   const getEventStartDate = (event: Event): Date | null => {
     if (isWebinarEvent(event)) {
       const startTimeString =
-        event.appointment?.slotsOfAppointment?.[0]?.slotStartTimeInUTC;
+        event.appointment?.slotsOfAppointment?.[0]?.startsAt;
       return startTimeString ? new Date(startTimeString) : null;
     }
     if (isClassEvent(event)) {
-      return event.startDate ? new Date(event.startDate) : null;
+      return event.schedulingPeriodStartsAt ? new Date(event.schedulingPeriodStartsAt) : null;
     }
     return null;
   };

@@ -79,9 +79,9 @@ export function formatDate(date: Date | null | undefined): string {
 export function getEventEndDate(event: EventWithType): Date | null {
   switch (event.type) {
     case "Subscription":
-      return event.endDate;
+      return event.schedulingPeriodEndsAt;
     case "Class":
-      return event.endDate;
+      return event.schedulingPeriodEndsAt;
     default:
       return null;
   }

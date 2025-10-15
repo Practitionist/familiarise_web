@@ -87,7 +87,7 @@ export const getSlotTimes = (appointment: TAppointment): Date[] => {
 
   return appointment.slotsOfAppointment
     .map((slot) => {
-      const time = slot.slotStartTimeInUTC;
+      const time = slot.startsAt;
       // Handle both Date objects and string timestamps
       if (time instanceof Date) {
         return time;
@@ -247,8 +247,8 @@ export const getTodayAppointments = (
       appointment.appointmentType === "SUBSCRIPTION" &&
       appointment.subscription
     ) {
-      const startDate = new Date(appointment.subscription.startDate);
-      const endDate = new Date(appointment.subscription.endDate);
+      const startDate = new Date(appointment.subscription.schedulingPeriodStartsAt);
+      const endDate = new Date(appointment.subscription.schedulingPeriodEndsAt);
       return isToday && now >= startDate && now <= endDate;
     }
 
@@ -399,8 +399,8 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
 
   if (type === "SUBSCRIPTION" && firstAppointment.subscription) {
     const now = new Date();
-    const startDate = new Date(firstAppointment.subscription.startDate);
-    const endDate = new Date(firstAppointment.subscription.endDate);
+    const startDate = new Date(firstAppointment.subscription.schedulingPeriodStartsAt);
+    const endDate = new Date(firstAppointment.subscription.schedulingPeriodEndsAt);
 
     // Check if any sessions are completed
     const hasCompletedSessions = appointments.some((app) =>

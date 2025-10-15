@@ -31,8 +31,8 @@ export interface AllocationRequest {
  * Constraints for auto-allocation algorithm
  */
 export interface AllocationConstraints {
-  startDate: Date;
-  endDate: Date;
+  schedulingPeriodStartsAt: Date;
+  schedulingPeriodEndsAt: Date;
   slotsRequired: number;
   sessionDurationInHours: number;
   callsPerWeek?: number; // For subscriptions/classes
@@ -89,16 +89,16 @@ export interface ConsultantAllocationData {
   scheduleType: "WEEKLY" | "CUSTOM";
   slotsOfAvailabilityWeekly: Array<{
     id: string;
-    dayOfWeekforStartTimeInUTC: string;
-    slotStartTimeInUTC: Date;
-    slotEndTimeInUTC: Date;
+    dayOfWeekForStartsAt: string;
+    availabilityStartsAt: Date;
+    availabilityEndsAt: Date;
   }>;
   slotsOfAvailabilityCustom: Array<{
     id: string;
-    slotStartTimeInUTC: Date;
-    slotEndTimeInUTC: Date;
+    availabilityStartsAt: Date;
+    availabilityEndsAt: Date;
   }>;
-  currentTimezone?: string;
+  timezone?: string;
 }
 
 /**
@@ -109,8 +109,8 @@ export interface EventConfig {
   durationInHours?: number; // For consultations/webinars (total duration)
   sessionDurationInHours?: number; // For subscriptions/classes (per session)
   callsPerWeek?: number; // For subscriptions/classes
-  startDate?: Date; // For subscriptions/classes
-  endDate?: Date; // For subscriptions/classes
+  schedulingPeriodStartsAt?: Date; // For subscriptions/classes
+  schedulingPeriodEndsAt?: Date; // For subscriptions/classes
 }
 
 /**

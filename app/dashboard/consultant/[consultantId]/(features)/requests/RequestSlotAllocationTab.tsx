@@ -332,8 +332,8 @@ export function RequestSlotAllocationTab({
                 }
 
                 return {
-                  startTime: slot.slotStartTimeInUTC,
-                  endTime: slot.slotEndTimeInUTC,
+                  startTime: slot.startsAt,
+                  endTime: slot.endsAt,
                   appointmentDetails: {
                     id: id,
                     type: type,
