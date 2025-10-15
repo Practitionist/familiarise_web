@@ -196,8 +196,7 @@ export async function PATCH(
         consultantProfileId:
           body.consultantProfileId || currentSlot.consultantProfileId,
         dayOfWeekForStartsAt:
-          body.dayOfWeekForStartsAt ||
-          currentSlot.dayOfWeekForStartsAt,
+          body.dayOfWeekForStartsAt || currentSlot.dayOfWeekForStartsAt,
         OR: [
           {
             availabilityStartsAt: { lte: startTime },

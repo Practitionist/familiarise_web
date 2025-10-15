@@ -53,8 +53,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
                 const startTime = formatTime(slot.availabilityStartsAt, "12h");
                 const endTime = formatTime(slot.availabilityEndsAt, "12h");
                 const isSameDay =
-                  slot.dayOfWeekForStartsAt ===
-                  slot.dayOfWeekForEndsAt;
+                  slot.dayOfWeekForStartsAt === slot.dayOfWeekForEndsAt;
 
                 return (
                   <li

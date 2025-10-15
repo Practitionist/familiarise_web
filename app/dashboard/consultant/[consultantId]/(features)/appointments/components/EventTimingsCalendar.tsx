@@ -189,7 +189,9 @@ export function EventTimingsCalendar({
                 : undefined
               : appointment.appointmentType === "CLASS"
                 ? (appointment.class as any)?.schedulingPeriodStartsAt
-                  ? new Date((appointment.class as any).schedulingPeriodStartsAt)
+                  ? new Date(
+                      (appointment.class as any).schedulingPeriodStartsAt,
+                    )
                   : undefined
                 : undefined
           }

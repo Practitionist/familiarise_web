@@ -221,9 +221,7 @@ export function SlotCard({
               <p>
                 {formatDateTime(
                   new Date(slot.startsAt),
-                  slot.endsAt
-                    ? new Date(slot.endsAt)
-                    : undefined,
+                  slot.endsAt ? new Date(slot.endsAt) : undefined,
                 )}
               </p>
             </div>

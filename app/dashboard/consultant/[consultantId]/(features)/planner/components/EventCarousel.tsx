@@ -257,7 +257,9 @@ export function EventCarousel({
       return startTimeString ? new Date(startTimeString) : null;
     }
     if (isClassEvent(event)) {
-      return event.schedulingPeriodStartsAt ? new Date(event.schedulingPeriodStartsAt) : null;
+      return event.schedulingPeriodStartsAt
+        ? new Date(event.schedulingPeriodStartsAt)
+        : null;
     }
     return null;
   };

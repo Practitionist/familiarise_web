@@ -389,10 +389,7 @@ async function createAppointmentForConsultation(consultation: any) {
         slotsOfAppointment: {
           create: {
             startsAt: startDate,
-            endsAt: addHours(
-              startDate,
-              consultationPlan.durationInHours,
-            ),
+            endsAt: addHours(startDate, consultationPlan.durationInHours),
             isTentative: false,
             user: {
               connect: [

@@ -48,8 +48,7 @@ export default function WebinarDetailsPage({
   // This relies on the API response including nested: webinars > appointment > slotsOfAppointment.
   const firstWebinarInstance = webinarData.webinars?.[0];
   const nextSession =
-    firstWebinarInstance?.appointment?.slotsOfAppointment?.[0]
-      ?.startsAt;
+    firstWebinarInstance?.appointment?.slotsOfAppointment?.[0]?.startsAt;
 
   // Pass the entire webinarData (WebinarPlanData) as the 'plan' prop.
   // 'webinarInstanceId' is currently the WebinarPlan.id.

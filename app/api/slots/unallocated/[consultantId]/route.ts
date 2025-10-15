@@ -130,8 +130,7 @@ export async function GET(
       while (currentDate <= end) {
         // Check if this day matches the slot's day
         if (
-          currentDate.getDay() ===
-          dayToNumber[weeklySlot.dayOfWeekForStartsAt]
+          currentDate.getDay() === dayToNumber[weeklySlot.dayOfWeekForStartsAt]
         ) {
           // Create slot instance for this date
           const slotStart = new Date(currentDate);
@@ -175,7 +174,9 @@ export async function GET(
         slotEndTimeInUTC: slot.availabilityEndsAt.toISOString(),
         slotOfAvailabilityId: slot.id,
         slotOfAppointmentId: "",
-        localStartTime: new Date(slot.availabilityStartsAt).toLocaleTimeString(),
+        localStartTime: new Date(
+          slot.availabilityStartsAt,
+        ).toLocaleTimeString(),
         localEndTime: new Date(slot.availabilityEndsAt).toLocaleTimeString(),
         type: "CUSTOM" as const,
       }),

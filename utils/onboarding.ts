@@ -372,8 +372,7 @@ export function transformOnboardingFormToServerData(
     phone: formData.phone,
     address: formData.address,
     timezone:
-      formData.timezone ||
-      Intl.DateTimeFormat().resolvedOptions().timeZone,
+      formData.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
     onlineStatus: formData.onlineStatus || false,
     onboardingCompleted: true, // Set to true when completing onboarding
     role: formData.role,

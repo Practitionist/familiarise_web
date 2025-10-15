@@ -104,9 +104,7 @@ export async function GET(req: NextRequest) {
 
       while (currentDate <= endDate) {
         // Check if current date matches the slot's day
-        if (
-          currentDate.getDay() === dayToNumber[slot.dayOfWeekForStartsAt]
-        ) {
+        if (currentDate.getDay() === dayToNumber[slot.dayOfWeekForStartsAt]) {
           // Set the time from the slot
           const start = new Date(currentDate);
           start.setHours(slot.availabilityStartsAt.getHours());

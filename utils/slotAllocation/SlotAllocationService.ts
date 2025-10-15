@@ -79,94 +79,99 @@ export class SlotAllocationService {
     eventType: EventType,
     eventId: string,
   ): Promise<AllocationResult> {
-    return await prisma.$transaction(async (tx) => {
-      // Fetch event details and consultant info
-      const eventData = await this.fetchEventData(tx, eventType, eventId);
-      if (!eventData) {
-        throw new Error(`${eventType} not found`);
-      }
+    return await prisma.$transaction(
+      async (tx) => {
+        // Fetch event details and consultant info
+        const eventData = await this.fetchEventData(tx, eventType, eventId);
+        if (!eventData) {
+          throw new Error(`${eventType} not found`);
+        }
 
-      const { consultant, config, consulteeUserId } = eventData;
+        const { consultant, config, consulteeUserId } = eventData;
 
-      // Calculate required slots
-      const requiredSlots = SlotCalculationService.calculateRequiredSlots(
-        eventType,
-        config,
-      );
-      const slotsPerCall = SlotCalculationService.getSlotsPerCall(
-        config.sessionDurationInHours || config.durationInHours || 1,
-      );
-
-      // Find available slots
-      const selectedSlots = await this.findAvailableSlots(
-        tx,
-        consultant,
-        requiredSlots,
-        slotsPerCall,
-        eventType,
-        config,
-      );
-
-      // Validate
-      const validator = new SlotValidationService(tx as any);
-      const validation = await validator.validate(
-        eventType,
-        eventId,
-        selectedSlots,
-        consultant,
-        config,
-      );
-
-      if (!validation.isValid) {
-        throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
-      }
-
-      // CRITICAL FIX: Validate all slots are within configured scheduling period
-      // This prevents slots from being allocated before schedulingPeriodStartsAt or after schedulingPeriodEndsAt
-      if (config.schedulingPeriodStartsAt && config.schedulingPeriodEndsAt) {
-        const slotsOutsidePeriod = selectedSlots.filter(
-          (slot) => slot < config.schedulingPeriodStartsAt! || slot > config.schedulingPeriodEndsAt!
+        // Calculate required slots
+        const requiredSlots = SlotCalculationService.calculateRequiredSlots(
+          eventType,
+          config,
+        );
+        const slotsPerCall = SlotCalculationService.getSlotsPerCall(
+          config.sessionDurationInHours || config.durationInHours || 1,
         );
 
-        if (slotsOutsidePeriod.length > 0) {
-          const firstBad = slotsOutsidePeriod[0];
-          throw new Error(
-            `Cannot allocate slots outside scheduling period. ` +
-            `Period: ${config.schedulingPeriodStartsAt.toISOString()} to ${config.schedulingPeriodEndsAt.toISOString()}. ` +
-            `Found slot at: ${firstBad.toISOString()} (${firstBad < config.schedulingPeriodStartsAt! ? 'before start' : 'after end'}). ` +
-            `Total violations: ${slotsOutsidePeriod.length}`
-          );
+        // Find available slots
+        const selectedSlots = await this.findAvailableSlots(
+          tx,
+          consultant,
+          requiredSlots,
+          slotsPerCall,
+          eventType,
+          config,
+        );
+
+        // Validate
+        const validator = new SlotValidationService(tx as any);
+        const validation = await validator.validate(
+          eventType,
+          eventId,
+          selectedSlots,
+          consultant,
+          config,
+        );
+
+        if (!validation.isValid) {
+          throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
         }
-      }
 
-      // Create appointments
-      const appointments = await this.createAppointments(
-        tx,
-        eventType,
-        eventId,
-        selectedSlots,
-        consultant.userId,
-        consulteeUserId,
-        config,
-      );
+        // CRITICAL FIX: Validate all slots are within configured scheduling period
+        // This prevents slots from being allocated before schedulingPeriodStartsAt or after schedulingPeriodEndsAt
+        if (config.schedulingPeriodStartsAt && config.schedulingPeriodEndsAt) {
+          const slotsOutsidePeriod = selectedSlots.filter(
+            (slot) =>
+              slot < config.schedulingPeriodStartsAt! ||
+              slot > config.schedulingPeriodEndsAt!,
+          );
 
-      // Update event status
-      await this.updateEventStatus(
-        tx,
-        eventType,
-        eventId,
-        selectedSlots[0],
-        config,
-      );
+          if (slotsOutsidePeriod.length > 0) {
+            const firstBad = slotsOutsidePeriod[0];
+            throw new Error(
+              `Cannot allocate slots outside scheduling period. ` +
+                `Period: ${config.schedulingPeriodStartsAt.toISOString()} to ${config.schedulingPeriodEndsAt.toISOString()}. ` +
+                `Found slot at: ${firstBad.toISOString()} (${firstBad < config.schedulingPeriodStartsAt! ? "before start" : "after end"}). ` +
+                `Total violations: ${slotsOutsidePeriod.length}`,
+            );
+          }
+        }
 
-      return {
-        success: true,
-        appointments,
-        warnings: validation.warnings,
-      };
-    }, {
-      timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
-    });
+        // Create appointments
+        const appointments = await this.createAppointments(
+          tx,
+          eventType,
+          eventId,
+          selectedSlots,
+          consultant.userId,
+          consulteeUserId,
+          config,
+        );
+
+        // Update event status
+        await this.updateEventStatus(
+          tx,
+          eventType,
+          eventId,
+          selectedSlots[0],
+          config,
+        );
+
+        return {
+          success: true,
+          appointments,
+          warnings: validation.warnings,
+        };
+      },
+      {
+        timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
+      },
+    );
   }
 
   /**
@@ -196,86 +201,89 @@ export class SlotAllocationService {
     eventId: string,
     slotStrings: string[],
   ): Promise<AllocationResult> {
-    return await prisma.$transaction(async (tx) => {
-      // Fetch event details
-      const eventData = await this.fetchEventData(tx, eventType, eventId);
-      if (!eventData) {
-        throw new Error(`${eventType} not found`);
-      }
+    return await prisma.$transaction(
+      async (tx) => {
+        // Fetch event details
+        const eventData = await this.fetchEventData(tx, eventType, eventId);
+        if (!eventData) {
+          throw new Error(`${eventType} not found`);
+        }
 
-      const { consultant, config, consulteeUserId } = eventData;
+        const { consultant, config, consulteeUserId } = eventData;
 
-      // Convert to Date objects
-      const slots = slotStrings.map((s) => new Date(s));
+        // Convert to Date objects
+        const slots = slotStrings.map((s) => new Date(s));
 
-      // FIX: Detect and reject duplicate slots
-      // Duplicates can cause validation errors, inflated counts, and DB anomalies
-      const uniqueSlots = Array.from(
-        new Map(slots.map((s) => [s.toISOString(), s])).values(),
-      );
-
-      if (uniqueSlots.length !== slots.length) {
-        throw new Error(
-          `Duplicate slots detected: ${slots.length} slots provided but only ` +
-            `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
+        // FIX: Detect and reject duplicate slots
+        // Duplicates can cause validation errors, inflated counts, and DB anomalies
+        const uniqueSlots = Array.from(
+          new Map(slots.map((s) => [s.toISOString(), s])).values(),
         );
-      }
 
-      // CRITICAL FIX: Validate slot count matches session duration requirements
-      // This prevents incomplete appointments from being created
-      const slotsPerCall = SlotCalculationService.getSlotsPerCall(
-        config.sessionDurationInHours || config.durationInHours || 1,
-      );
+        if (uniqueSlots.length !== slots.length) {
+          throw new Error(
+            `Duplicate slots detected: ${slots.length} slots provided but only ` +
+              `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
+          );
+        }
 
-      if (slots.length % slotsPerCall !== 0) {
-        const sessionDuration =
-          config.sessionDurationInHours || config.durationInHours || 1;
-        throw new Error(
-          `Invalid slot count: ${slots.length} slots provided, but ${sessionDuration}-hour ` +
-            `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
-            `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
+        // CRITICAL FIX: Validate slot count matches session duration requirements
+        // This prevents incomplete appointments from being created
+        const slotsPerCall = SlotCalculationService.getSlotsPerCall(
+          config.sessionDurationInHours || config.durationInHours || 1,
         );
-      }
 
-      // Validate
-      const validator = new SlotValidationService(tx as any);
-      const validation = await validator.validate(
-        eventType,
-        eventId,
-        slots,
-        consultant,
-        config,
-      );
+        if (slots.length % slotsPerCall !== 0) {
+          const sessionDuration =
+            config.sessionDurationInHours || config.durationInHours || 1;
+          throw new Error(
+            `Invalid slot count: ${slots.length} slots provided, but ${sessionDuration}-hour ` +
+              `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
+              `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
+          );
+        }
 
-      if (!validation.isValid) {
-        throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
-      }
+        // Validate
+        const validator = new SlotValidationService(tx as any);
+        const validation = await validator.validate(
+          eventType,
+          eventId,
+          slots,
+          consultant,
+          config,
+        );
 
-      // Delete existing appointments if any
-      await this.deleteExistingAppointments(tx, eventType, eventId);
+        if (!validation.isValid) {
+          throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
+        }
 
-      // Create appointments
-      const appointments = await this.createAppointments(
-        tx,
-        eventType,
-        eventId,
-        slots,
-        consultant.userId,
-        consulteeUserId,
-        config,
-      );
+        // Delete existing appointments if any
+        await this.deleteExistingAppointments(tx, eventType, eventId);
 
-      // Update event status
-      await this.updateEventStatus(tx, eventType, eventId, slots[0], config);
+        // Create appointments
+        const appointments = await this.createAppointments(
+          tx,
+          eventType,
+          eventId,
+          slots,
+          consultant.userId,
+          consulteeUserId,
+          config,
+        );
 
-      return {
-        success: true,
-        appointments,
-        warnings: validation.warnings,
-      };
-    }, {
-      timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
-    });
+        // Update event status
+        await this.updateEventStatus(tx, eventType, eventId, slots[0], config);
+
+        return {
+          success: true,
+          appointments,
+          warnings: validation.warnings,
+        };
+      },
+      {
+        timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
+      },
+    );
   }
 
   /**
@@ -302,80 +310,83 @@ export class SlotAllocationService {
     eventType: EventType,
     eventId: string,
   ): Promise<AllocationResult> {
-    return await prisma.$transaction(async (tx) => {
-      // Fetch event with requested slots
-      const eventData = await this.fetchEventData(tx, eventType, eventId);
-      if (!eventData) {
-        throw new Error(`${eventType} not found`);
-      }
+    return await prisma.$transaction(
+      async (tx) => {
+        // Fetch event with requested slots
+        const eventData = await this.fetchEventData(tx, eventType, eventId);
+        if (!eventData) {
+          throw new Error(`${eventType} not found`);
+        }
 
-      const { consultant, config, requestedSlots } = eventData;
+        const { consultant, config, requestedSlots } = eventData;
 
-      if (!requestedSlots || requestedSlots.length === 0) {
-        throw new Error("No requested slots found");
-      }
+        if (!requestedSlots || requestedSlots.length === 0) {
+          throw new Error("No requested slots found");
+        }
 
-      // CRITICAL FIX: Verify appointments actually exist before approving
-      // This prevents approving requests with no actual bookings
-      const relationField = this.getEventRelationField(eventType);
-      const existingAppointments = await (tx as any).appointment.findMany({
-        where: { [`${relationField}Id`]: eventId },
-        include: { slotsOfAppointment: true },
-      });
+        // CRITICAL FIX: Verify appointments actually exist before approving
+        // This prevents approving requests with no actual bookings
+        const relationField = this.getEventRelationField(eventType);
+        const existingAppointments = await (tx as any).appointment.findMany({
+          where: { [`${relationField}Id`]: eventId },
+          include: { slotsOfAppointment: true },
+        });
 
-      if (existingAppointments.length === 0) {
-        throw new Error(
-          "Cannot approve requested slots: No appointments found. " +
-            "The consultee may not have created appointments yet, or they were deleted. " +
-            "Please ask the consultee to resubmit their request.",
+        if (existingAppointments.length === 0) {
+          throw new Error(
+            "Cannot approve requested slots: No appointments found. " +
+              "The consultee may not have created appointments yet, or they were deleted. " +
+              "Please ask the consultee to resubmit their request.",
+          );
+        }
+
+        // Verify appointment slots match requested slots
+        const existingSlotCount = existingAppointments.reduce(
+          (sum: number, app: any) => sum + app.slotsOfAppointment.length,
+          0,
         );
-      }
 
-      // Verify appointment slots match requested slots
-      const existingSlotCount = existingAppointments.reduce(
-        (sum: number, app: any) => sum + app.slotsOfAppointment.length,
-        0,
-      );
+        if (existingSlotCount !== requestedSlots.length) {
+          throw new Error(
+            `Appointment mismatch: Found ${existingSlotCount} slots in appointments ` +
+              `but ${requestedSlots.length} requested slots. ` +
+              `The appointments may have been modified. Please review and try again.`,
+          );
+        }
 
-      if (existingSlotCount !== requestedSlots.length) {
-        throw new Error(
-          `Appointment mismatch: Found ${existingSlotCount} slots in appointments ` +
-            `but ${requestedSlots.length} requested slots. ` +
-            `The appointments may have been modified. Please review and try again.`,
+        // Validate requested slots still meet all requirements
+        const validator = new SlotValidationService(tx as any);
+        const validation = await validator.validate(
+          eventType,
+          eventId,
+          requestedSlots,
+          consultant,
+          config,
         );
-      }
 
-      // Validate requested slots still meet all requirements
-      const validator = new SlotValidationService(tx as any);
-      const validation = await validator.validate(
-        eventType,
-        eventId,
-        requestedSlots,
-        consultant,
-        config,
-      );
+        if (!validation.isValid) {
+          throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
+        }
 
-      if (!validation.isValid) {
-        throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
-      }
+        // Update event status to approved (appointments already exist and verified)
+        await this.updateEventStatus(
+          tx,
+          eventType,
+          eventId,
+          requestedSlots[0],
+          config,
+        );
 
-      // Update event status to approved (appointments already exist and verified)
-      await this.updateEventStatus(
-        tx,
-        eventType,
-        eventId,
-        requestedSlots[0],
-        config,
-      );
-
-      return {
-        success: true,
-        appointments: existingAppointments,
-        warnings: validation.warnings,
-      };
-    }, {
-      timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
-    });
+        return {
+          success: true,
+          appointments: existingAppointments,
+          warnings: validation.warnings,
+        };
+      },
+      {
+        timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
+      },
+    );
   }
 
   /**
@@ -459,7 +470,7 @@ export class SlotAllocationService {
         // object repeatedly, then mutated it. Result: only final occurrence (week 7) was added.
         const baseOccurrence = this.getNextOccurrence(
           slot.availabilityStartsAt,
-          consultant.scheduleType
+          consultant.scheduleType,
         );
 
         // CRITICAL FIX: Break down each availability slot into 30-minute blocks
@@ -475,11 +486,13 @@ export class SlotAllocationService {
         for (let week = 0; week < 8; week++) {
           // Create NEW Date object for each week to avoid mutation bug
           const weekOccurrence = new Date(baseOccurrence);
-          weekOccurrence.setDate(weekOccurrence.getDate() + (week * 7));
+          weekOccurrence.setDate(weekOccurrence.getDate() + week * 7);
 
           // Add all 30-minute blocks within this slot
           for (let block = 0; block < blocksPerSlot; block++) {
-            const blockTime = new Date(weekOccurrence.getTime() + (block * thirtyMinutesMs));
+            const blockTime = new Date(
+              weekOccurrence.getTime() + block * thirtyMinutesMs,
+            );
             availableSlotsSet.add(blockTime.toISOString());
           }
         }
@@ -494,7 +507,9 @@ export class SlotAllocationService {
         const blocksPerSlot = Math.floor(slotDurationMs / thirtyMinutesMs);
 
         for (let block = 0; block < blocksPerSlot; block++) {
-          const blockTime = new Date(slotStart.getTime() + (block * thirtyMinutesMs));
+          const blockTime = new Date(
+            slotStart.getTime() + block * thirtyMinutesMs,
+          );
           availableSlotsSet.add(blockTime.toISOString());
         }
       }
@@ -544,7 +559,8 @@ export class SlotAllocationService {
     // For subscriptions/classes: find distributed slots across weeks
     const startDate = config.schedulingPeriodStartsAt || new Date();
     const endDate =
-      config.schedulingPeriodEndsAt || addMonths(startDate, config.durationInMonths || 1);
+      config.schedulingPeriodEndsAt ||
+      addMonths(startDate, config.durationInMonths || 1);
     const callsPerWeek = config.callsPerWeek || 1;
 
     // FIX: Start from the week containing schedulingPeriodStartsAt, but ensure we don't
@@ -749,10 +765,13 @@ export class SlotAllocationService {
     }
 
     // CRITICAL: For consultations/webinars, ensure only ONE appointment is created
-    if ((eventType === "consultation" || eventType === "webinar") && calls.length > 1) {
+    if (
+      (eventType === "consultation" || eventType === "webinar") &&
+      calls.length > 1
+    ) {
       throw new Error(
         `INTERNAL ERROR: ${eventType} should create exactly 1 appointment, but ${calls.length} were grouped. ` +
-        `This indicates non-consecutive slots were provided. Slots: ${slots.map(s => s.toISOString()).join(", ")}`
+          `This indicates non-consecutive slots were provided. Slots: ${slots.map((s) => s.toISOString()).join(", ")}`,
       );
     }
 
@@ -834,9 +853,15 @@ export class SlotAllocationService {
           // FIX: Only set schedulingPeriod if not already configured
           // This prevents overwriting the user's scheduling period with the first allocated slot
           // which could cause slots to appear outside the intended scheduling window
-          if (!config.schedulingPeriodStartsAt || !config.schedulingPeriodEndsAt) {
+          if (
+            !config.schedulingPeriodStartsAt ||
+            !config.schedulingPeriodEndsAt
+          ) {
             updates.schedulingPeriodStartsAt = firstSlot;
-            updates.schedulingPeriodEndsAt = addMonths(firstSlot, config.durationInMonths || 1);
+            updates.schedulingPeriodEndsAt = addMonths(
+              firstSlot,
+              config.durationInMonths || 1,
+            );
           }
         }
         break;
@@ -915,9 +940,7 @@ export class SlotAllocationService {
         };
         consulteeUserId = event.requestedBy?.user?.id;
         requestedSlots = event.appointments?.flatMap((app: any) =>
-          app.slotsOfAppointment.map(
-            (s: any) => new Date(s.startsAt),
-          ),
+          app.slotsOfAppointment.map((s: any) => new Date(s.startsAt)),
         );
         break;
 

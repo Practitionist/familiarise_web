@@ -15,9 +15,7 @@ export function convertTAppointmentToIAppointment(
       (slot): ISlotOfAppointment => ({
         id: slot.id,
         startsAt: new Date(slot.startsAt),
-        endsAt: slot.endsAt
-          ? new Date(slot.endsAt)
-          : null,
+        endsAt: slot.endsAt ? new Date(slot.endsAt) : null,
         isTentative: slot.isTentative,
         user: slot.user.map(
           (u): IUser => ({
@@ -118,7 +116,8 @@ export function convertTAppointmentToIAppointment(
             },
           },
           startDate:
-            typeof tAppointment.subscription.schedulingPeriodStartsAt === "string"
+            typeof tAppointment.subscription.schedulingPeriodStartsAt ===
+            "string"
               ? tAppointment.subscription.schedulingPeriodStartsAt
               : tAppointment.subscription.schedulingPeriodStartsAt.toISOString(),
           endDate:

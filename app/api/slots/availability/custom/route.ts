@@ -85,7 +85,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { consultantProfileId, availabilityStartsAt, availabilityEndsAt } = body;
+    const { consultantProfileId, availabilityStartsAt, availabilityEndsAt } =
+      body;
 
     if (!consultantProfileId || !availabilityStartsAt || !availabilityEndsAt) {
       return NextResponse.json(

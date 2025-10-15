@@ -56,8 +56,7 @@ describe("Schedule Data Consistency Tests", () => {
           index: number,
         ) => {
           const diffInDays = Math.floor(
-            (slot.startsAt.getTime() - now.getTime()) /
-              (1000 * 60 * 60 * 24),
+            (slot.startsAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
           );
           expect(diffInDays).toBe(expectedDays[index]);
         },
@@ -136,8 +135,7 @@ describe("Schedule Data Consistency Tests", () => {
               monthly.event.id === (appointment as any).id &&
               monthly.slots.some(
                 (monthlySlot: { startsAt: Date }) =>
-                  monthlySlot.startsAt.getTime() ===
-                  slot.startsAt.getTime(),
+                  monthlySlot.startsAt.getTime() === slot.startsAt.getTime(),
               ),
           );
           expect(foundInMonthly).toBe(true);
@@ -159,9 +157,7 @@ describe("Schedule Data Consistency Tests", () => {
                 appointment: any;
                 slot: { startsAt: Date };
                 isTentative: boolean;
-              }) =>
-                slot.startsAt.getTime() ===
-                monthlySlot.startsAt.getTime(),
+              }) => slot.startsAt.getTime() === monthlySlot.startsAt.getTime(),
             );
             expect(upcomingSlot).toBeDefined();
           });
@@ -215,12 +211,8 @@ describe("Schedule Data Consistency Tests", () => {
       expect(slots).toHaveLength(2);
 
       // Verify specific time slots from the UI
-      expect(slots[0].startsAt).toEqual(
-        new Date("2025-01-01T12:00:00Z"),
-      );
-      expect(slots[1].startsAt).toEqual(
-        new Date("2025-01-08T13:00:00Z"),
-      );
+      expect(slots[0].startsAt).toEqual(new Date("2025-01-01T12:00:00Z"));
+      expect(slots[1].startsAt).toEqual(new Date("2025-01-08T13:00:00Z"));
     });
 
     it("should handle rejected consultations correctly", () => {
@@ -250,9 +242,7 @@ describe("Schedule Data Consistency Tests", () => {
     it("should format time until next session correctly", () => {
       const nextSlot = getActualNextSlotTime(mockEvents[0]);
       expect(nextSlot).not.toBeNull();
-      expect(nextSlot!.startsAt).toEqual(
-        new Date("2024-12-30T13:00:00Z"),
-      );
+      expect(nextSlot!.startsAt).toEqual(new Date("2024-12-30T13:00:00Z"));
 
       // Calculate difference in minutes and pass to formatTimeUntil
       const diffInMinutes = Math.floor(

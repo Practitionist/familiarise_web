@@ -110,8 +110,10 @@ export async function POST(
           durationInMonths: classPlan.durationInMonths || 1,
           callsPerWeek: classPlan.callsPerWeek || 2,
           sessionDurationInHours: classPlan.sessionDurationInHours || 1,
-          schedulingPeriodStartsAt: classEntity.schedulingPeriodStartsAt ?? undefined,
-          schedulingPeriodEndsAt: classEntity.schedulingPeriodEndsAt ?? undefined,
+          schedulingPeriodStartsAt:
+            classEntity.schedulingPeriodStartsAt ?? undefined,
+          schedulingPeriodEndsAt:
+            classEntity.schedulingPeriodEndsAt ?? undefined,
         },
       );
 

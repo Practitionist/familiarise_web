@@ -578,11 +578,8 @@ export async function handleWebinarCheckout(
     data: {
       appointmentId: appointment.id,
       startsAt:
-        webinar.appointment?.slotsOfAppointment[0]?.startsAt ||
-        new Date(),
-      endsAt:
-        webinar.appointment?.slotsOfAppointment[0]?.endsAt ||
-        new Date(),
+        webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(),
+      endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
       isTentative: !skipPayment,
       user: {
         connect: { id: userId },

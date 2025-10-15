@@ -175,11 +175,7 @@ async function removeBookedSlots(slots: TSlotTiming[]): Promise<TSlotTiming[]> {
 
   const bookedSlotTimes = appointments.flatMap((a) =>
     a.slotsOfAppointment.map((slot) =>
-      formatInTimeZone(
-        slot.startsAt,
-        "UTC",
-        "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
-      ),
+      formatInTimeZone(slot.startsAt, "UTC", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"),
     ),
   );
 

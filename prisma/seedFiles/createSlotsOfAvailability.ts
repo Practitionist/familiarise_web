@@ -248,7 +248,9 @@ export async function createSlotsOfAvailability(
               customSlots.push({
                 consultantProfileId: consultant.consultantProfile.id,
                 availabilityStartsAt: slotDate,
-                availabilityEndsAt: new Date(slotDate.getTime() + 60 * 60 * 1000),
+                availabilityEndsAt: new Date(
+                  slotDate.getTime() + 60 * 60 * 1000,
+                ),
               });
             }
           }

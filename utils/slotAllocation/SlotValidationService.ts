@@ -259,24 +259,32 @@ export class SlotValidationService {
         const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000); // 30-minute slot
 
         // Check if this slot falls within ANY weekly availability slot
-        const matchesAvailability = consultant.slotsOfAvailabilityWeekly.some((availSlot) => {
-          const availStart = new Date(availSlot.availabilityStartsAt);
-          const availEnd = new Date(availSlot.availabilityEndsAt);
-          const availDay = availStart.getUTCDay();
+        const matchesAvailability = consultant.slotsOfAvailabilityWeekly.some(
+          (availSlot) => {
+            const availStart = new Date(availSlot.availabilityStartsAt);
+            const availEnd = new Date(availSlot.availabilityEndsAt);
+            const availDay = availStart.getUTCDay();
 
-          // Must be same day of week
-          if (slotDay !== availDay) return false;
+            // Must be same day of week
+            if (slotDay !== availDay) return false;
 
-          // Check if the requested time falls within this availability slot's time range
-          // Compare ONLY the time-of-day part (hours:minutes), not the full date
-          const slotTimeMinutes = slotHours * 60 + slotMinutes;
-          const slotEndMinutes = slotEnd.getUTCHours() * 60 + slotEnd.getUTCMinutes();
-          const availStartMinutes = availStart.getUTCHours() * 60 + availStart.getUTCMinutes();
-          const availEndMinutes = availEnd.getUTCHours() * 60 + availEnd.getUTCMinutes();
+            // Check if the requested time falls within this availability slot's time range
+            // Compare ONLY the time-of-day part (hours:minutes), not the full date
+            const slotTimeMinutes = slotHours * 60 + slotMinutes;
+            const slotEndMinutes =
+              slotEnd.getUTCHours() * 60 + slotEnd.getUTCMinutes();
+            const availStartMinutes =
+              availStart.getUTCHours() * 60 + availStart.getUTCMinutes();
+            const availEndMinutes =
+              availEnd.getUTCHours() * 60 + availEnd.getUTCMinutes();
 
-          // Slot must start >= availability start AND end <= availability end
-          return slotTimeMinutes >= availStartMinutes && slotEndMinutes <= availEndMinutes;
-        });
+            // Slot must start >= availability start AND end <= availability end
+            return (
+              slotTimeMinutes >= availStartMinutes &&
+              slotEndMinutes <= availEndMinutes
+            );
+          },
+        );
 
         if (!matchesAvailability) {
           const timeStr = `${slotHours.toString().padStart(2, "0")}:${slotMinutes.toString().padStart(2, "0")}`;
@@ -300,14 +308,16 @@ export class SlotValidationService {
       // larger slots (e.g., 1-hour slot from 16:30-17:30) that the calendar breaks down
       // into multiple 30-minute display intervals (16:30-17:00 and 17:00-17:30)
 
-      console.log('[SlotValidationService] Custom schedule validation:', {
-        consultantAvailableSlots: consultant.slotsOfAvailabilityCustom.slice(0, 5).map(s => ({
-          start: new Date(s.availabilityStartsAt).toISOString(),
-          end: new Date(s.availabilityEndsAt).toISOString(),
-          duration: `${(new Date(s.availabilityEndsAt).getTime() - new Date(s.availabilityStartsAt).getTime()) / (1000 * 60)} mins`,
-        })),
+      console.log("[SlotValidationService] Custom schedule validation:", {
+        consultantAvailableSlots: consultant.slotsOfAvailabilityCustom
+          .slice(0, 5)
+          .map((s) => ({
+            start: new Date(s.availabilityStartsAt).toISOString(),
+            end: new Date(s.availabilityEndsAt).toISOString(),
+            duration: `${(new Date(s.availabilityEndsAt).getTime() - new Date(s.availabilityStartsAt).getTime()) / (1000 * 60)} mins`,
+          })),
         totalAvailable: consultant.slotsOfAvailabilityCustom.length,
-        requestedSlots: slots.slice(0, 3).map(s => s.toISOString()), // First 3 for debugging
+        requestedSlots: slots.slice(0, 3).map((s) => s.toISOString()), // First 3 for debugging
         totalRequested: slots.length,
       });
 
@@ -319,11 +329,13 @@ export class SlotValidationService {
 
         // Check if this slot overlaps with ANY available custom slot
         // Uses same overlap logic as calendar: intervalStart < slotEnd && slotStart < intervalEnd
-        const hasOverlap = consultant.slotsOfAvailabilityCustom.some((availableSlot) => {
-          const availableStart = new Date(availableSlot.availabilityStartsAt);
-          const availableEnd = new Date(availableSlot.availabilityEndsAt);
-          return slot < availableEnd && availableStart < slotEnd;
-        });
+        const hasOverlap = consultant.slotsOfAvailabilityCustom.some(
+          (availableSlot) => {
+            const availableStart = new Date(availableSlot.availabilityStartsAt);
+            const availableEnd = new Date(availableSlot.availabilityEndsAt);
+            return slot < availableEnd && availableStart < slotEnd;
+          },
+        );
 
         if (!hasOverlap) {
           hasInvalidSlots = true;
@@ -332,19 +344,21 @@ export class SlotValidationService {
       }
 
       if (hasInvalidSlots) {
-        console.error('[SlotValidationService] Invalid slots found:', {
+        console.error("[SlotValidationService] Invalid slots found:", {
           invalidSlots: invalidSlotsList,
-          availableSlotRanges: consultant.slotsOfAvailabilityCustom.slice(0, 10).map(s => ({
-            start: new Date(s.availabilityStartsAt).toISOString(),
-            end: new Date(s.availabilityEndsAt).toISOString(),
-          })),
+          availableSlotRanges: consultant.slotsOfAvailabilityCustom
+            .slice(0, 10)
+            .map((s) => ({
+              start: new Date(s.availabilityStartsAt).toISOString(),
+              end: new Date(s.availabilityEndsAt).toISOString(),
+            })),
         });
 
         const slotWord = slots.length === 1 ? "slot" : "slots";
         const verbTense = slots.length === 1 ? "is" : "are";
 
         // Check if this looks like a consecutive slot issue (some slots valid, some not)
-        const validSlotCount = slots.filter(slot => {
+        const validSlotCount = slots.filter((slot) => {
           const slotEnd = new Date(slot.getTime() + 30 * 60 * 1000);
           return consultant.slotsOfAvailabilityCustom.some((availableSlot) => {
             const availableStart = new Date(availableSlot.availabilityStartsAt);
@@ -352,13 +366,14 @@ export class SlotValidationService {
             return slot < availableEnd && availableStart < slotEnd;
           });
         }).length;
-        const isConsecutiveIssue = validSlotCount > 0 && validSlotCount < slots.length;
+        const isConsecutiveIssue =
+          validSlotCount > 0 && validSlotCount < slots.length;
 
         if (isConsecutiveIssue) {
           errors.push(
-            `The consultant doesn't have enough consecutive availability for this ${slots.length === 2 ? '1-hour' : `${slots.length * 0.5}-hour`} event. ` +
-            `Only ${validSlotCount} of ${slots.length} required time slots ${verbTense} available. ` +
-            `The consultant needs to add more consecutive time slots to their schedule.`,
+            `The consultant doesn't have enough consecutive availability for this ${slots.length === 2 ? "1-hour" : `${slots.length * 0.5}-hour`} event. ` +
+              `Only ${validSlotCount} of ${slots.length} required time slots ${verbTense} available. ` +
+              `The consultant needs to add more consecutive time slots to their schedule.`,
           );
         } else {
           errors.push(

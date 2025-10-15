@@ -259,7 +259,10 @@ export async function GET(
 
         // Filter out invalid slots, but allow legitimate overnight slots
         if (
-          !isValidOvernightSlot(slot.availabilityStartsAt, slot.availabilityEndsAt)
+          !isValidOvernightSlot(
+            slot.availabilityStartsAt,
+            slot.availabilityEndsAt,
+          )
         ) {
           console.warn(
             `❌ Filtering out invalid weekly slot ${slot.id}: end time ${slot.availabilityEndsAt.toISOString()} <= start time ${slot.availabilityStartsAt.toISOString()}`,
@@ -309,7 +312,10 @@ export async function GET(
 
         // Filter out invalid slots, but allow legitimate overnight slots
         if (
-          !isValidOvernightSlot(slot.availabilityStartsAt, slot.availabilityEndsAt)
+          !isValidOvernightSlot(
+            slot.availabilityStartsAt,
+            slot.availabilityEndsAt,
+          )
         ) {
           console.warn(
             `❌ Filtering out invalid custom slot ${slot.id}: end time ${slot.availabilityEndsAt.toISOString()} <= start time ${slot.availabilityStartsAt.toISOString()}`,

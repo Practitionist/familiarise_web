@@ -71,9 +71,7 @@ export async function GET(
         slotsOfAppointment: appointment.slotsOfAppointment.map((slot) => ({
           id: slot.id,
           slotStartTimeInUTC: new Date(slot.startsAt),
-          slotEndTimeInUTC: slot.endsAt
-            ? new Date(slot.endsAt)
-            : null,
+          slotEndTimeInUTC: slot.endsAt ? new Date(slot.endsAt) : null,
           isTentative: slot.isTentative,
           user: Array.isArray(slot.user)
             ? slot.user.map((u) => ({
@@ -137,7 +135,9 @@ export async function GET(
               startDate: new Date(
                 appointment.subscription.schedulingPeriodStartsAt,
               ).toISOString(),
-              endDate: new Date(appointment.subscription.schedulingPeriodEndsAt).toISOString(),
+              endDate: new Date(
+                appointment.subscription.schedulingPeriodEndsAt,
+              ).toISOString(),
             }
           : undefined,
         webinar: appointment.webinar

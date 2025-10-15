@@ -282,11 +282,8 @@ async function createWebinar(tx: Prisma.TransactionClient, data: any) {
     data: {
       appointmentId: appointment.id,
       startsAt:
-        webinar.appointment?.slotsOfAppointment[0]?.startsAt ||
-        new Date(),
-      endsAt:
-        webinar.appointment?.slotsOfAppointment[0]?.endsAt ||
-        new Date(),
+        webinar.appointment?.slotsOfAppointment[0]?.startsAt || new Date(),
+      endsAt: webinar.appointment?.slotsOfAppointment[0]?.endsAt || new Date(),
       isTentative: false,
       user: { connect: { id: data.userId } },
     },

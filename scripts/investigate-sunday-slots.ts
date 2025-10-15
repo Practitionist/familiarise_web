@@ -74,7 +74,9 @@ async function investigateSundaySlots() {
     console.log(`Plan: ${subscription.subscriptionPlan.title}`);
     console.log(`Status: ${subscription.requestStatus}`);
     console.log(`Client: ${subscription.requestedBy.user.name}`);
-    console.log(`Start: ${subscription.schedulingPeriodStartsAt.toISOString()}`);
+    console.log(
+      `Start: ${subscription.schedulingPeriodStartsAt.toISOString()}`,
+    );
     console.log(`End: ${subscription.schedulingPeriodEndsAt.toISOString()}`);
     console.log(`\nIn IST (UTC+5:30):`);
     console.log(
@@ -199,19 +201,17 @@ async function investigateSundaySlots() {
         console.log(`  August Slots: ${appt.slotsOfAppointment.length}`);
 
         appt.slotsOfAppointment.forEach((slot) => {
-          const dayOfWeek = new Date(
-            slot.startsAt,
-          ).toLocaleDateString("en-US", { weekday: "short" });
-          const istTime = new Date(slot.startsAt).toLocaleString(
-            "en-IN",
-            {
-              timeZone: "Asia/Kolkata",
-              month: "short",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            },
+          const dayOfWeek = new Date(slot.startsAt).toLocaleDateString(
+            "en-US",
+            { weekday: "short" },
           );
+          const istTime = new Date(slot.startsAt).toLocaleString("en-IN", {
+            timeZone: "Asia/Kolkata",
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
           console.log(
             `    ${dayOfWeek} ${istTime} ${slot.isTentative ? "(TENTATIVE)" : "(CONFIRMED)"}`,
           );

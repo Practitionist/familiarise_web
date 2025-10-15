@@ -176,7 +176,9 @@ async function verifyConsultantSlots() {
         console.log(
           `  ⚠️ WARNING: Viewing dates (Oct 5-11, 2025) are AFTER subscription end date!`,
         );
-        console.log(`     Subscription ends: ${sub.schedulingPeriodEndsAt.toISOString()}`);
+        console.log(
+          `     Subscription ends: ${sub.schedulingPeriodEndsAt.toISOString()}`,
+        );
         console.log(`     Current view starts: ${START_DATE.toISOString()}`);
       }
 

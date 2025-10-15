@@ -34,9 +34,7 @@ export function getActualSlots(event: EventWithType): SlotOfAppointment[] {
       // && new Date(slot.startsAt).getFullYear() > PREVIOUS_YEAR // Removed year filter
     )
     .sort(
-      (a, b) =>
-        new Date(a.startsAt).getTime() -
-        new Date(b.startsAt).getTime(),
+      (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
     );
 }
 
@@ -76,9 +74,7 @@ export function getActualUpcomingSlots(events: EventWithType[]): Array<{
       const iSlot: ISlotOfAppointment = {
         id: prismaSlot.id,
         startsAt: new Date(prismaSlot.startsAt),
-        endsAt: prismaSlot.endsAt
-          ? new Date(prismaSlot.endsAt)
-          : null,
+        endsAt: prismaSlot.endsAt ? new Date(prismaSlot.endsAt) : null,
         isTentative: prismaSlot.isTentative,
         // Explicitly set user to empty array as relation is likely missing
         // TODO: Ensure user relation is included in upstream fetch if needed
@@ -153,8 +149,7 @@ export function getActualUpcomingSlots(events: EventWithType[]): Array<{
 
   // Sort the final array
   return allUpcomingItems.sort(
-    (a, b) =>
-      a.slot.startsAt.getTime() - b.slot.startsAt.getTime(),
+    (a, b) => a.slot.startsAt.getTime() - b.slot.startsAt.getTime(),
   );
 }
 
@@ -188,8 +183,7 @@ export function getActualMonthlyEvents(
         )
         .sort(
           (a, b) =>
-            new Date(a.startsAt).getTime() -
-            new Date(b.startsAt).getTime(),
+            new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
         )
         .map((slot) => ({ ...slot /* Add enrichment flags here if needed */ }));
 

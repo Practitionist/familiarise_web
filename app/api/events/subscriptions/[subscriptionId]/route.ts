@@ -344,10 +344,7 @@ export async function PATCH(
 
           // If approved, create appointments
           if (status === RequestStatus.APPROVED) {
-            await createAppointmentsForSubscription(
-              subscription,
-              tx,
-            );
+            await createAppointmentsForSubscription(subscription, tx);
           }
 
           return subscription;
