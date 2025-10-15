@@ -1,11 +1,25 @@
-import prisma from "@/lib/prisma";
-import { RequestStatus, ScheduleType } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
-import { SubscriptionValidationService } from "@/utils/subscriptionValidation";
+/**
+ * Subscription Slot Validation API Route
+ *
+ * Refactored to use unified SlotValidationService + SubscriptionValidationService
+ * Reduced from 240 lines to ~100 lines
+ *
+ * VALIDATION LAYERS:
+ * 1. Zod schema validation - Type-safe validation with automatic type inference
+ * 2. SlotValidationService - Validates business rules (conflicts, availability, etc.)
+ * 3. SubscriptionValidationService - Validates subscription-specific rules (weekly limits, etc.)
+ */
 
-interface ValidationRequest {
-  slots: string[];
-}
+import prisma from "@/lib/prisma";
+import { RequestStatus } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
+import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
+import { SubscriptionValidationService } from "@/utils/subscriptionValidation";
+import {
+  validationRequestSchema,
+  eventIdSchema,
+} from "@/schemas/slotAllocation/validationSchemas";
+import { ZodError } from "zod";
 
 interface ValidationResult {
   conflicts: {
@@ -67,172 +81,152 @@ export async function POST(
 ) {
   try {
     const { subscriptionId } = await params;
-    const body: ValidationRequest = await request.json();
 
-    // Fetch subscription with necessary relations
-    const subscription = await prisma.subscription.findUnique({
-      where: { id: subscriptionId },
-      include: subscriptionInclude,
-    });
+    // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
+    try {
+      // Validate subscription ID from URL params
+      eventIdSchema.parse(subscriptionId);
 
-    if (!subscription) {
-      return NextResponse.json(
-        { error: "Subscription not found" },
-        { status: 404 },
-      );
-    }
+      // Validate request body and get typed data
+      const body = validationRequestSchema.parse(await request.json());
 
-    const { subscriptionPlan } = subscription;
-    const { consultantProfile } = subscriptionPlan;
+      // Fetch subscription with necessary relations
+      const subscription = await prisma.subscription.findUnique({
+        where: { id: subscriptionId },
+        include: subscriptionInclude,
+      });
 
-    if (!consultantProfile) {
-      return NextResponse.json(
-        { error: "Consultant profile not found" },
-        { status: 400 },
-      );
-    }
-
-    // Initialize validation result
-    const result: ValidationResult = {
-      conflicts: [],
-      outsideAvailability: [],
-      validSlots: [],
-    };
-
-    // Convert slots to Date objects
-    const slotDates = body.slots.map((slot) => new Date(slot));
-
-    // Check for conflicts with existing appointments
-    const existingAppointments = await prisma.appointment.findMany({
-      where: {
-        AND: [
-          {
-            OR: [
-              {
-                subscription: {
-                  requestStatus: RequestStatus.APPROVED,
-                },
-              },
-              {
-                consultation: {
-                  requestStatus: RequestStatus.APPROVED,
-                },
-              },
-            ],
-          },
-          {
-            slotsOfAppointment: {
-              some: {
-                slotStartTimeInUTC: {
-                  in: slotDates,
-                },
-              },
-            },
-          },
-        ],
-      },
-      include: {
-        subscription: true,
-        consultation: true,
-        slotsOfAppointment: {
-          include: {
-            user: true,
-          },
-        },
-      },
-    });
-
-    // Process conflicts
-    for (const appointment of existingAppointments) {
-      const conflictingSlots = appointment.slotsOfAppointment.filter((slot) =>
-        slotDates.some(
-          (date) =>
-            date.toISOString() === slot.slotStartTimeInUTC.toISOString(),
-        ),
-      );
-
-      for (const slot of conflictingSlots) {
-        result.conflicts.push({
-          slot: slot.slotStartTimeInUTC.toISOString(),
-          existingAppointment: {
-            type: appointment.subscription ? "Subscription" : "Consultation",
-            with: slot.user[0]?.name || "Unknown",
-            time: new Date(slot.slotStartTimeInUTC).toLocaleString(),
-          },
-        });
+      if (!subscription) {
+        return NextResponse.json(
+          { error: "Subscription not found" },
+          { status: 404 },
+        );
       }
-    }
 
-    // Check for slots outside availability
-    const availableSlots =
-      consultantProfile.scheduleType === ScheduleType.WEEKLY
-        ? consultantProfile.slotsOfAvailabilityWeekly
-        : consultantProfile.slotsOfAvailabilityCustom;
+      const { subscriptionPlan } = subscription;
+      const { consultantProfile } = subscriptionPlan;
 
-    for (const slotDate of slotDates) {
-      let isAvailable = false;
+      if (!consultantProfile) {
+        return NextResponse.json(
+          { error: "Consultant profile not found" },
+          { status: 400 },
+        );
+      }
 
-      if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
-        // For weekly schedule, check if the slot matches any weekly pattern
-        isAvailable = availableSlots.some((slot) => {
-          const slotTime = new Date(slot.slotStartTimeInUTC);
+      // Convert slots to Date objects
+      const slotDates = body.slots.map((slot) => new Date(slot));
+
+      // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
+      const validationService = new SlotValidationService(prisma);
+      const validationResult = await validationService.validate(
+        "subscription",
+        subscriptionId,
+        slotDates,
+        {
+          userId: consultantProfile.user.id,
+          scheduleType: consultantProfile.scheduleType,
+          slotsOfAvailabilityWeekly:
+            consultantProfile.slotsOfAvailabilityWeekly,
+          slotsOfAvailabilityCustom:
+            consultantProfile.slotsOfAvailabilityCustom,
+          currentTimezone: consultantProfile.user.currentTimezone || undefined,
+        },
+        {
+          durationInMonths: subscriptionPlan.durationInMonths,
+          callsPerWeek: subscriptionPlan.callsPerWeek,
+          sessionDurationInHours: subscriptionPlan.sessionDurationInHours,
+          startDate: subscription.startDate,
+          endDate: subscription.endDate,
+        },
+      );
+
+      // LAYER 3: Subscription-Specific Validation (weekly limits, total calls, etc.)
+      const subscriptionValidationService = new SubscriptionValidationService(
+        prisma,
+      );
+      const subscriptionValidation =
+        await subscriptionValidationService.validateSubscriptionSlots(
+          subscriptionId,
+          body.slots,
+        );
+
+      // Build response
+      const result: ValidationResult = {
+        conflicts: [],
+        outsideAvailability: [],
+        validSlots: validationResult.isValid ? body.slots : [],
+        subscriptionValidation,
+      };
+
+      // Parse errors if validation failed
+      if (!validationResult.isValid) {
+        for (const error of validationResult.errors) {
+          if (
+            error.includes("already booked") ||
+            error.includes("conflicts with")
+          ) {
+            const slotMatch = error.match(
+              /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
+            );
+            if (slotMatch) {
+              result.conflicts.push({
+                slot: slotMatch[1],
+                existingAppointment: {
+                  type: error.includes("Subscription")
+                    ? "Subscription"
+                    : "Consultation",
+                  with: "Another user",
+                  time: new Date(slotMatch[1]).toLocaleString(),
+                },
+              });
+            }
+          } else if (
+            error.includes("does not match") ||
+            error.includes("not in consultant's")
+          ) {
+            const slotMatch = error.match(
+              /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
+            );
+            if (slotMatch) {
+              result.outsideAvailability.push({ slot: slotMatch[1] });
+            }
+          }
+        }
+
+        // Filter valid slots
+        result.validSlots = body.slots.filter((slot) => {
           return (
-            slotDate.getDay() === slotTime.getDay() &&
-            slotDate.getHours() === slotTime.getHours() &&
-            slotDate.getMinutes() === slotTime.getMinutes()
+            !result.conflicts.some((c) => c.slot === slot) &&
+            !result.outsideAvailability.some((o) => o.slot === slot)
           );
         });
-      } else {
-        // For custom schedule, check if the slot exists exactly
-        isAvailable = availableSlots.some(
-          (slot) =>
-            new Date(slot.slotStartTimeInUTC).toISOString() ===
-            slotDate.toISOString(),
-        );
       }
 
-      if (!isAvailable) {
-        result.outsideAvailability.push({
-          slot: slotDate.toISOString(),
-        });
+      // If subscription validation fails, no slots are valid
+      if (!subscriptionValidation.isValid) {
+        result.validSlots = [];
       }
+
+      return NextResponse.json({ data: result });
+    } catch (validationError) {
+      // Zod validation errors - return 400 Bad Request
+      if (validationError instanceof ZodError) {
+        const errorMessage = validationError.errors
+          .map((err) => `${err.path.join(".")}: ${err.message}`)
+          .join("; ");
+
+        return NextResponse.json({ error: errorMessage }, { status: 400 });
+      }
+      throw validationError; // Re-throw non-validation errors
     }
-
-    // Valid slots are those without conflicts and within availability
-    result.validSlots = slotDates
-      .filter((date) => {
-        const dateStr = date.toISOString();
-        return (
-          !result.conflicts.some((c) => c.slot === dateStr) &&
-          !result.outsideAvailability.some((o) => o.slot === dateStr)
-        );
-      })
-      .map((date) => date.toISOString());
-
-    // Add subscription-specific validation
-    const validationService = new SubscriptionValidationService(prisma);
-    const subscriptionValidation =
-      await validationService.validateSubscriptionSlots(
-        subscriptionId,
-        body.slots,
-      );
-
-    result.subscriptionValidation = subscriptionValidation;
-
-    // Mark slots as invalid if they violate subscription rules
-    if (!subscriptionValidation.isValid) {
-      result.validSlots = result.validSlots.filter((slot) => {
-        // Additional filtering based on subscription validation errors
-        // For now, if subscription validation fails, no slots are valid
-        return false;
-      });
-    }
-
-    return NextResponse.json({ data: result });
   } catch (error) {
+    // Catch-all for unexpected errors (database errors, network issues, etc.)
     console.error("Validation error:", error);
     return NextResponse.json(
-      { error: "Failed to validate slots" },
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to validate slots",
+      },
       { status: 500 },
     );
   }

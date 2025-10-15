@@ -1,4 +1,3 @@
-import { AppointmentsType } from "@prisma/client";
 import { TimeSlot } from "./calendarUtils";
 
 export interface AllocationRequest {
@@ -35,7 +34,35 @@ export interface ValidationResponse {
 }
 
 /**
- * Service class for handling slot allocation and validation API calls
+ * AllocationService - Pure API Client for Event Slot Management
+ *
+ * Handles all HTTP communication for slot allocation, validation,
+ * and related operations. This is a pure API client with no business logic.
+ *
+ * Features:
+ * - Slot allocation for consultations, subscriptions, webinars, classes
+ * - Slot validation with conflict and availability checking
+ * - Consultant data and availability fetching
+ * - Appointment querying
+ * - Consistent error handling and response format
+ *
+ * @example
+ * ```ts
+ * // Allocate slots
+ * const result = await AllocationService.allocateSlots(
+ *   "consultation",
+ *   consultationId,
+ *   slots,
+ *   { isAuto: false }
+ * );
+ *
+ * // Validate slots
+ * const validation = await AllocationService.validateSlots(
+ *   "subscription",
+ *   subscriptionId,
+ *   slots
+ * );
+ * ```
  */
 export class AllocationService {
   /**
@@ -211,7 +238,7 @@ export class AllocationService {
    */
   static async allocateWebinarSlots(
     webinarId: string,
-    slots: string[],
+    request: AllocationRequest,
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(
@@ -221,7 +248,7 @@ export class AllocationService {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ slots }),
+          body: JSON.stringify(request),
         },
       );
 
@@ -253,7 +280,7 @@ export class AllocationService {
    */
   static async allocateClassSlots(
     classId: string,
-    slots: string[],
+    request: AllocationRequest,
   ): Promise<AllocationResponse> {
     try {
       const response = await fetch(`/api/events/classes/${classId}/allocate`, {
@@ -261,7 +288,7 @@ export class AllocationService {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ slots }),
+        body: JSON.stringify(request),
       });
 
       const data = await response.json();
@@ -301,26 +328,25 @@ export class AllocationService {
   ): Promise<AllocationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
 
+    // Build the request object consistently for all event types
+    const request: AllocationRequest = {
+      isAuto: allocationOptions?.isAuto || false,
+      slots: slotStrings,
+      useRequestedSlots: allocationOptions?.useRequestedSlots,
+    };
+
     switch (eventType) {
       case "consultation":
-        return this.allocateConsultationSlots(eventId, {
-          isAuto: allocationOptions?.isAuto || false,
-          slots: slotStrings,
-          useRequestedSlots: allocationOptions?.useRequestedSlots,
-        });
+        return this.allocateConsultationSlots(eventId, request);
 
       case "subscription":
-        return this.allocateSubscriptionSlots(eventId, {
-          isAuto: allocationOptions?.isAuto || false,
-          slots: slotStrings,
-          useRequestedSlots: allocationOptions?.useRequestedSlots,
-        });
+        return this.allocateSubscriptionSlots(eventId, request);
 
       case "webinar":
-        return this.allocateWebinarSlots(eventId, slotStrings);
+        return this.allocateWebinarSlots(eventId, request);
 
       case "class":
-        return this.allocateClassSlots(eventId, slotStrings);
+        return this.allocateClassSlots(eventId, request);
 
       default:
         return {
@@ -331,14 +357,100 @@ export class AllocationService {
   }
 
   /**
+   * Validates slots for classes
+   */
+  static async validateClassSlots(
+    classId: string,
+    slots: string[],
+  ): Promise<ValidationResponse> {
+    try {
+      const response = await fetch(`/api/events/classes/${classId}/validate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ slots }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || "Failed to validate class slots",
+        };
+      }
+
+      return {
+        success: true,
+        data: data.data,
+      };
+    } catch (error) {
+      console.error("Error validating class slots:", error);
+      return {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
+      };
+    }
+  }
+
+  /**
+   * Validates slots for webinars
+   */
+  static async validateWebinarSlots(
+    webinarId: string,
+    slots: string[],
+  ): Promise<ValidationResponse> {
+    try {
+      const response = await fetch(
+        `/api/events/webinars/${webinarId}/validate`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ slots }),
+        },
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || "Failed to validate webinar slots",
+        };
+      }
+
+      return {
+        success: true,
+        data: data.data,
+      };
+    } catch (error) {
+      console.error("Error validating webinar slots:", error);
+      return {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Network error occurred",
+      };
+    }
+  }
+
+  /**
    * Generic validation method that routes to the appropriate service
    */
   static async validateSlots(
-    eventType: "consultation" | "subscription",
+    eventType: "consultation" | "subscription" | "webinar" | "class",
     eventId: string,
     slots: TimeSlot[],
   ): Promise<ValidationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
+
+    console.log(`[AllocationService] Validating ${slotStrings.length} slots for ${eventType}:`, {
+      eventId,
+      slots: slotStrings.slice(0, 3), // Log first 3 for debugging
+    });
 
     switch (eventType) {
       case "consultation":
@@ -346,6 +458,12 @@ export class AllocationService {
 
       case "subscription":
         return this.validateSubscriptionSlots(eventId, slotStrings);
+
+      case "class":
+        return this.validateClassSlots(eventId, slotStrings);
+
+      case "webinar":
+        return this.validateWebinarSlots(eventId, slotStrings);
 
       default:
         return {
@@ -466,10 +584,11 @@ export class AllocationService {
   }
 
   /**
-   * Fetches specific event slots
+   * Fetches specific event slots for any event type
+   * Used to display "This Event" (black) instead of "Booked" (gray) in calendar
    */
   static async fetchEventSlots(
-    eventType: "webinar" | "class",
+    eventType: "consultation" | "subscription" | "webinar" | "class",
     eventId: string,
   ) {
     try {
@@ -477,10 +596,15 @@ export class AllocationService {
         type: eventType.toUpperCase(),
       });
 
+      // Add the appropriate ID parameter based on event type
       if (eventType === "webinar") {
         params.append("webinarId", eventId);
-      } else {
+      } else if (eventType === "class") {
         params.append("classId", eventId);
+      } else if (eventType === "subscription") {
+        params.append("subscriptionId", eventId);
+      } else if (eventType === "consultation") {
+        params.append("consultationId", eventId);
       }
 
       const response = await fetch(`/api/slots/appointments?${params}`);

@@ -31,6 +31,8 @@ export interface AllocationOptions {
   callsPerWeek?: number;
   sessionDurationInHours?: number;
   durationInHours?: number; // FIXED: Add durationInHours for consultations and webinars
+  startDate?: Date; // Required for subscriptions and classes
+  endDate?: Date; // Required for subscriptions and classes
   requestedSlots?: TimeSlot[];
 }
 
@@ -78,6 +80,8 @@ export class AllocationAlgorithms {
         options.durationInMonths,
         options.callsPerWeek,
         options.sessionDurationInHours,
+        options.startDate,
+        options.endDate,
       );
 
       if (selectedSlots.length !== requiredSlots) {
@@ -198,14 +202,17 @@ export class AllocationAlgorithms {
         options.durationInMonths,
         options.callsPerWeek,
         options.sessionDurationInHours,
+        options.startDate,
+        options.endDate,
       );
 
-      // console.log("🤖 Auto-allocation started:", {
-      // eventType: options.eventType,
-      // requiredSlots,
-      // availableSlots: availableSlots.length,
-      // preferences,
-      // });
+      console.log("🤖 Auto-allocation started:", {
+        eventType: options.eventType,
+        requiredSlots,
+        availableSlots: availableSlots.length,
+        options,
+        preferences,
+      });
 
       let selectedSlots: TimeSlot[] = [];
       let strategy = "";
@@ -296,11 +303,11 @@ export class AllocationAlgorithms {
         };
       }
 
-      // console.log("✅ Auto-allocation successful:", {
-      //   strategy,
-      //   slotsAllocated: selectedSlots.length,
-      //   selectedTimes: selectedSlots.map((s) => s.startTime.toISOString()),
-      // });
+      console.log("✅ Auto-allocation successful:", {
+        strategy,
+        slotsAllocated: selectedSlots.length,
+        selectedTimes: selectedSlots.map((s) => s.startTime.toISOString()),
+      });
 
       return {
         success: true,
@@ -338,6 +345,8 @@ export class AllocationAlgorithms {
         options.durationInMonths,
         options.callsPerWeek,
         options.sessionDurationInHours,
+        options.startDate,
+        options.endDate,
       );
 
       if (options.requestedSlots.length !== requiredSlots) {

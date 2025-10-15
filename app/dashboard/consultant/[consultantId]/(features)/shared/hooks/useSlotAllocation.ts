@@ -533,9 +533,15 @@ function validateEventSlots(
   switch (eventType) {
     case "webinar":
       result.consecutiveSlotsValid = validateConsecutiveSlots(slots);
-      if (!result.consecutiveSlotsValid) {
+
+      // Only enforce error if user has selected all required slots
+      if (slots.length >= limits.minSlots && !result.consecutiveSlotsValid) {
         result.isValid = false;
         result.errors.push("Webinar slots must be consecutive");
+      } else if (!result.consecutiveSlotsValid && slots.length > 1) {
+        result.warnings.push(
+          "Select consecutive slots to complete the webinar",
+        );
       }
       break;
 
@@ -1832,6 +1838,8 @@ export function useEventSlotAllocation(
         durationInMonths: options.durationInMonths,
         callsPerWeek: options.callsPerWeek,
         sessionDurationInHours: sessionDuration,
+        startDate: options.startDate,
+        endDate: options.endDate,
       };
 
       const result = await AllocationAlgorithms.manualAllocate(
@@ -1848,12 +1856,22 @@ export function useEventSlotAllocation(
       } else {
         const errorMessage = result.error || "Manual allocation failed";
         setAllocationError(errorMessage);
+        toast({
+          variant: "destructive",
+          title: "Allocation Failed",
+          description: errorMessage,
+        });
         onError?.(errorMessage);
       }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Allocation failed";
       setAllocationError(errorMessage);
+      toast({
+        variant: "destructive",
+        title: "Allocation Error",
+        description: errorMessage,
+      });
       onError?.(errorMessage);
     } finally {
       setIsAllocating(false);
@@ -1890,6 +1908,8 @@ export function useEventSlotAllocation(
           durationInMonths: options.durationInMonths,
           callsPerWeek: options.callsPerWeek,
           sessionDurationInHours: sessionDuration,
+          startDate: options.startDate,
+          endDate: options.endDate,
         };
 
         const result = await AllocationAlgorithms.autoAllocate(
@@ -1907,12 +1927,22 @@ export function useEventSlotAllocation(
         } else {
           const errorMessage = result.error || "Auto allocation failed";
           setAllocationError(errorMessage);
+          toast({
+            title: "Auto Allocation Failed",
+            description: errorMessage,
+            variant: "destructive",
+          });
           onError?.(errorMessage);
         }
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Auto allocation failed";
         setAllocationError(errorMessage);
+        toast({
+          title: "Error",
+          description: errorMessage,
+          variant: "destructive",
+        });
         onError?.(errorMessage);
       } finally {
         setIsAllocating(false);
@@ -1941,6 +1971,8 @@ export function useEventSlotAllocation(
           durationInMonths: options.durationInMonths,
           callsPerWeek: options.callsPerWeek,
           sessionDurationInHours: sessionDuration,
+          startDate: options.startDate,
+          endDate: options.endDate,
           requestedSlots,
         };
 

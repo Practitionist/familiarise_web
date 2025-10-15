@@ -341,10 +341,10 @@ export function formatSlotsForAPI(slots: TimeSlot[]): string[] {
  * For different event types:
  * - CONSULTATIONS: Returns slots needed for the session duration (e.g., 2 slots for 1 hour)
  * - WEBINARS: Returns slots needed for the session duration (e.g., 2 slots for 1 hour)
- * - CLASSES: Returns slots needed for the session duration (e.g., 2 slots for 1 hour)
- * - SUBSCRIPTIONS: Computes weeks → calls → slots (based on 30-min increments)
- *   - Uses Sunday-to-Saturday week boundaries when start/end dates are provided
- *   - Falls back to average weeks per month (4.33) when dates are not provided
+ * - CLASSES: Computes weeks → sessions → slots using Sunday-boundary week counting
+ *   - Requires startDate and endDate
+ * - SUBSCRIPTIONS: Computes weeks → calls → slots using Sunday-boundary week counting
+ *   - Requires startDate and endDate
  *
  * Example: A 6-month subscription with 3 calls/week and 1-hour sessions:
  * - Weeks: 26 (using Sunday boundaries)
@@ -368,7 +368,7 @@ export function calculateRequiredSlots(
     case "consultation":
       // For consultations, calculate based on session duration
       if (!sessionDurationInHours || sessionDurationInHours <= 0) {
-        throw new Error("Consultation duration must be a positive number");
+        return Math.ceil(1 / 0.5); // Default 1 hour = 2 slots
       }
       return Math.ceil(sessionDurationInHours / 0.5); // 30-minute intervals
 
@@ -380,34 +380,36 @@ export function calculateRequiredSlots(
       return Math.ceil(sessionDurationInHours / 0.5); // 30-minute intervals
 
     case "subscription": {
-      // Prefer exact Sunday-boundary week counting when dates are provided
-      if (startDate && endDate) {
-        if (sessionDurationInHours && sessionDurationInHours <= 0) {
-          throw new Error(
-            "Session duration must be a positive number for subscriptions",
-          );
-        }
-        // totalWeeks = number of distinct Sunday-start weeks overlapping [startDate, endDate]
-        const totalWeeks = countSundayWeeksInclusive(startDate, endDate);
-        const totalCalls = totalWeeks * (callsPerWeek || 1);
-        // slotsPerCall = number of 30-minute slots per call
-        const slotsPerCall = Math.ceil((sessionDurationInHours || 1) / 0.5);
-        // Return total slots for the entire subscription
-        return totalCalls * slotsPerCall;
+      if (!startDate || !endDate) {
+        throw new Error(
+          "Start date and end date are required for subscription slot calculation",
+        );
       }
-      // Fallback to average weeks per month when dates are not provided
-      const weeksPerMonth = 4.33;
-      const totalWeeks = Math.ceil((durationInMonths || 0) * weeksPerMonth);
-      const totalCalls = totalWeeks * (callsPerWeek || 1);
+
+      if (sessionDurationInHours && sessionDurationInHours <= 0) {
+        throw new Error(
+          "Session duration must be a positive number for subscriptions",
+        );
+      }
+
       const slotsPerCall = Math.ceil((sessionDurationInHours || 1) / 0.5);
+      const totalWeeks = countSundayWeeksInclusive(startDate, endDate);
+      const totalCalls = totalWeeks * (callsPerWeek || 1);
       return totalCalls * slotsPerCall;
     }
 
     case "class": {
       // Number of slots required = (weeks × classesPerWeek) × slotsPerSession
+      if (!startDate || !endDate) {
+        throw new Error(
+          "Start date and end date are required for class slot calculation",
+        );
+      }
+
       if (!callsPerWeek || callsPerWeek <= 0) {
         throw new Error("Calls per week must be a positive number for classes");
       }
+
       if (!sessionDurationInHours || sessionDurationInHours <= 0) {
         throw new Error(
           "Session duration must be a positive number for classes",
@@ -415,18 +417,8 @@ export function calculateRequiredSlots(
       }
 
       const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5);
-
-      // Prefer exact Sunday-boundary week counting when dates are provided
-      if (startDate && endDate) {
-        const totalWeeks = countSundayWeeksInclusive(startDate, endDate);
-        const totalSessions = totalWeeks * (callsPerWeek || 1);
-        return totalSessions * slotsPerSession;
-      }
-
-      // Fallback to average weeks per month when dates are not provided
-      const weeksPerMonth = 4.33;
-      const totalWeeks = Math.ceil((durationInMonths || 0) * weeksPerMonth);
-      const totalSessions = totalWeeks * (callsPerWeek || 1);
+      const totalWeeks = countSundayWeeksInclusive(startDate, endDate);
+      const totalSessions = totalWeeks * callsPerWeek;
       return totalSessions * slotsPerSession;
     }
 
@@ -717,8 +709,8 @@ export function validateDayBasedConsecutiveSlots(slots: TimeSlot[]): boolean {
 }
 
 /**
- * NEW: Calculates call progress for subscriptions
- * Returns a string showing progress of calls completed vs total calls needed
+ * Calculates call progress for subscriptions
+ * Returns a clean, organized string showing progress with visual hierarchy
  */
 export function calculateCallProgress(
   slots: TimeSlot[],
@@ -729,11 +721,11 @@ export function calculateCallProgress(
     return "No slots selected";
   }
 
-  const slotsPerCall = Math.ceil((sessionDurationInHours || 1) / 0.5); // 30-minute intervals
+  const slotsPerCall = Math.ceil((sessionDurationInHours || 1) / 0.5);
   const completedCalls = Math.floor(slots.length / slotsPerCall);
   const incompleteCallSlots = slots.length % slotsPerCall;
 
-  // Group by day to show daily progress
+  // Group by day
   const slotsByDay = new Map<string, TimeSlot[]>();
   slots.forEach((slot) => {
     const dayKey = slot.startTime.toDateString();
@@ -743,32 +735,38 @@ export function calculateCallProgress(
     slotsByDay.get(dayKey)!.push(slot);
   });
 
-  const daysWithSlots = Array.from(slotsByDay.entries()).filter(
-    ([_, daySlots]) => daySlots.length > 0,
+  const incompleteDays = Array.from(slotsByDay.entries()).filter(
+    ([_, daySlots]) => daySlots.length > 0 && daySlots.length < slotsPerCall,
   );
 
-  let progressText = `${completedCalls} call${completedCalls !== 1 ? "s" : ""} completed`;
+  // Build clean, multi-line progress text
+  const lines: string[] = [];
 
+  // Line 1: Main progress
   if (maxTotalCalls) {
-    progressText += ` of ${maxTotalCalls} total`;
-  }
-
-  if (incompleteCallSlots > 0) {
-    progressText += `, ${incompleteCallSlots} slot${incompleteCallSlots !== 1 ? "s" : ""} remaining for next call`;
-  }
-
-  if (daysWithSlots.length > 0) {
-    const incompleteDays = daysWithSlots.filter(
-      ([_, daySlots]) => daySlots.length > 0 && daySlots.length < slotsPerCall,
+    lines.push(`✅ ${completedCalls}/${maxTotalCalls} calls scheduled`);
+  } else {
+    lines.push(
+      `✅ ${completedCalls} call${completedCalls !== 1 ? "s" : ""} scheduled`,
     );
-
-    if (incompleteDays.length > 0) {
-      const incompleteDay = incompleteDays[0][0];
-      const incompleteDaySlots = incompleteDays[0][1];
-      const needed = slotsPerCall - incompleteDaySlots.length;
-      progressText += ` | Call on ${incompleteDay} needs ${needed} more consecutive slots`;
-    }
   }
 
-  return progressText;
+  // Line 2: Incomplete call warning (if applicable)
+  if (incompleteCallSlots > 0 && incompleteDays.length > 0) {
+    const [incompleteDay, incompleteDaySlots] = incompleteDays[0];
+    const needed = slotsPerCall - incompleteDaySlots.length;
+    const date = new Date(incompleteDay).toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    const duration = sessionDurationInHours || 1;
+    const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
+
+    lines.push(
+      `⚠️ ${date}: Add ${needed} more slot${needed !== 1 ? "s" : ""} to complete ${durationText} call`,
+    );
+  }
+
+  return lines.join(" | ");
 }

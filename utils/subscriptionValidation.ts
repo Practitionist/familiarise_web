@@ -269,10 +269,20 @@ export class SubscriptionValidationService {
         (a, b) => a.getTime() - b.getTime(),
       );
 
+      // FIX: Use 1-second tolerance for floating-point precision issues
+      // Matches SlotValidationService behavior for consistency
+      // WHY: Date arithmetic and timezone conversions can introduce sub-second precision errors
+      const TOLERANCE_MS = 1000; // 1 second tolerance
+
       for (let i = 1; i < sortedSlots.length; i++) {
         const prevEnd = new Date(sortedSlots[i - 1].getTime() + 30 * 60 * 1000); // Add 30 min
         const currentStart = sortedSlots[i];
-        if (currentStart.getTime() !== prevEnd.getTime()) return false;
+        const timeDiff = Math.abs(currentStart.getTime() - prevEnd.getTime());
+
+        // Use tolerance instead of exact equality
+        if (timeDiff > TOLERANCE_MS) {
+          return false;
+        }
       }
 
       return true;
@@ -300,6 +310,14 @@ export class SubscriptionValidationService {
 
   /**
    * Generates weekly information for the entire subscription period
+   *
+   * SAFETY: Includes maximum iteration limit to prevent infinite loops
+   * in case of malformed dates or bugs in date-fns library.
+   *
+   * MAX_WEEKS = 520 weeks = 10 years
+   * - Reasonable upper bound for any subscription
+   * - Protects against infinite loops from bad data
+   * - Example malformed dates: startDate="3000-01-01", endDate="2020-01-01"
    */
   private generateWeeklyInfo(
     subscriptionStart: Date,
@@ -308,10 +326,25 @@ export class SubscriptionValidationService {
     existingCalls: Map<string, number>,
     proposedCalls: Map<string, number>,
   ): WeeklyCallInfo[] {
+    // FIX: Add maximum iteration limit to prevent infinite loops
+    const MAX_WEEKS = 520; // 10 years - reasonable upper bound for subscriptions
+    let weekCount = 0;
+
     const weeklyInfo: WeeklyCallInfo[] = [];
     let currentWeek = startOfWeek(subscriptionStart);
 
     while (currentWeek <= subscriptionEnd) {
+      weekCount++;
+
+      // Safety check: prevent infinite loops from malformed dates
+      if (weekCount > MAX_WEEKS) {
+        throw new Error(
+          `Subscription period exceeds maximum duration (${MAX_WEEKS} weeks / 10 years). ` +
+            `Start: ${subscriptionStart.toISOString()}, End: ${subscriptionEnd.toISOString()}. ` +
+            `Please verify the subscription dates are correct.`,
+        );
+      }
+
       const weekEnd = endOfWeek(currentWeek);
       const weekKey = currentWeek.toISOString();
 
