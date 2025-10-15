@@ -102,13 +102,13 @@ export default function Profile() {
   };
 
   return (
-    <div className="flex justify-center items-center min-h-screen px-4 py-20 md:py-30 lg:py-30 xl:py-40">
+    <div className="flex justify-center items-center min-h-screen bg-gray-900 px-4 py-20 md:py-30 lg:py-30 xl:py-40">
       <div className="max-w-4xl w-full space-y-8">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <Card>
+          <Card className="bg-gray-800 border-gray-700">
             <CardHeader>
-              <CardTitle>Profile Information</CardTitle>
-              <CardDescription>
+              <CardTitle className="text-white">Profile Information</CardTitle>
+              <CardDescription className="text-gray-400">
                 View and update your personal information.
               </CardDescription>
             </CardHeader>
@@ -124,10 +124,10 @@ export default function Profile() {
                 </Avatar>
 
                 <div>
-                  <p className="text-lg font-medium">
+                  <p className="text-lg font-medium text-white">
                     {session?.user?.name || ""}
                   </p>
-                  <p className="text-sm text-gray-500">Full Name</p>
+                  <p className="text-sm text-gray-400">Full Name</p>
                 </div>
                 <Dialog>
                   <DialogTrigger asChild>
@@ -135,10 +135,12 @@ export default function Profile() {
                       Upload Profile Picture
                     </Button>
                   </DialogTrigger>
-                  <DialogContent className="sm:max-w-[425px] bg-white shadow-lg rounded-lg p-6">
+                  <DialogContent className="sm:max-w-[425px] bg-gray-800 border-gray-700 shadow-lg rounded-lg p-6">
                     <DialogHeader>
-                      <DialogTitle>Update Profile Picture</DialogTitle>
-                      <DialogDescription>
+                      <DialogTitle className="text-white">
+                        Update Profile Picture
+                      </DialogTitle>
+                      <DialogDescription className="text-gray-400">
                         Upload a new profile picture to update your account.
                       </DialogDescription>
                     </DialogHeader>
@@ -152,15 +154,22 @@ export default function Profile() {
                             width={100}
                             height={100}
                           />
-                          <p className="mt-2 text-sm text-muted-foreground">
+                          <p className="mt-2 text-sm text-gray-400">
                             Preview of selected image
                           </p>
                         </div>
                         <div className="flex flex-col space-y-1.5">
-                          <Label htmlFor="profile-picture">
+                          <Label
+                            htmlFor="profile-picture"
+                            className="text-white"
+                          >
                             Profile Picture
                           </Label>
-                          <Input id="profile-picture" type="file" />
+                          <Input
+                            id="profile-picture"
+                            type="file"
+                            className="bg-gray-700 border-gray-600 text-white"
+                          />
                         </div>
                       </div>
                     </div>
@@ -181,15 +190,19 @@ export default function Profile() {
                 <div className="flex items-center">
                   <MailIcon className="w-5 h-5 text-gray-400 mr-2" />
                   <div>
-                    <p className="text-sm font-medium">Address</p>
-                    <p className="text-sm">{session?.user?.address || ""}</p>
+                    <p className="text-sm font-medium text-white">Address</p>
+                    <p className="text-sm text-gray-400">
+                      {session?.user?.address || ""}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center">
                   <PhoneIcon className="w-5 h-5 text-gray-400 mr-2" />
                   <div>
-                    <p className="text-sm font-medium">Phone</p>
-                    <p className="text-sm">{session?.user?.phone ?? ""}</p>
+                    <p className="text-sm font-medium text-white">Phone</p>
+                    <p className="text-sm text-gray-400">
+                      {session?.user?.phone ?? ""}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -201,47 +214,55 @@ export default function Profile() {
                     Update Information
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-[450px] bg-white shadow-lg rounded-lg p-6">
+                <DialogContent className="sm:max-w-[450px] bg-gray-800 border-gray-700 shadow-lg rounded-lg p-6">
                   <DialogHeader>
-                    <DialogTitle>Update Information</DialogTitle>
-                    <DialogDescription>
+                    <DialogTitle className="text-white">
+                      Update Information
+                    </DialogTitle>
+                    <DialogDescription className="text-gray-400">
                       Update your personal information below.
                     </DialogDescription>
                   </DialogHeader>
                   <form onSubmit={handleUpdateProfile}>
                     <div className="grid gap-4 py-4">
                       <div className="grid grid-cols-4 items-center gap-4">
-                        <Label htmlFor="name" className="text-right">
+                        <Label htmlFor="name" className="text-right text-white">
                           Full Name
                         </Label>
                         <Input
                           id="name"
                           placeholder="John Doe"
-                          className="col-span-3"
+                          className="col-span-3 bg-gray-700 border-gray-600 text-white"
                           value={name}
                           onChange={(e) => setName(e.target.value)}
                         />
                       </div>
                       <div className="grid grid-cols-4 items-center gap-4">
-                        <Label htmlFor="phone" className="text-right">
+                        <Label
+                          htmlFor="phone"
+                          className="text-right text-white"
+                        >
                           Phone
                         </Label>
                         <Input
                           id="phone"
                           placeholder="+1 (555) 555-5555"
-                          className="col-span-3"
+                          className="col-span-3 bg-gray-700 border-gray-600 text-white"
                           value={phone}
                           onChange={(e) => setPhone(e.target.value)}
                         />
                       </div>
                       <div className="grid grid-cols-4 items-center gap-4">
-                        <Label htmlFor="address" className="text-right">
+                        <Label
+                          htmlFor="address"
+                          className="text-right text-white"
+                        >
                           Address
                         </Label>
                         <Input
                           id="address"
                           placeholder="1234 Elm Street"
-                          className="col-span-3"
+                          className="col-span-3 bg-gray-700 border-gray-600 text-white"
                           value={address}
                           onChange={(e) => setAddress(e.target.value)}
                         />
@@ -260,10 +281,10 @@ export default function Profile() {
               </Dialog>
             </CardFooter>
           </Card>
-          <Card>
+          <Card className="bg-gray-800 border-gray-700">
             <CardHeader>
-              <CardTitle>Account Settings</CardTitle>
-              <CardDescription>
+              <CardTitle className="text-white">Account Settings</CardTitle>
+              <CardDescription className="text-gray-400">
                 Manage your account settings and preferences.
               </CardDescription>
             </CardHeader>
@@ -274,18 +295,21 @@ export default function Profile() {
                   <AvatarFallback>JP</AvatarFallback>
                 </Avatar>
                 <div>
-                  <p className="text-sm font-medium">Current User</p>
-                  <p className="text-sm text-gray-500">user@example.com</p>
+                  <p className="text-sm font-medium text-white">Current User</p>
+                  <p className="text-sm text-gray-400">user@example.com</p>
                 </div>
               </div>
               <div className="space-y-4">
                 <div className="flex items-center">
                   <SettingsIcon className="w-5 h-5 text-gray-400 mr-2" />
                   <div>
-                    <Link className="text-sm font-medium underline" href="#">
+                    <Link
+                      className="text-sm font-medium underline text-white"
+                      href="#"
+                    >
                       Logout of all devices
                     </Link>
-                    <p className="text-sm text-gray-500">
+                    <p className="text-sm text-gray-400">
                       This will logout your account from all devices.
                     </p>
                   </div>
@@ -299,7 +323,7 @@ export default function Profile() {
                     >
                       Delete Account
                     </Link>
-                    <p className="text-sm text-gray-500">
+                    <p className="text-sm text-gray-400">
                       This will permanently delete your account.
                     </p>
                   </div>
@@ -313,13 +337,13 @@ export default function Profile() {
             </CardFooter>
           </Card>
         </div>
-        <Card>
+        <Card className="bg-gray-800 border-gray-700">
           <CardHeader>
             <div className="flex items-center">
               <CookieIcon className="w-5 h-5 text-gray-400 mr-2" />
-              <CardTitle>Cookie Preferences</CardTitle>
+              <CardTitle className="text-white">Cookie Preferences</CardTitle>
             </div>
-            <CardDescription>
+            <CardDescription className="text-gray-400">
               Manage your cookie settings. You can enable or disable different
               types of cookies below.
             </CardDescription>
@@ -327,8 +351,10 @@ export default function Profile() {
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <Label htmlFor="essential">Essential Cookies</Label>
-                <p className="text-sm text-gray-500">
+                <Label htmlFor="essential" className="text-white">
+                  Essential Cookies
+                </Label>
+                <p className="text-sm text-gray-400">
                   These cookies are necessary for the website to function and
                   cannot be switched off.
                 </p>
@@ -337,8 +363,10 @@ export default function Profile() {
             </div>
             <div className="flex items-center justify-between">
               <div>
-                <Label htmlFor="analytics">Analytics Cookies</Label>
-                <p className="text-sm text-gray-500">
+                <Label htmlFor="analytics" className="text-white">
+                  Analytics Cookies
+                </Label>
+                <p className="text-sm text-gray-400">
                   These cookies allow us to count visits and traffic sources, so
                   we can measure and improve the performance of our site.
                 </p>
@@ -347,8 +375,10 @@ export default function Profile() {
             </div>
             <div className="flex items-center justify-between">
               <div>
-                <Label htmlFor="marketing">Marketing Cookies</Label>
-                <p className="text-sm text-gray-500">
+                <Label htmlFor="marketing" className="text-white">
+                  Marketing Cookies
+                </Label>
+                <p className="text-sm text-gray-400">
                   These cookies help us show you relevant ads.
                 </p>
               </div>
@@ -356,10 +386,12 @@ export default function Profile() {
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-gray-800 border-gray-700">
           <CardHeader>
-            <CardTitle>Notification Preferences</CardTitle>
-            <CardDescription>
+            <CardTitle className="text-white">
+              Notification Preferences
+            </CardTitle>
+            <CardDescription className="text-gray-400">
               Select which notifications you'd like to receive
             </CardDescription>
           </CardHeader>
@@ -367,12 +399,12 @@ export default function Profile() {
             <div className="flex items-center justify-between">
               <div>
                 <Label
-                  className="text-sm font-medium leading-none"
+                  className="text-sm font-medium leading-none text-white"
                   htmlFor="all"
                 >
                   All Notifications
                 </Label>
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-gray-400">
                   Receive all notifications.
                 </p>
               </div>
@@ -381,12 +413,12 @@ export default function Profile() {
             <div className="flex items-center justify-between">
               <div>
                 <Label
-                  className="text-sm font-medium leading-none"
+                  className="text-sm font-medium leading-none text-white"
                   htmlFor="mentions"
                 >
                   Mentions
                 </Label>
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-gray-400">
                   Receive notifications only when someone mentions you.
                 </p>
               </div>
@@ -395,12 +427,12 @@ export default function Profile() {
             <div className="flex items-center justify-between">
               <div>
                 <Label
-                  className="text-sm font-medium leading-none"
+                  className="text-sm font-medium leading-none text-white"
                   htmlFor="direct-messages"
                 >
                   Direct Messages
                 </Label>
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-gray-400">
                   Receive notifications for direct messages.
                 </p>
               </div>
@@ -409,12 +441,12 @@ export default function Profile() {
             <div className="flex items-center justify-between">
               <div>
                 <Label
-                  className="text-sm font-medium leading-none"
+                  className="text-sm font-medium leading-none text-white"
                   htmlFor="updates"
                 >
                   Updates
                 </Label>
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-gray-400">
                   Get notifications about new features and updates.
                 </p>
               </div>
