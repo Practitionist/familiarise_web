@@ -146,6 +146,8 @@ export class SlotAllocationService {
         appointments,
         warnings: validation.warnings,
       };
+    }, {
+      timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
     });
   }
 
@@ -253,6 +255,8 @@ export class SlotAllocationService {
         appointments,
         warnings: validation.warnings,
       };
+    }, {
+      timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
     });
   }
 
@@ -351,6 +355,8 @@ export class SlotAllocationService {
         appointments: existingAppointments,
         warnings: validation.warnings,
       };
+    }, {
+      timeout: 60000, // 60 seconds - handles large allocations (200+ slots)
     });
   }
 

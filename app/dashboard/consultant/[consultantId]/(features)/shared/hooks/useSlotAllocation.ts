@@ -1838,6 +1838,8 @@ export function useEventSlotAllocation(
         durationInMonths: options.durationInMonths,
         callsPerWeek: options.callsPerWeek,
         sessionDurationInHours: sessionDuration,
+        startDate: options.startDate,
+        endDate: options.endDate,
       };
 
       const result = await AllocationAlgorithms.manualAllocate(
@@ -1906,6 +1908,8 @@ export function useEventSlotAllocation(
           durationInMonths: options.durationInMonths,
           callsPerWeek: options.callsPerWeek,
           sessionDurationInHours: sessionDuration,
+          startDate: options.startDate,
+          endDate: options.endDate,
         };
 
         const result = await AllocationAlgorithms.autoAllocate(
@@ -1967,6 +1971,8 @@ export function useEventSlotAllocation(
           durationInMonths: options.durationInMonths,
           callsPerWeek: options.callsPerWeek,
           sessionDurationInHours: sessionDuration,
+          startDate: options.startDate,
+          endDate: options.endDate,
           requestedSlots,
         };
 

@@ -163,39 +163,39 @@ export class SlotCalculationService {
       }
 
       case "subscription": {
-        // Use exact Sunday-boundary week counting when dates are provided
-        if (config.startDate && config.endDate) {
-          let sessionDuration = config.sessionDurationInHours;
-          if (!sessionDuration || sessionDuration <= 0) {
-            console.warn(
-              "⚠️ Subscription session duration missing or invalid. Using default: 1 hour",
-            );
-            sessionDuration = 1; // Default 1 hour
-          }
-          const totalWeeks = this.countWeeks(config.startDate, config.endDate);
-          const totalCalls = totalWeeks * (config.callsPerWeek || 1);
-          const slotsPerCall = Math.ceil((sessionDuration || 1) / 0.5);
-          return totalCalls * slotsPerCall;
+        if (!config.startDate || !config.endDate) {
+          throw new Error(
+            "Start date and end date are required for subscription slot calculation",
+          );
         }
 
-        // Fallback to average weeks per month when dates are not provided
-        const weeksPerMonth = 4.33;
-        const totalWeeks = Math.ceil(
-          (config.durationInMonths || 0) * weeksPerMonth,
-        );
+        let sessionDuration = config.sessionDurationInHours;
+        if (!sessionDuration || sessionDuration <= 0) {
+          console.warn(
+            "⚠️ Subscription session duration missing or invalid. Using default: 1 hour",
+          );
+          sessionDuration = 1; // Default 1 hour
+        }
+
+        const totalWeeks = this.countWeeks(config.startDate, config.endDate);
         const totalCalls = totalWeeks * (config.callsPerWeek || 1);
-        const slotsPerCall = Math.ceil(
-          (config.sessionDurationInHours || 1) / 0.5,
-        );
+        const slotsPerCall = Math.ceil(sessionDuration / 0.5);
         return totalCalls * slotsPerCall;
       }
 
       case "class": {
+        if (!config.startDate || !config.endDate) {
+          throw new Error(
+            "Start date and end date are required for class slot calculation",
+          );
+        }
+
         if (!config.callsPerWeek || config.callsPerWeek <= 0) {
           throw new Error(
             "Calls per week must be a positive number for classes",
           );
         }
+
         const sessionDuration = config.sessionDurationInHours;
         if (!sessionDuration || sessionDuration <= 0) {
           throw new Error(
@@ -204,20 +204,8 @@ export class SlotCalculationService {
         }
 
         const slotsPerSession = Math.ceil(sessionDuration / 0.5);
-
-        // Use exact Sunday-boundary week counting when dates are provided
-        if (config.startDate && config.endDate) {
-          const totalWeeks = this.countWeeks(config.startDate, config.endDate);
-          const totalSessions = totalWeeks * (config.callsPerWeek || 1);
-          return totalSessions * slotsPerSession;
-        }
-
-        // Fallback to average weeks per month when dates are not provided
-        const weeksPerMonth = 4.33;
-        const totalWeeks = Math.ceil(
-          (config.durationInMonths || 0) * weeksPerMonth,
-        );
-        const totalSessions = totalWeeks * (config.callsPerWeek || 1);
+        const totalWeeks = this.countWeeks(config.startDate, config.endDate);
+        const totalSessions = totalWeeks * config.callsPerWeek;
         return totalSessions * slotsPerSession;
       }
 
@@ -263,13 +251,14 @@ export class SlotCalculationService {
         scheduled = this.countCompletedCalls(selectedSlots, slotsPerCall);
 
         // Calculate total required calls/sessions
-        if (config.startDate && config.endDate && config.callsPerWeek) {
-          const weeks = this.countWeeks(config.startDate, config.endDate);
-          required = weeks * config.callsPerWeek;
-        } else if (config.durationInMonths && config.callsPerWeek) {
-          const weeks = Math.ceil(config.durationInMonths * 4.33);
-          required = weeks * config.callsPerWeek;
+        if (!config.startDate || !config.endDate || !config.callsPerWeek) {
+          throw new Error(
+            "Start date, end date, and calls per week are required for subscription/class progress calculation",
+          );
         }
+
+        const weeks = this.countWeeks(config.startDate, config.endDate);
+        required = weeks * config.callsPerWeek;
         break;
       }
     }

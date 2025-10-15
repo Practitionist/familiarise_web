@@ -31,6 +31,8 @@ export interface AllocationOptions {
   callsPerWeek?: number;
   sessionDurationInHours?: number;
   durationInHours?: number; // FIXED: Add durationInHours for consultations and webinars
+  startDate?: Date; // Required for subscriptions and classes
+  endDate?: Date; // Required for subscriptions and classes
   requestedSlots?: TimeSlot[];
 }
 
@@ -78,6 +80,8 @@ export class AllocationAlgorithms {
         options.durationInMonths,
         options.callsPerWeek,
         options.sessionDurationInHours,
+        options.startDate,
+        options.endDate,
       );
 
       if (selectedSlots.length !== requiredSlots) {
@@ -198,6 +202,8 @@ export class AllocationAlgorithms {
         options.durationInMonths,
         options.callsPerWeek,
         options.sessionDurationInHours,
+        options.startDate,
+        options.endDate,
       );
 
       console.log("🤖 Auto-allocation started:", {
@@ -339,6 +345,8 @@ export class AllocationAlgorithms {
         options.durationInMonths,
         options.callsPerWeek,
         options.sessionDurationInHours,
+        options.startDate,
+        options.endDate,
       );
 
       if (options.requestedSlots.length !== requiredSlots) {
