@@ -121,6 +121,24 @@ export class SlotAllocationService {
         throw new Error(`Validation failed: ${validation.errors.join("; ")}`);
       }
 
+      // CRITICAL FIX: Validate all slots are within configured scheduling period
+      // This prevents slots from being allocated before startDate or after endDate
+      if (config.startDate && config.endDate) {
+        const slotsOutsidePeriod = selectedSlots.filter(
+          (slot) => slot < config.startDate! || slot > config.endDate!
+        );
+
+        if (slotsOutsidePeriod.length > 0) {
+          const firstBad = slotsOutsidePeriod[0];
+          throw new Error(
+            `Cannot allocate slots outside scheduling period. ` +
+            `Period: ${config.startDate.toISOString()} to ${config.endDate.toISOString()}. ` +
+            `Found slot at: ${firstBad.toISOString()} (${firstBad < config.startDate! ? 'before start' : 'after end'}). ` +
+            `Total violations: ${slotsOutsidePeriod.length}`
+          );
+        }
+      }
+
       // Create appointments
       const appointments = await this.createAppointments(
         tx,
@@ -529,6 +547,8 @@ export class SlotAllocationService {
       config.endDate || addMonths(startDate, config.durationInMonths || 1);
     const callsPerWeek = config.callsPerWeek || 1;
 
+    // FIX: Start from the week containing startDate, but ensure we don't
+    // allocate slots before the actual startDate (even if they're in the same week)
     let currentWeek = SlotCalculationService.startOfWeekSunday(startDate);
     const totalWeeks = SlotCalculationService.countWeeks(startDate, endDate);
 
@@ -811,8 +831,13 @@ export class SlotAllocationService {
       case "subscription":
         updates.requestStatus = RequestStatus.APPROVED;
         if (eventType === "subscription") {
-          updates.startDate = firstSlot;
-          updates.endDate = addMonths(firstSlot, config.durationInMonths || 1);
+          // FIX: Only set startDate/endDate if they're not already configured
+          // This prevents overwriting the user's scheduling period with the first allocated slot
+          // which could cause slots to appear outside the intended scheduling window
+          if (!config.startDate || !config.endDate) {
+            updates.startDate = firstSlot;
+            updates.endDate = addMonths(firstSlot, config.durationInMonths || 1);
+          }
         }
         break;
 

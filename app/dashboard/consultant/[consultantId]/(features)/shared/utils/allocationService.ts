@@ -584,10 +584,11 @@ export class AllocationService {
   }
 
   /**
-   * Fetches specific event slots
+   * Fetches specific event slots for any event type
+   * Used to display "This Event" (black) instead of "Booked" (gray) in calendar
    */
   static async fetchEventSlots(
-    eventType: "webinar" | "class",
+    eventType: "consultation" | "subscription" | "webinar" | "class",
     eventId: string,
   ) {
     try {
@@ -595,10 +596,15 @@ export class AllocationService {
         type: eventType.toUpperCase(),
       });
 
+      // Add the appropriate ID parameter based on event type
       if (eventType === "webinar") {
         params.append("webinarId", eventId);
-      } else {
+      } else if (eventType === "class") {
         params.append("classId", eventId);
+      } else if (eventType === "subscription") {
+        params.append("subscriptionId", eventId);
+      } else if (eventType === "consultation") {
+        params.append("consultationId", eventId);
       }
 
       const response = await fetch(`/api/slots/appointments?${params}`);

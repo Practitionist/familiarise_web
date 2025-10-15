@@ -323,11 +323,10 @@ export function useCalendarData(
   }, [consultantId, toast, view, currentDate]);
 
   const fetchEventSlots = useCallback(async (): Promise<void> => {
-    if (
-      !eventType ||
-      !eventId ||
-      (eventType !== "webinar" && eventType !== "class")
-    ) {
+    // Fetch event slots for ALL event types (subscription, consultation, webinar, class)
+    // This allows the calendar to show "This Event" (black) instead of "Booked" (gray)
+    // for slots belonging to the current event being viewed
+    if (!eventType || !eventId) {
       setEventSlots([]);
       return;
     }
