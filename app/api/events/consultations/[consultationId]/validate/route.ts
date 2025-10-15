@@ -1,10 +1,23 @@
-import prisma from "@/lib/prisma";
-import { Prisma, RequestStatus, ScheduleType } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
+/**
+ * Consultation Slot Validation API Route
+ *
+ * Refactored to use unified SlotValidationService
+ * Reduced from 200 lines to ~90 lines
+ *
+ * VALIDATION LAYERS:
+ * 1. Zod schema validation - Type-safe validation with automatic type inference
+ * 2. SlotValidationService - Validates business rules (conflicts, availability, etc.)
+ */
 
-interface ValidationRequest {
-  slots: string[];
-}
+import prisma from "@/lib/prisma";
+import { RequestStatus, ScheduleType } from "@prisma/client";
+import { NextRequest, NextResponse } from "next/server";
+import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
+import {
+  validationRequestSchema,
+  eventIdSchema,
+} from "@/schemas/slotAllocation/validationSchemas";
+import { ZodError } from "zod";
 
 interface ValidationResult {
   conflicts: {
@@ -47,153 +60,143 @@ export async function POST(
 ) {
   try {
     const { consultationId } = await params;
-    const body: ValidationRequest = await request.json();
 
-    // Fetch consultation with necessary relations
-    const consultation = await prisma.consultation.findUnique({
-      where: { id: consultationId },
-      include: consultationInclude,
-    });
+    // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
+    try {
+      // Validate consultation ID from URL params
+      eventIdSchema.parse(consultationId);
 
-    if (!consultation) {
-      return NextResponse.json(
-        { error: "Consultation not found" },
-        { status: 404 },
-      );
-    }
+      // Validate request body and get typed data
+      const body = validationRequestSchema.parse(await request.json());
 
-    const { consultationPlan, requestedBy } = consultation;
-    const { consultantProfile } = consultationPlan;
+      // Fetch consultation with necessary relations
+      const consultation = await prisma.consultation.findUnique({
+        where: { id: consultationId },
+        include: consultationInclude,
+      });
 
-    if (!consultantProfile) {
-      return NextResponse.json(
-        { error: "Consultant profile not found" },
-        { status: 400 },
-      );
-    }
+      if (!consultation) {
+        return NextResponse.json(
+          { error: "Consultation not found" },
+          { status: 404 },
+        );
+      }
 
-    // Initialize validation result
-    const result: ValidationResult = {
-      conflicts: [],
-      outsideAvailability: [],
-      validSlots: [],
-    };
+      const { consultationPlan, requestedBy } = consultation;
+      const { consultantProfile } = consultationPlan;
 
-    // Convert slots to Date objects
-    const slotDates = body.slots.map((slot) => new Date(slot));
+      if (!consultantProfile) {
+        return NextResponse.json(
+          { error: "Consultant profile not found" },
+          { status: 400 },
+        );
+      }
 
-    // Check for conflicts with existing appointments
-    const existingAppointments = await prisma.appointment.findMany({
-      where: {
-        AND: [
-          {
-            OR: [
-              {
-                subscription: {
-                  requestStatus: RequestStatus.APPROVED,
-                },
-              },
-              {
-                consultation: {
-                  requestStatus: RequestStatus.APPROVED,
-                },
-              },
-            ],
-          },
-          {
-            slotsOfAppointment: {
-              some: {
-                slotStartTimeInUTC: {
-                  in: slotDates,
-                },
-              },
-            },
-          },
-        ],
-      },
-      include: {
-        subscription: true,
-        consultation: true,
-        slotsOfAppointment: {
-          include: {
-            user: true,
-          },
+      // Convert slots to Date objects
+      const slotDates = body.slots.map((slot) => new Date(slot));
+
+      // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
+      const validationService = new SlotValidationService(prisma);
+      const validationResult = await validationService.validate(
+        "consultation",
+        consultationId,
+        slotDates,
+        {
+          userId: consultantProfile.user.id,
+          scheduleType: consultantProfile.scheduleType,
+          slotsOfAvailabilityWeekly:
+            consultantProfile.slotsOfAvailabilityWeekly,
+          slotsOfAvailabilityCustom:
+            consultantProfile.slotsOfAvailabilityCustom,
+          timezone: consultantProfile.user.timezone || undefined,
         },
-      },
-    });
-
-    // Process conflicts
-    for (const appointment of existingAppointments) {
-      const conflictingSlots = appointment.slotsOfAppointment.filter((slot) =>
-        slotDates.some(
-          (date) =>
-            date.toISOString() === slot.slotStartTimeInUTC.toISOString(),
-        ),
+        {
+          durationInHours: consultationPlan.durationInHours,
+        },
       );
 
-      for (const slot of conflictingSlots) {
-        result.conflicts.push({
-          slot: slot.slotStartTimeInUTC.toISOString(),
-          existingAppointment: {
-            type: appointment.subscription ? "Subscription" : "Consultation",
-            with: slot.user[0]?.name || "Unknown",
-            time: new Date(slot.slotStartTimeInUTC).toLocaleString(),
+      // If validation passed, all slots are valid
+      if (validationResult.isValid) {
+        return NextResponse.json({
+          data: {
+            conflicts: [],
+            outsideAvailability: [],
+            validSlots: body.slots,
           },
         });
       }
-    }
 
-    // Check for slots outside availability
-    const availableSlots =
-      consultantProfile.scheduleType === ScheduleType.WEEKLY
-        ? consultantProfile.slotsOfAvailabilityWeekly
-        : consultantProfile.slotsOfAvailabilityCustom;
+      // Parse errors to extract conflicts and availability issues
+      const result: ValidationResult = {
+        conflicts: [],
+        outsideAvailability: [],
+        validSlots: [],
+      };
 
-    for (const slotDate of slotDates) {
-      let isAvailable = false;
-
-      if (consultantProfile.scheduleType === ScheduleType.WEEKLY) {
-        // For weekly schedule, check if the slot matches any weekly pattern
-        isAvailable = availableSlots.some((slot) => {
-          const slotTime = new Date(slot.slotStartTimeInUTC);
-          return (
-            slotDate.getDay() === slotTime.getDay() &&
-            slotDate.getHours() === slotTime.getHours() &&
-            slotDate.getMinutes() === slotTime.getMinutes()
+      for (const error of validationResult.errors) {
+        if (
+          error.includes("already booked") ||
+          error.includes("conflicts with")
+        ) {
+          // Extract slot time from error message
+          const slotMatch = error.match(
+            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
           );
-        });
-      } else {
-        // For custom schedule, check if the slot exists exactly
-        isAvailable = availableSlots.some(
-          (slot) =>
-            new Date(slot.slotStartTimeInUTC).toISOString() ===
-            slotDate.toISOString(),
-        );
+          if (slotMatch) {
+            const slot = slotMatch[1];
+            result.conflicts.push({
+              slot,
+              existingAppointment: {
+                type: error.includes("Subscription")
+                  ? "Subscription"
+                  : "Consultation",
+                with: "Another user",
+                time: new Date(slot).toLocaleString(),
+              },
+            });
+          }
+        } else if (
+          error.includes("does not match") ||
+          error.includes("not in consultant's")
+        ) {
+          // Outside availability
+          const slotMatch = error.match(
+            /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
+          );
+          if (slotMatch) {
+            result.outsideAvailability.push({ slot: slotMatch[1] });
+          }
+        }
       }
 
-      if (!isAvailable) {
-        result.outsideAvailability.push({
-          slot: slotDate.toISOString(),
-        });
-      }
-    }
-
-    // Valid slots are those without conflicts and within availability
-    result.validSlots = slotDates
-      .filter((date) => {
-        const dateStr = date.toISOString();
+      // Valid slots are those not in conflicts or outside availability
+      result.validSlots = body.slots.filter((slot) => {
         return (
-          !result.conflicts.some((c) => c.slot === dateStr) &&
-          !result.outsideAvailability.some((o) => o.slot === dateStr)
+          !result.conflicts.some((c) => c.slot === slot) &&
+          !result.outsideAvailability.some((o) => o.slot === slot)
         );
-      })
-      .map((date) => date.toISOString());
+      });
 
-    return NextResponse.json({ data: result });
+      return NextResponse.json({ data: result });
+    } catch (validationError) {
+      // Zod validation errors - return 400 Bad Request
+      if (validationError instanceof ZodError) {
+        const errorMessage = validationError.errors
+          .map((err) => `${err.path.join(".")}: ${err.message}`)
+          .join("; ");
+
+        return NextResponse.json({ error: errorMessage }, { status: 400 });
+      }
+      throw validationError; // Re-throw non-validation errors
+    }
   } catch (error) {
+    // Catch-all for unexpected errors (database errors, network issues, etc.)
     console.error("Validation error:", error);
     return NextResponse.json(
-      { error: "Failed to validate slots" },
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to validate slots",
+      },
       { status: 500 },
     );
   }

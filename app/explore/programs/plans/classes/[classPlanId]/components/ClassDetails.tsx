@@ -249,7 +249,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                                     appointment.slotsOfAppointment.map(
                                       (slot, slotIndex) => {
                                         const startTime = new Date(
-                                          slot.slotStartTimeInUTC,
+                                          slot.startsAt,
                                         );
                                         const userTimeZone =
                                           Intl.DateTimeFormat().resolvedOptions()
@@ -266,8 +266,8 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
 
                                         // Basic status determination (can be expanded)
                                         const now = new Date();
-                                        const endTime = slot.slotEndTimeInUTC
-                                          ? new Date(slot.slotEndTimeInUTC)
+                                        const endTime = slot.endsAt
+                                          ? new Date(slot.endsAt)
                                           : null;
                                         let status = "Upcoming";
                                         if (endTime && now > endTime) {

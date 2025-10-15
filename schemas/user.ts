@@ -10,7 +10,7 @@ export const PersonalInfoAndRoleSchema = z.object({
   phone: z.string().optional(),
   address: z.string().optional(),
   onlineStatus: z.boolean().optional().default(false),
-  currentTimezone: z.string().optional(),
+  timezone: z.string().optional(),
   onboardingCompleted: z.boolean().optional().default(false),
   role: z.enum(["CONSULTANT", "CONSULTEE", "ADMIN", "STAFF"]),
 });
@@ -59,7 +59,7 @@ export const ConsultantProfileSchema = z.object({
   weeklySlots: z
     .array(
       z.object({
-        dayOfWeekforStartTimeInUTC: z.enum([
+        dayOfWeekForStartsAt: z.enum([
           "MONDAY",
           "TUESDAY",
           "WEDNESDAY",
@@ -68,8 +68,8 @@ export const ConsultantProfileSchema = z.object({
           "SATURDAY",
           "SUNDAY",
         ]),
-        slotStartTimeInUTC: z.string(),
-        dayOfWeekforEndTimeInUTC: z.enum([
+        availabilityStartsAt: z.string(),
+        dayOfWeekForEndsAt: z.enum([
           "MONDAY",
           "TUESDAY",
           "WEDNESDAY",
@@ -78,15 +78,15 @@ export const ConsultantProfileSchema = z.object({
           "SATURDAY",
           "SUNDAY",
         ]),
-        slotEndTimeInUTC: z.string(),
+        availabilityEndsAt: z.string(),
       }),
     )
     .optional(),
   customSlots: z
     .array(
       z.object({
-        slotStartTimeInUTC: z.string(),
-        slotEndTimeInUTC: z.string(),
+        availabilityStartsAt: z.string(),
+        availabilityEndsAt: z.string(),
       }),
     )
     .optional(),
@@ -135,7 +135,7 @@ export const PreferredScheduleSchema = z.object({
   weeklySlots: z
     .array(
       z.object({
-        dayOfWeekforStartTimeInUTC: z.enum([
+        dayOfWeekForStartsAt: z.enum([
           "MONDAY",
           "TUESDAY",
           "WEDNESDAY",
@@ -144,8 +144,8 @@ export const PreferredScheduleSchema = z.object({
           "SATURDAY",
           "SUNDAY",
         ]),
-        slotStartTimeInUTC: z.string(),
-        dayOfWeekforEndTimeInUTC: z.enum([
+        availabilityStartsAt: z.string(),
+        dayOfWeekForEndsAt: z.enum([
           "MONDAY",
           "TUESDAY",
           "WEDNESDAY",
@@ -154,15 +154,15 @@ export const PreferredScheduleSchema = z.object({
           "SATURDAY",
           "SUNDAY",
         ]),
-        slotEndTimeInUTC: z.string(),
+        availabilityEndsAt: z.string(),
       }),
     )
     .optional(),
   customSlots: z
     .array(
       z.object({
-        slotStartTimeInUTC: z.string(),
-        slotEndTimeInUTC: z.string(),
+        availabilityStartsAt: z.string(),
+        availabilityEndsAt: z.string(),
       }),
     )
     .optional(),

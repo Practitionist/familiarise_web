@@ -23,7 +23,7 @@ model User {
   passwordResetToken   String?   @unique
   passwordResetExpires DateTime?
   onlineStatus         Boolean   @default(false)
-  currentTimezone      String?
+  timezone             String?
   onboardingCompleted  Boolean?  @default(false)
   role                 UserRole? @default(CONSULTEE)
 
@@ -333,31 +333,31 @@ model StaffProfile {
 }
 
 model SlotOfAvailabilityWeekly {
-  id                         String    @id @default(uuid())
-  dayOfWeekforStartTimeInUTC DayOfWeek
-  slotStartTimeInUTC         DateTime  @db.Timestamptz()
-  dayOfWeekforEndTimeInUTC   DayOfWeek
-  slotEndTimeInUTC           DateTime  @db.Timestamptz()
+  id                   String    @id @default(uuid())
+  dayOfWeekForStartsAt DayOfWeek
+  availabilityStartsAt DateTime  @db.Timestamptz()
+  dayOfWeekForEndsAt   DayOfWeek
+  availabilityEndsAt   DateTime  @db.Timestamptz()
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz()
+  updatedAt DateTime @updatedAt @db.Timestamptz()
 
   @@index([consultantProfileId])
 }
 
 model SlotOfAvailabilityCustom {
-  id                 String   @id @default(uuid())
-  slotStartTimeInUTC DateTime @db.Timestamptz()
-  slotEndTimeInUTC   DateTime @db.Timestamptz()
+  id                   String   @id @default(uuid())
+  availabilityStartsAt DateTime @db.Timestamptz()
+  availabilityEndsAt   DateTime @db.Timestamptz()
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz()
+  updatedAt DateTime @updatedAt @db.Timestamptz()
 
   @@index([consultantProfileId])
 }
@@ -394,7 +394,7 @@ model Consultation {
   requestStatus          RequestStatus    @default(PENDING)
   requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById          String
-  requestedAt            DateTime         @default(now())
+  requestedAt            DateTime         @default(now()) @db.Timestamptz()
   requestNotes           String?
   directlyBooked         Boolean          @default(false)
   feedbackFromConsultee  String?
@@ -403,8 +403,8 @@ model Consultation {
 
   appointment Appointment?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz()
+  updatedAt DateTime @updatedAt @db.Timestamptz()
 }
 
 model SubscriptionPlan {
@@ -433,14 +433,15 @@ model SubscriptionPlan {
 }
 
 model Subscription {
-  id        String   @id @default(cuid())
-  startDate DateTime @default(now())
-  endDate   DateTime
+  id                         String   @id @default(cuid())
+  schedulingPeriodStartsAt   DateTime @db.Timestamptz()
+  schedulingPeriodEndsAt     DateTime @db.Timestamptz()
+  schedulingTimezone         String   @default("Asia/Kolkata")
 
   requestStatus          RequestStatus    @default(PENDING)
   requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById          String
-  requestedAt            DateTime         @default(now())
+  requestedAt            DateTime         @default(now()) @db.Timestamptz()
   requestNotes           String?
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
@@ -451,8 +452,8 @@ model Subscription {
 
   appointments Appointment[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz()
+  updatedAt DateTime @updatedAt @db.Timestamptz()
 }
 
 enum RequestStatus {
@@ -544,21 +545,22 @@ model ClassPlan {
 }
 
 model Class {
-  id              String      @id @default(cuid())
-  startDate       DateTime?
-  endDate         DateTime?
-  status          ClassStatus @default(SCHEDULED)
-  waitlist        Waitlist[]
-  recordingUrls   String[]
-  feedbackSummary String?     @db.Text
+  id                       String      @id @default(cuid())
+  schedulingPeriodStartsAt DateTime?   @db.Timestamptz()
+  schedulingPeriodEndsAt   DateTime?   @db.Timestamptz()
+  schedulingTimezone       String      @default("Asia/Kolkata")
+  status                   ClassStatus @default(SCHEDULED)
+  waitlist                 Waitlist[]
+  recordingUrls            String[]
+  feedbackSummary          String?     @db.Text
 
   classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
 
   appointments Appointment[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz()
+  updatedAt DateTime @updatedAt @db.Timestamptz()
 
   @@index([classPlanId])
 }
@@ -645,8 +647,8 @@ model Appointment {
   payment   Payment[]
   documents AppointmentDocument[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz()
+  updatedAt DateTime @updatedAt @db.Timestamptz()
 }
 
 enum AppointmentsType {
@@ -698,17 +700,17 @@ model SlotOfAppointment {
 
   user User[] @relation("SlotOfAppointmentToUser")
 
-  slotStartTimeInUTC DateTime @db.Timestamptz()
-  slotEndTimeInUTC   DateTime @db.Timestamptz()
-  isTentative        Boolean  @default(false)
+  startsAt    DateTime @db.Timestamptz()
+  endsAt      DateTime @db.Timestamptz()
+  isTentative Boolean  @default(false)
 
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
 
   meetingSession MeetingSession?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz()
+  updatedAt DateTime @updatedAt @db.Timestamptz()
 
   @@index([appointmentId])
   @@index([isTentative, appointmentId])

@@ -208,7 +208,43 @@ export function useCalendarData(
         startDate,
         endDate,
       );
-      setRawAvailabilitySlots(data);
+
+      // Defensive: Validate data structure before using
+      if (!data || typeof data !== "object") {
+        console.warn(
+          "⚠️ fetchAvailabilitySlots: Invalid data structure returned",
+        );
+        setRawAvailabilitySlots({ weekly: [], custom: [] });
+        return;
+      }
+
+      // Defensive: Ensure arrays exist and are valid
+      const validatedData = {
+        weekly: Array.isArray(data.weekly)
+          ? data.weekly.filter((slot: any) => {
+              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+                console.warn(
+                  "⚠️ fetchAvailabilitySlots: Filtering out invalid weekly slot",
+                );
+                return false;
+              }
+              return true;
+            })
+          : [],
+        custom: Array.isArray(data.custom)
+          ? data.custom.filter((slot: any) => {
+              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+                console.warn(
+                  "⚠️ fetchAvailabilitySlots: Filtering out invalid custom slot",
+                );
+                return false;
+              }
+              return true;
+            })
+          : [],
+      };
+
+      setRawAvailabilitySlots(validatedData);
     } catch (error) {
       console.error("Error fetching availability slots:", error);
       const errorMessage =
@@ -237,7 +273,42 @@ export function useCalendarData(
         startDate,
         endDate,
       );
-      setExistingAppointments(data);
+
+      // Defensive: Validate data is an array before using
+      if (!Array.isArray(data)) {
+        console.warn("⚠️ fetchExistingAppointments: Data is not an array");
+        setExistingAppointments([]);
+        return;
+      }
+
+      // Defensive: Filter out invalid appointments
+      const validatedAppointments = data.filter((appt: any) => {
+        if (!appt || !appt.id) {
+          console.warn(
+            "⚠️ fetchExistingAppointments: Filtering out appointment without id",
+          );
+          return false;
+        }
+
+        // If appointment has slots, validate them
+        if (appt.slotsOfAppointment && Array.isArray(appt.slotsOfAppointment)) {
+          appt.slotsOfAppointment = appt.slotsOfAppointment.filter(
+            (slot: any) => {
+              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+                console.warn(
+                  `⚠️ fetchExistingAppointments: Filtering out invalid slot in appointment ${appt.id}`,
+                );
+                return false;
+              }
+              return true;
+            },
+          );
+        }
+
+        return true;
+      });
+
+      setExistingAppointments(validatedAppointments);
     } catch (error) {
       console.error("Error fetching appointments:", error);
       const errorMessage =
@@ -252,17 +323,23 @@ export function useCalendarData(
   }, [consultantId, toast, view, currentDate]);
 
   const fetchEventSlots = useCallback(async (): Promise<void> => {
-    if (
-      !eventType ||
-      !eventId ||
-      (eventType !== "webinar" && eventType !== "class")
-    ) {
+    // Fetch event slots for ALL event types (subscription, consultation, webinar, class)
+    // This allows the calendar to show "This Event" (black) instead of "Booked" (gray)
+    // for slots belonging to the current event being viewed
+    if (!eventType || !eventId) {
       setEventSlots([]);
       return;
     }
 
     try {
       const data = await AllocationService.fetchEventSlots(eventType, eventId);
+
+      console.log("[useCalendarData] fetchEventSlots response:", {
+        eventType,
+        eventId,
+        dataLength: data?.length,
+        firstAppointment: data?.[0],
+      });
 
       if (data && data.length > 0 && data[0].slotsOfAppointment?.length > 0) {
         const slots: TimeSlot[] = data[0].slotsOfAppointment.flatMap(
@@ -294,8 +371,20 @@ export function useCalendarData(
             return intervalSlots;
           },
         );
+        console.log("[useCalendarData] Setting eventSlots:", {
+          slotsCount: slots.length,
+          firstSlot: slots[0]
+            ? {
+                startTime: slots[0].startTime.toISOString(),
+                endTime: slots[0].endTime.toISOString(),
+              }
+            : null,
+        });
         setEventSlots(slots);
       } else {
+        console.log(
+          "[useCalendarData] No event slots found, setting empty array",
+        );
         setEventSlots([]);
       }
     } catch (error) {
@@ -303,6 +392,49 @@ export function useCalendarData(
       setEventSlots([]);
     }
   }, [eventType, eventId]);
+
+  /**
+   * Helper function to extract appointment plan title
+   */
+  const extractAppointmentTitle = (appointment: any): string => {
+    if (!appointment) return "Unknown";
+
+    switch (appointment.appointmentType) {
+      case "CONSULTATION":
+        return (
+          appointment.consultation?.consultationPlan?.title || "Consultation"
+        );
+      case "SUBSCRIPTION":
+        return (
+          appointment.subscription?.subscriptionPlan?.title || "Subscription"
+        );
+      case "WEBINAR":
+        return appointment.webinar?.webinarPlan?.title || "Webinar";
+      case "CLASS":
+        return appointment.class?.classPlan?.title || "Class";
+      default:
+        return appointment.appointmentType || "Unknown";
+    }
+  };
+
+  /**
+   * Helper function to extract appointment participant name
+   */
+  const extractAppointmentParticipant = (appointment: any): string => {
+    if (!appointment) return "";
+
+    switch (appointment.appointmentType) {
+      case "CONSULTATION":
+        return appointment.consultation?.requestedBy?.user?.name || "";
+      case "SUBSCRIPTION":
+        return appointment.subscription?.requestedBy?.user?.name || "";
+      case "WEBINAR":
+      case "CLASS":
+        return appointment.slotsOfAppointment?.[0]?.user?.[0]?.name || "";
+      default:
+        return "";
+    }
+  };
 
   /**
    * CRITICAL FUNCTION - SLOT STATUS CALCULATION REFACTOR
@@ -324,15 +456,17 @@ export function useCalendarData(
       interval: { hour: number; minute: number },
       date: Date,
     ): SlotStatusResult => {
-      // STEP 1: Calculate the 30-minute interval boundaries
+      // STEP 1: Calculate the 30-minute interval boundaries in local time
       const localIntervalStartDate = new Date(date);
       localIntervalStartDate.setHours(interval.hour, interval.minute, 0, 0);
       const localIntervalEndDate = new Date(localIntervalStartDate);
       localIntervalEndDate.setMinutes(localIntervalStartDate.getMinutes() + 30);
 
-      // STEP 2: Convert to UTC for server data comparison - FIXED timezone handling
-      const intervalStartUTC = new Date(localIntervalStartDate.toISOString());
-      const intervalEndUTC = new Date(localIntervalEndDate.toISOString());
+      // STEP 2: Get UTC times for comparison with server data
+      // The Date objects are already in the correct time - just use them directly
+      // toISOString() will convert them to UTC format correctly
+      const intervalStartUTC = localIntervalStartDate;
+      const intervalEndUTC = localIntervalEndDate;
 
       // STEP 3: Find overlapping slots from raw availability data
       // KEY CHANGE: Use server-calculated booking status instead of manual calculation
@@ -359,8 +493,8 @@ export function useCalendarData(
             .map((_slot) => ({
               id: appointment.id,
               type: appointment.appointmentType,
-              title: appointment.appointmentType,
-              with: "", // Add if available in data
+              title: extractAppointmentTitle(appointment),
+              with: extractAppointmentParticipant(appointment),
             })) || [],
       );
 

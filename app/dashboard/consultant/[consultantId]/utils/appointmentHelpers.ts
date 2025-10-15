@@ -87,7 +87,7 @@ export const getSlotTimes = (appointment: TAppointment): Date[] => {
 
   return appointment.slotsOfAppointment
     .map((slot) => {
-      const time = slot.slotStartTimeInUTC;
+      const time = slot.startsAt;
       // Handle both Date objects and string timestamps
       if (time instanceof Date) {
         return time;
@@ -209,7 +209,7 @@ export const getTodayAppointments = (
     999,
   );
 
-  // First expand appointments with multiple slots
+  // First expand appointments with multiple slots (only for subscriptions and classes)
   const expandedAppointments = appointments.flatMap((appointment) => {
     if (
       !appointment.slotsOfAppointment ||
@@ -218,12 +218,21 @@ export const getTodayAppointments = (
       return [appointment];
     }
 
-    // Create separate appointments for each slot
-    return appointment.slotsOfAppointment.map((slot) => ({
-      ...appointment,
-      id: `${appointment.id}-${slot.id}`,
-      slotsOfAppointment: [slot],
-    }));
+    // Only expand subscriptions and classes by slot
+    // Consultations and webinars keep all slots together as one event
+    if (
+      appointment.appointmentType === "SUBSCRIPTION" ||
+      appointment.appointmentType === "CLASS"
+    ) {
+      return appointment.slotsOfAppointment.map((slot) => ({
+        ...appointment,
+        id: `${appointment.id}-${slot.id}`,
+        slotsOfAppointment: [slot],
+      }));
+    }
+
+    // Keep consultations and webinars as single appointments
+    return [appointment];
   });
 
   return expandedAppointments.filter((appointment) => {
@@ -238,8 +247,10 @@ export const getTodayAppointments = (
       appointment.appointmentType === "SUBSCRIPTION" &&
       appointment.subscription
     ) {
-      const startDate = new Date(appointment.subscription.startDate);
-      const endDate = new Date(appointment.subscription.endDate);
+      const startDate = new Date(
+        appointment.subscription.schedulingPeriodStartsAt,
+      );
+      const endDate = new Date(appointment.subscription.schedulingPeriodEndsAt);
       return isToday && now >= startDate && now <= endDate;
     }
 
@@ -311,10 +322,15 @@ export const groupRecurringAppointments = (
       groups[groupKey] = [];
     }
 
-    // For appointments with slots, create separate entries for each slot
+    // For SUBSCRIPTION and CLASS appointments with slots, create separate entries for each slot
+    // (because each slot represents a separate session)
+    // For CONSULTATION and WEBINAR appointments, keep all slots together
+    // (because all slots form one single event)
     if (
       appointment.slotsOfAppointment &&
-      appointment.slotsOfAppointment.length > 0
+      appointment.slotsOfAppointment.length > 0 &&
+      (appointment.appointmentType === "SUBSCRIPTION" ||
+        appointment.appointmentType === "CLASS")
     ) {
       appointment.slotsOfAppointment.forEach((slot) => {
         groups[groupKey].push({
@@ -324,11 +340,8 @@ export const groupRecurringAppointments = (
         });
       });
     } else {
-      // For appointments without slots, add them as is
-      groups[groupKey].push({
-        ...appointment,
-        id: `${appointment.id}-default`,
-      });
+      // For appointments without slots or single-event types, add them as is
+      groups[groupKey].push(appointment);
     }
   });
 
@@ -388,8 +401,12 @@ export const getGroupStatus = (appointments: TAppointment[]): string => {
 
   if (type === "SUBSCRIPTION" && firstAppointment.subscription) {
     const now = new Date();
-    const startDate = new Date(firstAppointment.subscription.startDate);
-    const endDate = new Date(firstAppointment.subscription.endDate);
+    const startDate = new Date(
+      firstAppointment.subscription.schedulingPeriodStartsAt,
+    );
+    const endDate = new Date(
+      firstAppointment.subscription.schedulingPeriodEndsAt,
+    );
 
     // Check if any sessions are completed
     const hasCompletedSessions = appointments.some((app) =>

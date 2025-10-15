@@ -61,10 +61,48 @@ function isOutsideAllowedRange(
   return false;
 }
 
+/** Returns true if a date (day-level) is within the allowed scheduling period. */
+function isDateInSchedulingPeriod(
+  date: Date,
+  allowedStart?: Date,
+  allowedEnd?: Date,
+): boolean {
+  if (!allowedStart && !allowedEnd) return false;
+
+  // Compare at day level (ignore time)
+  const dateOnly = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  );
+  const startOnly = allowedStart
+    ? new Date(
+        allowedStart.getFullYear(),
+        allowedStart.getMonth(),
+        allowedStart.getDate(),
+      )
+    : null;
+  const endOnly = allowedEnd
+    ? new Date(
+        allowedEnd.getFullYear(),
+        allowedEnd.getMonth(),
+        allowedEnd.getDate(),
+      )
+    : null;
+
+  if (startOnly && dateOnly < startOnly) return false;
+  if (endOnly && dateOnly > endOnly) return false;
+  return true;
+}
+
 /** Formats the allowed [start, end] range for user-facing messages. */
 function formatAllowedRange(allowedStart?: Date, allowedEnd?: Date): string {
-  const startText = allowedStart ? allowedStart.toLocaleString() : "-";
-  const endText = allowedEnd ? allowedEnd.toLocaleString() : "-";
+  const startText = allowedStart
+    ? format(allowedStart, "MMM d, yyyy 'at' h:mm a")
+    : "-";
+  const endText = allowedEnd
+    ? format(allowedEnd, "MMM d, yyyy 'at' h:mm a")
+    : "-";
   return `${startText} – ${endText}`;
 }
 
@@ -150,10 +188,8 @@ function countInProgressSelectedCallsForWeek(
 }
 
 /**
- * Computes the dynamic footer text for subscriptions:
- * - Max calls derived from (weeks between start/end) × callsPerWeek
- * - Past fully elapsed weeks are counted as completed calls
- * - Currently selected consecutive slots add to completed calls
+ * Subscription footer: Clear, action-oriented progress text
+ * Removes confusing "past completed" concept and technical jargon
  */
 function computeSubscriptionFooter(
   params: Readonly<{
@@ -176,24 +212,20 @@ function computeSubscriptionFooter(
   const weeks = countSundayWeeksInclusive(allowedStart, allowedEnd);
   const maxTotalCalls = weeks * callsPerWeek;
   const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
-  const selectedCompleted = Math.floor(selectedSlots.length / slotsPerCall);
+  const scheduled = Math.floor(selectedSlots.length / slotsPerCall);
+  const remaining = maxTotalCalls - scheduled;
 
-  // Fully elapsed weeks (up to prev Saturday) are assumed completed
-  const now = new Date();
-  const prevSaturday = new Date(startOfWeek(now));
-  prevSaturday.setDate(prevSaturday.getDate() - 1);
-  const pastEnd = prevSaturday < allowedEnd ? prevSaturday : allowedEnd;
-  const pastWeeks =
-    pastEnd >= allowedStart
-      ? countSundayWeeksInclusive(allowedStart, pastEnd)
-      : 0;
-  const pastCompleted = pastWeeks * callsPerWeek;
+  const duration = sessionDurationInHours || 1;
+  const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
 
-  const totalCompleted = Math.min(
-    maxTotalCalls,
-    pastCompleted + selectedCompleted,
-  );
-  return `Calls completed: ${totalCompleted}/${maxTotalCalls} (${pastCompleted} past + ${selectedCompleted} selected)`;
+  // Clear, action-oriented text based on progress
+  if (scheduled === 0) {
+    return `📅 Select slots for ${maxTotalCalls} calls (${durationText} each) | Limit: ${callsPerWeek}/week`;
+  } else if (remaining > 0) {
+    return `✅ ${scheduled}/${maxTotalCalls} calls scheduled | ⏳ ${remaining} remaining (${durationText} each) | Limit: ${callsPerWeek}/week`;
+  } else {
+    return `✅ All ${maxTotalCalls} calls scheduled`;
+  }
 }
 
 /** Counts total completed class sessions across all selected slots. */
@@ -229,7 +261,10 @@ function countCompletedSelectedClasses(
   return sessions;
 }
 
-/** Footer text for classes: show classes completed vs required. */
+/**
+ * Class footer: Clear progress without technical jargon
+ * Shows user-facing duration (hours) not implementation details (slots)
+ */
 function computeClassFooter(params: {
   selectedSlots: TimeSlot[];
   sessionDurationInHours?: number;
@@ -237,14 +272,28 @@ function computeClassFooter(params: {
 }): string {
   const { selectedSlots, sessionDurationInHours, totalSessions } = params;
   const slotsPerSession = Math.ceil((sessionDurationInHours || 1) / 0.5);
-  const completed = countCompletedSelectedClasses(
+  const scheduled = countCompletedSelectedClasses(
     selectedSlots,
     slotsPerSession,
   );
+
+  const duration = sessionDurationInHours || 1;
+  const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
+
   if (typeof totalSessions === "number" && totalSessions > 0) {
-    return `Classes completed: ${completed}/${totalSessions}`;
+    const remaining = totalSessions - scheduled;
+
+    if (scheduled === 0) {
+      return `📅 Schedule ${totalSessions} sessions (${durationText} each)`;
+    } else if (remaining > 0) {
+      return `✅ ${scheduled} scheduled | ⏳ ${remaining} remaining (${durationText} each)`;
+    } else {
+      return `✅ All ${totalSessions} sessions scheduled`;
+    }
   }
-  return `Classes completed: ${completed}`;
+
+  // Fallback when total not known
+  return `Sessions scheduled: ${scheduled}`;
 }
 
 export interface UnifiedCalendarProps {
@@ -258,6 +307,7 @@ export interface UnifiedCalendarProps {
   mode: "view" | "select" | "allocate";
   onSlotsSelected?: (slots: TimeSlot[]) => void;
   onAllocationComplete?: (result: any) => void;
+  onClose?: () => void;
   showAllocationButtons?: boolean;
   preSelectedSlots?: TimeSlot[];
   requestedSlots?: TimeSlot[];
@@ -278,6 +328,7 @@ export function UnifiedCalendar({
   mode = "view",
   onSlotsSelected,
   onAllocationComplete,
+  onClose,
   showAllocationButtons = false,
   preSelectedSlots = [],
   requestedSlots = [],
@@ -290,6 +341,7 @@ export function UnifiedCalendar({
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [view, setView] = useState<"week" | "month">("week");
   const [browserTimezone, setBrowserTimezone] = useState("UTC");
+  const [configWarning, setConfigWarning] = useState<string | null>(null);
 
   // Initialize timezone
   useEffect(() => {
@@ -301,6 +353,7 @@ export function UnifiedCalendar({
     consultantDetails,
     availableSlots,
     existingAppointments,
+    eventSlots,
     loading,
     error,
     refetch,
@@ -319,6 +372,9 @@ export function UnifiedCalendar({
     setSelectedSlots,
     isAllocating,
     allocationError,
+    isValid,
+    validationErrors,
+    requiredSlots,
     toggleSlot,
     clearSlots,
     isSlotSelected,
@@ -346,18 +402,41 @@ export function UnifiedCalendar({
   });
 
   // Initialize pre-selected slots
+  // Note: setSelectedSlots is stable (from useState), intentionally not in deps
   useEffect(() => {
     if (preSelectedSlots.length > 0) {
       setSelectedSlots(preSelectedSlots);
     }
-  }, [preSelectedSlots, setSelectedSlots]);
+  }, [preSelectedSlots]);
 
   // Call onSlotsSelected when selection changes
+  // Note: onSlotsSelected intentionally not in deps to avoid infinite loops from parent re-renders
   useEffect(() => {
     if (mode === "select" && onSlotsSelected) {
       onSlotsSelected(selectedSlots);
     }
-  }, [selectedSlots, mode, onSlotsSelected]);
+  }, [selectedSlots, mode]);
+
+  // Set warning banner if duration configuration is missing
+  useEffect(() => {
+    if (eventType === "consultation" || eventType === "webinar") {
+      if (!durationInHours || durationInHours <= 0) {
+        setConfigWarning(
+          `${eventType === "consultation" ? "Consultation" : "Webinar"} duration not configured. Using 1-hour default.`,
+        );
+      } else {
+        setConfigWarning(null);
+      }
+    } else if (eventType === "subscription" || eventType === "class") {
+      if (!sessionDurationInHours || sessionDurationInHours <= 0) {
+        setConfigWarning(
+          `${eventType === "subscription" ? "Session" : "Class"} duration not configured. Using 1-hour default.`,
+        );
+      } else {
+        setConfigWarning(null);
+      }
+    }
+  }, [eventType, durationInHours, sessionDurationInHours]);
 
   // Week view dates
   const weekDates = useMemo(() => {
@@ -433,9 +512,26 @@ export function UnifiedCalendar({
         }
       }
 
-      // Allow selection even if booked or not available; server will validate conflicts
-      // Still block past intervals for UX sanity
-      if (status.isInPast) return;
+      // Block selection of unavailable, booked, or past slots
+      if (status.isInPast) {
+        toast({
+          variant: "destructive",
+          title: "Cannot select past slot",
+          description: "This time slot is in the past and cannot be selected.",
+        });
+        return;
+      }
+
+      if (!status.isAvailable || status.isBookedForDisplay) {
+        toast({
+          variant: "destructive",
+          title: "Slot unavailable",
+          description: status.isBookedForDisplay
+            ? "This time slot is already booked."
+            : "This time slot is not available for booking.",
+        });
+        return;
+      }
 
       const slot: TimeSlot = {
         startTime: new Date(status.intervalStartUTCString),
@@ -479,6 +575,46 @@ export function UnifiedCalendar({
 
       const isCurrentlySelected = isSlotSelected(slot);
 
+      // Check if this slot belongs to the current event (already booked for THIS event)
+      // Use robust timestamp matching with tolerance for floating point precision
+      const isCurrentEventSlot = eventSlots.some((eventSlot) => {
+        const slotTime = slot.startTime.getTime();
+        const eventTime = eventSlot.startTime.getTime();
+        const timeDiff = Math.abs(slotTime - eventTime);
+
+        // Match with 1-second tolerance for precision issues
+        const timeMatch = timeDiff < 1000;
+
+        // Fallback: compare ISO strings for exact match
+        const stringMatch =
+          slot.startTime.toISOString() === eventSlot.startTime.toISOString();
+
+        return timeMatch || stringMatch;
+      });
+
+      // Enhanced debug logging
+      if (eventSlots.length > 0 && !isCurrentEventSlot && slot.isBooked) {
+        console.log("[UnifiedCalendar] Slot not matching eventSlots:", {
+          slotTime: slot.startTime.toISOString(),
+          slotTimeMs: slot.startTime.getTime(),
+          eventSlotsCount: eventSlots.length,
+          eventSlotTimes: eventSlots.map((s) => ({
+            time: s.startTime.toISOString(),
+            ms: s.startTime.getTime(),
+            diff: Math.abs(slot.startTime.getTime() - s.startTime.getTime()),
+          })),
+          eventType,
+          eventId,
+        });
+      }
+
+      // Check if slot is outside allowed period for subscriptions/classes
+      const intervalStart = new Date(status.intervalStartUTCString);
+      const intervalEnd = new Date(status.intervalEndUTCString);
+      const isOutsideAllowedRange =
+        (allowedStart && intervalEnd <= allowedStart) ||
+        (allowedEnd && intervalStart >= allowedEnd);
+
       // Fast-exit: avoid rendering a clickable button for cells that have no
       // availability **and** are disabled (e.g. past date).  Rendering a
       // lightweight placeholder saves performance.
@@ -496,30 +632,41 @@ export function UnifiedCalendar({
         status.overlappingAppointments.length > 0;
 
       if (isCurrentlySelected) {
+        // Dark green for manually selected slots
         cellClassName +=
-          " bg-primary text-primary-foreground hover:bg-primary/90 border-primary-darker";
+          " bg-green-700 text-white hover:bg-green-800 border-green-900";
         buttonText = "Selected";
+      } else if (isCurrentEventSlot) {
+        // Black for this event's already booked slots
+        cellClassName +=
+          " bg-black text-white cursor-pointer hover:bg-gray-900 border-gray-800";
+        buttonText = "This Event";
       } else if (status.isBookedForDisplay) {
-        cellClassName += " bg-slate-400 text-slate-800 cursor-not-allowed";
+        // Grey for other appointments
+        cellClassName +=
+          " bg-slate-400 text-slate-800 cursor-pointer hover:bg-slate-500";
         cellClassName += status.isInPast ? " opacity-50" : "";
         buttonText = "Booked";
       } else if (status.isPartiallyBooked) {
-        cellClassName += " bg-yellow-400 text-yellow-900 cursor-not-allowed";
+        cellClassName +=
+          " bg-yellow-400 text-yellow-900 cursor-pointer hover:bg-yellow-500";
         cellClassName += status.isInPast ? " opacity-50" : "";
         buttonText = "Partially Booked";
       } else if (status.isAvailable) {
+        // Available slot - check if past for fading
         if (status.isInPast) {
+          // Past available slot - faded, clickable (shows toast)
           cellClassName +=
-            " bg-green-300 text-green-950 opacity-50 cursor-not-allowed border-green-400";
-          buttonText = "Available";
+            " bg-green-300 text-green-950 opacity-50 cursor-pointer border-green-400";
+          buttonText = isOutsideAllowedRange ? "Outside Period" : "Available";
         } else {
-          // Add special hover effect for consultations to show the selected duration
+          // Future available slot - unfaded, clickable
           const hoverClass =
             eventType === "consultation"
               ? " hover:bg-green-400 hover:shadow-md"
               : " hover:bg-green-400";
           cellClassName += ` bg-green-300 text-green-950${hoverClass} border-green-400`;
-          buttonText = "Available";
+          buttonText = isOutsideAllowedRange ? "Outside Period" : "Available";
         }
       } else {
         if (status.isInPast) {
@@ -530,8 +677,9 @@ export function UnifiedCalendar({
         }
       }
 
+      // Only disable in view mode or if no availability at all (gray slots)
       const isButtonDisabled =
-        status.isInPast && !isCurrentlySelected && mode !== "view";
+        mode === "view" || (!status.isAvailable && !status.isBooked);
 
       const buttonElement = (
         <Button
@@ -589,6 +737,10 @@ export function UnifiedCalendar({
       loading,
       error,
       mode,
+      allowedStart,
+      allowedEnd,
+      eventType,
+      eventSlots,
     ],
   );
 
@@ -703,6 +855,38 @@ export function UnifiedCalendar({
 
   return (
     <div className={`flex flex-col gap-4 ${className}`}>
+      {/* Warning Banner */}
+      {configWarning && (
+        <div className="rounded-md bg-yellow-50 border border-yellow-200 px-4 py-3">
+          <div className="flex items-start">
+            <span className="text-yellow-600 mr-2">⚠️</span>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-yellow-800">
+                Using Default Value
+              </p>
+              <p className="text-sm text-yellow-700">{configWarning}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Scheduling Period Info Banner */}
+      {allowedStart && allowedEnd && (
+        <div className="rounded-md bg-blue-50 border border-blue-200 px-4 py-3">
+          <div className="flex items-start">
+            <Calendar className="h-5 w-5 text-blue-600 mr-2 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-blue-800">
+                Scheduling Period
+              </p>
+              <p className="text-sm text-blue-700">
+                {formatAllowedRange(allowedStart, allowedEnd)}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex justify-between items-center gap-4">
         <div className="flex gap-2">
@@ -756,34 +940,7 @@ export function UnifiedCalendar({
           </Button>
         </div>
 
-        <div className="w-20"></div>
-      </div>
-
-      {/* Allocation buttons */}
-      {showAllocationButtons && mode === "allocate" && (
-        <div className="flex gap-2 flex-wrap">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => autoAllocate(availableSlots)}
-            disabled={isAllocating}
-          >
-            <Zap className="h-4 w-4 mr-2" />
-            Auto Allocate
-          </Button>
-
-          {requestedSlots.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => preAllocate(requestedSlots)}
-              disabled={isAllocating}
-            >
-              <Clock className="h-4 w-4 mr-2" />
-              Use Requested Times
-            </Button>
-          )}
-
+        {showAllocationButtons && mode === "allocate" ? (
           <Button
             variant="outline"
             size="sm"
@@ -793,8 +950,10 @@ export function UnifiedCalendar({
             <RotateCcw className="h-4 w-4 mr-2" />
             Clear Selection
           </Button>
-        </div>
-      )}
+        ) : (
+          <div className="w-20"></div>
+        )}
+      </div>
 
       {/* Calendar View */}
       {view === "week" ? (
@@ -804,8 +963,18 @@ export function UnifiedCalendar({
             <div className="w-14 md:w-20"></div>
             {weekDates.map((date, index) => {
               const isToday = isSameDay(date, new Date());
+              const isInPeriod = isDateInSchedulingPeriod(
+                date,
+                allowedStart,
+                allowedEnd,
+              );
               return (
-                <div key={DAYS[index]} className="text-center p-1 md:p-2">
+                <div
+                  key={DAYS[index]}
+                  className={`text-center p-1 md:p-2 ${
+                    isInPeriod ? "bg-blue-50 border-x-2 border-blue-200" : ""
+                  }`}
+                >
                   <div
                     className={`font-bold text-xs md:text-base ${
                       isToday ? "text-primary" : ""
@@ -823,7 +992,7 @@ export function UnifiedCalendar({
 
           {/* Week grid */}
           <div className="flex-1 overflow-y-auto scrollbar-thin min-h-0">
-            {INTERVALS.map((interval, i) => (
+            {INTERVALS.map((interval) => (
               <div
                 key={`interval-row-${interval.hour}-${interval.minute}`}
                 className="grid grid-cols-8 gap-0.5 md:gap-1"
@@ -912,7 +1081,9 @@ export function UnifiedCalendar({
               ? `Required: ${durationInHours || 1}h consultation (${Math.ceil((durationInHours || 1) / 0.5)} consecutive slots)`
               : eventType === "subscription"
                 ? `Required: ${sessionDurationInHours || 1}h per call (${Math.ceil((sessionDurationInHours || 1) / 0.5)} consecutive slots per call)`
-                : `Required: ${sessionDurationInHours || 1}h per session (2 consecutive slots)`}
+                : eventType === "webinar"
+                  ? `Required: ${durationInHours || 1}h webinar (${Math.ceil((durationInHours || 1) / 0.5)} consecutive slots)`
+                  : `Required: ${sessionDurationInHours || 1}h per class (${Math.ceil((sessionDurationInHours || 1) / 0.5)} consecutive slots)`}
           </div>
           {allocationError && (
             <div className="text-sm text-red-600">{allocationError}</div>
@@ -922,20 +1093,69 @@ export function UnifiedCalendar({
         <div className="text-sm text-muted-foreground">
           Timezone: {browserTimezone}
         </div>
-
-        {mode === "allocate" && (
-          <div className="flex gap-2">
-            <Button
-              onClick={() => manualAllocate()}
-              disabled={isAllocating}
-              size="sm"
-            >
-              <Users className="h-4 w-4 mr-2" />
-              {isAllocating ? "Allocating..." : "Allocate Selected"}
-            </Button>
-          </div>
-        )}
       </div>
+
+      {/* Allocation Buttons - Bottom */}
+      {showAllocationButtons && mode === "allocate" && (
+        <div className="flex justify-end gap-2 mt-2">
+          {onClose && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onClose}
+              disabled={isAllocating}
+            >
+              Cancel
+            </Button>
+          )}
+
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => autoAllocate(availableSlots)}
+            disabled={isAllocating}
+          >
+            <Zap className="h-4 w-4 mr-2" />
+            Auto Allocate
+          </Button>
+
+          {requestedSlots.length > 0 && (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => preAllocate(requestedSlots)}
+              disabled={isAllocating}
+            >
+              <Clock className="h-4 w-4 mr-2" />
+              Use Requested Times
+            </Button>
+          )}
+
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => manualAllocate()}
+            disabled={
+              isAllocating ||
+              !isValid ||
+              selectedSlots.length === 0 ||
+              selectedSlots.length !== requiredSlots
+            }
+            title={
+              !isValid
+                ? `Invalid selection: ${validationErrors.join(", ")}`
+                : selectedSlots.length === 0
+                  ? "Please select slots first"
+                  : selectedSlots.length !== requiredSlots
+                    ? `Need ${requiredSlots} slots, but ${selectedSlots.length} selected`
+                    : "Allocate the selected slots"
+            }
+          >
+            <Users className="h-4 w-4 mr-2" />
+            {isAllocating ? "Allocating..." : "Allocate Manual Slots"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

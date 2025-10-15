@@ -46,7 +46,7 @@ interface DashboardCardProps {
 
 // Helper functions
 function formatDateFromSlot(slotInfo: SlotOfAppointment): string {
-  return new Date(slotInfo.slotStartTimeInUTC).toLocaleString();
+  return new Date(slotInfo.startsAt).toLocaleString();
 }
 
 function getNoSlotMessage(type: string): string {
@@ -59,8 +59,8 @@ function getValidAppointmentSlots(event: EventWithType): Array<{
 }> {
   const slots = getActualSlots(event);
   return slots.map((slot) => ({
-    startTime: new Date(slot.slotStartTimeInUTC),
-    endTime: new Date(slot.slotEndTimeInUTC || slot.slotStartTimeInUTC),
+    startTime: new Date(slot.startsAt),
+    endTime: new Date(slot.endsAt || slot.startsAt),
   }));
 }
 

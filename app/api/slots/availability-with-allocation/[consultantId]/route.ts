@@ -88,20 +88,20 @@ export async function GET(
             // Use comprehensive overlap check for custom slots to match appointment logic
             OR: [
               {
-                slotStartTimeInUTC: {
+                availabilityStartsAt: {
                   gte: startDate,
                   lt: endDate,
                 },
               },
               {
-                slotEndTimeInUTC: {
+                availabilityEndsAt: {
                   gt: startDate,
                   lte: endDate,
                 },
               },
               {
-                slotStartTimeInUTC: { lte: startDate },
-                slotEndTimeInUTC: { gte: endDate },
+                availabilityStartsAt: { lte: startDate },
+                availabilityEndsAt: { gte: endDate },
               },
             ],
           },
@@ -137,20 +137,20 @@ export async function GET(
           some: {
             OR: [
               {
-                slotStartTimeInUTC: {
+                startsAt: {
                   gte: startDate,
                   lt: endDate,
                 },
               },
               {
-                slotEndTimeInUTC: {
+                endsAt: {
                   gt: startDate,
                   lte: endDate,
                 },
               },
               {
-                slotStartTimeInUTC: { lte: startDate },
-                slotEndTimeInUTC: { gte: endDate },
+                startsAt: { lte: startDate },
+                endsAt: { gte: endDate },
               },
             ],
           },
@@ -161,53 +161,204 @@ export async function GET(
       },
     });
 
-    // Extract appointment slots using flatMap for conciseness
+    // Extract appointment slots using flatMap with defensive filtering
+    // Defensive Programming: Filter out corrupt appointment slots
     const appointmentSlots: AppointmentSlot[] = appointments.flatMap((appt) =>
-      appt.slotsOfAppointment.map((slot) => ({
-        slotStartTimeInUTC: slot.slotStartTimeInUTC,
-        slotEndTimeInUTC: slot.slotEndTimeInUTC,
-      })),
+      appt.slotsOfAppointment
+        .filter((slot) => {
+          // Validate slot has required fields
+          if (!slot.startsAt || !slot.endsAt) {
+            console.warn(
+              `⚠️ Skipping appointment slot ${slot.id}: missing start or end time`,
+            );
+            return false;
+          }
+
+          // Validate slot times are valid dates
+          const start = new Date(slot.startsAt);
+          const end = new Date(slot.endsAt);
+          if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+            console.warn(
+              `⚠️ Skipping appointment slot ${slot.id}: invalid date format`,
+            );
+            return false;
+          }
+
+          // Filter out invalid appointment slots (allow legitimate overnight slots)
+          if (!isValidOvernightSlot(start, end)) {
+            console.warn(
+              `⚠️ Skipping appointment slot ${slot.id}: end time ${end.toISOString()} <= start time ${start.toISOString()} (not a valid overnight slot)`,
+            );
+            return false;
+          }
+
+          // Defensive: Filter out slots that are unreasonably far in the past (>10 years)
+          // This likely indicates data corruption
+          const tenYearsAgo = new Date();
+          tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
+          if (end < tenYearsAgo) {
+            console.warn(
+              `⚠️ Skipping appointment slot ${slot.id}: end time is more than 10 years in the past (${end.toISOString()}) - possible data corruption`,
+            );
+            return false;
+          }
+
+          // Defensive: Filter out slots that are unreasonably far in the future (>10 years)
+          // This likely indicates data corruption
+          const tenYearsFromNow = new Date();
+          tenYearsFromNow.setFullYear(tenYearsFromNow.getFullYear() + 10);
+          if (start > tenYearsFromNow) {
+            console.warn(
+              `⚠️ Skipping appointment slot ${slot.id}: start time is more than 10 years in the future (${start.toISOString()}) - possible data corruption`,
+            );
+            return false;
+          }
+
+          // Defensive: Filter out slots with duration > 24 hours (likely data corruption)
+          const durationHours =
+            (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+          if (durationHours > 24) {
+            console.warn(
+              `⚠️ Skipping appointment slot ${slot.id}: duration is > 24 hours (${durationHours.toFixed(1)}h) - possible data corruption`,
+            );
+            return false;
+          }
+
+          return true;
+        })
+        .map((slot) => ({
+          slotStartTimeInUTC: slot.startsAt,
+          slotEndTimeInUTC: slot.endsAt,
+        })),
     );
 
-    // Convert to utility interfaces
+    // Convert to utility interfaces with defensive validation
     const weeklySlots: WeeklySlot[] = consultant.slotsOfAvailabilityWeekly
       .filter((slot) => {
-        // Filter out invalid slots, but allow legitimate overnight slots
+        // Defensive: Validate required fields exist
         if (
-          !isValidOvernightSlot(slot.slotStartTimeInUTC, slot.slotEndTimeInUTC)
+          !slot.availabilityStartsAt ||
+          !slot.availabilityEndsAt ||
+          !slot.dayOfWeekForStartsAt
         ) {
           console.warn(
-            `❌ Filtering out invalid weekly slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`,
+            `⚠️ Filtering out weekly slot ${slot.id}: missing required fields`,
           );
           return false;
         }
+
+        // Defensive: Validate dates are valid
+        const start = new Date(slot.availabilityStartsAt);
+        const end = new Date(slot.availabilityEndsAt);
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+          console.warn(
+            `⚠️ Filtering out weekly slot ${slot.id}: invalid date format`,
+          );
+          return false;
+        }
+
+        // Filter out invalid slots, but allow legitimate overnight slots
+        if (
+          !isValidOvernightSlot(
+            slot.availabilityStartsAt,
+            slot.availabilityEndsAt,
+          )
+        ) {
+          console.warn(
+            `❌ Filtering out invalid weekly slot ${slot.id}: end time ${slot.availabilityEndsAt.toISOString()} <= start time ${slot.availabilityStartsAt.toISOString()}`,
+          );
+          return false;
+        }
+
+        // Defensive: Check duration is reasonable (<= 24 hours)
+        const durationHours =
+          (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+        if (durationHours > 24) {
+          console.warn(
+            `⚠️ Filtering out weekly slot ${slot.id}: duration > 24 hours (${durationHours.toFixed(1)}h)`,
+          );
+          return false;
+        }
+
         return true;
       })
       .map((slot) => ({
         id: slot.id,
-        dayOfWeekforStartTimeInUTC: slot.dayOfWeekforStartTimeInUTC,
-        slotStartTimeInUTC: slot.slotStartTimeInUTC,
-        dayOfWeekforEndTimeInUTC: slot.dayOfWeekforEndTimeInUTC,
-        slotEndTimeInUTC: slot.slotEndTimeInUTC,
+        dayOfWeekforStartTimeInUTC: slot.dayOfWeekForStartsAt,
+        slotStartTimeInUTC: slot.availabilityStartsAt,
+        dayOfWeekforEndTimeInUTC: slot.dayOfWeekForEndsAt,
+        slotEndTimeInUTC: slot.availabilityEndsAt,
       }));
 
     const customSlots: CustomSlot[] = consultant.slotsOfAvailabilityCustom
       .filter((slot) => {
-        // Filter out invalid slots, but allow legitimate overnight slots
-        if (
-          !isValidOvernightSlot(slot.slotStartTimeInUTC, slot.slotEndTimeInUTC)
-        ) {
+        // Defensive: Validate required fields exist
+        if (!slot.availabilityStartsAt || !slot.availabilityEndsAt) {
           console.warn(
-            `❌ Filtering out invalid custom slot ${slot.id}: end time ${slot.slotEndTimeInUTC.toISOString()} <= start time ${slot.slotStartTimeInUTC.toISOString()}`,
+            `⚠️ Filtering out custom slot ${slot.id}: missing required fields`,
           );
           return false;
         }
+
+        // Defensive: Validate dates are valid
+        const start = new Date(slot.availabilityStartsAt);
+        const end = new Date(slot.availabilityEndsAt);
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+          console.warn(
+            `⚠️ Filtering out custom slot ${slot.id}: invalid date format`,
+          );
+          return false;
+        }
+
+        // Filter out invalid slots, but allow legitimate overnight slots
+        if (
+          !isValidOvernightSlot(
+            slot.availabilityStartsAt,
+            slot.availabilityEndsAt,
+          )
+        ) {
+          console.warn(
+            `❌ Filtering out invalid custom slot ${slot.id}: end time ${slot.availabilityEndsAt.toISOString()} <= start time ${slot.availabilityStartsAt.toISOString()}`,
+          );
+          return false;
+        }
+
+        // Defensive: Filter out slots that are unreasonably far in the past (>10 years)
+        const tenYearsAgo = new Date();
+        tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
+        if (end < tenYearsAgo) {
+          console.warn(
+            `⚠️ Filtering out custom slot ${slot.id}: end time is more than 10 years in the past (${end.toISOString()})`,
+          );
+          return false;
+        }
+
+        // Defensive: Filter out slots that are unreasonably far in the future (>10 years)
+        const tenYearsFromNow = new Date();
+        tenYearsFromNow.setFullYear(tenYearsFromNow.getFullYear() + 10);
+        if (start > tenYearsFromNow) {
+          console.warn(
+            `⚠️ Filtering out custom slot ${slot.id}: start time is more than 10 years in the future (${start.toISOString()})`,
+          );
+          return false;
+        }
+
+        // Defensive: Check duration is reasonable (<= 24 hours)
+        const durationHours =
+          (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+        if (durationHours > 24) {
+          console.warn(
+            `⚠️ Filtering out custom slot ${slot.id}: duration > 24 hours (${durationHours.toFixed(1)}h)`,
+          );
+          return false;
+        }
+
         return true;
       })
       .map((slot) => ({
         id: slot.id,
-        slotStartTimeInUTC: slot.slotStartTimeInUTC,
-        slotEndTimeInUTC: slot.slotEndTimeInUTC,
+        slotStartTimeInUTC: slot.availabilityStartsAt,
+        slotEndTimeInUTC: slot.availabilityEndsAt,
       }));
 
     // Apply schedule type filtering based on consultant's preference
