@@ -20,6 +20,7 @@ Common issues and their solutions.
 ### Issue: "The table 'audit_logs' does not exist"
 
 **Symptoms:**
+
 - OAuth sign-in fails with database error
 - Error occurs during user update operation
 - NextAuth callback fails
@@ -30,6 +31,7 @@ Audit triggers reference non-existent `audit_logs` table.
 **Solution:**
 
 1. **Check for audit triggers:**
+
 ```sql
 SELECT tgname, tgfoid::regproc
 FROM pg_trigger
@@ -38,15 +40,17 @@ WHERE tgrelid = 'users'::regclass
 ```
 
 2. **Remove audit triggers if not needed:**
+
 ```sql
 DROP TRIGGER IF EXISTS audit_users_trigger ON users;
 DROP FUNCTION IF EXISTS audit_users_changes();
 ```
 
 3. **OR create audit_logs table if needed:**
-See [How to Implement Audit Logging](./README.md#how-to-implement-audit-logging)
+   See [How to Implement Audit Logging](./README.md#how-to-implement-audit-logging)
 
 **Prevention:**
+
 - Don't enable Supabase audit features without creating the required tables
 - Test trigger functions before creating triggers
 - Document all triggers in this repository
@@ -54,6 +58,7 @@ See [How to Implement Audit Logging](./README.md#how-to-implement-audit-logging)
 ### Issue: "User already exists" on OAuth Sign-In
 
 **Symptoms:**
+
 - Can't sign in with Google/GitHub after signing up with email
 - Error about duplicate email
 
@@ -89,6 +94,7 @@ async signIn({ user, account, profile }) {
 ### Issue: "new row violates row-level security policy"
 
 **Symptoms:**
+
 - INSERT/UPDATE operations fail
 - Error mentions RLS policy violation
 - Works with service role key but not as user
@@ -96,6 +102,7 @@ async signIn({ user, account, profile }) {
 **Diagnosis:**
 
 1. **Check which policy is failing:**
+
 ```sql
 -- As user
 SET LOCAL ROLE authenticated;
@@ -109,6 +116,7 @@ RESET ROLE;
 ```
 
 2. **List policies on the table:**
+
 ```sql
 SELECT policyname, cmd, qual
 FROM pg_policies
@@ -118,6 +126,7 @@ WHERE tablename = 'table_name';
 **Common Causes:**
 
 #### Cause 1: Missing WITH CHECK clause
+
 ```sql
 -- Wrong: No WITH CHECK for INSERT
 CREATE POLICY insert_policy ON users
@@ -133,6 +142,7 @@ CREATE POLICY insert_policy ON users
 ```
 
 #### Cause 2: Policy condition too restrictive
+
 ```sql
 -- Too restrictive: Can only insert own user record
 CREATE POLICY insert_policy ON consultations
@@ -148,6 +158,7 @@ CREATE POLICY insert_policy ON consultations
 ```
 
 #### Cause 3: No INSERT policy exists
+
 ```sql
 -- Check if INSERT policy exists
 SELECT policyname, cmd
@@ -163,6 +174,7 @@ CREATE POLICY authenticated_insert ON table_name
 ```
 
 **Solution Template:**
+
 ```sql
 -- Drop and recreate policy with correct conditions
 DROP POLICY IF EXISTS policy_name ON table_name;
@@ -179,6 +191,7 @@ CREATE POLICY policy_name ON table_name
 ### Issue: "permission denied for table X"
 
 **Symptoms:**
+
 - Cannot read/write table
 - Error even though RLS is enabled
 - Works in Supabase dashboard but not in app
@@ -189,6 +202,7 @@ RLS enabled but no policies exist.
 **Solution:**
 
 1. **Check if RLS is enabled:**
+
 ```sql
 SELECT tablename, rowsecurity
 FROM pg_tables
@@ -196,6 +210,7 @@ WHERE tablename = 'table_name';
 ```
 
 2. **Check for policies:**
+
 ```sql
 SELECT policyname
 FROM pg_policies
@@ -203,6 +218,7 @@ WHERE tablename = 'table_name';
 ```
 
 3. **Add appropriate policies:**
+
 ```sql
 -- Example: Allow users to read all records
 CREATE POLICY public_read ON table_name
@@ -214,6 +230,7 @@ CREATE POLICY public_read ON table_name
 ### Issue: Can See Other Users' Data
 
 **Symptoms:**
+
 - User can see data they shouldn't
 - Privacy leak
 - All records visible regardless of owner
@@ -224,6 +241,7 @@ Policy condition is too permissive.
 **Solution:**
 
 1. **Check current policy:**
+
 ```sql
 SELECT policyname, qual
 FROM pg_policies
@@ -232,6 +250,7 @@ WHERE tablename = 'table_name'
 ```
 
 2. **Look for overly permissive policies:**
+
 ```sql
 -- BAD: Allows seeing all records
 USING (true)
@@ -245,6 +264,7 @@ USING (user_id = auth.uid())
 ```
 
 3. **Update policy:**
+
 ```sql
 DROP POLICY IF EXISTS policy_name ON table_name;
 
@@ -261,11 +281,13 @@ CREATE POLICY policy_name ON table_name
 ### Issue: Trigger References Non-Existent Table/Column
 
 **Symptoms:**
+
 - INSERT/UPDATE fails with "table/column does not exist"
 - Error mentions trigger name
 - Operation works when trigger is disabled
 
 **Diagnosis:**
+
 ```sql
 -- Find the trigger
 SELECT tgname, tgfoid::regproc
@@ -281,6 +303,7 @@ WHERE proname = 'function_name';
 **Solution:**
 
 Option 1: Fix the function
+
 ```sql
 -- Drop and recreate function with correct table/column names
 DROP FUNCTION IF EXISTS function_name() CASCADE;
@@ -301,6 +324,7 @@ CREATE TRIGGER trigger_name
 ```
 
 Option 2: Remove trigger if not needed
+
 ```sql
 DROP TRIGGER IF EXISTS trigger_name ON table_name;
 DROP FUNCTION IF EXISTS function_name();
@@ -309,6 +333,7 @@ DROP FUNCTION IF EXISTS function_name();
 ### Issue: "infinite recursion detected in trigger"
 
 **Symptoms:**
+
 - Operation hangs then fails
 - Error about recursion limit
 - Trigger modifies the same table
@@ -317,6 +342,7 @@ DROP FUNCTION IF EXISTS function_name();
 Trigger updates the table it's attached to without protection.
 
 **Bad Example:**
+
 ```sql
 CREATE OR REPLACE FUNCTION update_timestamp()
 RETURNS TRIGGER AS $$
@@ -331,6 +357,7 @@ $$ LANGUAGE plpgsql;
 **Solution:**
 
 Option 1: Modify NEW directly
+
 ```sql
 CREATE OR REPLACE FUNCTION update_timestamp()
 RETURNS TRIGGER AS $$
@@ -343,6 +370,7 @@ $$ LANGUAGE plpgsql;
 ```
 
 Option 2: Use WHEN clause
+
 ```sql
 CREATE TRIGGER update_timestamp_trigger
   BEFORE UPDATE ON users
@@ -355,6 +383,7 @@ CREATE TRIGGER update_timestamp_trigger
 ### Issue: Trigger Slows Down Operations
 
 **Symptoms:**
+
 - INSERT/UPDATE takes much longer than expected
 - Trigger performs complex operations
 - Multiple triggers on same table
@@ -362,6 +391,7 @@ CREATE TRIGGER update_timestamp_trigger
 **Solution:**
 
 1. **Identify slow triggers:**
+
 ```sql
 -- Enable timing
 \timing on
@@ -382,12 +412,14 @@ ALTER TABLE table_name ENABLE TRIGGER trigger_name;
 ```
 
 2. **Optimize trigger function:**
+
 - Avoid complex queries in triggers
 - Use EXISTS instead of COUNT
 - Minimize database calls
 - Consider moving logic to application code
 
 3. **Use AFTER triggers instead of BEFORE when possible:**
+
 ```sql
 -- BEFORE trigger (runs during transaction)
 CREATE TRIGGER before_trigger
@@ -409,17 +441,20 @@ CREATE TRIGGER after_trigger
 ### Issue: Slow Queries with RLS
 
 **Symptoms:**
+
 - Queries take seconds instead of milliseconds
 - Query works fast as service_role
 - EXPLAIN shows policy evaluation
 
 **Diagnosis:**
+
 ```sql
 EXPLAIN ANALYZE
 SELECT * FROM users WHERE email = 'user@example.com';
 ```
 
 Look for:
+
 - Sequential scans instead of index scans
 - Policy conditions evaluated for every row
 - Multiple EXISTS subqueries
@@ -427,6 +462,7 @@ Look for:
 **Solutions:**
 
 #### Solution 1: Add indexes for policy conditions
+
 ```sql
 -- If policy uses: userId = auth.uid()
 CREATE INDEX idx_table_user_id ON table_name("userId");
@@ -437,6 +473,7 @@ CREATE INDEX idx_users_role ON users(role);
 ```
 
 #### Solution 2: Simplify policy conditions
+
 ```sql
 -- Complex (slower)
 CREATE POLICY complex_policy ON table_name
@@ -462,7 +499,9 @@ CREATE POLICY simple_policy ON table_name
 ```
 
 #### Solution 3: Use materialized views
+
 For complex queries with RLS, create materialized views:
+
 ```sql
 CREATE MATERIALIZED VIEW consultant_stats AS
 SELECT
@@ -479,11 +518,13 @@ REFRESH MATERIALIZED VIEW consultant_stats;
 ### Issue: Connection Pool Exhaustion
 
 **Symptoms:**
+
 - "Too many connections" error
 - App becomes unresponsive
 - Works fine after restart
 
 **Cause:**
+
 - Using direct connection in serverless environment
 - Not closing Prisma clients
 - Too many concurrent requests
@@ -491,6 +532,7 @@ REFRESH MATERIALIZED VIEW consultant_stats;
 **Solution:**
 
 1. **Use connection pooling:**
+
 ```env
 # Use pooler URL
 DATABASE_URL="postgresql://...pooler.supabase.com:6543/postgres?pgbouncer=true"
@@ -500,29 +542,31 @@ DIRECT_URL="postgresql://...pooler.supabase.com:5432/postgres"
 ```
 
 2. **Optimize Prisma client:**
+
 ```typescript
 // lib/prisma.ts
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient } from "@prisma/client";
 
 const prismaClientSingleton = () => {
   return new PrismaClient({
-    log: ['error'],
+    log: ["error"],
     // Don't log queries in production
-  })
-}
+  });
+};
 
 declare global {
-  var prisma: undefined | ReturnType<typeof prismaClientSingleton>
+  var prisma: undefined | ReturnType<typeof prismaClientSingleton>;
 }
 
-const prisma = globalThis.prisma ?? prismaClientSingleton()
+const prisma = globalThis.prisma ?? prismaClientSingleton();
 
-export default prisma
+export default prisma;
 
-if (process.env.NODE_ENV !== 'production') globalThis.prisma = prisma
+if (process.env.NODE_ENV !== "production") globalThis.prisma = prisma;
 ```
 
 3. **Increase Supabase connection limit:**
+
 - Go to Supabase Dashboard → Settings → Database
 - Increase max_connections (requires plan upgrade for high limits)
 
@@ -533,6 +577,7 @@ if (process.env.NODE_ENV !== 'production') globalThis.prisma = prisma
 ### Issue: "Connection refused" or "Connection timeout"
 
 **Symptoms:**
+
 - Can't connect to database
 - Works in Supabase dashboard
 - Timeout after 30 seconds
@@ -540,33 +585,39 @@ if (process.env.NODE_ENV !== 'production') globalThis.prisma = prisma
 **Solutions:**
 
 1. **Check connection string:**
+
 ```bash
 # Test connection
 psql "postgresql://user:password@host:port/database"
 ```
 
 2. **Verify environment variables:**
+
 ```bash
 # In your app directory
 cat .env.local | grep DATABASE_URL
 ```
 
 3. **Check IP allowlist:**
+
 - Go to Supabase Dashboard → Settings → Database
 - Ensure your IP is not blocked
 - Consider using IPv4 vs IPv6
 
 4. **Use correct port:**
+
 - Pooler: 6543
 - Direct: 5432
 
 ### Issue: SSL/TLS Errors
 
 **Symptoms:**
+
 - "SSL connection required"
 - "Certificate verification failed"
 
 **Solution:**
+
 ```typescript
 // In Prisma schema
 datasource db {
@@ -578,6 +629,7 @@ datasource db {
 ```
 
 Or in connection string:
+
 ```
 postgresql://...?sslmode=require
 ```
@@ -589,6 +641,7 @@ postgresql://...?sslmode=require
 ### Issue: NextAuth Can't Read User Data
 
 **Symptoms:**
+
 - Session is empty
 - User data not available in callbacks
 - Works in SQL editor
@@ -602,10 +655,10 @@ Use service role key for NextAuth operations:
 
 ```typescript
 // lib/prisma.ts - Create separate client for NextAuth
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient } from "@prisma/client";
 
 // Regular client (with RLS)
-export const prisma = new PrismaClient()
+export const prisma = new PrismaClient();
 
 // Admin client for NextAuth (bypasses RLS)
 export const prismaAuth = new PrismaClient({
@@ -614,22 +667,23 @@ export const prismaAuth = new PrismaClient({
       url: process.env.DATABASE_URL_ADMIN, // Service role connection
     },
   },
-})
+});
 ```
 
 ```typescript
 // app/api/auth/[...nextauth]/options.ts
-import { prismaAuth } from '@/lib/prisma'
+import { prismaAuth } from "@/lib/prisma";
 
 const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prismaAuth), // Use admin client
   // ...
-}
+};
 ```
 
 ### Issue: Flutter App Can't Access Data After Removing Triggers
 
 **Symptoms:**
+
 - Flutter app errors after trigger removal
 - "Column 'audit_logs' not found" error (from Flutter)
 
@@ -638,6 +692,7 @@ const authOptions: NextAuthOptions = {
 Triggers were not used by Flutter app. If you see errors:
 
 1. **Check Flutter Supabase client version:**
+
 ```yaml
 # pubspec.yaml
 dependencies:
@@ -645,12 +700,14 @@ dependencies:
 ```
 
 2. **Verify Flutter is using correct schema:**
+
 ```dart
 // Regenerate types
 supabase gen types typescript --local
 ```
 
 3. **Clear Flutter cache:**
+
 ```bash
 flutter clean
 flutter pub get

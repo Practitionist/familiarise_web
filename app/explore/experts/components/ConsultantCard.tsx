@@ -79,7 +79,9 @@ const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
     <Card className="rounded-lg border-0 shadow-md hover:shadow-lg transition-shadow bg-gray-800/30 border-gray-700/50">
       <CardContent className="grid gap-4 p-6">
         <div className="flex items-center justify-between">
-          <div className="text-3xl font-bold text-gray-100">${plan.price / 100}</div>
+          <div className="text-3xl font-bold text-gray-100">
+            ${plan.price / 100}
+          </div>
           <div className="text-gray-400 font-medium">
             {formatDuration(plan.durationInMonths)}
           </div>
@@ -87,7 +89,9 @@ const SubscriptionPlanCard = ({ plan }: { plan: any }) => {
         <div className="space-y-3">
           <div className="flex items-center justify-between text-sm">
             <span className="text-gray-300">Calls per week</span>
-            <span className="font-semibold text-gray-100">{plan.callsPerWeek}</span>
+            <span className="font-semibold text-gray-100">
+              {plan.callsPerWeek}
+            </span>
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-gray-300">Email support</span>
@@ -134,7 +138,9 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
               />
             </div>
             <div>
-              <h3 className="text-xl font-semibold text-white">{consultant.user.name}</h3>
+              <h3 className="text-xl font-semibold text-white">
+                {consultant.user.name}
+              </h3>
               {consultant.user.email && (
                 <span className="text-gray-300">
                   @{consultant.user.email.split("@")[0]}
@@ -159,7 +165,11 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
           <div className="space-y-2">
             <div className="flex flex-wrap gap-2 items-center">
               <span className="text-gray-200 font-medium">Experience:</span>
-              <span className="text-white font-semibold">{consultant.experience ? `${consultant.experience} years` : "Not specified"}</span>
+              <span className="text-white font-semibold">
+                {consultant.experience
+                  ? `${consultant.experience} years`
+                  : "Not specified"}
+              </span>
             </div>
             <ConsultantInfo
               label="Specialization"
@@ -234,17 +244,13 @@ export function ConsultantCard({ consultant, metadata }: ConsultantCardProps) {
           </div>
 
           <div className="flex flex-col gap-2">
-            <Button
-              className="w-full bg-gradient-to-r from-gray-700 to-gray-800 hover:from-gray-600 hover:to-gray-700 text-white border border-gray-600 shadow-md hover:shadow-lg transition-all"
-            >
+            <Button className="w-full bg-gradient-to-r from-gray-700 to-gray-800 hover:from-gray-600 hover:to-gray-700 text-white border border-gray-600 shadow-md hover:shadow-lg transition-all">
               Book a Free Trial
             </Button>
             <Button className="w-full bg-white hover:bg-gray-100 text-black shadow-md hover:shadow-lg transition-all font-semibold">
               Book a Session
             </Button>
-            <Button
-              className="w-full bg-gradient-to-r from-gray-700 to-gray-800 hover:from-gray-600 hover:to-gray-700 text-white border border-gray-600 shadow-md hover:shadow-lg transition-all"
-            >
+            <Button className="w-full bg-gradient-to-r from-gray-700 to-gray-800 hover:from-gray-600 hover:to-gray-700 text-white border border-gray-600 shadow-md hover:shadow-lg transition-all">
               Book Mentorship
             </Button>
           </div>

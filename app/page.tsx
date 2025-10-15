@@ -32,11 +32,16 @@ import type { ReviewWithProfiles } from "@/types/review";
 // Styles from CSS modules, combined into a single object
 // Reusable glow effect constants for consistent lighting across the page
 const GLOW_EFFECTS = {
-  moonArc: 'radial-gradient(ellipse at center bottom, rgba(220,220,220,0.4) 0%, rgba(220,220,220,0.2) 30%, rgba(220,220,220,0.08) 50%, transparent 70%)',
-  cardGlow: 'radial-gradient(circle at center, rgba(220,220,220,0.03) 0%, transparent 70%)',
-  sectionGlow: 'radial-gradient(ellipse at center, rgba(220,220,220,0.05) 0%, rgba(220,220,220,0.02) 50%, transparent 75%)',
-  sectionTopFade: 'radial-gradient(ellipse at center top, rgba(200,200,200,0.2) 0%, rgba(200,200,200,0.12) 30%, rgba(200,200,200,0.06) 60%, transparent 80%)',
-  transitionGradient: 'linear-gradient(to bottom, transparent 0%, rgba(150,150,150,0.06) 20%, rgba(150,150,150,0.1) 50%, rgba(150,150,150,0.06) 80%, transparent 100%)',
+  moonArc:
+    "radial-gradient(ellipse at center bottom, rgba(220,220,220,0.4) 0%, rgba(220,220,220,0.2) 30%, rgba(220,220,220,0.08) 50%, transparent 70%)",
+  cardGlow:
+    "radial-gradient(circle at center, rgba(220,220,220,0.03) 0%, transparent 70%)",
+  sectionGlow:
+    "radial-gradient(ellipse at center, rgba(220,220,220,0.05) 0%, rgba(220,220,220,0.02) 50%, transparent 75%)",
+  sectionTopFade:
+    "radial-gradient(ellipse at center top, rgba(200,200,200,0.2) 0%, rgba(200,200,200,0.12) 30%, rgba(200,200,200,0.06) 60%, transparent 80%)",
+  transitionGradient:
+    "linear-gradient(to bottom, transparent 0%, rgba(150,150,150,0.06) 20%, rgba(150,150,150,0.1) 50%, rgba(150,150,150,0.06) 80%, transparent 100%)",
 } as const;
 
 const pageStyles = {
@@ -139,7 +144,9 @@ function ExpertCard({
             {expert.rating % 1 >= 0.5 && (
               <StarHalf className="w-4 h-4 fill-gray-400 text-gray-400" />
             )}
-            <span className="text-sm text-gray-400 ml-1">{expert.rating.toFixed(1)}</span>
+            <span className="text-sm text-gray-400 ml-1">
+              {expert.rating.toFixed(1)}
+            </span>
           </div>
           <div className="text-center space-y-1">
             <p className="text-sm text-gray-300 font-medium line-clamp-1">
@@ -492,9 +499,7 @@ export default function Home() {
 
   // For Testimonials marquee effect (reduced duplication for performance)
   const displayReviews =
-    reviews.length >= 4
-      ? reviews
-      : [...reviews, ...reviews]; // Reduced from 4x to 2x for performance
+    reviews.length >= 4 ? reviews : [...reviews, ...reviews]; // Reduced from 4x to 2x for performance
   const marqueeGroups = Array.from({ length: 2 }, (_, i) => ({
     ltrId: `ltr-group-${i}-${Math.random()}`,
     rtlId: `rtl-group-${i}-${Math.random()}`,
@@ -561,7 +566,10 @@ export default function Home() {
           will-change: transform;
         }
       `}</style>
-      <main key="main-content-wrapper" className="flex-1 w-full relative bg-black">
+      <main
+        key="main-content-wrapper"
+        className="flex-1 w-full relative bg-black"
+      >
         <DarkBackground key="dark-background" />
 
         {/* HeroSection */}
@@ -575,7 +583,9 @@ export default function Home() {
                 Connect with Expert Consultants Who Transform Your Career
               </h1>
               <p className="max-w-[800px] text-xl md:text-2xl text-gray-400 leading-relaxed">
-                Book 1-1 sessions, join classes, attend webinars, and get personalized guidance from industry professionals in 50+ domains.
+                Book 1-1 sessions, join classes, attend webinars, and get
+                personalized guidance from industry professionals in 50+
+                domains.
               </p>
               <div className="flex flex-col sm:flex-row gap-4 pt-6">
                 <Link
@@ -599,7 +609,7 @@ export default function Home() {
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: GLOW_EFFECTS.moonArc
+                background: GLOW_EFFECTS.moonArc,
               }}
             />
           </div>
@@ -627,7 +637,7 @@ export default function Home() {
           <div
             className="absolute inset-0"
             style={{
-              background: GLOW_EFFECTS.transitionGradient
+              background: GLOW_EFFECTS.transitionGradient,
             }}
           />
         </div>
@@ -642,7 +652,7 @@ export default function Home() {
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: GLOW_EFFECTS.sectionTopFade
+                background: GLOW_EFFECTS.sectionTopFade,
               }}
             />
           </div>
@@ -652,7 +662,8 @@ export default function Home() {
                 How Familiarise Works
               </h2>
               <p className="max-w-2xl mx-auto text-xl text-gray-400 leading-relaxed">
-                Get personalized guidance from industry experts through our simple three-step process.
+                Get personalized guidance from industry experts through our
+                simple three-step process.
               </p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
@@ -661,13 +672,26 @@ export default function Home() {
                 <div className="h-full bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl p-10 hover:border-white/30 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-3xl">
                   <div className="flex flex-col items-center text-center space-y-5">
                     <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/30 flex items-center justify-center border border-gray-700/30">
-                      <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      <svg
+                        className="w-10 h-10 text-gray-300"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={1.5}
+                          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                        />
                       </svg>
                     </div>
-                    <h3 className="text-2xl font-semibold text-gray-100">Browse Expert Consultants</h3>
+                    <h3 className="text-2xl font-semibold text-gray-100">
+                      Browse Expert Consultants
+                    </h3>
                     <p className="text-gray-400 leading-relaxed">
-                      Explore 500+ verified experts across 50+ domains. Filter by expertise, rating, and availability.
+                      Explore 500+ verified experts across 50+ domains. Filter
+                      by expertise, rating, and availability.
                     </p>
                   </div>
                 </div>
@@ -678,13 +702,26 @@ export default function Home() {
                 <div className="h-full bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl p-10 hover:border-white/30 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-3xl">
                   <div className="flex flex-col items-center text-center space-y-5">
                     <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/30 flex items-center justify-center border border-gray-700/30">
-                      <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      <svg
+                        className="w-10 h-10 text-gray-300"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={1.5}
+                          d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                        />
                       </svg>
                     </div>
-                    <h3 className="text-2xl font-semibold text-gray-100">Book Your Session</h3>
+                    <h3 className="text-2xl font-semibold text-gray-100">
+                      Book Your Session
+                    </h3>
                     <p className="text-gray-400 leading-relaxed">
-                      Choose from 1-1 consultations, classes, webinars, or subscriptions. Schedule at your convenience.
+                      Choose from 1-1 consultations, classes, webinars, or
+                      subscriptions. Schedule at your convenience.
                     </p>
                   </div>
                 </div>
@@ -695,13 +732,26 @@ export default function Home() {
                 <div className="h-full bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl p-10 hover:border-white/30 transition-all duration-500 hover:shadow-2xl hover:shadow-gray-900/50 backdrop-blur-3xl">
                   <div className="flex flex-col items-center text-center space-y-5">
                     <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/30 flex items-center justify-center border border-gray-700/30">
-                      <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      <svg
+                        className="w-10 h-10 text-gray-300"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={1.5}
+                          d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                        />
                       </svg>
                     </div>
-                    <h3 className="text-2xl font-semibold text-gray-100">Join & Learn</h3>
+                    <h3 className="text-2xl font-semibold text-gray-100">
+                      Join & Learn
+                    </h3>
                     <p className="text-gray-400 leading-relaxed">
-                      Connect instantly through our platform. Get actionable insights and transform your career.
+                      Connect instantly through our platform. Get actionable
+                      insights and transform your career.
                     </p>
                   </div>
                 </div>
@@ -720,7 +770,7 @@ export default function Home() {
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: GLOW_EFFECTS.sectionTopFade
+                background: GLOW_EFFECTS.sectionTopFade,
               }}
             />
           </div>
@@ -729,7 +779,7 @@ export default function Home() {
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: GLOW_EFFECTS.sectionGlow
+                background: GLOW_EFFECTS.sectionGlow,
               }}
             />
           </div>
@@ -739,7 +789,8 @@ export default function Home() {
                 Platform Metrics
               </h2>
               <p className="max-w-2xl mx-auto text-xl text-gray-400 leading-relaxed">
-                Join thousands of professionals who have transformed their careers through expert guidance.
+                Join thousands of professionals who have transformed their
+                careers through expert guidance.
               </p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 max-w-7xl mx-auto">
@@ -748,10 +799,16 @@ export default function Home() {
                 <div className="flex flex-col space-y-3">
                   <div className="flex items-center gap-3">
                     <div className="w-4 h-4 rounded-full bg-gradient-to-r from-gray-400 to-gray-500"></div>
-                    <p className="text-gray-400 text-sm uppercase tracking-wider font-medium">Expert Consultants</p>
+                    <p className="text-gray-400 text-sm uppercase tracking-wider font-medium">
+                      Expert Consultants
+                    </p>
                   </div>
-                  <p className="text-6xl font-bold bg-gradient-to-br from-gray-200 to-gray-400 bg-clip-text text-transparent">500+</p>
-                  <p className="text-gray-500 text-sm">Verified Professionals</p>
+                  <p className="text-6xl font-bold bg-gradient-to-br from-gray-200 to-gray-400 bg-clip-text text-transparent">
+                    500+
+                  </p>
+                  <p className="text-gray-500 text-sm">
+                    Verified Professionals
+                  </p>
                 </div>
               </div>
 
@@ -760,9 +817,13 @@ export default function Home() {
                 <div className="flex flex-col space-y-3">
                   <div className="flex items-center gap-3">
                     <div className="w-4 h-4 rounded-full bg-gradient-to-r from-gray-400 to-gray-500"></div>
-                    <p className="text-gray-400 text-sm uppercase tracking-wider font-medium">Consultations</p>
+                    <p className="text-gray-400 text-sm uppercase tracking-wider font-medium">
+                      Consultations
+                    </p>
                   </div>
-                  <p className="text-6xl font-bold bg-gradient-to-br from-gray-200 to-gray-400 bg-clip-text text-transparent">10K+</p>
+                  <p className="text-6xl font-bold bg-gradient-to-br from-gray-200 to-gray-400 bg-clip-text text-transparent">
+                    10K+
+                  </p>
                   <p className="text-gray-500 text-sm">Sessions Completed</p>
                 </div>
               </div>
@@ -772,9 +833,13 @@ export default function Home() {
                 <div className="flex flex-col space-y-3">
                   <div className="flex items-center gap-3">
                     <div className="w-4 h-4 rounded-full bg-gradient-to-r from-gray-400 to-gray-500"></div>
-                    <p className="text-gray-400 text-sm uppercase tracking-wider font-medium">Average Rating</p>
+                    <p className="text-gray-400 text-sm uppercase tracking-wider font-medium">
+                      Average Rating
+                    </p>
                   </div>
-                  <p className="text-6xl font-bold bg-gradient-to-br from-gray-200 to-gray-400 bg-clip-text text-transparent">4.8</p>
+                  <p className="text-6xl font-bold bg-gradient-to-br from-gray-200 to-gray-400 bg-clip-text text-transparent">
+                    4.8
+                  </p>
                   <p className="text-gray-500 text-sm">out of 5.0 stars</p>
                 </div>
               </div>
@@ -784,9 +849,13 @@ export default function Home() {
                 <div className="flex flex-col space-y-3">
                   <div className="flex items-center gap-3">
                     <div className="w-4 h-4 rounded-full bg-gradient-to-r from-gray-400 to-gray-500"></div>
-                    <p className="text-gray-400 text-sm uppercase tracking-wider font-medium">Expertise Areas</p>
+                    <p className="text-gray-400 text-sm uppercase tracking-wider font-medium">
+                      Expertise Areas
+                    </p>
                   </div>
-                  <p className="text-6xl font-bold bg-gradient-to-br from-gray-200 to-gray-400 bg-clip-text text-transparent">50+</p>
+                  <p className="text-6xl font-bold bg-gradient-to-br from-gray-200 to-gray-400 bg-clip-text text-transparent">
+                    50+
+                  </p>
                   <p className="text-gray-500 text-sm">Domains Covered</p>
                 </div>
               </div>
@@ -799,7 +868,7 @@ export default function Home() {
           <div
             className="absolute inset-0"
             style={{
-              background: GLOW_EFFECTS.transitionGradient
+              background: GLOW_EFFECTS.transitionGradient,
             }}
           />
         </div>
@@ -866,7 +935,7 @@ export default function Home() {
           <div
             className="absolute inset-0"
             style={{
-              background: GLOW_EFFECTS.transitionGradient
+              background: GLOW_EFFECTS.transitionGradient,
             }}
           />
         </div>
@@ -881,7 +950,7 @@ export default function Home() {
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: GLOW_EFFECTS.sectionTopFade
+                background: GLOW_EFFECTS.sectionTopFade,
               }}
             />
           </div>
@@ -890,7 +959,7 @@ export default function Home() {
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: GLOW_EFFECTS.sectionGlow
+                background: GLOW_EFFECTS.sectionGlow,
               }}
             />
           </div>
@@ -900,7 +969,9 @@ export default function Home() {
                 Top-Rated Consultants Ready to Help
               </h2>
               <p className="mt-4 mx-auto max-w-[800px] text-gray-400 text-xl leading-relaxed">
-                Connect with industry leaders who have helped thousands of professionals achieve their goals. Browse through our curated selection of top consultants across various domains.
+                Connect with industry leaders who have helped thousands of
+                professionals achieve their goals. Browse through our curated
+                selection of top consultants across various domains.
               </p>
               <Link href="/explore/experts">
                 <Button className="mt-8 h-14 px-8 bg-white text-black hover:bg-gray-100 hover:scale-105 transition-all duration-300 shadow-2xl rounded-xl font-semibold">
@@ -951,19 +1022,22 @@ export default function Home() {
           <div
             className="absolute inset-0"
             style={{
-              background: GLOW_EFFECTS.transitionGradient
+              background: GLOW_EFFECTS.transitionGradient,
             }}
           />
         </div>
 
         {/* OfferingsSection */}
-        <section key="offerings-section" className="py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/30 to-black relative">
+        <section
+          key="offerings-section"
+          className="py-24 md:py-32 lg:py-40 bg-gradient-to-b from-black via-gray-950/30 to-black relative"
+        >
           {/* Top fade shadow */}
           <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none">
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: GLOW_EFFECTS.sectionTopFade
+                background: GLOW_EFFECTS.sectionTopFade,
               }}
             />
           </div>
@@ -973,7 +1047,8 @@ export default function Home() {
                 Our Services
               </h2>
               <p className="max-w-2xl mx-auto text-xl text-gray-400 leading-relaxed">
-                Choose from flexible consultation formats that fit your learning style and schedule.
+                Choose from flexible consultation formats that fit your learning
+                style and schedule.
               </p>
             </div>
             <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-4 max-w-7xl mx-auto">
@@ -985,7 +1060,9 @@ export default function Home() {
                   <h3 className="text-2xl font-semibold mb-4 text-gray-100">
                     {offering.title}
                   </h3>
-                  <p className="text-gray-400 leading-relaxed">{offering.description}</p>
+                  <p className="text-gray-400 leading-relaxed">
+                    {offering.description}
+                  </p>
                 </div>
               ))}
             </div>
@@ -997,19 +1074,22 @@ export default function Home() {
           <div
             className="absolute inset-0"
             style={{
-              background: GLOW_EFFECTS.transitionGradient
+              background: GLOW_EFFECTS.transitionGradient,
             }}
           />
         </div>
 
         {/* HowProcessWorksSection */}
-        <section key="how-process-works-section" className="py-24 md:py-32 bg-black relative">
+        <section
+          key="how-process-works-section"
+          className="py-24 md:py-32 bg-black relative"
+        >
           {/* Top fade shadow */}
           <div className="absolute top-0 left-0 right-0 h-64 pointer-events-none z-10">
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: GLOW_EFFECTS.sectionTopFade
+                background: GLOW_EFFECTS.sectionTopFade,
               }}
             />
           </div>
@@ -1018,7 +1098,7 @@ export default function Home() {
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: GLOW_EFFECTS.sectionGlow
+                background: GLOW_EFFECTS.sectionGlow,
               }}
             />
           </div>
@@ -1029,35 +1109,64 @@ export default function Home() {
               whileInView={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
             >
-              <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold mb-6 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">How The Process Works</h2>
+              <h2 className="text-4xl sm:text-5xl md:text-6xl font-bold mb-6 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+                How The Process Works
+              </h2>
               <p className="text-gray-400 max-w-2xl mx-auto text-xl leading-relaxed">
-                Choose from our various formats and follow these simple steps to start your learning journey
+                Choose from our various formats and follow these simple steps to
+                start your learning journey
               </p>
             </motion.div>
             <div className="relative bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl p-10 shadow-2xl max-w-5xl mx-auto backdrop-blur-3xl">
               {/* Card glow effect */}
-              <div className="absolute inset-0 -z-10 rounded-3xl" style={{ background: GLOW_EFFECTS.cardGlow, filter: 'blur(40px)' }} />
-            <Tabs defaultValue="consultation" className="w-full">
-              <TabsList className="flex flex-wrap justify-center gap-3 mb-8 bg-transparent border-0">
-                <TabsTrigger value="consultation" className="data-[state=active]:bg-white data-[state=active]:text-black data-[state=active]:shadow-xl data-[state=active]:shadow-white/20 bg-white/5 border border-white/10 text-gray-400 transition-all duration-300 hover:text-gray-200 hover:bg-white/10 hover:border-white/20 rounded-full py-3 px-8 font-medium whitespace-nowrap">Consultation</TabsTrigger>
-                <TabsTrigger value="subscription" className="data-[state=active]:bg-white data-[state=active]:text-black data-[state=active]:shadow-xl data-[state=active]:shadow-white/20 bg-white/5 border border-white/10 text-gray-400 transition-all duration-300 hover:text-gray-200 hover:bg-white/10 hover:border-white/20 rounded-full py-3 px-8 font-medium whitespace-nowrap">Subscription</TabsTrigger>
-                <TabsTrigger value="webinar" className="data-[state=active]:bg-white data-[state=active]:text-black data-[state=active]:shadow-xl data-[state=active]:shadow-white/20 bg-white/5 border border-white/10 text-gray-400 transition-all duration-300 hover:text-gray-200 hover:bg-white/10 hover:border-white/20 rounded-full py-3 px-8 font-medium whitespace-nowrap">Webinar</TabsTrigger>
-                <TabsTrigger value="class" className="data-[state=active]:bg-white data-[state=active]:text-black data-[state=active]:shadow-xl data-[state=active]:shadow-white/20 bg-white/5 border border-white/10 text-gray-400 transition-all duration-300 hover:text-gray-200 hover:bg-white/10 hover:border-white/20 rounded-full py-3 px-8 font-medium whitespace-nowrap">Class</TabsTrigger>
-              </TabsList>
-              <div className="mt-8">
-                <Suspense fallback={<div>Loading process flows...</div>}>
-                  {Object.entries(flowData).map(([flowType, steps]) => (
-                    <TabsContent key={flowType} value={flowType}>
-                      <div className="space-y-6">
-                        {steps.map((step) => (
-                          <ProcessFlowDisplay key={step.number} {...step} />
-                        ))}
-                      </div>
-                    </TabsContent>
-                  ))}
-                </Suspense>
-              </div>
-            </Tabs>
+              <div
+                className="absolute inset-0 -z-10 rounded-3xl"
+                style={{
+                  background: GLOW_EFFECTS.cardGlow,
+                  filter: "blur(40px)",
+                }}
+              />
+              <Tabs defaultValue="consultation" className="w-full">
+                <TabsList className="flex flex-wrap justify-center gap-3 mb-8 bg-transparent border-0">
+                  <TabsTrigger
+                    value="consultation"
+                    className="data-[state=active]:bg-white data-[state=active]:text-black data-[state=active]:shadow-xl data-[state=active]:shadow-white/20 bg-white/5 border border-white/10 text-gray-400 transition-all duration-300 hover:text-gray-200 hover:bg-white/10 hover:border-white/20 rounded-full py-3 px-8 font-medium whitespace-nowrap"
+                  >
+                    Consultation
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="subscription"
+                    className="data-[state=active]:bg-white data-[state=active]:text-black data-[state=active]:shadow-xl data-[state=active]:shadow-white/20 bg-white/5 border border-white/10 text-gray-400 transition-all duration-300 hover:text-gray-200 hover:bg-white/10 hover:border-white/20 rounded-full py-3 px-8 font-medium whitespace-nowrap"
+                  >
+                    Subscription
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="webinar"
+                    className="data-[state=active]:bg-white data-[state=active]:text-black data-[state=active]:shadow-xl data-[state=active]:shadow-white/20 bg-white/5 border border-white/10 text-gray-400 transition-all duration-300 hover:text-gray-200 hover:bg-white/10 hover:border-white/20 rounded-full py-3 px-8 font-medium whitespace-nowrap"
+                  >
+                    Webinar
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="class"
+                    className="data-[state=active]:bg-white data-[state=active]:text-black data-[state=active]:shadow-xl data-[state=active]:shadow-white/20 bg-white/5 border border-white/10 text-gray-400 transition-all duration-300 hover:text-gray-200 hover:bg-white/10 hover:border-white/20 rounded-full py-3 px-8 font-medium whitespace-nowrap"
+                  >
+                    Class
+                  </TabsTrigger>
+                </TabsList>
+                <div className="mt-8">
+                  <Suspense fallback={<div>Loading process flows...</div>}>
+                    {Object.entries(flowData).map(([flowType, steps]) => (
+                      <TabsContent key={flowType} value={flowType}>
+                        <div className="space-y-6">
+                          {steps.map((step) => (
+                            <ProcessFlowDisplay key={step.number} {...step} />
+                          ))}
+                        </div>
+                      </TabsContent>
+                    ))}
+                  </Suspense>
+                </div>
+              </Tabs>
             </div>
           </div>
         </section>
@@ -1067,7 +1176,7 @@ export default function Home() {
           <div
             className="absolute inset-0"
             style={{
-              background: GLOW_EFFECTS.transitionGradient
+              background: GLOW_EFFECTS.transitionGradient,
             }}
           />
         </div>
@@ -1079,7 +1188,7 @@ export default function Home() {
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: GLOW_EFFECTS.sectionTopFade
+                background: GLOW_EFFECTS.sectionTopFade,
               }}
             />
           </div>
@@ -1088,14 +1197,20 @@ export default function Home() {
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: GLOW_EFFECTS.sectionGlow
+                background: GLOW_EFFECTS.sectionGlow,
               }}
             />
           </div>
           <div className="container mx-auto px-4 md:px-6 relative z-10">
             <div className="relative bg-gradient-to-br from-white/20 to-gray-400/15 border border-white/20 rounded-3xl shadow-2xl w-full max-w-4xl mx-auto p-10 md:p-12 backdrop-blur-3xl">
               {/* Card glow effect */}
-              <div className="absolute inset-0 -z-10 rounded-3xl" style={{ background: GLOW_EFFECTS.cardGlow, filter: 'blur(40px)' }} />
+              <div
+                className="absolute inset-0 -z-10 rounded-3xl"
+                style={{
+                  background: GLOW_EFFECTS.cardGlow,
+                  filter: "blur(40px)",
+                }}
+              />
 
               {/* Animated heading */}
               <motion.div
@@ -1108,7 +1223,9 @@ export default function Home() {
                 <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
                   Frequently Asked Questions
                 </h2>
-                <p className="text-gray-400 text-lg">Everything you need to know about our platform</p>
+                <p className="text-gray-400 text-lg">
+                  Everything you need to know about our platform
+                </p>
               </motion.div>
 
               {/* Animated accordion with stagger */}
@@ -1121,9 +1238,9 @@ export default function Home() {
                   visible: {
                     opacity: 1,
                     transition: {
-                      staggerChildren: 0.1
-                    }
-                  }
+                      staggerChildren: 0.1,
+                    },
+                  },
                 }}
               >
                 <Accordion
@@ -1136,7 +1253,7 @@ export default function Home() {
                       key={`item-${index + 1}`}
                       variants={{
                         hidden: { opacity: 0, y: 20 },
-                        visible: { opacity: 1, y: 0 }
+                        visible: { opacity: 1, y: 0 },
                       }}
                     >
                       <AccordionItem
@@ -1148,7 +1265,7 @@ export default function Home() {
                             <div className="flex items-center gap-4 flex-1">
                               {/* Number badge */}
                               <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-gray-600 via-gray-700 to-gray-800 border border-gray-500/50 flex items-center justify-center text-sm font-bold text-gray-200 group-hover:border-gray-400/60 group-hover:shadow-lg transition-all duration-300">
-                                {String(index + 1).padStart(2, '0')}
+                                {String(index + 1).padStart(2, "0")}
                               </div>
                               <span className="flex-1 font-semibold text-lg md:text-xl text-white group-hover:text-gray-100 transition-colors">
                                 {item.question}
@@ -1156,7 +1273,9 @@ export default function Home() {
                             </div>
                           </AccordionTrigger>
                           <AccordionContent className="px-6 pb-5">
-                            <p className="text-base text-gray-400 leading-relaxed ml-14">{item.answer}</p>
+                            <p className="text-base text-gray-400 leading-relaxed ml-14">
+                              {item.answer}
+                            </p>
                           </AccordionContent>
                         </div>
                       </AccordionItem>
@@ -1173,7 +1292,7 @@ export default function Home() {
           <div
             className="absolute inset-0"
             style={{
-              background: GLOW_EFFECTS.transitionGradient
+              background: GLOW_EFFECTS.transitionGradient,
             }}
           />
         </div>
@@ -1188,7 +1307,7 @@ export default function Home() {
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: GLOW_EFFECTS.sectionTopFade
+                background: GLOW_EFFECTS.sectionTopFade,
               }}
             />
           </div>
@@ -1197,7 +1316,8 @@ export default function Home() {
               Become a Consultant
             </h2>
             <p className="text-xl text-gray-400 leading-relaxed max-w-[700px] mx-auto mb-8">
-              Share your expertise, build your reputation, and earn income by helping professionals achieve their goals.
+              Share your expertise, build your reputation, and earn income by
+              helping professionals achieve their goals.
             </p>
             <Button className="w-full sm:w-auto bg-white text-black hover:bg-gray-100 hover:scale-105 transition-all duration-300 shadow-lg h-12 px-8">
               Become an Expert
@@ -1210,7 +1330,7 @@ export default function Home() {
           <div
             className="absolute inset-0"
             style={{
-              background: GLOW_EFFECTS.transitionGradient
+              background: GLOW_EFFECTS.transitionGradient,
             }}
           />
         </div>
@@ -1222,7 +1342,7 @@ export default function Home() {
             <div
               className="absolute inset-0 blur-3xl"
               style={{
-                background: GLOW_EFFECTS.sectionTopFade
+                background: GLOW_EFFECTS.sectionTopFade,
               }}
             />
           </div>

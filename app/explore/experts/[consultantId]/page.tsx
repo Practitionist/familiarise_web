@@ -281,7 +281,9 @@ export default function ExpertProfile(
   if (error || !consultantDetails || !userDetails) {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-black">
-        <h1 className="text-3xl font-bold mb-4 text-gray-100">Oops! Consultant not found</h1>
+        <h1 className="text-3xl font-bold mb-4 text-gray-100">
+          Oops! Consultant not found
+        </h1>
         <p className="text-lg mb-6 text-gray-400">
           Here are some other consultants you might want to try out
         </p>
@@ -295,7 +297,10 @@ export default function ExpertProfile(
   }
 
   return (
-    <div key={params.consultantId} className="bg-black min-h-screen py-8 lg:py-20">
+    <div
+      key={params.consultantId}
+      className="bg-black min-h-screen py-8 lg:py-20"
+    >
       <div className="container mx-auto px-4">
         <div className="flex flex-col lg:flex-row gap-8 lg:gap-10">
           {/* Main Content */}
@@ -350,18 +355,19 @@ export default function ExpertProfile(
                 // This would need slot selection - for now just show toast
                 toast({
                   title: "Please select a time slot",
-                  description: "Use the pricing sidebar to book a consultation with a specific time slot.",
+                  description:
+                    "Use the pricing sidebar to book a consultation with a specific time slot.",
                   variant: "default",
-                })
+                });
               }}
               onSubscriptionBook={(plan) => {
                 // Trigger the existing subscription booking flow
                 handleSubscriptionBooking({
-                  title: `${plan.durationInMonths} Month${plan.durationInMonths > 1 ? 's' : ''}`,
+                  title: `${plan.durationInMonths} Month${plan.durationInMonths > 1 ? "s" : ""}`,
                   price: plan.price,
                   duration: `${plan.durationInMonths}`,
                   durationInMonths: plan.durationInMonths,
-                })
+                });
               }}
             />
           </div>

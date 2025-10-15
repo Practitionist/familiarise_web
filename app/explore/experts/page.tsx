@@ -125,7 +125,9 @@ function FindExperts() {
 
               return (
                 <div key={domain.id} className="space-y-4">
-                  <h2 className="text-2xl font-bold text-gray-100">{domain.name}</h2>
+                  <h2 className="text-2xl font-bold text-gray-100">
+                    {domain.name}
+                  </h2>
                   {domainConsultants.map(
                     (consultant: TConsultantProfile, index: number) => {
                       if (domainConsultants.length === index + 1) {

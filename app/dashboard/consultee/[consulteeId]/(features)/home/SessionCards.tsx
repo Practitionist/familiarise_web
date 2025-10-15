@@ -247,7 +247,9 @@ export function SlotCard({
               {status}
             </Badge>
             {isTentative && (
-              <span className="text-red-600 text-xs font-semibold italic">*Tentative</span>
+              <span className="text-red-600 text-xs font-semibold italic">
+                *Tentative
+              </span>
             )}
           </div>
           {(isDevelopmentEnvironment() || isJoinable) && (

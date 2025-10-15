@@ -150,7 +150,9 @@ export function WebinarDetails({ plan, nextSession }: WebinarDetailsProps) {
           <div className="md:col-span-2">
             <Card className="mb-8 bg-gradient-to-br from-gray-900/90 to-gray-800/80 border-gray-700/50">
               <CardContent className="p-6">
-                <h1 className="text-3xl font-bold mb-2 text-white">{plan.title}</h1>
+                <h1 className="text-3xl font-bold mb-2 text-white">
+                  {plan.title}
+                </h1>
                 <p className="text-xl font-semibold mb-4 text-white">
                   ${plan.price} USD
                 </p>

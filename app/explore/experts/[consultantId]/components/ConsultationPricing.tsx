@@ -142,7 +142,9 @@ export function ConsultationPricing({
       />
       <div className="card p-8 bg-gradient-to-br from-gray-900/90 to-gray-800/80 border border-gray-700/50 backdrop-blur-sm shadow-2xl rounded-2xl w-full">
         <div className="mb-6">
-          <h3 className="text-2xl font-bold mb-2 text-white tracking-tight">Consultation Pricing</h3>
+          <h3 className="text-2xl font-bold mb-2 text-white tracking-tight">
+            Consultation Pricing
+          </h3>
           <div className="h-1 w-16 bg-gradient-to-r from-white to-gray-600 rounded-full"></div>
         </div>
         <PricingToggle

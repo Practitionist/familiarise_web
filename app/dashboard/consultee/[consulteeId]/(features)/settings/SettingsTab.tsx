@@ -169,7 +169,9 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
       <div className="relative overflow-hidden bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 rounded-2xl p-8 shadow-xl">
         <div className="absolute inset-0 bg-grid-white/10 [mask-image:linear-gradient(0deg,transparent,white)]"></div>
         <div className="relative z-10">
-          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-2">Settings</h2>
+          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-2">
+            Settings
+          </h2>
           <p className="text-blue-100 text-lg">
             Manage your account settings and preferences
           </p>
@@ -179,12 +181,19 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
 
       <Card className="border-2 border-gray-100 shadow-xl rounded-2xl overflow-hidden">
         <CardHeader className="bg-gradient-to-r from-gray-50 to-white border-b-2 border-gray-100 p-6">
-          <CardTitle className="text-2xl font-bold text-gray-900">Profile Settings</CardTitle>
+          <CardTitle className="text-2xl font-bold text-gray-900">
+            Profile Settings
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6 p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <Label htmlFor="education" className="text-sm font-semibold text-gray-700">Education</Label>
+              <Label
+                htmlFor="education"
+                className="text-sm font-semibold text-gray-700"
+              >
+                Education
+              </Label>
               <Input
                 id="education"
                 name="education"
@@ -195,7 +204,12 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="occupation" className="text-sm font-semibold text-gray-700">Occupation</Label>
+              <Label
+                htmlFor="occupation"
+                className="text-sm font-semibold text-gray-700"
+              >
+                Occupation
+              </Label>
               <Input
                 id="occupation"
                 name="occupation"
@@ -206,7 +220,12 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="preferredLanguage" className="text-sm font-semibold text-gray-700">Preferred Language</Label>
+              <Label
+                htmlFor="preferredLanguage"
+                className="text-sm font-semibold text-gray-700"
+              >
+                Preferred Language
+              </Label>
               <Input
                 id="preferredLanguage"
                 name="preferredLanguage"
@@ -217,7 +236,10 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="preferredCommunicationMethod" className="text-sm font-semibold text-gray-700">
+              <Label
+                htmlFor="preferredCommunicationMethod"
+                className="text-sm font-semibold text-gray-700"
+              >
                 Communication Method
               </Label>
               <select
@@ -234,7 +256,12 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
             </div>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="aboutMe" className="text-sm font-semibold text-gray-700">About Me</Label>
+            <Label
+              htmlFor="aboutMe"
+              className="text-sm font-semibold text-gray-700"
+            >
+              About Me
+            </Label>
             <Textarea
               id="aboutMe"
               name="aboutMe"
@@ -245,7 +272,12 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="specialRequirements" className="text-sm font-semibold text-gray-700">Special Requirements</Label>
+            <Label
+              htmlFor="specialRequirements"
+              className="text-sm font-semibold text-gray-700"
+            >
+              Special Requirements
+            </Label>
             <Textarea
               id="specialRequirements"
               name="specialRequirements"
@@ -256,7 +288,12 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="interests" className="text-sm font-semibold text-gray-700">Interests</Label>
+            <Label
+              htmlFor="interests"
+              className="text-sm font-semibold text-gray-700"
+            >
+              Interests
+            </Label>
             <Textarea
               id="interests"
               name="interests"
@@ -267,7 +304,12 @@ export default function SettingsTab({ consulteeId }: SettingsTabProps) {
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="goals" className="text-sm font-semibold text-gray-700">Goals</Label>
+            <Label
+              htmlFor="goals"
+              className="text-sm font-semibold text-gray-700"
+            >
+              Goals
+            </Label>
             <Textarea
               id="goals"
               name="goals"

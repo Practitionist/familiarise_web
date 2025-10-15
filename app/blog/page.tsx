@@ -23,14 +23,17 @@ export default function Blog() {
             Blog & Insights
           </h1>
           <p className="text-xl text-gray-400 leading-relaxed">
-            Expert insights, industry trends, and career guidance from top consultants
+            Expert insights, industry trends, and career guidance from top
+            consultants
           </p>
         </div>
       </div>
 
       <main className="w-full px-4 md:px-8 lg:px-16 py-8 relative z-10">
         <section className="mb-16 max-w-7xl mx-auto">
-          <h2 className="text-4xl sm:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">Top Story</h2>
+          <h2 className="text-4xl sm:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+            Top Story
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 bg-gradient-to-br from-gray-900/80 to-gray-800/60 border border-gray-800/50 rounded-3xl p-8 hover:border-gray-600/50 transition-all duration-500 backdrop-blur-sm">
             <div>
               <Image
@@ -46,19 +49,26 @@ export default function Blog() {
               />
             </div>
             <div className="flex flex-col justify-center">
-              <h3 className="text-3xl font-bold mb-4 text-gray-100">Top Story Headline</h3>
+              <h3 className="text-3xl font-bold mb-4 text-gray-100">
+                Top Story Headline
+              </h3>
               <p className="text-gray-400 text-lg leading-relaxed">
                 This is a brief summary of the top story. Click the link to read
                 more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-6 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-6 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
           </div>
         </section>
         <section className="mb-16">
-          <h2 className="text-4xl sm:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">Politics</h2>
+          <h2 className="text-4xl sm:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+            Politics
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div>
               <Image
@@ -79,7 +89,10 @@ export default function Blog() {
                 This is a brief summary of the politics story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
@@ -102,7 +115,10 @@ export default function Blog() {
                 This is a brief summary of the politics story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
@@ -125,14 +141,19 @@ export default function Blog() {
                 This is a brief summary of the politics story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
           </div>
         </section>
         <section className="mb-16">
-          <h2 className="text-4xl sm:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">Business</h2>
+          <h2 className="text-4xl sm:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+            Business
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div>
               <Image
@@ -153,7 +174,10 @@ export default function Blog() {
                 This is a brief summary of the business story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
@@ -176,7 +200,10 @@ export default function Blog() {
                 This is a brief summary of the business story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
@@ -199,14 +226,19 @@ export default function Blog() {
                 This is a brief summary of the business story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
           </div>
         </section>
         <section className="mb-16">
-          <h2 className="text-4xl sm:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">Tech</h2>
+          <h2 className="text-4xl sm:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+            Tech
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <Image
@@ -227,7 +259,10 @@ export default function Blog() {
                 This is a brief summary of the tech story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
@@ -250,7 +285,10 @@ export default function Blog() {
                 This is a brief summary of the tech story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
@@ -273,14 +311,19 @@ export default function Blog() {
                 This is a brief summary of the tech story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
           </div>
         </section>
         <section className="mb-16">
-          <h2 className="text-4xl sm:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">Culture</h2>
+          <h2 className="text-4xl sm:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+            Culture
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <Image
@@ -301,7 +344,10 @@ export default function Blog() {
                 This is a brief summary of the culture story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
@@ -324,7 +370,10 @@ export default function Blog() {
                 This is a brief summary of the culture story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
@@ -347,14 +396,19 @@ export default function Blog() {
                 This is a brief summary of the culture story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
           </div>
         </section>
         <section className="mb-16">
-          <h2 className="text-4xl sm:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">Sports</h2>
+          <h2 className="text-4xl sm:text-5xl font-bold mb-8 bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+            Sports
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <Image
@@ -375,7 +429,10 @@ export default function Blog() {
                 This is a brief summary of the sports story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
@@ -398,7 +455,10 @@ export default function Blog() {
                 This is a brief summary of the sports story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>
@@ -421,7 +481,10 @@ export default function Blog() {
                 This is a brief summary of the sports story. Click the link to
                 read more.
               </p>
-              <Link className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300" href="#">
+              <Link
+                className="inline-flex items-center text-gray-300 hover:text-white mt-4 font-medium transition-colors duration-300"
+                href="#"
+              >
                 Read More →
               </Link>
             </div>

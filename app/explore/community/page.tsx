@@ -54,7 +54,9 @@ export default function CommunitySection() {
       <section className="py-12 md:py-20 flex justify-center items-center">
         <div className="px-4 md:px-6 max-w-7xl w-full">
           <div className="space-y-4 mb-8 text-center">
-            <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">Meet Our Community</h2>
+            <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+              Meet Our Community
+            </h2>
             <p className="text-gray-400">
               Explore the diverse backgrounds and expertise of our community
               members.
@@ -118,7 +120,9 @@ export default function CommunitySection() {
       <section className="bg-gradient-to-b from-black via-gray-950/30 to-black py-12 md:py-20">
         <div className="px-4 md:px-6 max-w-7xl mx-auto">
           <div className="space-y-4 mb-8">
-            <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">Recent Community Activity</h2>
+            <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-300 via-gray-100 to-gray-400 bg-clip-text text-transparent">
+              Recent Community Activity
+            </h2>
             <p className="text-gray-400">
               Stay up-to-date with the latest discussions and interactions.
             </p>
@@ -142,9 +146,7 @@ export default function CommunitySection() {
                   </Avatar>
                   <div>
                     <p className="font-medium text-gray-100">John Doe</p>
-                    <p className="text-sm text-gray-400">
-                      Software Engineer
-                    </p>
+                    <p className="text-sm text-gray-400">Software Engineer</p>
                   </div>
                   <div className="ml-auto text-sm text-gray-500">
                     2 days ago
@@ -170,9 +172,7 @@ export default function CommunitySection() {
                   </Avatar>
                   <div>
                     <p className="font-medium text-gray-100">Sarah Miller</p>
-                    <p className="text-sm text-gray-400">
-                      Product Manager
-                    </p>
+                    <p className="text-sm text-gray-400">Product Manager</p>
                   </div>
                   <div className="ml-auto text-sm text-gray-500">
                     1 week ago
@@ -196,10 +196,10 @@ export default function CommunitySection() {
                     <AvatarFallback>MR</AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="font-medium text-gray-100">Michael Rodriguez</p>
-                    <p className="text-sm text-gray-400">
-                      Project Manager
+                    <p className="font-medium text-gray-100">
+                      Michael Rodriguez
                     </p>
+                    <p className="text-sm text-gray-400">Project Manager</p>
                   </div>
                   <div className="ml-auto text-sm text-gray-500">
                     2 weeks ago

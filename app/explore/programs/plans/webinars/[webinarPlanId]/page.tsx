@@ -38,7 +38,9 @@ export default function WebinarDetailsPage({
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-black">
         <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-white mb-4"></div>
-        <p className="text-gray-300 animate-pulse">Loading webinar details...</p>
+        <p className="text-gray-300 animate-pulse">
+          Loading webinar details...
+        </p>
       </div>
     );
   }

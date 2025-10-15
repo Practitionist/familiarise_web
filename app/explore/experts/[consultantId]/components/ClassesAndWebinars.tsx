@@ -34,20 +34,33 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
       <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 pointer-events-none" />
 
       <CardContent className="p-8 flex flex-col h-full relative z-10">
-        <h3 className="text-2xl font-bold mb-4 text-white tracking-tight">{classPlan.title}</h3>
+        <h3 className="text-2xl font-bold mb-4 text-white tracking-tight">
+          {classPlan.title}
+        </h3>
 
         <div className="flex flex-wrap gap-2 mb-6">
-          <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800/60 border border-gray-700/50 text-gray-200 backdrop-blur-sm">
+          <Badge
+            variant="secondary"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800/60 border border-gray-700/50 text-gray-200 backdrop-blur-sm"
+          >
             <GlobeIcon className="w-3.5 h-3.5" />
             <span className="text-xs font-medium">{classPlan.language}</span>
           </Badge>
-          <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800/60 border border-gray-700/50 text-gray-200 backdrop-blur-sm">
+          <Badge
+            variant="secondary"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800/60 border border-gray-700/50 text-gray-200 backdrop-blur-sm"
+          >
             <GraduationCapIcon className="w-3.5 h-3.5" />
             <span className="text-xs font-medium">{classPlan.level}</span>
           </Badge>
-          <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800/60 border border-gray-700/50 text-gray-200 backdrop-blur-sm">
+          <Badge
+            variant="secondary"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800/60 border border-gray-700/50 text-gray-200 backdrop-blur-sm"
+          >
             <Users2Icon className="w-3.5 h-3.5" />
-            <span className="text-xs font-medium">{classPlan.maxParticipants} participants</span>
+            <span className="text-xs font-medium">
+              {classPlan.maxParticipants} participants
+            </span>
           </Badge>
         </div>
 
@@ -58,7 +71,10 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
           </div>
           <div className="flex items-center gap-1.5">
             <ClockIcon className="w-4 h-4" />
-            <span>{classPlan.durationInMonths} month{classPlan.durationInMonths > 1 ? "s" : ""}</span>
+            <span>
+              {classPlan.durationInMonths} month
+              {classPlan.durationInMonths > 1 ? "s" : ""}
+            </span>
           </div>
         </div>
 
@@ -70,15 +86,21 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
           <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-800/30 border border-gray-700/30">
             <BookOpenIcon className="w-5 h-5 mt-0.5 text-gray-400 flex-shrink-0" />
             <div>
-              <p className="text-sm font-semibold text-white mb-1">Prerequisites</p>
-              <p className="text-sm text-gray-300 leading-relaxed">{classPlan.prerequisites}</p>
+              <p className="text-sm font-semibold text-white mb-1">
+                Prerequisites
+              </p>
+              <p className="text-sm text-gray-300 leading-relaxed">
+                {classPlan.prerequisites}
+              </p>
             </div>
           </div>
           <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-800/30 border border-gray-700/30">
             <PackageIcon className="w-5 h-5 mt-0.5 text-gray-400 flex-shrink-0" />
             <div>
               <p className="text-sm font-semibold text-white mb-1">Materials</p>
-              <p className="text-sm text-gray-300 leading-relaxed">{classPlan.materialProvided}</p>
+              <p className="text-sm text-gray-300 leading-relaxed">
+                {classPlan.materialProvided}
+              </p>
             </div>
           </div>
         </div>
@@ -86,10 +108,15 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
         <div className="flex items-center justify-between mb-6 pt-6 border-t border-gray-700/50">
           <div className="flex items-center gap-2">
             <DollarSignIcon className="w-6 h-6 text-white" />
-            <span className="text-3xl font-bold text-white tracking-tight">${classPlan.price}</span>
+            <span className="text-3xl font-bold text-white tracking-tight">
+              ${classPlan.price}
+            </span>
           </div>
           {classPlan.certificateProvided && (
-            <Badge variant="outline" className="text-xs px-3 py-1 bg-gray-800/50 border-gray-600/50 text-gray-200">
+            <Badge
+              variant="outline"
+              className="text-xs px-3 py-1 bg-gray-800/50 border-gray-600/50 text-gray-200"
+            >
               🎓 Certificate
             </Badge>
           )}
@@ -116,20 +143,33 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
       <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 pointer-events-none" />
 
       <CardContent className="p-8 flex flex-col h-full relative z-10">
-        <h3 className="text-2xl font-bold mb-4 text-white tracking-tight">{webinarPlan.title}</h3>
+        <h3 className="text-2xl font-bold mb-4 text-white tracking-tight">
+          {webinarPlan.title}
+        </h3>
 
         <div className="flex flex-wrap gap-2 mb-6">
-          <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800/60 border border-gray-700/50 text-gray-200 backdrop-blur-sm">
+          <Badge
+            variant="secondary"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800/60 border border-gray-700/50 text-gray-200 backdrop-blur-sm"
+          >
             <GlobeIcon className="w-3.5 h-3.5" />
             <span className="text-xs font-medium">{webinarPlan.language}</span>
           </Badge>
-          <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800/60 border border-gray-700/50 text-gray-200 backdrop-blur-sm">
+          <Badge
+            variant="secondary"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800/60 border border-gray-700/50 text-gray-200 backdrop-blur-sm"
+          >
             <GraduationCapIcon className="w-3.5 h-3.5" />
             <span className="text-xs font-medium">{webinarPlan.level}</span>
           </Badge>
-          <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800/60 border border-gray-700/50 text-gray-200 backdrop-blur-sm">
+          <Badge
+            variant="secondary"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800/60 border border-gray-700/50 text-gray-200 backdrop-blur-sm"
+          >
             <Users2Icon className="w-3.5 h-3.5" />
-            <span className="text-xs font-medium">{webinarPlan.maxParticipants} participants</span>
+            <span className="text-xs font-medium">
+              {webinarPlan.maxParticipants} participants
+            </span>
           </Badge>
         </div>
 
@@ -140,7 +180,10 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
           </div>
           <div className="flex items-center gap-1.5">
             <ClockIcon className="w-4 h-4" />
-            <span>{webinarPlan.durationInHours} hour{webinarPlan.durationInHours > 1 ? "s" : ""}</span>
+            <span>
+              {webinarPlan.durationInHours} hour
+              {webinarPlan.durationInHours > 1 ? "s" : ""}
+            </span>
           </div>
         </div>
 
@@ -152,15 +195,21 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
           <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-800/30 border border-gray-700/30">
             <BookOpenIcon className="w-5 h-5 mt-0.5 text-gray-400 flex-shrink-0" />
             <div>
-              <p className="text-sm font-semibold text-white mb-1">Prerequisites</p>
-              <p className="text-sm text-gray-300 leading-relaxed">{webinarPlan.prerequisites}</p>
+              <p className="text-sm font-semibold text-white mb-1">
+                Prerequisites
+              </p>
+              <p className="text-sm text-gray-300 leading-relaxed">
+                {webinarPlan.prerequisites}
+              </p>
             </div>
           </div>
           <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-800/30 border border-gray-700/30">
             <PackageIcon className="w-5 h-5 mt-0.5 text-gray-400 flex-shrink-0" />
             <div>
               <p className="text-sm font-semibold text-white mb-1">Materials</p>
-              <p className="text-sm text-gray-300 leading-relaxed">{webinarPlan.materialProvided}</p>
+              <p className="text-sm text-gray-300 leading-relaxed">
+                {webinarPlan.materialProvided}
+              </p>
             </div>
           </div>
         </div>
@@ -168,7 +217,9 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
         <div className="flex items-center mb-6 pt-6 border-t border-gray-700/50">
           <div className="flex items-center gap-2">
             <DollarSignIcon className="w-6 h-6 text-white" />
-            <span className="text-3xl font-bold text-white tracking-tight">${webinarPlan.price}</span>
+            <span className="text-3xl font-bold text-white tracking-tight">
+              ${webinarPlan.price}
+            </span>
           </div>
         </div>
 
@@ -189,7 +240,9 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
       {classPlans.length > 0 && (
         <section>
           <div className="mb-8">
-            <h2 className="text-4xl font-bold mb-2 text-white tracking-tight">Class Plans</h2>
+            <h2 className="text-4xl font-bold mb-2 text-white tracking-tight">
+              Class Plans
+            </h2>
             <div className="h-1 w-20 bg-gradient-to-r from-white to-gray-600 rounded-full"></div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
@@ -200,7 +253,9 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
       {webinarPlans.length > 0 && (
         <section>
           <div className="mb-8">
-            <h2 className="text-4xl font-bold mb-2 text-white tracking-tight">Webinar Plans</h2>
+            <h2 className="text-4xl font-bold mb-2 text-white tracking-tight">
+              Webinar Plans
+            </h2>
             <div className="h-1 w-20 bg-gradient-to-r from-white to-gray-600 rounded-full"></div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">

@@ -37,6 +37,7 @@ This document provides comprehensive information about the database security pol
 **Error:** `Invalid prisma.user.update() invocation: The table 'audit_logs' does not exist in the current database`
 
 **Root Cause:**
+
 - Audit triggers were created on multiple tables referencing a non-existent `audit_logs` table
 - These triggers were likely created accidentally via Supabase Dashboard or Flutter SDK
 - OAuth sign-in flow failed when NextAuth attempted to update user records
@@ -56,6 +57,7 @@ The following tables had broken audit triggers:
 ### Resolution
 
 **Actions Taken:**
+
 ```sql
 -- Removed all audit triggers
 DROP TRIGGER IF EXISTS audit_users_trigger ON users;
@@ -276,6 +278,7 @@ Policy: user_select_cookie_preferences
 These triggers automatically update the `updatedAt` timestamp whenever a row is modified.
 
 **Function:**
+
 ```sql
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -287,6 +290,7 @@ $$ LANGUAGE plpgsql;
 ```
 
 **Applied to 31 tables:**
+
 ```
 ✅ Appointment                   ✅ Subscription
 ✅ AppointmentDocument           ✅ SubscriptionPlan
@@ -306,6 +310,7 @@ $$ LANGUAGE plpgsql;
 ```
 
 **Example:**
+
 ```sql
 CREATE TRIGGER update_appointment_updated_at
   BEFORE UPDATE ON "Appointment"
@@ -320,6 +325,7 @@ CREATE TRIGGER update_appointment_updated_at
 Automatically recalculates consultant rating when reviews are added/updated/deleted.
 
 **Trigger:**
+
 ```sql
 CREATE TRIGGER update_consultant_rating_trigger
   AFTER INSERT OR UPDATE OR DELETE ON "ConsultantReview"
@@ -449,7 +455,7 @@ CREATE POLICY system_insert_audit_logs ON audit_logs
 
 ```typescript
 // In your Next.js API route
-import prisma from '@/lib/prisma';
+import prisma from "@/lib/prisma";
 
 // Get audit history for a specific record
 export async function getAuditHistory(tableName: string, recordId: string) {
@@ -459,7 +465,7 @@ export async function getAuditHistory(tableName: string, recordId: string) {
       recordId,
     },
     orderBy: {
-      changedAt: 'desc',
+      changedAt: "desc",
     },
   });
 }
@@ -471,7 +477,7 @@ export async function getUserActivity(userId: string, limit = 50) {
       changedBy: userId,
     },
     orderBy: {
-      changedAt: 'desc',
+      changedAt: "desc",
     },
     take: limit,
   });
@@ -514,16 +520,19 @@ export default async function AuditLogsPage() {
 ### Important Considerations
 
 ⚠️ **Performance Impact:**
+
 - Audit triggers add overhead to every write operation
 - Only audit sensitive tables (users, payments, consultant profiles)
 - Consider archiving old audit logs (>90 days) to a separate table
 
 ⚠️ **Storage:**
+
 - JSON columns can grow large
 - Consider retention policies (e.g., delete logs older than 1 year)
 - Monitor database size growth
 
 ⚠️ **Privacy/GDPR:**
+
 - Audit logs contain personal data
 - Include audit logs in user data deletion requests
 - Document audit log retention in privacy policy
@@ -560,16 +569,19 @@ export default async function AuditLogsPage() {
 ### Regular Checks
 
 **Monthly:**
+
 - [ ] Review RLS policies for new tables
 - [ ] Check for slow queries caused by RLS
 - [ ] Verify trigger execution times
 
 **Quarterly:**
+
 - [ ] Audit unused policies
 - [ ] Review and optimize complex policies
 - [ ] Update documentation
 
 **Yearly:**
+
 - [ ] Full security audit
 - [ ] Review audit log retention
 - [ ] Update policies for new features
@@ -577,6 +589,7 @@ export default async function AuditLogsPage() {
 ### Useful Queries
 
 #### List All Policies
+
 ```sql
 SELECT schemaname, tablename, policyname, roles, cmd, qual
 FROM pg_policies
@@ -585,6 +598,7 @@ ORDER BY tablename, policyname;
 ```
 
 #### List All Triggers
+
 ```sql
 SELECT
   t.tgname as trigger_name,
@@ -599,6 +613,7 @@ ORDER BY c.relname, t.tgname;
 ```
 
 #### Check RLS Status
+
 ```sql
 SELECT tablename, rowsecurity
 FROM pg_tables
@@ -607,6 +622,7 @@ ORDER BY tablename;
 ```
 
 #### Test Policy as User
+
 ```sql
 -- Set role to simulate a specific user
 SET LOCAL ROLE authenticated;
@@ -632,6 +648,7 @@ RESET ROLE;
 ## Contact & Support
 
 For questions about this documentation or database policies:
+
 - Review this document
 - Check Supabase Dashboard → Database → Policies
 - Consult PostgreSQL documentation

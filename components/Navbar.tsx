@@ -207,17 +207,23 @@ const Navbar = () => {
           <div className="hidden lg:flex gap-8">
             {session?.user && (
               <Link href="/dashboard">
-                <button className="text-white hover:text-teal-400 transition-colors font-medium">Dashboard</button>
+                <button className="text-white hover:text-teal-400 transition-colors font-medium">
+                  Dashboard
+                </button>
               </Link>
             )}
             {navLinks.map((link) => (
               <Link key={link.path} href={link.path}>
-                <button className="text-white hover:text-teal-400 transition-colors font-medium">{link.label}</button>
+                <button className="text-white hover:text-teal-400 transition-colors font-medium">
+                  {link.label}
+                </button>
               </Link>
             ))}
           </div>
 
-          <div className="flex items-center hidden lg:flex">{renderUserSection()}</div>
+          <div className="flex items-center hidden lg:flex">
+            {renderUserSection()}
+          </div>
         </div>
       </nav>
 

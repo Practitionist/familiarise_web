@@ -111,18 +111,17 @@ export function FiltersSection({
             value={selectedDomain || "all"}
             onValueChange={handleDomainChange}
           >
-            <SelectTrigger id="domain" aria-label="Select domain" className="bg-gray-800/50 border-gray-700 text-gray-100">
+            <SelectTrigger
+              id="domain"
+              aria-label="Select domain"
+              className="bg-gray-800/50 border-gray-700 text-gray-100"
+            >
               <SelectValue placeholder="All Domains" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">
-                All Domains
-              </SelectItem>
+              <SelectItem value="all">All Domains</SelectItem>
               {metadata?.domains.map((domain) => (
-                <SelectItem
-                  key={domain.id}
-                  value={domain.id}
-                >
+                <SelectItem key={domain.id} value={domain.id}>
                   {domain.name}
                 </SelectItem>
               ))}
@@ -141,7 +140,11 @@ export function FiltersSection({
             value={selectedSubdomain || "all"}
             onValueChange={handleSubdomainChange}
           >
-            <SelectTrigger id="subdomain" aria-label="Select subdomain" className="bg-gray-800/50 border-gray-700 text-gray-100">
+            <SelectTrigger
+              id="subdomain"
+              aria-label="Select subdomain"
+              className="bg-gray-800/50 border-gray-700 text-gray-100"
+            >
               <SelectValue
                 placeholder={
                   selectedDomain ? "All Subdomains" : "Select a domain first"
@@ -149,16 +152,11 @@ export function FiltersSection({
               />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">
-                All Subdomains
-              </SelectItem>
+              <SelectItem value="all">All Subdomains</SelectItem>
               {metadata?.subdomains
                 .filter((subdomain) => subdomain.domainId === selectedDomain)
                 .map((subdomain) => (
-                  <SelectItem
-                    key={subdomain.id}
-                    value={subdomain.id}
-                  >
+                  <SelectItem key={subdomain.id} value={subdomain.id}>
                     {subdomain.name}
                   </SelectItem>
                 ))}

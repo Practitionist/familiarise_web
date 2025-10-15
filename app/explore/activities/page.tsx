@@ -16,34 +16,61 @@ export default function Programs() {
           <div className="flex flex-col">
             <div className="flex justify-between border-b border-gray-800 py-6">
               <div className="flex space-x-4">
-                <Button className="bg-gray-800/50 text-gray-100 hover:bg-gray-700" variant="ghost">
+                <Button
+                  className="bg-gray-800/50 text-gray-100 hover:bg-gray-700"
+                  variant="ghost"
+                >
                   Home
                 </Button>
-                <Button className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50" variant="ghost">
+                <Button
+                  className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50"
+                  variant="ghost"
+                >
                   Events
                 </Button>
-                <Button className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50" variant="ghost">
+                <Button
+                  className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50"
+                  variant="ghost"
+                >
                   Hackathons
                 </Button>
-                <Button className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50" variant="ghost">
+                <Button
+                  className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50"
+                  variant="ghost"
+                >
                   Webinars
                 </Button>
-                <Button className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50" variant="ghost">
+                <Button
+                  className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50"
+                  variant="ghost"
+                >
                   Community
                 </Button>
               </div>
               <div>
-                <Input className="border-gray-700 bg-gray-800/50 text-gray-100 placeholder:text-gray-500" placeholder="Search" />
+                <Input
+                  className="border-gray-700 bg-gray-800/50 text-gray-100 placeholder:text-gray-500"
+                  placeholder="Search"
+                />
               </div>
             </div>
             <div className="flex space-x-2 py-4">
-              <Button className="bg-gray-800/50 text-gray-100 hover:bg-gray-700" variant="ghost">
+              <Button
+                className="bg-gray-800/50 text-gray-100 hover:bg-gray-700"
+                variant="ghost"
+              >
                 Upcoming
               </Button>
-              <Button className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50" variant="ghost">
+              <Button
+                className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50"
+                variant="ghost"
+              >
                 Past Events
               </Button>
-              <Button className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50" variant="ghost">
+              <Button
+                className="text-gray-300 hover:text-gray-100 hover:bg-gray-800/50"
+                variant="ghost"
+              >
                 Popular
               </Button>
             </div>
@@ -57,7 +84,9 @@ export default function Programs() {
                   width="320"
                 />
                 <div className="p-4">
-                  <h3 className="text-lg font-semibold text-gray-100">AI Hackathon 2024</h3>
+                  <h3 className="text-lg font-semibold text-gray-100">
+                    AI Hackathon 2024
+                  </h3>
                   <p className="text-gray-400">Starts in 3 days</p>
                 </div>
               </Card>

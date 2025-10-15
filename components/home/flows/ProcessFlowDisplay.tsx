@@ -42,13 +42,14 @@ export function ProcessFlowDisplay({
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
           >
             {/* Outer ring */}
-            <div className="absolute inset-0 rounded-full border-2 border-white/20 group-hover:border-white/40 transition-colors duration-300" style={{ width: '56px', height: '56px' }} />
+            <div
+              className="absolute inset-0 rounded-full border-2 border-white/20 group-hover:border-white/40 transition-colors duration-300"
+              style={{ width: "56px", height: "56px" }}
+            />
 
             {/* Inner circle with number */}
             <div className="relative w-14 h-14 rounded-full bg-white/10 backdrop-blur-md border border-white/30 flex items-center justify-center group-hover:bg-white/15 transition-all duration-300">
-              <span className="text-2xl font-bold text-white">
-                {number}
-              </span>
+              <span className="text-2xl font-bold text-white">{number}</span>
 
               {/* Checkmark overlay on hover */}
               <motion.div
@@ -73,7 +74,7 @@ export function ProcessFlowDisplay({
                 repeat: Infinity,
                 ease: "easeInOut",
               }}
-              style={{ width: '56px', height: '56px' }}
+              style={{ width: "56px", height: "56px" }}
             />
           </motion.div>
         </div>
@@ -86,9 +87,7 @@ export function ProcessFlowDisplay({
           <h4 className="text-base font-semibold text-white mb-1.5 leading-snug">
             {title}
           </h4>
-          <p className="text-gray-300 text-xs leading-relaxed">
-            {description}
-          </p>
+          <p className="text-gray-300 text-xs leading-relaxed">{description}</p>
         </motion.div>
       </motion.div>
     </div>

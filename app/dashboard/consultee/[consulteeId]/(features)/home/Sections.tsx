@@ -83,8 +83,18 @@ export function UpcomingSection({ slots }: Readonly<UpcomingSectionProps>) {
         {slots.length === 0 && (
           <div className="w-full text-center py-12">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-100 mb-3">
-              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              <svg
+                className="w-8 h-8 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
               </svg>
             </div>
             <p className="text-gray-500 font-medium">No upcoming sessions</p>
@@ -157,11 +167,23 @@ export function MonthlySection({
           {events.length === 0 && (
             <div className="text-center py-12">
               <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-100 mb-3">
-                <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                <svg
+                  className="w-8 h-8 text-gray-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  />
                 </svg>
               </div>
-              <p className="text-gray-500 font-medium">No sessions this month</p>
+              <p className="text-gray-500 font-medium">
+                No sessions this month
+              </p>
             </div>
           )}
         </div>
@@ -189,7 +211,9 @@ export function MonthlySection({
                     />
                   </svg>
                 </div>
-                <span className="font-medium">Unlimited Access to Expert Sessions</span>
+                <span className="font-medium">
+                  Unlimited Access to Expert Sessions
+                </span>
               </div>
               <div className="flex items-center gap-3 text-sm text-white">
                 <div className="flex-shrink-0 w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
@@ -221,7 +245,9 @@ export function MonthlySection({
                     />
                   </svg>
                 </div>
-                <span className="font-medium">Exclusive Webinars & Workshops</span>
+                <span className="font-medium">
+                  Exclusive Webinars & Workshops
+                </span>
               </div>
             </div>
             <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 mb-4">

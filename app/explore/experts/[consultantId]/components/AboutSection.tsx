@@ -22,7 +22,9 @@ export function AboutSection({
       </div>
 
       <div>
-        <h3 className="text-xl font-semibold mb-2 text-white">Education & Background</h3>
+        <h3 className="text-xl font-semibold mb-2 text-white">
+          Education & Background
+        </h3>
         <p className="text-gray-200">
           {userDetails.name} has experience across multiple industries, with a
           particular focus on{" "}
@@ -34,7 +36,9 @@ export function AboutSection({
       </div>
 
       <div>
-        <h3 className="text-xl font-semibold mb-2 text-white">Skills & Specialties</h3>
+        <h3 className="text-xl font-semibold mb-2 text-white">
+          Skills & Specialties
+        </h3>
         <p className="text-gray-200">
           {userDetails.name} focuses on{" "}
           {consultantDetails.tags

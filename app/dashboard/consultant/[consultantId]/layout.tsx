@@ -217,7 +217,14 @@ export default function ConsultantLayout({
                     prefetch={true}
                     onMouseEnter={() => handleNavHover(item.path)}
                   >
-                    <Icon size={20} className={currentPath === item.path ? "text-gray-900" : "text-gray-500"} />
+                    <Icon
+                      size={20}
+                      className={
+                        currentPath === item.path
+                          ? "text-gray-900"
+                          : "text-gray-500"
+                      }
+                    />
                     <span>{item.name}</span>
                   </Link>
                 </li>
@@ -238,10 +245,17 @@ export default function ConsultantLayout({
               }`}
               prefetch={true}
               onMouseEnter={() =>
-                router.prefetch(`/dashboard/consultant/${consultantId}/settings`)
+                router.prefetch(
+                  `/dashboard/consultant/${consultantId}/settings`,
+                )
               }
             >
-              <Settings size={20} className={currentPath === "settings" ? "text-gray-900" : "text-gray-500"} />
+              <Settings
+                size={20}
+                className={
+                  currentPath === "settings" ? "text-gray-900" : "text-gray-500"
+                }
+              />
               <span>Settings</span>
             </Link>
             <button
