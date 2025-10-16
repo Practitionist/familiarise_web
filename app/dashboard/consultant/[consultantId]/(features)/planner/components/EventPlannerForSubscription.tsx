@@ -252,16 +252,20 @@ export function EventPlannerForSubscription({
           <DialogTitle>
             {initialData ? "Edit" : "Create New"} Subscription Plan
           </DialogTitle>
-          <DialogDescription>
-            {initialData
-              ? "Update the details of your subscription plan."
-              : "Fill in the details to create a new subscription plan."}
-            {activeSubscriptionsCount > 0 && (
-              <div className="mt-2 text-sm text-blue-600">
-                This plan has {activeSubscriptionsCount} subscription
-                request(s).
-              </div>
-            )}
+          <DialogDescription asChild>
+            <div className="text-sm text-muted-foreground">
+              <p>
+                {initialData
+                  ? "Update the details of your subscription plan."
+                  : "Fill in the details to create a new subscription plan."}
+              </p>
+              {activeSubscriptionsCount > 0 && (
+                <div className="mt-2 text-sm text-blue-600">
+                  This plan has {activeSubscriptionsCount} subscription
+                  request(s).
+                </div>
+              )}
+            </div>
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>

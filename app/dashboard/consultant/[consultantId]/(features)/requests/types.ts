@@ -26,8 +26,8 @@ export interface SubscriptionPlanInfo {
 
 export interface AppointmentSlot {
   id: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
 }
 
 export interface AppointmentInfo {
@@ -42,6 +42,7 @@ export interface ConsultationApiResponse {
   requestedAt: string;
   appointment?: AppointmentInfo;
   requestStatus: RequestStatus;
+  directlyBooked?: boolean; // Flag to indicate if consultation was directly booked
 }
 
 export interface SubscriptionApiResponse {
@@ -51,8 +52,9 @@ export interface SubscriptionApiResponse {
   requestedAt: string;
   appointments?: AppointmentInfo[];
   requestStatus: RequestStatus;
-  startDate?: string;
-  endDate?: string;
+  // Correct field names from Prisma Subscription model
+  schedulingPeriodStartsAt?: string;
+  schedulingPeriodEndsAt?: string;
 }
 
 export interface AvailabilityApiResponse extends AppointmentSlot {}
@@ -67,6 +69,6 @@ export interface ConsultantApiResponse {
 // Interface used within the component
 export interface SlotInterval {
   id: string;
-  slotStartTimeInUTC: string;
-  slotEndTimeInUTC: string;
+  startsAt: string;
+  endsAt: string;
 }

@@ -107,6 +107,22 @@ function formatAllowedRange(allowedStart?: Date, allowedEnd?: Date): string {
 }
 
 /**
+ * Compares two TimeSlot arrays by content (not reference).
+ * Used to prevent unnecessary state updates that cause infinite loops.
+ */
+function areSlotsEqual(slots1: TimeSlot[], slots2: TimeSlot[]): boolean {
+  if (slots1.length !== slots2.length) return false;
+
+  // Sort both arrays by startTime for consistent comparison
+  const sorted1 = [...slots1].sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+  const sorted2 = [...slots2].sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+
+  return sorted1.every((slot, index) =>
+    slot.startTime.getTime() === sorted2[index].startTime.getTime()
+  );
+}
+
+/**
  * Counts completed calls (appointments with a full slot block) for a given
  * subscription inside a specific week window.
  */
@@ -402,9 +418,9 @@ export function UnifiedCalendar({
   });
 
   // Initialize pre-selected slots
-  // Note: setSelectedSlots is stable (from useState), intentionally not in deps
+  // Compare by content to prevent infinite loops from parent re-renders creating new array references
   useEffect(() => {
-    if (preSelectedSlots.length > 0) {
+    if (preSelectedSlots.length > 0 && !areSlotsEqual(selectedSlots, preSelectedSlots)) {
       setSelectedSlots(preSelectedSlots);
     }
   }, [preSelectedSlots]);

@@ -1235,18 +1235,20 @@ export function useEventSlotAllocation(
   // ==========================================
 
   // Notify parent of validation changes
+  // NOTE: onValidationChange intentionally not in deps to avoid infinite loops from parent re-renders
   useEffect(() => {
     if (onValidationChange) {
       onValidationChange(isValid, validationResult);
     }
-  }, [isValid, validationResult, onValidationChange]);
+  }, [isValid, validationResult]);
 
   // Notify parent of slot changes
+  // NOTE: onSlotsChange intentionally not in deps to avoid infinite loops from parent re-renders
   useEffect(() => {
     if (onSlotsChange) {
       onSlotsChange(selectedSlots);
     }
-  }, [selectedSlots, onSlotsChange]);
+  }, [selectedSlots]);
 
   // Clear allocation error when slots change
   useEffect(() => {

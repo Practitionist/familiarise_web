@@ -67,6 +67,7 @@ interface Request {
   durationInHours?: number;
   startDate?: Date;
   endDate?: Date;
+  directlyBooked?: boolean; // Flag for consultations booked directly (not through request system)
 }
 
 // interface SlotInterval { ... } // Removed - Now imported
@@ -149,7 +150,7 @@ export function RequestSlotAllocationTab({
     setError(null);
 
     try {
-      // Fetch data in parallel
+      // Fetch data in parallel (only PENDING requests)
       const [
         consultationsResult,
         subscriptionsResult,
@@ -212,7 +213,7 @@ export function RequestSlotAllocationTab({
             requestedAt: consultation.requestedAt,
             requestedTimes:
               consultation.appointment?.slotsOfAppointment?.map(
-                (slot) => slot.slotStartTimeInUTC,
+                (slot) => slot.startsAt,
               ) || [],
             status: consultation.requestStatus,
             requiredSlots: Math.ceil(
@@ -220,6 +221,7 @@ export function RequestSlotAllocationTab({
             ), // Convert hours to 30-min slots
             durationInHours:
               consultation.consultationPlan?.durationInHours || 1,
+            directlyBooked: consultation.directlyBooked, // Map directlyBooked flag
             // No scheduling period for consultations (one-time event)
           })),
         );
@@ -247,7 +249,7 @@ export function RequestSlotAllocationTab({
                 subscription.appointments?.flatMap(
                   (appt) =>
                     appt.slotsOfAppointment?.map(
-                      (slot) => slot.slotStartTimeInUTC,
+                      (slot) => slot.startsAt,
                     ) || [],
                 ) || [],
               status: subscription.requestStatus,
@@ -259,12 +261,12 @@ export function RequestSlotAllocationTab({
               durationInMonths: subscription.subscriptionPlan?.durationInMonths,
               callsPerWeek: subscription.subscriptionPlan?.callsPerWeek,
               sessionDurationInHours: sessionDuration,
-              // Scheduling period for subscriptions
-              startDate: subscription.startDate
-                ? new Date(subscription.startDate)
+              // Scheduling period for subscriptions (using correct field names from Prisma schema)
+              startDate: subscription.schedulingPeriodStartsAt
+                ? new Date(subscription.schedulingPeriodStartsAt)
                 : undefined,
-              endDate: subscription.endDate
-                ? new Date(subscription.endDate)
+              endDate: subscription.schedulingPeriodEndsAt
+                ? new Date(subscription.schedulingPeriodEndsAt)
                 : undefined,
             };
           }),
@@ -276,8 +278,8 @@ export function RequestSlotAllocationTab({
       if (weeklyAvailabilityResult.ok && weeklyAvailabilityResult.data) {
         processedAvailableSlots.push(
           ...weeklyAvailabilityResult.data.map((slot) => ({
-            startTime: slot.slotStartTimeInUTC,
-            endTime: slot.slotEndTimeInUTC,
+            startTime: slot.startsAt,
+            endTime: slot.endsAt,
             // Add other properties if TimeSlotMeta requires them
           })),
         );
@@ -285,8 +287,8 @@ export function RequestSlotAllocationTab({
       if (customAvailabilityResult.ok && customAvailabilityResult.data) {
         processedAvailableSlots.push(
           ...customAvailabilityResult.data.map((slot) => ({
-            startTime: slot.slotStartTimeInUTC,
-            endTime: slot.slotEndTimeInUTC,
+            startTime: slot.startsAt,
+            endTime: slot.endsAt,
           })),
         );
       }
@@ -673,11 +675,19 @@ export function RequestSlotAllocationTab({
                   {request.requestedTimes &&
                   request.requestedTimes.length > 0 ? (
                     <div className="space-y-1">
-                      {request.requestedTimes.slice(0, 5).map((time, index) => (
-                        <div key={time + index} className="text-sm">
-                          {new Date(time).toLocaleString()}
-                        </div>
-                      ))}
+                      {request.requestedTimes.slice(0, 5).map((time, index) => {
+                        // Validate and parse date string (Bug #5 fix)
+                        const date = new Date(time);
+                        const isValidDate = !isNaN(date.getTime());
+
+                        return (
+                          <div key={`${request.id}-time-${index}`} className="text-sm">
+                            {isValidDate
+                              ? date.toLocaleString()
+                              : "Invalid date"}
+                          </div>
+                        );
+                      })}
                       {request.requestedTimes.length > 5 && (
                         <div className="text-xs text-muted-foreground">
                           ... and {request.requestedTimes.length - 5} more slot
@@ -700,8 +710,10 @@ export function RequestSlotAllocationTab({
                 <TableCell>
                   {request.status === RequestStatus.PENDING && (
                     <>
+                      {/* Hide "Use Requested Times" button for directly booked consultations (Bug #8 fix) */}
                       {request.requestedTimes &&
-                        request.requestedTimes.length > 0 && (
+                        request.requestedTimes.length > 0 &&
+                        !request.directlyBooked && (
                           <Button
                             variant="secondary"
                             size="sm"
@@ -730,12 +742,6 @@ export function RequestSlotAllocationTab({
                       </Button>
                     </>
                   )}
-                  {request.status === RequestStatus.APPROVED &&
-                    request.allocatedSlots && (
-                      <div className="text-sm text-muted-foreground">
-                        {request.allocatedSlots.length} slots allocated
-                      </div>
-                    )}
                 </TableCell>
               </TableRow>
             ))}
@@ -755,9 +761,9 @@ export function RequestSlotAllocationTab({
           >
             <DialogHeader>
               <DialogTitle>Allocate Slots</DialogTitle>
-              <DialogDescription>
+              <DialogDescription asChild>
                 {selectedRequest && (
-                  <div className="space-y-1">
+                  <div className="space-y-1 text-sm text-muted-foreground">
                     <p>
                       Choose {selectedRequest.requiredSlots} slots for{" "}
                       {selectedRequest.type.toLowerCase()}
