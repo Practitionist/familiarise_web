@@ -142,7 +142,8 @@ function countCompletedCallsForWeek(
     const slots = appt.slotsOfAppointment || [];
     // A completed call is an appointment that has exactly the per-call slot count
     if (slots.length !== slotsPerCall) return false;
-    const start = new Date(slots[0].slotStartTimeInUTC);
+    // FIX: Use correct field names from API (startsAt, not slotStartTimeInUTC)
+    const start = new Date(slots[0].startsAt || slots[0].slotStartTimeInUTC);
     return start >= weekStart && start <= weekEnd;
   }).length;
 }
@@ -373,6 +374,8 @@ export function UnifiedCalendar({
     loading,
     error,
     refetch,
+    refetchEventSlots,
+    refetchAppointments,
     getSlotStatusForInterval,
   } = useCalendarData({
     consultantId,
@@ -381,6 +384,22 @@ export function UnifiedCalendar({
     currentDate,
     view,
   });
+
+  // Wrap onAllocationComplete to refetch data before calling parent callback
+  const handleAllocationSuccess = useCallback(
+    async (result: any) => {
+      try {
+        // Refetch event slots and appointments so newly allocated slots appear correctly
+        await Promise.all([refetchEventSlots(), refetchAppointments()]);
+      } catch (error) {
+        console.error("Error refetching calendar data after allocation:", error);
+      }
+
+      // Call parent callback
+      onAllocationComplete?.(result);
+    },
+    [refetchEventSlots, refetchAppointments, onAllocationComplete]
+  );
 
   // Slot allocation hook
   const {
@@ -414,7 +433,7 @@ export function UnifiedCalendar({
         ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
           (callsPerWeek || 1)
         : undefined,
-    onSuccess: onAllocationComplete,
+    onSuccess: handleAllocationSuccess,
   });
 
   // Initialize pre-selected slots
@@ -466,6 +485,25 @@ export function UnifiedCalendar({
       if (mode === "view") return;
 
       const status = getSlotStatusForInterval(interval, date);
+
+      const slot: TimeSlot = {
+        startTime: new Date(status.intervalStartUTCString),
+        endTime: new Date(status.intervalEndUTCString),
+        isAvailable: status.isAvailable,
+        isBooked: status.isBooked,
+      };
+
+      // Check if this slot belongs to the current event (for rescheduling)
+      const isCurrentEventSlot = eventSlots.some((eventSlot) => {
+        const slotTime = slot.startTime.getTime();
+        const eventTime = eventSlot.startTime.getTime();
+        const timeDiff = Math.abs(slotTime - eventTime);
+        const timeMatch = timeDiff < 1000;
+        const stringMatch =
+          slot.startTime.toISOString() === eventSlot.startTime.toISOString();
+        return timeMatch || stringMatch;
+      });
+
       // First-line guard: allow click but block selection with feedback if outside allowed range
       if (allowedStart || allowedEnd) {
         const intervalStart = new Date(status.intervalStartUTCString);
@@ -538,7 +576,8 @@ export function UnifiedCalendar({
         return;
       }
 
-      if (!status.isAvailable || status.isBookedForDisplay) {
+      // Allow current event slots to be toggled for rescheduling
+      if (!isCurrentEventSlot && (!status.isAvailable || status.isBookedForDisplay)) {
         toast({
           variant: "destructive",
           title: "Slot unavailable",
@@ -548,13 +587,6 @@ export function UnifiedCalendar({
         });
         return;
       }
-
-      const slot: TimeSlot = {
-        startTime: new Date(status.intervalStartUTCString),
-        endTime: new Date(status.intervalEndUTCString),
-        isAvailable: status.isAvailable,
-        isBooked: status.isBooked,
-      };
 
       if (mode === "select" || mode === "allocate") {
         toggleSlot(slot);
@@ -573,6 +605,7 @@ export function UnifiedCalendar({
       allowedEnd,
       selectedSlots,
       existingAppointments,
+      eventSlots,
       toast,
     ],
   );
@@ -644,8 +677,9 @@ export function UnifiedCalendar({
         "h-8 w-full relative transition-colors duration-150 ease-in-out border border-transparent rounded-sm text-[10px] leading-tight px-1 py-0.5";
       let buttonText = "";
       const showTooltip =
-        (status.isBookedForDisplay || status.isPartiallyBooked) &&
-        status.overlappingAppointments.length > 0;
+        ((status.isBookedForDisplay || status.isPartiallyBooked) &&
+          status.overlappingAppointments.length > 0) ||
+        isCurrentEventSlot;
 
       if (isCurrentlySelected) {
         // Dark green for manually selected slots
@@ -719,21 +753,41 @@ export function UnifiedCalendar({
                 align="center"
               >
                 <div className="flex flex-col gap-1">
-                  {status.overlappingAppointments.map(
-                    (appSlot: AppointmentDetail, index: number) => (
-                      <div
-                        key={`${appSlot.id}-${index}`}
-                        className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0"
-                      >
-                        <p className="font-semibold">{appSlot.title}</p>
-                        <p className="text-muted-foreground">{appSlot.type}</p>
-                        {appSlot.with && (
-                          <p className="text-muted-foreground">
-                            with {appSlot.with}
-                          </p>
-                        )}
-                      </div>
-                    ),
+                  {isCurrentEventSlot ? (
+                    // Show current event details
+                    <div>
+                      <p className="font-semibold">This Event&apos;s Slot</p>
+                      <p className="text-muted-foreground">
+                        {eventType === "consultation"
+                          ? "Consultation"
+                          : eventType === "subscription"
+                            ? "Subscription"
+                            : eventType === "webinar"
+                              ? "Webinar"
+                              : "Class"}
+                      </p>
+                      <p className="text-muted-foreground text-[10px] mt-1">
+                        Click to reschedule
+                      </p>
+                    </div>
+                  ) : (
+                    // Show overlapping appointments
+                    status.overlappingAppointments.map(
+                      (appSlot: AppointmentDetail, index: number) => (
+                        <div
+                          key={`${appSlot.id}-${index}`}
+                          className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0"
+                        >
+                          <p className="font-semibold">{appSlot.title}</p>
+                          <p className="text-muted-foreground">{appSlot.type}</p>
+                          {appSlot.with && (
+                            <p className="text-muted-foreground">
+                              with {appSlot.with}
+                            </p>
+                          )}
+                        </div>
+                      ),
+                    )
                   )}
                 </div>
               </TooltipContent>

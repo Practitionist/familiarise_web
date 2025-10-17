@@ -41,9 +41,16 @@ export interface Appointment {
   id: string;
   appointmentType: string;
   slotsOfAppointment?: {
-    slotStartTimeInUTC: string;
-    slotEndTimeInUTC: string;
+    startsAt: string;
+    endsAt: string;
+    // Legacy field names for backwards compatibility
+    slotStartTimeInUTC?: string;
+    slotEndTimeInUTC?: string;
   }[];
+  consultation?: any;
+  subscription?: any;
+  webinar?: any;
+  class?: any;
 }
 
 export interface ConsultantData {
@@ -343,12 +350,10 @@ export function useCalendarData(
 
       if (data && data.length > 0 && data[0].slotsOfAppointment?.length > 0) {
         const slots: TimeSlot[] = data[0].slotsOfAppointment.flatMap(
-          (slot: {
-            slotStartTimeInUTC: string;
-            slotEndTimeInUTC: string;
-          }): TimeSlot[] => {
-            const start = new Date(slot.slotStartTimeInUTC);
-            const end = new Date(slot.slotEndTimeInUTC);
+          (slot: any): TimeSlot[] => {
+            // FIX: Use correct field names from API (startsAt/endsAt)
+            const start = new Date(slot.startsAt || slot.slotStartTimeInUTC);
+            const end = new Date(slot.endsAt || slot.slotEndTimeInUTC);
             const durationMinutes =
               (end.getTime() - start.getTime()) / (1000 * 60);
             const numIntervals = Math.round(durationMinutes / 30);
@@ -485,9 +490,10 @@ export function useCalendarData(
       const overlappingAppointments = existingAppointments.flatMap(
         (appointment) =>
           appointment.slotsOfAppointment
-            ?.filter((slt) => {
-              const slotStart = new Date(slt.slotStartTimeInUTC);
-              const slotEnd = new Date(slt.slotEndTimeInUTC);
+            ?.filter((slt: any) => {
+              // FIX: Use correct field names from API (startsAt/endsAt, not slotStartTimeInUTC/slotEndTimeInUTC)
+              const slotStart = new Date(slt.startsAt || slt.slotStartTimeInUTC);
+              const slotEnd = new Date(slt.endsAt || slt.slotEndTimeInUTC);
               return intervalStartUTC < slotEnd && slotStart < intervalEndUTC;
             })
             .map((_slot) => ({
