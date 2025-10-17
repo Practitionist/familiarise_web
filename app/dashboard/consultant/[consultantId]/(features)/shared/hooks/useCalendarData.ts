@@ -301,9 +301,14 @@ export function useCalendarData(
         if (appt.slotsOfAppointment && Array.isArray(appt.slotsOfAppointment)) {
           appt.slotsOfAppointment = appt.slotsOfAppointment.filter(
             (slot: any) => {
-              if (!slot || !slot.slotStartTimeInUTC || !slot.slotEndTimeInUTC) {
+              // FIX: Check for BOTH new field names (startsAt/endsAt) AND old field names (slotStartTimeInUTC/slotEndTimeInUTC)
+              const hasNewFields = slot && slot.startsAt && slot.endsAt;
+              const hasOldFields = slot && slot.slotStartTimeInUTC && slot.slotEndTimeInUTC;
+
+              if (!hasNewFields && !hasOldFields) {
                 console.warn(
                   `⚠️ fetchExistingAppointments: Filtering out invalid slot in appointment ${appt.id}`,
+                  { slot }
                 );
                 return false;
               }
@@ -503,6 +508,19 @@ export function useCalendarData(
               with: extractAppointmentParticipant(appointment),
             })) || [],
       );
+
+      // DEBUG: Log when booked slots have no overlapping appointments (tooltip won't show)
+      if (overlappingSlots.length > 0 && overlappingSlots[0].bookingStatus === "fully-booked" && overlappingAppointments.length === 0) {
+        console.warn(
+          "[getSlotStatusForInterval] Booked slot with no overlapping appointments - tooltip won't show:",
+          {
+            interval: `${interval.hour}:${interval.minute}`,
+            date: date.toDateString(),
+            existingAppointmentsCount: existingAppointments.length,
+            firstAppointmentSlots: existingAppointments[0]?.slotsOfAppointment?.length,
+          }
+        );
+      }
 
       // STEP 5: Determine booking status using SERVER-CALCULATED data
       // FIXED: Use server bookingStatus instead of manual calculation
