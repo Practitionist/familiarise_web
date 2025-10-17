@@ -322,7 +322,7 @@ async function checkSubscriptionRelationship(
         requestStatus: {
           in: ["APPROVED", "SCHEDULED"],
         },
-        endDate: {
+        schedulingPeriodEndsAt: {
           gte: new Date(), // Active subscription
         },
       },
@@ -341,7 +341,7 @@ async function checkSubscriptionRelationship(
         requestStatus: {
           in: ["APPROVED", "SCHEDULED"],
         },
-        endDate: {
+        schedulingPeriodEndsAt: {
           gte: new Date(),
         },
       },
