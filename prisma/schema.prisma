@@ -396,7 +396,7 @@ model Consultation {
   requestedById          String
   requestedAt            DateTime         @default(now()) @db.Timestamptz()
   requestNotes           String?
-  directlyBooked         Boolean          @default(false)
+  bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
   rating                 Float?
@@ -433,16 +433,17 @@ model SubscriptionPlan {
 }
 
 model Subscription {
-  id                         String   @id @default(cuid())
-  schedulingPeriodStartsAt   DateTime @db.Timestamptz()
-  schedulingPeriodEndsAt     DateTime @db.Timestamptz()
-  schedulingTimezone         String   @default("Asia/Kolkata")
+  id                       String   @id @default(cuid())
+  schedulingPeriodStartsAt DateTime @db.Timestamptz()
+  schedulingPeriodEndsAt   DateTime @db.Timestamptz()
+  schedulingTimezone       String   @default("Asia/Kolkata")
 
   requestStatus          RequestStatus    @default(PENDING)
   requestedBy            ConsulteeProfile @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
   requestedById          String
   requestedAt            DateTime         @default(now()) @db.Timestamptz()
   requestNotes           String?
+  bookingSource          BookingSource    @default(REQUEST_SUBMITTED)
   feedbackFromConsultee  String?
   feedbackFromConsultant String?
   rating                 Float?
@@ -463,6 +464,11 @@ enum RequestStatus {
   REJECTED
   CANCELLED
   EXPIRED
+}
+
+enum BookingSource {
+  DIRECT_CHECKOUT
+  REQUEST_SUBMITTED
 }
 
 // Many-Many Webinar

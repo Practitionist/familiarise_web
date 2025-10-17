@@ -67,7 +67,7 @@ interface Request {
   durationInHours?: number;
   startDate?: Date;
   endDate?: Date;
-  directlyBooked?: boolean; // Flag for consultations booked directly (not through request system)
+  bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source - direct checkout or request submitted
 }
 
 // interface SlotInterval { ... } // Removed - Now imported
@@ -221,7 +221,7 @@ export function RequestSlotAllocationTab({
             ), // Convert hours to 30-min slots
             durationInHours:
               consultation.consultationPlan?.durationInHours || 1,
-            directlyBooked: consultation.directlyBooked, // Map directlyBooked flag
+            bookingSource: consultation.bookingSource, // Map bookingSource enum
             // No scheduling period for consultations (one-time event)
           })),
         );
@@ -713,7 +713,7 @@ export function RequestSlotAllocationTab({
                       {/* Hide "Use Requested Times" button for directly booked consultations (Bug #8 fix) */}
                       {request.requestedTimes &&
                         request.requestedTimes.length > 0 &&
-                        !request.directlyBooked && (
+                        request.bookingSource === "REQUEST_SUBMITTED" && (
                           <Button
                             variant="secondary"
                             size="sm"

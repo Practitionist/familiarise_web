@@ -433,7 +433,7 @@ export async function handleConsultationCheckout(
         : RequestStatus.PENDING,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
-      directlyBooked: true,
+      bookingSource: "DIRECT_CHECKOUT",
     },
   });
 
@@ -495,6 +495,7 @@ export async function handleSubscriptionCheckout(
         : RequestStatus.PENDING,
       requestedById: consulteeProfileId,
       requestNotes: data.notes,
+      bookingSource: "DIRECT_CHECKOUT",
       schedulingPeriodStartsAt: startDate,
       schedulingPeriodEndsAt: endDate,
     },

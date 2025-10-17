@@ -42,7 +42,7 @@ export interface ConsultationApiResponse {
   requestedAt: string;
   appointment?: AppointmentInfo;
   requestStatus: RequestStatus;
-  directlyBooked?: boolean; // Flag to indicate if consultation was directly booked
+  bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
 }
 
 export interface SubscriptionApiResponse {
@@ -52,6 +52,7 @@ export interface SubscriptionApiResponse {
   requestedAt: string;
   appointments?: AppointmentInfo[];
   requestStatus: RequestStatus;
+  bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
   // Correct field names from Prisma Subscription model
   schedulingPeriodStartsAt?: string;
   schedulingPeriodEndsAt?: string;

@@ -195,7 +195,7 @@ async function createConsultation(tx: Prisma.TransactionClient, data: any) {
       requestStatus: RequestStatus.PENDING,
       requestedById: data.consulteeProfileId,
       requestNotes: data.notes,
-      directlyBooked: true,
+      bookingSource: "DIRECT_CHECKOUT",
     },
   });
 
@@ -235,6 +235,7 @@ async function createSubscription(tx: Prisma.TransactionClient, data: any) {
       requestStatus: RequestStatus.PENDING,
       requestedById: data.consulteeProfileId,
       requestNotes: data.notes,
+      bookingSource: "DIRECT_CHECKOUT",
       schedulingPeriodStartsAt: startDate,
       schedulingPeriodEndsAt: endDate,
     },

@@ -91,7 +91,7 @@ export async function PUT(
       data: {
         requestStatus: body.requestStatus,
         requestNotes: body.requestNotes,
-        directlyBooked: body.directlyBooked,
+        bookingSource: body.bookingSource,
         feedbackFromConsultee: body.feedbackFromConsultee,
         feedbackFromConsultant: body.feedbackFromConsultant,
         rating: body.rating,

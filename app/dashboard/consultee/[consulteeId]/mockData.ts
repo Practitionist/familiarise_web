@@ -263,7 +263,7 @@ export const eventWithoutSlots: EventWithType = {
   consultationPlanId: "plan-noslot", // Added
   requestedById: "consultee-noslot", // Added
   requestNotes: null, // Added
-  directlyBooked: false, // Added
+  bookingSource: "REQUEST_SUBMITTED", // Added
   feedbackFromConsultee: null, // Added
   feedbackFromConsultant: null, // Added
   rating: null, // Added
