@@ -9,15 +9,25 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect } from "react";
 
 export default function SignIn() {
   const { toast } = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [callbackUrl, setCallbackUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const url = searchParams.get("callbackUrl");
+    if (url) {
+      setCallbackUrl(url);
+      console.log("Sign-in page loaded with callbackUrl:", url);
+    }
+  }, [searchParams]);
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,6 +39,7 @@ export default function SignIn() {
         redirect: false,
         email,
         password,
+        callbackUrl: callbackUrl || undefined,
       });
 
       if (result?.error) {
@@ -43,9 +54,12 @@ export default function SignIn() {
       } else if (result?.ok) {
         toast({
           title: "Sign In Successful",
-          description: "Redirecting to dashboard...",
+          description: callbackUrl
+            ? "Redirecting to your destination..."
+            : "Redirecting to dashboard...",
         });
-        router.push("/");
+        // Redirect to callbackUrl if available, otherwise to root
+        router.push(callbackUrl || "/");
       } else {
         toast({
           title: "Sign In Failed",
@@ -155,7 +169,7 @@ export default function SignIn() {
             className="w-full flex items-center justify-center bg-black hover:bg-gray-700"
             disabled={isLoading}
             onClick={() => {
-              signIn("github");
+              signIn("github", { callbackUrl: callbackUrl || undefined });
               toast({
                 title: "Signing in with GitHub...",
                 description: "Please wait while we redirect you.",
@@ -169,7 +183,7 @@ export default function SignIn() {
             className="w-full flex items-center justify-center mt-4 bg-red-600 hover:bg-red-500"
             disabled={isLoading}
             onClick={() => {
-              signIn("google");
+              signIn("google", { callbackUrl: callbackUrl || undefined });
               toast({
                 title: "Signing in with Google...",
                 description: "Please wait while we redirect you.",
@@ -183,7 +197,7 @@ export default function SignIn() {
             className="w-full flex items-center justify-center mt-4 bg-blue-600 hover:bg-blue-500"
             disabled={isLoading}
             onClick={() => {
-              signIn("facebook");
+              signIn("facebook", { callbackUrl: callbackUrl || undefined });
               toast({
                 title: "Signing in with Facebook...",
                 description: "Please wait while we redirect you.",

@@ -6,7 +6,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Button } from "components/ui/button";
 import { Skeleton } from "components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { useConsulteePrefetchDashboard } from "@/hooks/useConsulteePrefetchDashboard";
+import StreamProvider from "@/providers/StreamProvider";
+// Removed aggressive prefetching import - using lightweight approach instead
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -45,6 +46,7 @@ interface ConsulteeNavProps {
   userImage?: string | null;
   userName?: string | null;
   onNavHover: (path: string) => void;
+  isLoadingProfile?: boolean;
 }
 
 // Reusable components
@@ -71,6 +73,7 @@ function ConsulteeNav({
   userImage,
   userName,
   onNavHover,
+  isLoadingProfile = false,
 }: Readonly<ConsulteeNavProps>) {
   const firstName = userName?.split(" ")[0] || "User";
 
@@ -102,11 +105,15 @@ function ConsulteeNav({
         {/* User Profile Section */}
         <div className="flex items-center gap-3">
           {/* Welcome Message */}
-          <div className="hidden md:block">
-            <p className="text-sm font-medium text-gray-700">
-              Welcome, {firstName}
-            </p>
-          </div>
+          {isLoadingProfile ? (
+            <Skeleton className="hidden md:block h-5 w-36" />
+          ) : (
+            <div className="hidden md:block">
+              <p className="text-sm font-medium text-gray-700">
+                Welcome, {firstName}
+              </p>
+            </div>
+          )}
 
           {/* Sign Out Button */}
           <Button
@@ -120,13 +127,17 @@ function ConsulteeNav({
 
           {/* User Profile Avatar */}
           <Link href="/profile">
-            <Avatar className="h-10 w-10 cursor-pointer hover:ring-2 hover:ring-offset-2 hover:ring-blue-400 transition-all">
-              <AvatarImage
-                src={userImage || "/placeholder.svg"}
-                alt={userName || "User Profile"}
-              />
-              <AvatarFallback>{userName?.charAt(0) || "U"}</AvatarFallback>
-            </Avatar>
+            {isLoadingProfile ? (
+              <Skeleton className="h-10 w-10 rounded-full" />
+            ) : (
+              <Avatar className="h-10 w-10 cursor-pointer hover:ring-2 hover:ring-offset-2 hover:ring-blue-400 transition-all">
+                <AvatarImage
+                  src={userImage || "/placeholder.svg"}
+                  alt={userName || "User Profile"}
+                />
+                <AvatarFallback>{userName?.charAt(0) || "U"}</AvatarFallback>
+              </Avatar>
+            )}
           </Link>
         </div>
       </div>
@@ -148,8 +159,6 @@ export default function ConsulteeLayout({
   const queryClient = useQueryClient();
 
   const userId = getEffectiveUserId(session);
-  const { prefetchAllConsulteeData, prefetchUserData, prefetchOnTabHover } =
-    useConsulteePrefetchDashboard({ consulteeId });
 
   // Replace SWR with React Query for user details
   const {
@@ -179,50 +188,42 @@ export default function ConsulteeLayout({
     retry: 2,
   });
 
-  // Enhanced prefetching strategy
+  // Reduced prefetching strategy - only prefetch on user interaction
   useEffect(() => {
     if (!userId || !consulteeId) return;
 
-    // Immediate prefetch of critical data
-    const prefetchCriticalData = async () => {
-      // Prefetch user data
-      prefetchUserData(userId);
+    // Only prefetch current route and one likely next route after a delay
+    const prefetchMinimalData = () => {
+      // Prefetch only the current route
+      const currentRoute = pathname;
+      if (currentRoute) {
+        router.prefetch(currentRoute);
+      }
 
-      // Prefetch all consultee dashboard data in background
-      prefetchAllConsulteeData();
-
-      // Prefetch routes that are likely to be visited
-      const criticalRoutes = [
-        `/dashboard/consultee/${consulteeId}/home`,
-        `/dashboard/consultee/${consulteeId}/appointments`,
-        `/dashboard/consultee/${consulteeId}/messages`,
-      ];
-
-      // Use Next.js router.prefetch for route-level prefetching
-      criticalRoutes.forEach((route) => {
-        router.prefetch(route);
-      });
+      // Prefetch home route only if not already there, after a longer delay
+      if (!pathname.includes("/home")) {
+        setTimeout(() => {
+          router.prefetch(`/dashboard/consultee/${consulteeId}/home`);
+        }, 2000);
+      }
     };
 
-    // Use requestIdleCallback for non-blocking prefetch
+    // Use requestIdleCallback with longer timeout to reduce blocking
     if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      window.requestIdleCallback(prefetchCriticalData);
+      window.requestIdleCallback(prefetchMinimalData, { timeout: 5000 });
     } else {
-      setTimeout(prefetchCriticalData, 100);
+      setTimeout(prefetchMinimalData, 1000);
     }
-  }, [userId, consulteeId, prefetchAllConsulteeData, prefetchUserData, router]);
+  }, [userId, consulteeId, pathname, router]);
 
-  // Smart hover prefetching with route prefetching
+  // Lightweight hover prefetching - route only
   const handleNavHover = (path: string) => {
-    // Prefetch the route
+    // Only prefetch the route, let the page handle its own data loading
     router.prefetch(`/dashboard/consultee/${consulteeId}/${path}`);
-
-    // Prefetch data for specific tabs
-    prefetchOnTabHover(path);
   };
 
   const isLoading = isLoadingUser || isLoadingProfile;
-  const error = userError || profileError;
+  const error = (userError || profileError) as Error | null;
 
   // Authentication check
   if (
@@ -250,8 +251,22 @@ export default function ConsulteeLayout({
     );
   }
 
-  // Enhanced loading UI
-  if (isLoading) {
+  // Show loading only for critical user details needed for UserProvider
+  if (!userDetails) {
+    // Only show error if there's an actual error, otherwise render layout with skeleton
+    if (userError || profileError) {
+      return (
+        <MessageContainer
+          title="Error"
+          message={
+            (userError as Error)?.message ||
+            (profileError as Error)?.message ||
+            "Failed to load user details"
+          }
+        />
+      );
+    }
+    // If still loading userDetails, show minimal skeleton but still render layout
     return (
       <div className="bg-slate-50 min-h-screen flex flex-col">
         {/* Skeleton Nav */}
@@ -271,7 +286,7 @@ export default function ConsulteeLayout({
         </div>
 
         {/* Skeleton Main Content */}
-        <div className="flex-grow overflow-y-auto p-8">
+        <main className="flex-grow overflow-y-auto p-8">
           <div className="space-y-6">
             <Skeleton className="h-12 w-64" />
             <Skeleton className="h-40 w-full rounded-lg" />
@@ -280,15 +295,8 @@ export default function ConsulteeLayout({
               <Skeleton className="h-32 rounded-lg" />
             </div>
           </div>
-        </div>
+        </main>
       </div>
-    );
-  }
-
-  // Ensure userDetails is available since UserProvider expects it
-  if (!userDetails) {
-    return (
-      <MessageContainer title="Error" message="Failed to load user details" />
     );
   }
 
@@ -302,9 +310,16 @@ export default function ConsulteeLayout({
           userImage={userDetails.image}
           userName={userDetails.name}
           onNavHover={handleNavHover}
+          isLoadingProfile={isLoadingProfile}
         />
         <main className="flex-grow overflow-y-auto p-8">
-          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+          <StreamProvider
+            userId={userDetails.id}
+            enableChat={true}
+            enableVideo={true}
+          >
+            <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+          </StreamProvider>
         </main>
       </div>
     </UserProvider>

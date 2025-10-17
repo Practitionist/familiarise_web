@@ -1,5 +1,6 @@
+// This script handles Stream user synchronization and can be run directly by Node.js (e.g., by GitHub Actions)
 import { StreamChat, UserResponse } from "stream-chat";
-import prisma from "@/lib/prisma"; // Assuming prisma client is in lib, adjust if different
+import prisma from "../lib/prisma";
 
 interface FailedDeletionFromSDK {
   user_id: string;
@@ -84,7 +85,7 @@ export async function performStreamUserSync(): Promise<SyncSummary> {
         select: { id: true },
       });
       const activePrismaUserIdsOnPageSet = new Set(
-        activePrismaUsersOnPage.map((user) => user.id),
+        activePrismaUsersOnPage.map((user: { id: string }) => user.id),
       );
       console.log(
         `[Stream Sync Job] Found ${activePrismaUserIdsOnPageSet.size} active Prisma users among the current Stream page.`,
@@ -172,3 +173,68 @@ export async function performStreamUserSync(): Promise<SyncSummary> {
     throw error; // Rethrow to be handled by the caller
   }
 }
+
+// Self-executing script logic - only runs when this file is executed directly
+// Immediately-invoked async function (IIFE) to use await
+(async () => {
+  console.log("[Stream Sync Script] Starting execution...");
+
+  // Ensure required environment variables for Prisma are set if not already handled by Next.js context
+  // For GitHub Actions, these will need to be explicitly provided as secrets/env vars.
+  if (!process.env.DATABASE_URL) {
+    console.error(
+      "[Stream Sync Script] Critical: DATABASE_URL environment variable is not set.",
+    );
+    process.exit(1);
+  }
+  // The stream-sync module itself checks for Stream API keys.
+
+  try {
+    const summary: SyncSummary = await performStreamUserSync();
+
+    console.log("[Stream Sync Script] Synchronization completed.");
+    console.log("--- Summary ---");
+    console.log(
+      `Total Stream Users Processed: ${summary.totalStreamUsersProcessed}`,
+    );
+    console.log(
+      `Total Stale Users Identified: ${summary.totalStaleUsersIdentified}`,
+    );
+    console.log(
+      `Total Stale Users Deleted:    ${summary.totalStaleUsersDeleted}`,
+    );
+    console.log(
+      `Total Failed Deletions:       ${summary.totalFailedDeletions}`,
+    );
+
+    if (
+      summary.failedDeletionDetails &&
+      summary.failedDeletionDetails.length > 0
+    ) {
+      console.warn("--- Failed Deletion Details ---");
+      summary.failedDeletionDetails.forEach((failure) => {
+        console.warn(`  User ID: ${failure.id}, Error: ${failure.error}`);
+      });
+    }
+
+    if (summary.totalFailedDeletions > 0) {
+      console.warn(
+        "[Stream Sync Script] Process completed with some failed deletions.",
+      );
+      // Optionally, exit with a different code for partial success if needed by CI
+      // process.exit(2);
+    }
+
+    console.log("[Stream Sync Script] Execution finished successfully.");
+    process.exit(0);
+  } catch (error: any) {
+    console.error(
+      "[Stream Sync Script] An error occurred during the synchronization process:",
+    );
+    console.error(error.message);
+    if (error.stack) {
+      console.error(error.stack);
+    }
+    process.exit(1); // Exit with a failure code
+  }
+})();

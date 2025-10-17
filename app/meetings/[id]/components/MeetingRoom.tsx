@@ -12,6 +12,7 @@ import {
   useCallStateHooks,
 } from "@stream-io/video-react-sdk";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { Users, LayoutList } from "lucide-react";
 
 import {
@@ -25,6 +26,7 @@ import Loader from "./Loader";
 import EndCallButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
 import { cn } from "@/utils/tailwind";
+import { StreamVideoErrorBoundary } from "@/components/stream/StreamErrorBoundary";
 
 type CallLayoutType = "grid" | "speaker-left" | "speaker-right";
 
@@ -48,6 +50,7 @@ const MeetingRoom = () => {
   const searchParams = useSearchParams();
   const isPersonalRoom = !!searchParams.get("personal");
   const router = useRouter();
+  const { data: session } = useSession();
   const [layout, setLayout] = useState<CallLayoutType>("speaker-left");
   const [showParticipants, setShowParticipants] = useState(false);
   const call = useCall();
@@ -59,6 +62,15 @@ const MeetingRoom = () => {
 
   // Track if we're trying to rejoin
   const [isRejoining, setIsRejoining] = useState(false);
+
+  // Monitor call state for cleanup
+  useEffect(() => {
+    if (callEndedAt) {
+      console.log("Call ended at:", callEndedAt);
+      // Call has ended - cleanup will be handled by EndCallButton
+      // or by component unmount effect
+    }
+  }, [callEndedAt, callingState]);
 
   // Check if the user is the call owner
   const { useLocalParticipant } = useCallStateHooks();
@@ -114,57 +126,96 @@ const MeetingRoom = () => {
   }
 
   return (
-    <section className="relative h-screen w-full overflow-hidden pt-4 text-white">
-      <div className="relative flex size-full items-center justify-center">
-        <div className="flex size-full max-w-[1000px] items-center">
-          <CallLayout layout={layout} />
-        </div>
-        <div
-          className={cn("h-[calc(100vh-86px)] hidden ml-2", {
-            block: showParticipants,
-          })}
-        >
-          <CallParticipantsList onClose={() => setShowParticipants(false)} />
-        </div>
-      </div>
-
-      {/* Video layout and call controls */}
-      <div className="fixed bottom-0 flex w-full items-center justify-center gap-5">
-        <CallControls onLeave={() => router.push("/")} />
-
-        <DropdownMenu>
-          <div className="flex items-center">
-            <DropdownMenuTrigger className="cursor-pointer rounded-2xl bg-[#19232d] px-4 py-2 hover:bg-[#4c535b]">
-              <LayoutList size={20} className="text-white" />
-            </DropdownMenuTrigger>
+    <StreamVideoErrorBoundary>
+      <section className="relative h-screen w-full overflow-hidden pt-4 text-white">
+        <div className="relative flex size-full items-center justify-center">
+          <div className="flex size-full max-w-[1000px] items-center">
+            <CallLayout layout={layout} />
           </div>
-          <DropdownMenuContent className="border-dark-1 bg-dark-1 text-white">
-            {["Grid", "Speaker-Left", "Speaker-Right"].map((item, index) => (
-              <div key={index}>
-                <DropdownMenuItem
-                  onClick={() =>
-                    setLayout(item.toLowerCase() as CallLayoutType)
+          <div
+            className={cn("h-[calc(100vh-86px)] hidden ml-2", {
+              block: showParticipants,
+            })}
+          >
+            <CallParticipantsList onClose={() => setShowParticipants(false)} />
+          </div>
+        </div>
+
+        {/* Video layout and call controls */}
+        <div className="fixed bottom-0 flex w-full items-center justify-center gap-5">
+          <CallControls
+            onLeave={async () => {
+              // Handle participant leaving call (not ending for everyone)
+              console.log("Participant leaving call");
+              try {
+                await call?.leave();
+
+                // Navigate to appropriate dashboard
+                if (session?.user) {
+                  const {
+                    role,
+                    consultantProfileId,
+                    consulteeProfileId,
+                    staffProfileId,
+                  } = session.user;
+
+                  if (role === "CONSULTANT" && consultantProfileId) {
+                    router.push(
+                      `/dashboard/consultant/${consultantProfileId}/home`,
+                    );
+                  } else if (role === "CONSULTEE" && consulteeProfileId) {
+                    router.push(
+                      `/dashboard/consultee/${consulteeProfileId}/home`,
+                    );
+                  } else if (role === "STAFF" && staffProfileId) {
+                    router.push(`/dashboard/staff/${staffProfileId}/home`);
+                  } else {
+                    router.push("/");
                   }
-                >
-                  {item}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator className="border-dark-1" />
-              </div>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+                } else {
+                  router.push("/");
+                }
+              } catch (error) {
+                console.error("Error leaving call:", error);
+                router.push("/");
+              }
+            }}
+          />
 
-        <CallStatsButton />
+          <DropdownMenu>
+            <div className="flex items-center">
+              <DropdownMenuTrigger className="cursor-pointer rounded-2xl bg-[#19232d] px-4 py-2 hover:bg-[#4c535b]">
+                <LayoutList size={20} className="text-white" />
+              </DropdownMenuTrigger>
+            </div>
+            <DropdownMenuContent className="border-dark-1 bg-dark-1 text-white">
+              {["Grid", "Speaker-Left", "Speaker-Right"].map((item, index) => (
+                <div key={index}>
+                  <DropdownMenuItem
+                    onClick={() =>
+                      setLayout(item.toLowerCase() as CallLayoutType)
+                    }
+                  >
+                    {item}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator className="border-dark-1" />
+                </div>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-        <button onClick={() => setShowParticipants((prev) => !prev)}>
-          <div className="cursor-pointer rounded-2xl bg-[#19232d] px-4 py-2 hover:bg-[#4c535b]">
-            <Users size={20} className="text-white" />
-          </div>
-        </button>
+          <CallStatsButton />
 
-        {!isPersonalRoom && <EndCallButton />}
-      </div>
-    </section>
+          <button onClick={() => setShowParticipants((prev) => !prev)}>
+            <div className="cursor-pointer rounded-2xl bg-[#19232d] px-4 py-2 hover:bg-[#4c535b]">
+              <Users size={20} className="text-white" />
+            </div>
+          </button>
+
+          {!isPersonalRoom && <EndCallButton />}
+        </div>
+      </section>
+    </StreamVideoErrorBoundary>
   );
 };
 

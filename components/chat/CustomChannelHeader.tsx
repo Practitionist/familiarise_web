@@ -3,6 +3,10 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useChatContext } from "stream-chat-react";
 import { ChannelInfoAndManageDialog } from "./ChannelInfoAndManageDialog";
+import {
+  getChannelDisplayInfo,
+  getTruncatedDisplayName,
+} from "./utils/channelUtils";
 
 export const CustomChannelHeader = () => {
   const { channel, client } = useChatContext();
@@ -12,27 +16,38 @@ export const CustomChannelHeader = () => {
   const isDirectMessage = channel.type === "messaging";
 
   if (isDirectMessage) {
-    // Find the other member in the channel
-    const otherMember = Object.values(channel.state.members || {}).find(
-      (member) => member.user?.id !== client?.userID,
-    )?.user;
-
-    const displayName = otherMember?.name || otherMember?.id || "Unknown User";
-    const displayImage = (otherMember?.image as string) || undefined;
-    const isOnline = otherMember?.online || false;
+    const displayInfo = getChannelDisplayInfo(channel, client?.userID);
+    const truncatedName = getTruncatedDisplayName(displayInfo, 35);
+    const showTooltip = truncatedName !== displayInfo.displayName;
 
     return (
       <div className="flex items-center px-4 py-2 border-b">
-        <Avatar className="h-8 w-8 mr-3">
-          <AvatarImage src={displayImage || "/placeholder-user.jpg"} />
-          <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
-        </Avatar>
+        <div className="relative mr-3">
+          <Avatar className="h-8 w-8">
+            <AvatarImage
+              src={displayInfo.displayImage || "/placeholder-user.jpg"}
+            />
+            <AvatarFallback>{displayInfo.displayName.charAt(0)}</AvatarFallback>
+          </Avatar>
+          {displayInfo.isGroupDM && (
+            <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-blue-500 rounded-full border border-blue-600 flex items-center justify-center">
+              <span className="text-[8px] text-white font-bold">G</span>
+            </div>
+          )}
+        </div>
 
-        <div className="flex-1">
-          <div className="font-medium">{displayName}</div>
-          <div className="text-xs text-gray-500">
-            {isOnline ? "Online" : "Offline"}
+        <div className="flex-1 min-w-0">
+          <div
+            className="font-medium truncate"
+            title={
+              showTooltip
+                ? displayInfo.fullGroupName || displayInfo.displayName
+                : undefined
+            }
+          >
+            {truncatedName}
           </div>
+          <div className="text-xs text-gray-500">{displayInfo.statusText}</div>
         </div>
 
         <ChannelInfoAndManageDialog channel={channel} />
