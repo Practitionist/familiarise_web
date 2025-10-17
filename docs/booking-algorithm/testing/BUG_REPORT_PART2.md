@@ -1,4 +1,5 @@
 # Comprehensive Bug Report - Part 2
+
 ## Booking Allocation System Testing - Continued
 
 **Date**: 2025-10-16
@@ -12,12 +13,14 @@
 ## Testing Continuation Overview
 
 **Part 1 Summary** (see BUG_REPORT_PART1.md):
+
 - Tests 1-4 completed
 - 6 bugs discovered (3 critical, 2 high, 1 medium)
 - Consultation auto-allocation: ✅ WORKING
 - Subscription allocation: ❌ COMPLETELY BROKEN
 
 **Part 2 Focus**:
+
 - Manual allocation testing
 - "Use Requested Times" approval workflow
 - Edge cases and impossible scenarios
@@ -29,6 +32,7 @@
 ## Test Credentials
 
 **Test Account**:
+
 - Email: `teetanrobotics@gmail.com`
 - Password: `robotics123`
 - Role: CONSULTEE
@@ -83,11 +87,13 @@
 #### Error Details
 
 **React Error**:
+
 ```
 Maximum update depth exceeded. This can happen when a component repeatedly calls setState inside componentWillUpdate or componentDidUpdate. React limits the number of nested updates to prevent infinite loops.
 ```
 
 **Evidence**:
+
 - Screenshot captured showing error boundary with "Dashboard Error" heading
 - Error message displayed: "There was a problem loading your dashboard. This might be due to a temporary issue with the data or a network connection problem."
 - Technical error shown to user: Full React infinite loop error message
@@ -104,17 +110,20 @@ Maximum update depth exceeded. This can happen when a component repeatedly calls
 **Identified Issue**: Infinite React Update Loop in Manual Slot Selection
 
 **Likely Cause**:
+
 - State update in slot click handler triggers re-render
 - Re-render causes another state update
 - Creates infinite loop until React's update depth limit reached
 - Dialog component or parent component has incorrect state management
 
 **Probable Location**:
+
 - `UnifiedCalendar.tsx` - Slot click handler
 - `RequestSlotAllocationTab.tsx` - Parent state management
 - State lifting or callback chain issue
 
 **Why Auto-Allocation Works But Manual Fails**:
+
 - Auto-allocation calls API directly without UI state updates during selection
 - Manual selection updates UI state on every click
 - Faulty useEffect or useState dependency causing re-triggers
@@ -124,6 +133,7 @@ Maximum update depth exceeded. This can happen when a component repeatedly calls
 **Severity**: ⚠️ **CRITICAL**
 
 **Impact**:
+
 - **100% blocking** for manual slot selection
 - Entire dashboard crashes, not just dialog
 - User loses all work in progress
@@ -131,6 +141,7 @@ Maximum update depth exceeded. This can happen when a component repeatedly calls
 - Affects ALL event types (consultations, subscriptions, webinars, classes)
 
 **User Experience**:
+
 - Catastrophic - instant page crash on first click
 - Technical error message exposed to users (should be internal)
 - No graceful degradation
@@ -139,12 +150,13 @@ Maximum update depth exceeded. This can happen when a component repeatedly calls
 #### Recommended Fixes
 
 1. **Immediate Fix - Prevent Infinite Loop**:
+
    ```typescript
    // In slot click handler - add proper memoization
    const handleSlotClick = useCallback((slotId: string) => {
-     setSelectedSlots(prev => {
+     setSelectedSlots((prev) => {
        if (prev.includes(slotId)) {
-         return prev.filter(id => id !== slotId);
+         return prev.filter((id) => id !== slotId);
        }
        return [...prev, slotId];
      });
@@ -171,12 +183,12 @@ Maximum update depth exceeded. This can happen when a component repeatedly calls
 
 #### Comparison to Auto-Allocation
 
-| Feature | Auto-Allocation | Manual Selection |
-|---------|----------------|------------------|
-| **Works?** | ✅ Yes | ❌ No |
-| **Stability** | Stable | **Crashes immediately** |
-| **Error Handling** | Good | **None - catastrophic failure** |
-| **User Experience** | Smooth | **Unusable** |
+| Feature             | Auto-Allocation | Manual Selection                |
+| ------------------- | --------------- | ------------------------------- |
+| **Works?**          | ✅ Yes          | ❌ No                           |
+| **Stability**       | Stable          | **Crashes immediately**         |
+| **Error Handling**  | Good            | **None - catastrophic failure** |
+| **User Experience** | Smooth          | **Unusable**                    |
 
 #### Related Bugs
 
@@ -196,6 +208,7 @@ Maximum update depth exceeded. This can happen when a component repeatedly calls
 Clicking any slot in the calendar to manually select it triggers an infinite React update loop, causing the entire page to crash with "Maximum update depth exceeded" error.
 
 **Reproduction Steps**:
+
 1. Go to Requests tab
 2. Click "Allocate Slots" for any request
 3. Wait for calendar to load
@@ -203,12 +216,14 @@ Clicking any slot in the calendar to manually select it triggers an infinite Rea
 5. **Page crashes immediately**
 
 **Expected Behavior**:
+
 - Slot should be selected (turn dark green)
 - Counter should update: "X selected out of Y required slots"
 - User can continue selecting more slots
 - "Allocate Manual Slots" button should enable when quota met
 
 **Actual Behavior**:
+
 - Slot selection triggers infinite update loop
 - React hits maximum update depth limit
 - Error boundary catches error
@@ -217,11 +232,13 @@ Clicking any slot in the calendar to manually select it triggers an infinite Rea
 - No recovery except full page refresh
 
 **Evidence**:
+
 - Screenshot: Error boundary showing "Maximum update depth exceeded"
 - Console: Over 43,000 tokens of error messages
 - Confirmed crash on first slot click
 
 **Technical Details**:
+
 ```
 Error: Maximum update depth exceeded. This can happen when a component
 repeatedly calls setState inside componentWillUpdate or componentDidUpdate.
@@ -232,6 +249,7 @@ React limits the number of nested updates to prevent infinite loops.
 Improper state management in slot selection callback chain causing cascading re-renders.
 
 **Recommended Fix**:
+
 1. Add useCallback memoization to slot click handlers
 2. Review and fix useEffect dependencies in calendar components
 3. Prevent state updates from triggering re-renders of entire calendar
@@ -281,6 +299,7 @@ None - manual allocation is completely unusable. Users must use auto-allocation 
 #### Database Investigation
 
 **Query Result**:
+
 ```json
 {
   "id": "8513c4d5-6365-4ee1-a097-65a55cf4fc76",
@@ -296,6 +315,7 @@ None - manual allocation is completely unusable. Users must use auto-allocation 
 ```
 
 **Key Finding**:
+
 - `directlyBooked: true` - This consultation was directly booked by consultant
 - No requested slots exist (consultee didn't request specific times)
 - The "Use Requested Times" button should NOT be visible for directly booked consultations
@@ -305,6 +325,7 @@ None - manual allocation is completely unusable. Users must use auto-allocation 
 **Identified Issue**: Incorrect Button Visibility Logic
 
 **Cause**:
+
 1. Frontend doesn't check `directlyBooked` flag before showing "Use Requested Times" button
 2. Button shown for ALL consultations regardless of booking method
 3. When clicked, attempts to fetch non-existent requested slots
@@ -312,6 +333,7 @@ None - manual allocation is completely unusable. Users must use auto-allocation 
 5. Shows "Invalid time value" error instead of preventing the action
 
 **Related UI Bug**:
+
 - "Requested Times" column shows "Invalid Date" for all directly booked consultations
 - This is Bug #5 from Part 1, but now we understand the root cause
 
@@ -320,12 +342,14 @@ None - manual allocation is completely unusable. Users must use auto-allocation 
 **Severity**: 🟡 **HIGH**
 
 **Impact**:
+
 - Confusing user experience - button shown when not applicable
 - Wasted clicks - users try to use feature that won't work
 - Poor error message - "Invalid time value" doesn't explain the issue
 - Data integrity indicator - shows frontend not validating data properly
 
 **User Experience**:
+
 - Misleading - suggests consultee requested specific times when they didn't
 - Frustrating - button leads to error instead of being disabled/hidden
 - No guidance - error doesn't explain that consultation was directly booked
@@ -333,6 +357,7 @@ None - manual allocation is completely unusable. Users must use auto-allocation 
 #### Recommended Fixes
 
 1. **Conditional Button Rendering**:
+
    ```typescript
    {!consultation.directlyBooked && consultation.requestedSlots?.length > 0 && (
      <Button onClick={handleUseRequestedTimes}>
@@ -342,18 +367,24 @@ None - manual allocation is completely unusable. Users must use auto-allocation 
    ```
 
 2. **Fix "Requested Times" Column**:
+
    ```typescript
    // In table cell
-   {consultation.directlyBooked
-     ? "N/A (Direct Booking)"
-     : formatRequestedSlots(consultation.requestedSlots)}
+   {
+     consultation.directlyBooked
+       ? "N/A (Direct Booking)"
+       : formatRequestedSlots(consultation.requestedSlots);
+   }
    ```
 
 3. **Better Error Message**:
+
    ```typescript
    // If accidentally clicked
    if (consultation.directlyBooked) {
-     toast.error("This consultation was directly booked. No specific times were requested.");
+     toast.error(
+       "This consultation was directly booked. No specific times were requested.",
+     );
      return;
    }
    ```
@@ -365,11 +396,13 @@ None - manual allocation is completely unusable. Users must use auto-allocation 
 #### Testing Notes
 
 **Cannot Test Full Workflow**:
+
 - All available consultation requests are directly booked
 - Need consultation with `directlyBooked: false` and actual requested slots to test full approval workflow
 - This blocks complete testing of "Use Requested Times" feature
 
 **Workaround Needed**:
+
 - Create test data with consultations that have requested slots
 - Or find consultant with proper requested-time consultations
 
@@ -385,6 +418,7 @@ None - manual allocation is completely unusable. Users must use auto-allocation 
 The "Use Requested Times" button is displayed for all pending requests, including directly booked consultations where the consultee didn't request specific times. Clicking the button shows "Invalid time value" error instead of the button being hidden.
 
 **Reproduction Steps**:
+
 1. Go to Requests tab
 2. Observe any directly booked consultation (directlyBooked: true)
 3. "Use Requested Times" button is visible
@@ -392,6 +426,7 @@ The "Use Requested Times" button is displayed for all pending requests, includin
 5. Dialog shows "Invalid time value" error
 
 **Expected Behavior**:
+
 - "Use Requested Times" button should ONLY show when:
   - `directlyBooked === false`
   - `requestedSlots` array exists and has values
@@ -399,12 +434,14 @@ The "Use Requested Times" button is displayed for all pending requests, includin
 - "Requested Times" column should show "N/A" or "Direct Booking"
 
 **Actual Behavior**:
+
 - Button shown for ALL consultations regardless of booking method
 - Clicking leads to error dialog with "Invalid time value"
 - No indication that consultation was directly booked
 - "Requested Times" column shows "Invalid Date" (Bug #5)
 
 **Evidence**:
+
 - Screenshot: Dialog showing "Invalid time value"
 - Database: All test consultations have `directlyBooked: true`
 - No requested slots exist in database
@@ -413,6 +450,7 @@ The "Use Requested Times" button is displayed for all pending requests, includin
 Frontend doesn't check `directlyBooked` flag before rendering button. No validation of requested slots existence.
 
 **Recommended Fix**:
+
 1. Conditionally render button based on booking method and requested slots
 2. Add tooltip explaining why button is unavailable for directly booked items
 3. Show proper message in "Requested Times" column
@@ -424,6 +462,7 @@ Users must ignore the button for directly booked consultations and use "Allocate
 **Priority**: 🔴 **P1 - High** (Confusing UX but doesn't block functionality)
 
 **Related Bugs**:
+
 - Bug #5: Invalid date display in "Requested Times" column (same root cause)
 
 ---
@@ -541,6 +580,7 @@ SELECT COUNT(*) FROM "Appointment" WHERE "consultantProfileId" = '76810f94-abae-
 #### User Experience
 
 **Positive Aspects**:
+
 - Clean, intuitive interface
 - Color-coded slot statuses easy to understand
 - Relative dates ("In 3 days") user-friendly
@@ -555,23 +595,25 @@ SELECT COUNT(*) FROM "Appointment" WHERE "consultantProfileId" = '76810f94-abae-
 
 ### Tests Executed
 
-| Test # | Feature | Status | Bugs Found |
-|--------|---------|--------|------------|
+| Test #     | Feature               | Status        | Bugs Found            |
+| ---------- | --------------------- | ------------- | --------------------- |
 | **Test 5** | Manual Slot Selection | ❌ **FAILED** | 1 (Bug #7 - Critical) |
-| **Test 6** | Use Requested Times | ❌ **FAILED** | 1 (Bug #8 - High) |
-| **Test 7** | Appointments Tab | ✅ **PASSED** | 0 |
+| **Test 6** | Use Requested Times   | ❌ **FAILED** | 1 (Bug #8 - High)     |
+| **Test 7** | Appointments Tab      | ✅ **PASSED** | 0                     |
 
 **Success Rate**: 33% (1/3 tests passed)
 
 ### Bugs Discovered in Part 2
 
 #### Bug #7: Manual Slot Selection Causes Infinite React Update Loop
+
 - **Severity**: ⚠️ CRITICAL
 - **Impact**: 100% blocking for manual allocation
 - **Status**: Page crashes immediately on slot click
 - **Priority**: P0
 
 #### Bug #8: "Use Requested Times" Button Shown for Directly Booked Consultations
+
 - **Severity**: 🟡 HIGH
 - **Impact**: Confusing UX, wasted clicks, poor error messages
 - **Status**: Button shown incorrectly, leads to error
@@ -580,6 +622,7 @@ SELECT COUNT(*) FROM "Appointment" WHERE "consultantProfileId" = '76810f94-abae-
 ### Combined Bug Summary (Parts 1 & 2)
 
 **Total Bugs Found**: 8
+
 - **Critical (P0)**: 4 bugs
   - Bug #1: Missing scheduling period dates (subscriptions)
   - Bug #2: Calendar component crash (subscriptions)
@@ -594,15 +637,15 @@ SELECT COUNT(*) FROM "Appointment" WHERE "consultantProfileId" = '76810f94-abae-
 
 ### Feature Status Overview
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| **Auto-Allocation (Consultations)** | ✅ **WORKING** | Tests 2-3 passed, reliable |
-| **Auto-Allocation (Subscriptions)** | ❌ **BROKEN** | Bug #1-3 block entirely |
-| **Manual Slot Selection** | ❌ **BROKEN** | Bug #7 causes instant crash |
-| **Use Requested Times** | ⚠️ **PARTIAL** | Bug #8 - wrong button logic |
-| **Appointments Tab** | ✅ **WORKING** | All features functional |
-| **Calendar Display** | ✅ **WORKING** | Renders correctly, shows bookings |
-| **Slot Visualization** | ✅ **WORKING** | Color coding accurate |
+| Feature                             | Status         | Notes                             |
+| ----------------------------------- | -------------- | --------------------------------- |
+| **Auto-Allocation (Consultations)** | ✅ **WORKING** | Tests 2-3 passed, reliable        |
+| **Auto-Allocation (Subscriptions)** | ❌ **BROKEN**  | Bug #1-3 block entirely           |
+| **Manual Slot Selection**           | ❌ **BROKEN**  | Bug #7 causes instant crash       |
+| **Use Requested Times**             | ⚠️ **PARTIAL** | Bug #8 - wrong button logic       |
+| **Appointments Tab**                | ✅ **WORKING** | All features functional           |
+| **Calendar Display**                | ✅ **WORKING** | Renders correctly, shows bookings |
+| **Slot Visualization**              | ✅ **WORKING** | Color coding accurate             |
 
 ### Key Findings
 
@@ -748,6 +791,7 @@ These tests can proceed without fixes:
 **Blocking Issues**: 4 critical bugs preventing core functionality
 
 **User Impact**:
+
 - **Consultations**: 50% functional (auto only, no manual)
 - **Subscriptions**: 0% functional (completely broken)
 - **Appointments**: 100% functional (viewing works perfectly)
@@ -759,8 +803,8 @@ These tests can proceed without fixes:
 _End of Bug Report - Part 2_
 
 **Next Steps:**
+
 1. Fix critical bugs #1, #3, #7
 2. Continue testing with manual allocation, edge cases, and impossible scenarios
 3. Performance and stress testing
 4. Create Part 3 for remaining test coverage
-

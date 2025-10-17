@@ -1,5 +1,7 @@
 # Bug Report Part 4 - Additional UI Testing
+
 ## Date: 2025-10-17
+
 ## Tester: Claude (Comprehensive UI Testing - Continued)
 
 ---
@@ -32,6 +34,7 @@
 ### Database Verification
 
 **Subscription Appointments Query**:
+
 ```sql
 SELECT
   a.id as appointment_id,
@@ -46,6 +49,7 @@ LIMIT 20;
 ```
 
 **Result**: Confirmed 4 slots allocated:
+
 - Mon Oct 20: 09:00-10:00 UTC (2:30 PM IST)
 - Tue Oct 21: 14:00-15:00 UTC (7:30 PM IST)
 - Wed Oct 22: 14:00-15:00 UTC (7:30 PM IST)
@@ -67,11 +71,13 @@ LIMIT 20;
 ### Description
 
 When clicking the "Timings" button for appointments that **already have slots allocated**, the system opens an **editable allocation dialog** showing:
+
 - "Auto Allocate" button
 - "Allocate Manual Slots" button
 - Availability calendar with booking overlay
 
 **Expected Behavior**: Should show a **read-only view** of the booked slots with:
+
 - List of booked time slots
 - No allocation buttons
 - Clear indication this is a view-only mode
@@ -82,11 +88,13 @@ When clicking the "Timings" button for appointments that **already have slots al
 ### Evidence
 
 **Screenshot 1**: Subscription with 4 booked slots showing editable dialog
+
 - Calendar displays "Booked" slots correctly (Mon 14:30-17:00, Tue/Wed 19:30-20:00, Thu 22:30-23:00)
 - But still shows "Auto Allocate" and "Allocate Manual Slots" buttons
 - Confusing: appears slots can be re-allocated
 
 **Screenshot 2**: Completed consultation opening allocation dialog
+
 - Status: "Completed"
 - Date: Thu, Aug 28, 7:30 PM (past date)
 - Still shows allocation interface with available slots
@@ -101,17 +109,20 @@ When clicking the "Timings" button for appointments that **already have slots al
 ### Impact Assessment
 
 **User Confusion**: High
+
 - Consultants may think they need to re-allocate already booked slots
 - Risk of accidental double-booking if "Auto Allocate" clicked
 - No clear indication of current booking status
 
 **Data Integrity Risk**: Medium
+
 - If consultant clicks "Auto Allocate" on already-booked appointment, could create duplicate slots
 - No backend validation preventing re-allocation
 
 ### Recommended Fix
 
 **Option 1: Separate Read-Only Dialog** (Recommended)
+
 ```typescript
 // In appointments tab component
 const handleTimingsClick = (appointment: Appointment) => {
@@ -126,6 +137,7 @@ const handleTimingsClick = (appointment: Appointment) => {
 ```
 
 **Option 2: Conditional UI in Same Dialog**
+
 ```typescript
 // Inside TimingsDialog component
 {appointment.slotsOfAppointment.length > 0 ? (
@@ -136,6 +148,7 @@ const handleTimingsClick = (appointment: Appointment) => {
 ```
 
 **Read-Only View Should Include**:
+
 - Clear header: "Booked Time Slots" (not "Allocate Slots")
 - List of all booked slots with dates/times
 - "Reschedule" button (optional feature)
@@ -183,17 +196,20 @@ const handleTimingsClick = (appointment: Appointment) => {
 ### Results
 
 ✅ **Navigation Performance**: PASSED
+
 - All week transitions completed smoothly (< 1 second)
 - No crashes or blank screens
 - Calendar data loads correctly for each week
 - Booked slots display accurately across weeks
 
 ✅ **Month View**: PASSED
+
 - Displays high-level overview with slot counts
 - Correctly shows "No Slots" for unavailable days
 - Useful for quickly finding availability
 
 ❌ **HTML Structure**: FAILED
+
 - Critical hydration errors in console
 - Dialog became unresponsive after extended navigation
 
@@ -211,6 +227,7 @@ const handleTimingsClick = (appointment: Appointment) => {
 The allocation dialog contains **invalid nested HTML** in the `DialogDescription` component, causing React hydration errors and eventually making the dialog unresponsive.
 
 **Specific Errors**:
+
 ```
 Error: In HTML, <p> cannot be a descendant of <p>.
 This will cause a hydration error.
@@ -227,12 +244,17 @@ Error: <p> cannot contain a nested <div>.
 ### Root Cause
 
 **Component Structure** (from React DevTools stack trace):
+
 ```jsx
 <DialogDescription>
   <Primitive.p id="radix-«r2»" className="text-sm text-muted-foreground">
-    <p>  {/* INVALID: <p> inside <p> */}
-      <div className="space-y-1">  {/* INVALID: <div> inside <p> */}
-        <p>...</p>  {/* INVALID: nested <p> tags */}
+    <p>
+      {" "}
+      {/* INVALID: <p> inside <p> */}
+      <div className="space-y-1">
+        {" "}
+        {/* INVALID: <div> inside <p> */}
+        <p>...</p> {/* INVALID: nested <p> tags */}
       </div>
     </p>
   </Primitive.p>
@@ -242,6 +264,7 @@ Error: <p> cannot contain a nested <div>.
 ### Evidence
 
 **Console Output** (repeated multiple times):
+
 ```
 react-dom-client.development.js:2613:18
 In HTML, %s cannot be a descendant of <%s>.
@@ -249,6 +272,7 @@ This will cause a hydration error. <p> p
 ```
 
 **Impact Observed**:
+
 - Dialog becomes unresponsive after multiple view switches
 - Cancel button timeout (5000ms exceeded)
 - Close button timeout (5000ms exceeded)
@@ -257,6 +281,7 @@ This will cause a hydration error. <p> p
 ### HTML Validity Rules Violated
 
 According to HTML5 spec:
+
 1. `<p>` element can only contain **phrasing content** (text, `<span>`, `<a>`, etc.)
 2. `<p>` **cannot** contain block-level elements like `<div>`, `<section>`, or nested `<p>`
 3. Radix UI's `DialogDescription` renders as `<p>` by default
@@ -271,6 +296,7 @@ According to HTML5 spec:
 ### Recommended Fix
 
 **Option 1: Remove Nested Paragraph Tags**
+
 ```tsx
 // BEFORE (Invalid HTML)
 <DialogDescription>
@@ -292,15 +318,18 @@ According to HTML5 spec:
 ```
 
 **Option 2: Use Span for Inline Content**
+
 ```tsx
 <DialogDescription>
   <span className="space-y-1">
-    Choose 4 slots for consultation. Consultation is 2 hours (4 consecutive slots).
+    Choose 4 slots for consultation. Consultation is 2 hours (4 consecutive
+    slots).
   </span>
 </DialogDescription>
 ```
 
 **Key Points**:
+
 - Use `asChild` prop on `DialogDescription` to render as `<div>` instead of `<p>`
 - OR flatten the structure to avoid nesting block elements
 - Apply `text-sm text-muted-foreground` classes to the wrapper div
@@ -314,11 +343,13 @@ According to HTML5 spec:
 ### Additional Console Warnings Discovered
 
 **Slot Filtering Warnings** (repeated):
+
 ```
 ⚠️ fetchExistingAppointments: Filtering out invalid slot in appointment ca24d842-1d78-4372-a36d-01e011f22458
 ```
 
 **Analysis**: The `useCalendarData` hook is filtering out slots it considers "invalid". This may indicate:
+
 1. Data integrity issues with existing appointments
 2. Overly strict validation logic
 3. Timezone conversion problems
@@ -330,6 +361,7 @@ According to HTML5 spec:
 ## Summary of New Bugs
 
 ### Bug #9: Editable Dialog for Booked Appointments
+
 - **Severity**: Critical (UX)
 - **Priority**: P1
 - **Estimated Fix Time**: 3-4 hours
@@ -337,6 +369,7 @@ According to HTML5 spec:
 - **User Impact**: High confusion risk, potential data corruption
 
 ### Bug #10: HTML Hydration Errors
+
 - **Severity**: Critical (Rendering)
 - **Priority**: P0
 - **Estimated Fix Time**: 1-2 hours
@@ -355,6 +388,7 @@ According to HTML5 spec:
 **Test 12**: ⚠️ PARTIAL PASS (Bug #10)
 
 **Total Bugs Discovered**: 10 bugs
+
 - **P0 (Critical)**: 5 bugs (Bugs #1, #2, #3, #7, #10)
 - **P1 (High)**: 3 bugs (Bugs #4, #6, #9)
 - **P2-P3 (Medium)**: 2 bugs (Bugs #5, #8)
@@ -364,16 +398,19 @@ According to HTML5 spec:
 ## Recommendations for Immediate Action
 
 ### Priority 1: Fix HTML Structure (Bug #10)
+
 **Why**: Causes dialog to freeze, affecting 100% of allocation workflows
 **Time**: 1-2 hours
 **Impact**: High - prevents users from dismissing dialogs
 
 ### Priority 2: Implement Read-Only Timings View (Bug #9)
+
 **Why**: Major UX confusion for all appointment management
 **Time**: 3-4 hours
 **Impact**: High - users can't view booked slots properly
 
 ### Priority 3: Address Existing Critical Bugs
+
 - Bug #1: Subscription scheduling period dates (CRITICAL)
 - Bug #2: Invalid date display (CRITICAL)
 - Bug #3: Consultant availability count (CRITICAL)
@@ -384,6 +421,7 @@ According to HTML5 spec:
 ## Next Testing Steps
 
 Due to critical bugs blocking further testing:
+
 1. ❌ **Test 13**: Error Message Quality - Blocked by Bug #10 (dialog issues)
 2. ❌ **Test 14**: Boundary Testing - Blocked by Bug #7 (manual selection broken)
 3. ✅ **Test 15**: Visual Verification - Can proceed (screenshot-based)
@@ -396,16 +434,19 @@ Due to critical bugs blocking further testing:
 ## Development Recommendations
 
 ### Short-term (This Week)
+
 1. Fix Bug #10 (HTML structure) - **URGENT**
 2. Fix Bug #9 (read-only view) - **HIGH**
 3. Fix Bug #7 (manual selection) to unblock testing
 
 ### Medium-term (Next Sprint)
+
 1. Address all P0 bugs (Bugs #1, #2, #3)
 2. Implement proper error boundaries
 3. Add integration tests for allocation workflows
 
 ### Long-term (Future Sprints)
+
 1. Refactor allocation dialog architecture
 2. Implement proper state management (React Query/Zustand)
 3. Add E2E tests with Playwright/Cypress

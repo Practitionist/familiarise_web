@@ -175,7 +175,10 @@ const createConsultationAppointment = (
         requestStatus: defaultStatus,
         requestedAt: new Date(),
         requestNotes: faker.lorem.sentence(),
-        bookingSource: faker.helpers.arrayElement(["DIRECT_CHECKOUT", "REQUEST_SUBMITTED"]),
+        bookingSource: faker.helpers.arrayElement([
+          "DIRECT_CHECKOUT",
+          "REQUEST_SUBMITTED",
+        ]),
         feedbackFromConsultee: isPastAppointment
           ? faker.lorem.paragraph()
           : null,
@@ -338,7 +341,10 @@ const createSubscriptionAppointment = (
         requestStatus: defaultStatus,
         requestedAt: new Date(),
         requestNotes: faker.lorem.sentence(),
-        bookingSource: faker.helpers.arrayElement(["DIRECT_CHECKOUT", "REQUEST_SUBMITTED"]),
+        bookingSource: faker.helpers.arrayElement([
+          "DIRECT_CHECKOUT",
+          "REQUEST_SUBMITTED",
+        ]),
         schedulingPeriodStartsAt: startDate,
         schedulingPeriodEndsAt: endDate,
         schedulingTimezone: "UTC",
