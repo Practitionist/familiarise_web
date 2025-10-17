@@ -54,21 +54,10 @@ export const consultationSearchParamsSchema = searchParamsSchema
   );
 
 // Subscription-specific validation
-export const subscriptionSearchParamsSchema = searchParamsSchema
-  .extend({
-    slotStartTimeInUTC: z.string().datetime(),
-    slotEndTimeInUTC: z.string().datetime(),
-  })
-  .refine(
-    (data) =>
-      (data.slotOfAvailabilityWeeklyId && !data.slotOfAvailabilityCustomId) ||
-      (!data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId),
-    {
-      message:
-        "Exactly one of slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
-      path: ["slotOfAvailabilityWeeklyId"],
-    },
-  );
+export const subscriptionSearchParamsSchema = searchParamsSchema.extend({
+  schedulingPeriodStartsAt: z.string().datetime().optional(),
+  schedulingPeriodEndsAt: z.string().datetime().optional(),
+});
 
 // Webinar-specific validation
 export const webinarSearchParamsSchema = searchParamsSchema.extend({

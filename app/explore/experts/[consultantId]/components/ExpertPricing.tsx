@@ -2,7 +2,9 @@ import Image from "next/image";
 import { User, ConsultationPlan, SubscriptionPlan } from "@prisma/client";
 import { TConsultantProfile } from "@/types/consultant";
 import { TSlotTiming } from "@/types/slots";
-import PricingToggle from "./PricingToggle";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import ConsultationPricingToggle from "./ConsultationPricingToggle";
+import SubscriptionPricingToggle from "./SubscriptionPricingToggle";
 
 import { PricingOption } from "../defaults";
 
@@ -16,11 +18,14 @@ const getSubscriptionDurationLabel = (durationInMonths: number): string => {
   return `${durationInMonths} Month${durationInMonths > 1 ? "s" : ""}`;
 };
 
-interface ConsultationPricingProps {
+interface ExpertPricingProps {
   userDetails: User;
   consultantDetails: TConsultantProfile;
   handleConsultationBooking: () => Promise<void>;
-  handleSubscriptionBooking: (option: PricingOption) => Promise<void>;
+  handleSubscriptionBooking: (
+    option: PricingOption,
+    schedulingPeriod: { startDate: Date; endDate: Date }
+  ) => Promise<void>;
   selectedDate: Date | null;
   setSelectedDate: (date: Date | null) => void;
   currentDate: Date;
@@ -32,7 +37,7 @@ interface ConsultationPricingProps {
   timezone: string;
 }
 
-export function ConsultationPricing({
+export function ExpertPricing({
   userDetails,
   consultantDetails,
   handleConsultationBooking,
@@ -46,7 +51,7 @@ export function ConsultationPricing({
   selectedSlot,
   setSelectedSlot,
   timezone,
-}: Readonly<ConsultationPricingProps>) {
+}: Readonly<ExpertPricingProps>) {
   const formatPricingOptions = (
     plans: (ConsultationPlan | SubscriptionPlan)[],
     type: "consultation" | "subscription",
@@ -127,6 +132,9 @@ export function ConsultationPricing({
     "subscription",
   );
 
+  const hasConsultations = consultationOptions.length > 0;
+  const hasSubscriptions = subscriptionOptions.length > 0;
+
   return (
     <div className="flex flex-col items-center w-1/4 ml-10">
       <Image
@@ -140,25 +148,71 @@ export function ConsultationPricing({
         }}
         width="1080"
       />
-      <div className="card p-6 bg-white shadow-lg rounded-lg w-full">
-        <h3 className="text-lg font-semibold mb-4">Consultation Pricing</h3>
-        <PricingToggle
-          consultationOptions={consultationOptions}
-          subscriptionOptions={subscriptionOptions}
-          consultantDetails={consultantDetails}
-          userDetails={userDetails}
-          handleConsultationBooking={handleConsultationBooking}
-          handleSubscriptionBooking={handleSubscriptionBooking}
-          selectedDate={selectedDate}
-          setSelectedDate={setSelectedDate}
-          currentDate={currentDate}
-          setCurrentDate={setCurrentDate}
-          renderCalendar={renderCalendar}
-          slotTimings={slotTimings}
-          selectedSlot={selectedSlot}
-          setSelectedSlot={setSelectedSlot}
-          timezone={timezone}
-        />
+
+      {/* Blue bordered container */}
+      <div className="w-full p-6 border-2 border-blue-500 rounded-2xl bg-gradient-to-br from-gray-900 to-black shadow-2xl">
+        {/* If both consultation and subscription plans exist, show tabs */}
+        {hasConsultations && hasSubscriptions ? (
+          <Tabs defaultValue="consultations" className="w-full">
+            <TabsList className="grid w-full grid-cols-2 mb-6">
+              <TabsTrigger value="consultations">Consultations</TabsTrigger>
+              <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
+            </TabsList>
+            <TabsContent value="consultations">
+              <ConsultationPricingToggle
+                consultationOptions={consultationOptions}
+                consultantDetails={consultantDetails}
+                handleConsultationBooking={handleConsultationBooking}
+                selectedDate={selectedDate}
+                setSelectedDate={setSelectedDate}
+                currentDate={currentDate}
+                setCurrentDate={setCurrentDate}
+                renderCalendar={renderCalendar}
+                slotTimings={slotTimings}
+                selectedSlot={selectedSlot}
+                setSelectedSlot={setSelectedSlot}
+                timezone={timezone}
+              />
+            </TabsContent>
+            <TabsContent value="subscriptions">
+              <SubscriptionPricingToggle
+                subscriptionOptions={subscriptionOptions}
+                consultantDetails={consultantDetails}
+                handleSubscriptionBooking={handleSubscriptionBooking}
+                timezone={timezone}
+              />
+            </TabsContent>
+          </Tabs>
+        ) : hasConsultations ? (
+          // Only consultations available
+          <ConsultationPricingToggle
+            consultationOptions={consultationOptions}
+            consultantDetails={consultantDetails}
+            handleConsultationBooking={handleConsultationBooking}
+            selectedDate={selectedDate}
+            setSelectedDate={setSelectedDate}
+            currentDate={currentDate}
+            setCurrentDate={setCurrentDate}
+            renderCalendar={renderCalendar}
+            slotTimings={slotTimings}
+            selectedSlot={selectedSlot}
+            setSelectedSlot={setSelectedSlot}
+            timezone={timezone}
+          />
+        ) : hasSubscriptions ? (
+          // Only subscriptions available
+          <SubscriptionPricingToggle
+            subscriptionOptions={subscriptionOptions}
+            consultantDetails={consultantDetails}
+            handleSubscriptionBooking={handleSubscriptionBooking}
+            timezone={timezone}
+          />
+        ) : (
+          // No plans available
+          <div className="w-full p-8 text-center text-gray-300">
+            <p>No pricing plans available at the moment.</p>
+          </div>
+        )}
       </div>
     </div>
   );

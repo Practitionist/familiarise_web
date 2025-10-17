@@ -108,18 +108,24 @@ export default function SubscriptionCheckoutPage({
           throw new Error("Subscription plan not found");
         }
 
-        // Create checkout data using the shared utility
+        // Validate that scheduling period dates are present
+        if (
+          !searchParamsValidation.data.schedulingPeriodStartsAt ||
+          !searchParamsValidation.data.schedulingPeriodEndsAt
+        ) {
+          throw new Error(
+            "Scheduling period dates are required for subscriptions",
+          );
+        }
+
+        // Create checkout data using the shared utility with scheduling period
         const checkoutData = createCheckoutData({
           appointmentType: "SUBSCRIPTION",
           planId: planData.data.id,
-          // TODO: Add proper slot selection UI for subscriptions
-          // For now, use placeholder times that will be scheduled later
-          slotStartTimeInUTC: new Date(
-            Date.now() + 24 * 60 * 60 * 1000,
-          ).toISOString(), // Tomorrow
-          slotEndTimeInUTC: new Date(
-            Date.now() + 25 * 60 * 60 * 1000,
-          ).toISOString(), // Tomorrow + 1 hour
+          slotStartTimeInUTC:
+            searchParamsValidation.data.schedulingPeriodStartsAt,
+          slotEndTimeInUTC:
+            searchParamsValidation.data.schedulingPeriodEndsAt,
           discountCode: searchParamsValidation.data.discountCode,
           paymentGateway: gateway,
         });
@@ -313,6 +319,29 @@ export default function SubscriptionCheckoutPage({
         <div className="grid gap-2">
           <div className="font-semibold">Subscription Details</div>
           <div className="grid gap-2">
+            {/* Scheduling Period */}
+            {typeof resolvedSearchParams.schedulingPeriodStartsAt ===
+              "string" &&
+              typeof resolvedSearchParams.schedulingPeriodEndsAt ===
+                "string" && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <div className="text-muted-foreground">
+                      Scheduling Period
+                    </div>
+                    <div className="text-right text-sm">
+                      {new Date(
+                        resolvedSearchParams.schedulingPeriodStartsAt,
+                      ).toLocaleDateString()}{" "}
+                      →{" "}
+                      {new Date(
+                        resolvedSearchParams.schedulingPeriodEndsAt,
+                      ).toLocaleDateString()}
+                    </div>
+                  </div>
+                  <Separator className="bg-gray-300" />
+                </>
+              )}
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
               <div>{planData?.data?.durationInMonths || 1} months</div>
