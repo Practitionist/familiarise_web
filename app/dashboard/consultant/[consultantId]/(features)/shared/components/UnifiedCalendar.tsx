@@ -114,11 +114,16 @@ function areSlotsEqual(slots1: TimeSlot[], slots2: TimeSlot[]): boolean {
   if (slots1.length !== slots2.length) return false;
 
   // Sort both arrays by startTime for consistent comparison
-  const sorted1 = [...slots1].sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
-  const sorted2 = [...slots2].sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+  const sorted1 = [...slots1].sort(
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+  );
+  const sorted2 = [...slots2].sort(
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+  );
 
-  return sorted1.every((slot, index) =>
-    slot.startTime.getTime() === sorted2[index].startTime.getTime()
+  return sorted1.every(
+    (slot, index) =>
+      slot.startTime.getTime() === sorted2[index].startTime.getTime(),
   );
 }
 
@@ -392,13 +397,16 @@ export function UnifiedCalendar({
         // Refetch event slots and appointments so newly allocated slots appear correctly
         await Promise.all([refetchEventSlots(), refetchAppointments()]);
       } catch (error) {
-        console.error("Error refetching calendar data after allocation:", error);
+        console.error(
+          "Error refetching calendar data after allocation:",
+          error,
+        );
       }
 
       // Call parent callback
       onAllocationComplete?.(result);
     },
-    [refetchEventSlots, refetchAppointments, onAllocationComplete]
+    [refetchEventSlots, refetchAppointments, onAllocationComplete],
   );
 
   // Slot allocation hook
@@ -439,7 +447,10 @@ export function UnifiedCalendar({
   // Initialize pre-selected slots
   // Compare by content to prevent infinite loops from parent re-renders creating new array references
   useEffect(() => {
-    if (preSelectedSlots.length > 0 && !areSlotsEqual(selectedSlots, preSelectedSlots)) {
+    if (
+      preSelectedSlots.length > 0 &&
+      !areSlotsEqual(selectedSlots, preSelectedSlots)
+    ) {
       setSelectedSlots(preSelectedSlots);
     }
   }, [preSelectedSlots]);
@@ -577,7 +588,10 @@ export function UnifiedCalendar({
       }
 
       // Allow current event slots to be toggled for rescheduling
-      if (!isCurrentEventSlot && (!status.isAvailable || status.isBookedForDisplay)) {
+      if (
+        !isCurrentEventSlot &&
+        (!status.isAvailable || status.isBookedForDisplay)
+      ) {
         toast({
           variant: "destructive",
           title: "Slot unavailable",
@@ -779,7 +793,9 @@ export function UnifiedCalendar({
                           className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0"
                         >
                           <p className="font-semibold">{appSlot.title}</p>
-                          <p className="text-muted-foreground">{appSlot.type}</p>
+                          <p className="text-muted-foreground">
+                            {appSlot.type}
+                          </p>
                           {appSlot.with && (
                             <p className="text-muted-foreground">
                               with {appSlot.with}

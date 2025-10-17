@@ -217,9 +217,7 @@ export function RequestSlotAllocationTab({
               requestedTimes:
                 subscription.appointments?.flatMap(
                   (appt) =>
-                    appt.slotsOfAppointment?.map(
-                      (slot) => slot.startsAt,
-                    ) || [],
+                    appt.slotsOfAppointment?.map((slot) => slot.startsAt) || [],
                 ) || [],
               status: subscription.requestStatus,
               requiredSlots:
@@ -419,7 +417,10 @@ export function RequestSlotAllocationTab({
                         const isValidDate = !isNaN(date.getTime());
 
                         return (
-                          <div key={`${request.id}-time-${index}`} className="text-sm">
+                          <div
+                            key={`${request.id}-time-${index}`}
+                            className="text-sm"
+                          >
                             {isValidDate
                               ? date.toLocaleString()
                               : "Invalid date"}

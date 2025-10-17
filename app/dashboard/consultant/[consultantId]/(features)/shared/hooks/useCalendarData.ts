@@ -303,12 +303,13 @@ export function useCalendarData(
             (slot: any) => {
               // FIX: Check for BOTH new field names (startsAt/endsAt) AND old field names (slotStartTimeInUTC/slotEndTimeInUTC)
               const hasNewFields = slot && slot.startsAt && slot.endsAt;
-              const hasOldFields = slot && slot.slotStartTimeInUTC && slot.slotEndTimeInUTC;
+              const hasOldFields =
+                slot && slot.slotStartTimeInUTC && slot.slotEndTimeInUTC;
 
               if (!hasNewFields && !hasOldFields) {
                 console.warn(
                   `⚠️ fetchExistingAppointments: Filtering out invalid slot in appointment ${appt.id}`,
-                  { slot }
+                  { slot },
                 );
                 return false;
               }
@@ -497,7 +498,9 @@ export function useCalendarData(
           appointment.slotsOfAppointment
             ?.filter((slt: any) => {
               // FIX: Use correct field names from API (startsAt/endsAt, not slotStartTimeInUTC/slotEndTimeInUTC)
-              const slotStart = new Date(slt.startsAt || slt.slotStartTimeInUTC);
+              const slotStart = new Date(
+                slt.startsAt || slt.slotStartTimeInUTC,
+              );
               const slotEnd = new Date(slt.endsAt || slt.slotEndTimeInUTC);
               return intervalStartUTC < slotEnd && slotStart < intervalEndUTC;
             })
@@ -509,6 +512,23 @@ export function useCalendarData(
             })) || [],
       );
 
+      // DEBUG: Log when booked slots have no overlapping appointments (tooltip won't show)
+      if (
+        overlappingSlots.length > 0 &&
+        overlappingSlots[0].bookingStatus === "fully-booked" &&
+        overlappingAppointments.length === 0
+      ) {
+        console.warn(
+          "[getSlotStatusForInterval] Booked slot with no overlapping appointments - tooltip won't show:",
+          {
+            interval: `${interval.hour}:${interval.minute}`,
+            date: date.toDateString(),
+            existingAppointmentsCount: existingAppointments.length,
+            firstAppointmentSlots:
+              existingAppointments[0]?.slotsOfAppointment?.length,
+          },
+        );
+      }
 
       // STEP 5: Determine booking status using SERVER-CALCULATED data
       // FIXED: Use server bookingStatus instead of manual calculation

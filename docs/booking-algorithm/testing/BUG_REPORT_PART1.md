@@ -58,16 +58,20 @@
 **File Location:** `app/dashboard/consultant/[consultantId]/(features)/requests/`
 
 #### Description
+
 Frontend displays error "Start date and end date are required for subscription slot calculation" despite the database containing valid scheduling period dates.
 
 #### Evidence
+
 **Error Message Shown:**
+
 ```
 Something went wrong
 Start date and end date are required for subscription slot calculation
 ```
 
 **Database Query Result:**
+
 ```sql
 SELECT "schedulingPeriodStartsAt", "schedulingPeriodEndsAt"
 FROM "Subscription"
@@ -79,24 +83,30 @@ schedulingPeriodEndsAt:   2025-12-08 17:21:31.113+00
 ```
 
 #### Root Cause
+
 The subscription dates exist in the database but are not being:
+
 1. Fetched by the API endpoint, OR
 2. Passed to the allocation component correctly, OR
 3. Parsed/validated correctly by the frontend
 
 #### Impact
+
 - **Blocks 100% of subscription allocations**
 - Prevents any testing of subscription allocation features
 - Prevents access to calendar UI for subscriptions
 - Users cannot allocate any subscription requests
 
 #### Reproduction Steps
+
 1. Navigate to consultant requests page with pending subscription
 2. Click "Allocate Slots" button
 3. Error appears immediately in dialog
 
 #### Recommended Fix
+
 Investigate data flow:
+
 1. Check API endpoint: `/api/events/subscriptions?consultantProfileId=X&status=PENDING`
 2. Verify scheduling period dates are included in response
 3. Check RequestSlotAllocationTab component - ensure dates passed to TimingsCalendar
@@ -112,10 +122,13 @@ Investigate data flow:
 **File Location:** `app/dashboard/consultant/[consultantId]/(features)/shared/components/UnifiedCalendar.tsx:198`
 
 #### Description
+
 UnifiedCalendar component crashes when subscription allocation dialog opens, preventing any calendar interaction.
 
 #### Evidence
+
 **Console Error:**
+
 ```
 Error: Uncaught error in calendar
 Component: UnifiedCalendar (line 198)
@@ -123,6 +136,7 @@ Caught by: CalendarErrorBoundary
 ```
 
 **Component Stack:**
+
 ```
 at UnifiedCalendar (UnifiedCalendar.tsx:198:11)
 at CalendarErrorBoundary (CalendarErrorBoundary.tsx:76:9)
@@ -131,12 +145,15 @@ at TimingsCalendar (TimingsCalendar.tsx:10:11)
 ```
 
 #### Root Cause (Suspected)
+
 Likely caused by Bug #1 (missing dates). The calendar component probably:
+
 1. Expects scheduling period dates but receives undefined/null
 2. Attempts to render calendar without valid date range
 3. Throws exception due to invalid state
 
 #### Impact
+
 - **No calendar displayed in allocation dialog**
 - Cannot view available slots
 - Cannot select slots manually
@@ -144,12 +161,14 @@ Likely caused by Bug #1 (missing dates). The calendar component probably:
 - Error boundary catches crash (good) but provides no recovery
 
 #### Reproduction Steps
+
 1. Open subscription allocation dialog
 2. Calendar fails to render
 3. Error caught by CalendarErrorBoundary
 4. Red error box displayed instead of calendar
 
 #### Recommended Fix
+
 1. **Immediate:** Add proper null/undefined checks for scheduling period dates in UnifiedCalendar
 2. **Proper:** Fix Bug #1 to ensure dates are always provided
 3. **Enhancement:** Improve error message from CalendarErrorBoundary to indicate missing dates
@@ -164,32 +183,40 @@ Likely caused by Bug #1 (missing dates). The calendar component probably:
 **File Location:** `app/dashboard/consultant/[consultantId]/(features)/requests/RequestSlotAllocationTab.tsx`
 
 #### Description
+
 Both "Auto Allocate" and "Allocate Manual Slots" buttons are disabled in subscription allocation dialog, preventing any allocation attempt.
 
 #### Evidence
+
 **UI State:**
+
 - "Auto Allocate" button: ❌ Disabled (grayed out)
 - "Allocate Manual Slots" button: ❌ Disabled (grayed out)
 - "Retry" button: ✅ Enabled (but doesn't fix issue)
 - "Cancel" button: ✅ Enabled
 
 #### Root Cause (Suspected)
+
 Button state likely depends on:
+
 1. Valid calendar initialization (blocked by Bug #2)
 2. Valid scheduling period dates (blocked by Bug #1)
 3. Availability data loaded (may be failing)
 
 #### Impact
+
 - **Cannot test auto-allocation functionality**
 - **Cannot test manual allocation functionality**
 - Complete feature lockout for subscriptions
 
 #### Reproduction Steps
+
 1. Open subscription allocation dialog
 2. Observe both main action buttons are disabled
 3. Clicking "Retry" does not enable buttons
 
 #### Recommended Fix
+
 1. Fix Bug #1 and Bug #2 first (likely cascade effect)
 2. Add debug logging to identify exact condition preventing button enable
 3. Consider progressive enhancement - enable manual allocation even if auto-allocation unavailable
@@ -204,10 +231,13 @@ Button state likely depends on:
 **File Location:** Dialog component template
 
 #### Description
+
 Multiple React hydration errors due to invalid HTML nesting in the allocation dialog.
 
 #### Evidence
+
 **Console Errors:**
+
 ```
 Error: In HTML, <p> cannot be a descendant of <p>.
 This will cause a hydration error.
@@ -217,6 +247,7 @@ See this log for the ancestor stack trace.
 ```
 
 **HTML Structure Issue:**
+
 ```html
 <DialogDescription>  <!-- This is a <p> tag -->
   <p>                <!-- Nested <p> tag - INVALID -->
@@ -228,11 +259,14 @@ See this log for the ancestor stack trace.
 ```
 
 #### Root Cause
+
 DialogDescription component from Radix UI renders as `<p>` tag by default, but content contains:
+
 1. Nested `<p>` tags (invalid HTML)
 2. Block-level `<div>` elements inside `<p>` (invalid HTML)
 
 #### Impact
+
 - **6 HTML validation errors** (shown in error badge)
 - Potential rendering inconsistencies
 - SEO/accessibility concerns
@@ -240,28 +274,28 @@ DialogDescription component from Radix UI renders as `<p>` tag by default, but c
 - Does not block functionality but indicates poor code quality
 
 #### Reproduction Steps
+
 1. Open any allocation dialog
 2. Check browser console
 3. See multiple hydration errors
 
 #### Recommended Fix
+
 Option 1 (Recommended):
+
 ```tsx
 // Use asChild prop to unwrap the p tag
 <DialogDescription asChild>
-  <div className="space-y-1">
-    {/* Content here */}
-  </div>
+  <div className="space-y-1">{/* Content here */}</div>
 </DialogDescription>
 ```
 
 Option 2:
+
 ```tsx
 // Keep DialogDescription as p, ensure no nested p or div tags
 <DialogDescription>
-  <span className="space-y-1">
-    {/* Use only inline elements */}
-  </span>
+  <span className="space-y-1">{/* Use only inline elements */}</span>
 </DialogDescription>
 ```
 
@@ -291,6 +325,7 @@ Option 2:
 ### Testing Plan Adjustment
 
 Due to critical blocking bugs in subscription allocation:
+
 - ✅ Will continue testing with CONSULTATION requests (simpler)
 - ✅ Will return to subscription testing after bug fixes
 - ✅ Will test other consultants with different configurations
@@ -300,6 +335,7 @@ Due to critical blocking bugs in subscription allocation:
 ## Test Environment Details
 
 **Database State at Test Time:**
+
 - Consultant: Mamie Ruecker
 - Availability Slots: 48 custom slots
 - Availability Range: 2025-10-16 to 2026-01-06
@@ -308,9 +344,11 @@ Due to critical blocking bugs in subscription allocation:
 - Dev Server: Running without issues
 
 **API Endpoints Used:**
+
 - GET `/api/events/subscriptions?consultantProfileId=X&status=PENDING`
 
 **Components Tested:**
+
 - RequestSlotAllocationTab.tsx
 - TimingsCalendar.tsx
 - UnifiedCalendar.tsx (crashed)
@@ -320,14 +358,14 @@ Due to critical blocking bugs in subscription allocation:
 
 ## Metrics
 
-| Metric | Value |
-|--------|-------|
-| Time to First Bug | < 1 minute |
-| Bugs per Test | 4 |
-| Critical Bugs | 3 |
-| Test Blocked | Yes |
-| User Impact | Complete feature failure |
-| Dev Console Errors | 6+ |
+| Metric             | Value                    |
+| ------------------ | ------------------------ |
+| Time to First Bug  | < 1 minute               |
+| Bugs per Test      | 4                        |
+| Critical Bugs      | 3                        |
+| Test Blocked       | Yes                      |
+| User Impact        | Complete feature failure |
+| Dev Console Errors | 6+                       |
 
 ---
 
@@ -362,11 +400,13 @@ Due to critical blocking bugs in subscription allocation:
 ### Allocation Details
 
 **Allocated Slots:**
+
 - Slot 1: 2025-10-20 09:00-09:30 UTC
 - Slot 2: 2025-10-20 09:30-10:00 UTC
 - Both slots: `isTentative: false` (confirmed)
 
 **Database Verification:**
+
 ```sql
 -- Consultation status: APPROVED
 -- Appointment ID: 6c5671f2-dc36-41d6-9997-ead44c57c207
@@ -374,6 +414,7 @@ Due to critical blocking bugs in subscription allocation:
 ```
 
 **UI Behavior:**
+
 - Dialog closed automatically on success
 - Request removed from pending requests table
 - No error messages
@@ -384,6 +425,7 @@ Due to critical blocking bugs in subscription allocation:
 **🔍 Important Discovery:** The critical bugs found in Test 1 are **subscription-specific**.
 
 Consultation allocation works perfectly, indicating that:
+
 - Bug #1 (Missing Dates) only affects subscriptions
 - Bug #2 (Calendar Crash) only occurs for subscriptions
 - Bug #3 (Buttons Disabled) is a cascade effect of subscription-specific issues
@@ -392,12 +434,14 @@ Consultation allocation works perfectly, indicating that:
 ### Console Observations
 
 **Positive:**
+
 - No calendar crash errors
 - Calendar data fetched successfully
 - No 500 errors from allocation API
 - Fast Refresh worked (HMR functional)
 
 **Negative (Non-blocking):**
+
 - Bug #4 (React Hydration Errors) still present
 - 6 HTML validation errors from nested `<p>` tags in DialogDescription
 
@@ -411,23 +455,29 @@ Consultation allocation works perfectly, indicating that:
 **File Location:** `app/dashboard/consultant/[consultantId]/(features)/requests/`
 
 #### Description
+
 All consultation requests show "Invalid Date" in the "Requested Times" column instead of displaying the requested time slots.
 
 #### Evidence
+
 Screenshot shows all 6 consultations have:
+
 - Requested Times: "Invalid Date"
 
 #### Impact
+
 - Consultants cannot see what times the consultee requested
 - Makes "Use Requested Times" button context unclear
 - Poor UX for consultants reviewing requests
 
 #### Reproduction Steps
+
 1. Navigate to Requests tab
 2. View any consultation request
 3. "Requested Times" column shows "Invalid Date"
 
 #### Recommended Fix
+
 - Check date formatting logic in requests table component
 - Verify requested slots are being fetched from database
 - Ensure proper timezone conversion for display
@@ -436,15 +486,15 @@ Screenshot shows all 6 consultations have:
 
 ## Updated Metrics
 
-| Metric | Test 1 | Test 2 |
-|--------|--------|--------|
-| Status | ❌ FAILED | ✅ PASSED |
-| Time to Execute | < 1 minute | ~5 seconds |
-| Bugs Found | 4 | 1 (new) |
-| Critical Bugs | 3 | 0 |
-| Feature Blocked | Yes | No |
-| Console Errors | 6+ | 6 (Bug #4 only) |
-| User Impact | Complete failure | Fully functional |
+| Metric          | Test 1           | Test 2           |
+| --------------- | ---------------- | ---------------- |
+| Status          | ❌ FAILED        | ✅ PASSED        |
+| Time to Execute | < 1 minute       | ~5 seconds       |
+| Bugs Found      | 4                | 1 (new)          |
+| Critical Bugs   | 3                | 0                |
+| Feature Blocked | Yes              | No               |
+| Console Errors  | 6+               | 6 (Bug #4 only)  |
+| User Impact     | Complete failure | Fully functional |
 
 ---
 
@@ -479,6 +529,7 @@ Screenshot shows all 6 consultations have:
 ### Allocation Details
 
 **Database Verification:**
+
 - Consultation Status: APPROVED ✅
 - Duration: 2 hours (as expected)
 - Slots Allocated: 4 (exactly as required)
@@ -541,9 +592,11 @@ allocate:undefined:undefined
 **File Location:** `/api/events/consultations/[id]/allocate`
 
 #### Description
+
 When auto-allocation fails due to insufficient consecutive availability (or any server error), the system provides NO feedback to the user. The allocation silently fails with a 500 error, leaving the dialog open with no error message.
 
 #### Evidence
+
 - Console shows: 500 Internal Server Error
 - Dialog remains open
 - Buttons return to normal state
@@ -552,19 +605,23 @@ When auto-allocation fails due to insufficient consecutive availability (or any 
 - NO visual indication of failure
 
 #### Impact
+
 - **Poor user experience** - users don't know what went wrong
 - **Confusing workflow** - users may retry repeatedly without understanding the issue
 - **No actionable guidance** - users don't know if they should try manual allocation or choose different times
 - Affects both consultations and potentially subscriptions
 
 #### Root Cause (Suspected)
+
 1. Auto-allocation API endpoint throws 500 error when it cannot find sufficient consecutive slots
 2. Frontend doesn't have proper error handling for 500 responses
 3. No try-catch wrapper around allocation API call
 4. Missing user-friendly error messages
 
 #### Expected Behavior
+
 When allocation fails, user should see:
+
 ```
 ❌ Unable to auto-allocate slots
 
@@ -577,12 +634,14 @@ Please try:
 ```
 
 #### Reproduction Steps
+
 1. Create consultation requiring many consecutive slots (e.g., 4+ hours)
 2. Ensure consultant doesn't have that many consecutive slots available
 3. Click "Auto Allocate"
 4. Observe silent failure with no user feedback
 
 #### Recommended Fix
+
 1. **Frontend:** Add proper error handling for allocation API failures
 2. **Frontend:** Display clear, actionable error messages to users
 3. **Backend:** Return 400 (Bad Request) instead of 500 with descriptive error message like:
@@ -602,29 +661,29 @@ Please try:
 
 ## Final Test Summary
 
-| Metric | Test 1 | Test 2 | Test 3 | Test 4 |
-|--------|--------|--------|--------|--------|
-| **Event Type** | Subscription | Consultation | Consultation | Consultation |
-| **Duration** | 1h × 144 calls | 1 hour | 2 hours | 4 hours |
-| **Required Slots** | 288 | 2 | 4 | 8 |
-| **Status** | ❌ FAILED | ✅ PASSED | ✅ PASSED | ❌ FAILED |
-| **Bugs Found** | 4 | 1 | 0 | 1 |
-| **Critical Bugs** | 3 | 0 | 0 | 0 |
-| **Feature Blocked** | Yes | No | No | No |
-| **User Feedback** | Error shown | Success | Success | **None (Bug #6)** |
+| Metric              | Test 1         | Test 2       | Test 3       | Test 4            |
+| ------------------- | -------------- | ------------ | ------------ | ----------------- |
+| **Event Type**      | Subscription   | Consultation | Consultation | Consultation      |
+| **Duration**        | 1h × 144 calls | 1 hour       | 2 hours      | 4 hours           |
+| **Required Slots**  | 288            | 2            | 4            | 8                 |
+| **Status**          | ❌ FAILED      | ✅ PASSED    | ✅ PASSED    | ❌ FAILED         |
+| **Bugs Found**      | 4              | 1            | 0            | 1                 |
+| **Critical Bugs**   | 3              | 0            | 0            | 0                 |
+| **Feature Blocked** | Yes            | No           | No           | No                |
+| **User Feedback**   | Error shown    | Success      | Success      | **None (Bug #6)** |
 
 ---
 
 ## All Bugs Summary
 
-| Bug # | Severity | Status | Component | Affects |
-|-------|----------|--------|-----------|---------|
-| #1 | 🔴 CRITICAL | 🔴 OPEN | Subscription dates | Subscriptions only |
-| #2 | 🔴 CRITICAL | 🔴 OPEN | Calendar component | Subscriptions only |
-| #3 | 🔴 CRITICAL | 🔴 OPEN | Allocation buttons | Subscriptions only |
-| #4 | 🟠 HIGH | 🔴 OPEN | Dialog HTML structure | All dialogs |
-| #5 | 🟡 MEDIUM | 🔴 OPEN | Requests table dates | All requests |
-| #6 | 🟠 HIGH | 🔴 OPEN | Error handling | All allocations |
+| Bug # | Severity    | Status  | Component             | Affects            |
+| ----- | ----------- | ------- | --------------------- | ------------------ |
+| #1    | 🔴 CRITICAL | 🔴 OPEN | Subscription dates    | Subscriptions only |
+| #2    | 🔴 CRITICAL | 🔴 OPEN | Calendar component    | Subscriptions only |
+| #3    | 🔴 CRITICAL | 🔴 OPEN | Allocation buttons    | Subscriptions only |
+| #4    | 🟠 HIGH     | 🔴 OPEN | Dialog HTML structure | All dialogs        |
+| #5    | 🟡 MEDIUM   | 🔴 OPEN | Requests table dates  | All requests       |
+| #6    | 🟠 HIGH     | 🔴 OPEN | Error handling        | All allocations    |
 
 ---
 
@@ -670,16 +729,19 @@ Please try:
 ### Recommendations
 
 **Priority 1 (Critical - Fix Immediately):**
+
 1. Fix Bug #1: Subscription date handling
 2. Fix Bug #6: Add proper error messages for allocation failures
 3. Add defensive checks in calendar component
 
 **Priority 2 (High - Fix Soon):**
+
 1. Fix Bug #4: HTML structure in dialogs
 2. Fix Bug #5: Date formatting in requests table
 3. Add better logging for allocation failures
 
 **Priority 3 (Enhancement):**
+
 1. Show longest available consecutive block in error messages
 2. Add "Why did this fail?" help text
 3. Consider progressive disclosure for manual allocation when auto-allocation fails
@@ -689,6 +751,7 @@ Please try:
 ## Test Coverage Achieved
 
 **Tested:**
+
 - ✅ Consultation auto-allocation (1h, 2h, 4h)
 - ✅ Calendar rendering for consultations
 - ✅ Database integrity after allocation
@@ -697,6 +760,7 @@ Please try:
 - ✅ Multiple consultant configurations
 
 **Not Tested (Blocked by Bugs):**
+
 - ❌ Subscription auto-allocation
 - ❌ Manual slot selection
 - ❌ "Use Requested Times" feature
