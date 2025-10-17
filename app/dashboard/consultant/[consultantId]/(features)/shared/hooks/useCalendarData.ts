@@ -509,18 +509,6 @@ export function useCalendarData(
             })) || [],
       );
 
-      // DEBUG: Log when booked slots have no overlapping appointments (tooltip won't show)
-      if (overlappingSlots.length > 0 && overlappingSlots[0].bookingStatus === "fully-booked" && overlappingAppointments.length === 0) {
-        console.warn(
-          "[getSlotStatusForInterval] Booked slot with no overlapping appointments - tooltip won't show:",
-          {
-            interval: `${interval.hour}:${interval.minute}`,
-            date: date.toDateString(),
-            existingAppointmentsCount: existingAppointments.length,
-            firstAppointmentSlots: existingAppointments[0]?.slotsOfAppointment?.length,
-          }
-        );
-      }
 
       // STEP 5: Determine booking status using SERVER-CALCULATED data
       // FIXED: Use server bookingStatus instead of manual calculation
