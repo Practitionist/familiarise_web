@@ -1,13 +1,17 @@
 import {
   searchUsers,
+  searchUsersWithRelationships,
   upsertUsersToStream,
 } from "@/actions/stream/chat/user.action";
+import { getServerSession } from "next-auth";
+import authOptions from "@/app/api/auth/[...nextauth]/options";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
     const searchTerm = url.searchParams.get("term");
+    const withRelationships = url.searchParams.get("relationships") === "true";
 
     if (!searchTerm) {
       return NextResponse.json(
@@ -16,10 +20,32 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    console.log(`Searching for users with term: ${searchTerm}`);
+    console.log(
+      `Searching for users with term: ${searchTerm}, with relationships: ${withRelationships}`,
+    );
 
-    // Search for users using our server action
-    const users = await searchUsers(searchTerm);
+    let users;
+
+    if (withRelationships) {
+      // Get current user session for relationship checking
+      const session = await getServerSession(authOptions);
+
+      if (!session?.user?.id) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Authentication required for relationship search",
+          },
+          { status: 401 },
+        );
+      }
+
+      // Use enhanced search with relationship checking
+      users = await searchUsersWithRelationships(searchTerm, session.user.id);
+    } else {
+      // Use legacy search for backward compatibility
+      users = await searchUsers(searchTerm);
+    }
 
     console.log(`Found ${users.length} users`);
 

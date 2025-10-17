@@ -104,27 +104,39 @@ export const addUserToEventChannel = async (
       if (eventType === "webinar") {
         const webinar = await prisma.webinar.findUnique({
           where: { id: eventId },
-          include: { webinarPlan: { include: { consultantProfile: true } } },
+          include: {
+            webinarPlan: {
+              include: { consultantProfile: { include: { user: true } } },
+            },
+          },
         });
         if (!webinar) throw new Error(`Webinar ${eventId} not found`);
         channelName = webinar.webinarPlan.title;
         // Use the consultant as the creator if available
-        if (webinar.webinarPlan.consultantProfileId) {
+        if (webinar.webinarPlan.consultantProfile?.user?.id) {
+          const consultantUserId =
+            webinar.webinarPlan.consultantProfile.user.id;
           // Ensure consultant user exists in Stream before making them a creator
-          await upsertUserToStream(webinar.webinarPlan.consultantProfileId);
-          channelCreatorId = webinar.webinarPlan.consultantProfileId;
+          await upsertUserToStream(consultantUserId);
+          channelCreatorId = consultantUserId;
         }
       } else {
         // class
         const classData = await prisma.class.findUnique({
           where: { id: eventId },
-          include: { classPlan: { include: { consultantProfile: true } } },
+          include: {
+            classPlan: {
+              include: { consultantProfile: { include: { user: true } } },
+            },
+          },
         });
         if (!classData) throw new Error(`Class ${eventId} not found`);
         channelName = classData.classPlan.title;
-        if (classData.classPlan.consultantProfileId) {
-          await upsertUserToStream(classData.classPlan.consultantProfileId);
-          channelCreatorId = classData.classPlan.consultantProfileId;
+        if (classData.classPlan.consultantProfile?.user?.id) {
+          const consultantUserId =
+            classData.classPlan.consultantProfile.user.id;
+          await upsertUserToStream(consultantUserId);
+          channelCreatorId = consultantUserId;
         }
       }
 
@@ -241,99 +253,102 @@ export const syncUserEventChannels = async (userId: string) => {
       throw new Error("User not found");
     }
 
-    // If the user is a consultee, get all webinars and classes they are participating in
-    if (user.consulteeProfile) {
-      const consulteeId = user.consulteeProfile.id;
+    // Get webinars where the user is participating (SIMPLIFIED APPROACH)
+    // Method 1: Direct waitlist participation
+    const webinarsFromWaitlist = await prisma.webinar.findMany({
+      where: {
+        waitlist: {
+          some: {
+            userId: userId, // Direct user ID, no need for consulteeProfile
+          },
+        },
+      },
+      select: { id: true },
+    });
 
-      // Get webinars where the consultee is registered
-      const webinars = await prisma.webinar.findMany({
-        where: {
-          OR: [
-            // Get webinars where consultee is registered through appointments
-            {
-              appointment: {
-                slotsOfAppointment: {
+    // Method 2: Appointment participation
+    const webinarsFromAppointments = await prisma.webinar.findMany({
+      where: {
+        appointment: {
+          slotsOfAppointment: {
+            some: {
+              user: {
+                some: {
+                  id: userId, // Direct user ID
+                },
+              },
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+
+    // Combine and deduplicate webinar IDs
+    const allWebinarIds = Array.from(
+      new Set([
+        ...webinarsFromWaitlist.map((w) => w.id),
+        ...webinarsFromAppointments.map((w) => w.id),
+      ]),
+    );
+
+    console.log(
+      `User ${userId}: Found ${webinarsFromWaitlist.length} webinars from waitlist, ${webinarsFromAppointments.length} from appointments, ${allWebinarIds.length} total unique webinars`,
+    );
+
+    // Add the user to all webinar channels
+    for (const webinarId of allWebinarIds) {
+      await addUserToEventChannel("webinar", webinarId, userId);
+    }
+
+    // Get classes where the user is participating (SIMPLIFIED APPROACH)
+    // Method 1: Direct waitlist participation
+    const classesFromWaitlist = await prisma.class.findMany({
+      where: {
+        waitlist: {
+          some: {
+            userId: userId, // Direct user ID
+          },
+        },
+      },
+      select: { id: true },
+    });
+
+    // Method 2: Appointment participation
+    const classesFromAppointments = await prisma.class.findMany({
+      where: {
+        appointments: {
+          some: {
+            slotsOfAppointment: {
+              some: {
+                user: {
                   some: {
-                    user: {
-                      some: {
-                        consulteeProfile: {
-                          id: consulteeId,
-                        },
-                      },
-                    },
+                    id: userId, // Direct user ID
                   },
                 },
               },
             },
-            // Get webinars where consultee is in waitlist
-            {
-              waitlist: {
-                some: {
-                  user: {
-                    consulteeProfile: {
-                      id: consulteeId,
-                    },
-                  },
-                },
-              },
-            },
-          ],
+          },
         },
-        select: {
-          id: true,
-        },
-      });
+      },
+      select: { id: true },
+    });
 
-      // Add the user to all webinar channels
-      for (const webinar of webinars) {
-        await addUserToEventChannel("webinar", webinar.id, userId);
-      }
+    // Combine and deduplicate class IDs
+    const allClassIds = Array.from(
+      new Set([
+        ...classesFromWaitlist.map((c) => c.id),
+        ...classesFromAppointments.map((c) => c.id),
+      ]),
+    );
 
-      // Get classes where the consultee is registered
-      const classes = await prisma.class.findMany({
-        where: {
-          OR: [
-            // Get classes where consultee is registered through appointments
-            {
-              appointments: {
-                some: {
-                  slotsOfAppointment: {
-                    some: {
-                      user: {
-                        some: {
-                          consulteeProfile: {
-                            id: consulteeId,
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            // Get classes where consultee is in waitlist
-            {
-              waitlist: {
-                some: {
-                  user: {
-                    consulteeProfile: {
-                      id: consulteeId,
-                    },
-                  },
-                },
-              },
-            },
-          ],
-        },
-        select: {
-          id: true,
-        },
-      });
+    console.log(
+      `User ${userId}: Found ${classesFromWaitlist.length} classes from waitlist, ${classesFromAppointments.length} from appointments, ${allClassIds.length} total unique classes`,
+    );
 
-      // Add the user to all class channels
-      for (const classItem of classes) {
-        await addUserToEventChannel("class", classItem.id, userId);
-      }
+    // Add the user to all class channels
+    for (const classId of allClassIds) {
+      await addUserToEventChannel("class", classId, userId);
     }
 
     // If the user is a consultant, get all webinars and classes they are hosting

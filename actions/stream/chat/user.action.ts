@@ -117,7 +117,267 @@ export const upsertUsersToStream = async (userIds: string[]) => {
 };
 
 /**
- * Searches for users in the database, excluding known system/bot patterns.
+ * Enhanced user search with relationship status for Direct Message dialog
+ * @param searchTerm The term to search for (name or email).
+ * @param currentUserId The current user's ID to exclude from results and check relationships
+ * @returns Users with relationship status information
+ */
+export const searchUsersWithRelationships = async (
+  searchTerm: string,
+  currentUserId: string,
+) => {
+  try {
+    if (!searchTerm.trim()) {
+      return [];
+    }
+    console.log(`Searching DB for users with term: ${searchTerm}`);
+
+    const users = await prisma.user.findMany({
+      where: {
+        AND: [
+          { id: { not: currentUserId } }, // Exclude current user
+          {
+            // Exclude users whose IDs start with common system prefixes
+            NOT: [
+              { id: { startsWith: "recording-egress-" } },
+              { id: { startsWith: "system-" } },
+            ],
+          },
+          {
+            OR: [
+              { name: { contains: searchTerm, mode: "insensitive" } },
+              { email: { contains: searchTerm, mode: "insensitive" } },
+            ],
+          },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        role: true,
+        consultantProfileId: true,
+        consulteeProfileId: true,
+      },
+      take: 20,
+      orderBy: [{ name: "asc" }],
+    });
+
+    // For each user, check if they have any relationship with the current user
+    const usersWithRelationships = await Promise.all(
+      users.map(async (user) => {
+        const hasRelationship = await checkUserRelationship(
+          currentUserId,
+          user.id,
+        );
+
+        return {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          image: user.image,
+          role: user.role,
+          hasRelationship,
+        };
+      }),
+    );
+
+    // Sort by relationship status (connected users first), then by name
+    usersWithRelationships.sort((a, b) => {
+      if (a.hasRelationship && !b.hasRelationship) return -1;
+      if (!a.hasRelationship && b.hasRelationship) return 1;
+      return (a.name || "").localeCompare(b.name || "");
+    });
+
+    console.log(
+      `Found ${usersWithRelationships.length} users with relationship status.`,
+    );
+    return usersWithRelationships;
+  } catch (error) {
+    console.error("Error searching users with relationships:", error);
+    throw error;
+  }
+};
+
+/**
+ * Check if two users have any relationship through appointments
+ * @param userId1 First user ID
+ * @param userId2 Second user ID
+ * @returns Boolean indicating if they have any relationship
+ */
+export const checkUserRelationship = async (
+  userId1: string,
+  userId2: string,
+): Promise<boolean> => {
+  try {
+    // Get profile IDs for both users
+    const [user1, user2] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId1 },
+        select: { consultantProfileId: true, consulteeProfileId: true },
+      }),
+      prisma.user.findUnique({
+        where: { id: userId2 },
+        select: { consultantProfileId: true, consulteeProfileId: true },
+      }),
+    ]);
+
+    if (!user1 || !user2) return false;
+
+    // Check for relationships through various appointment types
+    const relationshipChecks = await Promise.all([
+      // Check consultations (user1 as consultant, user2 as consultee or vice versa)
+      checkConsultationRelationship(user1, user2),
+
+      // Check subscriptions
+      checkSubscriptionRelationship(user1, user2),
+
+      // Check webinars/classes through shared appointments
+      checkSharedAppointments(userId1, userId2),
+    ]);
+
+    return relationshipChecks.some(Boolean);
+  } catch (error) {
+    console.error("Error checking user relationship:", error);
+    return false; // Default to no relationship on error
+  }
+};
+
+/**
+ * Check consultation relationships between two users
+ */
+async function checkConsultationRelationship(
+  user1: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
+  user2: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
+): Promise<boolean> {
+  if (!user1.consultantProfileId && !user1.consulteeProfileId) return false;
+  if (!user2.consultantProfileId && !user2.consulteeProfileId) return false;
+
+  // Check if user1 (consultant) has consultations with user2 (consultee)
+  if (user1.consultantProfileId && user2.consulteeProfileId) {
+    const consultation = await prisma.consultation.findFirst({
+      where: {
+        consultationPlan: {
+          consultantProfileId: user1.consultantProfileId,
+        },
+        requestedById: user2.consulteeProfileId,
+        requestStatus: {
+          in: ["APPROVED", "SCHEDULED"],
+        },
+      },
+    });
+    if (consultation) return true;
+  }
+
+  // Check reverse relationship (user2 as consultant, user1 as consultee)
+  if (user2.consultantProfileId && user1.consulteeProfileId) {
+    const consultation = await prisma.consultation.findFirst({
+      where: {
+        consultationPlan: {
+          consultantProfileId: user2.consultantProfileId,
+        },
+        requestedById: user1.consulteeProfileId,
+        requestStatus: {
+          in: ["APPROVED", "SCHEDULED"],
+        },
+      },
+    });
+    if (consultation) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Check subscription relationships between two users
+ */
+async function checkSubscriptionRelationship(
+  user1: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
+  user2: {
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  },
+): Promise<boolean> {
+  if (!user1.consultantProfileId && !user1.consulteeProfileId) return false;
+  if (!user2.consultantProfileId && !user2.consulteeProfileId) return false;
+
+  // Check if user1 (consultant) has subscriptions with user2 (consultee)
+  if (user1.consultantProfileId && user2.consulteeProfileId) {
+    const subscription = await prisma.subscription.findFirst({
+      where: {
+        subscriptionPlan: {
+          consultantProfileId: user1.consultantProfileId,
+        },
+        requestedById: user2.consulteeProfileId,
+        requestStatus: {
+          in: ["APPROVED", "SCHEDULED"],
+        },
+        endDate: {
+          gte: new Date(), // Active subscription
+        },
+      },
+    });
+    if (subscription) return true;
+  }
+
+  // Check reverse relationship
+  if (user2.consultantProfileId && user1.consulteeProfileId) {
+    const subscription = await prisma.subscription.findFirst({
+      where: {
+        subscriptionPlan: {
+          consultantProfileId: user2.consultantProfileId,
+        },
+        requestedById: user1.consulteeProfileId,
+        requestStatus: {
+          in: ["APPROVED", "SCHEDULED"],
+        },
+        endDate: {
+          gte: new Date(),
+        },
+      },
+    });
+    if (subscription) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Check if users share any appointments (webinars, classes)
+ */
+async function checkSharedAppointments(
+  userId1: string,
+  userId2: string,
+): Promise<boolean> {
+  // Check if both users are in the same appointment slots
+  const sharedSlot = await prisma.slotOfAppointment.findFirst({
+    where: {
+      user: {
+        some: { id: userId1 },
+      },
+      AND: {
+        user: {
+          some: { id: userId2 },
+        },
+      },
+    },
+  });
+
+  return !!sharedSlot;
+}
+
+/**
+ * Legacy search function for backward compatibility
  * @param searchTerm The term to search for (name or email).
  * @returns The users that match the search term.
  */

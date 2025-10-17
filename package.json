@@ -40,6 +40,8 @@
     "scripts:update-postman": "npx ts-node scripts/typescript/update-postman-collection.ts",
     "scripts:cleanup-abandoned-payments": "npx ts-node scripts/cleanup-abandoned-payments.ts",
     "scripts:delete-dependabot-prs": "npx ts-node scripts/delete-dependabot-prs.ts",
+    "scripts:stream-sync": "npx ts-node -P tsconfig.scripts.json jobs/stream-sync.ts",
+    "scripts:sync-env-github": "npx ts-node -P tsconfig.scripts.json scripts/update-env-github-actions.ts",
     "start": "next start",
     "start-watch": "WATCHPACK_POLLING=true next start",
     "studio": "prisma studio",
@@ -97,6 +99,7 @@
     "framer-motion": "^11.15.0",
     "ioredis": "^5.7.0",
     "iso-639-1": "^3.1.5",
+    "libsodium-wrappers": "^0.7.15",
     "lucide-react": "^0.541.0",
     "next": "15.3.0",
     "next-auth": "^4.24.11",
@@ -119,6 +122,8 @@
     "swr": "^2.3.6",
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1",
     "zod": "^3.25.67"
   },
   "devDependencies": {
@@ -127,6 +132,7 @@
     "@testing-library/cypress": "^10.0.2",
     "@testing-library/jest-dom": "^6.6.3",
     "@types/jest": "^29.5.14",
+    "@types/libsodium-wrappers": "^0.7.14",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

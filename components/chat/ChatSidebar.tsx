@@ -2,14 +2,16 @@
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { MessageSquareIcon, RefreshCwIcon } from "lucide-react";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, memo, startTransition } from "react";
 import type { Channel, Event } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
 import { ChannelSearch } from "./ChannelSearch";
 import { CreateChannelDialog } from "./CreateChannelDialog";
 import { CreateDirectMessageDialog } from "./CreateDirectMessageDialog";
 import { InitializeUserChannelsButton } from "./InitializeUserChannelsButton";
+import { DebugDialog } from "./DebugDialog";
 import { Button } from "../ui/button";
+import { getChannelDisplayInfo } from "./utils/channelUtils";
 
 // Empty state component for when there are no channels
 const EmptyChannelState = () => (
@@ -20,81 +22,101 @@ const EmptyChannelState = () => (
   </div>
 );
 
-// Custom channel item component for the sidebar
-const ChannelItem = ({
-  channel,
-  isActive,
-  onClick,
-}: {
-  channel: Channel;
-  isActive: boolean;
-  onClick: () => void;
-}) => {
-  const { client } = useChatContext();
-  const isTeamChannel = channel.type === "team";
+// Custom channel item component for the sidebar - memoized for performance
+const ChannelItem = memo(
+  ({
+    channel,
+    isActive,
+    onClick,
+  }: {
+    channel: Channel;
+    isActive: boolean;
+    onClick: () => void;
+  }) => {
+    const { client } = useChatContext();
+    const isTeamChannel = channel.type === "team";
 
-  // For direct messages, get the other user's details
-  let displayName = channel.data?.name || channel.id || "";
-  let displayImage: string | undefined = undefined;
+    // Get display info using shared utility
+    const displayInfo = !isTeamChannel
+      ? getChannelDisplayInfo(channel, client?.userID)
+      : {
+          displayName: channel.data?.name || channel.id || "",
+          displayImage: undefined,
+          isGroupDM: false,
+          memberCount: Object.keys(channel.state.members || {}).length,
+          statusText: "",
+          fullGroupName: undefined,
+        };
 
-  if (!isTeamChannel && client) {
-    // Find the other member in the channel
-    const otherMember = Object.values(channel.state.members || {}).find(
-      (member) => member.user?.id !== client.userID,
-    )?.user;
+    const displayName = displayInfo.displayName;
+    const displayImage = displayInfo.displayImage;
+    const isGroupDM = displayInfo.isGroupDM;
+    const memberCount = displayInfo.memberCount;
 
-    if (otherMember) {
-      displayName = otherMember.name || otherMember.id || "Unknown User";
-      displayImage = (otherMember.image as string) || undefined;
-    }
-  }
+    // Get unread count directly from the channel
+    const unreadCount = channel.countUnread();
+    const hasUnread = unreadCount > 0;
 
-  // Get unread count directly from the channel
-  const unreadCount = channel.countUnread();
-  const hasUnread = unreadCount > 0;
+    return (
+      <button
+        onClick={onClick}
+        className={`w-full text-left px-4 py-2 hover:bg-blue-700 transition-colors ${isActive ? "bg-blue-700" : ""}`}
+        title={displayName}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center min-w-0">
+            {isTeamChannel ? (
+              <div className="flex items-center min-w-0">
+                <span className="text-blue-200 mr-2">#</span>
+                <span
+                  className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
+                >
+                  {displayName}
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center min-w-0">
+                <div className="relative mr-2 flex-shrink-0">
+                  <Avatar className="w-6 h-6">
+                    <AvatarImage
+                      src={displayImage || "/placeholder-user.jpg"}
+                    />
+                    <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
+                  </Avatar>
+                  {isGroupDM && (
+                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-blue-500 rounded-full border border-blue-600 flex items-center justify-center">
+                      <span className="text-[8px] text-white font-bold">G</span>
+                    </div>
+                  )}
+                </div>
+                <span
+                  className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
+                  title={
+                    isGroupDM
+                      ? displayInfo.fullGroupName ||
+                        `Group chat with ${memberCount} members`
+                      : displayName
+                  }
+                >
+                  {displayName}
+                </span>
+              </div>
+            )}
+          </div>
 
-  return (
-    <button
-      onClick={onClick}
-      className={`w-full text-left px-4 py-2 hover:bg-blue-700 transition-colors ${isActive ? "bg-blue-700" : ""}`}
-      title={displayName}
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center min-w-0">
-          {isTeamChannel ? (
-            <div className="flex items-center min-w-0">
-              <span className="text-blue-200 mr-2">#</span>
-              <span
-                className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
-              >
-                {displayName}
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-center min-w-0">
-              <Avatar className="w-6 h-6 mr-2 flex-shrink-0">
-                <AvatarImage src={displayImage || "/placeholder-user.jpg"} />
-                <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
-              </Avatar>
-              <span
-                className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
-              >
-                {displayName}
-              </span>
+          {/* Unread indicator */}
+          {hasUnread && (
+            <div className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center ml-2 flex-shrink-0">
+              {unreadCount > 9 ? "9+" : unreadCount}
             </div>
           )}
         </div>
+      </button>
+    );
+  },
+);
 
-        {/* Unread indicator */}
-        {hasUnread && (
-          <div className="bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center ml-2 flex-shrink-0">
-            {unreadCount > 9 ? "9+" : unreadCount}
-          </div>
-        )}
-      </div>
-    </button>
-  );
-};
+ChannelItem.displayName = "ChannelItem";
 
 export const ChatSidebar = () => {
   const { client, setActiveChannel } = useChatContext();
@@ -103,6 +125,11 @@ export const ChatSidebar = () => {
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Pagination state
+  const [hasMoreTeamChannels, setHasMoreTeamChannels] = useState(true);
+  const [hasMoreDMChannels, setHasMoreDMChannels] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   // Function to fetch channels initially and on significant changes
   const fetchChannels = useCallback(async () => {
@@ -114,7 +141,12 @@ export const ChatSidebar = () => {
 
     setIsLoading(true);
     setError(null);
-    console.log("Fetching channels for user:", client.userID);
+    console.log(
+      "Fetching channels for user:",
+      client.userID,
+      "with role:",
+      client.user?.role,
+    );
 
     try {
       const filter = { members: { $in: [client.userID] } };
@@ -122,10 +154,13 @@ export const ChatSidebar = () => {
       const options = {
         watch: true, // Crucial for real-time updates
         state: true,
-        limit: 30, // Adjust limit as needed
-        message_limit: 1, // Only need 1 message for unread status usually
-        presence: true,
+        limit: 20, // Reduced initial limit for faster loading
+        message_limit: 100, // Load recent messages for proper chat history and scroll functionality
+        presence: false, // Disable presence for initial load to improve performance
       };
+
+      console.log("Channel query filter:", filter);
+      console.log("Channel query options:", options);
 
       // Fetch channels in parallel
       const [teamResponse, dmResponse] = await Promise.all([
@@ -136,23 +171,224 @@ export const ChatSidebar = () => {
       console.log(
         "Team channels found:",
         teamResponse.length,
-        teamResponse.map((c) => ({ id: c.cid, name: c.data?.name })),
+        teamResponse.map((c) => ({
+          id: c.cid,
+          name: c.data?.name,
+          memberCount: Object.keys(c.state.members || {}).length,
+          members: Object.keys(c.state.members || {}),
+          userIsMember: client.userID
+            ? c.state.members?.[client.userID]
+              ? true
+              : false
+            : false,
+        })),
       );
       console.log(
         "DM channels found:",
         dmResponse.length,
-        dmResponse.map((c) => ({ id: c.cid })),
+        dmResponse.map((c) => ({
+          id: c.cid,
+          memberCount: Object.keys(c.state.members || {}).length,
+          userIsMember: client.userID
+            ? c.state.members?.[client.userID]
+              ? true
+              : false
+            : false,
+        })),
       );
 
       setTeamChannels(teamResponse);
       setDirectMessages(dmResponse);
+
+      // Update pagination state
+      setHasMoreTeamChannels(teamResponse.length === options.limit);
+      setHasMoreDMChannels(dmResponse.length === options.limit);
     } catch (err) {
       console.error("Error fetching channels:", err);
+      console.error("Error details:", {
+        error: err,
+        userId: client.userID,
+        userRole: client.user?.role,
+        timestamp: new Date().toISOString(),
+      });
       setError("Failed to load channels. Please try refreshing.");
     } finally {
       setIsLoading(false);
     }
   }, [client]);
+
+  // Function to load more channels (pagination)
+  const loadMoreChannels = useCallback(
+    async (type: "team" | "messaging") => {
+      if (!client?.userID || isLoadingMore) return;
+
+      const currentChannels = type === "team" ? teamChannels : directMessages;
+      const hasMore = type === "team" ? hasMoreTeamChannels : hasMoreDMChannels;
+
+      if (!hasMore) return;
+
+      setIsLoadingMore(true);
+
+      try {
+        const filter = { members: { $in: [client.userID] }, type };
+        const sort: { last_message_at: -1 } = { last_message_at: -1 };
+
+        // Get the last channel's last_message_at for pagination
+        const lastChannel = currentChannels[currentChannels.length - 1];
+        const offset = currentChannels.length;
+
+        const options = {
+          watch: true,
+          state: true,
+          limit: 20,
+          message_limit: 100, // Load messages for paginated channels too
+          presence: false,
+          offset,
+        };
+
+        console.log(`Loading more ${type} channels from offset ${offset}`);
+
+        const response = await client.queryChannels(filter, sort, options);
+
+        if (type === "team") {
+          setTeamChannels((prev) => [...prev, ...response]);
+          setHasMoreTeamChannels(response.length === options.limit);
+        } else {
+          setDirectMessages((prev) => [...prev, ...response]);
+          setHasMoreDMChannels(response.length === options.limit);
+        }
+
+        console.log(`Loaded ${response.length} more ${type} channels`);
+      } catch (error) {
+        console.error(`Error loading more ${type} channels:`, error);
+      } finally {
+        setIsLoadingMore(false);
+      }
+    },
+    [
+      client,
+      teamChannels,
+      directMessages,
+      hasMoreTeamChannels,
+      hasMoreDMChannels,
+      isLoadingMore,
+    ],
+  );
+
+  // Handle individual channel deletion without full refresh
+  const handleChannelDeleted = useCallback(
+    (deletedChannelId: string) => {
+      console.log("Individual channel deleted:", deletedChannelId);
+
+      // Remove from team channels
+      setTeamChannels((prevChannels) => {
+        const filtered = prevChannels.filter(
+          (ch) => ch.cid !== deletedChannelId,
+        );
+        if (filtered.length !== prevChannels.length) {
+          console.log("Removed team channel:", deletedChannelId);
+        }
+        return filtered;
+      });
+
+      // Remove from direct messages
+      setDirectMessages((prevChannels) => {
+        const filtered = prevChannels.filter(
+          (ch) => ch.cid !== deletedChannelId,
+        );
+        if (filtered.length !== prevChannels.length) {
+          console.log("Removed DM channel:", deletedChannelId);
+        }
+        return filtered;
+      });
+
+      // Clear active channel if it was the deleted one
+      if (activeChannelId === deletedChannelId) {
+        setActiveChannel(undefined);
+        setActiveChannelId(null);
+      }
+    },
+    [activeChannelId, setActiveChannel],
+  );
+
+  // Handle user being removed from channel
+  const handleUserRemovedFromChannel = useCallback(
+    (channelId: string) => {
+      console.log("User removed from channel:", channelId);
+      handleChannelDeleted(channelId); // Same logic as deletion
+    },
+    [handleChannelDeleted],
+  );
+
+  // Handle individual channel creation without full refresh
+  const handleChannelCreated = useCallback(async () => {
+    console.log("Individual channel created - checking for new channels");
+
+    if (!client?.userID) return;
+
+    try {
+      // Only query for channels that might have been just created
+      // Use a more recent timestamp filter to avoid loading all channels
+      const recentFilter = {
+        members: { $in: [client.userID] },
+        // created_at: { $gte: new Date(Date.now() - 60000) } // Last minute
+      };
+
+      const [recentTeamChannels, recentDMChannels] = await Promise.all([
+        client.queryChannels(
+          { ...recentFilter, type: "team" },
+          { created_at: -1 },
+          { limit: 5, state: true },
+        ),
+        client.queryChannels(
+          { ...recentFilter, type: "messaging" },
+          { created_at: -1 },
+          { limit: 5, state: true },
+        ),
+      ]);
+
+      // Add any new channels to existing lists (avoiding duplicates)
+      setTeamChannels((prevChannels) => {
+        const existingIds = new Set(prevChannels.map((ch) => ch.cid));
+        const newChannels = recentTeamChannels.filter(
+          (ch) => !existingIds.has(ch.cid),
+        );
+        if (newChannels.length > 0) {
+          console.log(
+            "Adding new team channels:",
+            newChannels.map((ch) => ch.cid),
+          );
+          return [...newChannels, ...prevChannels]; // New channels at top
+        }
+        return prevChannels;
+      });
+
+      setDirectMessages((prevChannels) => {
+        const existingIds = new Set(prevChannels.map((ch) => ch.cid));
+        const newChannels = recentDMChannels.filter(
+          (ch) => !existingIds.has(ch.cid),
+        );
+        if (newChannels.length > 0) {
+          console.log(
+            "Adding new DM channels:",
+            newChannels.map((ch) => ch.cid),
+          );
+          return [...newChannels, ...prevChannels]; // New channels at top
+        }
+        return prevChannels;
+      });
+    } catch (err) {
+      console.error("Error handling individual channel creation:", err);
+      // Fallback to full refresh if individual handling fails
+      fetchChannels();
+    }
+  }, [client, fetchChannels]);
+
+  // Manual refresh function
+  const handleRefresh = () => {
+    console.log("Manual refresh triggered");
+    fetchChannels();
+  };
 
   // Initial fetch and setup listeners
   useEffect(() => {
@@ -188,29 +424,11 @@ export const ChatSidebar = () => {
           event.user?.id === client.userID
         ) {
           console.log(`Removed from channel ${event.channel.cid}`);
-          if (event.channel.type === "team") {
-            setTeamChannels((prev) =>
-              prev.filter((ch) => ch.cid !== event.channel?.id),
-            );
-          } else if (event.channel.type === "messaging") {
-            setDirectMessages((prev) =>
-              prev.filter((ch) => ch.cid !== event.channel?.id),
-            );
-          }
-          if (activeChannelId === event.channel.id) setActiveChannel(undefined);
+          handleUserRemovedFromChannel(event.channel.cid || event.channel.id);
           channelUpdated = true;
         } else if (event.type === "channel.deleted" && event.channel) {
           console.log(`Channel deleted ${event.channel.cid}`);
-          if (event.channel.type === "team") {
-            setTeamChannels((prev) =>
-              prev.filter((ch) => ch.cid !== event.channel?.id),
-            );
-          } else if (event.channel.type === "messaging") {
-            setDirectMessages((prev) =>
-              prev.filter((ch) => ch.cid !== event.channel?.id),
-            );
-          }
-          if (activeChannelId === event.channel.id) setActiveChannel(undefined);
+          handleChannelDeleted(event.channel.cid || event.channel.id);
           channelUpdated = true;
         }
 
@@ -258,20 +476,32 @@ export const ChatSidebar = () => {
       setTeamChannels([]);
       setDirectMessages([]);
     }
-  }, [client, fetchChannels, activeChannelId, setActiveChannel]); // Add dependencies
+  }, [
+    client,
+    fetchChannels,
+    activeChannelId,
+    setActiveChannel,
+    handleChannelDeleted,
+    handleUserRemovedFromChannel,
+  ]); // Add dependencies
 
-  // Manual refresh function
-  const handleRefresh = () => {
-    console.log("Manual refresh triggered");
-    fetchChannels();
-  };
+  const handleChannelSelect = useCallback(
+    (channel: Channel) => {
+      // Use startTransition for non-urgent updates to improve perceived performance
+      startTransition(() => {
+        setActiveChannelId(channel.cid || null);
+      });
 
-  const handleChannelSelect = (channel: Channel) => {
-    setActiveChannelId(channel.cid || null);
-    setActiveChannel(channel);
-    // Optionally mark channel as read here if needed
-    // channel.markRead();
-  };
+      // Set active channel immediately for instant feedback
+      setActiveChannel(channel);
+
+      // Mark channel as read asynchronously
+      channel.markRead().catch((error) => {
+        console.warn("Failed to mark channel as read:", error);
+      });
+    },
+    [setActiveChannel],
+  );
 
   return (
     <div className="w-64 bg-blue-600 text-white flex flex-col h-full">
@@ -302,7 +532,7 @@ export const ChatSidebar = () => {
         {/* Team Channels Section */}
         <div className="px-4 py-2 flex justify-between items-center sticky top-0 bg-blue-600 z-10">
           <h2 className="font-semibold">Channels</h2>
-          <CreateChannelDialog onChannelCreated={handleRefresh} />
+          <CreateChannelDialog onChannelCreated={handleChannelCreated} />
         </div>
         {isLoading ? (
           <div className="p-4">
@@ -334,6 +564,19 @@ export const ChatSidebar = () => {
                 onClick={() => handleChannelSelect(channel)}
               />
             ))}
+            {hasMoreTeamChannels && (
+              <div className="p-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => loadMoreChannels("team")}
+                  disabled={isLoadingMore}
+                  className="w-full text-blue-200 hover:bg-blue-700 text-sm"
+                >
+                  {isLoadingMore ? "Loading..." : `Load More Channels`}
+                </Button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="p-4 text-center text-blue-200 text-sm">
@@ -344,7 +587,7 @@ export const ChatSidebar = () => {
         {/* Direct Messages Section */}
         <div className="mt-4 px-4 py-2 flex justify-between items-center sticky top-0 bg-blue-600 z-10">
           <h2 className="font-semibold">Direct Messages</h2>
-          <CreateDirectMessageDialog onChannelCreated={handleRefresh} />
+          <CreateDirectMessageDialog onChannelCreated={handleChannelCreated} />
         </div>
         {isLoading ? (
           <div className="p-4">
@@ -369,6 +612,19 @@ export const ChatSidebar = () => {
                 onClick={() => handleChannelSelect(channel)}
               />
             ))}
+            {hasMoreDMChannels && (
+              <div className="p-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => loadMoreChannels("messaging")}
+                  disabled={isLoadingMore}
+                  className="w-full text-blue-200 hover:bg-blue-700 text-sm"
+                >
+                  {isLoadingMore ? "Loading..." : `Load More Messages`}
+                </Button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="p-4 text-center text-blue-200 text-sm">
@@ -378,11 +634,16 @@ export const ChatSidebar = () => {
       </div>
 
       {/* Footer Section */}
-      <div className="p-4 border-t border-blue-700 mt-auto">
+      <div className="p-4 border-t border-blue-700 mt-auto space-y-2">
         <InitializeUserChannelsButton
           userId={client?.userID || ""}
           className="w-full"
           onSuccess={handleRefresh}
+        />
+        <DebugDialog
+          userId={client?.userID || ""}
+          variant="ghost"
+          className="w-full text-blue-200 hover:bg-blue-700 hover:text-white"
         />
       </div>
     </div>

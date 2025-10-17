@@ -2,72 +2,51 @@
 
 import { User } from "@prisma/client";
 import React, { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { createConsulteeQueries } from "@/hooks/useConsulteePrefetchDashboard";
 import { EventWithType } from "../../utils/getMetadata";
 import {
   getActualMonthlyEvents,
   getActualUpcomingSlots,
 } from "../../utils/scheduleHelpers";
 import { MonthlySection, UpcomingSection } from "./Sections";
-import { ConsulteeDashboardSkeleton } from "@/components/ui/dashboard-skeleton";
 
 interface HomeTabProps {
   userDetails: User | null;
-  params: Promise<{ consulteeId: string }>;
+  eventsData: any; // Events data passed from parent
+  isRefreshing?: boolean;
 }
 
 export default function HomeTab({
   userDetails,
-  params,
+  eventsData,
+  isRefreshing = false,
 }: Readonly<HomeTabProps>) {
-  const resolvedParams = React.use(params);
-  const consulteeId = resolvedParams.consulteeId;
-
-  // Use the centralized query configuration
-  const eventsQuery = createConsulteeQueries(consulteeId).events;
-  const { data, isLoading, error } = useQuery(eventsQuery);
-
   const [currentMonth, setCurrentMonth] = useState(new Date());
 
-  if (!userDetails || isLoading) {
-    return <ConsulteeDashboardSkeleton />;
-  }
-
-  if (error) {
+  if (!userDetails || !eventsData) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
-          <h3 className="font-semibold mb-2">Error Loading Events</h3>
-          <p className="text-sm">
-            {error.message || "Failed to load events data. Please try again."}
-          </p>
-          <button
-            onClick={() => window.location.reload()}
-            className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-          >
-            Retry
-          </button>
+      <div className="space-y-6 min-h-[calc(100vh-200px)] p-6 bg-gray-50">
+        <div className="bg-white rounded-xl p-6">
+          <h2 className="text-2xl font-bold text-blue-600">Welcome back</h2>
+          <p className="mt-1 text-gray-600">Loading your dashboard...</p>
         </div>
       </div>
     );
   }
 
-  if (!data) {
-    return <ConsulteeDashboardSkeleton />;
-  }
-
   const allEvents: EventWithType[] = [
-    ...data.consultations.map((c: any) => ({
+    ...eventsData.consultations.map((c: any) => ({
       ...c,
       type: "Consultation" as const,
     })),
-    ...data.webinars.map((w: any) => ({ ...w, type: "Webinar" as const })),
-    ...data.subscriptions.map((s: any) => ({
+    ...eventsData.webinars.map((w: any) => ({
+      ...w,
+      type: "Webinar" as const,
+    })),
+    ...eventsData.subscriptions.map((s: any) => ({
       ...s,
       type: "Subscription" as const,
     })),
-    ...data.classes.map((c: any) => ({ ...c, type: "Class" as const })),
+    ...eventsData.classes.map((c: any) => ({ ...c, type: "Class" as const })),
   ];
 
   const upcomingSlots = getActualUpcomingSlots(allEvents);
@@ -87,6 +66,13 @@ export default function HomeTab({
 
   return (
     <div className="space-y-6 min-h-[calc(100vh-200px)] p-6 bg-gray-50">
+      {/* Show subtle loading indicator when refreshing */}
+      {isRefreshing && (
+        <div className="fixed top-4 right-4 bg-blue-500 text-white px-3 py-1 rounded-md text-sm z-50">
+          Refreshing...
+        </div>
+      )}
+
       {/* Welcome Section */}
       <div className="bg-white rounded-xl p-6">
         <h2 className="text-2xl font-bold text-blue-600">

@@ -4,7 +4,8 @@ import { getEffectiveUserId } from "@/utils/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "components/ui/avatar";
 import { Skeleton } from "components/ui/skeleton";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import { usePrefetchDashboard } from "@/hooks/useCosultantPrefetchDashboard";
+import StreamProvider from "@/providers/StreamProvider";
+// Removed aggressive prefetching import - using lightweight approach instead
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -66,8 +67,6 @@ export default function ConsultantLayout({
   const queryClient = useQueryClient();
 
   const userId = getEffectiveUserId(session);
-  const { prefetchOnTabHover, prefetchAllConsultantData } =
-    usePrefetchDashboard({ consultantId });
 
   // Replace SWR with React Query
   const {
@@ -83,51 +82,38 @@ export default function ConsultantLayout({
     retry: 2,
   });
 
-  // Enhanced prefetching strategy
+  // Reduced prefetching strategy - only prefetch on user interaction
   useEffect(() => {
     if (!userId || !consultantId) return;
 
-    // Immediate prefetch of critical data
-    const prefetchCriticalData = async () => {
-      // Prefetch all dashboard data in background
-      prefetchAllConsultantData();
+    // Only prefetch current route and one likely next route after a delay
+    const prefetchMinimalData = () => {
+      // Prefetch only the current route
+      const currentRoute = pathname;
+      if (currentRoute) {
+        router.prefetch(currentRoute);
+      }
 
-      // Prefetch routes that are likely to be visited
-      const criticalRoutes = [
-        `/dashboard/consultant/${consultantId}/home`,
-        `/dashboard/consultant/${consultantId}/appointments`,
-        `/dashboard/consultant/${consultantId}/chats`,
-      ];
-
-      // Use Next.js router.prefetch for route-level prefetching
-      criticalRoutes.forEach((route) => {
-        router.prefetch(route);
-      });
+      // Prefetch home route only if not already there, after a longer delay
+      if (!pathname.includes("/home")) {
+        setTimeout(() => {
+          router.prefetch(`/dashboard/consultant/${consultantId}/home`);
+        }, 2000);
+      }
     };
 
-    // Use requestIdleCallback for non-blocking prefetch
+    // Use requestIdleCallback with longer timeout to reduce blocking
     if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      window.requestIdleCallback(prefetchCriticalData);
+      window.requestIdleCallback(prefetchMinimalData, { timeout: 5000 });
     } else {
-      setTimeout(prefetchCriticalData, 100);
+      setTimeout(prefetchMinimalData, 1000);
     }
-  }, [userId, consultantId, prefetchAllConsultantData, router]);
+  }, [userId, consultantId, pathname, router]);
 
-  // Smart hover prefetching with route prefetching
+  // Lightweight hover prefetching - route only
   const handleNavHover = (path: string) => {
-    // Prefetch the route
+    // Only prefetch the route, let the page handle its own data loading
     router.prefetch(`/dashboard/consultant/${consultantId}/${path}`);
-
-    // Prefetch data for specific tabs
-    if (path === "home") {
-      prefetchOnTabHover("home");
-    } else if (path === "appointments") {
-      prefetchOnTabHover("appointments");
-    } else if (path === "planner") {
-      prefetchOnTabHover("planner");
-    } else if (path === "requests") {
-      prefetchOnTabHover("requests");
-    }
   };
 
   // Authentication check
@@ -144,7 +130,7 @@ export default function ConsultantLayout({
     );
   }
 
-  // Main layout - Note we always render the layout even during loading
+  // Main layout - Always render immediately, show skeleton only in profile section
   return (
     <div className="flex min-h-screen bg-gray-100">
       {/* Sidebar */}
@@ -251,18 +237,17 @@ export default function ConsultantLayout({
               </p>
             </div>
           </div>
-        ) : isLoading ? (
-          // Show a loading UI in the main content while data is loading
-          <div className="flex flex-col space-y-4">
-            <Skeleton className="h-8 w-64" />
-            <Skeleton className="h-32 w-full rounded-md" />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Skeleton className="h-24 rounded-md" />
-              <Skeleton className="h-24 rounded-md" />
-            </div>
-          </div>
+        ) : consultantData?.user?.id ? (
+          // Wrap content with combined StreamProvider when user ID is available
+          <StreamProvider
+            userId={consultantData.user.id}
+            enableChat={true}
+            enableVideo={true}
+          >
+            <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
+          </StreamProvider>
         ) : (
-          // Render children when data is loaded and no error with error boundary
+          // Fallback without Stream providers while loading user data
           <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
         )}
       </main>
