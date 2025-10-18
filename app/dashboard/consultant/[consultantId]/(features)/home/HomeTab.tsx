@@ -100,18 +100,18 @@ export function HomeTab({
     }));
   });
 
-  // Filter appointments for today
-  const todayAppointments = getTodayAppointments(expandedAppointments).filter(
-    (appointment) => {
+  // Filter appointments for today (limit to 5 for performance)
+  const todayAppointments = getTodayAppointments(expandedAppointments)
+    .filter((appointment) => {
       const status = getAppointmentStatus(appointment);
       return status !== "Completed";
-    },
-  );
+    })
+    .slice(0, 5);
 
-  // Get all upcoming appointments
+  // Get all upcoming appointments (limit to 10 for performance)
   const upcomingAppointments = sortAppointmentsByStartTime(
     getUpcomingAppointments(expandedAppointments),
-  );
+  ).slice(0, 10);
 
   // Group upcoming appointments
   const groupedUpcomingAppointments =
@@ -308,15 +308,14 @@ export function HomeTab({
                                 >
                                   {status}
                                 </Badge>
-                                {status !== "Completed" && (
+                                {status !== "Completed" && isJoinable && (
                                   <Button
                                     className="bg-blue-500 text-white w-full sm:w-auto text-sm py-1"
-                                    disabled={!isJoinable}
                                     onClick={() =>
                                       handleJoinMeeting(appointment)
                                     }
                                   >
-                                    {isJoinable ? "Join meet" : "Chat"}
+                                    Join meet
                                   </Button>
                                 )}
                               </div>
@@ -332,6 +331,18 @@ export function HomeTab({
                 <p className="text-gray-500">No upcoming appointments</p>
               )}
             </div>
+            {/* View All Link */}
+            {upcomingAppointments.length > 0 && (
+              <div className="mt-4 text-center border-t pt-4">
+                <Button
+                  variant="link"
+                  className="text-blue-600 hover:text-blue-700 font-medium"
+                  onClick={() => router.push("../appointments")}
+                >
+                  View All Appointments →
+                </Button>
+              </div>
+            )}
           </div>
         </Suspense>
       </div>

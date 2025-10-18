@@ -86,8 +86,9 @@ export const getSlotTimes = (appointment: TAppointment): Date[] => {
   }
 
   return appointment.slotsOfAppointment
-    .map((slot) => {
-      const time = slot.startsAt;
+    .map((slot: any) => {
+      // Support both field names: startsAt (from API) and slotStartTimeInUTC (from dashboard API transformation)
+      const time = slot.startsAt || slot.slotStartTimeInUTC;
       // Handle both Date objects and string timestamps
       if (time instanceof Date) {
         return time;
@@ -241,18 +242,6 @@ export const getTodayAppointments = (
 
     const slotDate = new Date(slotTime);
     const isToday = slotDate >= todayStart && slotDate <= todayEnd;
-
-    // For subscription appointments, also check if they're active
-    if (
-      appointment.appointmentType === "SUBSCRIPTION" &&
-      appointment.subscription
-    ) {
-      const startDate = new Date(
-        appointment.subscription.schedulingPeriodStartsAt,
-      );
-      const endDate = new Date(appointment.subscription.schedulingPeriodEndsAt);
-      return isToday && now >= startDate && now <= endDate;
-    }
 
     return isToday;
   });
